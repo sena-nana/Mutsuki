@@ -2,9 +2,9 @@
 
 > 为 Yume / mind-sim 提供运行核心，并通过插件组合实现传统 Bot 框架能力的 Agent 中心框架。
 
-**当前版本：v0.0 骨架（无实现代码）**
+**当前版本：v0.1 最小可运行骨架**
 
-v0.0 仅产出方向、分层、契约草案与规则文档，作为后续实现的唯一事实来源。`nanobot/` 与 `tests/` 目录在 v0.1 引入第一个可运行模块时再创建。
+v0.1 落地了第一个可装载、可运行、可被测试的 Agent 闭环（echo 插件 + in-memory adapter + 完整 contracts/core/runtime 分层 + 45 项测试）。运行 `uv run python -m nanobot.plugins.echo.smoke` 验证。详见 [plans/version-reports/v0.1.md](plans/version-reports/v0.1.md)。
 
 ## 阅读入口
 

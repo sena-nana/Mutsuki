@@ -19,7 +19,7 @@
 | `AgentId` | Agent 身份 | `value: str`（kebab-case，含命名空间） |
 | `AgentContext` | Agent 运行期上下文 | `agent_id`、`clock`、`id_gen`、`rng`、`services`、`scope`、`trace_ctx` |
 | `LifecyclePhase` | 生命周期阶段 | enum：`spawn / awake / sleep / stop` |
-| `Message` | 入站 / 出站消息 | `id`、`timestamp`、`source`、`channel`、`content_parts`、`capabilities_required` |
+| `Message` | 入站 / 出站消息 | `id`、`timestamp`、`source`、`parts`、`capabilities_required`（v0.1 实现：[nanobot/contracts/message.py](../nanobot/contracts/message.py)；字段名 `parts` 为正式名，本表早期草案的 `content_parts` 已弃用） |
 | `Event` | 内部事件 | `id`、`timestamp`、`type`、`source_plugin`、`payload`、`trace_id`、`span_id`、`parent_span_id` |
 | `Capability` | 能力声明 | `name: str`、`quantity: optional`、`policy: optional` |
 | `Service` | 服务声明 | `name`、`contract_id`、`mode: by_value \| by_ref`、`version` |
@@ -29,7 +29,7 @@
 | `TraceSpan` | trace 因果链节点 | `trace_id`、`span_id`、`parent_span_id`、`name`、`start`、`end`、`attributes`、`status` |
 | `RefPayload[T]` | 标记字段为「按引用传递」（详见 §11） | `ref_id`、`handle: Handle[T]`、`descriptor: RefDescriptor` |
 | `Handle[T]` | 引用所有权与生命周期 | `acquire / release / borrow / is_alive`；与 `PluginScope` 集成 |
-| `RefDescriptor` | 引用的可观测元数据 | `ref_id`、`kind`、`schema_id`、`schema_version`、`attributes`、`lineage` |
+| `RefDescriptor` | 引用的可观测元数据 | `ref_id`、`kind`、`schema_id_target`、`schema_version_target`、`attributes`、`lineage`（详见 §11.3） |
 | `BackpressureChannel[T]` | 流式 payload 速率匹配 | `send / recv / high_watermark / low_watermark` |
 
 ## 2. PluginManifest
@@ -55,7 +55,13 @@ PluginManifest:
 - `id` 全局唯一；`version` 遵循 SemVer。
 - `contracts / capabilities / config_schema` 缺一不可；core 在装载前校验，不通过则拒绝装载。
 - `requires_plugins` 用于 DAG 解析；存在环则拒绝启动。
-- `commands` 由 `@plugin.command` / `@plugin.tool` 装饰器自动填充（详见 [engineering.md §3.3](engineering.md#33-指令即工具hard-rule)）。
+- `commands` 由 `@command` 装饰器自动填充（详见 [engineering.md §3.3](engineering.md#33-指令即工具hard-rule)）。
+
+**v0.1 实现层规范**：manifest 字段以 `ClassVar` 形式声明在 `Plugin` 子类
+（`id` / `version` / `capabilities` / `requires_plugins` / `requires_services` /
+`provides_services` / `contracts`），`Config` 是嵌套的 `msgspec.Struct` 类。
+`PluginMeta` 元类在 class 定义时校验上述字段并自动构造 `PluginManifest`，绑定到
+`cls.__manifest__`；用户不直接构造 `PluginManifest` 实例。
 
 ## 3. Error（结构化错误）
 
@@ -93,9 +99,17 @@ Error:
 | `plugin.scope_violation` | 副作用未通过 `PluginScope` 注册 |
 | `transaction.compensation_failed` | Saga 补偿步骤失败 |
 
-## 4. Capability 草案能力名
+## 4. Capability 命名
 
-v0.0 草案，可在 v0.1 扩展：
+**v0.1 实现**：`CapabilityName` 是 `str` 子类 + 进程内注册表（详见
+[nanobot/contracts/capability.py](../nanobot/contracts/capability.py)）。
+框架内置常量集中在 `Caps` 门面（[capability_builtin.py](../nanobot/contracts/capability_builtin.py)），
+插件通过 `CapabilityName.register(name, declared_by=...)` 扩展自有命名空间
+（如 `yume.vram` / `mindsim.session`）。**禁止用裸字符串构造 Capability**；
+未注册的名字在 `CapabilityName(value)` 构造点立即抛 `UnknownCapabilityError`，
+跨 owner 重注册抛 `CapabilityConflictError`。
+
+v0.0 草案能力名（v0.1 已注册到 `Caps` 内）：
 
 | 名称 | 量纲示例 | 用途 |
 |---|---|---|
@@ -291,12 +305,12 @@ Handle[T]:
 
 ```text
 RefDescriptor:
-  ref_id: str
-  kind: str                          # 领域命名（如 "yume.latent" / "mindsim.session"）
-  schema_id: str                     # 完整契约标识（如 "yume.latent/v2"）
-  schema_version: str                # SemVer
-  attributes: dict[str, JSON]        # 领域元数据（如 {"shape": [4096], "dtype": "fp16", "device": "cuda:0"}）
-  lineage: list[str]                 # 派生自哪些 ref_id（用于因果追溯）
+  ref_id: RefId
+  kind: str                                # 领域命名（如 "yume.latent" / "mindsim.session"）
+  schema_id_target: str                    # 引用对象的契约标识（如 "yume.latent/v2"）
+  schema_version_target: str               # SemVer
+  attributes: dict[str, str|int|float|bool] # 领域元数据（如 {"shape": "[4096]", "dtype": "fp16"}）
+  lineage: tuple[RefId, ...]               # 派生自哪些 ref_id（用于因果追溯，不可变）
 ```
 
 约束：
@@ -304,6 +318,10 @@ RefDescriptor:
 - 框架使用 `RefDescriptor` 做 trace、审计、面板显示，**不解读 `attributes` 内容**。
 - `kind` 用于面板分类与权限策略匹配，不参与执行逻辑。
 - `lineage` 在 `Handle` 派生（如从一个 latent 算出另一个 latent）时由插件填充。
+- **字段命名**：`schema_id_target` / `schema_version_target` 而不是裸 `schema_id` / `schema_version`，
+  避免与 [§10.1](#101-字段约定) 通用 schema 元数据字段（任何 Contract 自身都有）的同名歧义；
+  `_target` 后缀表示「引用所指向对象的 schema」。
+- `lineage` 用 `tuple` 而非 `list`，使 `RefDescriptor` 可哈希、可作为 trace key。
 
 ### 11.4 Schema 兼容性
 
@@ -370,7 +388,40 @@ BackpressureChannel[T]:
 
 二者互补，不互斥：`by_ref` 的 service 可以返回 `RefPayload`。
 
-## 12. 承载性测试样本（contracts 验证用）
+## 12. Permission 系统（v0.1 引入）
+
+> **设计原则**：与 Capability **正交**。Capability 是「插件**有能力**做某事」的
+> *静态* manifest 申报；Permission 是「**当下这个调用**是否被允许」的 *动态* 谓词。
+
+### 12.1 PermissionRule —— 谓词组合
+
+```text
+PermissionRule:
+  __and__ -> 合并所有 checker（AND）
+  __or__  -> 包装为新 OR 节点
+  check(ctx) -> bool
+```
+
+实现见 [nanobot/contracts/permission.py](../nanobot/contracts/permission.py)。
+
+### 12.2 PermissionName —— 命名权限注册式
+
+与 `CapabilityName` 同模式：`str` 子类 + 注册表 + 内置门面 `Perms`
+（`Perms.PUBLIC` / `Perms.AGENT_OWNER`）。注册时绑定 checker 函数。
+插件可调 `PermissionName.register(name, declared_by=..., checker=...)` 扩展。
+
+### 12.3 消费点
+
+任意 `@command` / `@tool` / Service 方法都可声明：
+
+```python
+@command(perms=Perms.AGENT_OWNER & MyPerms.IN_CHANNEL("ops"))
+async def restart(self, ctx: AgentContext) -> str: ...
+```
+
+scheduler 在路由前 `await rule.check(ctx)`；失败 → `Error(code="permission.denied")`。
+
+## 13. 承载性测试样本（contracts 验证用）
 
 设计任何契约时，必须用以下样本验证可承载：
 
