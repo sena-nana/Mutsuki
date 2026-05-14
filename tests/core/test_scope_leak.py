@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.ids import RefId
-from nanobot.core.handle import make_stub_handle
-from nanobot.core.scope import HandleLeakError, PluginScope, TransactionScope
+from mutsukibot.contracts.ids import RefId
+from mutsukibot.core.handle import make_stub_handle
+from mutsukibot.core.scope import HandleLeakError, PluginScope, TransactionScope
 
 
 @pytest.mark.asyncio

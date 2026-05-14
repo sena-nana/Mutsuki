@@ -2,13 +2,13 @@
 
 ## 这是什么
 
-`Agent` 是 NanoBot 里的**一等运行时实体** —— 不是会话、不是 LLM 调用、不是平台连接，而是带身份的常驻对象。它有自己的 `agent_id`、自己的事件总线、自己的入站 / 出站队列、自己的插件集合，以及一个独立的 tick 调度器（一个 `asyncio.Task`）。
+`Agent` 是 MutsukiBot 里的**一等运行时实体** —— 不是会话、不是 LLM 调用、不是平台连接，而是带身份的常驻对象。它有自己的 `agent_id`、自己的事件总线、自己的入站 / 出站队列、自己的插件集合，以及一个独立的 tick 调度器（一个 `asyncio.Task`）。
 
-代码：[nanobot/core/agent.py](../../nanobot/core/agent.py)。
+代码：[mutsukibot/core/agent.py](../../mutsukibot/core/agent.py)。
 
 ## 解决什么问题
 
-传统 bot 框架里，"bot" 通常是一个无状态的回调集合 + 一些会话级 state。NanoBot 要承载 Yume / mind-sim 这类需要长时间运行、有内在状态、要主动行动的 agent，会话语义不够 —— 必须有一个明确的、可以被 spawn / awake / sleep / stop 的对象。
+传统 bot 框架里，"bot" 通常是一个无状态的回调集合 + 一些会话级 state。MutsukiBot 要承载 Yume / mind-sim 这类需要长时间运行、有内在状态、要主动行动的 agent，会话语义不够 —— 必须有一个明确的、可以被 spawn / awake / sleep / stop 的对象。
 
 把它做成一等公民有两个直接收益：
 
@@ -19,7 +19,7 @@
 
 ### Agent 数据形态
 
-[agent.py:55-72](../../nanobot/core/agent.py#L55-L72) 是个普通 dataclass：
+[agent.py:55-72](../../mutsukibot/core/agent.py#L55-L72) 是个普通 dataclass：
 
 ```python
 @dataclass
@@ -44,7 +44,7 @@ class Agent:
 
 ### 生命周期阶段
 
-`LifecyclePhase`（[lifecycle.py:6](../../nanobot/contracts/lifecycle.py#L6)）只有四个值，按顺序流转：
+`LifecyclePhase`（[lifecycle.py:6](../../mutsukibot/contracts/lifecycle.py#L6)）只有四个值，按顺序流转：
 
 | 阶段 | 含义 | 触发点 |
 |---|---|---|
@@ -53,11 +53,11 @@ class Agent:
 | `SLEEP` | 调度器暂停 | `AgentScheduler.stop()` 早段 |
 | `STOP` | 完全停止，插件已卸载 | `AgentScheduler.stop()` 末段 |
 
-每个阶段都触发 [lifespan.py:32](../../nanobot/core/lifespan.py#L32) 的 `Lifespan.fire()`，按声明顺序运行 `on_spawn` / `on_awake`，按反序运行 `on_sleep` / `on_stop`（LIFO 退栈，模拟资源 acquire / release 的对称性）。
+每个阶段都触发 [lifespan.py:32](../../mutsukibot/core/lifespan.py#L32) 的 `Lifespan.fire()`，按声明顺序运行 `on_spawn` / `on_awake`，按反序运行 `on_sleep` / `on_stop`（LIFO 退栈，模拟资源 acquire / release 的对称性）。
 
 ### 命令索引：O(1) 路由
 
-加载插件时 [agent.py:98-107](../../nanobot/core/agent.py#L98-L107) 会扫描插件类的 `__command_markers__`（这个属性由 `PluginMeta` 在类定义时填充，详见 [插件定义](plugin-definition.md)），把每个命令的 `attr_name` 与函数名都登记到 `_command_index: dict[str, CommandTarget]`：
+加载插件时 [agent.py:98-107](../../mutsukibot/core/agent.py#L98-L107) 会扫描插件类的 `__command_markers__`（这个属性由 `PluginMeta` 在类定义时填充，详见 [插件定义](plugin-definition.md)），把每个命令的 `attr_name` 与函数名都登记到 `_command_index: dict[str, CommandTarget]`：
 
 ```python
 def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
@@ -71,11 +71,11 @@ def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
         self._command_index.setdefault(marker.func.__name__, target)
 ```
 
-调度器分发命令时只做一次 `dict.get` 查表（[scheduler.py:88](../../nanobot/runtime/scheduler.py#L88) 的 `find_command`），不需要每条消息都 `inspect`。`setdefault` 保证先注册的不会被覆盖。
+调度器分发命令时只做一次 `dict.get` 查表（[scheduler.py:88](../../mutsukibot/runtime/scheduler.py#L88) 的 `find_command`），不需要每条消息都 `inspect`。`setdefault` 保证先注册的不会被覆盖。
 
 ### Agent 自有 fallback scope
 
-[agent.py:74-96](../../nanobot/core/agent.py#L74-L96) 的 `make_context()` 创建上下文时，会用一个**懒初始化**的 `_agent_scope`：
+[agent.py:74-96](../../mutsukibot/core/agent.py#L74-L96) 的 `make_context()` 创建上下文时，会用一个**懒初始化**的 `_agent_scope`：
 
 ```python
 if self._agent_scope is None:
@@ -83,18 +83,18 @@ if self._agent_scope is None:
 scope = self._agent_scope
 ```
 
-为什么这么做：早期版本里，没有命令上下文时（如 `lifespan.fire`）我们直接借用第一个加载插件的 scope —— 结果那个插件被卸载时把 agent 的 lifespan 钩子上下文也带走了。现在 fallback scope 与任何插件解耦，由 `AgentScheduler.stop()` 显式 `await self.agent.close_agent_scope()` 关闭（[scheduler.py:65](../../nanobot/runtime/scheduler.py#L65)）。
+为什么这么做：早期版本里，没有命令上下文时（如 `lifespan.fire`）我们直接借用第一个加载插件的 scope —— 结果那个插件被卸载时把 agent 的 lifespan 钩子上下文也带走了。现在 fallback scope 与任何插件解耦，由 `AgentScheduler.stop()` 显式 `await self.agent.close_agent_scope()` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。
 
-命令路由路径不会用 fallback scope —— 调度器会显式把上下文里的 scope 替换为命令所属插件的 scope（[scheduler.py:106](../../nanobot/runtime/scheduler.py#L106)），这样命令副作用就跟着插件走。
+命令路由路径不会用 fallback scope —— 调度器会显式把上下文里的 scope 替换为命令所属插件的 scope（[scheduler.py:106](../../mutsukibot/runtime/scheduler.py#L106)），这样命令副作用就跟着插件走。
 
 ## 用法示例
 
 构造一个 Agent 是赤裸的：
 
 ```python
-from nanobot.contracts.ids import AgentId
-from nanobot.core.agent import Agent
-from nanobot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.core.agent import Agent
+from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 
 agent = Agent(
     agent_id=AgentId("smoke-agent"),
@@ -111,7 +111,7 @@ agent = Agent(
 3. 通过 adapter 往 `agent.inbox` 投消息，从 `agent.outbox` 取响应
 4. `await scheduler.stop()` + `await loader.unload_from(agent)` 收尾
 
-完整闭环在 [nanobot/plugins/echo/smoke.py](../../nanobot/plugins/echo/smoke.py)。
+完整闭环在 [mutsukibot/plugins/echo/smoke.py](../../mutsukibot/plugins/echo/smoke.py)。
 
 ## 常见陷阱
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.capability_builtin import Caps
-from nanobot.core.capability_guard import (
+from mutsukibot.contracts.capability_builtin import Caps
+from mutsukibot.core.capability_guard import (
     CapabilityNotDeclaredError,
     check_capabilities,
 )

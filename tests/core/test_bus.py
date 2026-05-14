@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.core.bus import Bus
+from mutsukibot.core.bus import Bus
 
 
 @pytest.mark.asyncio

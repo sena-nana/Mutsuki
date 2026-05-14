@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.ids import RefId
-from nanobot.core.handle import (
+from mutsukibot.contracts.ids import RefId
+from mutsukibot.core.handle import (
     HandleNotAttachedError,
     HandleUseAfterReleaseError,
     make_stub_handle,
 )
-from nanobot.core.scope import HandleLeakError, PluginScope
+from mutsukibot.core.scope import HandleLeakError, PluginScope
 
 
 def test_handle_use_without_attach_raises() -> None:
@@ -74,8 +74,8 @@ def test_refpayload_generic_specialization_does_not_pollute_schema_registry() ->
 
     这是 v0.5 引入领域插件（``RefPayload[LatentTensor]``）前的不变量保护。
     """
-    from nanobot.contracts.base import SchemaRegistry
-    from nanobot.contracts.refpayload import RefPayload
+    from mutsukibot.contracts.base import SchemaRegistry
+    from mutsukibot.contracts.refpayload import RefPayload
 
     class _Foo:
         pass
@@ -92,7 +92,7 @@ def test_refpayload_generic_specialization_does_not_pollute_schema_registry() ->
     refpayload_entries = [
         (sid, ver, cls)
         for sid, ver, cls in snapshot
-        if sid == "nanobot.ref_payload"
+        if sid == "mutsukibot.ref_payload"
     ]
     assert len(refpayload_entries) == 1
     assert refpayload_entries[0][2] is RefPayload

@@ -2,9 +2,9 @@
 
 ## 这是什么
 
-NanoBot 的错误是**结构化数据对象**，不是字符串异常。`Error` 含稳定 code、source、route、可选 lost_capability、recovery 提示、cause 链、evidence 字典。错误码本身（`ErrorCode`）是注册式字符串。
+MutsukiBot 的错误是**结构化数据对象**，不是字符串异常。`Error` 含稳定 code、source、route、可选 lost_capability、recovery 提示、cause 链、evidence 字典。错误码本身（`ErrorCode`）是注册式字符串。
 
-代码：[nanobot/contracts/error.py](../../nanobot/contracts/error.py)。
+代码：[mutsukibot/contracts/error.py](../../mutsukibot/contracts/error.py)。
 
 ## 解决什么问题
 
@@ -20,7 +20,7 @@ NanoBot 的错误是**结构化数据对象**，不是字符串异常。`Error` 
 
 ### Error 数据形态
 
-[error.py:41-61](../../nanobot/contracts/error.py#L41-L61)：
+[error.py:41-61](../../mutsukibot/contracts/error.py#L41-L61)：
 
 ```python
 class Error(Contract):
@@ -49,11 +49,11 @@ class Error(Contract):
 - `cause` —— 链式 wrapping，外层 wrap 内层
 - `evidence` —— 标量诊断字段（不允许嵌套结构）
 
-`evidence` 只接受标量是为了保证错误总能被序列化、写到 JSONL trace、被指标聚合。需要传嵌套结构时序列化为 JSON 字符串塞进去（[scope.py:155-160](../../nanobot/core/scope.py#L155-L160) 就是这么处理 `cleanup_failures`）。
+`evidence` 只接受标量是为了保证错误总能被序列化、写到 JSONL trace、被指标聚合。需要传嵌套结构时序列化为 JSON 字符串塞进去（[scope.py:155-160](../../mutsukibot/core/scope.py#L155-L160) 就是这么处理 `cleanup_failures`）。
 
 ### ErrorCode：注册式字符串
 
-[error.py:26-31](../../nanobot/contracts/error.py#L26-L31)：
+[error.py:26-31](../../mutsukibot/contracts/error.py#L26-L31)：
 
 ```python
 class ErrorCode(RegisteredString):
@@ -66,7 +66,7 @@ class ErrorCode(RegisteredString):
 
 ### 内置 Errs 门面
 
-[error.py:67-105](../../nanobot/contracts/error.py#L67-L105)：
+[error.py:67-105](../../mutsukibot/contracts/error.py#L67-L105)：
 
 | `Errs.*` | 字符串值 | 触发场景 |
 |---|---|---|
@@ -94,13 +94,13 @@ ErrorCode.bootstrap_facade(
         "CAPABILITY_NOT_DECLARED": "capability.not_declared",
         ...
     },
-    declared_by="nanobot.core",
+    declared_by="mutsukibot.core",
 )
 ```
 
 ### Scheduler 的异常分类
 
-调度器在命令里捕获到任何 `Exception` 都不会让它逃逸 —— 由 [_classify_command_exception](../../nanobot/runtime/scheduler.py#L222-L264) 映射成 `Error`：
+调度器在命令里捕获到任何 `Exception` 都不会让它逃逸 —— 由 [_classify_command_exception](../../mutsukibot/runtime/scheduler.py#L222-L264) 映射成 `Error`：
 
 | 捕获到的异常 | 映射到 |
 |---|---|
@@ -109,11 +109,11 @@ ErrorCode.bootstrap_facade(
 | `KeyError`（缺参数） | `Errs.PLUGIN_DEFINITION_ERROR`，evidence reason = `missing_arg` |
 | 其他 | `Errs.PLUGIN_DEFINITION_ERROR`，evidence 包含 `exception_type` / `exception_repr` |
 
-错误 message 写到出站：[scheduler.py:196-208](../../nanobot/runtime/scheduler.py#L196-L208) 的 `_emit_error` 把 `Error` 序列化成 `[error <code>] <evidence>` 文本投到 outbox。Trace span 同时设 status=ERROR 并发到 bus（[scheduler.py:170-185](../../nanobot/runtime/scheduler.py#L170-L185)）。
+错误 message 写到出站：[scheduler.py:196-208](../../mutsukibot/runtime/scheduler.py#L196-L208) 的 `_emit_error` 把 `Error` 序列化成 `[error <code>] <evidence>` 文本投到 outbox。Trace span 同时设 status=ERROR 并发到 bus（[scheduler.py:170-185](../../mutsukibot/runtime/scheduler.py#L170-L185)）。
 
 ### RecoveryAction
 
-[error.py:34-38](../../nanobot/contracts/error.py#L34-L38)：
+[error.py:34-38](../../mutsukibot/contracts/error.py#L34-L38)：
 
 ```python
 class RecoveryAction(StrEnum):
@@ -130,7 +130,7 @@ class RecoveryAction(StrEnum):
 构造一个错误：
 
 ```python
-from nanobot.contracts.error import Error, Errs, RecoveryAction
+from mutsukibot.contracts.error import Error, Errs, RecoveryAction
 
 err = Error(
     code=Errs.CAPABILITY_EXHAUSTED,
@@ -170,7 +170,7 @@ for e in err.chain():
 注册自有错误码：
 
 ```python
-from nanobot.contracts.error import ErrorCode
+from mutsukibot.contracts.error import ErrorCode
 
 YUME_KERNEL_TIMEOUT = ErrorCode.register(
     "yume.kernel.timeout",
@@ -180,9 +180,9 @@ YUME_KERNEL_TIMEOUT = ErrorCode.register(
 
 ## 常见陷阱
 
-- **`evidence` 只接受标量**——`str | int | float | bool`。要塞 list / dict 必须先 `json.dumps`（参考 [scope.py 的 cleanup_failures_json](../../nanobot/core/scope.py#L155-L160) 处理方式）。
+- **`evidence` 只接受标量**——`str | int | float | bool`。要塞 list / dict 必须先 `json.dumps`（参考 [scope.py 的 cleanup_failures_json](../../mutsukibot/core/scope.py#L155-L160) 处理方式）。
 - **不要把 `Error` 当 Python 异常抛**。`Error` 是 `Contract`（msgspec.Struct），不是 `Exception`。要抛 → 用一个 wrapper 异常（`HandleLeakError(leaked, error=...)` 这种）携带它。Scheduler 期望命令里抛 Python 异常，由它去分类成 `Error`。
 - **`cause` 是 `Error | None`，不是 Python `__cause__`**。用 `raise X from Y` 链接 Python 异常，`Error.cause` 用来链接结构化错误。两者独立。
-- **`Errs.*` 在 import 时立即触发注册**。`from nanobot.contracts.error import Errs` 这一行就跑了 `bootstrap_facade`。所以 `ErrorCode("permission.denied")` 在 import 之后才能成功；之前会抛 `UnknownErrorCodeError`。
+- **`Errs.*` 在 import 时立即触发注册**。`from mutsukibot.contracts.error import Errs` 这一行就跑了 `bootstrap_facade`。所以 `ErrorCode("permission.denied")` 在 import 之后才能成功；之前会抛 `UnknownErrorCodeError`。
 - **避免从 `Errs.PLUGIN_DEFINITION_ERROR` 推断具体原因**。这个 code 是默认 fallback，scheduler 给所有未分类异常都用它。要区分原因看 `evidence["reason"]`（`service_not_found` / `missing_arg` / `command_raised`）。
 - **错误码字符串不应频繁变化**。它们出现在 alerting 规则、grep 脚本、测试断言里。要废弃一个错误码，先注册新的并迁移调用方，最后再删除旧引用。

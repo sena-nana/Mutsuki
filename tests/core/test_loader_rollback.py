@@ -7,13 +7,13 @@ from typing import ClassVar
 import msgspec
 import pytest
 
-from nanobot import Capability, Caps, Plugin
-from nanobot.contracts.error import Errs
-from nanobot.contracts.ids import AgentId
-from nanobot.contracts.plugin import PluginDep
-from nanobot.core.agent import Agent
-from nanobot.core.loader import PluginLoader, PluginLoadFailedError
-from nanobot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot import Capability, Caps, Plugin
+from mutsukibot.contracts.error import Errs
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts.plugin import PluginDep
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.loader import PluginLoader, PluginLoadFailedError
+from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 
 
 class _OkConfig(msgspec.Struct, kw_only=True):

@@ -4,7 +4,7 @@
 
 `ServiceContainer` 是 Agent 持有的服务注册表 —— 按 `(契约类型, 可选名字)` 索引。插件通过命令签名里的 `Inject()` 默认值，让框架自动从容器解析出实例。
 
-代码：[nanobot/core/container.py](../../nanobot/core/container.py)。
+代码：[mutsukibot/core/container.py](../../mutsukibot/core/container.py)。
 
 ## 解决什么问题
 
@@ -14,7 +14,7 @@
 
 ### 数据结构
 
-[container.py:17-21](../../nanobot/core/container.py#L17-L21)：
+[container.py:17-21](../../mutsukibot/core/container.py#L17-L21)：
 
 ```python
 class ServiceContainer:
@@ -26,7 +26,7 @@ class ServiceContainer:
 
 ### 注册
 
-[container.py:23-30](../../nanobot/core/container.py#L23-L30)：
+[container.py:23-30](../../mutsukibot/core/container.py#L23-L30)：
 
 ```python
 def register(
@@ -43,7 +43,7 @@ def register(
 
 ### 解析
 
-[container.py:38-51](../../nanobot/core/container.py#L38-L51)：
+[container.py:38-51](../../mutsukibot/core/container.py#L38-L51)：
 
 ```python
 def resolve(self, contract: type, *, name: str | None = None) -> Any:
@@ -58,11 +58,11 @@ def resolve(self, contract: type, *, name: str | None = None) -> Any:
     return bucket[0][1]
 ```
 
-不指定 name 就拿第一个。`ServiceNotFoundError` 是 `KeyError` 的子类。Scheduler 的异常分类器会把它映射成 `Errs.PLUGIN_DEFINITION_ERROR` 并标 `reason="service_not_found"`（[scheduler.py:235-244](../../nanobot/runtime/scheduler.py#L235-L244)）。
+不指定 name 就拿第一个。`ServiceNotFoundError` 是 `KeyError` 的子类。Scheduler 的异常分类器会把它映射成 `Errs.PLUGIN_DEFINITION_ERROR` 并标 `reason="service_not_found"`（[scheduler.py:235-244](../../mutsukibot/runtime/scheduler.py#L235-L244)）。
 
 ### Inject() 注入流程
 
-`Inject()` 是 [contracts/plugin.py:37-44](../../nanobot/contracts/plugin.py#L37-L44) 定义的 sentinel：
+`Inject()` 是 [contracts/plugin.py:37-44](../../mutsukibot/contracts/plugin.py#L37-L44) 定义的 sentinel：
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -72,7 +72,7 @@ class Inject:
 
 在命令签名里以 **默认值** 形式出现：`svc: SomeService = Inject()` 或 `svc: SomeService = Inject(name="primary")`。
 
-Dependent 的 `ServiceParam` 看到默认值是 `Inject` 实例就认领（[dependency.py:138-142](../../nanobot/core/dependency.py#L138-L142)），调用时执行：
+Dependent 的 `ServiceParam` 看到默认值是 `Inject` 实例就认领（[dependency.py:138-142](../../mutsukibot/core/dependency.py#L138-L142)），调用时执行：
 
 ```python
 ann = _strip_annotated(self.info.annotation)
@@ -83,7 +83,7 @@ return ctx.services.resolve(ann, name=self.inject.name)
 
 ### by-value vs by-ref
 
-`ServiceMode`（[contracts/service.py:9-11](../../nanobot/contracts/service.py#L9-L11)）有两个值：
+`ServiceMode`（[contracts/service.py:9-11](../../mutsukibot/contracts/service.py#L9-L11)）有两个值：
 
 - `BY_VALUE` —— 服务实例本身可序列化，跨进程也能传
 - `BY_REF` —— 服务持有非可序列化资源（GPU handle、KV cache 槽……），不能跨进程
@@ -135,7 +135,7 @@ class WebSearchPlugin(Plugin[_Cfg]):
 声明侧依赖（让 loader 能保证装载顺序）：
 
 ```python
-from nanobot.contracts.plugin import PluginDep, ServiceDep
+from mutsukibot.contracts.plugin import PluginDep, ServiceDep
 
 class WebSearchPlugin(Plugin[_Cfg]):
     requires_plugins = [PluginDep(plugin_id="http-client")]

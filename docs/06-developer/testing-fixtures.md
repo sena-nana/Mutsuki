@@ -2,11 +2,11 @@
 
 ## 这是什么
 
-NanoBot 内置一组用于测试的夹具：`ManualClock` / `DeterministicIdGen` / `SeededRng` / `make_stub_handle` / `InMemoryAdapter`。它们让你能在没有真实平台、没有真实后端、没有真实 wall-clock 的情况下完整复现 Agent 闭环。
+MutsukiBot 内置一组用于测试的夹具：`ManualClock` / `DeterministicIdGen` / `SeededRng` / `make_stub_handle` / `InMemoryAdapter`。它们让你能在没有真实平台、没有真实后端、没有真实 wall-clock 的情况下完整复现 Agent 闭环。
 
 ## 解决什么问题
 
-如果测试只能跑端到端，每条测试都几秒；如果测试只能 mock 一切，那 mock 与真实实现的漂移会让 bug 在生产才被发现。NanoBot 的妥协：
+如果测试只能跑端到端，每条测试都几秒；如果测试只能 mock 一切，那 mock 与真实实现的漂移会让 bug 在生产才被发现。MutsukiBot 的妥协：
 
 - **协议层提供两种实现**——生产 / 测试用一套同样的 ABC，业务代码不感知差异
 - **scope 与 lifecycle 完全实现**——测试里的 Agent 是真 Agent，跑真调度，真泄漏检测
@@ -16,10 +16,10 @@ NanoBot 内置一组用于测试的夹具：`ManualClock` / `DeterministicIdGen`
 
 ### ManualClock
 
-[clock.py:39-96](../../nanobot/runtime/clock.py#L39-L96)。详见 [确定性运行时](../05-advanced/deterministic-runtime.md)。
+[clock.py:39-96](../../mutsukibot/runtime/clock.py#L39-L96)。详见 [确定性运行时](../05-advanced/deterministic-runtime.md)。
 
 ```python
-from nanobot.runtime import ManualClock
+from mutsukibot.runtime import ManualClock
 
 clock = ManualClock(start=1_700_000_000.0, max_pending_waiters=64)
 
@@ -35,7 +35,7 @@ assert clock.pending_waiters == 0
 ### DeterministicIdGen
 
 ```python
-from nanobot.runtime import DeterministicIdGen
+from mutsukibot.runtime import DeterministicIdGen
 
 gen = DeterministicIdGen(seed=0)
 assert gen.next() == "00000000000000000000000001"
@@ -47,7 +47,7 @@ assert gen.next("trace") == "trace_00000000000000000000000002"
 ### SeededRng
 
 ```python
-from nanobot.runtime import SeededRng
+from mutsukibot.runtime import SeededRng
 
 rng = SeededRng(seed=42)
 assert rng.random() == 0.6394267984578837   # 取决于 CPython 版本
@@ -57,11 +57,11 @@ assert rng.random() == 0.6394267984578837   # 取决于 CPython 版本
 
 ### make_stub_handle
 
-[handle.py:137-157](../../nanobot/core/handle.py#L137-L157)：
+[handle.py:137-157](../../mutsukibot/core/handle.py#L137-L157)：
 
 ```python
-from nanobot.contracts.ids import RefId
-from nanobot.core.handle import make_stub_handle
+from mutsukibot.contracts.ids import RefId
+from mutsukibot.core.handle import make_stub_handle
 
 handle = make_stub_handle(
     RefId("test_001"),
@@ -80,10 +80,10 @@ handle.attach_to(scope)
 
 ### InMemoryAdapter
 
-[adapters/inmemory.py](../../nanobot/adapters/inmemory.py)：
+[adapters/inmemory.py](../../mutsukibot/adapters/inmemory.py)：
 
 ```python
-from nanobot.adapters import InMemoryAdapter
+from mutsukibot.adapters import InMemoryAdapter
 
 adapter = InMemoryAdapter(channel="test", user="alice")
 
@@ -94,19 +94,19 @@ await adapter.send_text(agent, "echo hello")
 msgs = await adapter.drain_outbox(agent, timeout=0.5)
 ```
 
-`drain_outbox` 在 `timeout` 内尽量多取消息，遇到第一次 50ms 内无消息时返回（[inmemory.py:51-62](../../nanobot/adapters/inmemory.py#L51-L62)）。
+`drain_outbox` 在 `timeout` 内尽量多取消息，遇到第一次 50ms 内无消息时返回（[inmemory.py:51-62](../../mutsukibot/adapters/inmemory.py#L51-L62)）。
 
 ## 标准测试模板
 
 ```python
 import pytest
-from nanobot.adapters import InMemoryAdapter
-from nanobot.contracts.ids import AgentId
-from nanobot.contracts.lifecycle import LifecyclePhase
-from nanobot.core.agent import Agent
-from nanobot.core.loader import PluginLoader
-from nanobot.runtime import DeterministicIdGen, ManualClock, SeededRng
-from nanobot.runtime.scheduler import AgentScheduler
+from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts.lifecycle import LifecyclePhase
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.loader import PluginLoader
+from mutsukibot.runtime import DeterministicIdGen, ManualClock, SeededRng
+from mutsukibot.runtime.scheduler import AgentScheduler
 
 from my_plugin import MyPlugin
 
@@ -171,7 +171,7 @@ assert spans[0].status == SpanStatus.OK
 ### 验证泄漏
 
 ```python
-from nanobot.core.scope import HandleLeakError
+from mutsukibot.core.scope import HandleLeakError
 
 class LeakyPlugin(Plugin[Cfg]):
     id = "leaky"
@@ -202,7 +202,7 @@ for _ in range(100):
 
 - **`pytest-asyncio` 模式**——pyproject 已设 `asyncio_mode = "auto"`，所有 async test 自动跑，不必加 `@pytest.mark.asyncio`（但加了也没事）。
 - **`ManualClock` teardown 必须 `cancel_all`**——否则 pending sleeper 在 event loop 关闭时会让 pytest 报 "Task was destroyed but it is pending"。最好放进 `pytest.fixture` 的 teardown。
-- **`adapter.drain_outbox(timeout=0.5)` 不能太短**——scheduler 的 inbox `wait_for(timeout=0.1)`（[scheduler.py:70](../../nanobot/runtime/scheduler.py#L70)），命令一个完整往返大概要 100ms+。timeout 给 0.5s 是安全值。
+- **`adapter.drain_outbox(timeout=0.5)` 不能太短**——scheduler 的 inbox `wait_for(timeout=0.1)`（[scheduler.py:70](../../mutsukibot/runtime/scheduler.py#L70)），命令一个完整往返大概要 100ms+。timeout 给 0.5s 是安全值。
 - **`PluginRegistry` 是进程级**——多个测试装载同一个 plugin 类要先 unload，否则 `RegistryConflictError`。模板里 `await loader.unload_from(agent)` 必须在 teardown 里跑。
 - **`SeededRng` 跨 Python 版本不稳**——CI 里如果 Python 版本变化，"完全相同的随机数序列"断言会失败。建议断言性质（"分布在 0-1 之间"）而不是具体值。
 - **`make_stub_handle` 的 target 是 `object()` 默认值**——它什么也不做。测试 `handle.acquire()` 拿到的是这个 object，能验证生命周期但不能验证业务逻辑。要测业务，传一个真 target 进去。

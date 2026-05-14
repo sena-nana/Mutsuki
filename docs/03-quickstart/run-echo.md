@@ -2,7 +2,7 @@
 
 ## 目标
 
-用 NanoBot 自带的 `EchoPlugin` + `InMemoryAdapter` 在十秒内走完一遍消息闭环：构造 Agent → 装载插件 → 启动调度器 → 投消息 → 拿回响应 → 看 trace。
+用 MutsukiBot 自带的 `EchoPlugin` + `InMemoryAdapter` 在十秒内走完一遍消息闭环：构造 Agent → 装载插件 → 启动调度器 → 投消息 → 拿回响应 → 看 trace。
 
 ## 准备
 
@@ -10,26 +10,26 @@
 
 ## 一行命令
 
-仓库自带冒烟入口（[nanobot/plugins/echo/smoke.py](../../nanobot/plugins/echo/smoke.py)）：
+仓库自带冒烟入口（[mutsukibot/plugins/echo/smoke.py](../../mutsukibot/plugins/echo/smoke.py)）：
 
 ```bash
-uv run python -m nanobot.plugins.echo.smoke
+uv run python -m mutsukibot.plugins.echo.smoke
 ```
 
 预期输出（来自 [v0.1 报告](../../plans/version-reports/v0.1.md)）：
 
 ```
 [smoke] agent smoke-agent phase=spawn
-[smoke] loaded plugins: ['nanobot-echo']
+[smoke] loaded plugins: ['mutsukibot-echo']
 [smoke] phase=awake
 [smoke] outbox -> 'echo: hello\n'
-[smoke] phase=stop; trace at .../nanobot-echo-smoke.jsonl
+[smoke] phase=stop; trace at .../mutsukibot-echo-smoke.jsonl
 ```
 
 最后一行的路径里能找到一个 JSONL trace —— 每条 span 一行。`cat` 出来类似：
 
 ```json
-{"trace_id":"trace_xxx","span_id":"span_yyy","parent_span_id":null,"name":"plugin.nanobot-echo.echo","start":1700000000.0,"end":1700000000.0,"status":"ok","attributes":{"agent_id":"smoke-agent"}}
+{"trace_id":"trace_xxx","span_id":"span_yyy","parent_span_id":null,"name":"plugin.mutsukibot-echo.echo","start":1700000000.0,"end":1700000000.0,"status":"ok","attributes":{"agent_id":"smoke-agent"}}
 ```
 
 ## 拆开看
@@ -43,7 +43,7 @@ agent = Agent(
     id_gen=NanoIdGen(),
     rng=SeededRng(seed=0),
 )
-trace_path = Path(gettempdir()) / "nanobot-echo-smoke.jsonl"
+trace_path = Path(gettempdir()) / "mutsukibot-echo-smoke.jsonl"
 writer = JsonlTraceWriter(trace_path)
 writer.attach(agent.bus)
 
@@ -96,14 +96,14 @@ AgentScheduler._handle_message(msg)
   │   └─ EchoPlugin.echo(self, text="hello", count=1)
   │      └─ return "echo: hello\n"
   ├─ outbox.put(Message(parts=[ContentPart(TEXT, "echo: hello\n")]))
-  └─ bus.publish("trace.span", TraceSpan(name="plugin.nanobot-echo.echo", ...))
+  └─ bus.publish("trace.span", TraceSpan(name="plugin.mutsukibot-echo.echo", ...))
 
 (JsonlTraceWriter 收到 trace.span，写一行 JSON 到文件)
 ```
 
 ## 自己改一行试试
 
-打开 [nanobot/plugins/echo/__init__.py](../../nanobot/plugins/echo/__init__.py)：
+打开 [mutsukibot/plugins/echo/__init__.py](../../mutsukibot/plugins/echo/__init__.py)：
 
 ```python
 class _EchoConfig(msgspec.Struct, kw_only=True):
@@ -131,18 +131,18 @@ await adapter.send_text(agent, "echo hi 3")
 [smoke] outbox -> 'echo: hi\necho: hi\necho: hi\n'
 ```
 
-`3` 被 scheduler 按 `parameters_schema` 类型强转成 `int`（[scheduler.py:211-219](../../nanobot/runtime/scheduler.py#L211-L219)）。
+`3` 被 scheduler 按 `parameters_schema` 类型强转成 `int`（[scheduler.py:211-219](../../mutsukibot/runtime/scheduler.py#L211-L219)）。
 
 ## 观察 trace
 
-JSONL trace 是诊断 NanoBot 业务的主要入口。打开 `/tmp/nanobot-echo-smoke.jsonl`（或 Windows 的 `%TEMP%/nanobot-echo-smoke.jsonl`），每行是一个 span：
+JSONL trace 是诊断 MutsukiBot 业务的主要入口。打开 `/tmp/mutsukibot-echo-smoke.jsonl`（或 Windows 的 `%TEMP%/mutsukibot-echo-smoke.jsonl`），每行是一个 span：
 
 ```json
 {
   "trace_id": "trace_xxx",
   "span_id": "span_yyy",
   "parent_span_id": null,
-  "name": "plugin.nanobot-echo.echo",
+  "name": "plugin.mutsukibot-echo.echo",
   "start": 1700000000.123,
   "end": 1700000000.124,
   "status": "ok",
@@ -156,7 +156,7 @@ JSONL trace 是诊断 NanoBot 业务的主要入口。打开 `/tmp/nanobot-echo-
 [smoke] outbox -> '[error capability.not_declared] {...}'
 ```
 
-trace 里看不到 span —— 因为命令未找到时 scheduler 直接 `_emit_error` 返回，不进入 try/finally 块（[scheduler.py:88-99](../../nanobot/runtime/scheduler.py#L88-L99)）。这是 v0.1 的已知行为。
+trace 里看不到 span —— 因为命令未找到时 scheduler 直接 `_emit_error` 返回，不进入 try/finally 块（[scheduler.py:88-99](../../mutsukibot/runtime/scheduler.py#L88-L99)）。这是 v0.1 的已知行为。
 
 ## 下一步
 

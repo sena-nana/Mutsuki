@@ -1,8 +1,8 @@
-# API · `nanobot.runtime`
+# API · `mutsukibot.runtime`
 
 注入到 `AgentContext` 的运行时来源：时钟、ID 生成器、RNG、调度器、asyncio 门面。
 
-来源：[nanobot/runtime/__init__.py](../../nanobot/runtime/__init__.py)。
+来源：[mutsukibot/runtime/__init__.py](../../mutsukibot/runtime/__init__.py)。
 
 ## 模块地图
 
@@ -20,7 +20,7 @@
 
 ## clock
 
-[clock.py](../../nanobot/runtime/clock.py)
+[clock.py](../../mutsukibot/runtime/clock.py)
 
 ```python
 @runtime_checkable
@@ -48,7 +48,7 @@ class ManualClockWaiterOverflow(RuntimeWarning):
 
 ## idgen
 
-[idgen.py](../../nanobot/runtime/idgen.py)
+[idgen.py](../../mutsukibot/runtime/idgen.py)
 
 ```python
 @runtime_checkable
@@ -65,7 +65,7 @@ class DeterministicIdGen:
 
 ## rng
 
-[rng.py](../../nanobot/runtime/rng.py)
+[rng.py](../../mutsukibot/runtime/rng.py)
 
 ```python
 @runtime_checkable
@@ -81,7 +81,7 @@ class SeededRng:
 
 ## scheduler
 
-[scheduler.py](../../nanobot/runtime/scheduler.py)
+[scheduler.py](../../mutsukibot/runtime/scheduler.py)
 
 ```python
 class AgentScheduler:
@@ -102,7 +102,7 @@ class AgentScheduler:
 
 ## loop
 
-[loop.py](../../nanobot/runtime/loop.py)
+[loop.py](../../mutsukibot/runtime/loop.py)
 
 asyncio 薄门面：
 

@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.capability import (
+from mutsukibot.contracts.capability import (
     Capability,
     CapabilityConflictError,
     CapabilityName,
     UnknownCapabilityError,
 )
-from nanobot.contracts.capability_builtin import Caps
+from mutsukibot.contracts.capability_builtin import Caps
 
 
 def test_builtin_constants_registered() -> None:
     assert isinstance(Caps.READ_MESSAGE, CapabilityName)
     assert Caps.READ_MESSAGE == "read_message"
-    assert CapabilityName.owner_of("read_message") == "nanobot.core"
+    assert CapabilityName.owner_of("read_message") == "mutsukibot.core"
 
 
 def test_construction_requires_registration() -> None:

@@ -1,15 +1,15 @@
-# NanoBot 架构设计（v0.0）
+# MutsukiBot 架构设计（v0.0）
 
-本文件回答：**NanoBot 是什么、不是什么、为何这样分层、与 Yume / mind-sim 的关系**。具体技术栈与目录结构见 [engineering.md](engineering.md)，契约形态见 [contracts.md](contracts.md)。
+本文件回答：**MutsukiBot 是什么、不是什么、为何这样分层、与 Yume / mind-sim 的关系**。具体技术栈与目录结构见 [engineering.md](engineering.md)，契约形态见 [contracts.md](contracts.md)。
 
 ## 1. 项目方向
 
-NanoBot 是 Agent 中心的 Bot 框架，**不是** 「事件总线 + 命令处理器」式的传统 Bot。设计目的双重：
+MutsukiBot 是 Agent 中心的 Bot 框架，**不是** 「事件总线 + 命令处理器」式的传统 Bot。设计目的双重：
 
 1. 为 Yume 与 mind-sim 提供运行核心。
 2. 通过插件组合实现传统 Bot 框架能力。
 
-Yume / mind-sim 自身的实现路径也将被解构为 NanoBot 之上的**零散插件**。它们既是目标用例，也是目标插件生态。
+Yume / mind-sim 自身的实现路径也将被解构为 MutsukiBot 之上的**零散插件**。它们既是目标用例，也是目标插件生态。
 
 ### 借鉴对象与边界
 
@@ -54,14 +54,14 @@ adapters → core → contracts ← plugins
 
 各层职责（v0.0 草案）：
 
-- `nanobot/contracts` —— 稳定内部协议。详见 [contracts.md](contracts.md)。
-- `nanobot/core` —— Agent 运行时本体：注册中心、调度器、Context 工厂、服务容器、生命周期编排、插件 DAG 加载、事务原语。
-- `nanobot/runtime` —— 事件循环策略、并发控制、进程/线程隔离、资源 quota、决定性时间与 ID 源。**Runtime 不决定 Agent 行为**。
-- `nanobot/adapters` —— 协议适配层（CLI / WS / HTTP / OneBot / 平台 SDK 等）。**不持有业务逻辑**。
-- `nanobot/plugins` —— 所有可装可卸的能力（命令、Matcher、记忆、情感、睡眠、LLM 桥接、Yume 模块等）。
-- `nanobot/services` —— 跨插件共享的具名服务，参考 Koishi 服务注入。服务必须有契约。
-- `nanobot/observability` —— trace、audit、metrics、事件总线观测。
-- `nanobot/common` —— 纯工具，禁止承载业务逻辑。
+- `mutsukibot/contracts` —— 稳定内部协议。详见 [contracts.md](contracts.md)。
+- `mutsukibot/core` —— Agent 运行时本体：注册中心、调度器、Context 工厂、服务容器、生命周期编排、插件 DAG 加载、事务原语。
+- `mutsukibot/runtime` —— 事件循环策略、并发控制、进程/线程隔离、资源 quota、决定性时间与 ID 源。**Runtime 不决定 Agent 行为**。
+- `mutsukibot/adapters` —— 协议适配层（CLI / WS / HTTP / OneBot / 平台 SDK 等）。**不持有业务逻辑**。
+- `mutsukibot/plugins` —— 所有可装可卸的能力（命令、Matcher、记忆、情感、睡眠、LLM 桥接、Yume 模块等）。
+- `mutsukibot/services` —— 跨插件共享的具名服务，参考 Koishi 服务注入。服务必须有契约。
+- `mutsukibot/observability` —— trace、audit、metrics、事件总线观测。
+- `mutsukibot/common` —— 纯工具，禁止承载业务逻辑。
 
 边界约束：
 
@@ -72,19 +72,19 @@ adapters → core → contracts ← plugins
 
 ## 4. 与 Yume / mind-sim 的关系
 
-Yume 与 mind-sim **既是目标用例，也是目标插件生态**。其原本的紧耦合实现路径将被解构为多个 NanoBot 插件，按契约组合复现原设计意图。
+Yume 与 mind-sim **既是目标用例，也是目标插件生态**。其原本的紧耦合实现路径将被解构为多个 MutsukiBot 插件，按契约组合复现原设计意图。
 
-NanoBot **不在源码层 import** Yume / mind-sim。二者作为插件组存在，命名空间建议：
+MutsukiBot **不在源码层 import** Yume / mind-sim。二者作为插件组存在，命名空间建议：
 
-- `nanobot-contracts-yume` —— 共享契约包（thought / kernel / sleep）
-- `nanobot-yume-architecture` —— consciousness loop / stimulus / thought engine / expression
-- `nanobot-yume-kernel` —— router + text / latent / skill / reflect kernels
-- `nanobot-yume-runtime` —— vLLM / KV cache / latent bridge / training
-- `nanobot-yume-evolution` —— sleep collector / evaluator / compiler / integrator
-- `nanobot-yume-memory` / `-affect` / `-identity` / `-skills`
-- `nanobot-mindsim-*` —— 同模式拆解 mind-sim 的 `bus` / `engine` / `provider` / `server`
+- `mutsukibot-contracts-yume` —— 共享契约包（thought / kernel / sleep）
+- `mutsukibot-yume-architecture` —— consciousness loop / stimulus / thought engine / expression
+- `mutsukibot-yume-kernel` —— router + text / latent / skill / reflect kernels
+- `mutsukibot-yume-runtime` —— vLLM / KV cache / latent bridge / training
+- `mutsukibot-yume-evolution` —— sleep collector / evaluator / compiler / integrator
+- `mutsukibot-yume-memory` / `-affect` / `-identity` / `-skills`
+- `mutsukibot-mindsim-*` —— 同模式拆解 mind-sim 的 `bus` / `engine` / `provider` / `server`
 
-**承载性测试样本**：设计任何 NanoBot 核心契约时，必须用 Yume 的 `StimulusEvent / ThoughtPacket / KernelRequest / ExpressionDecision / SleepCandidate` 与 mind-sim 的 `bus / engine / provider` 作为测试样本。契约若无法承载这些类型则**修契约**，不为任一系统特化。
+**承载性测试样本**：设计任何 MutsukiBot 核心契约时，必须用 Yume 的 `StimulusEvent / ThoughtPacket / KernelRequest / ExpressionDecision / SleepCandidate` 与 mind-sim 的 `bus / engine / provider` 作为测试样本。契约若无法承载这些类型则**修契约**，不为任一系统特化。
 
 参考阅读（**禁止复制代码**）：
 
@@ -112,11 +112,11 @@ NanoBot **不在源码层 import** Yume / mind-sim。二者作为插件组存在
 
 **验证标准**：拿 Yume v0.4 的一个实际 thought tick 走查上面 10 条，每条都能找到契约支撑点。
 
-**反向论证（红线）**：若未来出现「必须把 latent handle 序列化才能跨插件传」、「必须让全部消息走异步队列」、「必须让 sleep 流程通过松耦合事件链表达」这类需求，应**修 NanoBot 契约**，而不是把能力塞回 Yume 内部。这是判定 NanoBot 设计是否还在正轨的指针。
+**反向论证（红线）**：若未来出现「必须把 latent handle 序列化才能跨插件传」、「必须让全部消息走异步队列」、「必须让 sleep 流程通过松耦合事件链表达」这类需求，应**修 MutsukiBot 契约**，而不是把能力塞回 Yume 内部。这是判定 MutsukiBot 设计是否还在正轨的指针。
 
 ## 6. Generic By-Ref vs Domain-Specific Use（核心如何保持领域中立）
 
-NanoBot 核心面对一个看似矛盾的需求：
+MutsukiBot 核心面对一个看似矛盾的需求：
 
 - 必须支持「插件之间传递非序列化对象」（否则 Yume 的 latent / KV cache 路径走不通）。
 - 但**核心不能假设**这些对象是 latent、是张量、是 GPU 句柄——否则就把领域语义焊进了核心，违反 [§1](#1-项目方向) 的反模式。
@@ -140,7 +140,7 @@ NanoBot 核心面对一个看似矛盾的需求：
 
 ### 6.3 领域插件做什么
 
-`nanobot-contracts-yume`（举例）：
+`mutsukibot-contracts-yume`（举例）：
 
 - 定义 `LatentRef = RefPayload[torch.Tensor]`，并约定 `attributes` 包含 `shape / dtype / device / model_version / latent_space_id`。
 - 定义 `KVCacheRef = RefPayload[VLLMKVHandle]`，约定 `attributes` 包含 `slot_id / model_version / page_count`。
@@ -178,7 +178,7 @@ External Input
 ```text
 External Input
   → Adapter
-  → StimulusEvent（来自 nanobot-contracts-yume）
+  → StimulusEvent（来自 mutsukibot-contracts-yume）
   → StimulusSystem 插件
   → ThoughtEngine 插件
   → ConsciousnessLoop（Agent 调度循环）

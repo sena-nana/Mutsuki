@@ -6,14 +6,14 @@ import asyncio
 
 import pytest
 
-from nanobot.adapters import InMemoryAdapter
-from nanobot.contracts.ids import AgentId
-from nanobot.contracts.lifecycle import LifecyclePhase
-from nanobot.core.agent import Agent
-from nanobot.core.loader import PluginLoader
-from nanobot.plugins.echo import EchoPlugin
-from nanobot.runtime import DeterministicIdGen, SeededRng, SystemClock
-from nanobot.runtime.scheduler import AgentScheduler
+from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts.lifecycle import LifecyclePhase
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.loader import PluginLoader
+from mutsukibot.plugins.echo import EchoPlugin
+from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot.runtime.scheduler import AgentScheduler
 
 
 def _new_agent() -> Agent:

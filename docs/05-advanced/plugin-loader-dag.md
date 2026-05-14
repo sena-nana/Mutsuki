@@ -4,7 +4,7 @@
 
 `PluginLoader` 负责发现、按依赖拓扑排序、装载、卸载插件。装载顺序由 `requires_plugins` 形成的 DAG 决定，存在环则拒绝启动。
 
-代码：[nanobot/core/loader.py](../../nanobot/core/loader.py)。
+代码：[mutsukibot/core/loader.py](../../mutsukibot/core/loader.py)。
 
 ## 解决什么问题
 
@@ -14,7 +14,7 @@
 
 ### 发现：entry_points
 
-[loader.py:77-90](../../nanobot/core/loader.py#L77-L90)：
+[loader.py:77-90](../../mutsukibot/core/loader.py#L77-L90)：
 
 ```python
 def discover(self) -> list[type[Plugin]]:
@@ -30,18 +30,18 @@ def discover(self) -> list[type[Plugin]]:
     return discovered
 ```
 
-约定：`pyproject.toml` 里声明 `[project.entry-points."nanobot.plugins"]`：
+约定：`pyproject.toml` 里声明 `[project.entry-points."mutsukibot.plugins"]`：
 
 ```toml
-[project.entry-points."nanobot.plugins"]
-echo = "nanobot.plugins.echo:EchoPlugin"
+[project.entry-points."mutsukibot.plugins"]
+echo = "mutsukibot.plugins.echo:EchoPlugin"
 ```
 
 允许传 `allow={...}` 白名单只装一部分，便于测试。
 
 ### 拓扑排序：graphlib
 
-[loader.py:43-64](../../nanobot/core/loader.py#L43-L64)：
+[loader.py:43-64](../../mutsukibot/core/loader.py#L43-L64)：
 
 ```python
 def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
@@ -67,7 +67,7 @@ def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
 
 ### 装载：构造 Config + 实例化 + on_load
 
-[loader.py:92-120](../../nanobot/core/loader.py#L92-L120)：
+[loader.py:92-120](../../mutsukibot/core/loader.py#L92-L120)：
 
 ```python
 async def load_into(
@@ -104,7 +104,7 @@ async def load_into(
 
 ### 卸载：反序
 
-[loader.py:122-133](../../nanobot/core/loader.py#L122-L133)：
+[loader.py:122-133](../../mutsukibot/core/loader.py#L122-L133)：
 
 ```python
 async def unload_from(self, agent: Agent) -> None:
@@ -125,7 +125,7 @@ async def unload_from(self, agent: Agent) -> None:
 
 ### PluginCycleError 与 PluginNotFoundError
 
-[loader.py:32-40](../../nanobot/core/loader.py#L32-L40)：
+[loader.py:32-40](../../mutsukibot/core/loader.py#L32-L40)：
 
 ```python
 class PluginCycleError(Exception):
@@ -145,7 +145,7 @@ class PluginNotFoundError(KeyError):
 声明依赖：
 
 ```python
-from nanobot.contracts.plugin import PluginDep
+from mutsukibot.contracts.plugin import PluginDep
 
 class WebSearchPlugin(Plugin[Cfg]):
     id = "web-search"
@@ -158,7 +158,7 @@ class WebSearchPlugin(Plugin[Cfg]):
 装载：
 
 ```python
-from nanobot.core.loader import PluginLoader
+from mutsukibot.core.loader import PluginLoader
 
 loader = PluginLoader()  # 默认从 entry_points 发现
 classes = loader.discover()
@@ -176,7 +176,7 @@ await loader.load_into(agent, [WebSearchPlugin, HttpClientPlugin])
 捕获环：
 
 ```python
-from nanobot.core.loader import PluginCycleError
+from mutsukibot.core.loader import PluginCycleError
 
 try:
     await loader.load_into(agent, [A, B])  # A 依赖 B，B 依赖 A

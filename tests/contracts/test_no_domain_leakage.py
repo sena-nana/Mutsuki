@@ -2,7 +2,7 @@
 
 按设计计划，核心代码路径里不允许出现领域专属词汇 ``latent`` / ``kv`` /
 ``tensor`` / ``gpu`` / ``vram``。这些属于领域契约包
-（``nanobot-contracts-yume`` 等）。
+（``mutsukibot-contracts-yume`` 等）。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-CORE_PATH = Path(__file__).resolve().parents[2] / "nanobot" / "core"
+CORE_PATH = Path(__file__).resolve().parents[2] / "mutsukibot" / "core"
 FORBIDDEN = ("latent", "tensor", "vram", "gpu")
 
 

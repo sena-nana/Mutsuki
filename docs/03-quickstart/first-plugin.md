@@ -18,17 +18,17 @@
 
 ## 步骤一：拷贝 echo 当起点
 
-在 `nanobot/plugins/` 下新建 `greet/__init__.py`（或者放到你自己的 package 里都可以）：
+在 `mutsukibot/plugins/` 下新建 `greet/__init__.py`（或者放到你自己的 package 里都可以）：
 
 ```python
-"""Greet 插件 —— 第一个自己的 NanoBot 插件。"""
+"""Greet 插件 —— 第一个自己的 MutsukiBot 插件。"""
 
 from typing import Annotated, ClassVar
 
 import msgspec
 
-from nanobot import Capability, Caps, Perms, Plugin, command
-from nanobot.contracts import Arg
+from mutsukibot import Capability, Caps, Perms, Plugin, command
+from mutsukibot.contracts import Arg
 
 
 class _GreetConfig(msgspec.Struct, kw_only=True):
@@ -39,7 +39,7 @@ class _GreetConfig(msgspec.Struct, kw_only=True):
 class GreetPlugin(Plugin[_GreetConfig]):
     """问候插件。"""
 
-    id: ClassVar[str] = "nanobot-greet"
+    id: ClassVar[str] = "mutsukibot-greet"
     version: ClassVar[str] = "0.1.0"
     capabilities: ClassVar[list[Capability]] = [
         Capability(name=Caps.SEND_MESSAGE),
@@ -67,21 +67,21 @@ __all__ = ["GreetPlugin"]
 
 ## 步骤二：在 smoke 里用它
 
-最快的方式是改一份 smoke 脚本（保留 echo 那份）。在 `nanobot/plugins/greet/smoke.py`：
+最快的方式是改一份 smoke 脚本（保留 echo 那份）。在 `mutsukibot/plugins/greet/smoke.py`：
 
 ```python
 import asyncio
 from pathlib import Path
 from tempfile import gettempdir
 
-from nanobot.adapters import InMemoryAdapter
-from nanobot.contracts.ids import AgentId
-from nanobot.core.agent import Agent
-from nanobot.core.loader import PluginLoader
-from nanobot.observability import JsonlTraceWriter
-from nanobot.plugins.greet import GreetPlugin
-from nanobot.runtime import NanoIdGen, SeededRng, SystemClock
-from nanobot.runtime.scheduler import AgentScheduler
+from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.loader import PluginLoader
+from mutsukibot.observability import JsonlTraceWriter
+from mutsukibot.plugins.greet import GreetPlugin
+from mutsukibot.runtime import NanoIdGen, SeededRng, SystemClock
+from mutsukibot.runtime.scheduler import AgentScheduler
 
 
 async def main() -> None:
@@ -121,7 +121,7 @@ if __name__ == "__main__":
 跑：
 
 ```bash
-uv run python -m nanobot.plugins.greet.smoke
+uv run python -m mutsukibot.plugins.greet.smoke
 ```
 
 预期：
@@ -131,7 +131,7 @@ uv run python -m nanobot.plugins.greet.smoke
 -> '你好, WORLD！'
 ```
 
-第二行的 `world` 全大写，因为我们在命令里多传了 `true`，被 scheduler 按 `parameters_schema` 强转成 bool（[scheduler.py:217-218](../../nanobot/runtime/scheduler.py#L217-L218)）。
+第二行的 `world` 全大写，因为我们在命令里多传了 `true`，被 scheduler 按 `parameters_schema` 强转成 bool（[scheduler.py:217-218](../../mutsukibot/runtime/scheduler.py#L217-L218)）。
 
 ## 步骤三：理解 PluginMeta 在背后做了什么
 
@@ -146,13 +146,13 @@ print("source:", GreetPlugin.__source_location__)
 输出会显示：
 
 ```
-manifest: PluginManifest(id='nanobot-greet', version='0.1.0', capabilities=(...), commands=(CommandSpec(...),), ...)
+manifest: PluginManifest(id='mutsukibot-greet', version='0.1.0', capabilities=(...), commands=(CommandSpec(...),), ...)
 commands: (CommandSpec(name='greet', description='向某人问好。', ..., parameters_schema={'type': 'object', 'properties': {'name': {'type': 'string', 'minLength': 1, 'maxLength': 32, 'description': '对方名字。'}, 'loud': {'type': 'boolean', 'description': '是否大喊'}}, 'required': ['name']}, ...),)
 commands: ...
-source: .../nanobot/plugins/greet/__init__.py:14
+source: .../mutsukibot/plugins/greet/__init__.py:14
 ```
 
-`description` 取自 docstring 首段（"向某人问好。"），参数描述按 Google 风格 `Args:` 段抽出，约束（`minLength` / `maxLength`）来自 `Arg(...)`。整套合成由 [`_build_command_spec`](../../nanobot/core/plugin.py#L170-L274) 在 class 定义那一刻完成。
+`description` 取自 docstring 首段（"向某人问好。"），参数描述按 Google 风格 `Args:` 段抽出，约束（`minLength` / `maxLength`）来自 `Arg(...)`。整套合成由 [`_build_command_spec`](../../mutsukibot/core/plugin.py#L170-L274) 在 class 定义那一刻完成。
 
 详见 [插件定义](../04-guide/plugin-definition.md) 与 [命令与 Schema](../04-guide/command-and-schema.md)。
 
@@ -162,7 +162,7 @@ source: .../nanobot/plugins/greet/__init__.py:14
 
 ```python
 class GreetPlugin(Plugin[_GreetConfig]):
-    id: ClassVar[str] = "nanobot-greet"
+    id: ClassVar[str] = "mutsukibot-greet"
     version: ClassVar[str] = "0.1.0"
     capabilities: ClassVar[list[Capability]] = [
         Capability(name=Caps.SEND_MESSAGE),
@@ -183,7 +183,7 @@ class GreetPlugin(Plugin[_GreetConfig]):
 跑 smoke 时会看到额外输出：
 
 ```
-  [trace] greet 看到了 span: plugin.nanobot-greet.greet
+  [trace] greet 看到了 span: plugin.mutsukibot-greet.greet
 -> '你好, 世界！'
 ```
 
@@ -196,15 +196,15 @@ class GreetPlugin(Plugin[_GreetConfig]):
 ```python
 import pytest
 
-from nanobot.adapters import InMemoryAdapter
-from nanobot.contracts.ids import AgentId
-from nanobot.contracts.lifecycle import LifecyclePhase
-from nanobot.core.agent import Agent
-from nanobot.core.loader import PluginLoader
-from nanobot.runtime import DeterministicIdGen, ManualClock, SeededRng
-from nanobot.runtime.scheduler import AgentScheduler
+from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts.lifecycle import LifecyclePhase
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.loader import PluginLoader
+from mutsukibot.runtime import DeterministicIdGen, ManualClock, SeededRng
+from mutsukibot.runtime.scheduler import AgentScheduler
 
-from nanobot.plugins.greet import GreetPlugin
+from mutsukibot.plugins.greet import GreetPlugin
 
 
 async def test_greet_full_lifecycle() -> None:

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.permission import (
+from mutsukibot.contracts.permission import (
     PermissionConflictError,
     PermissionName,
     PermissionRule,
     UnknownPermissionError,
 )
-from nanobot.contracts.permission_builtin import Perms
+from mutsukibot.contracts.permission_builtin import Perms
 
 
 @pytest.mark.asyncio

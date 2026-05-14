@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.ids import AgentId
-from nanobot.core.agent import Agent
-from nanobot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.core.agent import Agent
+from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 
 
 def _bare_agent() -> Agent:

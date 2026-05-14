@@ -1,8 +1,8 @@
-# API · `nanobot.adapters`
+# API · `mutsukibot.adapters`
 
 外部协议 → 内部 `Message` 的翻译层。
 
-来源：[nanobot/adapters/__init__.py](../../nanobot/adapters/__init__.py)。
+来源：[mutsukibot/adapters/__init__.py](../../mutsukibot/adapters/__init__.py)。
 
 ## 模块地图
 
@@ -17,7 +17,7 @@
 
 ## base
 
-[base.py](../../nanobot/adapters/base.py)
+[base.py](../../mutsukibot/adapters/base.py)
 
 ```python
 class AdapterCapability(StrEnum):
@@ -39,7 +39,7 @@ class Adapter(ABC):
 
 ## inmemory
 
-[inmemory.py](../../nanobot/adapters/inmemory.py)
+[inmemory.py](../../mutsukibot/adapters/inmemory.py)
 
 ```python
 class InMemoryAdapter(Adapter):

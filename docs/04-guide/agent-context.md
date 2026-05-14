@@ -4,7 +4,7 @@
 
 `AgentContext` 是**单次调用的运行时上下文**。插件命令的签名里以 `ctx: AgentContext` 形式接收，框架在分发命令时构造一个新实例并注入。
 
-代码：[nanobot/core/context.py](../../nanobot/core/context.py)。
+代码：[mutsukibot/core/context.py](../../mutsukibot/core/context.py)。
 
 ## 解决什么问题
 
@@ -20,7 +20,7 @@
 
 ### 字段语义
 
-[context.py:32-46](../../nanobot/core/context.py#L32-L46)：
+[context.py:32-46](../../mutsukibot/core/context.py#L32-L46)：
 
 ```python
 @dataclass(slots=True)
@@ -61,14 +61,14 @@ class TraceContext:
     parent_span_id: SpanId | None = None
 ```
 
-`trace_id` 跨整个外部触发链路保持不变，`span_id` 标识当前这一跳，`parent_span_id` 指向调用方的 span。Scheduler 在每条命令开始时新建 trace_ctx（[scheduler.py:108-111](../../nanobot/runtime/scheduler.py#L108-L111)）；插件需要嵌套调用时应当继承当前 ctx 的 `trace_id`、把当前 `span_id` 作为子调用的 `parent_span_id`。
+`trace_id` 跨整个外部触发链路保持不变，`span_id` 标识当前这一跳，`parent_span_id` 指向调用方的 span。Scheduler 在每条命令开始时新建 trace_ctx（[scheduler.py:108-111](../../mutsukibot/runtime/scheduler.py#L108-L111)）；插件需要嵌套调用时应当继承当前 ctx 的 `trace_id`、把当前 `span_id` 作为子调用的 `parent_span_id`。
 
 ### 谁来构造它
 
 两条路径：
 
-1. **命令路由**：`AgentScheduler._handle_message` 显式构造（[scheduler.py:112-123](../../nanobot/runtime/scheduler.py#L112-L123)），`scope` = 命令所属插件的 scope。
-2. **生命周期钩子**：`Agent.make_context()`（[agent.py:74-96](../../nanobot/core/agent.py#L74-L96)）使用 agent 自有 fallback scope，`message=None`。
+1. **命令路由**：`AgentScheduler._handle_message` 显式构造（[scheduler.py:112-123](../../mutsukibot/runtime/scheduler.py#L112-L123)），`scope` = 命令所属插件的 scope。
+2. **生命周期钩子**：`Agent.make_context()`（[agent.py:74-96](../../mutsukibot/core/agent.py#L74-L96)）使用 agent 自有 fallback scope，`message=None`。
 
 两条路径都会**新建** `TraceContext` —— 没有 parent_span_id 即代表外部触发的根 span。
 
@@ -77,7 +77,7 @@ class TraceContext:
 最简命令：
 
 ```python
-from nanobot import AgentContext, Plugin, command
+from mutsukibot import AgentContext, Plugin, command
 
 class MyPlugin(Plugin[Config]):
     id = "my-plugin"

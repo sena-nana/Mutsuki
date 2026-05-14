@@ -1,12 +1,12 @@
 # 术语表
 
-NanoBot 文档里高频出现的概念按字母序速查。链接指向最详细的解释位置。
+MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详细的解释位置。
 
 ## A
 
 **Adapter** —— 把外部传输（CLI / WS / OneBot ...）映射成内部 `Message` 的翻译层。无业务逻辑。详见 [写一个 Adapter](../06-developer/writing-adapter.md)。
 
-**Agent** —— NanoBot 的一等运行时实体。有身份、生命周期、独立调度循环。详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
+**Agent** —— MutsukiBot 的一等运行时实体。有身份、生命周期、独立调度循环。详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
 
 **AgentContext** —— 单次调用上下文。插件命令以 `ctx` 形式接收，是访问 clock / id_gen / rng / services / scope / bus / trace 的唯一入口。详见 [AgentContext](../04-guide/agent-context.md)。
 
@@ -34,7 +34,7 @@ NanoBot 文档里高频出现的概念按字母序速查。链接指向最详细
 
 **CommandSpec** —— 已编译的命令规约（name / description / parameters_schema / requires_capabilities ...），由 PluginMeta 在类定义时合成。
 
-**Contract** —— 所有 NanoBot 契约对象的基类（`msgspec.Struct` 子类），要求 ClassVar `schema_id` / `schema_version`，自动注册到 `SchemaRegistry`。
+**Contract** —— 所有 MutsukiBot 契约对象的基类（`msgspec.Struct` 子类），要求 ClassVar `schema_id` / `schema_version`，自动注册到 `SchemaRegistry`。
 
 ## D
 

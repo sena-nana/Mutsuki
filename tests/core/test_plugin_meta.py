@@ -7,9 +7,9 @@ from typing import ClassVar
 import msgspec
 import pytest
 
-from nanobot import Capability, Caps, Plugin, command
-from nanobot.core.plugin import PluginDefinitionError
-from nanobot.core.registry import PluginRegistry
+from mutsukibot import Capability, Caps, Plugin, command
+from mutsukibot.core.plugin import PluginDefinitionError
+from mutsukibot.core.registry import PluginRegistry
 
 
 def test_plugin_subclass_registered_in_registry() -> None:
@@ -88,7 +88,7 @@ def test_command_must_be_async() -> None:
 
 def test_dependent_cached_on_marker_at_class_definition() -> None:
     """v0.1 P2 优化：Dependent 在 PluginMeta 阶段解析后缓存，避免 per-tick inspect。"""
-    from nanobot.core.dependency import Dependent
+    from mutsukibot.core.dependency import Dependent
 
     class WithCachedDep(Plugin):
         id: ClassVar[str] = "test-plugin-cached-dep"

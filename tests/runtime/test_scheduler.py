@@ -8,16 +8,16 @@ from typing import ClassVar
 import msgspec
 import pytest
 
-from nanobot import Capability, Caps, Perms, Plugin, command
-from nanobot.adapters import InMemoryAdapter
-from nanobot.contracts.error import Errs
-from nanobot.contracts.event import TraceSpan
-from nanobot.contracts.ids import AgentId
-from nanobot.core.agent import Agent
-from nanobot.core.container import ServiceNotFoundError
-from nanobot.core.loader import PluginLoader
-from nanobot.runtime import DeterministicIdGen, SeededRng, SystemClock
-from nanobot.runtime.scheduler import AgentScheduler, _classify_command_exception
+from mutsukibot import Capability, Caps, Perms, Plugin, command
+from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts.error import Errs
+from mutsukibot.contracts.event import TraceSpan
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.core.agent import Agent
+from mutsukibot.core.container import ServiceNotFoundError
+from mutsukibot.core.loader import PluginLoader
+from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot.runtime.scheduler import AgentScheduler, _classify_command_exception
 
 
 class _BoomConfig(msgspec.Struct, kw_only=True):

@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from nanobot.runtime import (
+from mutsukibot.runtime import (
     DeterministicIdGen,
     ManualClock,
     ManualClockWaiterOverflow,

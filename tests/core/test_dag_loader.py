@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.contracts.error import Errs
-from nanobot.core.loader import (
+from mutsukibot.contracts.error import Errs
+from mutsukibot.core.loader import (
     PluginCycleError,
     PluginDependencyMissingError,
     _toposort,

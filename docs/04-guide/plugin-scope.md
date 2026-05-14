@@ -4,24 +4,24 @@
 
 `PluginScope` 是一个插件实例（或一次事务）持有的所有副作用资源的**清单**。订阅、定时器、服务注册、context 挂件、配置监听、句柄（`Handle`）—— 都登记到 scope。卸载时 scope 反向调用所有清理函数；任何在关闭时仍存活的句柄被报告为泄漏。
 
-代码：[nanobot/core/scope.py](../../nanobot/core/scope.py)。
+代码：[mutsukibot/core/scope.py](../../mutsukibot/core/scope.py)。
 
 ## 解决什么问题
 
-NanoBot 的 hard rule #4：**无副作用热重载**。卸载插件后，必须没有它残留的 task / 订阅 / GPU 显存 / 连接。这是把 Yume / mind-sim 装载到长寿命 agent 里的前提 —— 出了 bug 要能整段换掉而不是重启进程。
+MutsukiBot 的 hard rule #4：**无副作用热重载**。卸载插件后，必须没有它残留的 task / 订阅 / GPU 显存 / 连接。这是把 Yume / mind-sim 装载到长寿命 agent 里的前提 —— 出了 bug 要能整段换掉而不是重启进程。
 
 实现这一点有两种思路：
 
 1. **依赖插件作者自觉清理**（NoneBot v1 的做法）。失败模式：忘了。
 2. **强制副作用过 scope**，scope 集中清理。失败模式可观测：泄漏会在 `scope.close()` 时显式报错。
 
-NanoBot 选 (2)。
+MutsukiBot 选 (2)。
 
 ## 怎么工作
 
 ### 五种登记口 + 一个句柄槽
 
-[scope.py:65-89](../../nanobot/core/scope.py#L65-L89)：
+[scope.py:65-89](../../mutsukibot/core/scope.py#L65-L89)：
 
 ```python
 class PluginScope:
@@ -35,11 +35,11 @@ class PluginScope:
 
 前五个接受一个清理回调（同步或 async 都行）；`attach_handle` 接受一个 `Handle`，`close()` 时会自动 release。
 
-按 [ResourceKind](../../nanobot/core/scope.py#L29-L41) 区分种类只是为了**诊断**——`HandleLeakError.evidence` 里要告诉你"是哪类资源没清理"。运行时所有清理函数共用一条反向释放循环（[scope.py:110-122](../../nanobot/core/scope.py#L110-L122)）。
+按 [ResourceKind](../../mutsukibot/core/scope.py#L29-L41) 区分种类只是为了**诊断**——`HandleLeakError.evidence` 里要告诉你"是哪类资源没清理"。运行时所有清理函数共用一条反向释放循环（[scope.py:110-122](../../mutsukibot/core/scope.py#L110-L122)）。
 
 ### close() 的执行顺序
 
-[scope.py:103-167](../../nanobot/core/scope.py#L103-L167)：
+[scope.py:103-167](../../mutsukibot/core/scope.py#L103-L167)：
 
 1. 设置 `closed = True`（`_guard` 之后会拒绝新登记）
 2. **反向**遍历 cleanups（LIFO，对称于 acquire 顺序）
@@ -53,11 +53,11 @@ class PluginScope:
 
 ### 为什么 release 后还活着叫泄漏
 
-`RefCountedHandle` 构造时引用计数 = 1（[handle.py:75](../../nanobot/core/handle.py#L75)）—— 这一份代表"调用方持有"。`attach_to(scope)` 不再 +1，只是把 handle 登记到 scope。scope.close 调用 `release()` 释放掉构造时的那一份；如果还有第三方在持有（比如某个 task 里 acquire 了没 release），refcount > 0，handle 仍 alive，就是泄漏。
+`RefCountedHandle` 构造时引用计数 = 1（[handle.py:75](../../mutsukibot/core/handle.py#L75)）—— 这一份代表"调用方持有"。`attach_to(scope)` 不再 +1，只是把 handle 登记到 scope。scope.close 调用 `release()` 释放掉构造时的那一份；如果还有第三方在持有（比如某个 task 里 acquire 了没 release），refcount > 0，handle 仍 alive，就是泄漏。
 
 ### TransactionScope：commit / rollback 二选一
 
-[scope.py:170-199](../../nanobot/core/scope.py#L170-L199) 扩展了一种"补偿"语义：
+[scope.py:170-199](../../mutsukibot/core/scope.py#L170-L199) 扩展了一种"补偿"语义：
 
 ```python
 class TransactionScope(PluginScope):
@@ -94,9 +94,9 @@ async def on_load(self) -> None:
 句柄绑定：
 
 ```python
-from nanobot.contracts.ids import RefId
-from nanobot.core.handle import RefCountedHandle
-from nanobot.contracts.refpayload import RefDescriptor
+from mutsukibot.contracts.ids import RefId
+from mutsukibot.core.handle import RefCountedHandle
+from mutsukibot.contracts.refpayload import RefDescriptor
 
 handle = RefCountedHandle(
     target=some_object,
@@ -114,7 +114,7 @@ handle.attach_to(ctx.scope)
 捕获泄漏：
 
 ```python
-from nanobot.core.scope import HandleLeakError
+from mutsukibot.core.scope import HandleLeakError
 
 try:
     await scope.close()
@@ -126,9 +126,9 @@ except HandleLeakError as e:
 
 ## 常见陷阱
 
-- **scope 不能复用**。`close()` 后再 `add_subscription` 会抛 `RuntimeError("PluginScope(...) 已关闭")`（[scope.py:95-97](../../nanobot/core/scope.py#L95-L97)）。
+- **scope 不能复用**。`close()` 后再 `add_subscription` 会抛 `RuntimeError("PluginScope(...) 已关闭")`（[scope.py:95-97](../../mutsukibot/core/scope.py#L95-L97)）。
 - **`add_timer(task.cancel)` 与 `add_timer(lambda: task.cancel())` 等价但前者更短**——`task.cancel` 本身就是 callable。
 - **不要在 cleanup 函数里再注册新 cleanup**。close 的循环已经在跑，新登记会被 `_guard` 拒绝。
 - **泄漏时 `cleanup_failures_json` 是字符串**。原始 list[dict] 不能放进 `Error.evidence`（约束只允许标量），所以序列化后塞进去。读的时候要 `json.loads`。
-- **句柄一定要先 `attach_to(scope)` 再用**。`acquire` / `borrow` 会先调用 `_check_attached`，未 attach 直接抛 `HandleNotAttachedError`（[handle.py:91-99](../../nanobot/core/handle.py#L91-L99)）—— 这是 contracts §11.2 的硬约束。
+- **句柄一定要先 `attach_to(scope)` 再用**。`acquire` / `borrow` 会先调用 `_check_attached`，未 attach 直接抛 `HandleNotAttachedError`（[handle.py:91-99](../../mutsukibot/core/handle.py#L91-L99)）—— 这是 contracts §11.2 的硬约束。
 - **`ResourceKind` 是诊断用，没有按种类的特殊清理**。即便你写错了类别（用 `add_subscription` 登记一个定时器的 cancel），运行时不会区别对待 —— 但泄漏报告里的 `kind` 字段会误导你。

@@ -9,8 +9,8 @@
 
 代码：
 
-- TransactionScope：[scope.py:170-199](../../nanobot/core/scope.py#L170-L199)
-- Saga：[nanobot/core/saga.py](../../nanobot/core/saga.py)
+- TransactionScope：[scope.py:170-199](../../mutsukibot/core/scope.py#L170-L199)
+- Saga：[mutsukibot/core/saga.py](../../mutsukibot/core/saga.py)
 
 ## 解决什么问题
 
@@ -22,7 +22,7 @@ PluginScope 的 LIFO 清理只解决"插件副作用回收"问题，不解决"�
 
 ### TransactionScope
 
-[scope.py:170-199](../../nanobot/core/scope.py#L170-L199)：
+[scope.py:170-199](../../mutsukibot/core/scope.py#L170-L199)：
 
 ```python
 class TransactionScope(PluginScope):
@@ -57,7 +57,7 @@ class TransactionScope(PluginScope):
 
 ### Saga 编排
 
-[saga.py:30-54](../../nanobot/core/saga.py#L30-L54)：
+[saga.py:30-54](../../mutsukibot/core/saga.py#L30-L54)：
 
 ```python
 @dataclass(slots=True)
@@ -95,7 +95,7 @@ class Saga:
 
 ### SagaCompensationError
 
-[saga.py:19-27](../../nanobot/core/saga.py#L19-L27)：
+[saga.py:19-27](../../mutsukibot/core/saga.py#L19-L27)：
 
 ```python
 class SagaCompensationError(Exception):
@@ -112,7 +112,7 @@ class SagaCompensationError(Exception):
 `TransactionScope` 单独使用：
 
 ```python
-from nanobot.core.scope import TransactionScope
+from mutsukibot.core.scope import TransactionScope
 
 @command()
 async def transfer(self, ctx: AgentContext, src: str, dst: str, amount: int) -> str:
@@ -133,7 +133,7 @@ async def transfer(self, ctx: AgentContext, src: str, dst: str, amount: int) -> 
 用 `Saga` 编排多步：
 
 ```python
-from nanobot.core.saga import Saga, SagaCompensationError
+from mutsukibot.core.saga import Saga, SagaCompensationError
 
 saga = Saga()
 saga.add_step(

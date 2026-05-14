@@ -1,8 +1,8 @@
-# API · `nanobot.contracts`
+# API · `mutsukibot.contracts`
 
 类型定义包；除三个内置门面（Caps / Perms / Errs）的注册副作用外，无运行时副作用。
 
-来源：[nanobot/contracts/__init__.py](../../nanobot/contracts/__init__.py)。
+来源：[mutsukibot/contracts/__init__.py](../../mutsukibot/contracts/__init__.py)。
 
 ## 模块地图
 
@@ -28,7 +28,7 @@
 
 ## base
 
-[base.py](../../nanobot/contracts/base.py)
+[base.py](../../mutsukibot/contracts/base.py)
 
 - `Contract` —— `msgspec.Struct` 子类，要求 ClassVar `schema_id` / `schema_version`；`__init_subclass__` 自动注册到 `SchemaRegistry`
 - `SchemaRegistry` —— 进程内单例（按 `schema_id` 索引契约类）
@@ -36,19 +36,19 @@
 
 ## ids
 
-[ids.py](../../nanobot/contracts/ids.py)
+[ids.py](../../mutsukibot/contracts/ids.py)
 
 `AgentId` / `TraceId` / `SpanId` / `RefId` / `MessageId` —— 全是 `NewType("...", str)`。pyright 会标记跨 ID 误赋值。
 
 ## lifecycle
 
-[lifecycle.py](../../nanobot/contracts/lifecycle.py)
+[lifecycle.py](../../mutsukibot/contracts/lifecycle.py)
 
 `LifecyclePhase`：`SPAWN` / `AWAKE` / `SLEEP` / `STOP`。
 
 ## message
 
-[message.py](../../nanobot/contracts/message.py)
+[message.py](../../mutsukibot/contracts/message.py)
 
 ```python
 class ContentKind(StrEnum):
@@ -78,7 +78,7 @@ class Message(Contract):
 
 ## event
 
-[event.py](../../nanobot/contracts/event.py)
+[event.py](../../mutsukibot/contracts/event.py)
 
 ```python
 class SpanStatus(StrEnum):
@@ -109,7 +109,7 @@ class Event(Contract):
 
 ## capability
 
-[capability.py](../../nanobot/contracts/capability.py)
+[capability.py](../../mutsukibot/contracts/capability.py)
 
 ```python
 class CapabilityName(RegisteredString): ...
@@ -127,13 +127,13 @@ class CapabilityConflictError(Exception): ...
 
 ## capability_builtin
 
-[capability_builtin.py](../../nanobot/contracts/capability_builtin.py)
+[capability_builtin.py](../../mutsukibot/contracts/capability_builtin.py)
 
-`Caps.READ_MESSAGE` / `SEND_MESSAGE` / `CALL_LLM` / `PERSIST` / `NETWORK_EGRESS` / `SPAWN_AGENT` / `HOLD_REF` / `BORROW_REF` / `PRODUCE_REF_STREAM`，由 `bootstrap_facade` 注册到 `nanobot.core` owner。
+`Caps.READ_MESSAGE` / `SEND_MESSAGE` / `CALL_LLM` / `PERSIST` / `NETWORK_EGRESS` / `SPAWN_AGENT` / `HOLD_REF` / `BORROW_REF` / `PRODUCE_REF_STREAM`，由 `bootstrap_facade` 注册到 `mutsukibot.core` owner。
 
 ## permission
 
-[permission.py](../../nanobot/contracts/permission.py)
+[permission.py](../../mutsukibot/contracts/permission.py)
 
 ```python
 class PermissionRule:
@@ -162,13 +162,13 @@ class PermissionConflictError(Exception): ...
 
 ## permission_builtin
 
-[permission_builtin.py](../../nanobot/contracts/permission_builtin.py)
+[permission_builtin.py](../../mutsukibot/contracts/permission_builtin.py)
 
 `Perms.PUBLIC` / `Perms.AGENT_OWNER`。
 
 ## error
 
-[error.py](../../nanobot/contracts/error.py)
+[error.py](../../mutsukibot/contracts/error.py)
 
 ```python
 class ErrorCode(RegisteredString): ...
@@ -191,7 +191,7 @@ class Error(Contract):
 
 ## refpayload
 
-[refpayload.py](../../nanobot/contracts/refpayload.py)
+[refpayload.py](../../mutsukibot/contracts/refpayload.py)
 
 ```python
 class Replayability(StrEnum):
@@ -235,7 +235,7 @@ class BackpressureChannel(ABC, Generic[T]):
 
 ## plugin
 
-[plugin.py](../../nanobot/contracts/plugin.py)
+[plugin.py](../../mutsukibot/contracts/plugin.py)
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -292,7 +292,7 @@ class PluginManifest(Contract):
 
 ## service
 
-[service.py](../../nanobot/contracts/service.py)
+[service.py](../../mutsukibot/contracts/service.py)
 
 ```python
 class ServiceMode(StrEnum):
@@ -305,7 +305,7 @@ class Service(Protocol):
 
 ## schema
 
-[schema.py](../../nanobot/contracts/schema.py)
+[schema.py](../../mutsukibot/contracts/schema.py)
 
 ```python
 CompatibilityFn = Callable[[str, str], bool]
@@ -318,7 +318,7 @@ def is_compatible(schema_id: str, producer: str, consumer: str) -> bool
 
 ## decision
 
-[decision.py](../../nanobot/contracts/decision.py)
+[decision.py](../../mutsukibot/contracts/decision.py)
 
 ```python
 class Decision(Contract):

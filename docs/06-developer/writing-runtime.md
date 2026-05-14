@@ -6,9 +6,9 @@
 
 代码：
 
-- [nanobot/runtime/clock.py](../../nanobot/runtime/clock.py)
-- [nanobot/runtime/idgen.py](../../nanobot/runtime/idgen.py)
-- [nanobot/runtime/rng.py](../../nanobot/runtime/rng.py)
+- [mutsukibot/runtime/clock.py](../../mutsukibot/runtime/clock.py)
+- [mutsukibot/runtime/idgen.py](../../mutsukibot/runtime/idgen.py)
+- [mutsukibot/runtime/rng.py](../../mutsukibot/runtime/rng.py)
 
 ## 解决什么问题
 
@@ -34,7 +34,7 @@
 
 ### 注入点
 
-`Agent` 构造时三参数为必传（[agent.py:60-62](../../nanobot/core/agent.py#L60-L62)）：
+`Agent` 构造时三参数为必传（[agent.py:60-62](../../mutsukibot/core/agent.py#L60-L62)）：
 
 ```python
 @dataclass
@@ -46,7 +46,7 @@ class Agent:
     ...
 ```
 
-之后传到每个 `AgentContext`（[context.py:38-40](../../nanobot/core/context.py#L38-L40)），插件命令通过 `ctx.clock` / `ctx.id_gen` / `ctx.rng` 访问。
+之后传到每个 `AgentContext`（[context.py:38-40](../../mutsukibot/core/context.py#L38-L40)），插件命令通过 `ctx.clock` / `ctx.id_gen` / `ctx.rng` 访问。
 
 ### 内置实现要点
 
@@ -79,7 +79,7 @@ ManualClock 内部用 min-heap `[(deadline, seq, asyncio.Event), ...]`，`advanc
 
 ```python
 import time
-from nanobot.runtime.idgen import IdGen
+from mutsukibot.runtime.idgen import IdGen
 
 class SnowflakeIdGen(IdGen):
     def __init__(self, *, machine_id: int) -> None:
@@ -110,7 +110,7 @@ class SnowflakeIdGen(IdGen):
 
 ```python
 import secrets
-from nanobot.runtime.rng import RNG
+from mutsukibot.runtime.rng import RNG
 
 class CryptoRng(RNG):
     def random(self) -> float:
@@ -126,9 +126,9 @@ class CryptoRng(RNG):
 ### 使用
 
 ```python
-from nanobot.contracts.ids import AgentId
-from nanobot.core.agent import Agent
-from nanobot.runtime import SystemClock
+from mutsukibot.contracts.ids import AgentId
+from mutsukibot.core.agent import Agent
+from mutsukibot.runtime import SystemClock
 
 agent = Agent(
     agent_id=AgentId("prod-1"),

@@ -1,6 +1,6 @@
-# NanoBot v0.1 项目宪法
+# MutsukiBot v0.1 项目宪法
 
-NanoBot 是一个全新的 **Agent 中心** Bot 框架，融合 Koishi、NoneBot、AstrBot 的优势。当前阶段为 **v0.1 最小可运行骨架**：第一个可装载、可运行、可被测试的 Agent + echo 插件 + in-memory adapter 已落地。详见 [plans/version-reports/v0.1.md](plans/version-reports/v0.1.md)。
+MutsukiBot 是一个全新的 **Agent 中心** Bot 框架，融合 Koishi、NoneBot、AstrBot 的优势。当前阶段为 **v0.1 最小可运行骨架**：第一个可装载、可运行、可被测试的 Agent + echo 插件 + in-memory adapter 已落地。详见 [plans/version-reports/v0.1.md](plans/version-reports/v0.1.md)。
 
 ## 一句话定位
 

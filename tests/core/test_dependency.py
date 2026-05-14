@@ -6,14 +6,14 @@ from typing import Annotated
 
 import pytest
 
-from nanobot.contracts.ids import AgentId, SpanId, TraceId
-from nanobot.contracts.plugin import Arg
-from nanobot.core.bus import Bus
-from nanobot.core.container import ServiceContainer
-from nanobot.core.context import AgentContext, TraceContext
-from nanobot.core.dependency import Dependent, UnresolvedParameterError
-from nanobot.core.scope import PluginScope
-from nanobot.runtime import NanoIdGen, SeededRng, SystemClock
+from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
+from mutsukibot.contracts.plugin import Arg
+from mutsukibot.core.bus import Bus
+from mutsukibot.core.container import ServiceContainer
+from mutsukibot.core.context import AgentContext, TraceContext
+from mutsukibot.core.dependency import Dependent, UnresolvedParameterError
+from mutsukibot.core.scope import PluginScope
+from mutsukibot.runtime import NanoIdGen, SeededRng, SystemClock
 
 
 def _ctx() -> AgentContext:

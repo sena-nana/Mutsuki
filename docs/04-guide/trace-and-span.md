@@ -2,13 +2,13 @@
 
 ## 这是什么
 
-NanoBot 的因果链系统：每条命令开始 / 结束时调度器都 emit 一个 `TraceSpan` 到事件总线；观察者订阅 `trace.span` 写到结构化 sink（JSONL、OTel、其他）。
+MutsukiBot 的因果链系统：每条命令开始 / 结束时调度器都 emit 一个 `TraceSpan` 到事件总线；观察者订阅 `trace.span` 写到结构化 sink（JSONL、OTel、其他）。
 
 代码：
 
-- 上下文：[`TraceContext`](../../nanobot/core/context.py#L25-L29)
-- 契约：[`TraceSpan`](../../nanobot/contracts/event.py#L19-L32)、[`Event`](../../nanobot/contracts/event.py#L35-L48)、[`SpanStatus`](../../nanobot/contracts/event.py#L14-L17)
-- 默认观察者：[`JsonlTraceWriter`](../../nanobot/observability/trace.py)
+- 上下文：[`TraceContext`](../../mutsukibot/core/context.py#L25-L29)
+- 契约：[`TraceSpan`](../../mutsukibot/contracts/event.py#L19-L32)、[`Event`](../../mutsukibot/contracts/event.py#L35-L48)、[`SpanStatus`](../../mutsukibot/contracts/event.py#L14-L17)
+- 默认观察者：[`JsonlTraceWriter`](../../mutsukibot/observability/trace.py)
 
 ## 解决什么问题
 
@@ -24,7 +24,7 @@ NanoBot 的因果链系统：每条命令开始 / 结束时调度器都 emit 一
 
 ### TraceContext 三段
 
-[context.py:25-29](../../nanobot/core/context.py#L25-L29)：
+[context.py:25-29](../../mutsukibot/core/context.py#L25-L29)：
 
 ```python
 @dataclass(slots=True)
@@ -42,7 +42,7 @@ class TraceContext:
 
 ### Scheduler emit span 的时机
 
-[scheduler.py:108-185](../../nanobot/runtime/scheduler.py#L108-L185)：
+[scheduler.py:108-185](../../mutsukibot/runtime/scheduler.py#L108-L185)：
 
 ```python
 trace_ctx = TraceContext(
@@ -86,7 +86,7 @@ finally:
 
 ### TraceSpan 形态
 
-[contracts/event.py:19-32](../../nanobot/contracts/event.py#L19-L32)：
+[contracts/event.py:19-32](../../mutsukibot/contracts/event.py#L19-L32)：
 
 ```python
 class TraceSpan(Contract):
@@ -104,7 +104,7 @@ class TraceSpan(Contract):
 
 ### Event 与 TraceSpan 的关系
 
-[contracts/event.py:35-48](../../nanobot/contracts/event.py#L35-L48) 的 `Event` 是更通用的"内部事件"包装：
+[contracts/event.py:35-48](../../mutsukibot/contracts/event.py#L35-L48) 的 `Event` 是更通用的"内部事件"包装：
 
 ```python
 class Event(Contract):
@@ -122,13 +122,13 @@ class Event(Contract):
 
 ### JsonlTraceWriter
 
-[observability/trace.py](../../nanobot/observability/trace.py) 的标准订阅者：
+[observability/trace.py](../../mutsukibot/observability/trace.py) 的标准订阅者：
 
 - `attach(bus)`：打开文件、订阅 `trace.span`
 - `detach()`：unsubscribe + 关文件
-- 写失败时不阻塞 publisher，转发到 bus 上的 `trace.write_failed` 事件（[trace.py:36-45](../../nanobot/observability/trace.py#L36-L45)）
+- 写失败时不阻塞 publisher，转发到 bus 上的 `trace.write_failed` 事件（[trace.py:36-45](../../mutsukibot/observability/trace.py#L36-L45)）
 
-落盘格式（[trace.py:58-72](../../nanobot/observability/trace.py#L58-L72)）：每行一个 JSON object，含 trace_id / span_id / parent_span_id / name / start / end / status / attributes。
+落盘格式（[trace.py:58-72](../../mutsukibot/observability/trace.py#L58-L72)）：每行一个 JSON object，含 trace_id / span_id / parent_span_id / name / start / end / status / attributes。
 
 ## 用法示例
 
@@ -144,7 +144,7 @@ unsub = agent.bus.subscribe("trace.span", collect)
 # ... 跑命令 ...
 unsub()
 
-assert spans[0].name == "plugin.nanobot-echo.echo"
+assert spans[0].name == "plugin.mutsukibot-echo.echo"
 assert spans[0].status == SpanStatus.OK
 ```
 
@@ -190,7 +190,7 @@ async def outer(self, ctx: AgentContext) -> str:
 
 ```python
 from pathlib import Path
-from nanobot.observability import JsonlTraceWriter
+from mutsukibot.observability import JsonlTraceWriter
 
 writer = JsonlTraceWriter(Path("/tmp/trace.jsonl"))
 writer.attach(agent.bus)

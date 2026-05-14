@@ -1,4 +1,4 @@
-# API · `nanobot.plugins`
+# API · `mutsukibot.plugins`
 
 仓库内置参考插件。
 
@@ -15,14 +15,14 @@
 
 ## echo
 
-[__init__.py](../../nanobot/plugins/echo/__init__.py)
+[__init__.py](../../mutsukibot/plugins/echo/__init__.py)
 
 ```python
 class _EchoConfig(msgspec.Struct, kw_only=True):
     prefix: str = "echo: "
 
 class EchoPlugin(Plugin[_EchoConfig]):
-    id = "nanobot-echo"
+    id = "mutsukibot-echo"
     version = "0.1.0"
     capabilities = [
         Capability(name=Caps.READ_MESSAGE),
@@ -38,16 +38,16 @@ class EchoPlugin(Plugin[_EchoConfig]):
     ) -> str
 ```
 
-通过 `pyproject.toml` 的 `[project.entry-points."nanobot.plugins"]` 注册：
+通过 `pyproject.toml` 的 `[project.entry-points."mutsukibot.plugins"]` 注册：
 
 ```toml
-[project.entry-points."nanobot.plugins"]
-echo = "nanobot.plugins.echo:EchoPlugin"
+[project.entry-points."mutsukibot.plugins"]
+echo = "mutsukibot.plugins.echo:EchoPlugin"
 ```
 
 ## echo.smoke
 
-[smoke.py](../../nanobot/plugins/echo/smoke.py)
+[smoke.py](../../mutsukibot/plugins/echo/smoke.py)
 
 ```python
 async def main() -> None: ...
@@ -59,9 +59,9 @@ if __name__ == "__main__":
 运行：
 
 ```bash
-uv run python -m nanobot.plugins.echo.smoke
+uv run python -m mutsukibot.plugins.echo.smoke
 ```
 
-完整流程：构造 Agent + JsonlTraceWriter + 装载 EchoPlugin + 启动 scheduler + 投 "echo hello" + 收响应 + 卸载。trace 落到 `<gettempdir()>/nanobot-echo-smoke.jsonl`。
+完整流程：构造 Agent + JsonlTraceWriter + 装载 EchoPlugin + 启动 scheduler + 投 "echo hello" + 收响应 + 卸载。trace 落到 `<gettempdir()>/mutsukibot-echo-smoke.jsonl`。
 
 `smoke.py` 同时是 v0.1 门控的运行检查（参见 [v0.1 报告](../../plans/version-reports/v0.1.md)）。

@@ -9,8 +9,8 @@
 ## 从源码安装
 
 ```bash
-git clone <repo-url> NanoBot
-cd NanoBot
+git clone <repo-url> MutsukiBot
+cd MutsukiBot
 uv sync --all-extras
 ```
 
@@ -57,8 +57,8 @@ uv run pytest tests/
 ### 跑 lint 与类型检查
 
 ```bash
-uv run ruff check nanobot tests
-uv run pyright nanobot tests
+uv run ruff check mutsukibot tests
+uv run pyright mutsukibot tests
 uv run pyrefly check
 ```
 
@@ -67,17 +67,17 @@ uv run pyrefly check
 ### 跑 echo 冒烟
 
 ```bash
-uv run python -m nanobot.plugins.echo.smoke
+uv run python -m mutsukibot.plugins.echo.smoke
 ```
 
-预期输出（来自 [smoke.py](../../nanobot/plugins/echo/smoke.py)）：
+预期输出（来自 [smoke.py](../../mutsukibot/plugins/echo/smoke.py)）：
 
 ```
 [smoke] agent smoke-agent phase=spawn
-[smoke] loaded plugins: ['nanobot-echo']
+[smoke] loaded plugins: ['mutsukibot-echo']
 [smoke] phase=awake
 [smoke] outbox -> 'echo: hello\n'
-[smoke] phase=stop; trace at /tmp/nanobot-echo-smoke.jsonl
+[smoke] phase=stop; trace at /tmp/mutsukibot-echo-smoke.jsonl
 ```
 
 最后一行的 trace 路径里能找到一行 JSON 的 span 记录。
@@ -89,10 +89,10 @@ python3.13 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 pytest tests/
-python -m nanobot.plugins.echo.smoke
+python -m mutsukibot.plugins.echo.smoke
 ```
 
-`-e .` 是 editable install —— 你在 `nanobot/` 下改代码立刻生效，不用重装。
+`-e .` 是 editable install —— 你在 `mutsukibot/` 下改代码立刻生效，不用重装。
 
 ## Windows 提示
 
@@ -102,9 +102,9 @@ python -m nanobot.plugins.echo.smoke
 
 ## 常见问题
 
-**Q: pip 报 `ERROR: Package 'nanobot' requires a different Python: 3.12.x not in '>=3.13'`**
+**Q: pip 报 `ERROR: Package 'mutsukibot' requires a different Python: 3.12.x not in '>=3.13'`**
 
-A: NanoBot 锁 Python 3.13+。装一个 3.13：
+A: MutsukiBot 锁 Python 3.13+。装一个 3.13：
 
 ```bash
 # pyenv
@@ -119,13 +119,13 @@ uv python install 3.13
 
 A: 这通常是 ManualClock 测试里漏了 `cancel_all()`，pending sleeper 让 event loop 关不掉。检查测试 teardown。详见 [测试夹具](../06-developer/testing-fixtures.md)。
 
-**Q: `nanobot.plugins.echo.smoke` 报 `EntryPoint not found`**
+**Q: `mutsukibot.plugins.echo.smoke` 报 `EntryPoint not found`**
 
 A: 仓库里的 entry_points 在 [pyproject.toml](../../pyproject.toml) 里：
 
 ```toml
-[project.entry-points."nanobot.plugins"]
-echo = "nanobot.plugins.echo:EchoPlugin"
+[project.entry-points."mutsukibot.plugins"]
+echo = "mutsukibot.plugins.echo:EchoPlugin"
 ```
 
 如果改了 pyproject.toml 但没重新 `uv sync` / `pip install -e .`，entry_points 不会更新。重新装一遍即可。

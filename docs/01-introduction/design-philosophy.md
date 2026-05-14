@@ -1,6 +1,6 @@
 # 设计哲学与硬规则
 
-> 本文复述 [AGENTS.md](../../AGENTS.md) 与 [plans/architecture.md](../../plans/architecture.md) 的核心立场。要理解 NanoBot 为什么长这样而不是 NoneBot / Koishi 的样子，先读这一篇。
+> 本文复述 [AGENTS.md](../../AGENTS.md) 与 [plans/architecture.md](../../plans/architecture.md) 的核心立场。要理解 MutsukiBot 为什么长这样而不是 NoneBot / Koishi 的样子，先读这一篇。
 
 ## 12 条 Hard Rules
 
@@ -23,17 +23,17 @@
 
 | 规则 | 落地点 |
 |---|---|
-| #1 Agent 一等 | [`Agent`](../../nanobot/core/agent.py) dataclass + [`AgentScheduler`](../../nanobot/runtime/scheduler.py) |
+| #1 Agent 一等 | [`Agent`](../../mutsukibot/core/agent.py) dataclass + [`AgentScheduler`](../../mutsukibot/runtime/scheduler.py) |
 | #2 核心域中立 | [tests/contracts/test_no_domain_leakage.py](../../tests/contracts/) 强制 core 不出现 latent / vram 等领域字样 |
-| #3 契约通信 | [`ServiceContainer.resolve`](../../nanobot/core/container.py) 按契约类型解析；契约类在 [`nanobot.contracts`](../../nanobot/contracts/) 独立模块 |
-| #4 无副作用热重载 | [`PluginScope.close`](../../nanobot/core/scope.py) 反向清理 + 泄漏检测；100 次反复装卸的回归用例 |
-| #5 指令即工具 | [`_build_command_spec`](../../nanobot/core/plugin.py) 从一份签名同时合成命令 schema 与 LLM tool schema |
-| #6 必有 schema | [`PluginMeta`](../../nanobot/core/plugin.py) 在类定义时校验嵌套 `Config(msgspec.Struct)` 必存 |
-| #7 显式 capability | [`check_capabilities`](../../nanobot/core/capability_guard.py) 在调度时 enforce required ⊆ declared |
-| #8 结构化错误 | [`Error`](../../nanobot/contracts/error.py) 是 Contract（msgspec.Struct）；scheduler 把 Python 异常分类成 `Error` |
-| #9 注入式 runtime | [`Agent.__init__`](../../nanobot/core/agent.py) 强制传入 `clock` / `id_gen` / `rng`；插件从 `ctx.*` 拿 |
-| #10 同步点显式 | [`runtime/loop.py`](../../nanobot/runtime/loop.py) 留了 `install_sync_point_guard` 钩子；当前靠 ruff ASYNC 规则间接覆盖 |
-| #11 双协议分离 | [`Adapter`](../../nanobot/adapters/base.py) ABC 是唯一允许出现外部协议的位置；core / contracts 没有任何外部协议字样 |
+| #3 契约通信 | [`ServiceContainer.resolve`](../../mutsukibot/core/container.py) 按契约类型解析；契约类在 [`mutsukibot.contracts`](../../mutsukibot/contracts/) 独立模块 |
+| #4 无副作用热重载 | [`PluginScope.close`](../../mutsukibot/core/scope.py) 反向清理 + 泄漏检测；100 次反复装卸的回归用例 |
+| #5 指令即工具 | [`_build_command_spec`](../../mutsukibot/core/plugin.py) 从一份签名同时合成命令 schema 与 LLM tool schema |
+| #6 必有 schema | [`PluginMeta`](../../mutsukibot/core/plugin.py) 在类定义时校验嵌套 `Config(msgspec.Struct)` 必存 |
+| #7 显式 capability | [`check_capabilities`](../../mutsukibot/core/capability_guard.py) 在调度时 enforce required ⊆ declared |
+| #8 结构化错误 | [`Error`](../../mutsukibot/contracts/error.py) 是 Contract（msgspec.Struct）；scheduler 把 Python 异常分类成 `Error` |
+| #9 注入式 runtime | [`Agent.__init__`](../../mutsukibot/core/agent.py) 强制传入 `clock` / `id_gen` / `rng`；插件从 `ctx.*` 拿 |
+| #10 同步点显式 | [`runtime/loop.py`](../../mutsukibot/runtime/loop.py) 留了 `install_sync_point_guard` 钩子；当前靠 ruff ASYNC 规则间接覆盖 |
+| #11 双协议分离 | [`Adapter`](../../mutsukibot/adapters/base.py) ABC 是唯一允许出现外部协议的位置；core / contracts 没有任何外部协议字样 |
 | #12 借鉴有度 | NoneBot 的 `Dependent` 思路保留，但去掉按名 fallback；NoneBot 的 `Permission` 思路保留，但合并成单类型 `PermissionRule` |
 
 ## 几个反复回响的设计选择
@@ -68,7 +68,7 @@
 
 `logger.info(...)` 的 callback 没有 trace_id，串不起多插件链路；每条日志独立写，事后聚合昂贵。Trace 走 `bus.publish("trace.span", TraceSpan(...))`，订阅者按需写 sink（JSONL / OTel / 自定义），核心不知道也不关心。
 
-更深层的原因：trace 是诊断 NanoBot 业务的**主入口**——出问题第一件事是看 trace，不是 log。把它做成结构化事件让"业务理解 trace"成为可能（写一个插件订阅 trace.span 自动检测异常 pattern）。
+更深层的原因：trace 是诊断 MutsukiBot 业务的**主入口**——出问题第一件事是看 trace，不是 log。把它做成结构化事件让"业务理解 trace"成为可能（写一个插件订阅 trace.span 自动检测异常 pattern）。
 
 ### 为什么 RefPayload 是契约层标记而不是基类
 

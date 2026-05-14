@@ -1,4 +1,4 @@
-# API · `nanobot.core`
+# API · `mutsukibot.core`
 
 Agent 运行时核心：注册表、scope、PluginMeta、Agent、bus、容器、loader、handle、saga、lifespan、capability 守卫。
 
@@ -24,7 +24,7 @@ Agent 运行时核心：注册表、scope、PluginMeta、Agent、bus、容器、
 
 ## agent
 
-[agent.py](../../nanobot/core/agent.py) · 详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
+[agent.py](../../mutsukibot/core/agent.py) · 详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
 
 ```python
 @dataclass
@@ -60,7 +60,7 @@ class CommandTarget:
 
 ## context
 
-[context.py](../../nanobot/core/context.py) · 详见 [AgentContext](../04-guide/agent-context.md)。
+[context.py](../../mutsukibot/core/context.py) · 详见 [AgentContext](../04-guide/agent-context.md)。
 
 ```python
 @dataclass(slots=True)
@@ -86,7 +86,7 @@ class AgentContext:
 
 ## plugin
 
-[plugin.py](../../nanobot/core/plugin.py) · 详见 [插件定义](../04-guide/plugin-definition.md)。
+[plugin.py](../../mutsukibot/core/plugin.py) · 详见 [插件定义](../04-guide/plugin-definition.md)。
 
 ```python
 class Plugin(ABC, Generic[C], metaclass=PluginMeta):
@@ -118,7 +118,7 @@ class PluginDefinitionError(Exception):
 
 ## dependency
 
-[dependency.py](../../nanobot/core/dependency.py) · 详见 [依赖注入](../04-guide/dependency-injection.md)。
+[dependency.py](../../mutsukibot/core/dependency.py) · 详见 [依赖注入](../04-guide/dependency-injection.md)。
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -155,7 +155,7 @@ class UnresolvedParameterError(TypeError): ...
 
 ## scope
 
-[scope.py](../../nanobot/core/scope.py) · 详见 [PluginScope](../04-guide/plugin-scope.md) · [TransactionScope 与 Saga](../05-advanced/transaction-scope-saga.md)。
+[scope.py](../../mutsukibot/core/scope.py) · 详见 [PluginScope](../04-guide/plugin-scope.md) · [TransactionScope 与 Saga](../05-advanced/transaction-scope-saga.md)。
 
 ```python
 CleanupFn = Callable[[], None] | Callable[[], Awaitable[None]]
@@ -186,7 +186,7 @@ class TransactionScope(PluginScope):
 
 ## bus
 
-[bus.py](../../nanobot/core/bus.py) · 详见 [事件总线](../04-guide/event-bus.md)。
+[bus.py](../../mutsukibot/core/bus.py) · 详见 [事件总线](../04-guide/event-bus.md)。
 
 ```python
 EventHandler = Callable[[object], Awaitable[None]]
@@ -201,7 +201,7 @@ class Bus:
 
 ## container
 
-[container.py](../../nanobot/core/container.py) · 详见 [服务容器](../04-guide/service-container.md)。
+[container.py](../../mutsukibot/core/container.py) · 详见 [服务容器](../04-guide/service-container.md)。
 
 ```python
 class ServiceContainer:
@@ -215,7 +215,7 @@ class ServiceNotFoundError(KeyError): ...
 
 ## handle
 
-[handle.py](../../nanobot/core/handle.py) · 详见 [Handle 与 RefPayload](../04-guide/handle-and-refpayload.md)。
+[handle.py](../../mutsukibot/core/handle.py) · 详见 [Handle 与 RefPayload](../04-guide/handle-and-refpayload.md)。
 
 ```python
 class HandleImpl(Handle[T], Generic[T]):
@@ -255,7 +255,7 @@ class HandleUseAfterReleaseError(Exception):
 
 ## registry
 
-[registry.py](../../nanobot/core/registry.py)
+[registry.py](../../mutsukibot/core/registry.py)
 
 ```python
 class _NamedRegistry(Generic[_T]):
@@ -274,11 +274,11 @@ class RegistryConflictError(Exception): ...
 
 ## loader
 
-[loader.py](../../nanobot/core/loader.py) · 详见 [插件 DAG 加载](../05-advanced/plugin-loader-dag.md)。
+[loader.py](../../mutsukibot/core/loader.py) · 详见 [插件 DAG 加载](../05-advanced/plugin-loader-dag.md)。
 
 ```python
 class PluginLoader:
-    def __init__(self, *, entry_point_group="nanobot.plugins", allow=None) -> None
+    def __init__(self, *, entry_point_group="mutsukibot.plugins", allow=None) -> None
     def discover(self) -> list[type[Plugin]]
     async def load_into(
         self, agent: Agent,
@@ -296,7 +296,7 @@ class PluginNotFoundError(KeyError): ...
 
 ## lifespan
 
-[lifespan.py](../../nanobot/core/lifespan.py)
+[lifespan.py](../../mutsukibot/core/lifespan.py)
 
 ```python
 Hook = Callable[[AgentContext], Awaitable[None]]
@@ -314,7 +314,7 @@ class Lifespan:
 
 ## saga
 
-[saga.py](../../nanobot/core/saga.py) · 详见 [TransactionScope 与 Saga](../05-advanced/transaction-scope-saga.md)。
+[saga.py](../../mutsukibot/core/saga.py) · 详见 [TransactionScope 与 Saga](../05-advanced/transaction-scope-saga.md)。
 
 ```python
 ForwardFn = Callable[[], Awaitable[Any]]
@@ -332,7 +332,7 @@ class SagaCompensationError(Exception):
 
 ## capability_guard
 
-[capability_guard.py](../../nanobot/core/capability_guard.py) · 详见 [Capability](../04-guide/capability.md)。
+[capability_guard.py](../../mutsukibot/core/capability_guard.py) · 详见 [Capability](../04-guide/capability.md)。
 
 ```python
 def check_capabilities(

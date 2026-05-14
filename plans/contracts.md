@@ -1,4 +1,4 @@
-# NanoBot 内部协议草案（v0.0）
+# MutsukiBot 内部协议草案（v0.0）
 
 本文件回答：**core 与 plugins 之间用什么协议通信、协议长什么样、哪些字段是必须的**。
 
@@ -19,7 +19,7 @@
 | `AgentId` | Agent 身份 | `value: str`（kebab-case，含命名空间） |
 | `AgentContext` | Agent 运行期上下文 | `agent_id`、`clock`、`id_gen`、`rng`、`services`、`scope`、`trace_ctx` |
 | `LifecyclePhase` | 生命周期阶段 | enum：`spawn / awake / sleep / stop` |
-| `Message` | 入站 / 出站消息 | `id`、`timestamp`、`source`、`parts`、`capabilities_required`（v0.1 实现：[nanobot/contracts/message.py](../nanobot/contracts/message.py)；字段名 `parts` 为正式名，本表早期草案的 `content_parts` 已弃用） |
+| `Message` | 入站 / 出站消息 | `id`、`timestamp`、`source`、`parts`、`capabilities_required`（v0.1 实现：[mutsukibot/contracts/message.py](../mutsukibot/contracts/message.py)；字段名 `parts` 为正式名，本表早期草案的 `content_parts` 已弃用） |
 | `Event` | 内部事件 | `id`、`timestamp`、`type`、`source_plugin`、`payload`、`trace_id`、`span_id`、`parent_span_id` |
 | `Capability` | 能力声明 | `name: str`、`quantity: optional`、`policy: optional` |
 | `Service` | 服务声明 | `name`、`contract_id`、`mode: by_value \| by_ref`、`version` |
@@ -102,8 +102,8 @@ Error:
 ## 4. Capability 命名
 
 **v0.1 实现**：`CapabilityName` 是 `str` 子类 + 进程内注册表（详见
-[nanobot/contracts/capability.py](../nanobot/contracts/capability.py)）。
-框架内置常量集中在 `Caps` 门面（[capability_builtin.py](../nanobot/contracts/capability_builtin.py)），
+[mutsukibot/contracts/capability.py](../mutsukibot/contracts/capability.py)）。
+框架内置常量集中在 `Caps` 门面（[capability_builtin.py](../mutsukibot/contracts/capability_builtin.py)），
 插件通过 `CapabilityName.register(name, declared_by=...)` 扩展自有命名空间
 （如 `yume.vram` / `mindsim.session`）。**禁止用裸字符串构造 Capability**；
 未注册的名字在 `CapabilityName(value)` 构造点立即抛 `UnknownCapabilityError`，
@@ -226,7 +226,7 @@ context.rng         # RNG 接口：可种子化
 任一契约对象可在 metadata 中声明：
 
 ```text
-schema_id: str            # 完整契约标识（如 "yume.thought.packet" / "nanobot.message"）
+schema_id: str            # 完整契约标识（如 "yume.thought.packet" / "mutsukibot.message"）
 schema_version: str       # SemVer
 ```
 
@@ -248,7 +248,7 @@ register_schema_compatibility(
 约束：
 
 - 契约包在加载时注册回调；未注册则默认仅 byte-equal 版本兼容。
-- 回调由契约包负责，例如 `nanobot-contracts-yume` 自行决定「latent space v1.2 兼容 v1.3」。
+- 回调由契约包负责，例如 `mutsukibot-contracts-yume` 自行决定「latent space v1.2 兼容 v1.3」。
 - 核心代码搜不到任何具体 `schema_id` 的兼容判断逻辑。
 
 ### 10.3 不兼容拦截
@@ -265,7 +265,7 @@ register_schema_compatibility(
 
 > **设计原则**：核心层只提供通用的「按引用传递」机制，**不假设引用对象的语义**。
 > Yume 的 latent / KV cache、mind-sim 的会话句柄、未来任何插件的非序列化对象都
-> 是该机制的应用。具体语义由领域契约包（如 `nanobot-contracts-yume`）定义。
+> 是该机制的应用。具体语义由领域契约包（如 `mutsukibot-contracts-yume`）定义。
 
 ### 11.1 RefPayload[T] —— 字段标记
 
@@ -402,7 +402,7 @@ PermissionRule:
   check(ctx) -> bool
 ```
 
-实现见 [nanobot/contracts/permission.py](../nanobot/contracts/permission.py)。
+实现见 [mutsukibot/contracts/permission.py](../mutsukibot/contracts/permission.py)。
 
 ### 12.2 PermissionName —— 命名权限注册式
 
