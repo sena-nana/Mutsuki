@@ -232,9 +232,19 @@ def _coerce(raw: str, schema: dict[str, object]) -> object:
 def _classify_command_exception(
     exc: BaseException, plugin_id: str, command_name: str
 ) -> Error:
-    """把命令执行抛出的异常映射到具体错误码，避免一刀切到 PLUGIN_DEFINITION_ERROR。"""
+    """把命令执行抛出的异常映射到分级错误码。
+
+    分级原则（按"运维看到这个码会去查什么"对齐）：
+
+    * ``HANDLE_LEAK`` —— 句柄泄漏（直接复用 scope 抛出的结构化 Error）
+    * ``SERVICE_NOT_FOUND`` —— 装载配置或服务注册有问题
+    * ``COMMAND_INVALID_ARGS`` —— 调用方参数错误（KeyError 通常是缺参）
+    * ``COMMAND_EXECUTION_FAILED`` —— 插件命令体抛了业务异常
+
+    ``PLUGIN_DEFINITION_ERROR`` 仅由 :class:`PluginMeta` 在类定义阶段使用，
+    不再被 scheduler 路径产生。
+    """
     route = f"command.{command_name}"
-    # HandleLeakError 自带结构化 Error，直接复用并改写 source/route。
     if isinstance(exc, HandleLeakError):
         return Error(
             code=Errs.HANDLE_LEAK,
@@ -244,7 +254,7 @@ def _classify_command_exception(
         )
     if isinstance(exc, ServiceNotFoundError):
         return Error(
-            code=Errs.PLUGIN_DEFINITION_ERROR,
+            code=Errs.SERVICE_NOT_FOUND,
             source=plugin_id,
             route=route,
             evidence={
@@ -254,7 +264,7 @@ def _classify_command_exception(
         )
     if isinstance(exc, KeyError):
         return Error(
-            code=Errs.PLUGIN_DEFINITION_ERROR,
+            code=Errs.COMMAND_INVALID_ARGS,
             source=plugin_id,
             route=route,
             evidence={
@@ -263,7 +273,7 @@ def _classify_command_exception(
             },
         )
     return Error(
-        code=Errs.PLUGIN_DEFINITION_ERROR,
+        code=Errs.COMMAND_EXECUTION_FAILED,
         source=plugin_id,
         route=route,
         evidence={

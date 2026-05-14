@@ -54,24 +54,32 @@ def _new_agent() -> Agent:
     )
 
 
-def test_classify_service_not_found_maps_to_definition_error() -> None:
+def test_classify_service_not_found_maps_to_service_not_found() -> None:
     err = _classify_command_exception(ServiceNotFoundError("nope"), "p", "c")
-    assert err.code == Errs.PLUGIN_DEFINITION_ERROR
+    assert err.code == Errs.SERVICE_NOT_FOUND
     assert err.evidence["reason"] == "service_not_found"
 
 
-def test_classify_key_error_maps_to_definition_error_with_arg_reason() -> None:
+def test_classify_key_error_maps_to_invalid_args() -> None:
     err = _classify_command_exception(KeyError("x"), "p", "c")
-    assert err.code == Errs.PLUGIN_DEFINITION_ERROR
+    assert err.code == Errs.COMMAND_INVALID_ARGS
     assert err.evidence["reason"] == "missing_arg"
 
 
-def test_classify_generic_exception_preserves_type_info() -> None:
+def test_classify_generic_exception_maps_to_execution_failed() -> None:
     err = _classify_command_exception(ValueError("oops"), "p", "c")
-    assert err.code == Errs.PLUGIN_DEFINITION_ERROR
+    assert err.code == Errs.COMMAND_EXECUTION_FAILED
     assert err.evidence["reason"] == "command_raised"
     assert err.evidence["exception_type"] == "ValueError"
     assert "oops" in str(err.evidence["exception_repr"])
+
+
+def test_classify_never_returns_plugin_definition_error() -> None:
+    """PLUGIN_DEFINITION_ERROR 仅由 PluginMeta 在类定义阶段使用，
+    scheduler 路径不应再产生它（避免运维误以为是定义层 bug）。"""
+    for exc in (ServiceNotFoundError("x"), KeyError("y"), ValueError("z"), RuntimeError("w")):
+        err = _classify_command_exception(exc, "p", "c")
+        assert err.code != Errs.PLUGIN_DEFINITION_ERROR
 
 
 @pytest.mark.asyncio
@@ -88,8 +96,8 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     msgs = await adapter.drain_outbox(agent, timeout=0.5)
     assert msgs, "至少有一条出错消息"
     text = "".join(m.text for m in msgs)
-    # 即使没拿到结构化 evidence，错误码也不应该被吞或换成无关码。
-    assert Errs.PLUGIN_DEFINITION_ERROR in text
+    # 命令体 ValueError 应当映射到 COMMAND_EXECUTION_FAILED，而不是定义错误。
+    assert Errs.COMMAND_EXECUTION_FAILED in text
     assert "command_raised" in text
     assert "ValueError" in text
 

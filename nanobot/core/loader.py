@@ -46,6 +46,15 @@ class PluginDependencyMissingError(Exception):
         self.error = err
 
 
+class PluginLoadFailedError(Exception):
+    """插件 ``on_load`` 抛错（或实例化失败）；已加载的插件已经被反向回滚。"""
+
+    def __init__(self, plugin_id: str, err: Error) -> None:
+        super().__init__(f"插件 {plugin_id!r} 加载失败")
+        self.plugin_id = plugin_id
+        self.error = err
+
+
 class PluginNotFoundError(KeyError):
     pass
 
@@ -119,7 +128,13 @@ class PluginLoader:
         plugin_classes: Iterable[type[Plugin]],
         configs: dict[str, msgspec.Struct] | None = None,
     ) -> None:
-        """按拓扑顺序把插件实例化进 ``agent``，再 await ``on_load``。"""
+        """按拓扑顺序把插件实例化进 ``agent``，再 await ``on_load``。
+
+        某个插件 ``on_load`` 抛错时，已加载的插件会按反向顺序被自动卸载
+        （``on_unload`` + ``scope.close``），保证 agent 不会停留在半加载
+        状态。最终抛出 :class:`PluginLoadFailedError`，``cause`` 链指向
+        原始异常以便排障。
+        """
         configs = configs or {}
         by_id: dict[str, type[Plugin]] = {cls.id: cls for cls in plugin_classes}
 
@@ -129,19 +144,64 @@ class PluginLoader:
         }
         order = _toposort(deps_map)
 
+        loaded_so_far: list[tuple[Plugin, PluginScope]] = []
         for pid in order:
             cls = by_id[pid]
             cfg = configs.get(pid) or cls.Config()
             scope = PluginScope(owner=pid)
-            instance = cls(
-                agent=agent,
-                config=cfg,
-                scope=scope,
-                services=agent.services,
-                bus=agent.bus,
-            )
-            agent.attach_plugin(instance, scope)
-            await instance.on_load()
+            instance: Plugin | None = None
+            try:
+                instance = cls(
+                    agent=agent,
+                    config=cfg,
+                    scope=scope,
+                    services=agent.services,
+                    bus=agent.bus,
+                )
+                # on_load 先跑：如果它抛错，instance 还没进 agent.plugins /
+                # _command_index，只需要关闭 scope 释放可能已注册的资源。
+                await instance.on_load()
+                # on_load 成功才登记，避免半加载状态污染查询路径。
+                agent.attach_plugin(instance, scope)
+            except Exception as exc:
+                # 当前失败插件：scope 可能已有部分资源
+                try:
+                    await scope.close()
+                except Exception:
+                    pass
+                # 反向卸载之前成功加载的插件
+                await self._rollback(agent, loaded_so_far)
+                err = Error(
+                    code=Errs.PLUGIN_LOAD_FAILED,
+                    source="core.loader",
+                    route=f"plugin.load.{pid}",
+                    evidence={
+                        "plugin_id": pid,
+                        "rolled_back": len(loaded_so_far),
+                        "exception_type": type(exc).__qualname__,
+                        "exception_repr": repr(exc),
+                    },
+                )
+                raise PluginLoadFailedError(pid, err) from exc
+            loaded_so_far.append((instance, scope))
+
+    async def _rollback(
+        self,
+        agent: Agent,
+        loaded: list[tuple[Plugin, PluginScope]],
+    ) -> None:
+        """反向卸载已成功加载的插件。回滚阶段的次生异常吞掉以便聚合上报原因。"""
+        for inst, scope in reversed(loaded):
+            agent.detach_plugin(inst)
+            agent.plugins[:] = [p for p in agent.plugins if p.plugin is not inst]
+            try:
+                await inst.on_unload()
+            except Exception:
+                pass
+            try:
+                await scope.close()
+            except Exception:
+                pass
 
     async def unload_from(self, agent: Agent) -> None:
         """按加载反序运行 ``on_unload`` 然后 ``scope.close()``。"""
@@ -160,6 +220,7 @@ class PluginLoader:
 __all__ = [
     "PluginCycleError",
     "PluginDependencyMissingError",
+    "PluginLoadFailedError",
     "PluginLoader",
     "PluginNotFoundError",
 ]
