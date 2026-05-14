@@ -101,13 +101,16 @@ class Agent:
     def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
         self.plugins.append(_LoadedPlugin(plugin, scope))
         markers: dict[str, "_CommandMarker"] = plugin.__class__.__command_markers__
+        # 用 spec.name（marker.explicit_name or func.__name__）登记，与外部
+        # 触发时输入的命令名一致。原先同时按 attr_name 与 func.__name__ 两次
+        # setdefault：99% 情况下两者相同，剩下 1% 也没人会用 attr_name 触发。
         for attr_name, marker in markers.items():
+            spec = marker.spec
+            cmd_name = spec.name if spec is not None else attr_name
             target = CommandTarget(
                 plugin=plugin, attr_name=attr_name, scope=scope, marker=marker
             )
-            # attr_name 与 func.__name__ 都可触发；优先 attr_name 不被覆盖。
-            self._command_index.setdefault(attr_name, target)
-            self._command_index.setdefault(marker.func.__name__, target)
+            self._command_index.setdefault(cmd_name, target)
 
     def detach_plugin(self, plugin: "Plugin") -> None:
         """从命令索引里剔除该插件 —— 由 loader 卸载时调用。"""

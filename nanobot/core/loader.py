@@ -25,7 +25,6 @@ import msgspec
 from nanobot.contracts.error import Error, Errs
 from nanobot.core.agent import Agent
 from nanobot.core.plugin import Plugin
-from nanobot.core.registry import PluginRegistry
 from nanobot.core.scope import PluginScope
 
 
@@ -204,7 +203,13 @@ class PluginLoader:
                 pass
 
     async def unload_from(self, agent: Agent) -> None:
-        """按加载反序运行 ``on_unload`` 然后 ``scope.close()``。"""
+        """按加载反序运行 ``on_unload`` 然后 ``scope.close()``。
+
+        注意：``PluginRegistry`` 存的是 Plugin **类**（由 ``PluginMeta`` 在
+        类定义阶段注册），卸载实例不应触碰类注册表。原先这里的
+        ``unregister`` + ``register`` 是 no-op 但中间窗口为空，多 Agent
+        共享同一插件类时有竞态，故移除。
+        """
         while agent.plugins:
             entry = agent.plugins.pop()
             agent.detach_plugin(entry.plugin)
@@ -212,9 +217,6 @@ class PluginLoader:
                 await entry.plugin.on_unload()
             finally:
                 await entry.scope.close()
-                PluginRegistry.unregister(entry.plugin.id)
-                # 卸载的是 *实例*，不是类；把类重新登记回去。
-                PluginRegistry.register(entry.plugin.id, type(entry.plugin))
 
 
 __all__ = [
