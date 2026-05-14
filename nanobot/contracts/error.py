@@ -75,8 +75,13 @@ class Errs:
     REF_CROSS_DOMAIN: ClassVar[ErrorCode]
     REF_SERIALIZE_ATTEMPT: ClassVar[ErrorCode]
     PLUGIN_CYCLE: ClassVar[ErrorCode]
+    PLUGIN_DEPENDENCY_MISSING: ClassVar[ErrorCode]
     PLUGIN_SCOPE_VIOLATION: ClassVar[ErrorCode]
     PLUGIN_DEFINITION_ERROR: ClassVar[ErrorCode]
+    PLUGIN_LOAD_FAILED: ClassVar[ErrorCode]
+    COMMAND_EXECUTION_FAILED: ClassVar[ErrorCode]
+    COMMAND_INVALID_ARGS: ClassVar[ErrorCode]
+    SERVICE_NOT_FOUND: ClassVar[ErrorCode]
     TRANSACTION_COMPENSATION_FAILED: ClassVar[ErrorCode]
     PERMISSION_DENIED: ClassVar[ErrorCode]
     UNKNOWN_CAPABILITY: ClassVar[ErrorCode]
@@ -94,8 +99,13 @@ ErrorCode.bootstrap_facade(
         "REF_CROSS_DOMAIN": "ref.cross_domain",
         "REF_SERIALIZE_ATTEMPT": "ref.serialize_attempt",
         "PLUGIN_CYCLE": "plugin.cycle",
+        "PLUGIN_DEPENDENCY_MISSING": "plugin.dependency_missing",
         "PLUGIN_SCOPE_VIOLATION": "plugin.scope_violation",
         "PLUGIN_DEFINITION_ERROR": "plugin.definition_error",
+        "PLUGIN_LOAD_FAILED": "plugin.load_failed",
+        "COMMAND_EXECUTION_FAILED": "command.execution_failed",
+        "COMMAND_INVALID_ARGS": "command.invalid_args",
+        "SERVICE_NOT_FOUND": "service.not_found",
         "TRANSACTION_COMPENSATION_FAILED": "transaction.compensation_failed",
         "PERMISSION_DENIED": "permission.denied",
         "UNKNOWN_CAPABILITY": "capability.unknown",

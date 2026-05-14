@@ -5,7 +5,12 @@
 
 * **direct**：handler 由发布者内联 await（用于延迟敏感链路，如
   Yume 的 ``thought → kernel → runtime``），按注册顺序串行执行。
+  失败会向 publisher 透传——direct 订阅者的契约就是"不抛"。
 * **deferred**（默认）：handler 通过 :func:`asyncio.gather` 并发执行。
+  失败被隔离：一个 handler 抛错不会取消其他 handler，也不会拖死 publisher。
+  这是 observability 旁路订阅的物理保证（一个挂掉的 trace writer 不能
+  影响主消息链路）。失败会写入 :data:`failures` 供巡检读取，并通过标准
+  ``logging`` 输出。
 
 订阅返回一个清理回调；插件必须把它登记到自己的 :class:`PluginScope`，
 这样热重载/卸载会干净地解除订阅。
@@ -17,10 +22,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import itertools
+import logging
 
 EventHandler = Callable[[object], Awaitable[None]]
 
-
+_logger = logging.getLogger(__name__)
 _sub_id_counter = itertools.count(1)
 
 
@@ -37,8 +43,19 @@ class _EventBucket:
 
 
 @dataclass(slots=True)
+class HandlerFailure:
+    """deferred handler 抛错时的诊断记录。"""
+
+    event_type: str
+    sub_id: int
+    exception_type: str
+    exception_repr: str
+
+
+@dataclass(slots=True)
 class Bus:
     _subs: dict[str, _EventBucket] = field(default_factory=dict)
+    failures: list[HandlerFailure] = field(default_factory=list)
 
     def subscribe(
         self, event_type: str, handler: EventHandler, *, direct: bool = False
@@ -67,7 +84,25 @@ class Bus:
         for sub in bucket.direct:
             await sub.handler(payload)
         if bucket.deferred:
-            await asyncio.gather(*(s.handler(payload) for s in bucket.deferred))
+            results = await asyncio.gather(
+                *(s.handler(payload) for s in bucket.deferred),
+                return_exceptions=True,
+            )
+            for sub, result in zip(bucket.deferred, results, strict=True):
+                if isinstance(result, BaseException):
+                    failure = HandlerFailure(
+                        event_type=event_type,
+                        sub_id=sub.sub_id,
+                        exception_type=type(result).__qualname__,
+                        exception_repr=repr(result),
+                    )
+                    self.failures.append(failure)
+                    _logger.warning(
+                        "bus deferred handler failed: event=%s sub_id=%d exc=%s",
+                        event_type,
+                        sub.sub_id,
+                        failure.exception_repr,
+                    )
 
 
-__all__ = ["Bus", "EventHandler"]
+__all__ = ["Bus", "EventHandler", "HandlerFailure"]

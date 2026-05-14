@@ -11,6 +11,7 @@ import pytest
 from nanobot import Capability, Caps, Perms, Plugin, command
 from nanobot.adapters import InMemoryAdapter
 from nanobot.contracts.error import Errs
+from nanobot.contracts.event import TraceSpan
 from nanobot.contracts.ids import AgentId
 from nanobot.core.agent import Agent
 from nanobot.core.container import ServiceNotFoundError
@@ -91,6 +92,44 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     assert Errs.PLUGIN_DEFINITION_ERROR in text
     assert "command_raised" in text
     assert "ValueError" in text
+
+    await scheduler.stop()
+    await loader.unload_from(agent)
+
+
+@pytest.mark.asyncio
+async def test_unmatched_command_is_silent_and_emits_trace_span() -> None:
+    """普通消息（首词不是任何已注册命令）不应进 outbox，仅写一条 unmatched span。"""
+    agent = _new_agent()
+    loader = PluginLoader(allow={_BoomPlugin.id})
+    await loader.load_into(agent, [_BoomPlugin])
+    scheduler = AgentScheduler(agent)
+
+    spans: list[TraceSpan] = []
+
+    async def _on_span(payload: object) -> None:
+        if isinstance(payload, TraceSpan):
+            spans.append(payload)
+
+    agent.bus.subscribe("trace.span", _on_span)
+
+    await scheduler.start()
+
+    adapter = InMemoryAdapter()
+    await adapter.send_text(agent, "你好世界")
+    await asyncio.sleep(0.2)
+
+    # 关键：outbox 不应有任何"命令不存在"错误回执
+    msgs = await adapter.drain_outbox(agent, timeout=0.3)
+    assert msgs == []
+
+    # 但应有一条 unmatched trace span
+    await asyncio.sleep(0.05)
+    unmatched = [s for s in spans if s.name == "agent.scheduler.unmatched"]
+    assert len(unmatched) == 1
+    span = unmatched[0]
+    assert span.attributes["unmatched"] is True
+    assert span.attributes["first_token"] == "你好世界"
 
     await scheduler.stop()
     await loader.unload_from(agent)

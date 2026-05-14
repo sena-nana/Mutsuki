@@ -36,6 +36,16 @@ class PluginCycleError(Exception):
         self.error = err
 
 
+class PluginDependencyMissingError(Exception):
+    """声明了 ``requires_plugins`` 但依赖未在装载列表中时抛出。"""
+
+    def __init__(self, missing: list[tuple[str, str]], err: Error) -> None:
+        pretty = ", ".join(f"{src}->{dep}" for src, dep in missing)
+        super().__init__(f"插件依赖缺失: {pretty}")
+        self.missing = missing
+        self.error = err
+
+
 class PluginNotFoundError(KeyError):
     pass
 
@@ -44,11 +54,25 @@ def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
     """委托给 :class:`graphlib.TopologicalSorter`。
 
     ``items[node]`` 是 ``node`` 依赖的节点 —— 与 ``TopologicalSorter`` 期望
-    的「predecessors」语义一致。外部依赖（不在 ``items`` 里的）过滤掉以保持
-    原行为：只对已知节点排序，不要求它们的外部依赖也被解析。
+    的「predecessors」语义一致。任何依赖不在 ``items`` 里的节点都视为缺失，
+    立即抛 :class:`PluginDependencyMissingError`：错误延迟到运行时
+    ``ServiceNotFound`` 比早 fail 难调试得多。
     """
-    graph = {node: tuple(d for d in deps if d in items) for node, deps in items.items()}
-    sorter = graphlib.TopologicalSorter(graph)
+    missing: list[tuple[str, str]] = [
+        (node, dep)
+        for node, deps in items.items()
+        for dep in deps
+        if dep not in items
+    ]
+    if missing:
+        err = Error(
+            code=Errs.PLUGIN_DEPENDENCY_MISSING,
+            source="core.loader",
+            route="plugin.dag",
+            evidence={"missing": ",".join(f"{s}->{d}" for s, d in missing)},
+        )
+        raise PluginDependencyMissingError(missing, err)
+    sorter = graphlib.TopologicalSorter(items)
     try:
         return list(sorter.static_order())
     except graphlib.CycleError as exc:
@@ -133,4 +157,9 @@ class PluginLoader:
                 PluginRegistry.register(entry.plugin.id, type(entry.plugin))
 
 
-__all__ = ["PluginCycleError", "PluginLoader", "PluginNotFoundError"]
+__all__ = [
+    "PluginCycleError",
+    "PluginDependencyMissingError",
+    "PluginLoader",
+    "PluginNotFoundError",
+]

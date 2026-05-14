@@ -87,15 +87,25 @@ class AgentScheduler:
 
         target = self.agent.find_command(cmd_name)
         if target is None:
-            await self._emit_error(
-                msg,
-                Error(
-                    code=Errs.CAPABILITY_NOT_DECLARED,
-                    source="agent.scheduler",
-                    route=f"command.{cmd_name}",
-                    evidence={"reason": "命令不存在", "name": cmd_name},
-                ),
+            # 找不到命令视为"普通消息"，不写 outbox（否则真实 IM adapter
+            # 会对群里每条非命令消息都吐错误回执）。仅打一条 ok 状态的
+            # trace span，attribute 里标记 unmatched，便于审计与未来引入
+            # 命令前缀过滤时回看。
+            now = self.agent.clock.now()
+            unmatched_span = TraceSpan(
+                trace_id=TraceId(self.agent.id_gen.next("trace")),
+                span_id=SpanId(self.agent.id_gen.next("span")),
+                name="agent.scheduler.unmatched",
+                start=now,
+                end=now,
+                status=SpanStatus.OK,
+                attributes={
+                    "agent_id": self.agent.agent_id,
+                    "unmatched": True,
+                    "first_token": cmd_name,
+                },
             )
+            await self.agent.bus.publish("trace.span", unmatched_span)
             return
 
         plugin = target.plugin
