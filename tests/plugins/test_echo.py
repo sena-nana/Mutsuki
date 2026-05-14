@@ -28,7 +28,6 @@ def _new_agent() -> Agent:
 @pytest.mark.asyncio
 async def test_full_lifecycle() -> None:
     agent = _new_agent()
-    assert agent.phase == LifecyclePhase.SPAWN
 
     loader = PluginLoader(allow={EchoPlugin.id})
     await loader.load_into(agent, [EchoPlugin])

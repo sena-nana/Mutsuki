@@ -10,13 +10,17 @@ v0.1 的最小循环：
 6. 通过解析好的 :class:`Dependent` ``await`` 插件方法。
 7. 把结果包成出站 :class:`Message` 投到 ``agent.outbox``。
 8. 每次调用产出一个 :class:`TraceSpan`。
+
+Graceful shutdown：``stop()`` 把一个 sentinel 放入 inbox，让 ``_loop``
+处理完手头消息后自然退出，而不是直接 ``cancel()`` 打断正在执行的命令。
+仅在 ``shutdown_timeout`` 超时后才回退到强制取消，作为最后兜底。
 """
 
 from __future__ import annotations
 
 import asyncio
 import shlex
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from nanobot.contracts.error import Error, Errs
 from nanobot.contracts.event import SpanStatus, TraceSpan
@@ -36,11 +40,23 @@ if TYPE_CHECKING:
     from nanobot.core.agent import Agent
 
 
+class _StopSentinel:
+    """放入 inbox 用来通知 ``_loop`` 优雅退出的哨兵。"""
+
+
+_STOP: Final[_StopSentinel] = _StopSentinel()
+
+
 class AgentScheduler:
-    def __init__(self, agent: "Agent") -> None:
+    def __init__(
+        self,
+        agent: "Agent",
+        *,
+        shutdown_timeout: float = 5.0,
+    ) -> None:
         self.agent = agent
+        self.shutdown_timeout = shutdown_timeout
         self._task: asyncio.Task[None] | None = None
-        self._stop_evt = asyncio.Event()
 
     async def start(self) -> None:
         ctx = self.agent.make_context()
@@ -49,28 +65,36 @@ class AgentScheduler:
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
-        self._stop_evt.set()
         if self._task is not None:
-            self._task.cancel()
+            # 优雅停机：让 _loop 处理完手头消息后自然退出。
+            await self.agent.inbox.put(_STOP)
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(self._task, timeout=self.shutdown_timeout)
+            except TimeoutError:
+                # 超时兜底：强制取消（接受被打断命令的副作用半完成风险）
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
             # 真实 loop 异常不静默：让上层看到 bug。
-        ctx = self.agent.make_context()
+        # sleep / stop 各自新建 ctx，避免 trace 上下文混淆两个阶段
+        sleep_ctx = self.agent.make_context()
         self.agent.phase = LifecyclePhase.SLEEP
-        await self.agent.lifespan.fire("sleep", ctx)
+        await self.agent.lifespan.fire("sleep", sleep_ctx)
+        stop_ctx = self.agent.make_context()
         self.agent.phase = LifecyclePhase.STOP
-        await self.agent.lifespan.fire("stop", ctx)
+        await self.agent.lifespan.fire("stop", stop_ctx)
         await self.agent.close_agent_scope()
 
     async def _loop(self) -> None:
-        while not self._stop_evt.is_set():
-            try:
-                msg = await asyncio.wait_for(self.agent.inbox.get(), timeout=0.1)
-            except TimeoutError:
-                continue
-            await self._handle_message(msg)
+        # 直接阻塞 await，不再每秒 10 次轮询。stop 通过 _STOP sentinel 唤醒。
+        while True:
+            item = await self.agent.inbox.get()
+            if item is _STOP:
+                return
+            if isinstance(item, Message):
+                await self._handle_message(item)
 
     async def _handle_message(self, msg: Message) -> None:
         text = msg.text.strip()

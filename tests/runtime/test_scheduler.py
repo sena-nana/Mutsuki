@@ -167,3 +167,74 @@ async def test_stop_propagates_loop_exceptions() -> None:
     # stop 不应再吞掉真实的 loop 异常。
     with pytest.raises(RuntimeError, match="loop crashed"):
         await scheduler.stop()
+
+
+class _SlowConfig(msgspec.Struct, kw_only=True):
+    pass
+
+
+class _SlowPlugin(Plugin[_SlowConfig]):
+    """命令体故意 sleep，用来验证 graceful shutdown 不会打断它。"""
+
+    id: ClassVar[str] = "test-slow"
+    version: ClassVar[str] = "0.0.1"
+    capabilities: ClassVar[list[Capability]] = [
+        Capability(name=Caps.READ_MESSAGE),
+        Capability(name=Caps.SEND_MESSAGE),
+    ]
+    Config = _SlowConfig
+
+    finished: ClassVar[bool]
+
+    @command(perms=Perms.PUBLIC)
+    async def slow(self) -> str:
+        """模拟一个需要时间完成的命令。"""
+        await asyncio.sleep(0.2)
+        _SlowPlugin.finished = True
+        return "done"
+
+
+@pytest.mark.asyncio
+async def test_graceful_shutdown_lets_in_flight_command_complete() -> None:
+    """stop() 在调用时若有正在执行的命令，应等它跑完再退出，而不是 cancel 打断。"""
+    _SlowPlugin.finished = False
+    agent = _new_agent()
+    loader = PluginLoader(allow={_SlowPlugin.id})
+    await loader.load_into(agent, [_SlowPlugin])
+    scheduler = AgentScheduler(agent, shutdown_timeout=2.0)
+    await scheduler.start()
+
+    adapter = InMemoryAdapter()
+    await adapter.send_text(agent, "slow")
+    # 在命令开始执行后立即 stop（命令还在 await asyncio.sleep）
+    await asyncio.sleep(0.05)
+    await scheduler.stop()
+
+    # 关键：命令体应跑完，而不是被 cancel 打断
+    assert _SlowPlugin.finished is True
+    msgs = await adapter.drain_outbox(agent, timeout=0.3)
+    assert any("done" in m.text for m in msgs)
+    await loader.unload_from(agent)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_timeout_falls_back_to_cancel() -> None:
+    """shutdown_timeout 超时时回退到 cancel（最后兜底，不让 stop 永远挂住）。"""
+    agent = _new_agent()
+    scheduler = AgentScheduler(agent, shutdown_timeout=0.1)
+    await scheduler.start()
+
+    # 直接 monkey-patch _handle_message 让它永远不返回
+    async def never_returns(_msg: object) -> None:
+        await asyncio.sleep(60)
+
+    scheduler._handle_message = never_returns  # type: ignore[method-assign]
+
+    adapter = InMemoryAdapter()
+    await adapter.send_text(agent, "anything")
+    await asyncio.sleep(0.05)
+
+    # stop 不应永远挂住；shutdown_timeout 后应回退到 cancel
+    await scheduler.stop()
+    assert scheduler._task is not None
+    assert scheduler._task.done()

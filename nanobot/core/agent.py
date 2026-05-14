@@ -64,9 +64,12 @@ class Agent:
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
     lifespan: Lifespan = field(default_factory=Lifespan)
-    inbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
+    # inbox 类型放宽到 object，让 scheduler 既能投 Message 也能投控制
+    # sentinel（如 graceful shutdown 用的 _STOP）。outbox 保持 Message
+    # 严格类型 —— adapter 是消费者，需要类型保护。
+    inbox: asyncio.Queue[object] = field(default_factory=asyncio.Queue)
     outbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
-    phase: LifecyclePhase = LifecyclePhase.SPAWN
+    phase: LifecyclePhase = LifecyclePhase.AWAKE
     plugins: list[_LoadedPlugin] = field(default_factory=list)
     _agent_scope: PluginScope | None = field(default=None, repr=False)
     _command_index: dict[str, CommandTarget] = field(default_factory=dict, repr=False)
