@@ -82,8 +82,8 @@ async def test_failed_load_rolls_back_previously_loaded_plugins() -> None:
 
     # agent 状态干净，没有半加载残留
     assert agent.plugins == []
-    # 命令索引也已清空（A 没有命令，但仍然检查 dict 状态）
-    assert agent._command_index == {}
+    # v0.2 起命令索引由 dispatcher 管理；回滚后 dispatcher 也无残留 op 注册
+    assert agent.dispatch.list_operations() == ()
 
 
 @pytest.mark.asyncio

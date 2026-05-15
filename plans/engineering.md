@@ -65,6 +65,12 @@ manifest 必含字段：
 - `requires_services`（依赖的服务名 + 契约引用）
 - `requires_plugins`（依赖的插件 id + 版本范围，用于 DAG 拓扑）
 - `config_schema`（msgspec.Struct 类型引用）
+- **v0.2 新增**：
+  - `consumes`：tuple[ScopeRule, ...]，声明插件消费哪些 envelope（缺省 = 不消费，仅命令型 plugin）
+  - `provides_operations`：tuple[OperationDescriptor, ...]，静态声明会注册到 dispatcher 的 Operation（@command 装饰的方法由 PluginMeta 自动汇入）
+  - `provides_sources`：tuple[SourceDescriptor, ...]，静态声明会注册的 Source
+  - `requires_operations`：tuple[OperationDep, ...]，依赖的外部 Operation（用于 DAG 反向解析）
+  - `requires_sources`：tuple[SourceDep, ...]，依赖的外部 Source
 
 ### 3.2 PluginScope（无副作用热重载 hard rule）
 
@@ -149,11 +155,14 @@ core 提供：
 - core 在装载时校验配置；**无 schema 的插件不允许装载**。
 - 自动生成面板字段（v0.x 后由 dashboard 插件消费）。
 
-### 4.7 Adapter 能力协商
+### 4.7 Endpoint 能力协商（v0.2 改写）
 
-- adapter 声明能力清单：`text` / `image` / `audio` / `file` / `markdown` / `card` / `reaction` / `typing` 等。
-- 插件发送消息时声明所需能力，core 决定 fallback。
-- **插件禁止硬假设平台能力**。
+> **v0.1 → v0.2 变更**：原 Adapter `StrEnum` `AdapterCapability` 已删除；能力名改注册式 `CapabilityName`，命名空间下移到 `im.*` / `tool.*`（详 [contracts.md §4](contracts.md#4-capability-命名)）。
+
+- Source / Operation 通过 `capabilities` 字段声明能力清单：`Caps.IM_TEXT` / `Caps.IM_IMAGE` / `Caps.TOOL_INVOKE` 等（注册式，领域插件可扩展）。
+- 插件 publish envelope 时声明 `capabilities_required`，dispatcher 用作 ScopeRule 匹配键之一（`ByCapability`）。
+- **插件禁止硬假设平台能力**：消费 envelope 时必须用 ScopeRule（如 `ByCapability(Caps.IM_TEXT)`）显式声明前置条件，缺失即不接收。
+- 详 [contracts.md §14-§18](contracts.md)。
 
 ### 4.8 双协议分离
 
@@ -187,16 +196,27 @@ core 提供：
 - 记录含 `trace_id` / `span_id` / `parent_span_id`，可串联跨插件因果链。
 - observability 插件订阅消费。
 
+### 4.13 Dispatcher 与跨 plugin 调用（v0.2 引入）
+
+- 命令、跨 plugin RPC、外部 invoke 全部统一为 **Operation** 概念（详 [contracts.md §14](contracts.md)）。
+- `@command` 装饰器降为 sugar：PluginMeta 在装载阶段自动包装为 `OperationDescriptor` 并通过 dispatcher 注册。
+- 跨 plugin 调用路径：`await ctx.dispatch.invoke(op_id, payload)` —— **inline await 实现**，不入异步队列（保 [architecture.md §5](architecture.md) 中 sub-ms 链路的预埋承诺）。
+- 事件推送：`await ctx.dispatch.publish(envelope)`，envelope.source.source_id 必须在已注册 Source 集内。
+- 注册的 Operation/Source 自动 attach 到调用方 PluginScope，plugin 卸载时 dispatcher 自动反注册（无需手写清理代码）。
+- Lint 规则（v0.2 起）将检查 plugin 字段直接持 raw socket / SDK client / 连接对象等违反 hard rule #14 的模式。
+- 详 [contracts.md §18 Dispatcher 协议](contracts.md)。
+
 ## 5. 测试基础设施
 
 core 必须内置以下测试支持，作为**一等公民**：
 
-- **In-memory adapter** —— 无需真实平台即可驱动 Agent。
+- **In-memory transport reference plugin** —— v0.2 起替代原 in-memory adapter；reference plugin 通过 dispatcher 注册 IM Source + Operation，无需真实平台即可驱动 Agent。
 - **可控时钟** —— 替换 `context.clock`，支持手动推进。
 - **内存事件总线** —— 同步分发，便于断言。
 - **Trace 录制 / 回放** —— 支持回归测试；尊重契约的 `Replayability` 声明，从不假装能回放 `none`。
 - **Contract test kit** —— 一份契约测试可套用任意实现（用于 Yume / mind-sim 多实现并存场景）。
 - **Handle leak detector** —— 测试结束时自动枚举未释放 `Handle`，存在即测试失败；contract test kit 强制启用，不可关闭。
+- **Operation/Source 反注册检测**（v0.2 新增）—— plugin 卸载后 contract test kit 自动断言 dispatcher 中无残留 Operation/Source 注册项。leak 即测试失败。
 - **Stub Handle 工厂** —— [`mutsukibot.core.handle.make_stub_handle(ref_id, *, kind, schema_id_target, schema_version_target, target, attributes)`](../mutsukibot/core/handle.py) 用于在没有真实后端（如 GPU）时生成可观测的假引用，便于上层插件单测。
 
 测试规则：

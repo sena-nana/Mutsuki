@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 import pytest
 
@@ -12,11 +12,13 @@ from mutsukibot.core.bus import Bus
 from mutsukibot.core.container import ServiceContainer
 from mutsukibot.core.context import AgentContext, TraceContext
 from mutsukibot.core.dependency import Dependent, UnresolvedParameterError
+from mutsukibot.core.dispatcher import Dispatcher
 from mutsukibot.core.scope import PluginScope
 from mutsukibot.runtime import NanoIdGen, SeededRng, SystemClock
 
 
 def _ctx() -> AgentContext:
+    # 单测 Dependent 不真实路由，dispatcher 用 None 占位（cast 绕过类型）。
     return AgentContext(
         agent_id=AgentId("a"),
         agent_owner=None,
@@ -26,6 +28,7 @@ def _ctx() -> AgentContext:
         services=ServiceContainer(),
         scope=PluginScope("p"),
         bus=Bus(),
+        dispatch=cast(Dispatcher, None),
         trace_ctx=TraceContext(trace_id=TraceId("t"), span_id=SpanId("s")),
     )
 

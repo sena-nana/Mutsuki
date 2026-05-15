@@ -6,12 +6,13 @@ import asyncio
 
 import pytest
 
-from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts import Scopes
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.plugins.echo import EchoPlugin
+from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
 
@@ -22,23 +23,31 @@ def _new_agent() -> Agent:
         clock=SystemClock(),
         id_gen=DeterministicIdGen(),
         rng=SeededRng(seed=0),
+        accepts=(Scopes.IM_TEXT.to_rule(),),
     )
+
+
+def _get_inmem(agent: Agent) -> InMemoryEndpointPlugin:
+    for entry in agent.plugins:
+        if isinstance(entry.plugin, InMemoryEndpointPlugin):
+            return entry.plugin
+    raise RuntimeError("InMemoryEndpointPlugin 未装载")
 
 
 @pytest.mark.asyncio
 async def test_full_lifecycle() -> None:
     agent = _new_agent()
 
-    loader = PluginLoader(allow={EchoPlugin.id})
-    await loader.load_into(agent, [EchoPlugin])
+    loader = PluginLoader(allow={EchoPlugin.id, InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, EchoPlugin])
     scheduler = AgentScheduler(agent)
     await scheduler.start()
     assert agent.phase == LifecyclePhase.AWAKE
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "echo hello")
+    inmem = _get_inmem(agent)
+    await inmem.send_text("echo hello")
     await asyncio.sleep(0.3)
-    msgs = await adapter.drain_outbox(agent, timeout=0.5)
+    msgs = await inmem.drain_outbox(timeout=0.5)
     assert msgs, "应至少有一条 outbox 消息"
     assert any("echo: hello" in m.text for m in msgs)
 

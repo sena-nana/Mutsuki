@@ -1,4 +1,10 @@
-"""消息与内容片段契约。"""
+"""消息与内容片段契约。
+
+v0.2 起 ``Message`` 是 :class:`mutsukibot.contracts.envelope.Envelope` 的 IM
+特化；``ChannelRef`` 是 :class:`mutsukibot.contracts.envelope.SourceRef` 的
+IM 特化。原 ``ChannelRef.adapter_id`` 字段已重命名为 ``source_id``（继承自
+SourceRef）—— 见 contracts.md §16 与 D1。
+"""
 
 from __future__ import annotations
 
@@ -6,8 +12,7 @@ from enum import StrEnum
 from typing import ClassVar
 
 from mutsukibot.contracts.base import Contract
-from mutsukibot.contracts.capability import CapabilityName
-from mutsukibot.contracts.ids import MessageId
+from mutsukibot.contracts.envelope import Envelope, SourceRef
 from mutsukibot.contracts.refpayload import RefDescriptor
 
 
@@ -20,13 +25,16 @@ class ContentKind(StrEnum):
     TOOL_SCHEMA_REF = "tool_schema_ref"
 
 
-class ChannelRef(Contract):
-    """消息来源所在频道的指针。"""
+class ChannelRef(SourceRef):
+    """IM 消息来源所在频道的指针 —— SourceRef 的 IM 特化。
+
+    ``source_id`` 继承自 SourceRef（v0.1 名为 ``adapter_id``，v0.2 重命名以
+    与统一的 endpoint 命名空间对齐；``kind`` 通常为 ``SourceKinds.IM``）。
+    """
 
     schema_id: ClassVar[str] = "mutsukibot.channel_ref"
     schema_version: ClassVar[str] = "1.0.0"
 
-    adapter_id: str
     channel_id: str
     user_id: str | None = None
 
@@ -43,17 +51,19 @@ class ContentPart(Contract):
     metadata: dict[str, str] = {}
 
 
-class Message(Contract):
-    """入站或出站消息的封装。"""
+class Message(Envelope):
+    """入站或出站消息 —— Envelope 的 IM 特化。
+
+    ``id / timestamp / source / capabilities_required`` 继承自 Envelope。
+    ``payload_schema_id`` 在 v0.2 默认为 ``"mutsukibot.message"``。
+    ``source`` 字段类型在运行时为 :class:`ChannelRef`（SourceRef 子类）；
+    msgspec 不在结构化继承中收窄字段类型，由调用方保证。
+    """
 
     schema_id: ClassVar[str] = "mutsukibot.message"
     schema_version: ClassVar[str] = "1.0.0"
 
-    id: MessageId
-    timestamp: float
-    source: ChannelRef
-    parts: tuple[ContentPart, ...]
-    capabilities_required: tuple[CapabilityName, ...] = ()
+    parts: tuple[ContentPart, ...] = ()
 
     @property
     def text(self) -> str:

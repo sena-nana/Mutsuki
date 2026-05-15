@@ -32,8 +32,10 @@ MutsukiBot 是一个全新的 **Agent 中心** Bot 框架，融合 Koishi、None
 8. **结构化错误，不允许吞异常返默认值** —— fallback 必须显式记录原因。
 9. **决定性时间与 ID 由 runtime 注入** —— 插件禁止直接用 `time.time()` / `uuid.uuid4()` / `random` 全局源。
 10. **同步点显式化** —— 禁止隐式阻塞，必须走 runtime scheduler。
-11. **双协议分离** —— 外部协议（OneBot / MCP / ChatCompletion 等）只能出现在 adapters / 桥接插件中，不得渗透 `core` / `contracts`。
+11. **双协议分离** —— 外部协议（OneBot / MCP / ChatCompletion 等）只能出现在 reference plugin（v0.2 起取代旧 adapters）中，不得渗透 `core` / `contracts`。
 12. **Borrow with Discipline** —— 借鉴 Koishi / NoneBot / AstrBot 的心智，**不照搬代码或 API 形态**；每个机制必须能解释自己对「Agent 一等公民、解耦、可扩展」中至少一项的贡献。
+13. **未声明 accepts 即拒绝路由**（v0.2 引入）—— Agent 必须显式声明 `accepts: tuple[ScopeRule, ...]`；空 tuple 等价于不接收任何 envelope（命令路径仍可用）。理由：路由层等价于 hard rule #8 的"显式 fallback 而非默认隐式"，避免 Agent 不自知地处理无关数据。详 [contracts.md §17](plans/contracts.md)。
+14. **I/O 资源外置**（v0.2 引入）—— 所有 Plugin（含注册 Operation/Source 的）禁止字段直接持 raw socket / SDK client / 连接对象；必须通过 `Handle[T]` attach 到 `PluginScope`，由 finalizer 释放。理由：让"重载 plugin 逻辑"与"重连资源"在生命周期上解耦；为 v0.3+ 的 ResourceHost 跨 plugin reload 共享留出无迁移成本的接口。详 [plans/engineering.md §4.13](plans/engineering.md)。
 
 ## 工作准则
 

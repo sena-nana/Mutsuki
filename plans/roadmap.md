@@ -84,12 +84,53 @@
 - Yume v0.4 的某个 `StimulusEvent → ExpressionDecision` 样本能用 v0.1 契约表达（即使没有 Yume 插件实现，也要能序列化 / 反序列化通过）
 - 通用 by-ref 协议自洽：用 stub 引用模拟一条「插件 A 产生 ref → 插件 B 借用 ref → scope 关闭自动释放」链路，全程核心代码不出现任何领域字样
 
+## 当前推进：v0.2 通用 Agent 框架改造（进行中）
+
+**已完成**（Phase A + Phase B）—— 把 Adapter 抽象拆解为 Plugin + 注册式 Operation/Source（Option IV，详见
+[contracts.md §14-§18](contracts.md) 与 plan 文档 D1/D9/D9b/D12/D13）：
+
+- 契约层：`Envelope` / `SourceRef` / `Operation` / `Source` / `ScopeRule` / `Dispatcher` 五节协议
+- Hard Rule #13（accepts 显式拒绝）+ #14（I/O 资源外置）
+- Dispatcher 实现：register_operation / register_source / lookup_operation / invoke (inline await) / publish 广播筛选
+- D9b：`provides_operations` / `provides_sources` / `requires_operations` / `requires_sources` 静态声明 + DAG 拓扑 + dispatcher undeclared 运行时校验
+- D12：`@command` 与 Operation 统一，scheduler 命令路径走 dispatcher
+- envelope 二次分发：`Plugin.consumes` ScopeRule + `on_envelope` hook
+- Reference 插件：`InMemoryEndpointPlugin` / `TodoPlugin` / `QqToTodoPlugin`（含 hard rule #14 Handle 演示）
+- 测试：130 通过（v0.1 74 + Phase A 36 + Phase B 20）
+- 三个 smoke 端到端：`echo` / `todo` / `qq_to_todo`（跨 endpoint 协作 + DAG 自动排序）
+
+**v0.2 剩余工作（按优先级）**：
+
+1. **Phase C —— 多 Agent 协作**
+   - `mutsukibot/core/agent_registry.py`：`AgentRegistry` + `iter_accepting(envelope)`
+   - `Dispatcher._route_envelope` 改造为通过 AgentRegistry 枚举所有 Agent 并发投递（D7 广播）
+   - `mutsukibot/plugins/cross_agent_smoke.py`：主控 Agent + 审计 Agent 同时 accepts IM 验证广播
+   - 测试：`tests/core/test_agent_registry.py`
+
+2. **首个真实 IM transport reference plugin**（如 OneBot v11）
+   - 仅作为 reference plugin 实现，不进 core / contracts（hard rule #11）
+   - 验证 hard rule #14：socket 走 Handle attach 到 PluginScope
+
+3. **配置 schema 自动校验**
+   - PluginLoader 装载阶段对 `cls.Config` 跑 msgspec 校验
+   - 配置加载失败 fail-loud 进 `plugin.config_invalid`
+
+4. **Phase B 跳过的次要项**
+   - dispatcher.invoke microbenchmark CI gate（保 v0.5+ Yume sub-ms 链路前置承诺）
+   - hard rule #14 lint 规则：扫 Plugin 子类禁止字段类型为 `socket.socket / ClientSession / ...`
+   - Contract test kit：把 "plugin 卸载后断言 dispatcher 无残留 op/source" 抽成可复用 fixture
+
+5. **docs/ 同步**
+   - `docs/06-developer/writing-adapter.md` → `writing-transport-plugin.md`，内容重写
+   - `docs/07-api/adapters.md` 删除，新增 `dispatcher.md` / `endpoint.md`
+   - `docs/appendix/glossary.md` 把 adapter / adapter_id 旧词替换为 endpoint / source_id
+   - 各章节示例代码用 InMemoryEndpointPlugin 替代 InMemoryAdapter
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.2 | 真实 adapter（CLI + 一个 IM 平台）、配置 schema 自动校验 |
-| v0.3 | 多 Agent 并发、capability 资源协商、saga 原语 |
+| v0.3 | 多 Agent 并发增强（优先级 / 选举）、capability 资源协商、saga 原语、跨 agent `dispatch.invoke_in_agent`、**ResourceHost** 服务（跨 plugin reload 物理零断连，承接 v0.2 hard rule #14）、类型化 Handle 注入（v0.2 D6 推迟项） |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

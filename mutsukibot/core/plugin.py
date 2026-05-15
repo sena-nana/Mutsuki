@@ -39,6 +39,7 @@ import msgspec
 
 from mutsukibot.contracts.capability import Capability, CapabilityName
 from mutsukibot.contracts.error import Error, Errs
+from mutsukibot.contracts.operation import OperationDep, OperationDescriptor
 from mutsukibot.contracts.permission import PermissionName, PermissionRule
 from mutsukibot.contracts.permission_builtin import Perms
 from mutsukibot.contracts.plugin import (
@@ -49,6 +50,8 @@ from mutsukibot.contracts.plugin import (
     PluginManifest,
     ServiceDep,
 )
+from mutsukibot.contracts.scope import ScopeRule
+from mutsukibot.contracts.source import SourceDep, SourceDescriptor
 from mutsukibot.core.dependency import (
     Dependent,
     UnresolvedParameterError,
@@ -56,6 +59,7 @@ from mutsukibot.core.dependency import (
 from mutsukibot.core.registry import PluginRegistry
 
 if TYPE_CHECKING:
+    from mutsukibot.contracts.envelope import Envelope
     from mutsukibot.core.agent import Agent
     from mutsukibot.core.bus import Bus
     from mutsukibot.core.container import ServiceContainer
@@ -262,6 +266,7 @@ def _build_command_spec(
         return_schema = _json_type_for(ret_ann)
 
     return CommandSpec(
+        op_id=f"{plugin_id}.{fn_name}",
         name=fn_name,
         description=description,
         plugin_id=plugin_id,
@@ -372,6 +377,70 @@ class PluginMeta(ABCMeta):
         cls.__commands__ = tuple(commands)  # type: ignore[attr-defined]
         cls.__command_markers__ = markers  # type: ignore[attr-defined]
 
+        # 3b) v0.2 新增静态字段（D9b）：consumes / provides_* / requires_*
+        # @command 装饰的方法自动汇入 provides_operations，与显式声明合并。
+        consumes_raw = cls.__dict__.get("consumes", ()) or ()
+        consumes: tuple[ScopeRule, ...] = tuple(consumes_raw)
+        for rule in consumes:
+            if not isinstance(rule, ScopeRule):
+                err = Error(
+                    code=Errs.PLUGIN_DEFINITION_ERROR,
+                    source=cls.__module__,
+                    route="plugin.define",
+                    evidence={
+                        "plugin_class": name,
+                        "field": "consumes",
+                        "reason": "element_not_scope_rule",
+                        "got_type": type(rule).__qualname__,
+                    },
+                )
+                raise PluginDefinitionError(
+                    f"Plugin {name!r} `consumes` 元素必须是 ScopeRule，"
+                    f"得到 {type(rule).__qualname__!r}",
+                    error=err,
+                )
+
+        explicit_ops: tuple[OperationDescriptor, ...] = tuple(
+            cls.__dict__.get("provides_operations", ()) or ()
+        )
+        # 检测：用户显式声明的 op_id 不得与 @command 派生的 op_id 撞名
+        cmd_op_ids = {spec.op_id for spec in commands}
+        for op in explicit_ops:
+            if op.op_id in cmd_op_ids:
+                err = Error(
+                    code=Errs.OPERATION_CONFLICT,
+                    source=cls.__module__,
+                    route="plugin.define",
+                    evidence={
+                        "plugin_class": name,
+                        "op_id": op.op_id,
+                        "reason": "explicit_op_clashes_with_command_derived",
+                    },
+                )
+                raise PluginDefinitionError(
+                    f"Plugin {name!r} 显式声明的 op_id {op.op_id!r} 与 @command "
+                    f"派生 op_id 冲突",
+                    error=err,
+                )
+        provides_operations = tuple(commands) + explicit_ops
+
+        provides_sources: tuple[SourceDescriptor, ...] = tuple(
+            cls.__dict__.get("provides_sources", ()) or ()
+        )
+        requires_operations: tuple[OperationDep, ...] = tuple(
+            cls.__dict__.get("requires_operations", ()) or ()
+        )
+        requires_sources: tuple[SourceDep, ...] = tuple(
+            cls.__dict__.get("requires_sources", ()) or ()
+        )
+
+        # 把规范化结果 setattr 回类（运行时 attach_plugin / dispatcher 直接读类属性）
+        cls.consumes = consumes  # type: ignore[attr-defined]
+        cls.provides_operations = provides_operations  # type: ignore[attr-defined]
+        cls.provides_sources = provides_sources  # type: ignore[attr-defined]
+        cls.requires_operations = requires_operations  # type: ignore[attr-defined]
+        cls.requires_sources = requires_sources  # type: ignore[attr-defined]
+
         # 4) 构造静态 manifest。
         config_schema_id = getattr(config_cls, "schema_id", "") or (
             f"{plugin_id}.config"
@@ -386,6 +455,11 @@ class PluginMeta(ABCMeta):
             requires_plugins=tuple(cls.__dict__.get("requires_plugins", ()) or ()),
             config_schema_id=config_schema_id,
             commands=tuple(commands),
+            consumes=consumes,
+            provides_operations=provides_operations,
+            provides_sources=provides_sources,
+            requires_operations=requires_operations,
+            requires_sources=requires_sources,
         )
         cls.__manifest__ = manifest  # type: ignore[attr-defined]
 
@@ -436,6 +510,18 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
     requires_plugins: ClassVar[list[PluginDep]] = []
     requires_services: ClassVar[list[ServiceDep]] = []
     provides_services: ClassVar[list[ServiceDep]] = []
+    # v0.2 新增（D9b 静态声明）：
+    # - consumes：插件消费哪些 envelope（ScopeRule 谓词）
+    # - provides_operations：声明会注册的 Operation；@command 装饰的方法
+    #   由 PluginMeta 自动汇入，用户的显式声明也会合并进来
+    # - provides_sources：声明会注册的 Source
+    # - requires_operations / requires_sources：依赖外部 op / source（用于
+    #   PluginLoader DAG 反向解析与运行时 undeclared 校验）
+    consumes: ClassVar[tuple[ScopeRule, ...]] = ()
+    provides_operations: ClassVar[tuple[OperationDescriptor, ...]] = ()
+    provides_sources: ClassVar[tuple[SourceDescriptor, ...]] = ()
+    requires_operations: ClassVar[tuple[OperationDep, ...]] = ()
+    requires_sources: ClassVar[tuple[SourceDep, ...]] = ()
     Config: ClassVar[type[msgspec.Struct]]
 
     __manifest__: ClassVar[PluginManifest]
@@ -463,6 +549,17 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
 
     async def on_unload(self) -> None:
         """重写以做显式清理。默认空实现（scope 仍会被关闭）。"""
+
+    async def on_envelope(self, envelope: "Envelope") -> None:
+        """envelope 二次分发的 hook（v0.2 引入；对应 D3 plugin.consumes）。
+
+        scheduler 取出 envelope 后，会遍历 agent.plugins，对 ``consumes``
+        声明的 ScopeRule 匹配此 envelope 的 plugin，依次 await 本方法。
+        默认空实现 —— 仅命令型插件（``consumes=()``）保持无操作。
+
+        envelope 类型为 :class:`mutsukibot.contracts.envelope.Envelope` 基类；
+        子类需要的 IM 字段通过 ``isinstance(envelope, Message)`` 收窄获取。
+        """
 
 
 __all__ = ["Plugin", "PluginDefinitionError", "PluginMeta", "command"]

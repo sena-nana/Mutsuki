@@ -38,6 +38,8 @@ class ResourceKind(StrEnum):
     SERVICE_REGISTRATION = "service_registration"
     CONTEXT_ATTACHMENT = "context_attachment"
     CONFIG_WATCHER = "config_watcher"
+    DISPATCH_REGISTRATION = "dispatch_registration"
+    GENERIC_DISPOSE = "generic_dispose"
 
 
 class HandleLeakError(Exception):
@@ -83,6 +85,20 @@ class PluginScope:
 
     def add_config_watcher(self, unwatch: CleanupFn) -> None:
         self._register(unwatch, ResourceKind.CONFIG_WATCHER)
+
+    def add_dispatch_registration(self, unregister: CleanupFn) -> None:
+        """挂载 dispatcher 反注册回调（v0.2 引入；详见 contracts §18.5）。
+
+        ``Dispatcher.register_operation`` / ``register_source`` 在内部调用
+        本方法把 ``unregister_operation`` / ``unregister_source`` 挂到调用方
+        的 PluginScope；plugin 卸载时 scope.close() 会触发反注册，无需 plugin
+        作者手写清理代码。
+        """
+        self._register(unregister, ResourceKind.DISPATCH_REGISTRATION)
+
+    def add_dispose(self, fn: CleanupFn) -> None:
+        """通用清理回调挂载点 —— 没有更具体类别可归时使用。"""
+        self._register(fn, ResourceKind.GENERIC_DISPOSE)
 
     def attach_handle(self, handle: Handle[object]) -> None:
         self._guard()

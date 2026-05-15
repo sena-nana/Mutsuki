@@ -3,15 +3,20 @@
 Agent 拥有自己的：
 
 * 身份（``agent_id``）
+* 职责范围（``accepts: tuple[ScopeRule, ...]``，v0.2 引入；空 tuple = 拒绝
+  所有 envelope，遵守 [AGENTS.md hard rule #13](../../AGENTS.md)）
 * 生命周期阶段（:class:`LifecyclePhase`）
 * tick 调度器（一个 ``asyncio.Task``）
 * inbox / outbox 队列
 * 已加载的插件实例（每个有自己的 :class:`PluginScope`）
-* :class:`ServiceContainer` 与 :class:`Bus`
+* :class:`ServiceContainer` / :class:`Bus` / :class:`Dispatcher`
 * trace 上下文
 
-Agent 由 :class:`AgentRegistry` 创建，由 :class:`AgentScheduler` 驱动
-（见 :mod:`mutsukibot.runtime.scheduler`）。
+v0.2 起 ``_command_index`` / ``find_command`` / ``CommandTarget`` 已删除：
+命令路由统一走 :class:`mutsukibot.core.dispatcher.Dispatcher`（详 D12 命令与
+Operation 统一）。``attach_plugin`` 仍保留 —— 用于装载流程把 plugin 实例
+绑到 agent.plugins，但不再写命令索引（PluginMeta 在装载阶段把 @command
+转成 Operation 注册到 dispatcher）。
 """
 
 from __future__ import annotations
@@ -23,14 +28,17 @@ from typing import TYPE_CHECKING
 from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.message import Message
+from mutsukibot.contracts.scope import ScopeRule
 from mutsukibot.core.bus import Bus
 from mutsukibot.core.container import ServiceContainer
 from mutsukibot.core.context import AgentContext, TraceContext
+from mutsukibot.core.dispatcher import Dispatcher
 from mutsukibot.core.lifespan import Lifespan
 from mutsukibot.core.scope import PluginScope
 
 if TYPE_CHECKING:
-    from mutsukibot.core.plugin import Plugin, _CommandMarker
+    from mutsukibot.core.dependency import Dependent
+    from mutsukibot.core.plugin import Plugin
     from mutsukibot.runtime.clock import Clock
     from mutsukibot.runtime.idgen import IdGen
     from mutsukibot.runtime.rng import RNG
@@ -42,14 +50,21 @@ class _LoadedPlugin:
     scope: PluginScope
 
 
-@dataclass(slots=True, frozen=True)
-class CommandTarget:
-    """``find_command`` 的命中结果 —— 调度器路由命令所需的全部句柄。"""
+def _make_command_handler(
+    plugin: "Plugin",
+    dependent: "Dependent[object]",
+):
+    """把一个 @command 装饰的方法包成 Operation handler。
 
-    plugin: "Plugin"
-    attr_name: str
-    scope: PluginScope
-    marker: "_CommandMarker"
+    Operation handler 统一签名 ``(ctx, payload: dict) -> Awaitable[Any]``。
+    这里把 ``payload`` 作为 extras 透传给 :meth:`Dependent.solve`，由 Dependent
+    完成 typed-arg 绑定（与 v0.1 scheduler 路径一致）。
+    """
+
+    async def _handler(ctx: AgentContext, payload: dict[str, object]) -> object:
+        return await dependent.solve(ctx, bound_self=plugin, **payload)
+
+    return _handler
 
 
 @dataclass
@@ -61,18 +76,29 @@ class Agent:
     id_gen: "IdGen"
     rng: "RNG"
     owner: str | None = None
+    # v0.2 新增：Agent 显式声明可消费 envelope 的 ScopeRule 集合。
+    # 空 tuple = 拒绝所有 envelope（命令路径仍可用 —— 命令是被显式调用，
+    # 不走 envelope 路由）。详见 hard rule #13 与 contracts §17。
+    accepts: tuple[ScopeRule, ...] = ()
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
     lifespan: Lifespan = field(default_factory=Lifespan)
-    # inbox 类型放宽到 object，让 scheduler 既能投 Message 也能投控制
-    # sentinel（如 graceful shutdown 用的 _STOP）。outbox 保持 Message
-    # 严格类型 —— adapter 是消费者，需要类型保护。
+    # inbox 类型放宽到 object，让 scheduler 既能投 Message / Envelope 也能
+    # 投控制 sentinel（如 graceful shutdown 用的 _STOP）。outbox 保持
+    # Message 严格类型 —— transport plugin 是消费者，需要类型保护。
     inbox: asyncio.Queue[object] = field(default_factory=asyncio.Queue)
     outbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
     phase: LifecyclePhase = LifecyclePhase.AWAKE
     plugins: list[_LoadedPlugin] = field(default_factory=list)
     _agent_scope: PluginScope | None = field(default=None, repr=False)
-    _command_index: dict[str, CommandTarget] = field(default_factory=dict, repr=False)
+    _dispatch: Dispatcher | None = field(default=None, repr=False)
+
+    @property
+    def dispatch(self) -> Dispatcher:
+        """该 Agent 的 Dispatcher 实例（懒初始化）。"""
+        if self._dispatch is None:
+            self._dispatch = Dispatcher(self)
+        return self._dispatch
 
     def make_context(self, message: Message | None = None) -> AgentContext:
         trace_ctx = TraceContext(
@@ -80,8 +106,8 @@ class Agent:
             span_id=SpanId(self.id_gen.next("span")),
         )
         # 默认 scope 始终是 agent 自有 scope，避免「碰巧排第一」的插件被卸载
-        # 时把 agent 上下文一起带走。命令路由路径在 scheduler 里会显式替换为
-        # 插件本体的 scope。
+        # 时把 agent 上下文一起带走。Operation 调用路径在 dispatcher 里会
+        # 显式替换为 op 注册时绑定的 plugin scope。
         if self._agent_scope is None:
             self._agent_scope = PluginScope(self.agent_id)
         scope = self._agent_scope
@@ -94,29 +120,54 @@ class Agent:
             services=self.services,
             scope=scope,
             bus=self.bus,
+            dispatch=self.dispatch,
             trace_ctx=trace_ctx,
             message=message,
         )
 
     def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
+        """把 plugin 实例登记到 agent.plugins，并把 @command 注册为 Operation。
+
+        v0.2 改动：原来的 ``_command_index`` 直接索引已删除；改为遍历 plugin
+        类的 ``__command_markers__``，把每个 @command 标记包装成一个
+        Operation handler 并通过 ``self.dispatch.register_operation`` 注册。
+        反注册回调挂到 plugin 的 PluginScope 上，plugin 卸载时自动清理。
+        """
         self.plugins.append(_LoadedPlugin(plugin, scope))
-        markers: dict[str, "_CommandMarker"] = plugin.__class__.__command_markers__
-        # 用 spec.name（marker.explicit_name or func.__name__）登记，与外部
-        # 触发时输入的命令名一致。原先同时按 attr_name 与 func.__name__ 两次
-        # setdefault：99% 情况下两者相同，剩下 1% 也没人会用 attr_name 触发。
-        for attr_name, marker in markers.items():
+
+        # 把 @command 标记的方法注册为 Operation。延迟 import 避免循环。
+        from mutsukibot.core.dependency import Dependent
+        from mutsukibot.core.plugin import _CommandMarker
+
+        markers: dict[str, _CommandMarker] = plugin.__class__.__command_markers__
+        for _attr_name, marker in markers.items():
             spec = marker.spec
-            cmd_name = spec.name if spec is not None else attr_name
-            target = CommandTarget(
-                plugin=plugin, attr_name=attr_name, scope=scope, marker=marker
+            if spec is None:
+                continue
+            # marker.dependent 已在 PluginMeta 装载阶段缓存
+            dependent: Dependent[object] = (
+                marker.dependent
+                if marker.dependent is not None
+                else Dependent.parse(marker.func)
             )
-            self._command_index.setdefault(cmd_name, target)
+            handler = _make_command_handler(plugin, dependent)
+            self.dispatch.register_operation(
+                spec,
+                handler=handler,
+                perms=marker.perms,
+                plugin_scope=scope,
+            )
 
     def detach_plugin(self, plugin: "Plugin") -> None:
-        """从命令索引里剔除该插件 —— 由 loader 卸载时调用。"""
-        keys_to_drop = [k for k, t in self._command_index.items() if t.plugin is plugin]
-        for k in keys_to_drop:
-            del self._command_index[k]
+        """从 agent.plugins 摘除该 plugin（v0.2 起 no-op）。
+
+        v0.2 改动：命令索引清理由 dispatcher 自动完成（register_operation 时
+        挂的反注册回调跟随 PluginScope.close 触发）。plugin 实例从
+        ``agent.plugins`` 中移除由 PluginLoader.unload_from 显式
+        ``agent.plugins.pop()`` 完成；这里仅保留接口签名以兼容 loader 现有
+        调用路径，无实际工作。
+        """
+        return
 
     async def close_agent_scope(self) -> None:
         """关闭 agent 自有 fallback scope；由调度器在 stop 阶段调用。"""
@@ -124,8 +175,5 @@ class Agent:
             await self._agent_scope.close()
         self._agent_scope = None
 
-    def find_command(self, name: str) -> CommandTarget | None:
-        return self._command_index.get(name)
 
-
-__all__ = ["Agent", "CommandTarget"]
+__all__ = ["Agent"]

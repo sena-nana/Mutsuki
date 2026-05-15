@@ -31,6 +31,15 @@
 | `Handle[T]` | 引用所有权与生命周期 | `acquire / release / borrow / is_alive`；与 `PluginScope` 集成 |
 | `RefDescriptor` | 引用的可观测元数据 | `ref_id`、`kind`、`schema_id_target`、`schema_version_target`、`attributes`、`lineage`（详见 §11.3） |
 | `BackpressureChannel[T]` | 流式 payload 速率匹配 | `send / recv / high_watermark / low_watermark` |
+| `Envelope` | 通用入站/出站载体（IM `Message` 是其子类） | `id`、`timestamp`、`source: SourceRef`、`payload_schema_id`、`capabilities_required`（详见 §16） |
+| `SourceRef` | 通用事件来源描述（IM `ChannelRef` 是其子类） | `source_id`、`kind: SourceKindName`、`metadata`（详见 §16） |
+| `OperationDescriptor` | 静态声明的可调用 Operation | `op_id`、`perms_rule_id`、`requires_capabilities`、`params_schema`、`return_schema`、`is_tool`（详见 §14；命令 `CommandSpec` 是其特化）|
+| `OperationDep` | 插件依赖外部 Operation 的声明 | `op_id`、`required_caps`（用于 DAG 反向解析）|
+| `SourceKindName` | 已注册的 Source 类型名（`im` / `tool` / `hybrid`） | `RegisteredString` 子类，门面 `SourceKinds` |
+| `SourceDescriptor` | 静态声明的事件源 | `source_id`、`kind`、`capabilities`（详见 §15）|
+| `SourceDep` | 插件依赖外部 Source 的声明 | `source_id`、`required_caps` |
+| `ScopeRule` | envelope 路由谓词（与 `PermissionRule` 同模式） | `_Leaf / _And / _Or` AST + `check(envelope) -> bool`（详见 §17） |
+| `ScopeName` | 已注册的命名 scope（门面 `Scopes`） | `RegisteredString` 子类 |
 
 ## 2. PluginManifest
 
@@ -98,6 +107,16 @@ Error:
 | `plugin.cycle` | 插件 DAG 存在环 |
 | `plugin.scope_violation` | 副作用未通过 `PluginScope` 注册 |
 | `transaction.compensation_failed` | Saga 补偿步骤失败 |
+| `operation.not_found` | dispatcher.invoke 找不到对应 op_id |
+| `operation.undeclared` | 运行时注册的 op_id 未在调用方 plugin 的 `provides_operations` 静态声明集内 |
+| `operation.conflict` | 多个 plugin 静态声明同一 op_id |
+| `operation.unhealthy` | Operation 处于 unhealthy 状态（handler 此前抛出异常）|
+| `operation.invoke_failed` | dispatcher.invoke 执行链路失败（capability/permission 拦截以外的失败）|
+| `operation.handler_raised` | Operation handler 抛出未捕获异常 |
+| `source.unregistered` | publish envelope 时 `envelope.source.source_id` 不在已注册集 |
+| `source.conflict` | 多个 plugin 静态声明同一 source_id |
+| `source.undeclared` | 运行时注册的 source_id 未在调用方 plugin 的 `provides_sources` 静态声明集内 |
+| `scope.no_match` | 路由阶段 envelope 无任何 Agent.accepts 匹配（仅在 strict 模式记录；默认 silently drop） |
 
 ## 4. Capability 命名
 
@@ -125,6 +144,16 @@ v0.0 草案能力名（v0.1 已注册到 `Caps` 内）：
 | `hold_ref` | `{"max_handles": 64}` | 长期持有 `Handle`（跨 tick） |
 | `borrow_ref` | — | 短期借用 `Handle`（单次调用内） |
 | `produce_ref_stream` | `{"channels": 4}` | 作为 `BackpressureChannel` 生产者 |
+| `im.text` | — | IM 文本消息 Source/Operation |
+| `im.image` | — | IM 图片消息 Source/Operation |
+| `im.audio` | — | IM 音频消息 Source/Operation |
+| `im.file` | — | IM 文件消息 Source/Operation |
+| `im.markdown` | — | IM Markdown 富文本 |
+| `im.card` | — | IM 卡片消息 |
+| `im.reaction` | — | IM 表情/反应 |
+| `im.typing` | — | IM 输入指示 |
+| `tool.invoke` | — | MCP 风格工具型 Operation |
+| `tool.event` | — | MCP 风格工具型 Source（外部状态变更推送）|
 
 约束：
 
@@ -434,3 +463,260 @@ scheduler 在路由前 `await rule.check(ctx)`；失败 → `Error(code="permiss
 - [Yume/mind-sim/mind_sim/](../../../Yume/mind-sim/mind_sim/) —— `bus` / `engines` / `providers` / `server`
 
 契约若无法承载这些类型 → **修契约**，不为任一系统特化。
+
+## 14. Operation 协议（v0.2 引入）
+
+> **设计原则**：命令（v0.1 `@command`）与跨 plugin RPC（v0.2 `dispatch.invoke`）是同一概念 —— 一个有「身份 + 准入 + 资源量纲 + 参数 schema + 实现」的可调用物。统一称为 **Operation**，对应 [AGENTS.md hard rule #5](../AGENTS.md)「指令即工具，禁止维护两份」。
+
+### 14.1 OperationDescriptor —— 静态声明
+
+```text
+OperationDescriptor:
+  op_id: str                        # agent-local 全限定，约定 "<plugin_id>.<name>" 或 "<source_namespace>.<name>"
+  description: str                  # 人类可读，docstring 首段 / Annotated[T, Arg(desc=...)]
+  perms_rule_id: str                # 关联到 PermissionRule
+  requires_capabilities: tuple[CapabilityName, ...]
+  params_schema: dict[str, Any]     # JSON Schema 形式（与 v0.1 CommandSpec.parameters_schema 一致）
+  return_schema: dict[str, Any]
+  is_tool: bool                     # 是否同时作为 LLM tool manifest
+```
+
+`CommandSpec` 是 `OperationDescriptor` 的命令侧别名/特化，PluginMeta 在装载阶段从 `@command` 装饰的方法**自动**生成 `OperationDescriptor` 并通过 dispatcher 注册（详 §18）。
+
+### 14.2 op_id 命名规范
+
+- **agent-local**：op_id 在同一 Agent 内全局唯一，跨 Agent 不冲突（同进程多 Agent 各持独立 Operation 表）。
+- **建议命名**：`<plugin_id>.<method_name>`（来自 @command）或 `<source_namespace>.<op_name>`（来自 `dispatch.register_operation`）。如 `echo.echo`、`todo:default.create`、`qq:bot1.send_msg`。
+- **跨 agent 调用**：v0.2 不提供；v0.3 引入显式 `dispatch.invoke_in_agent(agent_id, op_id, payload)`。
+
+### 14.3 注册路径
+
+| 来源 | 注册时机 | 静态声明位置 |
+|---|---|---|
+| `@command` 装饰的 plugin 方法 | PluginMeta 在 plugin 装载时把 marker 包成 OperationDescriptor，通过 dispatcher 注册 | `Plugin.provides_operations` 由 PluginMeta **自动汇入**（用户无需手写） |
+| `dispatch.register_operation(op_id, ...)` | plugin `on_load` 显式调用 | 用户必须在 `Plugin.provides_operations` 显式声明 OperationDescriptor |
+
+### 14.4 静态 vs 运行时校验
+
+- **静态（PluginLoader.discover）**：扫所有 plugin 的 `provides_operations`，构建 `op_id → providing_plugin_id` 反向索引；同名冲突 → `Error(code="operation.conflict")`。
+- **DAG 解析（PluginLoader._toposort）**：把 `requires_operations` 转换为 plugin-level 依赖（"A requires op X，X by B → A depends on B"）。
+- **运行时（dispatcher.register_operation）**：op_id 必须在调用方 plugin 的 provides_operations 集合内，否则 `Error(code="operation.undeclared")`。
+- **dispatcher.invoke 入口**：未注册 → `operation.not_found`；unhealthy → `operation.unhealthy`。
+
+### 14.5 状态机
+
+```text
+active → unhealthy（handler 抛出未捕获异常）
+unhealthy → active（plugin reload）
+active → unregistering（plugin 正在卸载，PluginScope.close 中）
+```
+
+dispatcher 提供 `operation_status(op_id) -> OperationStatus` 查询 API。
+
+## 15. Source 协议（v0.2 引入）
+
+> **设计原则**：Source 是「事件推送的标识声明」，与 Operation（被调用的入口）是对称概念。Plugin 主动 publish envelope 时，envelope.source.source_id 必须指向已注册 source_id；ScopeRule 据此做路由匹配。Source 不需要 handler，仅声明元数据。
+
+### 15.1 SourceDescriptor —— 静态声明
+
+```text
+SourceDescriptor:
+  source_id: str                # agent-local 全限定，如 "qq:bot1" / "todo:default"
+  kind: SourceKindName          # 注册式，如 SourceKinds.IM / SourceKinds.TOOL / SourceKinds.HYBRID
+  capabilities: tuple[CapabilityName, ...]   # 该源能产生哪类内容（如 Caps.IM_TEXT, Caps.IM_IMAGE）
+  description: str
+```
+
+### 15.2 SourceKindName
+
+`RegisteredString` 子类 + 内置门面 `SourceKinds`：
+
+- `SourceKinds.IM` —— 即时通讯类（QQ / Discord / Telegram 等）
+- `SourceKinds.TOOL` —— MCP 风格软件接口（Todo / 文件系统 / 数据库等）
+- `SourceKinds.HYBRID` —— 兼具 IM 与 Tool 性质（如同时收消息又暴露调用面的网关）
+
+领域插件可注册自有 kind：`SourceKindName.register("mcp.fs", declared_by="my-mcp-plugin")`。
+
+### 15.3 注册与校验
+
+- **注册**：`dispatch.register_source(source_id, kind, capabilities)` 仅声明，无 handler。
+- **静态声明**：`Plugin.provides_sources: ClassVar[tuple[SourceDescriptor, ...]]`；冲突 → `Error(code="source.conflict")`。
+- **运行时校验**：
+  - `dispatch.register_source(source_id, ...)` 必须在 plugin.provides_sources 内 → 否则 `source.undeclared`
+  - `dispatch.publish(envelope)` 必须 envelope.source.source_id 在已注册集 → 否则 `source.unregistered`
+
+### 15.4 与 Operation 的命名空间共享
+
+Source 与 Operation 共享同一前缀命名约定。例如 QQ 适配 plugin 同时提供：
+
+- Source：`source_id = "qq:bot1"`（kind=IM, capabilities=(Caps.IM_TEXT, Caps.IM_IMAGE)）—— 收到 QQ 消息时 publish envelope
+- Operation：`op_id = "qq:bot1.send_msg"` —— 跨 plugin 调用以发送消息
+
+`qq:bot1` 前缀对应"一个 QQ bot 实例"的语义分组。**但它不是独立类型**，仅是命名约定。
+
+## 16. Envelope 协议（v0.2 引入）
+
+> **设计原则**：通用入站/出站载体，IM `Message` 是其特化。adapter 侧的"消息"概念只是 Envelope 的一种 payload schema；MCP 风格 ToolEvent 是另一种。dispatcher 路由按 `payload_schema_id` 与 `source` 决定。
+
+### 16.1 Envelope 基类
+
+```text
+Envelope (Contract):
+  schema_id: ClassVar[str] = "mutsukibot.envelope"
+  schema_version: ClassVar[str] = "1.0.0"
+  
+  id: EnvelopeId                          # 由 runtime 注入
+  timestamp: float                        # 由 runtime 注入
+  source: SourceRef                       # 来源标识
+  payload_schema_id: str                  # 路由主 key（区分 Message / ToolEvent / 领域 envelope）
+  capabilities_required: tuple[CapabilityName, ...] = ()
+```
+
+### 16.2 SourceRef 层级
+
+```text
+SourceRef (Contract):                     # 通用基类
+  schema_id: ClassVar[str] = "mutsukibot.source_ref"
+  source_id: str                          # 引用已注册的 SourceDescriptor.source_id
+  kind: SourceKindName
+
+ChannelRef (SourceRef):                   # IM 特化（v0.1 已有，v0.2 改为继承 SourceRef）
+  schema_id: ClassVar[str] = "mutsukibot.channel_ref"
+  channel_id: str
+  user_id: str | None = None
+  # source_id 继承自 SourceRef，**字段从 v0.1 的 adapter_id 重命名而来**
+  # v0.2 保留 `adapter_id` 作为只读 property 一个 release，打 DeprecationWarning
+
+ToolSourceRef (SourceRef):                # 工具型 Source 特化
+  schema_id: ClassVar[str] = "mutsukibot.tool_source_ref"
+  endpoint_path: str | None = None        # 可选的内部路径（如 "todo:default/items"）
+```
+
+### 16.3 Message 与 ToolEvent
+
+```text
+Message (Envelope):                       # IM 消息特化（v0.1 已有，v0.2 改为继承 Envelope）
+  schema_id: ClassVar[str] = "mutsukibot.message"
+  parts: tuple[ContentPart, ...]
+  # source 字段类型收窄为 ChannelRef
+  # payload_schema_id 默认为 "mutsukibot.message"
+
+ToolEvent (Envelope):                     # MCP 风格事件推送（v0.2 新增）
+  schema_id: ClassVar[str] = "mutsukibot.tool_event"
+  event_type: str                         # 领域事件类型，如 "todo.created" / "fs.changed"
+  payload: dict[str, Any]                 # 领域 payload；复杂场景用 RefPayload[T]
+```
+
+### 16.4 路由 key
+
+dispatcher 路由 envelope 时，主匹配键是：
+1. `envelope.payload_schema_id`（对应 `BySchema(...)` / `BySchemaPrefix(...)`）
+2. `envelope.source.source_id`（对应 `BySourceId(...)`）
+3. `envelope.source.kind`（对应 `BySourceKind(...)`）
+4. `envelope.capabilities_required`（对应 `ByCapability(...)`）
+
+ScopeRule 谓词组合见 §17。
+
+## 17. ScopeRule 协议（v0.2 引入）
+
+> **设计原则**：完全镜像 [`PermissionRule`](../mutsukibot/contracts/permission.py) —— AST 谓词组合 + 注册式命名。差别仅在：PermissionRule 检查 `AgentContext`（who can call），ScopeRule 检查 `Envelope`（whether to route）。
+
+### 17.1 ScopeRule —— 谓词组合
+
+```text
+ScopeRule:
+  __and__ -> 合并所有 checker（AND）
+  __or__  -> 包装为新 OR 节点
+  check(envelope) -> bool          # 同步方法（纯数据匹配，无副作用）
+```
+
+实现细节与 PermissionRule 同型：抽象基类 + `_Leaf / _And / _Or` 三个 AST 节点；`__and__` / `__or__` 在组合时平展同类节点。
+
+### 17.2 内置叶子构造器
+
+| 构造器 | 语义 |
+|---|---|
+| `BySchema(schema_id: str)` | 严格匹配 envelope.payload_schema_id |
+| `BySchemaPrefix(prefix: str)` | envelope.payload_schema_id startswith prefix（如 `"yume."`）|
+| `BySourceId(source_id: str)` | 匹配 envelope.source.source_id |
+| `BySourceKind(kind: SourceKindName)` | 匹配 envelope.source.kind |
+| `ByCapability(cap: CapabilityName)` | envelope.capabilities_required 包含 cap |
+| `BySourceField(field: str, value: Any)` | envelope.source 任意字段精确匹配（如 `BySourceField("channel_id", "ops")`）|
+
+### 17.3 ScopeName —— 命名 scope 注册式
+
+与 `PermissionName` 同模式：`RegisteredString` 子类 + 内置门面 `Scopes`。核心内置：
+
+- `Scopes.IM_TEXT` = `BySchema("mutsukibot.message") & BySourceKind(SourceKinds.IM) & ByCapability(Caps.IM_TEXT)`
+- `Scopes.TOOL_INVOKE` = `BySchema("mutsukibot.tool_event") & BySourceKind(SourceKinds.TOOL)`
+
+插件可注册自有 scope：`ScopeName.register("yume.thought", declared_by="...", rule=...)`。
+
+### 17.4 消费点
+
+| 消费方 | 字段 | 作用 |
+|---|---|---|
+| `Agent.accepts: tuple[ScopeRule, ...]` | dispatcher 路由 envelope 时筛选目标 Agent | 空 tuple = 拒绝所有 envelope（仅命令路径仍可用，hard rule #13）|
+| `Plugin.consumes: ClassVar[tuple[ScopeRule, ...]]` | scheduler 把 envelope 二次分发给 plugin 内 handler | 空 = plugin 不消费 envelope（仅命令型 plugin，如 echo）|
+| `@command(consumes=...)` 可选 | 命令级粒度细化 | 默认与 plugin.consumes 等同 |
+
+## 18. Dispatcher 协议（v0.2 引入）
+
+> **设计原则**：dispatcher 是 envelope/Operation 路由的唯一入口；位于 [core/agent.py](../mutsukibot/core/agent.py) 与 plugins 之间，依赖 `contracts`，不被 plugins 直接 import（plugins 仅通过 `ctx.dispatch` 访问）。
+
+### 18.1 注册 API
+
+```text
+dispatch.register_operation(op_id, perms_rule, requires_caps, params_schema, handler)
+   -> dispose_callback   # 自动 attach 到调用方 PluginScope
+
+dispatch.register_source(source_id, kind, capabilities)
+   -> dispose_callback   # 自动 attach 到调用方 PluginScope
+
+dispatch.lookup_operation(name) -> op_id | None
+   # 供 scheduler 文本路径解析首词；按 op_id 后缀匹配（"echo" → "echo.echo"）
+```
+
+### 18.2 调用 API
+
+```text
+dispatch.invoke(op_id: str, payload: dict | None = None) -> Awaitable[Envelope]
+   # **inline await 实现**：直接 `await handler(payload)`，不入 asyncio.Queue 不走 gather
+   # 这是延迟敏感链路（v0.5+ Yume thought→kernel→runtime）的硬性前提
+   # 与 Bus subscribe(..., direct=True) 同等约束（参见 architecture.md §5）
+
+dispatch.publish(envelope: Envelope) -> Awaitable[None]
+   # 校验 envelope.source.source_id 在已注册集 → 否则 source.unregistered
+   # 默认 deferred 语义（fan-out 给所有 accepts 匹配的 Agent，gather 并发）
+   # direct 模式可选（envelope 标 Replayability.full + 订阅者声明 direct）
+```
+
+### 18.3 拦截链
+
+`dispatch.invoke` 的执行顺序：
+
+1. lookup op_id → 不存在 → `operation.not_found`
+2. status 检查 → unhealthy → `operation.unhealthy`；unregistering → `operation.unavailable`
+3. capability 检查（`check_capabilities`）→ 不通过 → `capability.not_declared`
+4. permission 检查（`await rule.check(ctx)`）→ 不通过 → `permission.denied`
+5. trace span 开始
+6. **inline `await handler(payload)`** —— 不进任何异步队列
+7. handler 抛出未捕获异常 → 标记 op 为 unhealthy，返 `operation.handler_raised`，**不主动卸载 plugin**（让 plugin 自决）
+8. trace span 结束（status: ok / error）
+
+### 18.4 状态查询
+
+```text
+dispatch.operation_status(op_id) -> OperationStatus  # active / unhealthy / unregistering / not_found
+dispatch.source_status(source_id) -> SourceStatus
+dispatch.list_operations() -> tuple[OperationDescriptor, ...]
+dispatch.list_sources() -> tuple[SourceDescriptor, ...]
+```
+
+dashboard / 审计插件用以上 API 枚举状态。
+
+### 18.5 与 PluginScope 集成
+
+- `register_operation` / `register_source` 内部把对应 `unregister_*` 作为 dispose 回调挂到调用方 PluginScope
+- plugin 卸载时 PluginScope.close() 触发反注册回调，dispatcher 状态保持一致
+- 卸载流程对照 PluginLoader.unload_from（[loader.py:205](../mutsukibot/core/loader.py#L205)）：on_unload → scope.close → dispatcher 状态自动清理

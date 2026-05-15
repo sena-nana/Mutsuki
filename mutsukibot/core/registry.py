@@ -1,9 +1,14 @@
 """进程级全局注册表。
 
 每个注册表都是 ``dict`` 的薄包装，提供显式的 register / get / iter 接口。
-:class:`Plugin` / :class:`Adapter` / :class:`Service` / :class:`Handle` 的子类
-会自动登记进对应注册表（通过 ``__init_subclass__``，或对 :class:`Plugin`
-而言通过 :class:`PluginMeta`）。
+:class:`Plugin` / :class:`Service` / :class:`Handle` 的子类会自动登记进对应
+注册表（通过 ``__init_subclass__``，或对 :class:`Plugin` 而言通过
+:class:`PluginMeta`）。
+
+v0.2 改动：删除 ``AdapterRegistry`` —— Adapter 抽象在 D1 中废除，transport
+翻译职责由 reference plugin 承担（参见
+:mod:`mutsukibot.plugins.inmemory_endpoint`）。Source / Operation 注册由
+:class:`mutsukibot.core.dispatcher.Dispatcher` 在 Agent 内部维护。
 """
 
 from __future__ import annotations
@@ -12,7 +17,6 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
-    from mutsukibot.adapters.base import Adapter
     from mutsukibot.core.handle import HandleImpl
     from mutsukibot.core.plugin import Plugin
 
@@ -63,12 +67,10 @@ class RegistryConflictError(Exception):
 
 
 PluginRegistry: _NamedRegistry["type[Plugin]"] = _NamedRegistry("Plugin")
-AdapterRegistry: _NamedRegistry["type[Adapter]"] = _NamedRegistry("Adapter")
 HandleRegistry: _NamedRegistry["type[HandleImpl]"] = _NamedRegistry("Handle")
 
 
 __all__ = [
-    "AdapterRegistry",
     "HandleRegistry",
     "PluginRegistry",
     "RegistryConflictError",

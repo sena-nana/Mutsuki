@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from mutsukibot.contracts.message import Message
     from mutsukibot.core.bus import Bus
     from mutsukibot.core.container import ServiceContainer
+    from mutsukibot.core.dispatcher import Dispatcher
     from mutsukibot.core.scope import PluginScope
     from mutsukibot.runtime.clock import Clock
     from mutsukibot.runtime.idgen import IdGen
@@ -31,7 +32,11 @@ class TraceContext:
 
 @dataclass(slots=True)
 class AgentContext:
-    """单次调用的上下文。插件命令签名里以 ``ctx`` 形式接收。"""
+    """单次调用的上下文。插件命令签名里以 ``ctx`` 形式接收。
+
+    v0.2 新增 ``dispatch`` 字段：插件通过 ``ctx.dispatch.invoke(op_id, ...)``
+    调用其他 plugin 的 Operation（详 contracts §18）。
+    """
 
     agent_id: AgentId
     agent_owner: str | None
@@ -41,6 +46,7 @@ class AgentContext:
     services: "ServiceContainer"
     scope: "PluginScope"
     bus: "Bus"
+    dispatch: "Dispatcher"
     trace_ctx: TraceContext
     message: "Message | None" = None
     extras: dict[str, object] = field(default_factory=dict)

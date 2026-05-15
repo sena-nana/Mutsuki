@@ -58,6 +58,118 @@ class PluginNotFoundError(KeyError):
     pass
 
 
+class OperationProvisionConflictError(Exception):
+    """两个不同 plugin 在 ``provides_operations`` 静态声明同一 op_id（D9b）。"""
+
+    def __init__(self, op_id: str, owners: tuple[str, str], err: Error) -> None:
+        super().__init__(
+            f"op_id {op_id!r} 被 {owners[0]!r} 与 {owners[1]!r} 同时声明"
+        )
+        self.op_id = op_id
+        self.owners = owners
+        self.error = err
+
+
+class SourceProvisionConflictError(Exception):
+    """两个不同 plugin 在 ``provides_sources`` 静态声明同一 source_id（D9b）。"""
+
+    def __init__(self, source_id: str, owners: tuple[str, str], err: Error) -> None:
+        super().__init__(
+            f"source_id {source_id!r} 被 {owners[0]!r} 与 {owners[1]!r} 同时声明"
+        )
+        self.source_id = source_id
+        self.owners = owners
+        self.error = err
+
+
+def _build_provision_indexes(
+    by_id: dict[str, "type[Plugin]"],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """返回 (op_id → providing_plugin_id, source_id → providing_plugin_id)。
+
+    冲突立即抛 :class:`OperationProvisionConflictError` /
+    :class:`SourceProvisionConflictError`（D9b 静态闸口，与 dispatcher 运行时
+    校验配对）。
+    """
+    op_owner: dict[str, str] = {}
+    src_owner: dict[str, str] = {}
+    for pid, cls in by_id.items():
+        for op in cls.provides_operations:
+            existing = op_owner.get(op.op_id)
+            if existing is not None and existing != pid:
+                err = Error(
+                    code=Errs.OPERATION_CONFLICT,
+                    source="core.loader",
+                    route="plugin.discover",
+                    evidence={
+                        "op_id": op.op_id,
+                        "owner_a": existing,
+                        "owner_b": pid,
+                    },
+                )
+                raise OperationProvisionConflictError(
+                    op.op_id, (existing, pid), err
+                )
+            op_owner[op.op_id] = pid
+        for src in cls.provides_sources:
+            existing_s = src_owner.get(src.source_id)
+            if existing_s is not None and existing_s != pid:
+                err = Error(
+                    code=Errs.SOURCE_CONFLICT,
+                    source="core.loader",
+                    route="plugin.discover",
+                    evidence={
+                        "source_id": src.source_id,
+                        "owner_a": existing_s,
+                        "owner_b": pid,
+                    },
+                )
+                raise SourceProvisionConflictError(
+                    src.source_id, (existing_s, pid), err
+                )
+            src_owner[src.source_id] = pid
+    return op_owner, src_owner
+
+
+def _resolve_provision_deps(
+    by_id: dict[str, "type[Plugin]"],
+    op_owner: dict[str, str],
+    src_owner: dict[str, str],
+) -> dict[str, set[str]]:
+    """把 ``requires_operations`` / ``requires_sources`` 翻译为 plugin-level 依赖。
+
+    返回 plugin_id → set[依赖 plugin_id]。未在 op_owner / src_owner 中找到
+    的 requires 视为缺失依赖，抛 :class:`PluginDependencyMissingError`，
+    与 ``requires_plugins`` 缺失同样的 fail-loud 语义。
+    """
+    extra_deps: dict[str, set[str]] = {pid: set() for pid in by_id}
+    missing: list[tuple[str, str]] = []
+    for pid, cls in by_id.items():
+        for op_dep in cls.requires_operations:
+            owner = op_owner.get(op_dep.op_id)
+            if owner is None:
+                missing.append((pid, f"op:{op_dep.op_id}"))
+                continue
+            if owner != pid:
+                extra_deps[pid].add(owner)
+        for src_dep in cls.requires_sources:
+            owner = src_owner.get(src_dep.source_id)
+            if owner is None:
+                missing.append((pid, f"source:{src_dep.source_id}"))
+                continue
+            if owner != pid:
+                extra_deps[pid].add(owner)
+    if missing:
+        err = Error(
+            code=Errs.PLUGIN_DEPENDENCY_MISSING,
+            source="core.loader",
+            route="plugin.dag",
+            evidence={"missing": ",".join(f"{s}->{d}" for s, d in missing)},
+        )
+        raise PluginDependencyMissingError(missing, err)
+    return extra_deps
+
+
 def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
     """委托给 :class:`graphlib.TopologicalSorter`。
 
@@ -137,10 +249,17 @@ class PluginLoader:
         configs = configs or {}
         by_id: dict[str, type[Plugin]] = {cls.id: cls for cls in plugin_classes}
 
-        deps_map = {
-            pid: tuple(d.plugin_id for d in cls.requires_plugins)
-            for pid, cls in by_id.items()
-        }
+        # D9b：先建立 op_id / source_id → providing_plugin_id 反向索引
+        # （冲突立刻 fail），再把 requires_operations / requires_sources
+        # 翻译为 plugin-level 依赖加入 DAG，与 requires_plugins 同一拓扑。
+        op_owner, src_owner = _build_provision_indexes(by_id)
+        provision_deps = _resolve_provision_deps(by_id, op_owner, src_owner)
+
+        deps_map: dict[str, tuple[str, ...]] = {}
+        for pid, cls in by_id.items():
+            combined: set[str] = {d.plugin_id for d in cls.requires_plugins}
+            combined.update(provision_deps.get(pid, set()))
+            deps_map[pid] = tuple(sorted(combined))
         order = _toposort(deps_map)
 
         loaded_so_far: list[tuple[Plugin, PluginScope]] = []
@@ -220,9 +339,11 @@ class PluginLoader:
 
 
 __all__ = [
+    "OperationProvisionConflictError",
     "PluginCycleError",
     "PluginDependencyMissingError",
     "PluginLoadFailedError",
     "PluginLoader",
     "PluginNotFoundError",
+    "SourceProvisionConflictError",
 ]

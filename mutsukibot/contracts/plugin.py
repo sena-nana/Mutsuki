@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from mutsukibot.contracts.base import Contract
-from mutsukibot.contracts.capability import Capability, CapabilityName
+from mutsukibot.contracts.capability import Capability
+from mutsukibot.contracts.operation import OperationDep, OperationDescriptor
+from mutsukibot.contracts.scope import ScopeRule
 from mutsukibot.contracts.service import ServiceMode
+from mutsukibot.contracts.source import SourceDep, SourceDescriptor
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,25 +90,19 @@ class ServiceDep(Contract):
     mode: ServiceMode = ServiceMode.BY_REF
 
 
-class CommandSpec(Contract):
-    """已编译的命令 / 工具规约（由 ``@command`` 装饰器自动生成）。"""
-
-    schema_id: ClassVar[str] = "mutsukibot.command_spec"
-    schema_version: ClassVar[str] = "1.0.0"
-
-    name: str
-    description: str
-    plugin_id: str
-    func_qualname: str
-    parameters_schema: dict[str, Any] = {}
-    return_schema: dict[str, Any] = {}
-    perms_rule_id: str | None = None
-    requires_capabilities: tuple[CapabilityName, ...] = ()
-    is_tool: bool = True
+# CommandSpec 在 v0.2 起是 OperationDescriptor 的 type alias —— 命令是
+# Operation 的特化（来自 @command 装饰器自动汇入），二者共用同一字段集。
+# 详见 contracts.md §14（Operation 协议）与 D12（命令与 Operation 统一）。
+CommandSpec = OperationDescriptor
 
 
 class PluginManifest(Contract):
-    """插件的静态元数据（由 ``Plugin`` 子类自动构造）。"""
+    """插件的静态元数据（由 ``Plugin`` 子类自动构造）。
+
+    v0.2 新增 ``consumes`` / ``provides_operations`` / ``provides_sources``
+    / ``requires_operations`` / ``requires_sources`` 五个字段（参见
+    contracts.md §14-§17 与 D9b 静态声明 + DAG 依赖）。
+    """
 
     schema_id: ClassVar[str] = "mutsukibot.plugin_manifest"
     schema_version: ClassVar[str] = "1.0.0"
@@ -118,7 +115,13 @@ class PluginManifest(Contract):
     requires_services: tuple[ServiceDep, ...] = ()
     requires_plugins: tuple[PluginDep, ...] = ()
     config_schema_id: str = ""
-    commands: tuple[CommandSpec, ...] = ()
+    commands: tuple[OperationDescriptor, ...] = ()
+    # v0.2 新增字段
+    consumes: tuple[ScopeRule, ...] = ()
+    provides_operations: tuple[OperationDescriptor, ...] = ()
+    provides_sources: tuple[SourceDescriptor, ...] = ()
+    requires_operations: tuple[OperationDep, ...] = ()
+    requires_sources: tuple[SourceDep, ...] = ()
 
 
 # 给下游调用者用的、对 lint 友好的空列表工厂兼容钩子。

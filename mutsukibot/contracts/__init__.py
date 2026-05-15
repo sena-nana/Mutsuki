@@ -13,11 +13,20 @@ from mutsukibot.contracts.capability import (
 )
 from mutsukibot.contracts.capability_builtin import Caps
 from mutsukibot.contracts.decision import Decision
+from mutsukibot.contracts.envelope import Envelope, SourceRef, ToolEvent, ToolSourceRef
 from mutsukibot.contracts.error import Error, ErrorCode, Errs, RecoveryAction
 from mutsukibot.contracts.event import Event, SpanStatus, TraceSpan
-from mutsukibot.contracts.ids import AgentId, MessageId, RefId, SpanId, TraceId
+from mutsukibot.contracts.ids import (
+    AgentId,
+    EnvelopeId,
+    MessageId,
+    RefId,
+    SpanId,
+    TraceId,
+)
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.message import ChannelRef, ContentKind, ContentPart, Message
+from mutsukibot.contracts.operation import OperationDep, OperationDescriptor
 from mutsukibot.contracts.permission import (
     PermissionConflictError,
     PermissionName,
@@ -43,12 +52,39 @@ from mutsukibot.contracts.refpayload import (
     Replayability,
 )
 from mutsukibot.contracts.schema import register_schema_compatibility
+from mutsukibot.contracts.scope import (
+    ByCapability,
+    BySchema,
+    BySchemaPrefix,
+    BySourceField,
+    BySourceId,
+    BySourceKind,
+    ScopeConflictError,
+    ScopeName,
+    ScopeRule,
+    UnknownScopeError,
+)
+from mutsukibot.contracts.scope_builtin import Scopes
 from mutsukibot.contracts.service import Service, ServiceMode
+from mutsukibot.contracts.source import (
+    SourceDep,
+    SourceDescriptor,
+    SourceKindConflictError,
+    SourceKindName,
+    UnknownSourceKindError,
+)
+from mutsukibot.contracts.source_builtin import SourceKinds
 
 __all__ = [
     "AgentId",
     "Arg",
     "BackpressureChannel",
+    "ByCapability",
+    "BySchema",
+    "BySchemaPrefix",
+    "BySourceField",
+    "BySourceId",
+    "BySourceKind",
     "Capability",
     "CapabilityConflictError",
     "CapabilityName",
@@ -60,6 +96,8 @@ __all__ = [
     "Contract",
     "ContractDep",
     "Decision",
+    "Envelope",
+    "EnvelopeId",
     "Error",
     "ErrorCode",
     "Errs",
@@ -69,6 +107,8 @@ __all__ = [
     "LifecyclePhase",
     "Message",
     "MessageId",
+    "OperationDep",
+    "OperationDescriptor",
     "PermissionConflictError",
     "PermissionName",
     "PermissionRule",
@@ -82,14 +122,28 @@ __all__ = [
     "RefPayload",
     "Replayability",
     "SchemaRegistry",
+    "ScopeConflictError",
+    "ScopeName",
+    "ScopeRule",
+    "Scopes",
     "Service",
     "ServiceDep",
     "ServiceMode",
+    "SourceDep",
+    "SourceDescriptor",
+    "SourceKindConflictError",
+    "SourceKindName",
+    "SourceKinds",
+    "SourceRef",
     "SpanId",
     "SpanStatus",
+    "ToolEvent",
+    "ToolSourceRef",
     "TraceId",
     "TraceSpan",
     "UnknownCapabilityError",
     "UnknownPermissionError",
+    "UnknownScopeError",
+    "UnknownSourceKindError",
     "register_schema_compatibility",
 ]

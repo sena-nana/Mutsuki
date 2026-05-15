@@ -9,13 +9,14 @@ import msgspec
 import pytest
 
 from mutsukibot import Capability, Caps, Perms, Plugin, command
-from mutsukibot.adapters import InMemoryAdapter
+from mutsukibot.contracts import Scopes
 from mutsukibot.contracts.error import Errs
 from mutsukibot.contracts.event import TraceSpan
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.container import ServiceNotFoundError
 from mutsukibot.core.loader import PluginLoader
+from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler, _classify_command_exception
 
@@ -51,7 +52,16 @@ def _new_agent() -> Agent:
         clock=SystemClock(),
         id_gen=DeterministicIdGen(),
         rng=SeededRng(seed=0),
+        accepts=(Scopes.IM_TEXT.to_rule(),),
     )
+
+
+def _get_inmem(agent: Agent) -> InMemoryEndpointPlugin:
+    """从已装载 plugin 中拿出 InMemoryEndpointPlugin 实例（v0.2 测试驱动）。"""
+    for entry in agent.plugins:
+        if isinstance(entry.plugin, InMemoryEndpointPlugin):
+            return entry.plugin
+    raise RuntimeError("InMemoryEndpointPlugin 未装载")
 
 
 def test_classify_service_not_found_maps_to_service_not_found() -> None:
@@ -85,20 +95,20 @@ def test_classify_never_returns_plugin_definition_error() -> None:
 @pytest.mark.asyncio
 async def test_handle_message_emits_classified_error_for_command_body_exception() -> None:
     agent = _new_agent()
-    loader = PluginLoader(allow={_BoomPlugin.id})
-    await loader.load_into(agent, [_BoomPlugin])
+    loader = PluginLoader(allow={_BoomPlugin.id, InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, _BoomPlugin])
     scheduler = AgentScheduler(agent)
     await scheduler.start()
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "boom value")
+    inmem = _get_inmem(agent)
+    await inmem.send_text("boom value")
     await asyncio.sleep(0.2)
-    msgs = await adapter.drain_outbox(agent, timeout=0.5)
+    msgs = await inmem.drain_outbox(timeout=0.5)
     assert msgs, "至少有一条出错消息"
     text = "".join(m.text for m in msgs)
-    # 命令体 ValueError 应当映射到 COMMAND_EXECUTION_FAILED，而不是定义错误。
-    assert Errs.COMMAND_EXECUTION_FAILED in text
-    assert "command_raised" in text
+    # 命令体 ValueError 应当映射到 OPERATION_HANDLER_RAISED（v0.2 dispatcher
+    # 路径）。dispatcher 把 handler 异常包成结构化 Error，scheduler 直接转写。
+    assert Errs.OPERATION_HANDLER_RAISED in text
     assert "ValueError" in text
 
     await scheduler.stop()
@@ -109,8 +119,8 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
 async def test_unmatched_command_is_silent_and_emits_trace_span() -> None:
     """普通消息（首词不是任何已注册命令）不应进 outbox，仅写一条 unmatched span。"""
     agent = _new_agent()
-    loader = PluginLoader(allow={_BoomPlugin.id})
-    await loader.load_into(agent, [_BoomPlugin])
+    loader = PluginLoader(allow={_BoomPlugin.id, InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, _BoomPlugin])
     scheduler = AgentScheduler(agent)
 
     spans: list[TraceSpan] = []
@@ -123,12 +133,12 @@ async def test_unmatched_command_is_silent_and_emits_trace_span() -> None:
 
     await scheduler.start()
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "你好世界")
+    inmem = _get_inmem(agent)
+    await inmem.send_text("你好世界")
     await asyncio.sleep(0.2)
 
     # 关键：outbox 不应有任何"命令不存在"错误回执
-    msgs = await adapter.drain_outbox(agent, timeout=0.3)
+    msgs = await inmem.drain_outbox(timeout=0.3)
     assert msgs == []
 
     # 但应有一条 unmatched trace span
@@ -199,20 +209,20 @@ async def test_graceful_shutdown_lets_in_flight_command_complete() -> None:
     """stop() 在调用时若有正在执行的命令，应等它跑完再退出，而不是 cancel 打断。"""
     _SlowPlugin.finished = False
     agent = _new_agent()
-    loader = PluginLoader(allow={_SlowPlugin.id})
-    await loader.load_into(agent, [_SlowPlugin])
+    loader = PluginLoader(allow={_SlowPlugin.id, InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, _SlowPlugin])
     scheduler = AgentScheduler(agent, shutdown_timeout=2.0)
     await scheduler.start()
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "slow")
+    inmem = _get_inmem(agent)
+    await inmem.send_text("slow")
     # 在命令开始执行后立即 stop（命令还在 await asyncio.sleep）
     await asyncio.sleep(0.05)
     await scheduler.stop()
 
     # 关键：命令体应跑完，而不是被 cancel 打断
     assert _SlowPlugin.finished is True
-    msgs = await adapter.drain_outbox(agent, timeout=0.3)
+    msgs = await inmem.drain_outbox(timeout=0.3)
     assert any("done" in m.text for m in msgs)
     await loader.unload_from(agent)
 
@@ -221,6 +231,8 @@ async def test_graceful_shutdown_lets_in_flight_command_complete() -> None:
 async def test_shutdown_timeout_falls_back_to_cancel() -> None:
     """shutdown_timeout 超时时回退到 cancel（最后兜底，不让 stop 永远挂住）。"""
     agent = _new_agent()
+    loader = PluginLoader(allow={InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin])
     scheduler = AgentScheduler(agent, shutdown_timeout=0.1)
     await scheduler.start()
 
@@ -230,11 +242,12 @@ async def test_shutdown_timeout_falls_back_to_cancel() -> None:
 
     scheduler._handle_message = never_returns  # type: ignore[method-assign]
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "anything")
+    inmem = _get_inmem(agent)
+    await inmem.send_text("anything")
     await asyncio.sleep(0.05)
 
     # stop 不应永远挂住；shutdown_timeout 后应回退到 cancel
     await scheduler.stop()
     assert scheduler._task is not None
     assert scheduler._task.done()
+    await loader.unload_from(agent)

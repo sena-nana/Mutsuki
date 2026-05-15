@@ -24,7 +24,14 @@ async def _public(_ctx: "AgentContext") -> bool:
 async def _agent_owner(ctx: "AgentContext") -> bool:
     if ctx.message is None:
         return True
-    source_user = ctx.message.source.user_id
+    # v0.2: source 是通用 SourceRef；user_id 仅 IM ChannelRef 子类有。
+    # 用 isinstance 收窄类型让 pyright 满意，同时保留 v0.1 行为。
+    from mutsukibot.contracts.message import ChannelRef
+
+    src = ctx.message.source
+    if not isinstance(src, ChannelRef):
+        return False
+    source_user = src.user_id
     return source_user is not None and source_user == ctx.agent_owner
 
 

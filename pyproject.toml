@@ -80,6 +80,12 @@ ignore = [
 "mutsukibot/plugins/echo/smoke.py" = [
     "T20", # smoke entry prints to stdout intentionally
 ]
+"mutsukibot/plugins/todo/smoke.py" = [
+    "T20",
+]
+"mutsukibot/plugins/qq_to_todo/smoke.py" = [
+    "T20",
+]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true

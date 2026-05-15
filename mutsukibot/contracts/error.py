@@ -86,6 +86,17 @@ class Errs:
     PERMISSION_DENIED: ClassVar[ErrorCode]
     UNKNOWN_CAPABILITY: ClassVar[ErrorCode]
     SYNC_VIOLATION: ClassVar[ErrorCode]
+    # v0.2 新增 —— Operation / Source / Scope 路由错误码
+    OPERATION_NOT_FOUND: ClassVar[ErrorCode]
+    OPERATION_UNDECLARED: ClassVar[ErrorCode]
+    OPERATION_CONFLICT: ClassVar[ErrorCode]
+    OPERATION_UNHEALTHY: ClassVar[ErrorCode]
+    OPERATION_INVOKE_FAILED: ClassVar[ErrorCode]
+    OPERATION_HANDLER_RAISED: ClassVar[ErrorCode]
+    SOURCE_UNREGISTERED: ClassVar[ErrorCode]
+    SOURCE_CONFLICT: ClassVar[ErrorCode]
+    SOURCE_UNDECLARED: ClassVar[ErrorCode]
+    SCOPE_NO_MATCH: ClassVar[ErrorCode]
 
 
 ErrorCode.bootstrap_facade(
@@ -110,6 +121,16 @@ ErrorCode.bootstrap_facade(
         "PERMISSION_DENIED": "permission.denied",
         "UNKNOWN_CAPABILITY": "capability.unknown",
         "SYNC_VIOLATION": "plugin.sync_violation",
+        "OPERATION_NOT_FOUND": "operation.not_found",
+        "OPERATION_UNDECLARED": "operation.undeclared",
+        "OPERATION_CONFLICT": "operation.conflict",
+        "OPERATION_UNHEALTHY": "operation.unhealthy",
+        "OPERATION_INVOKE_FAILED": "operation.invoke_failed",
+        "OPERATION_HANDLER_RAISED": "operation.handler_raised",
+        "SOURCE_UNREGISTERED": "source.unregistered",
+        "SOURCE_CONFLICT": "source.conflict",
+        "SOURCE_UNDECLARED": "source.undeclared",
+        "SCOPE_NO_MATCH": "scope.no_match",
     },
     declared_by=_OWNER,
 )
