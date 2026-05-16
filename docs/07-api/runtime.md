@@ -96,7 +96,7 @@ class AgentScheduler:
 - `start()` —— `phase=AWAKE`，fire `on_awake` 钩子，起 `_loop` task
 - `stop()` —— set stop event，cancel task，fire `on_sleep` → `phase=STOP` → fire `on_stop`，关 agent fallback scope
 - `_loop` —— 反复 `await asyncio.wait_for(agent.inbox.get(), timeout=0.1)`，超时则 continue（让 stop 信号有机会被检测）
-- `_handle_message`：parse → find_command → check capability → check perms → solve → outbox + trace span
+- `_handle_message`：parse → `dispatch.lookup_operation` → `dispatch.invoke` → outbox + trace span
 
 异常分类：`HandleLeakError` → `HANDLE_LEAK`；`ServiceNotFoundError` → `PLUGIN_DEFINITION_ERROR/service_not_found`；`KeyError` → `PLUGIN_DEFINITION_ERROR/missing_arg`；其他 → `PLUGIN_DEFINITION_ERROR/command_raised`。
 

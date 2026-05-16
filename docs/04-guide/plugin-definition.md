@@ -170,6 +170,6 @@ class EchoPlugin(Plugin[_EchoConfig]):
 
 - **`@command` 必须装饰 `async def`**。装饰同步方法会立刻 `TypeError`。
 - **`Config = SomeStruct` 不可省**。即便配置全是默认值，也要写一个空的 `class Config(msgspec.Struct, kw_only=True): pass`。
-- **`id` 必须 kebab-case 且全局唯一**。冲突时 `PluginRegistry` 会拒绝。如果你需要在测试里反复装载同一个插件，让 loader 在 `unload_from` 里走"卸载实例 → 重新登记类"的流程（[loader.py:131-133](../../mutsukibot/core/loader.py#L131-L133)），不要手动 register。
-- **`requires_plugins` 写错插件 id 会被拓扑器忽略**。`_toposort` 只对已知节点排序，外部依赖被过滤掉（[loader.py:50](../../mutsukibot/core/loader.py#L50)）。这避免"依赖未安装就启动失败"，但也意味着拼写错误不会立即报错 —— 命令调用时才会发现服务/插件不存在。
+- **`id` 必须 kebab-case 且全局唯一**。冲突时 `PluginRegistry` 会拒绝。`PluginRegistry` 保存的是插件类；实例级 Operation / Source 注册由每个 Agent 的 `Dispatcher` 管理。
+- **`requires_plugins` 写错插件 id 会在装载阶段失败**。`PluginLoader` 对缺失插件依赖、缺失 Operation / Source 依赖都 fail-loud，抛 `PluginDependencyMissingError`，避免错误延迟到命令调用时才暴露。
 - **不要在 `__init__` 里干活**。把订阅、定时器、服务注册都放在 `on_load`，因为 `__init__` 阶段 `self.scope` 已经存在但调用方还没拿到实例引用 —— 错误更难追踪。

@@ -37,6 +37,7 @@ from mutsukibot.contracts.error import Error, Errs
 from mutsukibot.contracts.operation import OperationDescriptor
 from mutsukibot.contracts.permission import PermissionRule
 from mutsukibot.contracts.source import SourceDescriptor
+from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.registry import PluginRegistry
 
 if TYPE_CHECKING:
@@ -466,8 +467,8 @@ class Dispatcher:
         校验 ``envelope.source.source_id`` 在已注册集；按 ``Agent.accepts``
         匹配后投递到 ``agent.inbox``。
 
-        v0.2 单 Agent 模式：仅向本 Agent 自己的 inbox 投。Phase C 的
-        AgentRegistry 会在此之上做 N 个 Agent 的广播扇出。
+        v0.2 Phase C：通过 AgentRegistry 进行广播扇出，把 envelope 投给所有
+        匹配 ``Agent.accepts`` 的 awake Agent。
         """
         source_id = envelope.source.source_id
         if source_id not in self._sources:
@@ -482,24 +483,15 @@ class Dispatcher:
             )
             raise OperationInvokeError(err)
 
-        # 匹配 Agent.accepts；空 accepts 等价于拒绝（hard rule #13）
-        accepts = self.agent.accepts
-        if not accepts:
+        matched = tuple(AgentRegistry.iter_accepting(envelope))
+        if not matched:
             _logger.debug(
-                "envelope %s dropped: agent %s has empty accepts",
+                "envelope %s dropped: no awake Agent.accepts rule matched",
                 envelope.id,
-                self.agent.agent_id,
             )
             return
-        for rule in accepts:
-            if rule.check(envelope):
-                await self.agent.inbox.put(envelope)
-                return
-        # 无匹配；当前默认 silently drop。strict 模式留 v0.x 后续。
-        _logger.debug(
-            "envelope %s dropped: no Agent.accepts rule matched",
-            envelope.id,
-        )
+        for agent in matched:
+            await agent.inbox.put(envelope)
 
 
 __all__ = [

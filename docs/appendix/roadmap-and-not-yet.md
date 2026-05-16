@@ -37,14 +37,17 @@
 
 `Errs.SYNC_VIOLATION` 错误码已定义，但触发路径未实现。
 
-## 配置 schema 自动校验（v0.2 候选）
+## 配置文件读取管线（v0.2+）
 
-当前 `PluginLoader.load_into` 接受 `configs: dict[plugin_id, msgspec.Struct]`，但没有"从 YAML / TOML 读 → 校验 schema → 注入 plugin"的自动管线。要加载真实配置，需要：
+`PluginLoader.load_into` 已经接受 `configs: Mapping[str, object]`，并在装载阶段用 `msgspec.convert(..., type=cls.Config)` 转换 / 校验插件配置；失败会以 `Errs.PLUGIN_CONFIG_INVALID` fail-loud。
 
-1. 自己 `yaml.safe_load(...)` + `msgspec.convert(...)`
-2. 失败时手动构造错误并抛
+尚未实现的是"从 YAML / TOML 读 → 按 plugin id 聚合 → 注入 loader"的完整配置文件管线。要加载真实配置，目前仍需要：
 
-后续版本会引入：从 `config/default.yaml` 读取 → 按 plugin manifest 的 config_schema_id 自动校验 → 装载前拒绝不通过的。
+1. 自己 `yaml.safe_load(...)` 或读取 TOML
+2. 整理成 `{plugin_id: raw_config}` mapping
+3. 传给 `PluginLoader.load_into(..., configs=...)`
+
+后续版本会引入：从 `config/default.yaml` 读取 → 按 plugin manifest 的 `config_schema_id` 分发配置 → 支持 profile / override / secrets。
 
 ## 真实平台 adapter（v0.2 候选）
 

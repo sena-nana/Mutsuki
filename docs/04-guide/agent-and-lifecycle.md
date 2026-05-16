@@ -29,49 +29,59 @@ class Agent:
     id_gen: "IdGen"
     rng: "RNG"
     owner: str | None = None
+    accepts: tuple[ScopeRule, ...] = ()
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
     lifespan: Lifespan = field(default_factory=Lifespan)
-    inbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
+    inbox: asyncio.Queue[object] = field(default_factory=asyncio.Queue)
     outbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
-    phase: LifecyclePhase = LifecyclePhase.SPAWN
+    phase: LifecyclePhase = LifecyclePhase.AWAKE
     plugins: list[_LoadedPlugin] = field(default_factory=list)
     _agent_scope: PluginScope | None = field(default=None, repr=False)
-    _command_index: dict[str, CommandTarget] = field(default_factory=dict, repr=False)
+    _dispatch: Dispatcher | None = field(default=None, repr=False)
 ```
 
 注意：`clock` / `id_gen` / `rng` 是**外部注入的**，不是默认构造的。这是 hard rule #9 的体现——决定性时间与 ID 由 runtime 注入，不允许 Agent 自己 `time.time()`。
 
+`accepts` 是 v0.2 引入的 envelope 路由边界：空 tuple 等价于拒绝所有 envelope；命令路径仍可通过显式 Operation 调用。
+
 ### 生命周期阶段
 
-`LifecyclePhase`（[lifecycle.py:6](../../mutsukibot/contracts/lifecycle.py#L6)）只有四个值，按顺序流转：
+`LifecyclePhase`（[lifecycle.py](../../mutsukibot/contracts/lifecycle.py)）当前有三个运行阶段：
 
 | 阶段 | 含义 | 触发点 |
 |---|---|---|
-| `SPAWN` | 身份创建完毕，调度尚未开始 | `Agent(...)` 构造完成时 |
 | `AWAKE` | 调度器启动，开始接收命令 | `AgentScheduler.start()` |
 | `SLEEP` | 调度器暂停 | `AgentScheduler.stop()` 早段 |
 | `STOP` | 完全停止，插件已卸载 | `AgentScheduler.stop()` 末段 |
 
-每个阶段都触发 [lifespan.py:32](../../mutsukibot/core/lifespan.py#L32) 的 `Lifespan.fire()`，按声明顺序运行 `on_spawn` / `on_awake`，按反序运行 `on_sleep` / `on_stop`（LIFO 退栈，模拟资源 acquire / release 的对称性）。
+`Agent` 构造后默认处于 `AWAKE`，并会自动登记到 `AgentRegistry`。调度器 `start()` 会再次设置为 `AWAKE` 并触发 `on_awake`；`stop()` 依次触发 `on_sleep` / `on_stop`，并把 phase 落到 `STOP`。
 
-### 命令索引：O(1) 路由
+### 命令路由：Dispatcher Operation
 
-加载插件时 [agent.py:98-107](../../mutsukibot/core/agent.py#L98-L107) 会扫描插件类的 `__command_markers__`（这个属性由 `PluginMeta` 在类定义时填充，详见 [插件定义](plugin-definition.md)），把每个命令的 `attr_name` 与函数名都登记到 `_command_index: dict[str, CommandTarget]`：
+v0.2 起，命令不再登记到 `_command_index`。加载插件时，`Agent.attach_plugin()` 会扫描插件类的 `__command_markers__`（这个属性由 `PluginMeta` 在类定义时填充，详见 [插件定义](plugin-definition.md)），把每个 `@command` 生成的 `CommandSpec` 注册为 dispatcher Operation：
 
 ```python
 def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
     self.plugins.append(_LoadedPlugin(plugin, scope))
     markers: dict[str, "_CommandMarker"] = plugin.__class__.__command_markers__
-    for attr_name, marker in markers.items():
-        target = CommandTarget(
-            plugin=plugin, attr_name=attr_name, scope=scope, marker=marker
+    for _attr_name, marker in markers.items():
+        handler = _make_command_handler(plugin, marker.dependent)
+        self.dispatch.register_operation(
+            marker.spec,
+            handler=handler,
+            perms=marker.perms,
+            plugin_scope=scope,
         )
-        self._command_index.setdefault(attr_name, target)
-        self._command_index.setdefault(marker.func.__name__, target)
 ```
 
-调度器分发命令时只做一次 `dict.get` 查表（[scheduler.py:88](../../mutsukibot/runtime/scheduler.py#L88) 的 `find_command`），不需要每条消息都 `inspect`。`setdefault` 保证先注册的不会被覆盖。
+调度器分发文本消息时取首词，通过 `agent.dispatch.lookup_operation(...)` 找到 op_id，再用 `agent.dispatch.invoke(...)` inline await 执行。这样人类命令、跨 plugin RPC、外部工具调用共享同一条 Operation 路径。
+
+### 多 Agent 广播：AgentRegistry
+
+`Agent.__post_init__` 会把自身登记到进程内 `AgentRegistry`。`Dispatcher.publish(envelope)` 校验 source 已注册后，不再只投给当前 Agent，而是枚举所有 `phase == AWAKE` 且 `accepts` 命中的 Agent，并把同一 envelope 投进它们的 inbox。
+
+这让 control Agent、audit Agent、观察型 Agent 能在同一进程内同时接收一条 transport envelope。可运行验收入口见 [cross_agent_smoke.py](../../mutsukibot/plugins/cross_agent_smoke.py)。
 
 ### Agent 自有 fallback scope
 
@@ -85,7 +95,7 @@ scope = self._agent_scope
 
 为什么这么做：早期版本里，没有命令上下文时（如 `lifespan.fire`）我们直接借用第一个加载插件的 scope —— 结果那个插件被卸载时把 agent 的 lifespan 钩子上下文也带走了。现在 fallback scope 与任何插件解耦，由 `AgentScheduler.stop()` 显式 `await self.agent.close_agent_scope()` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。
 
-命令路由路径不会用 fallback scope —— 调度器会显式把上下文里的 scope 替换为命令所属插件的 scope（[scheduler.py:106](../../mutsukibot/runtime/scheduler.py#L106)），这样命令副作用就跟着插件走。
+命令路由路径先由 `Agent.make_context()` 创建 agent fallback scope；真正执行时 `Dispatcher.invoke()` 会依据 Operation 注册时绑定的 `PluginScope` 进行权限 / 能力检查和调用。
 
 ## 用法示例
 
@@ -93,6 +103,7 @@ scope = self._agent_scope
 
 ```python
 from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts import Scopes
 from mutsukibot.core.agent import Agent
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 
@@ -101,6 +112,7 @@ agent = Agent(
     clock=SystemClock(),
     id_gen=DeterministicIdGen(),  # 测试场景；生产用 NanoIdGen
     rng=SeededRng(seed=0),
+    accepts=(Scopes.IM_TEXT.to_rule(),),
 )
 ```
 
@@ -108,7 +120,7 @@ agent = Agent(
 
 1. `await PluginLoader().load_into(agent, [...])` 装载插件
 2. `await AgentScheduler(agent).start()` 启动 tick 循环
-3. 通过 adapter 往 `agent.inbox` 投消息，从 `agent.outbox` 取响应
+3. 通过 transport reference plugin 发布 envelope，从 `agent.outbox` 取响应
 4. `await scheduler.stop()` + `await loader.unload_from(agent)` 收尾
 
 完整闭环在 [mutsukibot/plugins/echo/smoke.py](../../mutsukibot/plugins/echo/smoke.py)。
@@ -117,5 +129,6 @@ agent = Agent(
 
 - **不要绕开注入直接 `time.time()` / `uuid.uuid4()` / `random.random()`**。这是 hard rule #9，违反会让 `ManualClock` + `DeterministicIdGen` 的可重放测试失效。所有运行时来源都从 `AgentContext` 拿（详见 [AgentContext](agent-context.md)）。
 - **不要直接复用 `agent.bus.subscribe(...)` 的返回值**。一定要把它登记到当前 scope（命令里是 `ctx.scope.add_subscription(unsub)`），否则插件卸载后订阅还在，会被 `HandleLeakError` 拒绝（详见 [PluginScope](plugin-scope.md)）。
+- **不要忘记 `accepts`**。空 tuple 会显式拒绝所有 envelope，这是 hard rule #13；只需要 Operation invoke 的工具型 Agent 可以保持空 accepts。
 - **`agent.phase` 由调度器维护，不要手动写**。Lifespan 钩子里读 phase 是安全的；写 phase 是 bug。
 - **一个 Agent 只能由一个 `AgentScheduler` 驱动**。当前实现没做互斥 —— 由调用方约定。

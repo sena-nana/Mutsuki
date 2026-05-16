@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import graphlib
 import importlib.metadata
 
@@ -56,6 +56,15 @@ class PluginLoadFailedError(Exception):
 
 class PluginNotFoundError(KeyError):
     pass
+
+
+class PluginConfigInvalidError(Exception):
+    """插件配置无法转换成其 Config schema。"""
+
+    def __init__(self, plugin_id: str, err: Error) -> None:
+        super().__init__(f"插件 {plugin_id!r} 配置无效")
+        self.plugin_id = plugin_id
+        self.error = err
 
 
 class OperationProvisionConflictError(Exception):
@@ -170,6 +179,37 @@ def _resolve_provision_deps(
     return extra_deps
 
 
+def _resolve_config(
+    plugin_id: str,
+    cls: type[Plugin],
+    raw: object,
+) -> msgspec.Struct:
+    """把原始配置值转换成插件的 Config struct。
+
+    允许两种输入：
+
+    * 已经是目标 Config 实例
+    * 原始 mapping / payload，可通过 msgspec.convert 转成 Config
+    """
+    if isinstance(raw, cls.Config):
+        return raw
+    try:
+        return msgspec.convert(raw, type=cls.Config)
+    except Exception as exc:
+        err = Error(
+            code=Errs.PLUGIN_CONFIG_INVALID,
+            source="core.loader",
+            route=f"plugin.config.{plugin_id}",
+            evidence={
+                "plugin_id": plugin_id,
+                "config_type": type(raw).__qualname__,
+                "exception_type": type(exc).__qualname__,
+                "exception_repr": repr(exc),
+            },
+        )
+        raise PluginConfigInvalidError(plugin_id, err) from exc
+
+
 def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
     """委托给 :class:`graphlib.TopologicalSorter`。
 
@@ -237,7 +277,7 @@ class PluginLoader:
         self,
         agent: Agent,
         plugin_classes: Iterable[type[Plugin]],
-        configs: dict[str, msgspec.Struct] | None = None,
+        configs: Mapping[str, object] | None = None,
     ) -> None:
         """按拓扑顺序把插件实例化进 ``agent``，再 await ``on_load``。
 
@@ -265,10 +305,14 @@ class PluginLoader:
         loaded_so_far: list[tuple[Plugin, PluginScope]] = []
         for pid in order:
             cls = by_id[pid]
-            cfg = configs.get(pid) or cls.Config()
             scope = PluginScope(owner=pid)
-            instance: Plugin | None = None
             try:
+                if pid in configs:
+                    raw_cfg: object = configs[pid]
+                else:
+                    raw_cfg = cls.Config()
+                cfg = _resolve_config(pid, cls, raw_cfg)
+                instance: Plugin | None = None
                 instance = cls(
                     agent=agent,
                     config=cfg,
@@ -281,6 +325,9 @@ class PluginLoader:
                 await instance.on_load()
                 # on_load 成功才登记，避免半加载状态污染查询路径。
                 agent.attach_plugin(instance, scope)
+            except PluginConfigInvalidError as exc:
+                await self._rollback(agent, loaded_so_far)
+                raise PluginLoadFailedError(pid, exc.error) from exc
             except Exception as exc:
                 # 当前失败插件：scope 可能已有部分资源
                 try:

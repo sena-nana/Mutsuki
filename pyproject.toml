@@ -86,6 +86,9 @@ ignore = [
 "mutsukibot/plugins/qq_to_todo/smoke.py" = [
     "T20",
 ]
+"mutsukibot/plugins/cross_agent_smoke.py" = [
+    "T20",
+]
 
 [tool.ruff.lint.isort]
 force-sort-within-sections = true

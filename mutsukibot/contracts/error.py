@@ -79,6 +79,7 @@ class Errs:
     PLUGIN_SCOPE_VIOLATION: ClassVar[ErrorCode]
     PLUGIN_DEFINITION_ERROR: ClassVar[ErrorCode]
     PLUGIN_LOAD_FAILED: ClassVar[ErrorCode]
+    PLUGIN_CONFIG_INVALID: ClassVar[ErrorCode]
     COMMAND_EXECUTION_FAILED: ClassVar[ErrorCode]
     COMMAND_INVALID_ARGS: ClassVar[ErrorCode]
     SERVICE_NOT_FOUND: ClassVar[ErrorCode]
@@ -114,6 +115,7 @@ ErrorCode.bootstrap_facade(
         "PLUGIN_SCOPE_VIOLATION": "plugin.scope_violation",
         "PLUGIN_DEFINITION_ERROR": "plugin.definition_error",
         "PLUGIN_LOAD_FAILED": "plugin.load_failed",
+        "PLUGIN_CONFIG_INVALID": "plugin.config_invalid",
         "COMMAND_EXECUTION_FAILED": "command.execution_failed",
         "COMMAND_INVALID_ARGS": "command.invalid_args",
         "SERVICE_NOT_FOUND": "service.not_found",

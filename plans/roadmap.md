@@ -86,7 +86,7 @@
 
 ## 当前推进：v0.2 通用 Agent 框架改造（进行中）
 
-**已完成**（Phase A + Phase B）—— 把 Adapter 抽象拆解为 Plugin + 注册式 Operation/Source（Option IV，详见
+**已完成**（Phase A + Phase B + Phase C）—— 把 Adapter 抽象拆解为 Plugin + 注册式 Operation/Source（Option IV，详见
 [contracts.md §14-§18](contracts.md) 与 plan 文档 D1/D9/D9b/D12/D13）：
 
 - 契约层：`Envelope` / `SourceRef` / `Operation` / `Source` / `ScopeRule` / `Dispatcher` 五节协议
@@ -98,29 +98,27 @@
 - Reference 插件：`InMemoryEndpointPlugin` / `TodoPlugin` / `QqToTodoPlugin`（含 hard rule #14 Handle 演示）
 - 测试：130 通过（v0.1 74 + Phase A 36 + Phase B 20）
 - 三个 smoke 端到端：`echo` / `todo` / `qq_to_todo`（跨 endpoint 协作 + DAG 自动排序）
+- Phase C 多 Agent 广播：
+  - `mutsukibot/core/agent_registry.py`：进程全局弱引用 `AgentRegistry`
+  - `Agent.__post_init__` 自动注册；`Dispatcher.publish()` 广播给所有 awake 且 `accepts` 匹配的 Agent
+  - `mutsukibot/plugins/cross_agent_smoke.py` 验证 control / audit 双 Agent 同收 IM envelope
+- 配置 schema 自动校验：
+  - `PluginLoader.load_into(..., configs=Mapping[str, object])` 接受原始 mapping / payload
+  - 装载前用 `msgspec.convert(..., type=cls.Config)` 转换并校验
+  - 配置错误 fail-loud 为 `plugin.config_invalid`，外层仍包装成 `PluginLoadFailedError`
 
 **v0.2 剩余工作（按优先级）**：
 
-1. **Phase C —— 多 Agent 协作**
-   - `mutsukibot/core/agent_registry.py`：`AgentRegistry` + `iter_accepting(envelope)`
-   - `Dispatcher._route_envelope` 改造为通过 AgentRegistry 枚举所有 Agent 并发投递（D7 广播）
-   - `mutsukibot/plugins/cross_agent_smoke.py`：主控 Agent + 审计 Agent 同时 accepts IM 验证广播
-   - 测试：`tests/core/test_agent_registry.py`
-
-2. **首个真实 IM transport reference plugin**（如 OneBot v11）
+1. **首个真实 IM transport reference plugin**（如 OneBot v11）
    - 仅作为 reference plugin 实现，不进 core / contracts（hard rule #11）
    - 验证 hard rule #14：socket 走 Handle attach 到 PluginScope
 
-3. **配置 schema 自动校验**
-   - PluginLoader 装载阶段对 `cls.Config` 跑 msgspec 校验
-   - 配置加载失败 fail-loud 进 `plugin.config_invalid`
-
-4. **Phase B 跳过的次要项**
+2. **Phase B 跳过的次要项**
    - dispatcher.invoke microbenchmark CI gate（保 v0.5+ Yume sub-ms 链路前置承诺）
    - hard rule #14 lint 规则：扫 Plugin 子类禁止字段类型为 `socket.socket / ClientSession / ...`
    - Contract test kit：把 "plugin 卸载后断言 dispatcher 无残留 op/source" 抽成可复用 fixture
 
-5. **docs/ 同步**
+3. **docs/ 同步**
    - `docs/06-developer/writing-adapter.md` → `writing-transport-plugin.md`，内容重写
    - `docs/07-api/adapters.md` 删除，新增 `dispatcher.md` / `endpoint.md`
    - `docs/appendix/glossary.md` 把 adapter / adapter_id 旧词替换为 endpoint / source_id

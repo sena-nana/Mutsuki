@@ -29,6 +29,7 @@ from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.message import Message
 from mutsukibot.contracts.scope import ScopeRule
+from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.bus import Bus
 from mutsukibot.core.container import ServiceContainer
 from mutsukibot.core.context import AgentContext, TraceContext
@@ -92,6 +93,9 @@ class Agent:
     plugins: list[_LoadedPlugin] = field(default_factory=list)
     _agent_scope: PluginScope | None = field(default=None, repr=False)
     _dispatch: Dispatcher | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        AgentRegistry.register(self)
 
     @property
     def dispatch(self) -> Dispatcher:

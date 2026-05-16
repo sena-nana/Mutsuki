@@ -1,12 +1,13 @@
 # API · `mutsukibot.core`
 
-Agent 运行时核心：注册表、scope、PluginMeta、Agent、bus、容器、loader、handle、saga、lifespan、capability 守卫。
+Agent 运行时核心：Agent、AgentRegistry、Dispatcher、scope、PluginMeta、bus、容器、loader、handle、saga、lifespan、capability 守卫。
 
 ## 模块地图
 
 | 模块 | 公开符号 |
 |---|---|
-| [`agent`](#agent) | `Agent` / `CommandTarget` |
+| [`agent`](#agent) | `Agent` |
+| [`agent_registry`](#agent_registry) | `AgentRegistry` |
 | [`context`](#context) | `AgentContext` / `TraceContext` |
 | [`plugin`](#plugin) | `Plugin` / `PluginMeta` / `PluginDefinitionError` / `command` |
 | [`dependency`](#dependency) | `Dependent` / `Param` / `CtxParam` / `ArgParam` / `ServiceParam` / `RefParam` / `ParameterInfo` / `UnresolvedParameterError` |
@@ -14,8 +15,8 @@ Agent 运行时核心：注册表、scope、PluginMeta、Agent、bus、容器、
 | [`bus`](#bus) | `Bus` / `EventHandler` |
 | [`container`](#container) | `ServiceContainer` / `ServiceNotFoundError` |
 | [`handle`](#handle) | `RefCountedHandle` / `HandleImpl` / `HandleNotAttachedError` / `HandleUseAfterReleaseError` / `make_stub_handle` |
-| [`registry`](#registry) | `PluginRegistry` / `AdapterRegistry` / `HandleRegistry` / `RegistryConflictError` |
-| [`loader`](#loader) | `PluginLoader` / `PluginCycleError` / `PluginNotFoundError` |
+| [`registry`](#registry) | `PluginRegistry` / `HandleRegistry` / `RegistryConflictError` |
+| [`loader`](#loader) | `PluginLoader` / `PluginCycleError` / `PluginDependencyMissingError` / `PluginLoadFailedError` / `PluginConfigInvalidError` / `PluginNotFoundError` |
 | [`lifespan`](#lifespan) | `Lifespan` / `Hook` |
 | [`saga`](#saga) | `Saga` / `SagaCompensationError` |
 | [`capability_guard`](#capability_guard) | `check_capabilities` / `CapabilityNotDeclaredError` |
@@ -34,29 +35,44 @@ class Agent:
     id_gen: IdGen
     rng: RNG
     owner: str | None = None
+    accepts: tuple[ScopeRule, ...] = ()
     services: ServiceContainer = ...
     bus: Bus = ...
     lifespan: Lifespan = ...
-    inbox: asyncio.Queue[Message] = ...
+    inbox: asyncio.Queue[object] = ...
     outbox: asyncio.Queue[Message] = ...
-    phase: LifecyclePhase = SPAWN
+    phase: LifecyclePhase = AWAKE
     plugins: list[_LoadedPlugin] = ...
     _agent_scope: PluginScope | None = None
-    _command_index: dict[str, CommandTarget] = ...
 
+    def __post_init__(self) -> None
+    @property
+    def dispatch(self) -> Dispatcher
     def make_context(self, message: Message | None = None) -> AgentContext
     def attach_plugin(self, plugin: Plugin, scope: PluginScope) -> None
     def detach_plugin(self, plugin: Plugin) -> None
     async def close_agent_scope(self) -> None
-    def find_command(self, name: str) -> CommandTarget | None
-
-@dataclass(slots=True, frozen=True)
-class CommandTarget:
-    plugin: Plugin
-    attr_name: str
-    scope: PluginScope
-    marker: _CommandMarker
 ```
+
+`Agent.__post_init__` 会自动登记到 [`AgentRegistry`](#agent_registry)。v0.2 起命令路由统一走 `Dispatcher`；`CommandTarget` / `_command_index` / `find_command` 已删除。
+
+## agent_registry
+
+[agent_registry.py](../../mutsukibot/core/agent_registry.py)
+
+```python
+class _AgentRegistry:
+    def register(self, agent: Agent) -> None
+    def unregister(self, agent: Agent | str) -> None
+    def get(self, agent_id: str) -> Agent | None
+    def all(self) -> tuple[Agent, ...]
+    def clear(self) -> None
+    def iter_accepting(self, envelope: Envelope) -> Iterator[Agent]
+
+AgentRegistry: _AgentRegistry
+```
+
+`AgentRegistry` 用弱引用保存进程内 Agent。`Dispatcher.publish()` 用 `iter_accepting(envelope)` 广播给所有 `phase == AWAKE` 且 `accepts` 命中的 Agent。
 
 ## context
 
@@ -79,6 +95,7 @@ class AgentContext:
     services: ServiceContainer
     scope: PluginScope
     bus: Bus
+    dispatch: Dispatcher
     trace_ctx: TraceContext
     message: Message | None = None
     extras: dict[str, object] = ...
@@ -97,6 +114,11 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
     requires_plugins: ClassVar[list[PluginDep]] = []
     requires_services: ClassVar[list[ServiceDep]] = []
     provides_services: ClassVar[list[ServiceDep]] = []
+    consumes: ClassVar[tuple[ScopeRule, ...]] = ()
+    provides_operations: ClassVar[tuple[OperationDescriptor, ...]] = ()
+    provides_sources: ClassVar[tuple[SourceDescriptor, ...]] = ()
+    requires_operations: ClassVar[tuple[OperationDep, ...]] = ()
+    requires_sources: ClassVar[tuple[SourceDep, ...]] = ()
     Config: ClassVar[type[msgspec.Struct]]
 
     __manifest__: ClassVar[PluginManifest]
@@ -107,6 +129,7 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
     def __init__(self, *, agent, config, scope, services, bus): ...
     async def on_load(self) -> None: ...
     async def on_unload(self) -> None: ...
+    async def on_envelope(self, envelope: Envelope) -> None: ...
 
 class PluginMeta(ABCMeta): ...
 
@@ -162,6 +185,7 @@ CleanupFn = Callable[[], None] | Callable[[], Awaitable[None]]
 
 class ResourceKind(StrEnum):
     SUBSCRIPTION, TIMER, SERVICE_REGISTRATION, CONTEXT_ATTACHMENT, CONFIG_WATCHER
+    DISPATCH_REGISTRATION, GENERIC_DISPOSE
 
 class HandleLeakError(Exception):
     leaked: list[RefId]
@@ -175,6 +199,8 @@ class PluginScope:
     def add_service_registration(self, fn: CleanupFn) -> None
     def add_context_attachment(self, fn: CleanupFn) -> None
     def add_config_watcher(self, fn: CleanupFn) -> None
+    def add_dispatch_registration(self, fn: CleanupFn) -> None
+    def add_dispose(self, fn: CleanupFn) -> None
     def attach_handle(self, handle: Handle[object]) -> None
     async def close(self) -> None
 
@@ -266,7 +292,6 @@ class _NamedRegistry(Generic[_T]):
     def __iter__ / __contains__ / __len__ / clear
 
 PluginRegistry: _NamedRegistry[type[Plugin]]
-AdapterRegistry: _NamedRegistry[type[Adapter]]
 HandleRegistry: _NamedRegistry[type[HandleImpl]]
 
 class RegistryConflictError(Exception): ...
@@ -283,12 +308,24 @@ class PluginLoader:
     async def load_into(
         self, agent: Agent,
         plugin_classes: Iterable[type[Plugin]],
-        configs: dict[str, msgspec.Struct] | None = None,
+        configs: Mapping[str, object] | None = None,
     ) -> None
     async def unload_from(self, agent: Agent) -> None
 
 class PluginCycleError(Exception):
     cycle: list[str]
+    error: Error
+
+class PluginDependencyMissingError(Exception):
+    missing: list[tuple[str, str]]
+    error: Error
+
+class PluginLoadFailedError(Exception):
+    plugin_id: str
+    error: Error
+
+class PluginConfigInvalidError(Exception):
+    plugin_id: str
     error: Error
 
 class PluginNotFoundError(KeyError): ...

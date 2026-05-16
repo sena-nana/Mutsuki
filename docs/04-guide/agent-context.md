@@ -33,6 +33,7 @@ class AgentContext:
     services: "ServiceContainer"
     scope: "PluginScope"
     bus: "Bus"
+    dispatch: "Dispatcher"
     trace_ctx: TraceContext
     message: "Message | None" = None
     extras: dict[str, object] = field(default_factory=dict)
@@ -47,6 +48,7 @@ class AgentContext:
 | `services` | 按 `(契约类型, name)` 解析服务 | [服务容器](service-container.md) |
 | `scope` | 当前调用的资源生命周期作用域 | [PluginScope](plugin-scope.md) |
 | `bus` | 进程内事件总线 | [事件总线](event-bus.md) |
+| `dispatch` | Operation / Source 调用入口 | [插件 DAG 加载](../05-advanced/plugin-loader-dag.md) |
 | `trace_ctx` | trace_id / span_id / parent_span_id | [Trace 与 Span](trace-and-span.md) |
 | `message` | 触发本次调用的消息（命令路径必有；lifespan 钩子为 None） | [API · contracts.Message](../07-api/contracts.md#message) |
 | `extras` | 插件可以临时塞 per-call 状态 | —— |
@@ -103,6 +105,16 @@ async def subscribe_demo(self, ctx: AgentContext) -> str:
     unsub = ctx.bus.subscribe("my-event", handler)
     ctx.scope.add_subscription(unsub)
     return "subscribed"
+```
+
+调用其他插件的 Operation：
+
+```python
+result = await ctx.dispatch.invoke(
+    "todo:default.create",
+    {"text": "买菜"},
+    ctx=ctx,
+)
 ```
 
 发布 trace 子 span（嵌套调用场景）：
