@@ -98,6 +98,8 @@ class Errs:
     SOURCE_CONFLICT: ClassVar[ErrorCode]
     SOURCE_UNDECLARED: ClassVar[ErrorCode]
     SCOPE_NO_MATCH: ClassVar[ErrorCode]
+    # v0.3 新增 —— 多 Agent 协作错误码
+    AGENT_NOT_FOUND: ClassVar[ErrorCode]
 
 
 ErrorCode.bootstrap_facade(
@@ -133,6 +135,7 @@ ErrorCode.bootstrap_facade(
         "SOURCE_CONFLICT": "source.conflict",
         "SOURCE_UNDECLARED": "source.undeclared",
         "SCOPE_NO_MATCH": "scope.no_match",
+        "AGENT_NOT_FOUND": "agent.not_found",
     },
     declared_by=_OWNER,
 )

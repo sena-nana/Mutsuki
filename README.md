@@ -2,9 +2,9 @@
 
 > 为 Yume / mind-sim 提供运行核心，并通过插件组合实现传统 Bot 框架能力的 Agent 中心框架。
 
-**当前版本：v0.1 最小可运行骨架**
+**当前版本：v0.2 通用 Agent 框架收尾**
 
-v0.1 落地了第一个可装载、可运行、可被测试的 Agent 闭环（echo 插件 + in-memory adapter + 完整 contracts/core/runtime 分层 + 45 项测试）。运行 `uv run python -m mutsukibot.plugins.echo.smoke` 验证。详见 [plans/version-reports/v0.1.md](plans/version-reports/v0.1.md)。
+v0.2 删除旧 Adapter 抽象，改为 Plugin + Operation/Source/Dispatcher：内置 in-memory endpoint、todo endpoint、跨 endpoint 桥接、跨 Agent 广播，以及 OneBot v11 反向 WebSocket reference plugin。运行 `uv run python -m mutsukibot.plugins.echo.smoke` 验证最小闭环。详见 [plans/version-reports/v0.2.md](plans/version-reports/v0.2.md)。
 
 ## 阅读入口
 

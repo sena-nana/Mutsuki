@@ -16,7 +16,7 @@
 8. **结构化错误，不允许吞异常返默认值**——fallback 必须显式记录原因
 9. **决定性时间与 ID 由 runtime 注入**——插件禁止直接用 `time.time()` / `uuid.uuid4()` / `random` 全局源
 10. **同步点显式化**——禁止隐式阻塞，必须走 runtime scheduler
-11. **双协议分离**——外部协议（OneBot / MCP / ChatCompletion 等）只能出现在 adapters / 桥接插件中，不得渗透 `core` / `contracts`
+11. **双协议分离**——外部协议（OneBot / MCP / ChatCompletion 等）只能出现在 transport plugin / 桥接插件中，不得渗透 `core` / `contracts`
 12. **Borrow with Discipline**——借鉴 Koishi / NoneBot / AstrBot 的心智，**不照搬代码或 API 形态**；每个机制必须能解释自己对「Agent 一等公民、解耦、可扩展」中至少一项的贡献
 
 ## 这些规则在代码里的对应
@@ -33,7 +33,7 @@
 | #8 结构化错误 | [`Error`](../../mutsukibot/contracts/error.py) 是 Contract（msgspec.Struct）；scheduler 把 Python 异常分类成 `Error` |
 | #9 注入式 runtime | [`Agent.__init__`](../../mutsukibot/core/agent.py) 强制传入 `clock` / `id_gen` / `rng`；插件从 `ctx.*` 拿 |
 | #10 同步点显式 | [`runtime/loop.py`](../../mutsukibot/runtime/loop.py) 留了 `install_sync_point_guard` 钩子；当前靠 ruff ASYNC 规则间接覆盖 |
-| #11 双协议分离 | [`Adapter`](../../mutsukibot/adapters/base.py) ABC 是唯一允许出现外部协议的位置；core / contracts 没有任何外部协议字样 |
+| #11 双协议分离 | 外部协议只出现在 reference transport plugin；core / contracts 没有任何外部协议字样 |
 | #12 借鉴有度 | NoneBot 的 `Dependent` 思路保留，但去掉按名 fallback；NoneBot 的 `Permission` 思路保留，但合并成单类型 `PermissionRule` |
 
 ## 几个反复回响的设计选择
@@ -83,6 +83,6 @@
 3. 我添加的命令同时生成 LLM tool schema 了吗？
 4. 我处理错误时是 raise 字符串异常，还是构造 `Error`？
 5. 我用了 `time.time()` / `uuid.uuid4()` / `random.*` 吗？应当从 `ctx.*` 拿。
-6. 我引入的外部协议放在 adapter 还是渗到 core？
+6. 我引入的外部协议放在 transport plugin 还是渗到 core？
 
 如果某条规则在你的场景下需要松动，先在 plans / 进行讨论 —— 不要先写代码再补讨论。

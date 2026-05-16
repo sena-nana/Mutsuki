@@ -461,6 +461,34 @@ class Dispatcher:
             )
             raise OperationInvokeError(err) from exc
 
+    async def invoke_in_agent(
+        self,
+        agent_id: str,
+        op_id: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        ctx: "AgentContext",
+    ) -> Any:
+        """显式跨 Agent 调用目标 Agent 的 Operation（v0.3）。
+
+        该路径仍保持 inline await：找到目标 Agent 后直接调用目标
+        ``Dispatcher.invoke``，不通过 inbox/outbox 队列，也不做隐式广播。
+        调用上下文切换到目标 Agent，trace parent 继承自调用方上下文。
+        """
+        target = AgentRegistry.get(agent_id)
+        if target is None:
+            err = Error(
+                code=Errs.AGENT_NOT_FOUND,
+                source="dispatcher",
+                route=f"dispatcher.invoke_in_agent.{agent_id}.{op_id}",
+                evidence={"agent_id": agent_id, "op_id": op_id},
+            )
+            raise OperationInvokeError(err)
+
+        target_ctx = target.make_context()
+        target_ctx.trace_ctx.parent_span_id = ctx.trace_ctx.span_id
+        return await target.dispatch.invoke(op_id, payload or {}, ctx=target_ctx)
+
     async def publish(self, envelope: "Envelope") -> None:
         """发布 envelope。
 

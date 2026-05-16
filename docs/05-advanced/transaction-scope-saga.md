@@ -62,10 +62,11 @@ class TransactionScope(PluginScope):
 ```python
 @dataclass(slots=True)
 class Saga:
+    owner: str = "core.saga"
     _steps: list[_Step] = field(default_factory=list)
 
-    def add_step(self, forward: ForwardFn, compensate: CompensateFn) -> None:
-        self._steps.append(_Step(forward, compensate))
+    def add_step(self, forward: ForwardFn, compensate: CompensateFn, *, name=None) -> None:
+        ...
 
     async def run(self) -> list[Any]:
         results: list[Any] = []
@@ -83,7 +84,7 @@ class Saga:
                 except BaseException as ce:
                     comp_errors.append(ce)
             if comp_errors:
-                raise SagaCompensationError(exc, comp_errors) from exc
+                raise SagaCompensationError(exc, comp_errors, error) from exc
             raise
 ```
 
@@ -99,13 +100,14 @@ class Saga:
 
 ```python
 class SagaCompensationError(Exception):
-    def __init__(self, original: BaseException, comp_errors: list[BaseException]) -> None:
+    def __init__(self, original: BaseException, comp_errors: list[BaseException], error: Error) -> None:
         super().__init__(...)
         self.original = original
         self.comp_errors = comp_errors
+        self.error = error
 ```
 
-对应错误码：`Errs.TRANSACTION_COMPENSATION_FAILED`。
+对应错误码：`Errs.TRANSACTION_COMPENSATION_FAILED`。`error.evidence` 至少包含 `owner`、`completed_step_count`、`compensation_failure_count` 与原始异常类型。
 
 ## 用法示例
 

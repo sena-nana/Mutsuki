@@ -43,6 +43,19 @@ class _AgentRegistry:
         self._agents.clear()
 
     def iter_accepting(self, envelope: Envelope) -> Iterator[Agent]:
+        yield from self.rank_accepting(envelope)
+
+    def rank_accepting(self, envelope: Envelope) -> tuple[Agent, ...]:
+        """返回所有匹配 envelope 的 awake Agent，按确定性优先级排序。
+
+        v0.3 MVP 的"选举"只提供稳定排序：
+
+        1. ``priority`` 高者优先
+        2. priority 相同按 ``agent_id`` 字典序升序
+
+        更复杂的策略留给后续版本插件化。
+        """
+        matched: list[Agent] = []
         for agent in tuple(self._agents.values()):
             if agent.phase != LifecyclePhase.AWAKE:
                 continue
@@ -50,7 +63,18 @@ class _AgentRegistry:
             if not accepts:
                 continue
             if any(rule.check(envelope) for rule in accepts):
-                yield agent
+                matched.append(agent)
+        return tuple(
+            sorted(
+                matched,
+                key=lambda agent: (-agent.priority, str(agent.agent_id)),
+            )
+        )
+
+    def select_accepting(self, envelope: Envelope) -> Agent | None:
+        """选出单个最佳匹配 Agent；无匹配时返回 ``None``。"""
+        ranked = self.rank_accepting(envelope)
+        return ranked[0] if ranked else None
 
 
 AgentRegistry = _AgentRegistry()

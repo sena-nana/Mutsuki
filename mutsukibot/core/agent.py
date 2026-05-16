@@ -77,6 +77,9 @@ class Agent:
     id_gen: "IdGen"
     rng: "RNG"
     owner: str | None = None
+    # v0.3：多 Agent 目标选择的稳定权重。数值越大优先级越高；
+    # 平手由 AgentRegistry 按 agent_id 升序打破，保证确定性。
+    priority: int = 0
     # v0.2 新增：Agent 显式声明可消费 envelope 的 ScopeRule 集合。
     # 空 tuple = 拒绝所有 envelope（命令路径仍可用 —— 命令是被显式调用，
     # 不走 envelope 路由）。详见 hard rule #13 与 contracts §17。

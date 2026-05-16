@@ -24,7 +24,7 @@ MutsukiBot 的核心叫 "Agent"：
 ## 分层
 
 ```
-adapters → core → contracts ← plugins
+plugins → core → contracts
                      ↑
               runtime（横向支撑）
 
@@ -38,11 +38,10 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 | `contracts/` | 稳定的内部协议（仅类型，无运行时副作用） | Message / Event / Capability / Permission / Error / RefPayload / PluginManifest / ... |
 | `core/` | Agent 运行时、注册表、调度器、容器、scope、loader | Agent / PluginMeta / Bus / PluginScope / ServiceContainer / Saga / ... |
 | `runtime/` | 横向支撑：Clock / IdGen / RNG / Scheduler | SystemClock + ManualClock / NanoIdGen + DeterministicIdGen / SeededRng / AgentScheduler |
-| `adapters/` | 协议翻译（CLI / WS / OneBot ...）—— 无业务逻辑 | InMemoryAdapter（测试用）|
-| `plugins/` | 一切可装可卸的能力（命令、记忆、LLM、Yume 模块） | EchoPlugin（参考实现）|
+| `plugins/` | 一切可装可卸的能力（命令、记忆、LLM、Yume 模块、transport plugin） | EchoPlugin / InMemoryEndpointPlugin |
 | `observability/` | trace / audit / metrics —— 通过 bus 订阅，不被任何层依赖 | JsonlTraceWriter |
 
-## v0.1 已交付能力
+## 当前已交付能力
 
 完整列表在 [plans/version-reports/v0.1.md](../../plans/version-reports/v0.1.md)。简版：
 
@@ -58,11 +57,11 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 - **45 个测试**：覆盖契约、core、runtime、plugin 全路径
 - **lint + 双类型检查**：ruff + pyright + pyrefly，CI 必须三者都通过
 
-## v0.1 不在范围里的
+## 当前不在范围里的
 
 按 [plans/roadmap.md](../../plans/roadmap.md) 与 [v0.1 报告](../../plans/version-reports/v0.1.md) 的标注，以下属于 v0.2 及之后：
 
-- 真实平台 adapter（OneBot / WS）
+- 真实平台 transport plugin（OneBot v11 / WS）
 - 配置文件加载与 schema 校验
 - 运行时同步点检测（v0.1 留了 `install_sync_point_guard` 占位钩子）
 - LLM provider 集成
@@ -83,7 +82,7 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 
 不适合：
 
-- 想要 NoneBot 那种成熟生态、上百个 adapter 现成可用的人 —— v0.1 的 adapter 只有 InMemoryAdapter
+- 想要 NoneBot 那种成熟生态、上百个 adapter 现成可用的人 —— MutsukiBot 现在走的是 transport plugin 形态，不是独立 adapter 生态
 - 想跑大规模分布式 bot 集群的人 —— v0.1 是单进程内
 - 不想写类型注解的人 —— MutsukiBot 的 PluginMeta / Dependent 完全依赖类型注解工作
 

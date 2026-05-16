@@ -81,6 +81,7 @@ class ErrorCode(RegisteredString):
 | `PLUGIN_SCOPE_VIOLATION` | `plugin.scope_violation` | 副作用未通过 scope 注册（v0.1 未触发） |
 | `PLUGIN_DEFINITION_ERROR` | `plugin.definition_error` | 插件定义不合法 / 命令运行时异常 |
 | `TRANSACTION_COMPENSATION_FAILED` | `transaction.compensation_failed` | Saga 补偿步骤失败 |
+| `AGENT_NOT_FOUND` | `agent.not_found` | 跨 Agent 调用找不到目标 Agent |
 | `PERMISSION_DENIED` | `permission.denied` | Permission 检查未通过 |
 | `UNKNOWN_CAPABILITY` | `capability.unknown` | 构造未注册的 CapabilityName |
 | `SYNC_VIOLATION` | `plugin.sync_violation` | 同步阻塞调用违规 |

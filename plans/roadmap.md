@@ -2,9 +2,9 @@
 
 本文件回答：**当前在哪个版本、做什么、不做什么、何时进入下一版本**。
 
-## 当前版本：v0.1 最小可运行骨架
+## 当前版本：v0.2 通用 Agent 框架改造
 
-**目标**：第一个可装载、可运行、可被测试的 Agent + 一个回声插件 + 一个 in-memory adapter。**v0.1 已完成；产出报告见 [version-reports/v0.1.md](version-reports/v0.1.md)。**
+**目标**：删除旧 Adapter 抽象，改为 Plugin + 注册式 Operation/Source/Dispatcher，并用 in-memory / todo / OneBot v11 reference plugins 验证 transport 与 tool endpoint 形态。**v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。**
 
 ## 历史版本：v0.0 骨架
 
@@ -84,7 +84,7 @@
 - Yume v0.4 的某个 `StimulusEvent → ExpressionDecision` 样本能用 v0.1 契约表达（即使没有 Yume 插件实现，也要能序列化 / 反序列化通过）
 - 通用 by-ref 协议自洽：用 stub 引用模拟一条「插件 A 产生 ref → 插件 B 借用 ref → scope 关闭自动释放」链路，全程核心代码不出现任何领域字样
 
-## 当前推进：v0.2 通用 Agent 框架改造（进行中）
+## 已完成版本：v0.2 通用 Agent 框架改造
 
 **已完成**（Phase A + Phase B + Phase C）—— 把 Adapter 抽象拆解为 Plugin + 注册式 Operation/Source（Option IV，详见
 [contracts.md §14-§18](contracts.md) 与 plan 文档 D1/D9/D9b/D12/D13）：
@@ -107,28 +107,50 @@
   - 装载前用 `msgspec.convert(..., type=cls.Config)` 转换并校验
   - 配置错误 fail-loud 为 `plugin.config_invalid`，外层仍包装成 `PluginLoadFailedError`
 
-**v0.2 剩余工作（按优先级）**：
+**v0.2 收尾完成项**：
 
-1. **首个真实 IM transport reference plugin**（如 OneBot v11）
-   - 仅作为 reference plugin 实现，不进 core / contracts（hard rule #11）
-   - 验证 hard rule #14：socket 走 Handle attach 到 PluginScope
+- OneBot v11 反向 WebSocket reference plugin：只在 plugin 内处理 OneBot 外部协议，Source/Operation 通过 dispatcher 暴露，server/connection 走 `Handle` + `PluginScope`。
+- hard rule #14 lint：扫描 Plugin 子类字段，拒绝裸持 raw socket / SDK client / websocket server/connection。
+- dispatcher.invoke microbenchmark gate：建立 sub-ms 早期基线。
+- Operation/Source 反注册 contract helper：复用断言 plugin 卸载后 dispatcher 无残留。
+- docs 同步：adapter 文档迁移为 transport plugin / endpoint / dispatcher 文档。
 
-2. **Phase B 跳过的次要项**
-   - dispatcher.invoke microbenchmark CI gate（保 v0.5+ Yume sub-ms 链路前置承诺）
-   - hard rule #14 lint 规则：扫 Plugin 子类禁止字段类型为 `socket.socket / ClientSession / ...`
-   - Contract test kit：把 "plugin 卸载后断言 dispatcher 无残留 op/source" 抽成可复用 fixture
+## 下一阶段：v0.3 MVP 多 Agent 与资源协商
 
-3. **docs/ 同步**
-   - `docs/06-developer/writing-adapter.md` → `writing-transport-plugin.md`，内容重写
-   - `docs/07-api/adapters.md` 删除，新增 `dispatcher.md` / `endpoint.md`
-   - `docs/appendix/glossary.md` 把 adapter / adapter_id 旧词替换为 endpoint / source_id
-   - 各章节示例代码用 InMemoryEndpointPlugin 替代 InMemoryAdapter
+**目标**：在 v0.2 Dispatcher / Source / Operation 基础上补齐最小可用的多 Agent
+协作与资源生命周期能力，作为后续 Yume / mind-sim 插件拆解的运行时底座。
+
+### v0.3 MVP 范围
+
+- `dispatch.invoke_in_agent(agent_id, op_id, payload)`：显式跨 Agent 调用，仍保持
+  inline await，不经队列。
+- `AgentRegistry` 增加确定性候选选择：按 priority + agent_id 选择可接收某
+  envelope 的目标 Agent，为后续优先级 / 选举策略留接口。
+- `ResourceHost`：进程内资源托管服务，返回 `Handle[T]`，资源可跨 plugin reload
+  存活，租约归还后再释放物理资源。
+- 最小资源协商：按 `CapabilityName` 声明容量，`acquire/release` 返回可观测租约；
+  超额 fail-loud 为结构化 `capability.exhausted`。
+- `Saga` 扩展：主链失败 + 补偿失败时携带结构化 `Error(code="transaction.compensation_failed")`。
+
+### v0.3 MVP 不做
+
+- 不做分布式 ResourceHost、不做跨进程资源迁移。
+- 不做复杂选举算法；v0.3 只提供确定性排序与显式 winner。
+- 不做类型化 Handle 自动注入的完整实现；保留为 v0.3 后续或 v0.4。
+
+### v0.3 MVP 验收
+
+- 跨 Agent 调用能调用另一个 Agent 已注册 Operation，目标不存在 / op 不存在均结构化失败。
+- ResourceHost 创建的 Handle 可在 plugin scope 卸载后继续由 host 持有，host 关闭时释放。
+- 资源租约超额时返回 `capability.exhausted`，释放后可再次获取。
+- Agent 选举在相同输入下稳定，priority 高者胜出，平手按 agent_id。
+- `pytest`、`ruff`、`pyright`、`pyrefly` 与现有 smoke 均通过。
 
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.3 | 多 Agent 并发增强（优先级 / 选举）、capability 资源协商、saga 原语、跨 agent `dispatch.invoke_in_agent`、**ResourceHost** 服务（跨 plugin reload 物理零断连，承接 v0.2 hard rule #14）、类型化 Handle 注入（v0.2 D6 推迟项） |
+| v0.3 后续 | 类型化 Handle 注入、ResourceHost 策略化续租 / 心跳、选举策略插件化 |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

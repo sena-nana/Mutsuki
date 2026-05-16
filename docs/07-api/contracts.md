@@ -55,7 +55,7 @@ class ContentKind(StrEnum):
     TEXT, IMAGE_REF, AUDIO_REF, FILE_REF, LATENT_REF, TOOL_SCHEMA_REF
 
 class ChannelRef(Contract):
-    adapter_id: str
+    source_id: str
     channel_id: str
     user_id: str | None = None
 

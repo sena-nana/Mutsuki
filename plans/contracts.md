@@ -113,6 +113,7 @@ Error:
 | `operation.unhealthy` | Operation 处于 unhealthy 状态（handler 此前抛出异常）|
 | `operation.invoke_failed` | dispatcher.invoke 执行链路失败（capability/permission 拦截以外的失败）|
 | `operation.handler_raised` | Operation handler 抛出未捕获异常 |
+| `agent.not_found` | `dispatch.invoke_in_agent` 找不到目标 Agent |
 | `source.unregistered` | publish envelope 时 `envelope.source.source_id` 不在已注册集 |
 | `source.conflict` | 多个 plugin 静态声明同一 source_id |
 | `source.undeclared` | 运行时注册的 source_id 未在调用方 plugin 的 `provides_sources` 静态声明集内 |

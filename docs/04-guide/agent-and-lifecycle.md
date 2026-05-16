@@ -29,6 +29,7 @@ class Agent:
     id_gen: "IdGen"
     rng: "RNG"
     owner: str | None = None
+    priority: int = 0
     accepts: tuple[ScopeRule, ...] = ()
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
@@ -77,11 +78,13 @@ def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
 
 调度器分发文本消息时取首词，通过 `agent.dispatch.lookup_operation(...)` 找到 op_id，再用 `agent.dispatch.invoke(...)` inline await 执行。这样人类命令、跨 plugin RPC、外部工具调用共享同一条 Operation 路径。
 
-### 多 Agent 广播：AgentRegistry
+### 多 Agent 广播与目标选择：AgentRegistry
 
 `Agent.__post_init__` 会把自身登记到进程内 `AgentRegistry`。`Dispatcher.publish(envelope)` 校验 source 已注册后，不再只投给当前 Agent，而是枚举所有 `phase == AWAKE` 且 `accepts` 命中的 Agent，并把同一 envelope 投进它们的 inbox。
 
 这让 control Agent、audit Agent、观察型 Agent 能在同一进程内同时接收一条 transport envelope。可运行验收入口见 [cross_agent_smoke.py](../../mutsukibot/plugins/cross_agent_smoke.py)。
+
+v0.3 MVP 增加了确定性候选排序：`AgentRegistry.rank_accepting(envelope)` 按 `priority` 降序、`agent_id` 升序返回候选，`select_accepting(envelope)` 返回单个 winner。`ctx.dispatch.invoke_in_agent(agent_id, op_id, payload, ctx=ctx)` 则用于显式跨 Agent 调用；目标 Agent 不存在时抛 `OperationInvokeError(error.code == Errs.AGENT_NOT_FOUND)`。
 
 ### Agent 自有 fallback scope
 

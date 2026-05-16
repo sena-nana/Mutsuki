@@ -74,12 +74,12 @@ import asyncio
 from pathlib import Path
 from tempfile import gettempdir
 
-from mutsukibot.adapters import InMemoryAdapter
-from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts import AgentId, Scopes
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.observability import JsonlTraceWriter
 from mutsukibot.plugins.greet import GreetPlugin
+from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import NanoIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
 
@@ -90,22 +90,26 @@ async def main() -> None:
         clock=SystemClock(),
         id_gen=NanoIdGen(),
         rng=SeededRng(seed=0),
+        accepts=(Scopes.IM_TEXT.to_rule(),),
     )
     trace_path = Path(gettempdir()) / "greet-smoke.jsonl"
     writer = JsonlTraceWriter(trace_path)
     writer.attach(agent.bus)
 
-    loader = PluginLoader(allow={GreetPlugin.id})
-    await loader.load_into(agent, [GreetPlugin])
+    loader = PluginLoader(allow={InMemoryEndpointPlugin.id, GreetPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, GreetPlugin])
 
     scheduler = AgentScheduler(agent)
     await scheduler.start()
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "greet 世界")
-    await adapter.send_text(agent, "greet world true")
+    inmem = next(
+        p.plugin for p in agent.plugins
+        if isinstance(p.plugin, InMemoryEndpointPlugin)
+    )
+    await inmem.send_text("greet 世界")
+    await inmem.send_text("greet world true")
     await asyncio.sleep(0.3)
-    msgs = await adapter.drain_outbox(agent, timeout=0.5)
+    msgs = await inmem.drain_outbox(timeout=0.5)
     for m in msgs:
         print(f"-> {m.text!r}")
 
@@ -194,10 +198,7 @@ class GreetPlugin(Plugin[_GreetConfig]):
 新建 `tests/plugins/test_greet.py`（或者在你自己的项目里）：
 
 ```python
-import pytest
-
-from mutsukibot.adapters import InMemoryAdapter
-from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts import AgentId, Scopes
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.loader import PluginLoader
@@ -205,6 +206,7 @@ from mutsukibot.runtime import DeterministicIdGen, ManualClock, SeededRng
 from mutsukibot.runtime.scheduler import AgentScheduler
 
 from mutsukibot.plugins.greet import GreetPlugin
+from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 
 
 async def test_greet_full_lifecycle() -> None:
@@ -213,16 +215,20 @@ async def test_greet_full_lifecycle() -> None:
         clock=ManualClock(start=1_700_000_000.0),
         id_gen=DeterministicIdGen(seed=0),
         rng=SeededRng(seed=0),
+        accepts=(Scopes.IM_TEXT.to_rule(),),
     )
 
-    loader = PluginLoader(allow={GreetPlugin.id})
-    await loader.load_into(agent, [GreetPlugin])
+    loader = PluginLoader(allow={InMemoryEndpointPlugin.id, GreetPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, GreetPlugin])
     scheduler = AgentScheduler(agent)
     await scheduler.start()
 
-    adapter = InMemoryAdapter()
-    await adapter.send_text(agent, "greet alice")
-    msgs = await adapter.drain_outbox(agent, timeout=0.5)
+    inmem = next(
+        p.plugin for p in agent.plugins
+        if isinstance(p.plugin, InMemoryEndpointPlugin)
+    )
+    await inmem.send_text("greet alice")
+    msgs = await inmem.drain_outbox(timeout=0.5)
     assert msgs[0].text == "你好, alice！"
 
     await scheduler.stop()
@@ -244,7 +250,7 @@ uv run pytest tests/plugins/test_greet.py
 - 元数据（id / version / capabilities / Config）是 `ClassVar`，元类负责校验
 - 参数约束写在 `Annotated[..., Arg(...)]`，描述写在 docstring
 - 副作用（订阅 / 定时器 / 服务）必须登记到 `self.scope`
-- 命令路径是 `inbox → scheduler → find_command → check_capabilities → check_perms → solve → outbox + trace`
+- 命令路径是 `Message → Dispatcher.publish → scheduler → Dispatcher.invoke → solve → outbox + trace`
 
 ## 下一步
 

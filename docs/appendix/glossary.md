@@ -4,7 +4,7 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 ## A
 
-**Adapter** —— 把外部传输（CLI / WS / OneBot ...）映射成内部 `Message` 的翻译层。无业务逻辑。详见 [写一个 Adapter](../06-developer/writing-adapter.md)。
+**Adapter** —— v0.1 的旧抽象，v0.2 已删除。外部传输现在写成 transport plugin，通过 Source / Operation 接入。详见 [写一个 transport plugin](../06-developer/writing-transport-plugin.md)。
 
 **Agent** —— MutsukiBot 的一等运行时实体。有身份、生命周期、独立调度循环。详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
 
@@ -28,7 +28,7 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **Caps** —— 内置 CapabilityName 常量门面。`Caps.READ_MESSAGE` 等。
 
-**ChannelRef** —— Message 的来源指针（adapter_id + channel_id + 可选 user_id）。
+**ChannelRef** —— Message 的来源指针（source_id + channel_id + 可选 user_id）。
 
 **command（装饰器）** —— 把 async 方法标记为命令 + LLM tool。详见 [插件定义](../04-guide/plugin-definition.md)。
 
@@ -68,7 +68,7 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **Inject** —— 命令签名里的服务注入 sentinel：`svc: SomeService = Inject()`。
 
-**InMemoryAdapter** —— 进程内 adapter，测试 / 冒烟用。
+**InMemoryEndpointPlugin** —— 进程内 IM endpoint reference plugin，测试 / 冒烟用。
 
 ## L
 
@@ -104,6 +104,12 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **PluginScope** —— 插件副作用作用域。订阅 / 定时器 / 服务注册 / handle 都登记到它，close 时反向回收。详见 [PluginScope](../04-guide/plugin-scope.md)。
 
+## O
+
+**OneBotV11Plugin** —— OneBot v11 反向 WebSocket reference plugin。只在 plugin 内处理 OneBot 外部协议字段。
+
+**Operation** —— 命令、跨 plugin RPC、外部调用面的统一概念。由 `OperationDescriptor` 静态声明，通过 `Dispatcher.invoke` 执行。
+
 ## R
 
 **RefArg** —— 命令签名里的 handle 参数标记：`Annotated[Handle[T], RefArg(kind="...")]`。
@@ -123,6 +129,8 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 **Scope** —— 见 PluginScope / TransactionScope。
 
 **ServiceContainer** —— 按 `(契约类型, 可选名字)` 索引的服务注册表。详见 [服务容器](../04-guide/service-container.md)。
+
+**Source** —— 事件来源声明。transport plugin publish envelope 前必须注册 Source，`Envelope.source.source_id` 指向它。
 
 **SpanStatus** —— TraceSpan 的状态枚举：OK / ERROR。
 

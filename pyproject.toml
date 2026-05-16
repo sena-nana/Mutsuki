@@ -13,6 +13,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+onebot = [
+    "websockets>=14.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -67,7 +70,7 @@ ignore = [
     "RUF003",   # ambiguous-unicode-character-comment
     "RUF012",   # mutable class attribute — msgspec.Struct uses class defaults intentionally
     "PYI034",   # __new__ Self — registered str subclasses intentionally return existing instance
-    "ASYNC109", # async function with timeout param — InMemoryAdapter.drain_outbox by design
+    "ASYNC109", # async function with timeout param — endpoint test helpers expose timeouts
     "UP046",    # PEP 695 generics — Generic[T] subclassing is fine and works with msgspec
     "UP047",    # PEP 695 generic functions — keep Generic-style for consistency
 ]
@@ -107,7 +110,6 @@ pythonVersion = "3.13"
 pythonPlatform = "All"
 include = ["mutsukibot", "tests"]
 typeCheckingMode = "standard"
-reportShadowedImports = false
 disableBytesTypePromotions = true
 
 [tool.pyrefly]
@@ -118,4 +120,5 @@ python-version = "3.13"
 [dependency-groups]
 dev = [
     "pyrefly>=1.0.0",
+    "websockets>=14.0",
 ]
