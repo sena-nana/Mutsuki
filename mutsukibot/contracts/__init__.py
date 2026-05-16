@@ -42,6 +42,7 @@ from mutsukibot.contracts.plugin import (
     PluginDep,
     PluginManifest,
     RefArg,
+    RefArgSource,
     ServiceDep,
 )
 from mutsukibot.contracts.refpayload import (
@@ -117,6 +118,7 @@ __all__ = [
     "PluginManifest",
     "RecoveryAction",
     "RefArg",
+    "RefArgSource",
     "RefDescriptor",
     "RefId",
     "RefPayload",

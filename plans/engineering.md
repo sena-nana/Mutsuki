@@ -188,12 +188,14 @@ core 提供：
 - scope 关闭时自动调用 `release` 清理；finalizer 由创建者注册（核心不假设清理逻辑）。
 - 短期使用走 `with handle.borrow() as obj:`，with 块退出自动释放，避免误延长生命周期。
 - 携带 `RefPayload` 字段的契约不可跨进程 / 跨隔离域；装载时静态校验 + 序列化时拒绝。详见 [contracts.md §11](contracts.md#11-通用-by-ref-payload-协议)。
+- `Annotated[Handle[T], RefArg(...)]` 由 `Dependent` 类型化解析；payload 与 `ResourceHost` 两条来源都必须校验 `RefDescriptor.kind`，失败返回结构化 `ref.not_found` / `ref.kind_mismatch`。
 - Lint 规则（v0.1 起）将检查直接构造 `Handle` 而不调用 `attach_to` 的模式。
 
 ### 4.12 Trace / Audit 强制（含因果链）
 
 - 每个命令调用、工具调用、Agent tick、生命周期切换都产生结构化 trace 记录。
 - 记录含 `trace_id` / `span_id` / `parent_span_id`，可串联跨插件因果链。
+- `dispatch.invoke` / `dispatch.invoke_in_agent` / `ResourceHost.acquire_for` / `ResourceHost.release_for` / `ResourceHost.get_handle_for` 必须通过 `ctx.bus` 发出 span，且嵌套调用临时切换当前 span 保持父子链。
 - observability 插件订阅消费。
 
 ### 4.13 Dispatcher 与跨 plugin 调用（v0.2 引入）
@@ -218,6 +220,7 @@ core 必须内置以下测试支持，作为**一等公民**：
 - **Handle leak detector** —— 测试结束时自动枚举未释放 `Handle`，存在即测试失败；contract test kit 强制启用，不可关闭。
 - **Operation/Source 反注册检测**（v0.2 新增）—— plugin 卸载后 contract test kit 自动断言 dispatcher 中无残留 Operation/Source 注册项。leak 即测试失败。
 - **Stub Handle 工厂** —— [`mutsukibot.core.handle.make_stub_handle(ref_id, *, kind, schema_id_target, schema_version_target, target, attributes)`](../mutsukibot/core/handle.py) 用于在没有真实后端（如 GPU）时生成可观测的假引用，便于上层插件单测。
+- **ResourceHost 策略测试** —— host 暴露 `ResourceRecord` 给 eviction / keepalive policy；策略只能看通用 ref 元数据，不得引入领域字段解释。
 
 测试规则：
 

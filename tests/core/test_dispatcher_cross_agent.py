@@ -9,6 +9,7 @@ import pytest
 
 from mutsukibot import Capability, Caps, Perms, Plugin, command
 from mutsukibot.contracts.error import Errs
+from mutsukibot.contracts.event import TraceSpan
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.agent_registry import AgentRegistry
@@ -32,11 +33,11 @@ class _RemoteMathPlugin(Plugin[_Conf]):
         return left + right
 
 
-def _agent(agent_id: str) -> Agent:
+def _agent(agent_id: str, *, id_seed: int = 0) -> Agent:
     return Agent(
         agent_id=AgentId(agent_id),
         clock=SystemClock(),
-        id_gen=DeterministicIdGen(),
+        id_gen=DeterministicIdGen(seed=id_seed),
         rng=SeededRng(seed=0),
     )
 
@@ -45,7 +46,7 @@ def _agent(agent_id: str) -> Agent:
 async def test_invoke_in_agent_calls_target_agent_operation() -> None:
     AgentRegistry.clear()
     caller = _agent("caller")
-    target = _agent("target")
+    target = _agent("target", id_seed=100)
     loader = PluginLoader(allow={_RemoteMathPlugin.id})
     await loader.load_into(target, [_RemoteMathPlugin])
 
@@ -57,6 +58,45 @@ async def test_invoke_in_agent_calls_target_agent_operation() -> None:
             ctx=caller.make_context(),
         )
         assert result == 5
+    finally:
+        await loader.unload_from(target)
+        AgentRegistry.clear()
+
+
+@pytest.mark.asyncio
+async def test_invoke_in_agent_links_caller_and_target_trace_spans() -> None:
+    AgentRegistry.clear()
+    caller = _agent("caller")
+    target = _agent("target", id_seed=100)
+    loader = PluginLoader(allow={_RemoteMathPlugin.id})
+    await loader.load_into(target, [_RemoteMathPlugin])
+
+    caller_spans: list[TraceSpan] = []
+    target_spans: list[TraceSpan] = []
+
+    async def collect_caller(payload: object) -> None:
+        caller_spans.append(payload)  # type: ignore[arg-type]
+
+    async def collect_target(payload: object) -> None:
+        target_spans.append(payload)  # type: ignore[arg-type]
+
+    caller.bus.subscribe("trace.span", collect_caller, direct=True)
+    target.bus.subscribe("trace.span", collect_target, direct=True)
+
+    try:
+        result = await caller.dispatch.invoke_in_agent(
+            "target",
+            "test-remote-math.add",
+            {"left": 2, "right": 3},
+            ctx=caller.make_context(),
+        )
+        assert result == 5
+        assert [span.name for span in caller_spans] == ["dispatch.invoke_in_agent"]
+        assert [span.name for span in target_spans] == ["dispatch.invoke"]
+        assert target_spans[0].trace_id == caller_spans[0].trace_id
+        assert target_spans[0].parent_span_id == caller_spans[0].span_id
+        assert target_spans[0].attributes["agent_id"] == "target"
+        assert caller_spans[0].attributes["target_agent_id"] == "target"
     finally:
         await loader.unload_from(target)
         AgentRegistry.clear()

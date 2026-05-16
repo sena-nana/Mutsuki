@@ -39,6 +39,7 @@ from mutsukibot.contracts.permission import PermissionRule
 from mutsukibot.contracts.source import SourceDescriptor
 from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.registry import PluginRegistry
+from mutsukibot.core.trace import trace_span
 
 if TYPE_CHECKING:
     from mutsukibot.contracts.envelope import Envelope
@@ -406,60 +407,69 @@ class Dispatcher:
             )
             raise OperationInvokeError(err)
 
-        # capability 检查（复用 v0.1 的 check_capabilities）
-        from mutsukibot.core.capability_guard import (
-            CapabilityNotDeclaredError,
-            check_capabilities,
-        )
-
-        try:
-            # 已在 plugin manifest 中申报的 caps 是 entry.plugin_scope.owner 的
-            # plugin 类的 capabilities；为避免 dispatcher 直接看 plugin class，
-            # 把"能不能调"简化为"op 要求的 caps 是否被某 plugin 申报"——
-            # 在 register_operation 阶段的静态校验里保证（D9b）。这里只兜底。
-            declared = tuple(c for c in entry.descriptor.requires_capabilities)
-            check_capabilities(
-                plugin_id=entry.plugin_id,
-                declared=declared,
-                required=entry.descriptor.requires_capabilities,
-                route=f"operation.{op_id}",
+        async with trace_span(
+            ctx,
+            "dispatch.invoke",
+            attributes={
+                "agent_id": str(self.agent.agent_id),
+                "op_id": op_id,
+                "plugin_id": entry.plugin_id,
+            },
+        ):
+            # capability 检查（复用 v0.1 的 check_capabilities）
+            from mutsukibot.core.capability_guard import (
+                CapabilityNotDeclaredError,
+                check_capabilities,
             )
-        except CapabilityNotDeclaredError as exc:
-            raise OperationInvokeError(exc.error) from exc
 
-        # permission 检查
-        if not await entry.perms.check(ctx):
-            err = Error(
-                code=Errs.PERMISSION_DENIED,
-                source=entry.plugin_id,
-                route=f"operation.{op_id}",
-                evidence={
-                    "op_id": op_id,
-                    "perms_rule": entry.descriptor.perms_rule_id or "",
-                },
-            )
-            raise OperationInvokeError(err)
+            try:
+                # 已在 plugin manifest 中申报的 caps 是 entry.plugin_scope.owner 的
+                # plugin 类的 capabilities；为避免 dispatcher 直接看 plugin class，
+                # 把"能不能调"简化为"op 要求的 caps 是否被某 plugin 申报"——
+                # 在 register_operation 阶段的静态校验里保证（D9b）。这里只兜底。
+                declared = tuple(c for c in entry.descriptor.requires_capabilities)
+                check_capabilities(
+                    plugin_id=entry.plugin_id,
+                    declared=declared,
+                    required=entry.descriptor.requires_capabilities,
+                    route=f"operation.{op_id}",
+                )
+            except CapabilityNotDeclaredError as exc:
+                raise OperationInvokeError(exc.error) from exc
 
-        # **inline await** —— 这是 contracts §18 的硬性要求
-        try:
-            return await entry.handler(ctx, payload or {})
-        except OperationInvokeError:
-            # handler 自己抛了结构化错误，原样向上传
-            raise
-        except Exception as exc:
-            # 标记 op 为 unhealthy（D9 / contracts §14.5）
-            entry.status = OperationStatus.UNHEALTHY
-            err = Error(
-                code=Errs.OPERATION_HANDLER_RAISED,
-                source=entry.plugin_id,
-                route=f"operation.{op_id}",
-                evidence={
-                    "op_id": op_id,
-                    "exception_type": type(exc).__qualname__,
-                    "exception_repr": repr(exc),
-                },
-            )
-            raise OperationInvokeError(err) from exc
+            # permission 检查
+            if not await entry.perms.check(ctx):
+                err = Error(
+                    code=Errs.PERMISSION_DENIED,
+                    source=entry.plugin_id,
+                    route=f"operation.{op_id}",
+                    evidence={
+                        "op_id": op_id,
+                        "perms_rule": entry.descriptor.perms_rule_id or "",
+                    },
+                )
+                raise OperationInvokeError(err)
+
+            # **inline await** —— 这是 contracts §18 的硬性要求
+            try:
+                return await entry.handler(ctx, payload or {})
+            except OperationInvokeError:
+                # handler 自己抛了结构化错误，原样向上传
+                raise
+            except Exception as exc:
+                # 标记 op 为 unhealthy（D9 / contracts §14.5）
+                entry.status = OperationStatus.UNHEALTHY
+                err = Error(
+                    code=Errs.OPERATION_HANDLER_RAISED,
+                    source=entry.plugin_id,
+                    route=f"operation.{op_id}",
+                    evidence={
+                        "op_id": op_id,
+                        "exception_type": type(exc).__qualname__,
+                        "exception_repr": repr(exc),
+                    },
+                )
+                raise OperationInvokeError(err) from exc
 
     async def invoke_in_agent(
         self,
@@ -475,19 +485,30 @@ class Dispatcher:
         ``Dispatcher.invoke``，不通过 inbox/outbox 队列，也不做隐式广播。
         调用上下文切换到目标 Agent，trace parent 继承自调用方上下文。
         """
-        target = AgentRegistry.get(agent_id)
-        if target is None:
-            err = Error(
-                code=Errs.AGENT_NOT_FOUND,
-                source="dispatcher",
-                route=f"dispatcher.invoke_in_agent.{agent_id}.{op_id}",
-                evidence={"agent_id": agent_id, "op_id": op_id},
-            )
-            raise OperationInvokeError(err)
+        async with trace_span(
+            ctx,
+            "dispatch.invoke_in_agent",
+            attributes={
+                "agent_id": str(self.agent.agent_id),
+                "target_agent_id": agent_id,
+                "op_id": op_id,
+            },
+        ):
+            target = AgentRegistry.get(agent_id)
+            if target is None:
+                err = Error(
+                    code=Errs.AGENT_NOT_FOUND,
+                    source="dispatcher",
+                    route=f"dispatcher.invoke_in_agent.{agent_id}.{op_id}",
+                    evidence={"agent_id": agent_id, "op_id": op_id},
+                )
+                raise OperationInvokeError(err)
 
-        target_ctx = target.make_context()
-        target_ctx.trace_ctx.parent_span_id = ctx.trace_ctx.span_id
-        return await target.dispatch.invoke(op_id, payload or {}, ctx=target_ctx)
+            target_ctx = target.make_context()
+            target_ctx.trace_ctx.trace_id = ctx.trace_ctx.trace_id
+            target_ctx.trace_ctx.span_id = ctx.trace_ctx.span_id
+            target_ctx.trace_ctx.parent_span_id = ctx.trace_ctx.parent_span_id
+            return await target.dispatch.invoke(op_id, payload or {}, ctx=target_ctx)
 
     async def publish(self, envelope: "Envelope") -> None:
         """发布 envelope。

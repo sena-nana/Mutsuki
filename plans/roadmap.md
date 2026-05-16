@@ -146,11 +146,20 @@
 - Agent 选举在相同输入下稳定，priority 高者胜出，平手按 agent_id。
 - `pytest`、`ruff`、`pyright`、`pyrefly` 与现有 smoke 均通过。
 
+### v0.3 后续一：资源注入与 trace（已完成）
+
+- `Dependent` 支持 `Annotated[Handle[T], RefArg(...)]` 类型化注入。
+- `RefArg(source=payload)` 校验 payload 中的 `Handle` / `RefPayload` 与声明 kind 一致。
+- `RefArg(source=resource_host)` 通过 `ResourceHost` 服务按 `ref_id` 解析句柄，并写 `resource_host.get_handle` span。
+- `ResourceHost` 增加句柄索引、`ResourceRecord`、可插拔 eviction / keepalive policy。
+- `ResourceHost.acquire_for` / `release_for` 与 `dispatch.invoke` / `invoke_in_agent` 发出 trace span，跨 Agent 调用保持 parent-child 因果链。
+- 阶段报告见 [version-reports/v0.3.1.md](version-reports/v0.3.1.md)。
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.3 后续 | 类型化 Handle 注入、ResourceHost 策略化续租 / 心跳、选举策略插件化 |
+| v0.3 后续 | 选举策略插件化、ResourceHost 策略参数治理、trace 回放闭环 |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

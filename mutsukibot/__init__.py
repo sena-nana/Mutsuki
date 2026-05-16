@@ -9,7 +9,7 @@ from mutsukibot.contracts.capability_builtin import Caps
 from mutsukibot.contracts.error import Errs
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.permission_builtin import Perms
-from mutsukibot.contracts.plugin import Arg, Inject, RefArg
+from mutsukibot.contracts.plugin import Arg, Inject, RefArg, RefArgSource
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.context import AgentContext
 from mutsukibot.core.plugin import Plugin, command
@@ -26,5 +26,6 @@ __all__ = [
     "Perms",
     "Plugin",
     "RefArg",
+    "RefArgSource",
     "command",
 ]

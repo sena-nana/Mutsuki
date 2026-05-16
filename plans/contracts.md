@@ -102,6 +102,8 @@ Error:
 | `schema.mismatch` | 契约 `schema_id` / `schema_version` 不兼容（兼容规则由契约包注册回调） |
 | `handle.leak` | `PluginScope` / `TransactionScope` 关闭时仍有未释放 `Handle` |
 | `handle.use_after_release` | 使用已释放的 `Handle` |
+| `ref.not_found` | `RefArg` / `ResourceHost` 无法找到指定引用 |
+| `ref.kind_mismatch` | `RefArg` / `ResourceHost` 找到的引用 `kind` 与声明不匹配 |
 | `ref.cross_domain` | 携带 `RefPayload` 字段的契约试图跨进程 / 跨隔离域传递 |
 | `ref.serialize_attempt` | 试图序列化 `RefPayload` 字段 |
 | `plugin.cycle` | 插件 DAG 存在环 |
@@ -418,6 +420,22 @@ BackpressureChannel[T]:
 
 二者互补，不互斥：`by_ref` 的 service 可以返回 `RefPayload`。
 
+### 11.11 RefArg 类型化注入（v0.3 后续）
+
+命令 / Operation 签名可声明：
+
+```python
+resource: Annotated[Handle[T], RefArg(kind="domain.resource")]
+```
+
+规则：
+
+- `RefArg` 只认领 `Annotated[Handle[T], RefArg(...)]`；非 `Handle` 注解不得被当作 ref 参数。
+- `source=payload` 时，调用 payload 中同名字段必须是 `Handle[T]` 或 `RefPayload[T]`，并且 `handle.descriptor.kind == RefArg.kind`。
+- `source=resource_host` 时，通过 `ctx.services.resolve(ResourceHost, name=host_name)` 找到 host，再按 `ref_id`（或同名 payload 字段）解析句柄。
+- 找不到引用 → `Error(code="ref.not_found")`；kind 不匹配 → `Error(code="ref.kind_mismatch")`。
+- 解析 ResourceHost 句柄必须写 `resource_host.get_handle` trace span，并继承当前 `ctx.trace_ctx`。
+
 ## 12. Permission 系统（v0.1 引入）
 
 > **设计原则**：与 Capability **正交**。Capability 是「插件**有能力**做某事」的
@@ -721,3 +739,10 @@ dashboard / 审计插件用以上 API 枚举状态。
 - `register_operation` / `register_source` 内部把对应 `unregister_*` 作为 dispose 回调挂到调用方 PluginScope
 - plugin 卸载时 PluginScope.close() 触发反注册回调，dispatcher 状态保持一致
 - 卸载流程对照 PluginLoader.unload_from（[loader.py:205](../mutsukibot/core/loader.py#L205)）：on_unload → scope.close → dispatcher 状态自动清理
+
+### 18.6 Trace span（v0.3 后续）
+
+- `dispatch.invoke` 必须发出 `TraceSpan(name="dispatch.invoke")`，attributes 至少包含 `agent_id` / `op_id` / `plugin_id`。
+- `dispatch.invoke_in_agent` 必须发出 `TraceSpan(name="dispatch.invoke_in_agent")`，attributes 至少包含 `agent_id` / `target_agent_id` / `op_id`。
+- 跨 Agent 调用时，目标 Agent 的 `dispatch.invoke` span 必须沿用调用方 `trace_id`，并以调用方 `dispatch.invoke_in_agent` span 为 parent，保持跨 bus 的同一 trace 因果链。
+- span 通过 `ctx.bus.publish("trace.span", span)` 发出；observability 只旁路订阅，不进入 core 依赖图。

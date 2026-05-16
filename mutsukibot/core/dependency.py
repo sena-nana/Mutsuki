@@ -28,7 +28,10 @@ from typing import (
     get_type_hints,
 )
 
-from mutsukibot.contracts.plugin import Arg, Inject, RefArg
+from mutsukibot.contracts.error import Error, Errs
+from mutsukibot.contracts.ids import RefId
+from mutsukibot.contracts.plugin import Arg, Inject, RefArg, RefArgSource
+from mutsukibot.contracts.refpayload import Handle, RefPayload
 
 if TYPE_CHECKING:
     from mutsukibot.core.context import AgentContext
@@ -50,6 +53,14 @@ class ParameterInfo:
 
 class UnresolvedParameterError(TypeError):
     """没有任何已安装 ``Param`` 能认领某个函数参数时抛出。"""
+
+
+class RefResolutionError(Exception):
+    """RefArg 解析失败时的结构化错误载体。"""
+
+    def __init__(self, error: Error) -> None:
+        super().__init__(f"ref resolution failed: {error.code}")
+        self.error = error
 
 
 class Param(ABC):
@@ -158,12 +169,58 @@ class RefParam(Param):
         ref = next((m for m in info.annotated_metadata if isinstance(m, RefArg)), None)
         if ref is None:
             return None
+        if not _is_handle_annotation(info.annotation):
+            return None
         return cls(info, ref)
 
     async def solve(self, ctx: "AgentContext", **extras: Any) -> Any:
-        if self.info.name not in extras:
-            raise KeyError(f"缺少 ref 参数: {self.info.name!r}")
-        return extras[self.info.name]
+        if self.ref.source == RefArgSource.PAYLOAD:
+            if self.info.name not in extras:
+                raise KeyError(f"缺少 ref 参数: {self.info.name!r}")
+            return _coerce_handle(
+                extras[self.info.name],
+                expected_kind=self.ref.kind,
+                route=f"dependency.ref.{self.info.name}",
+            )
+
+        if self.ref.source == RefArgSource.RESOURCE_HOST:
+            from mutsukibot.core.container import ServiceNotFoundError
+            from mutsukibot.core.resource_host import ResourceHost
+
+            ref_id_value = self.ref.ref_id or extras.get(self.info.name)
+            if not isinstance(ref_id_value, str):
+                err = Error(
+                    code=Errs.REF_NOT_FOUND,
+                    source="core.dependency",
+                    route=f"dependency.ref.{self.info.name}",
+                    evidence={
+                        "parameter": self.info.name,
+                        "expected_kind": self.ref.kind,
+                        "reason": "missing_ref_id",
+                    },
+                )
+                raise RefResolutionError(err)
+            try:
+                host = ctx.services.resolve(ResourceHost, name=self.ref.host_name)
+            except ServiceNotFoundError as exc:
+                err = Error(
+                    code=Errs.SERVICE_NOT_FOUND,
+                    source="core.dependency",
+                    route=f"dependency.ref.{self.info.name}",
+                    evidence={
+                        "contract": "ResourceHost",
+                        "name": self.ref.host_name or "",
+                        "parameter": self.info.name,
+                    },
+                )
+                raise RefResolutionError(err) from exc
+            return await host.get_handle_for(
+                ctx,
+                RefId(ref_id_value),
+                kind=self.ref.kind,
+            )
+
+        raise AssertionError(f"unknown RefArgSource: {self.ref.source!r}")
 
 
 _DEFAULT_PARAMS: tuple[type[Param], ...] = (CtxParam, RefParam, ServiceParam, ArgParam)
@@ -261,6 +318,50 @@ def _annotated_metadata(annotation: Any) -> tuple[Any, ...]:
     return ()
 
 
+def _is_handle_annotation(annotation: Any) -> bool:
+    ann = _strip_annotated(annotation)
+    origin = get_origin(ann)
+    candidate = origin or ann
+    try:
+        return isinstance(candidate, type) and issubclass(candidate, Handle)
+    except TypeError:
+        return False
+
+
+def _coerce_handle(value: Any, *, expected_kind: str, route: str) -> Handle[Any]:
+    handle: Handle[Any]
+    if isinstance(value, RefPayload):
+        handle = value.handle
+    elif isinstance(value, Handle):
+        handle = value
+    else:
+        err = Error(
+            code=Errs.REF_NOT_FOUND,
+            source="core.dependency",
+            route=route,
+            evidence={
+                "expected_kind": expected_kind,
+                "actual_type": type(value).__qualname__,
+            },
+        )
+        raise RefResolutionError(err)
+
+    actual_kind = handle.descriptor.kind
+    if actual_kind != expected_kind:
+        err = Error(
+            code=Errs.REF_KIND_MISMATCH,
+            source="core.dependency",
+            route=route,
+            evidence={
+                "expected_kind": expected_kind,
+                "actual_kind": actual_kind,
+                "ref_id": handle.ref_id,
+            },
+        )
+        raise RefResolutionError(err)
+    return handle
+
+
 __all__ = [
     "ArgParam",
     "CtxParam",
@@ -268,6 +369,7 @@ __all__ = [
     "Param",
     "ParameterInfo",
     "RefParam",
+    "RefResolutionError",
     "ServiceParam",
     "UnresolvedParameterError",
 ]

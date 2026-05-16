@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import ClassVar
 
 from mutsukibot.contracts.base import Contract
@@ -47,6 +48,13 @@ class Inject:
     name: str | None = None
 
 
+class RefArgSource(StrEnum):
+    """RefArg 的解析来源。"""
+
+    PAYLOAD = "payload"
+    RESOURCE_HOST = "resource_host"
+
+
 @dataclass(frozen=True, slots=True)
 class RefArg:
     """按引用 handle 参数的 Annotated 标记。
@@ -57,6 +65,9 @@ class RefArg:
     """
 
     kind: str
+    source: RefArgSource = RefArgSource.PAYLOAD
+    ref_id: str | None = None
+    host_name: str | None = None
 
 
 class PluginDep(Contract):
@@ -137,5 +148,6 @@ __all__ = [
     "PluginDep",
     "PluginManifest",
     "RefArg",
+    "RefArgSource",
     "ServiceDep",
 ]

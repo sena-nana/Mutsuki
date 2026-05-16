@@ -72,6 +72,8 @@ class Errs:
     SCHEMA_MISMATCH: ClassVar[ErrorCode]
     HANDLE_LEAK: ClassVar[ErrorCode]
     HANDLE_USE_AFTER_RELEASE: ClassVar[ErrorCode]
+    REF_NOT_FOUND: ClassVar[ErrorCode]
+    REF_KIND_MISMATCH: ClassVar[ErrorCode]
     REF_CROSS_DOMAIN: ClassVar[ErrorCode]
     REF_SERIALIZE_ATTEMPT: ClassVar[ErrorCode]
     PLUGIN_CYCLE: ClassVar[ErrorCode]
@@ -110,6 +112,8 @@ ErrorCode.bootstrap_facade(
         "SCHEMA_MISMATCH": "schema.mismatch",
         "HANDLE_LEAK": "handle.leak",
         "HANDLE_USE_AFTER_RELEASE": "handle.use_after_release",
+        "REF_NOT_FOUND": "ref.not_found",
+        "REF_KIND_MISMATCH": "ref.kind_mismatch",
         "REF_CROSS_DOMAIN": "ref.cross_domain",
         "REF_SERIALIZE_ATTEMPT": "ref.serialize_attempt",
         "PLUGIN_CYCLE": "plugin.cycle",
