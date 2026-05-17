@@ -120,6 +120,8 @@ Error:
 | `source.conflict` | 多个 plugin 静态声明同一 source_id |
 | `source.undeclared` | 运行时注册的 source_id 未在调用方 plugin 的 `provides_sources` 静态声明集内 |
 | `scope.no_match` | 路由阶段 envelope 无任何 Agent.accepts 匹配（仅在 strict 模式记录；默认 silently drop） |
+| `trace.record_invalid` | JSONL trace 记录无法转换为 `TraceSpan` |
+| `trace.replay_failed` | trace replay kit 发现重复 span、父链缺失、时间区间非法等因果错误 |
 
 ## 4. Capability 命名
 
@@ -746,3 +748,11 @@ dashboard / 审计插件用以上 API 枚举状态。
 - `dispatch.invoke_in_agent` 必须发出 `TraceSpan(name="dispatch.invoke_in_agent")`，attributes 至少包含 `agent_id` / `target_agent_id` / `op_id`。
 - 跨 Agent 调用时，目标 Agent 的 `dispatch.invoke` span 必须沿用调用方 `trace_id`，并以调用方 `dispatch.invoke_in_agent` span 为 parent，保持跨 bus 的同一 trace 因果链。
 - span 通过 `ctx.bus.publish("trace.span", span)` 发出；observability 只旁路订阅，不进入 core 依赖图。
+
+### 18.7 Trace JSONL 与回放 kit（v0.3.2）
+
+- `JsonlTraceWriter` 是 observability 旁路订阅者，只负责把 `trace.span` 事件逐行写为 JSONL。
+- `JsonlTraceReader` 按相同格式读回 `TraceSpan`；记录缺字段、字段类型错误或非法枚举值时抛结构化 `Error(code="trace.record_invalid")`。
+- `mutsukibot.testing.replay_trace_spans(...)` 只验证已记录的 span 因果链，不重放外部副作用；输出 `TraceReplayFrame`，包含 `span` / `depth` / `parent_span_id` 等测试断言用信息。
+- replay kit 拒绝同一 trace 内重复 `span_id`、非法时间区间、父链环；当测试要求闭合父链时，缺失 parent 也必须 fail-loud 为 `trace.replay_failed`。
+- 默认允许父 span 不在当前文件内，以支持跨 Agent / 分片 trace 文件；契约测试可显式开启 `require_known_parents=True`。

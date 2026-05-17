@@ -102,6 +102,9 @@ class Errs:
     SCOPE_NO_MATCH: ClassVar[ErrorCode]
     # v0.3 新增 —— 多 Agent 协作错误码
     AGENT_NOT_FOUND: ClassVar[ErrorCode]
+    # v0.3 后续 —— trace 回放 / 记录错误码
+    TRACE_RECORD_INVALID: ClassVar[ErrorCode]
+    TRACE_REPLAY_FAILED: ClassVar[ErrorCode]
 
 
 ErrorCode.bootstrap_facade(
@@ -140,6 +143,8 @@ ErrorCode.bootstrap_facade(
         "SOURCE_UNDECLARED": "source.undeclared",
         "SCOPE_NO_MATCH": "scope.no_match",
         "AGENT_NOT_FOUND": "agent.not_found",
+        "TRACE_RECORD_INVALID": "trace.record_invalid",
+        "TRACE_REPLAY_FAILED": "trace.replay_failed",
     },
     declared_by=_OWNER,
 )

@@ -155,11 +155,18 @@
 - `ResourceHost.acquire_for` / `release_for` 与 `dispatch.invoke` / `invoke_in_agent` 发出 trace span，跨 Agent 调用保持 parent-child 因果链。
 - 阶段报告见 [version-reports/v0.3.1.md](version-reports/v0.3.1.md)。
 
+### v0.3 后续二：trace 回放闭环（已完成）
+
+- `JsonlTraceWriter` / `JsonlTraceReader` 形成同构 JSONL trace 记录链路。
+- `mutsukibot.testing.replay_trace_spans(...)` 作为可复用契约测试 kit，校验重复 span、父链闭包、非法时间区间和确定性排序。
+- 结构化错误码补齐：`trace.record_invalid` / `trace.replay_failed`。
+- 阶段报告见 [version-reports/v0.3.2.md](version-reports/v0.3.2.md)。
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.3 后续 | 选举策略插件化、ResourceHost 策略参数治理、trace 回放闭环 |
+| v0.3 后续 | 选举策略插件化、ResourceHost 策略参数治理 |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

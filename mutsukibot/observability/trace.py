@@ -8,9 +8,21 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import msgspec
+
+from mutsukibot.contracts.error import Error, Errs
+from mutsukibot.contracts.event import TraceSpan
+
 if TYPE_CHECKING:
-    from mutsukibot.contracts.event import TraceSpan
     from mutsukibot.core.bus import Bus
+
+
+class TraceReplayError(Exception):
+    """Trace 记录读取或回放失败时的结构化错误载体。"""
+
+    def __init__(self, error: Error) -> None:
+        super().__init__(f"trace replay failed: {error.code}")
+        self.error = error
 
 
 class JsonlTraceWriter:
@@ -72,4 +84,40 @@ class JsonlTraceWriter:
         self._file.flush()
 
 
-__all__ = ["JsonlTraceWriter"]
+class JsonlTraceReader:
+    """按 writer 的 JSONL 格式读回 TraceSpan 序列。"""
+
+    def __init__(self, path: Path | str) -> None:
+        self._path = Path(path)
+
+    def read_all(self) -> tuple[TraceSpan, ...]:
+        spans: list[TraceSpan] = []
+        with self._path.open("r", encoding="utf-8") as file:
+            for line_no, line in enumerate(file, start=1):
+                text = line.strip()
+                if not text:
+                    continue
+                spans.append(self._read_line(text, line_no=line_no))
+        return tuple(spans)
+
+    def _read_line(self, line: str, *, line_no: int) -> TraceSpan:
+        try:
+            record = json.loads(line)
+            return msgspec.convert(record, type=TraceSpan)
+        except Exception as exc:
+            raise TraceReplayError(
+                Error(
+                    code=Errs.TRACE_RECORD_INVALID,
+                    source="mutsukibot.observability.trace",
+                    route="jsonl_trace_reader.read_all",
+                    evidence={
+                        "path": str(self._path),
+                        "line": line_no,
+                        "exception_type": type(exc).__qualname__,
+                        "exception_repr": repr(exc),
+                    },
+                )
+            ) from exc
+
+
+__all__ = ["JsonlTraceReader", "JsonlTraceWriter", "TraceReplayError"]
