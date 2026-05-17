@@ -100,6 +100,9 @@ class Errs:
     SOURCE_CONFLICT: ClassVar[ErrorCode]
     SOURCE_UNDECLARED: ClassVar[ErrorCode]
     SCOPE_NO_MATCH: ClassVar[ErrorCode]
+    # v0.3 后续 —— ResourceHost 策略治理错误码
+    RESOURCE_POLICY_INVALID: ClassVar[ErrorCode]
+    RESOURCE_POLICY_CONFLICT: ClassVar[ErrorCode]
     # v0.3 新增 —— 多 Agent 协作错误码
     AGENT_NOT_FOUND: ClassVar[ErrorCode]
     # v0.3 后续 —— trace 回放 / 记录错误码
@@ -142,6 +145,8 @@ ErrorCode.bootstrap_facade(
         "SOURCE_CONFLICT": "source.conflict",
         "SOURCE_UNDECLARED": "source.undeclared",
         "SCOPE_NO_MATCH": "scope.no_match",
+        "RESOURCE_POLICY_INVALID": "resource.policy_invalid",
+        "RESOURCE_POLICY_CONFLICT": "resource.policy_conflict",
         "AGENT_NOT_FOUND": "agent.not_found",
         "TRACE_RECORD_INVALID": "trace.record_invalid",
         "TRACE_REPLAY_FAILED": "trace.replay_failed",

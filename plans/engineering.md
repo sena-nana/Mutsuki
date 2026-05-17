@@ -232,7 +232,7 @@ core 必须内置以下测试支持，作为**一等公民**：
 - **Handle leak detector** —— 测试结束时自动枚举未释放 `Handle`，存在即测试失败；contract test kit 强制启用，不可关闭。
 - **Operation/Source 反注册检测**（v0.2 新增）—— plugin 卸载后 contract test kit 自动断言 dispatcher 中无残留 Operation/Source 注册项。leak 即测试失败。
 - **Stub Handle 工厂** —— [`mutsukibot.core.handle.make_stub_handle(ref_id, *, kind, schema_id_target, schema_version_target, target, attributes)`](../mutsukibot/core/handle.py) 用于在没有真实后端（如 GPU）时生成可观测的假引用，便于上层插件单测。
-- **ResourceHost 策略测试** —— host 暴露 `ResourceRecord` 给 eviction / keepalive policy；策略只能看通用 ref 元数据，不得引入领域字段解释。
+- **ResourceHost 策略测试** —— host 暴露 `ResourceRecord` 给 eviction / keepalive policy；策略通过 `ResourceHostPolicyConfig` / `ResourceRecordSelector` 配置，策略只能看通用 ref 元数据，不得引入领域字段解释，配置解析必须拒绝未知字段与空 selector。
 
 测试规则：
 

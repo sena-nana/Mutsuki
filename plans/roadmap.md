@@ -169,11 +169,19 @@
 - registry 仍固定执行 lifecycle + `Agent.accepts` 过滤，策略只排序候选。
 - 阶段报告见 [version-reports/v0.3.3.md](version-reports/v0.3.3.md)。
 
+### v0.3 后续四：ResourceHost 策略参数治理（已完成）
+
+- `ResourceHostPolicyConfig` / `ResourceRecordSelector` 作为治理配置契约，统一描述
+  eviction / keepalive 的选择条件。
+- `ResourceHost` 接收配置化策略并进行严格校验：拒绝未知字段、空 selector 与
+  显式 config/callable 冲突。
+- 阶段报告见 [version-reports/v0.3.4.md](version-reports/v0.3.4.md)。
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.3 后续 | ResourceHost 策略参数治理 |
+| v0.3 后续 | ResourceHost 策略参数治理（已完成） |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

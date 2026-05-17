@@ -9,6 +9,10 @@ import pytest
 from mutsukibot.contracts import CapabilityName, RefId, SpanStatus
 from mutsukibot.contracts.error import Errs
 from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
+from mutsukibot.contracts.resource_host import (
+    ResourceHostPolicyConfig,
+    ResourceRecordSelector,
+)
 from mutsukibot.core.bus import Bus
 from mutsukibot.core.container import ServiceContainer
 from mutsukibot.core.context import AgentContext, TraceContext
@@ -17,6 +21,8 @@ from mutsukibot.core.resource_host import (
     CapabilityExhaustedError,
     ResourceHandleNotFoundError,
     ResourceHost,
+    ResourcePolicyConfigError,
+    ResourcePolicyConflictError,
 )
 from mutsukibot.core.scope import PluginScope
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
@@ -154,6 +160,87 @@ async def test_resource_host_eviction_and_keepalive_policies() -> None:
 
     await host.close()
     assert finalized == ["stale", "dead", "live"]
+
+
+@pytest.mark.asyncio
+async def test_resource_host_policy_config_drives_eviction_and_keepalive() -> None:
+    finalized: list[str] = []
+    host = ResourceHost(
+        owner="test-host",
+        policy_config={
+            "eviction": {"kind": "test.stale"},
+            "keepalive": {"ref_id": "dead", "invert": True},
+        },
+    )
+    stale = host.create_handle(
+        RefId("stale"),
+        target="stale",
+        kind="test.stale",
+        schema_id_target="test.resource",
+        schema_version_target="1.0.0",
+        finalizer=finalized.append,
+    )
+    live = host.create_handle(
+        RefId("live"),
+        target="live",
+        kind="test.live",
+        schema_id_target="test.resource",
+        schema_version_target="1.0.0",
+        finalizer=finalized.append,
+    )
+    dead = host.create_handle(
+        RefId("dead"),
+        target="dead",
+        kind="test.live",
+        schema_id_target="test.resource",
+        schema_version_target="1.0.0",
+        finalizer=finalized.append,
+    )
+
+    assert host.policy_config == ResourceHostPolicyConfig(
+        eviction=ResourceRecordSelector(kind="test.stale"),
+        keepalive=ResourceRecordSelector(ref_id=RefId("dead"), invert=True),
+    )
+    assert host.evict() == (RefId("stale"),)
+    assert not stale.is_alive()
+    assert live.is_alive()
+    assert dead.is_alive()
+
+    assert await host.keepalive() == (RefId("dead"),)
+    assert live.is_alive()
+    assert not dead.is_alive()
+    assert finalized == ["stale", "dead"]
+
+    await host.close()
+    assert finalized == ["stale", "dead", "live"]
+
+
+@pytest.mark.asyncio
+async def test_resource_host_policy_config_rejects_unknown_keys() -> None:
+    with pytest.raises(ResourcePolicyConfigError) as exc:
+        ResourceHost(
+            owner="test-host",
+            policy_config={
+                "eviction": {"kind": "test.stale", "unknown": "boom"},
+            },
+        )
+
+    assert exc.value.error.code == Errs.RESOURCE_POLICY_INVALID
+    assert exc.value.error.evidence["policy"] == "eviction"
+    assert exc.value.error.evidence["unknown_keys"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_resource_host_policy_config_conflicts_with_callable_override() -> None:
+    with pytest.raises(ResourcePolicyConflictError) as exc:
+        ResourceHost(
+            owner="test-host",
+            policy_config={"eviction": {"kind": "test.stale"}},
+            eviction_policy=lambda record: True,
+        )
+
+    assert exc.value.error.code == Errs.RESOURCE_POLICY_CONFLICT
+    assert exc.value.error.evidence["policy"] == "eviction"
 
 
 @pytest.mark.asyncio

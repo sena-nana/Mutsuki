@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 import inspect
 from typing import TYPE_CHECKING, Any, TypeVar
+
+import msgspec
 
 from mutsukibot.contracts.capability import CapabilityName
 from mutsukibot.contracts.error import Error, Errs
 from mutsukibot.contracts.ids import RefId
 from mutsukibot.contracts.refpayload import RefDescriptor
+from mutsukibot.contracts.resource_host import (
+    ResourceHostPolicyConfig,
+    ResourceRecordSelector,
+)
 from mutsukibot.core.handle import RefCountedHandle
 from mutsukibot.core.scope import PluginScope
 from mutsukibot.core.trace import trace_span
@@ -19,6 +25,212 @@ if TYPE_CHECKING:
     from mutsukibot.core.context import AgentContext
 
 T = TypeVar("T")
+
+
+class ResourcePolicyConfigError(Exception):
+    """ResourceHost 策略配置无效时抛出的结构化错误载体。"""
+
+    def __init__(self, error: Error) -> None:
+        super().__init__(f"resource policy invalid: {error.evidence}")
+        self.error = error
+
+
+class ResourcePolicyConflictError(Exception):
+    """策略配置与显式 callable 冲突时抛出的结构化错误载体。"""
+
+    def __init__(self, error: Error) -> None:
+        super().__init__(f"resource policy conflict: {error.evidence}")
+        self.error = error
+
+
+def _struct_field_names(struct_type: type[msgspec.Struct]) -> set[str]:
+    return {field.name for field in msgspec.structs.fields(struct_type)}
+
+
+_SELECTOR_FIELDS = _struct_field_names(ResourceRecordSelector)
+_HOST_POLICY_FIELDS = _struct_field_names(ResourceHostPolicyConfig)
+
+
+def _validate_selector_mapping(
+    raw: Mapping[str, object],
+    *,
+    policy_name: str,
+    host_owner: str,
+) -> None:
+    unknown = sorted(set(raw) - _SELECTOR_FIELDS)
+    if unknown:
+        err = Error(
+            code=Errs.RESOURCE_POLICY_INVALID,
+            source=host_owner,
+            route=f"resource_host.policy_config.{policy_name}",
+            evidence={
+                "policy": policy_name,
+                "unknown_keys": ",".join(unknown),
+            },
+        )
+        raise ResourcePolicyConfigError(err)
+
+
+def _validate_host_policy_mapping(
+    raw: Mapping[str, object],
+    *,
+    host_owner: str,
+) -> None:
+    unknown = sorted(set(raw) - _HOST_POLICY_FIELDS)
+    if unknown:
+        err = Error(
+            code=Errs.RESOURCE_POLICY_INVALID,
+            source=host_owner,
+            route="resource_host.policy_config",
+            evidence={"unknown_keys": ",".join(unknown)},
+        )
+        raise ResourcePolicyConfigError(err)
+
+    for policy_name in ("eviction", "keepalive"):
+        nested = raw.get(policy_name)
+        if isinstance(nested, Mapping):
+            _validate_selector_mapping(
+                nested,
+                policy_name=policy_name,
+                host_owner=host_owner,
+            )
+
+
+def _validate_policy_semantics(
+    config: ResourceHostPolicyConfig,
+    *,
+    host_owner: str,
+) -> None:
+    if config.is_empty():
+        err = Error(
+            code=Errs.RESOURCE_POLICY_INVALID,
+            source=host_owner,
+            route="resource_host.policy_config",
+            evidence={"reason": "empty_policy_config"},
+        )
+        raise ResourcePolicyConfigError(err)
+
+    for policy_name, selector in (
+        ("eviction", config.eviction),
+        ("keepalive", config.keepalive),
+    ):
+        if selector is None:
+            continue
+
+        issues: list[str] = []
+        if selector.is_empty():
+            issues.append("empty_selector")
+        if selector.ref_id is not None and selector.ref_id == "":
+            issues.append("ref_id_empty")
+        if selector.ref_id_prefix is not None:
+            if selector.ref_id_prefix == "":
+                issues.append("ref_id_prefix_empty")
+            elif selector.ref_id is not None and not str(selector.ref_id).startswith(
+                selector.ref_id_prefix
+            ):
+                issues.append("ref_id_prefix_mismatch")
+        if selector.kind is not None and selector.kind == "":
+            issues.append("kind_empty")
+        if selector.kind_prefix is not None:
+            if selector.kind_prefix == "":
+                issues.append("kind_prefix_empty")
+            elif selector.kind is not None and not selector.kind.startswith(
+                selector.kind_prefix
+            ):
+                issues.append("kind_prefix_mismatch")
+        if selector.schema_id_target is not None and selector.schema_id_target == "":
+            issues.append("schema_id_target_empty")
+        if selector.schema_id_target_prefix is not None:
+            if selector.schema_id_target_prefix == "":
+                issues.append("schema_id_target_prefix_empty")
+            elif selector.schema_id_target is not None and not selector.schema_id_target.startswith(
+                selector.schema_id_target_prefix
+            ):
+                issues.append("schema_id_target_prefix_mismatch")
+        if (
+            selector.schema_version_target is not None
+            and selector.schema_version_target == ""
+        ):
+            issues.append("schema_version_target_empty")
+        if selector.schema_version_target_prefix is not None:
+            if selector.schema_version_target_prefix == "":
+                issues.append("schema_version_target_prefix_empty")
+            elif selector.schema_version_target is not None and not (
+                selector.schema_version_target.startswith(
+                    selector.schema_version_target_prefix
+                )
+            ):
+                issues.append("schema_version_target_prefix_mismatch")
+
+        if issues:
+            err = Error(
+                code=Errs.RESOURCE_POLICY_INVALID,
+                source=host_owner,
+                route=f"resource_host.policy_config.{policy_name}",
+                evidence={
+                    "policy": policy_name,
+                    "issues": ",".join(issues),
+                    "selector": repr(selector),
+                },
+            )
+            raise ResourcePolicyConfigError(err)
+
+
+def _normalize_policy_config(
+    raw: ResourceHostPolicyConfig | Mapping[str, object] | None,
+    *,
+    host_owner: str,
+) -> ResourceHostPolicyConfig | None:
+    if raw is None:
+        return None
+    if isinstance(raw, Mapping):
+        _validate_host_policy_mapping(raw, host_owner=host_owner)
+    try:
+        config = (
+            raw
+            if isinstance(raw, ResourceHostPolicyConfig)
+            else msgspec.convert(raw, type=ResourceHostPolicyConfig)
+        )
+    except Exception as exc:
+        err = Error(
+            code=Errs.RESOURCE_POLICY_INVALID,
+            source=host_owner,
+            route="resource_host.policy_config",
+            evidence={
+                "exception_type": type(exc).__qualname__,
+                "exception_repr": repr(exc),
+            },
+        )
+        raise ResourcePolicyConfigError(err) from exc
+
+    _validate_policy_semantics(config, host_owner=host_owner)
+    return config
+
+
+def _resolve_policy(
+    *,
+    host_owner: str,
+    policy_name: str,
+    selector: ResourceRecordSelector | None,
+    explicit_policy: ResourceEvictionPolicy | ResourceKeepalivePolicy | None,
+) -> ResourceEvictionPolicy | ResourceKeepalivePolicy | None:
+    if selector is not None and explicit_policy is not None:
+        err = Error(
+            code=Errs.RESOURCE_POLICY_CONFLICT,
+            source=host_owner,
+            route=f"resource_host.policy_config.{policy_name}",
+            evidence={
+                "policy": policy_name,
+                "reason": "selector_and_callable_both_provided",
+                "callable_type": type(explicit_policy).__qualname__,
+            },
+        )
+        raise ResourcePolicyConflictError(err)
+    if explicit_policy is not None:
+        return explicit_policy
+    if selector is None:
+        return None
+    return selector.matches
 
 
 class CapabilityExhaustedError(Exception):
@@ -104,6 +316,7 @@ class ResourceHost:
         self,
         *,
         owner: str = "resource-host",
+        policy_config: ResourceHostPolicyConfig | Mapping[str, object] | None = None,
         eviction_policy: ResourceEvictionPolicy | None = None,
         keepalive_policy: ResourceKeepalivePolicy | None = None,
     ) -> None:
@@ -112,8 +325,22 @@ class ResourceHost:
         self._capacities: dict[CapabilityName, _Capacity] = {}
         self._leases: set[ResourceLease] = set()
         self._handles: dict[RefId, _ResourceEntry] = {}
-        self._eviction_policy = eviction_policy
-        self._keepalive_policy = keepalive_policy
+        self.policy_config = _normalize_policy_config(
+            policy_config,
+            host_owner=owner,
+        )
+        self._eviction_policy = _resolve_policy(
+            host_owner=owner,
+            policy_name="eviction",
+            selector=None if self.policy_config is None else self.policy_config.eviction,
+            explicit_policy=eviction_policy,
+        )
+        self._keepalive_policy = _resolve_policy(
+            host_owner=owner,
+            policy_name="keepalive",
+            selector=None if self.policy_config is None else self.policy_config.keepalive,
+            explicit_policy=keepalive_policy,
+        )
         self._tick = 0
         self._closed = False
 
@@ -370,5 +597,7 @@ __all__ = [
     "ResourceHost",
     "ResourceKeepalivePolicy",
     "ResourceLease",
+    "ResourcePolicyConfigError",
+    "ResourcePolicyConflictError",
     "ResourceRecord",
 ]

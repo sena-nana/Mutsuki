@@ -52,6 +52,10 @@ from mutsukibot.contracts.refpayload import (
     RefPayload,
     Replayability,
 )
+from mutsukibot.contracts.resource_host import (
+    ResourceHostPolicyConfig,
+    ResourceRecordSelector,
+)
 from mutsukibot.contracts.schema import register_schema_compatibility
 from mutsukibot.contracts.scope import (
     ByCapability,
@@ -123,6 +127,8 @@ __all__ = [
     "RefId",
     "RefPayload",
     "Replayability",
+    "ResourceHostPolicyConfig",
+    "ResourceRecordSelector",
     "SchemaRegistry",
     "ScopeConflictError",
     "ScopeName",

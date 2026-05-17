@@ -120,6 +120,8 @@ Error:
 | `source.conflict` | 多个 plugin 静态声明同一 source_id |
 | `source.undeclared` | 运行时注册的 source_id 未在调用方 plugin 的 `provides_sources` 静态声明集内 |
 | `scope.no_match` | 路由阶段 envelope 无任何 Agent.accepts 匹配（仅在 strict 模式记录；默认 silently drop） |
+| `resource.policy_invalid` | ResourceHost 策略配置存在未知字段、空 selector 或明显冲突 |
+| `resource.policy_conflict` | ResourceHost 同一策略同时由 config 与显式 callable 提供 |
 | `trace.record_invalid` | JSONL trace 记录无法转换为 `TraceSpan` |
 | `trace.replay_failed` | trace replay kit 发现重复 span、父链缺失、时间区间非法等因果错误 |
 
@@ -779,3 +781,45 @@ AgentElectionPolicy.rank(envelope, candidates) -> tuple[Agent, ...]
 插件通过 `AgentRegistry.install_election_policy(policy, owner=plugin_id)` 安装策略；
 返回的 disposer 必须挂到 `PluginScope.add_dispose(...)`。后安装策略优先；卸载当前
 策略后恢复上一策略，全部卸载后恢复默认策略。
+
+## 20. ResourceHost 策略配置（v0.3 后续）
+
+ResourceHost 的治理配置只允许观察通用 `ResourceRecord` 字段，不允许引入领域语义。
+
+### 20.1 ResourceRecordSelector
+
+```text
+ResourceRecordSelector:
+  ref_id: RefId | None
+  ref_id_prefix: str | None
+  kind: str | None
+  kind_prefix: str | None
+  schema_id_target: str | None
+  schema_id_target_prefix: str | None
+  schema_version_target: str | None
+  schema_version_target_prefix: str | None
+  attributes: dict[str, scalar]
+  invert: bool
+```
+
+规则：
+
+- 至少要有一个 selector 条件，空 selector 视为配置错误。
+- exact / prefix 同时存在时必须一致，否则拒绝装载。
+- `invert=True` 只反转最终匹配结果，不改变可见字段集合。
+- `attributes` 只做键值精确匹配，不解析领域值。
+
+### 20.2 ResourceHostPolicyConfig
+
+```text
+ResourceHostPolicyConfig:
+  eviction: ResourceRecordSelector | None
+  keepalive: ResourceRecordSelector | None
+```
+
+规则：
+
+- 可以只配 eviction、只配 keepalive，或两者都配。
+- `ResourceHost` 接受原始 mapping 时必须先做未知字段检查，再转换成
+  `msgspec.Struct`。
+- 同一策略不能同时由 `policy_config` 与显式 callable 提供，避免隐藏优先级。
