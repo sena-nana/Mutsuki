@@ -162,11 +162,18 @@
 - 结构化错误码补齐：`trace.record_invalid` / `trace.replay_failed`。
 - 阶段报告见 [version-reports/v0.3.2.md](version-reports/v0.3.2.md)。
 
+### v0.3 后续三：选举策略插件化（已完成）
+
+- `AgentElectionPolicy` 把固定 `priority + agent_id` 选择提升为可替换策略。
+- `AgentRegistry.install_election_policy(...)` 支持插件安装策略并返回 scope disposer。
+- registry 仍固定执行 lifecycle + `Agent.accepts` 过滤，策略只排序候选。
+- 阶段报告见 [version-reports/v0.3.3.md](version-reports/v0.3.3.md)。
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
-| v0.3 后续 | 选举策略插件化、ResourceHost 策略参数治理 |
+| v0.3 后续 | ResourceHost 策略参数治理 |
 | v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |

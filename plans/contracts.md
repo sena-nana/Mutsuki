@@ -756,3 +756,26 @@ dashboard / 审计插件用以上 API 枚举状态。
 - `mutsukibot.testing.replay_trace_spans(...)` 只验证已记录的 span 因果链，不重放外部副作用；输出 `TraceReplayFrame`，包含 `span` / `depth` / `parent_span_id` 等测试断言用信息。
 - replay kit 拒绝同一 trace 内重复 `span_id`、非法时间区间、父链环；当测试要求闭合父链时，缺失 parent 也必须 fail-loud 为 `trace.replay_failed`。
 - 默认允许父 span 不在当前文件内，以支持跨 Agent / 分片 trace 文件；契约测试可显式开启 `require_known_parents=True`。
+
+## 19. Agent Election Policy（v0.3.3）
+
+`AgentRegistry` 负责多 Agent 路由候选筛选与单 winner 选择。策略插件只能替换
+候选排序，不得绕过 Agent 生命周期与 `accepts` 过滤。
+
+### 19.1 策略接口
+
+```text
+AgentElectionPolicy.rank(envelope, candidates) -> tuple[Agent, ...]
+```
+
+规则：
+
+- registry 先筛掉非 `LifecyclePhase.AWAKE` Agent 与 `accepts` 不匹配 Agent。
+- policy 只接收已匹配候选；默认策略是 `priority` 降序，平手按 `agent_id` 升序。
+- `select_accepting(envelope)` 取排序后的第一个候选；`iter_accepting(envelope)` 按同一排序广播。
+
+### 19.2 插件安装
+
+插件通过 `AgentRegistry.install_election_policy(policy, owner=plugin_id)` 安装策略；
+返回的 disposer 必须挂到 `PluginScope.add_dispose(...)`。后安装策略优先；卸载当前
+策略后恢复上一策略，全部卸载后恢复默认策略。

@@ -208,6 +208,13 @@ core 提供：
 - Lint 规则（v0.2 起）将检查 plugin 字段直接持 raw socket / SDK client / 连接对象等违反 hard rule #14 的模式。
 - 详 [contracts.md §18 Dispatcher 协议](contracts.md)。
 
+### 4.14 Agent 选举策略插件化（v0.3.3）
+
+- `AgentRegistry` 固定执行 lifecycle + `Agent.accepts` 过滤；策略对象只负责排序已匹配候选。
+- 默认策略为 `PriorityThenIdElectionPolicy`：`priority` 降序，平手按 `agent_id` 升序。
+- 插件通过 `AgentRegistry.install_election_policy(policy, owner=plugin_id)` 安装策略，并必须把返回的 disposer 挂到 `PluginScope.add_dispose(...)`。
+- 后安装策略优先生效；插件卸载后由 scope disposer 自动恢复上一策略，避免热重载后污染全局 registry。
+
 ## 5. 测试基础设施
 
 core 必须内置以下测试支持，作为**一等公民**：
