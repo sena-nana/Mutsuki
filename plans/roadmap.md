@@ -177,12 +177,20 @@
   显式 config/callable 冲突。
 - 阶段报告见 [version-reports/v0.3.4.md](version-reports/v0.3.4.md)。
 
+### v0.4：Contract test kit 与跨插件因果 trace（已完成）
+
+- `mutsukibot.testing.contract_kit` 提供可复用的契约断言入口：
+  `assert_trace_tree_closed`、`assert_cross_agent_trace_chain`、`assert_dispatcher_clean`。
+- `tests/core/test_dispatcher_cross_agent.py` 直接复用 kit 断言跨 Agent trace 链，
+  形成可迁移的因果闭环样本。
+- 阶段报告见 [version-reports/v0.4.md](version-reports/v0.4.md)。
+
 ## 后续版本（仅方向，不锁字段）
 
 | 版本 | 主题 |
 |---|---|
 | v0.3 后续 | ResourceHost 策略参数治理（已完成） |
-| v0.4 | Contract test kit、跨插件因果 trace 完整闭环 |
+| v0.4 | Contract test kit、跨插件因果 trace 完整闭环（已完成） |
 | v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
 | v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |
 | v0.7 | `mutsukibot-yume-evolution` 睡眠插件（事务化） |

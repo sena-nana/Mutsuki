@@ -16,6 +16,7 @@ from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.dispatcher import OperationInvokeError
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot.testing.contract_kit import assert_cross_agent_trace_chain
 
 
 class _Conf(msgspec.Struct, kw_only=True):
@@ -91,12 +92,9 @@ async def test_invoke_in_agent_links_caller_and_target_trace_spans() -> None:
             ctx=caller.make_context(),
         )
         assert result == 5
-        assert [span.name for span in caller_spans] == ["dispatch.invoke_in_agent"]
-        assert [span.name for span in target_spans] == ["dispatch.invoke"]
-        assert target_spans[0].trace_id == caller_spans[0].trace_id
-        assert target_spans[0].parent_span_id == caller_spans[0].span_id
-        assert target_spans[0].attributes["agent_id"] == "target"
-        assert caller_spans[0].attributes["target_agent_id"] == "target"
+        link = assert_cross_agent_trace_chain(caller_spans + target_spans)
+        assert link.target.span.attributes["agent_id"] == "target"
+        assert link.caller.span.attributes["target_agent_id"] == "target"
     finally:
         await loader.unload_from(target)
         AgentRegistry.clear()

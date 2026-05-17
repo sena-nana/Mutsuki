@@ -228,7 +228,7 @@ core 必须内置以下测试支持，作为**一等公民**：
   [`replay_trace_spans`](../mutsukibot/testing/trace_replay.py) 负责在测试中校验
   重复 span、父链、时间区间与可确定排序；单 bus 文件默认允许外部 parent，闭环契约
   测试显式启用完整父链校验。
-- **Contract test kit** —— 一份契约测试可套用任意实现（用于 Yume / mind-sim 多实现并存场景）。
+- **Contract test kit** —— 一份契约测试可套用任意实现（用于 Yume / mind-sim 多实现并存场景）。`mutsukibot.testing.contract_kit` 提供可复用断言：`assert_trace_tree_closed`、`assert_cross_agent_trace_chain`、`assert_dispatcher_clean`。
 - **Handle leak detector** —— 测试结束时自动枚举未释放 `Handle`，存在即测试失败；contract test kit 强制启用，不可关闭。
 - **Operation/Source 反注册检测**（v0.2 新增）—— plugin 卸载后 contract test kit 自动断言 dispatcher 中无残留 Operation/Source 注册项。leak 即测试失败。
 - **Stub Handle 工厂** —— [`mutsukibot.core.handle.make_stub_handle(ref_id, *, kind, schema_id_target, schema_version_target, target, attributes)`](../mutsukibot/core/handle.py) 用于在没有真实后端（如 GPU）时生成可观测的假引用，便于上层插件单测。
