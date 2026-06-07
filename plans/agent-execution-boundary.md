@@ -105,9 +105,10 @@ Agent 之间的协作分两类：
 - 同步请求：主 Agent 使用 `dispatch.invoke_in_agent(target_agent_id, op_id, payload)`。
 - 旁路观察：使用现有 `publish` / trace 机制广播给 observer。
 
-## 5. 契约草案
+## 5. 契约（第一片已落地）
 
-设计层建议新增以下契约；字段名可在实现阶段根据现有代码风格调整。
+第一片实现位于 `mutsukibot/contracts/agent_profile.py`，只锁定 Agent/Profile/Strategy
+边界，不实现完整 strategy loop。
 
 ```text
 AgentParticipation:
@@ -120,9 +121,15 @@ AgentParticipation:
 AgentProfile:
   profile_id: str
   participation: AgentParticipation
-  accepts: tuple[ScopeRule, ...]
-  strategy_id: str
-  side_effect_policy: SideEffectPolicy
+  accepts: tuple[ScopeRule, ...] = ()
+  strategy_id: str = ""
+  side_effect_policy: SideEffectPolicy = read_only
+```
+
+```text
+SideEffectPolicy:
+  read_only
+  allow_external
 ```
 
 ```text
@@ -139,7 +146,7 @@ ExecutionStrategy:
 StrategyResult:
   status: continue | wait_input | completed | failed
   decision: Decision | None
-  emitted: tuple[Envelope, ...]
+  emitted: tuple[Envelope, ...] = ()
   error: Error | None
 ```
 
@@ -157,17 +164,25 @@ StrategyResult:
 
 ## 7. 第一阶段范围
 
-第一阶段只做设计与契约验证，不实现完整 Codex。
+第一阶段只做设计、契约验证与最小 owner 候选过滤，不实现完整 Codex。
 
 范围内：
 
 - 固化 Agent 是主体、ExecutionStrategy 是策略的边界。
-- 设计 `AgentParticipation` / `AgentProfile` / `ExecutionStrategy` 契约。
+- 落地 `AgentParticipation` / `AgentProfile` / `ExecutionStrategy` / `StrategyResult` 契约。
+- `Agent.profile` 为空时保持旧行为；有 profile 时通过 `effective_accepts`
+  读取 profile accepts。
+- `AgentRegistry.select_accepting` / `rank_accepting` 只从
+  `primary_candidate` 中选择 owner。
 - 设计单主 + 只读旁路路由语义。
 - 为后续最小 coding strategy 冒烟测试定义验收标准。
 
 范围外：
 
+- 不实现稳定 `(source_id, session_id) -> agent_id` binding。
+- 不实现 observer side-effect Operation 的 dispatcher 拦截链。
+- 不让 `ExecutionStrategy` 接管现有 `AgentScheduler`。
+- 不实现 strategy 卸载资源清理。
 - 不实现真实 shell / browser / git / LLM 工具集。
 - 不引入 Claude / Codex / coding 专用概念到 core。
 - 不删除现有 Bot scheduler 或 `publish` 广播路径。
@@ -177,14 +192,15 @@ StrategyResult:
 
 后续实现本设计时，至少需要覆盖以下场景：
 
-- 替换 ExecutionStrategy 后，Agent 的 `agent_id`、owner、生命周期、trace root 不变。
-- observer Agent 即使匹配输入，也不会成为 owner。
-- 同一 session 的后续输入稳定路由到同一个 primary Agent。
-- strategy 调工具必须走 dispatcher，不能直接调用插件实现。
-- side-effect Operation 在 observer Agent 上被拒绝，除非主 Agent 显式授权。
-- explicit helper 不自动接收外部输入，只能被 `invoke_in_agent` 调用。
-- strategy 卸载后不残留未释放资源、路由 binding 或未注销回调。
-- 现有 Bot scheduler 行为保持兼容。
+- 已覆盖：observer Agent 即使匹配输入，也不会成为 owner。
+- 已覆盖：explicit helper 不自动成为 owner，默认空 accepts 不接收外部输入。
+- 已覆盖：strategy 接口测试要求通过 dispatcher 调工具。
+- 已覆盖：现有 Bot scheduler 行为保持兼容。
+- 后续：替换 ExecutionStrategy 后，Agent 的 `agent_id`、owner、生命周期、trace root 不变。
+- 后续：同一 session 的后续输入稳定路由到同一个 primary Agent。
+- 后续：side-effect Operation 在 observer Agent 上被拒绝，除非主 Agent 显式授权。
+- 后续：explicit helper 只能被 `invoke_in_agent` 调用的完整路由约束。
+- 后续：strategy 卸载后不残留未释放资源、路由 binding 或未注销回调。
 
 ## 9. 反向判定
 

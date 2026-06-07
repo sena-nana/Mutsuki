@@ -7,7 +7,7 @@ from typing import ClassVar
 import msgspec
 import pytest
 
-from mutsukibot import Capability, Caps, Plugin
+from mutsukibot import Capability, Caps, Plugin, command
 from mutsukibot.contracts.error import Errs
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.contracts.plugin import PluginDep
@@ -34,6 +34,10 @@ class _OkPlugin(Plugin[_OkConfig]):
 
     async def on_unload(self) -> None:
         type(self).unload_count += 1
+
+    @command()
+    async def ping(self) -> str:
+        return "pong"
 
 
 class _BoomLoadConfig(msgspec.Struct, kw_only=True):
@@ -84,6 +88,7 @@ async def test_failed_load_rolls_back_previously_loaded_plugins() -> None:
     assert agent.plugins == []
     # v0.2 起命令索引由 dispatcher 管理；回滚后 dispatcher 也无残留 op 注册
     assert agent.dispatch.list_operations() == ()
+    assert not hasattr(agent, "detach_plugin")
 
 
 @pytest.mark.asyncio
@@ -98,3 +103,19 @@ async def test_first_plugin_load_failure_leaves_agent_clean() -> None:
         await loader.load_into(agent, [_OkPlugin, _BoomLoadPlugin])
 
     assert agent.plugins == []
+
+
+@pytest.mark.asyncio
+async def test_unload_closes_scope_without_agent_detach_hook() -> None:
+    """卸载只维护 plugins 列表并关闭 scope；Operation 清理由 scope disposer 负责。"""
+    agent = _new_agent()
+    loader = PluginLoader(allow={_OkPlugin.id})
+
+    await loader.load_into(agent, [_OkPlugin])
+    assert agent.dispatch.has_operation("rollback-ok.ping")
+    assert not hasattr(agent, "detach_plugin")
+
+    await loader.unload_from(agent)
+
+    assert agent.plugins == []
+    assert agent.dispatch.list_operations() == ()

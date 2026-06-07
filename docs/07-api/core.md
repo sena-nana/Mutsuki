@@ -52,7 +52,6 @@ class Agent:
     def dispatch(self) -> Dispatcher
     def make_context(self, message: Message | None = None) -> AgentContext
     def attach_plugin(self, plugin: Plugin, scope: PluginScope) -> None
-    def detach_plugin(self, plugin: Plugin) -> None
     async def close_agent_scope(self) -> None
 ```
 
@@ -69,6 +68,9 @@ class _AgentRegistry:
     def get(self, agent_id: str) -> Agent | None
     def all(self) -> tuple[Agent, ...]
     def clear(self) -> None
+    def install_election_policy(
+        self, policy: AgentElectionPolicy, *, owner: str
+    ) -> Callable[[], None]
     def rank_accepting(self, envelope: Envelope) -> tuple[Agent, ...]
     def select_accepting(self, envelope: Envelope) -> Agent | None
     def iter_accepting(self, envelope: Envelope) -> Iterator[Agent]
@@ -76,7 +78,7 @@ class _AgentRegistry:
 AgentRegistry: _AgentRegistry
 ```
 
-`AgentRegistry` 用弱引用保存进程内 Agent。`rank_accepting(envelope)` 按 `priority` 降序、`agent_id` 升序返回候选；`select_accepting(envelope)` 返回单个 winner。`Dispatcher.publish()` 用 `iter_accepting(envelope)` 广播给所有 `phase == AWAKE` 且 `accepts` 命中的 Agent。
+`AgentRegistry` 用弱引用保存进程内 Agent。默认 election policy 按 `priority` 降序、`agent_id` 升序排序；`install_election_policy(...)` 可临时替换排序策略，并返回幂等 disposer。`rank_accepting(envelope)` 返回当前策略排序后的候选，`select_accepting(envelope)` 返回单个 winner。`Dispatcher.publish()` 用 `iter_accepting(envelope)` 广播给所有 `phase == AWAKE` 且 `accepts` 命中的 Agent。
 
 ## context
 
@@ -289,14 +291,31 @@ class HandleUseAfterReleaseError(Exception):
 
 ```python
 class ResourceHost:
-    def __init__(self, *, owner: str = "resource-host") -> None
+    def __init__(
+        self, *, owner: str = "resource-host",
+        policy_config: ResourceHostPolicyConfig | Mapping[str, object] | None = None,
+        eviction_policy: ResourceEvictionPolicy | None = None,
+        keepalive_policy: ResourceKeepalivePolicy | None = None,
+    ) -> None
     def create_handle(
         self, ref_id: RefId, *, target: T, kind: str,
         schema_id_target: str, schema_version_target: str,
         attributes: dict | None = None, finalizer=None,
     ) -> RefCountedHandle[T]
+    def get_handle(self, ref_id: RefId, *, kind: str | None = None) -> RefCountedHandle[Any]
+    async def get_handle_for(
+        self, ctx: AgentContext, ref_id: RefId, *, kind: str | None = None
+    ) -> RefCountedHandle[Any]
     def declare_capacity(self, capability: CapabilityName, *, total: int) -> None
     def acquire(self, capability: CapabilityName, *, amount: int = 1, owner: str) -> ResourceLease
+    async def acquire_for(
+        self, ctx: AgentContext, capability: CapabilityName, *, amount: int = 1, owner: str
+    ) -> ResourceLease
+    async def release_for(self, ctx: AgentContext, lease: ResourceLease) -> None
+    def evict(self, policy: ResourceEvictionPolicy | None = None) -> tuple[RefId, ...]
+    async def keepalive(
+        self, policy: ResourceKeepalivePolicy | None = None
+    ) -> tuple[RefId, ...]
     async def close(self) -> None
 
 class ResourceLease:
@@ -307,6 +326,9 @@ class ResourceLease:
     def release(self) -> None
 
 class CapabilityExhaustedError(Exception):
+    error: Error
+
+class ResourceHandleNotFoundError(Exception):
     error: Error
 ```
 
@@ -371,14 +393,13 @@ Hook = Callable[[AgentContext], Awaitable[None]]
 
 @dataclass(slots=True)
 class Lifespan:
-    on_spawn: list[Hook] = ...
     on_awake: list[Hook] = ...
     on_sleep: list[Hook] = ...
     on_stop: list[Hook] = ...
     async def fire(self, phase: str, ctx: AgentContext) -> None
 ```
 
-`fire("spawn"|"awake")` 按声明顺序；`fire("sleep"|"stop")` 反序（LIFO）。
+`fire("awake")` 按声明顺序；`fire("sleep"|"stop")` 反序（LIFO）。
 
 ## saga
 

@@ -4,6 +4,14 @@
 的 bootstrap 注册外，禁止任何运行时副作用。
 """
 
+from mutsukibot.contracts.agent_profile import (
+    AgentParticipation,
+    AgentProfile,
+    ExecutionStrategy,
+    SideEffectPolicy,
+    StrategyResult,
+    StrategyResultStatus,
+)
 from mutsukibot.contracts.base import Contract, SchemaRegistry
 from mutsukibot.contracts.capability import (
     Capability,
@@ -82,6 +90,8 @@ from mutsukibot.contracts.source_builtin import SourceKinds
 
 __all__ = [
     "AgentId",
+    "AgentParticipation",
+    "AgentProfile",
     "Arg",
     "BackpressureChannel",
     "ByCapability",
@@ -107,6 +117,7 @@ __all__ = [
     "ErrorCode",
     "Errs",
     "Event",
+    "ExecutionStrategy",
     "Handle",
     "Inject",
     "LifecyclePhase",
@@ -137,6 +148,7 @@ __all__ = [
     "Service",
     "ServiceDep",
     "ServiceMode",
+    "SideEffectPolicy",
     "SourceDep",
     "SourceDescriptor",
     "SourceKindConflictError",
@@ -145,6 +157,8 @@ __all__ = [
     "SourceRef",
     "SpanId",
     "SpanStatus",
+    "StrategyResult",
+    "StrategyResultStatus",
     "TraceId",
     "TraceSpan",
     "UnknownCapabilityError",

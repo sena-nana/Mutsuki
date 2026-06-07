@@ -253,6 +253,9 @@ class Inject:
 @dataclass(frozen=True, slots=True)
 class RefArg:
     kind: str
+    source: RefArgSource = RefArgSource.PAYLOAD
+    ref_id: str | None = None
+    host_name: str | None = None
 
 class PluginDep(Contract):
     plugin_id: str

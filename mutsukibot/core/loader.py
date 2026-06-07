@@ -357,7 +357,6 @@ class PluginLoader:
     ) -> None:
         """反向卸载已成功加载的插件。回滚阶段的次生异常吞掉以便聚合上报原因。"""
         for inst, scope in reversed(loaded):
-            agent.detach_plugin(inst)
             agent.plugins[:] = [p for p in agent.plugins if p.plugin is not inst]
             try:
                 await inst.on_unload()
@@ -378,7 +377,6 @@ class PluginLoader:
         """
         while agent.plugins:
             entry = agent.plugins.pop()
-            agent.detach_plugin(entry.plugin)
             try:
                 await entry.plugin.on_unload()
             finally:

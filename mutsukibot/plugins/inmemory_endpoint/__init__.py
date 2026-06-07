@@ -1,9 +1,8 @@
-"""In-memory IM endpoint reference plugin —— v0.2 测试驱动入口。
+"""In-memory IM endpoint reference plugin —— 测试驱动入口。
 
-v0.1 中的 ``InMemoryAdapter`` 在 v0.2 删除 Adapter 抽象后，按 D1 改造为
-**reference plugin**：它在 ``on_load`` 中通过 dispatcher 注册一个 IM kind 的
-Source（``"inmemory:default"``），并暴露 ``send_text`` / ``drain_outbox``
-两个测试驱动方法。
+它在 ``on_load`` 中通过 dispatcher 注册一个 IM kind 的 Source
+（``"inmemory:default"``），并暴露 ``send_text`` / ``drain_outbox`` 两个
+测试驱动方法。
 
 测试用法::
 
@@ -38,8 +37,8 @@ from mutsukibot.contracts import (
     SourceKinds,
 )
 
-# v0.2 hard-coded source 描述符 —— 必须在类级声明（D9b 静态契约），同时
-# 运行时 on_load 中用同一对象注册，保证 declared/registered 一致。
+# hard-coded source 描述符 —— 必须在类级声明（D9b 静态契约），同时运行时
+# on_load 中用同一对象注册，保证 declared/registered 一致。
 _INMEMORY_SOURCE = SourceDescriptor(
     source_id="inmemory:default",
     kind=SourceKinds.IM,
@@ -54,7 +53,7 @@ class _InMemoryConfig(msgspec.Struct, kw_only=True):
 
 
 class InMemoryEndpointPlugin(Plugin[_InMemoryConfig]):
-    """进程内 IM endpoint —— v0.2 测试与冒烟脚本的标准 transport plugin。"""
+    """进程内 IM endpoint —— 测试与冒烟脚本的标准 transport plugin。"""
 
     id: ClassVar[str] = "mutsukibot-inmemory-endpoint"
     version: ClassVar[str] = "0.2.0"

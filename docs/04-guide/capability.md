@@ -162,5 +162,5 @@ CapabilityName.bootstrap_facade(
 - **构造未注册的 `CapabilityName` 会立即抛错**。导入时序很重要：如果你在某模块顶层 `Caps.READ_MESSAGE`，必须保证 `mutsukibot.contracts.capability_builtin` 已经被导入过（通常 `from mutsukibot import Caps` 或 `from mutsukibot.contracts import Caps` 就够了）。
 - **`requires_capabilities` 不会自动收录到插件 declared**。命令声明 `requires_capabilities=(Caps.PERSIST,)`，但插件 `capabilities` 没列 `PERSIST` —— 调度器拒绝执行。
 - **不同 owner 注册同名 capability 会冲突**。两家插件都想叫 "memory"，第二家在 `register` 时抛 `CapabilityConflictError`。约定带前缀（`yume.memory`、`mind_sim.memory`）。
-- **v0.1 不强制 quantity 配额**。`Capability(name=..., quantity={"tokens_per_min": 100})` 这种声明只是元数据，没有运行时计数器。资源耗尽（`Errs.CAPABILITY_EXHAUSTED`）这条错误码定义了，但目前没有触发路径。
+- **manifest 里的 quantity 仍只是声明元数据**。真正的容量计数走 `ResourceHost.declare_capacity()` / `acquire()`；超额时会触发 `Errs.CAPABILITY_EXHAUSTED`。
 - **守卫只在调度命令时跑**。在 `on_load` / `on_unload` 里直接做敏感操作不会被拦 —— 这是当前实现限制。把敏感操作放命令里走调度路径才能享受守卫。

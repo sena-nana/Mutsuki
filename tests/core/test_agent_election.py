@@ -10,6 +10,8 @@ import pytest
 
 from mutsukibot import Capability, Plugin
 from mutsukibot.contracts import (
+    AgentParticipation,
+    AgentProfile,
     Caps,
     ChannelRef,
     ContentKind,
@@ -34,6 +36,26 @@ def _agent(agent_id: str, *, priority: int) -> Agent:
         id_gen=DeterministicIdGen(),
         rng=SeededRng(seed=0),
         accepts=(Scopes.IM_TEXT.to_rule(),),
+        priority=priority,
+    )
+
+
+def _profiled_agent(
+    agent_id: str,
+    *,
+    participation: AgentParticipation,
+    priority: int = 0,
+) -> Agent:
+    return Agent(
+        agent_id=AgentId(agent_id),
+        clock=SystemClock(),
+        id_gen=DeterministicIdGen(),
+        rng=SeededRng(seed=0),
+        profile=AgentProfile(
+            profile_id=f"tests.{agent_id}",
+            participation=participation,
+            accepts=(Scopes.IM_TEXT.to_rule(),),
+        ),
         priority=priority,
     )
 
@@ -111,6 +133,52 @@ def test_rank_accepting_returns_stable_order() -> None:
 
         assert [str(agent.agent_id) for agent in ranked] == ["c", "a", "b"]
         assert agents[0].agent_id == "b"
+    finally:
+        AgentRegistry.clear()
+
+
+def test_observer_is_not_selected_as_owner_even_when_accepts_matches() -> None:
+    AgentRegistry.clear()
+    try:
+        primary = _profiled_agent(
+            "primary",
+            participation=AgentParticipation.PRIMARY_CANDIDATE,
+            priority=0,
+        )
+        observer = _profiled_agent(
+            "observer",
+            participation=AgentParticipation.OBSERVER,
+            priority=100,
+        )
+
+        selected = AgentRegistry.select_accepting(_message())
+        accepting = AgentRegistry.iter_accepting(_message())
+
+        assert selected is primary
+        assert observer.participation == AgentParticipation.OBSERVER
+        assert [str(agent.agent_id) for agent in accepting] == ["observer", "primary"]
+    finally:
+        AgentRegistry.clear()
+
+
+def test_explicit_helper_is_not_selected_as_owner_even_when_accepts_matches() -> None:
+    AgentRegistry.clear()
+    try:
+        primary = _profiled_agent(
+            "primary",
+            participation=AgentParticipation.PRIMARY_CANDIDATE,
+            priority=0,
+        )
+        helper = _profiled_agent(
+            "helper",
+            participation=AgentParticipation.EXPLICIT_HELPER,
+            priority=100,
+        )
+
+        selected = AgentRegistry.select_accepting(_message())
+
+        assert selected is primary
+        assert helper.participation == AgentParticipation.EXPLICIT_HELPER
     finally:
         AgentRegistry.clear()
 

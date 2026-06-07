@@ -26,7 +26,7 @@
 
 - 任何实现代码（`mutsukibot/` 目录暂不创建）
 - LLM provider 集成
-- 任何具体消息平台 adapter（OneBot / QQ / Discord / Telegram 等）
+- 任何具体消息平台 transport plugin（OneBot / QQ / Discord / Telegram 等）
 - 持久化层
 - Web 控制面板
 - 国际化
@@ -47,7 +47,7 @@
 
 ## 下一版本：v0.1 最小可运行骨架
 
-**目标**：第一个可装载、可运行、可被测试的 Agent + 一个回声插件 + 一个 in-memory adapter。
+**目标**：第一个可装载、可运行、可被测试的 Agent + 一个回声插件 + 一个 in-memory transport reference plugin。
 
 ### v0.1 候选范围
 
@@ -63,8 +63,8 @@
   - 决定性时间与 ID 源
   - 事件循环包装
   - 同步点检查
-- `mutsukibot/adapters/`：
-  - In-memory adapter（测试基础设施）
+- `mutsukibot/plugins/`：
+  - In-memory transport reference plugin（测试基础设施）
 - `mutsukibot/plugins/`：
   - 一个 echo 命令插件（同时是 LLM tool，验证「指令即工具」hard rule）
 - `mutsukibot/observability/`：

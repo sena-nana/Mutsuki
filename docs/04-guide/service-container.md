@@ -88,7 +88,7 @@ return ctx.services.resolve(ann, name=self.inject.name)
 - `BY_VALUE` —— 服务实例本身可序列化，跨进程也能传
 - `BY_REF` —— 服务持有非可序列化资源（GPU handle、KV cache 槽……），不能跨进程
 
-v0.1 的 `ServiceContainer` 不区分这两种 —— 它只解析进程内对象，模式只是 manifest 层（`ServiceDep.mode`）的元数据。容器跨进程序列化拦截是后续版本的工作（详见 [附录 · 未实现](../appendix/roadmap-and-not-yet.md)）。
+当前 `ServiceContainer` 不区分这两种 —— 它只解析进程内对象，模式只是 manifest 层（`ServiceDep.mode`）的元数据。容器跨进程序列化拦截是后续版本的工作（详见 [附录 · 未实现](../appendix/roadmap-and-not-yet.md)）。
 
 ## 用法示例
 

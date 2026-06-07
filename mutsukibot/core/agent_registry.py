@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from weakref import WeakValueDictionary
 
+from mutsukibot.contracts.agent_profile import AgentParticipation
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.core.agent_election import (
     AgentElectionPolicy,
@@ -88,7 +89,8 @@ class _AgentRegistry:
         return _dispose
 
     def iter_accepting(self, envelope: Envelope) -> Iterator[Agent]:
-        yield from self.rank_accepting(envelope)
+        matched = self._matching_agents(envelope, include_non_primary=True)
+        yield from self._current_election_policy().rank(envelope, matched)
 
     def rank_accepting(self, envelope: Envelope) -> tuple[Agent, ...]:
         """返回所有匹配 envelope 的 awake Agent，按确定性优先级排序。
@@ -101,15 +103,7 @@ class _AgentRegistry:
         v0.3 后续允许插件通过 ``install_election_policy`` 替换排序策略；路由
         前置过滤仍由 registry 固定执行。
         """
-        matched: list[Agent] = []
-        for agent in tuple(self._agents.values()):
-            if agent.phase != LifecyclePhase.AWAKE:
-                continue
-            accepts = agent.accepts
-            if not accepts:
-                continue
-            if any(rule.check(envelope) for rule in accepts):
-                matched.append(agent)
+        matched = self._matching_agents(envelope, include_non_primary=False)
         return tuple(self._current_election_policy().rank(envelope, matched))
 
     def select_accepting(self, envelope: Envelope) -> Agent | None:
@@ -121,6 +115,28 @@ class _AgentRegistry:
         if self._policy_stack:
             return self._policy_stack[-1].policy
         return self._default_policy
+
+    def _matching_agents(
+        self,
+        envelope: Envelope,
+        *,
+        include_non_primary: bool,
+    ) -> list[Agent]:
+        matched: list[Agent] = []
+        for agent in tuple(self._agents.values()):
+            if agent.phase != LifecyclePhase.AWAKE:
+                continue
+            if (
+                not include_non_primary
+                and agent.participation != AgentParticipation.PRIMARY_CANDIDATE
+            ):
+                continue
+            accepts = agent.effective_accepts
+            if not accepts:
+                continue
+            if any(rule.check(envelope) for rule in accepts):
+                matched.append(agent)
+        return matched
 
 
 AgentRegistry = _AgentRegistry()

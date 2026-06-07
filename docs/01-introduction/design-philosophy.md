@@ -32,7 +32,7 @@
 | #7 显式 capability | [`check_capabilities`](../../mutsukibot/core/capability_guard.py) 在调度时 enforce required ⊆ declared |
 | #8 结构化错误 | [`Error`](../../mutsukibot/contracts/error.py) 是 Contract（msgspec.Struct）；scheduler 把 Python 异常分类成 `Error` |
 | #9 注入式 runtime | [`Agent.__init__`](../../mutsukibot/core/agent.py) 强制传入 `clock` / `id_gen` / `rng`；插件从 `ctx.*` 拿 |
-| #10 同步点显式 | [`runtime/loop.py`](../../mutsukibot/runtime/loop.py) 留了 `install_sync_point_guard` 钩子；当前靠 ruff ASYNC 规则间接覆盖 |
+| #10 同步点显式 | 当前靠 ruff ASYNC 规则、code review 与插件契约测试约束；运行时拦截仍是后续项 |
 | #11 双协议分离 | 外部协议只出现在 reference transport plugin；core / contracts 没有任何外部协议字样 |
 | #12 借鉴有度 | NoneBot 的 `Dependent` 思路保留，但去掉按名 fallback；NoneBot 的 `Permission` 思路保留，但合并成单类型 `PermissionRule` |
 

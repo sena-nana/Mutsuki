@@ -129,7 +129,6 @@ async def load_into(
 async def unload_from(self, agent: Agent) -> None:
     while agent.plugins:
         entry = agent.plugins.pop()
-        agent.detach_plugin(entry.plugin)
         try:
             await entry.plugin.on_unload()
         finally:

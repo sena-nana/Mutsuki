@@ -52,14 +52,14 @@ plugins → core → contracts
 
 `observability` 不被任何层依赖，也不依赖任何层的内部实现，只通过事件总线 / trace 通道旁路订阅。把 observability 从依赖图中剥离是「卸载 observability 不影响主链路」的前提。
 
-**v0.2 关键变更**：删除 `mutsukibot/adapters/` 目录（保留 base.py 一个 release 作 DeprecationWarning shim）。原"协议适配层"的职责由 reference plugin 承担：plugin 通过 `dispatch.register_source(...)` + `dispatch.register_operation(...)` 暴露与外界的连接。详 [contracts.md §14-§18](contracts.md)。
+**v0.2 关键变更**：删除独立 Adapter 抽象。原"协议适配层"的职责由 reference plugin 承担：plugin 通过 `dispatch.register_source(...)` + `dispatch.register_operation(...)` 暴露与外界的连接。详 [contracts.md §14-§18](contracts.md)。
 
 各层职责（v0.2）：
 
 - `mutsukibot/contracts` —— 稳定内部协议。详见 [contracts.md](contracts.md)。
 - `mutsukibot/core` —— Agent 运行时本体：注册中心、调度器、Context 工厂、服务容器、生命周期编排、插件 DAG 加载、事务原语、**Dispatcher**（Operation/Source 注册 + envelope 路由）。
 - `mutsukibot/runtime` —— 事件循环策略、并发控制、进程/线程隔离、资源 quota、决定性时间与 ID 源。**Runtime 不决定 Agent 行为**。
-- ~~`mutsukibot/adapters`~~ —— **v0.2 删除**。原 IM/平台 SDK 适配职责由 reference plugin（`mutsukibot/plugins/inmemory_endpoint/` 等）通过 dispatcher 注册 Source + Operation 实现。
+- 独立 Adapter 层 —— **v0.2 删除**。原 IM/平台 SDK 适配职责由 reference plugin（`mutsukibot/plugins/inmemory_endpoint/` 等）通过 dispatcher 注册 Source + Operation 实现。
 - `mutsukibot/plugins` —— 所有可装可卸的能力（命令、Matcher、记忆、情感、睡眠、LLM 桥接、Yume 模块、**transport reference plugins**）。
 - `mutsukibot/services` —— 跨插件共享的具名服务，参考 Koishi 服务注入。服务必须有契约。
 - `mutsukibot/observability` —— trace、audit、metrics、事件总线观测。
@@ -104,8 +104,8 @@ MutsukiBot **不在源码层 import** Yume / mind-sim。二者作为插件组存
 | sub-ms 延迟链路 | `thought → kernel → runtime` | 事件总线 `direct-dispatch` 快路径 |
 | Sleep 多步事务一致性 | `collect → evaluate → compile → integrate → rollback` | Saga / TransactionScope 原语 |
 | 多插件共享类型 | `ThoughtPacket` / `KernelRequest` | contracts-only 共享包机制 |
-| 启动顺序刚性 | `runtime → kernel → architecture → adapters` | 插件依赖 DAG + 拓扑加载 |
-| 睡眠期身份连续性 | adapter / patch 版本切换 | Agent 状态 `snapshot` + `atomic_swap` |
+| 启动顺序刚性 | `runtime → kernel → architecture → transport plugins` | 插件依赖 DAG + 拓扑加载 |
+| 睡眠期身份连续性 | transport / patch 版本切换 | Agent 状态 `snapshot` + `atomic_swap` |
 | 复杂嵌套配置 | latent / KV / sleep 配置树 | 配置 schema 支持 union / 版本 / 引用 |
 | 跨插件因果调试 | 拆插件后丢失调用栈 | Trace 强制带 `trace_id` / `span_id` 因果链 |
 | 测试面爆炸 | N 插件 ⇒ N² 集成路径 | Contract test kit 可复用 |
@@ -169,19 +169,19 @@ mind-sim、其他第三方插件同理。
 
 ```text
 External Input
-  → Adapter
+  → transport plugin
   → Message
   → Agent inbox
   → Matcher / Command
   → Tool/Service call
-  → Adapter response
+  → transport Operation response
 ```
 
 ### 7.2 Yume 风格清醒路径（通过插件组合实现）
 
 ```text
 External Input
-  → Adapter
+  → transport plugin
   → StimulusEvent（来自 mutsukibot-contracts-yume）
   → StimulusSystem 插件
   → ThoughtEngine 插件

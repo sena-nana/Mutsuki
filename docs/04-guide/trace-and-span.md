@@ -2,13 +2,14 @@
 
 ## 这是什么
 
-MutsukiBot 的因果链系统：每条命令开始 / 结束时调度器都 emit 一个 `TraceSpan` 到事件总线；观察者订阅 `trace.span` 写到结构化 sink（JSONL、OTel、其他）。
+MutsukiBot 的因果链系统：dispatcher 调用、跨 Agent 调用、envelope consumer 和 ResourceHost 关键入口都会 emit `TraceSpan` 到事件总线；观察者订阅 `trace.span` 写到结构化 sink（JSONL、OTel、其他）。
 
 代码：
 
 - 上下文：[`TraceContext`](../../mutsukibot/core/context.py#L25-L29)
 - 契约：[`TraceSpan`](../../mutsukibot/contracts/event.py#L19-L32)、[`Event`](../../mutsukibot/contracts/event.py#L35-L48)、[`SpanStatus`](../../mutsukibot/contracts/event.py#L14-L17)
-- 默认观察者：[`JsonlTraceWriter`](../../mutsukibot/observability/trace.py)
+- 默认观察者：[`JsonlTraceWriter`](../../mutsukibot/observability/trace.py) / [`JsonlTraceReader`](../../mutsukibot/observability/trace.py)
+- 回放与契约断言：[`replay_trace_spans`](../../mutsukibot/testing/trace_replay.py) / [`contract_kit`](../../mutsukibot/testing/contract_kit.py)
 
 ## 解决什么问题
 
@@ -40,49 +41,37 @@ class TraceContext:
 | `span_id` | 当前这一跳的标识 | 每一跳新建 |
 | `parent_span_id` | 调用方的 span_id | 调用方传入；外部触发的根 span 为 None |
 
-### Scheduler emit span 的时机
+### Scheduler / Dispatcher emit span 的时机
 
-[scheduler.py:108-185](../../mutsukibot/runtime/scheduler.py#L108-L185)：
+[scheduler.py](../../mutsukibot/runtime/scheduler.py) 负责把 IM 文本解析成 Operation payload，并调用 dispatcher：
 
 ```python
-trace_ctx = TraceContext(
-    trace_id=TraceId(self.agent.id_gen.next("trace")),
-    span_id=SpanId(self.agent.id_gen.next("span")),
-)
-ctx = AgentContext(
-    ...,
-    trace_ctx=trace_ctx,
-    ...,
-)
-
-span_start = self.agent.clock.now()
-status = SpanStatus.OK
+ctx = self.agent.make_context(message=msg)
 try:
-    result = await dependent.solve(ctx, bound_self=plugin, **extras)
+    result = await self.agent.dispatch.invoke(op_id, payload, ctx=ctx)
     await self._emit_result(msg, str(result))
-except Exception as exc:
-    status = SpanStatus.ERROR
-    ...
-finally:
-    span = TraceSpan(
-        trace_id=trace_ctx.trace_id,
-        span_id=trace_ctx.span_id,
-        parent_span_id=trace_ctx.parent_span_id,
-        name=f"plugin.{plugin.id}.{spec.name}",
-        start=span_start,
-        end=self.agent.clock.now(),
-        status=status,
-        attributes={"agent_id": self.agent.agent_id},
-    )
-    await self.agent.bus.publish("trace.span", span)
+except OperationInvokeError as exc:
+    await self._emit_error(msg, exc.error)
 ```
 
 要点：
 
-- **每条命令一个 trace + 一个 span**——v0.1 没有"嵌套调用自动接 parent"的桥，业务嵌套要手动构造子 span_id 并把当前 span_id 作为 parent 传过去
-- **status OK / ERROR 一定会 emit**——即便命令抛错，`finally` 块仍执行
-- **start / end 来自 `agent.clock.now()`**——意味着 ManualClock 测试里 span 的时间也是确定的
-- 默认 attributes 至少包含 `agent_id`；插件可以扩展（在嵌套调用时手工构造子 span 时填）
+- **Operation 执行事实只由 dispatcher span 表达**。人类命令、跨 plugin RPC 和外部工具调用共享 `dispatch.invoke` span，避免 scheduler 再造一份 `plugin.<id>.<command>` 重复事实。
+- **普通消息未匹配命令时**，scheduler 会发 `agent.scheduler.unmatched` span，且不写 outbox。
+- **插件 envelope consumer** 由 scheduler 分发，但 span 通过 `core.trace.trace_span(...)` 统一创建，名称为 `plugin.<id>.on_envelope`。
+- **start / end 来自 `agent.clock.now()`**——意味着 ManualClock 测试里 span 的时间也是确定的。
+
+### Dispatcher / ResourceHost span
+
+v0.3.1 起，以下入口会自动发 trace span，并临时切换当前 span 来保持父子链：
+
+- `dispatch.invoke(...)`：`TraceSpan(name="dispatch.invoke")`
+- `dispatch.invoke_in_agent(...)`：`TraceSpan(name="dispatch.invoke_in_agent")`
+- `ResourceHost.acquire_for(...)`：`TraceSpan(name="resource_host.acquire")`
+- `ResourceHost.release_for(...)`：`TraceSpan(name="resource_host.release")`
+- `ResourceHost.get_handle_for(...)`：`TraceSpan(name="resource_host.get_handle")`
+
+跨 Agent 调用时，目标 Agent 的 `dispatch.invoke` 沿用调用方的 `trace_id`，并把调用方 `dispatch.invoke_in_agent` span 作为 parent。
 
 ### TraceSpan 形态
 
@@ -120,7 +109,7 @@ class Event(Contract):
 
 —— 它把 trace 三段揉进了通用事件里。v0.1 的 scheduler 只 publish `TraceSpan`（不是 `Event`），但 `Event` 的形状已经预留：插件之间发布业务事件时可用它，让 trace 写入器一并处理。
 
-### JsonlTraceWriter
+### JsonlTraceWriter / Reader
 
 [observability/trace.py](../../mutsukibot/observability/trace.py) 的标准订阅者：
 
@@ -128,7 +117,18 @@ class Event(Contract):
 - `detach()`：unsubscribe + 关文件
 - 写失败时不阻塞 publisher，转发到 bus 上的 `trace.write_failed` 事件（[trace.py:36-45](../../mutsukibot/observability/trace.py#L36-L45)）
 
-落盘格式（[trace.py:58-72](../../mutsukibot/observability/trace.py#L58-L72)）：每行一个 JSON object，含 trace_id / span_id / parent_span_id / name / start / end / status / attributes。
+落盘格式（[trace.py](../../mutsukibot/observability/trace.py)）：每行一个 JSON object，含 trace_id / span_id / parent_span_id / name / start / end / status / attributes。`JsonlTraceReader.read_all()` 按同构格式读回 `TraceSpan`；记录缺字段或字段类型错误时抛 `TraceReplayError`，其中 `error.code == Errs.TRACE_RECORD_INVALID`。
+
+### Trace replay / contract kit
+
+`mutsukibot.testing.replay_trace_spans(...)` 不重放外部副作用，只验证已记录 span 的因果链，并返回稳定排序的 `TraceReplayFrame`：
+
+- 拒绝同一 trace 内重复 `span_id`
+- 拒绝 `end < start`
+- 拒绝父链成环
+- `require_known_parents=True` 时要求父 span 闭合在同一批记录中
+
+v0.4 起，`mutsukibot.testing.contract_kit` 在 replay helper 之上提供更高层断言：`assert_trace_tree_closed(...)`、`assert_cross_agent_trace_chain(...)`、`assert_dispatcher_clean(...)`。
 
 ## 用法示例
 
@@ -144,7 +144,7 @@ unsub = agent.bus.subscribe("trace.span", collect)
 # ... 跑命令 ...
 unsub()
 
-assert spans[0].name == "plugin.mutsukibot-echo.echo"
+assert spans[0].name == "dispatch.invoke"
 assert spans[0].status == SpanStatus.OK
 ```
 
@@ -198,12 +198,22 @@ writer.attach(agent.bus)
 writer.detach()
 ```
 
+读回并校验闭合父链：
+
+```python
+from mutsukibot.observability import JsonlTraceReader
+from mutsukibot.testing.contract_kit import assert_trace_tree_closed
+
+spans = JsonlTraceReader(Path("/tmp/trace.jsonl")).read_all()
+frames = assert_trace_tree_closed(spans)
+```
+
 ## 常见陷阱
 
 - **不要复用 trace_id**。同一外部触发整链共享一个 trace_id；新触发要新分配（scheduler 自动做）。手工嵌套调用记得**继承** trace_id，不是新建。
 - **start / end 用 `clock.now()`，不要用 `clock.monotonic()`**。span 字段是墙钟时间，给观察者做绝对时间排序与跨进程关联。
 - **`attributes` 只接受标量**——结构化字段塞 `json.dumps(...)`。
-- **`parent_span_id` 是 None 不一定是 bug**——根 span 就是 None。区分"我忘了传 parent"和"我就是根"靠业务判断。
+- **`parent_span_id` 是 None 不一定是 bug**——根 span 就是 None。需要强制闭合父链时，用 `assert_trace_tree_closed(...)` 或 `replay_trace_spans(..., require_known_parents=True)`。
 - **status 默认 OK**——如果手工 emit span 不显式设 status，它会被记为 OK；记得在 except 里设 `status=SpanStatus.ERROR`。
 - **`JsonlTraceWriter` 是同步 IO**。在生产里如果 trace 量大，写盘可能成为 publisher 瓶颈（虽然 `subscribe` 默认 deferred 模式下 publisher 不阻塞，但仍会消耗事件循环）。需要异步写入要自己实现。
 - **`trace.write_failed` 事件如果再失败就会无限循环**。`JsonlTraceWriter` 当前只对 `trace.span` 失败发 `trace.write_failed`；如果你订阅了 `trace.write_failed` 又抛错，注意不要循环订阅同一通道。

@@ -17,8 +17,8 @@ _OWNER = "mutsukibot.core"
 class Caps:
     """所有 MutsukiBot 框架内置 capability 常量。
 
-    ``IM_*`` 系列（v0.2 引入）取代旧的 ``AdapterCapability`` StrEnum；
-    非 IM / 领域能力由插件用 ``CapabilityName.register(...)`` 自行声明。
+    ``IM_*`` 系列描述即时通讯 transport 能力；非 IM / 领域能力由插件用
+    ``CapabilityName.register(...)`` 自行声明。
     """
 
     READ_MESSAGE: ClassVar[CapabilityName]

@@ -1,12 +1,11 @@
-"""冒烟入口 —— 端到端跑 v0.2 的 echo 闭环（Option IV：Plugin + Endpoint）。
+"""冒烟入口 —— 端到端跑 echo 闭环（Plugin + Endpoint）。
 
-v0.2 改动：原 ``InMemoryAdapter`` 已废，改为 ``InMemoryEndpointPlugin`` ——
-作为 reference plugin 与 ``EchoPlugin`` 一并装载。Agent 显式声明
+``InMemoryEndpointPlugin`` 作为 reference plugin 与 ``EchoPlugin`` 一并装载。
+Agent 显式声明
 ``accepts=(Scopes.IM_TEXT.to_rule(),)`` 以满足 [AGENTS.md hard rule #13](../../../AGENTS.md)。
 
 额外断言：outbox message 的 ``source.source_id == "inmemory:default"``，
-验证 v0.1 的 [scheduler.py:225 adapter_id="agent" 硬编码](../../runtime/scheduler.py)
-缺陷已修复。
+验证出站消息保留入站 transport 标识。
 
 用法::
 

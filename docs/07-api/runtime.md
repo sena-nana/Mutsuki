@@ -1,6 +1,6 @@
 # API · `mutsukibot.runtime`
 
-注入到 `AgentContext` 的运行时来源：时钟、ID 生成器、RNG、调度器、asyncio 门面。
+注入到 `AgentContext` 的运行时来源：时钟、ID 生成器、RNG、调度器。
 
 来源：[mutsukibot/runtime/__init__.py](../../mutsukibot/runtime/__init__.py)。
 
@@ -12,7 +12,6 @@
 | [`idgen`](#idgen) | `IdGen` / `NanoIdGen` / `DeterministicIdGen` |
 | [`rng`](#rng) | `RNG` / `SeededRng` |
 | [`scheduler`](#scheduler) | `AgentScheduler` |
-| [`loop`](#loop) | `run` / `gather` / `create_task` / `install_sync_point_guard` |
 
 详见 [确定性运行时](../05-advanced/deterministic-runtime.md) · [写自定义运行时](../06-developer/writing-runtime.md)。
 
@@ -94,23 +93,8 @@ class AgentScheduler:
 行为：
 
 - `start()` —— `phase=AWAKE`，fire `on_awake` 钩子，起 `_loop` task
-- `stop()` —— set stop event，cancel task，fire `on_sleep` → `phase=STOP` → fire `on_stop`，关 agent fallback scope
-- `_loop` —— 反复 `await asyncio.wait_for(agent.inbox.get(), timeout=0.1)`，超时则 continue（让 stop 信号有机会被检测）
-- `_handle_message`：parse → `dispatch.lookup_operation` → `dispatch.invoke` → outbox + trace span
+- `stop()` —— 投递 stop sentinel，优雅等待当前消息处理；超时后才 cancel task，随后 fire `on_sleep` → `phase=STOP` → fire `on_stop`，关 agent fallback scope
+- `_loop` —— 直接 `await agent.inbox.get()`；stop sentinel 负责唤醒退出
+- `_handle_message`：parse → `dispatch.lookup_operation` → `dispatch.invoke` → outbox；Operation 执行 span 由 dispatcher 统一产出
 
-异常分类：`HandleLeakError` → `HANDLE_LEAK`；`ServiceNotFoundError` → `PLUGIN_DEFINITION_ERROR/service_not_found`；`KeyError` → `PLUGIN_DEFINITION_ERROR/missing_arg`；其他 → `PLUGIN_DEFINITION_ERROR/command_raised`。
-
-## loop
-
-[loop.py](../../mutsukibot/runtime/loop.py)
-
-asyncio 薄门面：
-
-```python
-def run(coro: Awaitable[T]) -> T                    # asyncio.run
-def gather(*coros) -> Awaitable[list[object]]       # asyncio.gather
-def create_task(coro: Awaitable[T]) -> Task[T]      # asyncio.create_task
-def install_sync_point_guard(callback) -> None      # v0.1 占位
-```
-
-`install_sync_point_guard` 是 placeholder —— 完整的 `sys.settrace` based 同步点检测在后续版本落地。
+异常分类：`HandleLeakError` → `HANDLE_LEAK`；`ServiceNotFoundError` → `SERVICE_NOT_FOUND`；`KeyError` → `COMMAND_INVALID_ARGS`；其他 → `COMMAND_EXECUTION_FAILED`。通过 dispatcher 调用的命令体异常会先被 dispatcher 包装为 `OPERATION_HANDLER_RAISED`。

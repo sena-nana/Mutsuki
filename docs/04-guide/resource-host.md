@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-`ResourceHost` 是 v0.3 MVP 的进程内资源托管服务。它用自己的 `PluginScope` 持有真实资源的 `Handle[T]`，让资源生命周期可以长于某个 plugin 实例。
+`ResourceHost` 是当前 runtime 的进程内资源托管服务。它用自己的 `PluginScope` 持有真实资源的 `Handle[T]`，让资源生命周期可以长于某个 plugin 实例。
 
 代码：[resource_host.py](../../mutsukibot/core/resource_host.py)。
 
@@ -44,6 +44,6 @@ await host.close()
 
 ## 常见陷阱
 
-- **ResourceHost 不是分布式资源管理器**。v0.3 MVP 只覆盖单进程对象。
+- **ResourceHost 不是分布式资源管理器**。当前 runtime 只覆盖单进程对象。
 - **租约不是权限系统**。它只做容量计数；权限仍走 `PermissionRule`。
 - **不要绕过 Handle**。真实资源仍应通过 `create_handle()` 进入 host scope，而不是裸字段挂在 plugin 上。

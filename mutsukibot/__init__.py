@@ -4,6 +4,14 @@
 ``mutsukibot.contracts`` 导入，而不是直接深入到子模块。
 """
 
+from mutsukibot.contracts.agent_profile import (
+    AgentParticipation,
+    AgentProfile,
+    ExecutionStrategy,
+    SideEffectPolicy,
+    StrategyResult,
+    StrategyResultStatus,
+)
 from mutsukibot.contracts.capability import Capability
 from mutsukibot.contracts.capability_builtin import Caps
 from mutsukibot.contracts.error import Errs
@@ -17,15 +25,21 @@ from mutsukibot.core.plugin import Plugin, command
 __all__ = [
     "Agent",
     "AgentContext",
+    "AgentParticipation",
+    "AgentProfile",
     "Arg",
     "Capability",
     "Caps",
     "Errs",
+    "ExecutionStrategy",
     "Inject",
     "LifecyclePhase",
     "Perms",
     "Plugin",
     "RefArg",
     "RefArgSource",
+    "SideEffectPolicy",
+    "StrategyResult",
+    "StrategyResultStatus",
     "command",
 ]

@@ -156,7 +156,7 @@ class RefPayload(Contract, Generic[T]):
     descriptor: RefDescriptor
 ```
 
-任何契约把它当字段类型，等于在告诉 codec："这里持有一个 handle，序列化你必须二选一 —— 拒绝（`Errs.REF_SERIALIZE_ATTEMPT`），或者降级成 descriptor"。v0.1 还没有 codec 拦截层，但契约的形状已经锁定。
+任何契约把它当字段类型，等于在告诉 codec："这里持有一个 handle，序列化你必须二选一 —— 拒绝（`Errs.REF_SERIALIZE_ATTEMPT`），或者降级成 descriptor"。当前 runtime 还没有 codec 拦截层，但契约的形状已经锁定。
 
 ## 用法示例
 

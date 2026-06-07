@@ -10,7 +10,8 @@ v0.2 循环：
 5. 把结果包成出站 :class:`Message`，**用 inbound message 的
    ``source.source_id`` 复写 ChannelRef**，而非硬编码 ``"agent"``，
    保留回写到正确 transport 的能力（修复 v0.1 缺陷）。
-6. 每次调用产出一个 :class:`TraceSpan`。
+6. 命令执行的 Operation span 只由 dispatcher 产出；scheduler 只记录 unmatched
+   与 envelope consumer 这类调度层事实。
 
 Graceful shutdown：``stop()`` 把一个 sentinel 放入 inbox，让 ``_loop``
 处理完手头消息后自然退出，而不是直接 ``cancel()`` 打断正在执行的命令。
@@ -31,9 +32,9 @@ from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.message import ChannelRef, ContentKind, ContentPart, Message
 from mutsukibot.contracts.source_builtin import SourceKinds
 from mutsukibot.core.container import ServiceNotFoundError
-from mutsukibot.core.context import TraceContext
 from mutsukibot.core.dispatcher import OperationInvokeError
 from mutsukibot.core.scope import HandleLeakError
+from mutsukibot.core.trace import trace_span
 
 if TYPE_CHECKING:
     from mutsukibot.core.agent import Agent
@@ -113,33 +114,24 @@ class AgentScheduler:
                 continue
             if not any(rule.check(envelope) for rule in consumes):
                 continue
-            trace_id = TraceId(self.agent.id_gen.next("trace"))
-            span_id = SpanId(self.agent.id_gen.next("span"))
-            span_start = self.agent.clock.now()
-            status = SpanStatus.OK
             attributes: dict[str, str | int | float | bool] = {
-                "agent_id": self.agent.agent_id,
-                "envelope_id": envelope.id,
+                "agent_id": str(self.agent.agent_id),
+                "envelope_id": str(envelope.id),
                 "envelope_schema": envelope.payload_schema_id,
                 "source_id": envelope.source.source_id,
             }
-            try:
-                await plugin.on_envelope(envelope)
-            except Exception as exc:
-                status = SpanStatus.ERROR
-                attributes["exception_type"] = type(exc).__qualname__
-                attributes["exception_repr"] = repr(exc)
-            finally:
-                span = TraceSpan(
-                    trace_id=trace_id,
-                    span_id=span_id,
-                    name=f"plugin.{plugin.id}.on_envelope",
-                    start=span_start,
-                    end=self.agent.clock.now(),
-                    status=status,
-                    attributes=attributes,
-                )
-                await self.agent.bus.publish("trace.span", span)
+            ctx = self.agent.make_context()
+            async with trace_span(
+                ctx,
+                f"plugin.{plugin.id}.on_envelope",
+                attributes=attributes,
+            ) as span:
+                try:
+                    await plugin.on_envelope(envelope)
+                except Exception as exc:
+                    span.status = SpanStatus.ERROR
+                    span.attributes["exception_type"] = type(exc).__qualname__
+                    span.attributes["exception_repr"] = repr(exc)
 
     async def _handle_message(self, msg: Message) -> None:
         text = msg.text.strip()
@@ -193,47 +185,24 @@ class AgentScheduler:
             payload[name] = _coerce(value, spec.parameters_schema["properties"][name])
 
         # 构造 ctx —— scope 用 agent 自有 fallback scope，dispatcher.invoke
-        # 内部会按 op 注册时绑定的 plugin scope 行使权限/容量检查。
-        trace_ctx = TraceContext(
-            trace_id=TraceId(self.agent.id_gen.next("trace")),
-            span_id=SpanId(self.agent.id_gen.next("span")),
-        )
+        # 内部会按 op 注册时绑定的 plugin scope 行使权限/容量检查，并产出唯一
+        # Operation 执行 span。
         ctx = self.agent.make_context(message=msg)
-        # make_context 自带 trace_ctx；我们覆盖以确保 span_id 是本次执行的。
-        ctx.trace_ctx = trace_ctx
 
-        span_start = self.agent.clock.now()
-        status = SpanStatus.OK
         try:
             result = await self.agent.dispatch.invoke(op_id, payload, ctx=ctx)
             await self._emit_result(msg, str(result))
         except OperationInvokeError as exc:
-            status = SpanStatus.ERROR
             await self._emit_error(msg, exc.error)
         except Exception as exc:
-            status = SpanStatus.ERROR
             await self._emit_error(
                 msg, _classify_command_exception(exc, spec.plugin_id, spec.name)
             )
-        finally:
-            span = TraceSpan(
-                trace_id=trace_ctx.trace_id,
-                span_id=trace_ctx.span_id,
-                parent_span_id=trace_ctx.parent_span_id,
-                name=f"plugin.{spec.plugin_id}.{spec.name}",
-                start=span_start,
-                end=self.agent.clock.now(),
-                status=status,
-                attributes={"agent_id": self.agent.agent_id},
-            )
-            await self.agent.bus.publish("trace.span", span)
 
     def _outbound_source(self, inbound: Message) -> ChannelRef:
         """复用入站 source 信息构造出站 ChannelRef，避免硬编码 ``"agent"``。
 
-        v0.2 修复 v0.1 的 [scheduler.py:225](../runtime/scheduler.py) 缺陷：
-        原代码硬编码 ``adapter_id="agent"`` 丢失了原始 transport 信息，
-        现在用 inbound message 的 source 复写，让回执能路由回正确 transport。
+        复用 inbound message 的 source 信息，让回执能路由回正确 transport。
         """
         src = inbound.source
         if isinstance(src, ChannelRef):

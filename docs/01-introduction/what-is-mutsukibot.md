@@ -53,7 +53,7 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 - **结构化错误**：`Error` 一等数据 + 14 个内置 `ErrorCode`
 - **Handle / RefPayload 协议**：`RefCountedHandle` + `make_stub_handle` 测试夹具
 - **确定性运行时**：`ManualClock` + `DeterministicIdGen` + `SeededRng` 让测试可重放
-- **Trace 因果链**：每条命令一个 `TraceSpan`；`JsonlTraceWriter` 旁路落盘
+- **Trace 因果链**：Operation / envelope consumer / ResourceHost 关键入口产出 `TraceSpan`；`JsonlTraceWriter` 旁路落盘
 - **45 个测试**：覆盖契约、core、runtime、plugin 全路径
 - **lint + 双类型检查**：ruff + pyright + pyrefly，CI 必须三者都通过
 
@@ -63,7 +63,7 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 
 - 真实平台 transport plugin（OneBot v11 / WS）
 - 配置文件加载与 schema 校验
-- 运行时同步点检测（v0.1 留了 `install_sync_point_guard` 占位钩子）
+- 运行时同步点检测（当前靠 ruff ASYNC 规则、code review 与契约测试约束）
 - LLM provider 集成
 - 持久化层
 - Web 控制面板

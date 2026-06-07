@@ -84,7 +84,9 @@ def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
 
 这让 control Agent、audit Agent、观察型 Agent 能在同一进程内同时接收一条 transport envelope。可运行验收入口见 [cross_agent_smoke.py](../../mutsukibot/plugins/cross_agent_smoke.py)。
 
-v0.3 MVP 增加了确定性候选排序：`AgentRegistry.rank_accepting(envelope)` 按 `priority` 降序、`agent_id` 升序返回候选，`select_accepting(envelope)` 返回单个 winner。`ctx.dispatch.invoke_in_agent(agent_id, op_id, payload, ctx=ctx)` 则用于显式跨 Agent 调用；目标 Agent 不存在时抛 `OperationInvokeError(error.code == Errs.AGENT_NOT_FOUND)`。
+当前 `AgentRegistry.rank_accepting(envelope)` 返回候选，`select_accepting(envelope)` 返回单个 winner。默认策略是 `PriorityThenIdElectionPolicy`，按 `priority` 降序、`agent_id` 升序排序；插件可通过 `AgentRegistry.install_election_policy(policy, owner=...)` 临时替换排序策略，卸载时用返回的 disposer 恢复上一策略。生命周期与 `accepts` 过滤仍由 registry 固定执行，策略只排序已经匹配的候选。
+
+`ctx.dispatch.invoke_in_agent(agent_id, op_id, payload, ctx=ctx)` 用于显式跨 Agent 调用；目标 Agent 不存在时抛 `OperationInvokeError(error.code == Errs.AGENT_NOT_FOUND)`。
 
 ### Agent 自有 fallback scope
 

@@ -14,9 +14,8 @@ Agent 拥有自己的：
 
 v0.2 起 ``_command_index`` / ``find_command`` / ``CommandTarget`` 已删除：
 命令路由统一走 :class:`mutsukibot.core.dispatcher.Dispatcher`（详 D12 命令与
-Operation 统一）。``attach_plugin`` 仍保留 —— 用于装载流程把 plugin 实例
-绑到 agent.plugins，但不再写命令索引（PluginMeta 在装载阶段把 @command
-转成 Operation 注册到 dispatcher）。
+Operation 统一）。``attach_plugin`` 负责把 plugin 实例绑到 ``agent.plugins``，
+并把 PluginMeta 派生出的 @command Operation 注册到 dispatcher。
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from mutsukibot.contracts.agent_profile import AgentParticipation, AgentProfile
 from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.contracts.message import Message
@@ -84,6 +84,9 @@ class Agent:
     # 空 tuple = 拒绝所有 envelope（命令路径仍可用 —— 命令是被显式调用，
     # 不走 envelope 路由）。详见 hard rule #13 与 contracts §17。
     accepts: tuple[ScopeRule, ...] = ()
+    # v0.5 前置切片：AgentProfile 是 Agent 的角色/策略配置层。为空时保持
+    # 既有 Agent 行为，等价于 primary_candidate + accepts 字段。
+    profile: AgentProfile | None = None
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
     lifespan: Lifespan = field(default_factory=Lifespan)
@@ -99,6 +102,20 @@ class Agent:
 
     def __post_init__(self) -> None:
         AgentRegistry.register(self)
+
+    @property
+    def participation(self) -> AgentParticipation:
+        """该 Agent 的外部输入参与方式。"""
+        if self.profile is None:
+            return AgentParticipation.PRIMARY_CANDIDATE
+        return self.profile.participation
+
+    @property
+    def effective_accepts(self) -> tuple[ScopeRule, ...]:
+        """实际用于 envelope 路由匹配的 ScopeRule。"""
+        if self.profile is None:
+            return self.accepts
+        return self.profile.accepts
 
     @property
     def dispatch(self) -> Dispatcher:
@@ -164,17 +181,6 @@ class Agent:
                 perms=marker.perms,
                 plugin_scope=scope,
             )
-
-    def detach_plugin(self, plugin: "Plugin") -> None:
-        """从 agent.plugins 摘除该 plugin（v0.2 起 no-op）。
-
-        v0.2 改动：命令索引清理由 dispatcher 自动完成（register_operation 时
-        挂的反注册回调跟随 PluginScope.close 触发）。plugin 实例从
-        ``agent.plugins`` 中移除由 PluginLoader.unload_from 显式
-        ``agent.plugins.pop()`` 完成；这里仅保留接口签名以兼容 loader 现有
-        调用路径，无实际工作。
-        """
-        return
 
     async def close_agent_scope(self) -> None:
         """关闭 agent 自有 fallback scope；由调度器在 stop 阶段调用。"""

@@ -10,7 +10,7 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **AgentContext** —— 单次调用上下文。插件命令以 `ctx` 形式接收，是访问 clock / id_gen / rng / services / scope / bus / trace 的唯一入口。详见 [AgentContext](../04-guide/agent-context.md)。
 
-**AgentScheduler** —— 驱动 Agent tick 循环的对象。从 `inbox` 取消息，路由到命令，把结果发到 `outbox`，emit trace span。详见 [API · runtime.scheduler](../07-api/runtime.md#scheduler)。
+**AgentScheduler** —— 驱动 Agent tick 循环的对象。从 `inbox` 取消息，路由到命令，把结果发到 `outbox`；Operation 执行 trace 由 dispatcher 统一产出。详见 [API · runtime.scheduler](../07-api/runtime.md#scheduler)。
 
 **Arg** —— 命令参数的 `Annotated` 元数据，承载约束（min/max/regex/choices）+ 兜底描述。详见 [命令与 Schema](../04-guide/command-and-schema.md)。
 
@@ -138,6 +138,6 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **TraceContext** —— `AgentContext` 的因果链字段：trace_id / span_id / parent_span_id。详见 [Trace 与 Span](../04-guide/trace-and-span.md)。
 
-**TraceSpan** —— 单个调用的 trace 记录契约。每条命令 emit 一个。
+**TraceSpan** —— 单个调用的 trace 记录契约。dispatcher、ResourceHost、envelope consumer 等运行时入口会 emit。
 
 **TransactionScope** —— PluginScope 的子类，加上 commit / rollback 与"补偿动作"语义。

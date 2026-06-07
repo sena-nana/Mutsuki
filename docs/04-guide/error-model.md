@@ -71,14 +71,14 @@ class ErrorCode(RegisteredString):
 | `Errs.*` | 字符串值 | 触发场景 |
 |---|---|---|
 | `CAPABILITY_NOT_DECLARED` | `capability.not_declared` | 命令需要的 capability 未在 manifest 声明 / 命令不存在 |
-| `CAPABILITY_EXHAUSTED` | `capability.exhausted` | 资源量纲超限（v0.1 已定义但未触发） |
+| `CAPABILITY_EXHAUSTED` | `capability.exhausted` | `ResourceHost` 资源量纲超限 |
 | `SCHEMA_MISMATCH` | `schema.mismatch` | 契约 schema 不兼容 |
 | `HANDLE_LEAK` | `handle.leak` | scope 关闭时仍有未释放 handle，或 cleanup 失败 |
 | `HANDLE_USE_AFTER_RELEASE` | `handle.use_after_release` | 使用已释放的 handle |
-| `REF_CROSS_DOMAIN` | `ref.cross_domain` | RefPayload 跨进程传递（v0.1 未触发） |
-| `REF_SERIALIZE_ATTEMPT` | `ref.serialize_attempt` | 试图序列化 RefPayload（v0.1 未触发） |
+| `REF_CROSS_DOMAIN` | `ref.cross_domain` | RefPayload 跨进程传递（当前 codec 边界未触发） |
+| `REF_SERIALIZE_ATTEMPT` | `ref.serialize_attempt` | 试图序列化 RefPayload（当前 codec 边界未触发） |
 | `PLUGIN_CYCLE` | `plugin.cycle` | 插件 DAG 存在环 |
-| `PLUGIN_SCOPE_VIOLATION` | `plugin.scope_violation` | 副作用未通过 scope 注册（v0.1 未触发） |
+| `PLUGIN_SCOPE_VIOLATION` | `plugin.scope_violation` | 副作用未通过 scope 注册（当前主要由 lint / review 捕获） |
 | `PLUGIN_DEFINITION_ERROR` | `plugin.definition_error` | 插件定义不合法 / 命令运行时异常 |
 | `TRANSACTION_COMPENSATION_FAILED` | `transaction.compensation_failed` | Saga 补偿步骤失败 |
 | `AGENT_NOT_FOUND` | `agent.not_found` | 跨 Agent 调用找不到目标 Agent |

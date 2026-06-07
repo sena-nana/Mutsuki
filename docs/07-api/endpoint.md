@@ -1,6 +1,6 @@
 # API · transport endpoints
 
-v0.2 起没有独立 `mutsukibot.adapters` 命名空间。外部协议接入都写成 reference plugin。
+v0.2 起没有独立 adapter 命名空间。外部协议接入都写成 reference plugin。
 
 ## 参考插件
 

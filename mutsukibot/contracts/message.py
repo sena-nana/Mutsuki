@@ -2,8 +2,7 @@
 
 v0.2 起 ``Message`` 是 :class:`mutsukibot.contracts.envelope.Envelope` 的 IM
 特化；``ChannelRef`` 是 :class:`mutsukibot.contracts.envelope.SourceRef` 的
-IM 特化。原 ``ChannelRef.adapter_id`` 字段已重命名为 ``source_id``（继承自
-SourceRef）—— 见 contracts.md §16 与 D1。
+IM 特化。``source_id`` 继承自 SourceRef，是 transport/source 的统一标识。
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ class ContentKind(StrEnum):
 class ChannelRef(SourceRef):
     """IM 消息来源所在频道的指针 —— SourceRef 的 IM 特化。
 
-    ``source_id`` 继承自 SourceRef（v0.1 名为 ``adapter_id``，v0.2 重命名以
-    与统一的 endpoint 命名空间对齐；``kind`` 通常为 ``SourceKinds.IM``）。
+    ``source_id`` 继承自 SourceRef，与统一的 endpoint 命名空间对齐；
+    ``kind`` 通常为 ``SourceKinds.IM``。
     """
 
     schema_id: ClassVar[str] = "mutsukibot.channel_ref"

@@ -11,7 +11,7 @@ import pytest
 from mutsukibot import Capability, Caps, Perms, Plugin, command
 from mutsukibot.contracts import Scopes
 from mutsukibot.contracts.error import Errs
-from mutsukibot.contracts.event import TraceSpan
+from mutsukibot.contracts.event import SpanStatus, TraceSpan
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.container import ServiceNotFoundError
@@ -98,6 +98,13 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     loader = PluginLoader(allow={_BoomPlugin.id, InMemoryEndpointPlugin.id})
     await loader.load_into(agent, [InMemoryEndpointPlugin, _BoomPlugin])
     scheduler = AgentScheduler(agent)
+    spans: list[TraceSpan] = []
+
+    async def _on_span(payload: object) -> None:
+        if isinstance(payload, TraceSpan):
+            spans.append(payload)
+
+    agent.bus.subscribe("trace.span", _on_span)
     await scheduler.start()
 
     inmem = _get_inmem(agent)
@@ -110,6 +117,11 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     # 路径）。dispatcher 把 handler 异常包成结构化 Error，scheduler 直接转写。
     assert Errs.OPERATION_HANDLER_RAISED in text
     assert "ValueError" in text
+    invoke_spans = [s for s in spans if s.name == "dispatch.invoke"]
+    scheduler_command_spans = [s for s in spans if s.name == "plugin.test-boom.boom"]
+    assert len(invoke_spans) == 1
+    assert invoke_spans[0].status == SpanStatus.ERROR
+    assert scheduler_command_spans == []
 
     await scheduler.stop()
     await loader.unload_from(agent)
@@ -250,4 +262,37 @@ async def test_shutdown_timeout_falls_back_to_cancel() -> None:
     await scheduler.stop()
     assert scheduler._task is not None
     assert scheduler._task.done()
+    await loader.unload_from(agent)
+
+
+@pytest.mark.asyncio
+async def test_command_success_emits_only_dispatch_invoke_operation_span() -> None:
+    """命令执行事实只由 dispatcher span 表达，scheduler 不再重复造 command span。"""
+    _SlowPlugin.finished = False
+    agent = _new_agent()
+    loader = PluginLoader(allow={_SlowPlugin.id, InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin, _SlowPlugin])
+    scheduler = AgentScheduler(agent)
+    spans: list[TraceSpan] = []
+
+    async def _on_span(payload: object) -> None:
+        if isinstance(payload, TraceSpan):
+            spans.append(payload)
+
+    agent.bus.subscribe("trace.span", _on_span)
+    await scheduler.start()
+
+    inmem = _get_inmem(agent)
+    await inmem.send_text("slow")
+    await asyncio.sleep(0.3)
+    msgs = await inmem.drain_outbox(timeout=0.3)
+
+    assert any("done" in m.text for m in msgs)
+    invoke_spans = [s for s in spans if s.name == "dispatch.invoke"]
+    scheduler_command_spans = [s for s in spans if s.name == "plugin.test-slow.slow"]
+    assert len(invoke_spans) == 1
+    assert invoke_spans[0].status == SpanStatus.OK
+    assert scheduler_command_spans == []
+
+    await scheduler.stop()
     await loader.unload_from(agent)

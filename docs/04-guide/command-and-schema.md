@@ -114,7 +114,7 @@ if sig_param.default is inspect.Parameter.empty:
 
 ### 返回值
 
-如果函数声明了返回类型，`return_schema` 会按同样规则生成（[plugin.py:260-262](../../mutsukibot/core/plugin.py#L260-L262)）。当前 v0.1 不做强制校验 —— scheduler 直接 `str(result)` 后塞进出站消息。
+如果函数声明了返回类型，`return_schema` 会按同样规则生成（[plugin.py:260-262](../../mutsukibot/core/plugin.py#L260-L262)）。当前 runtime 不做返回值强制校验 —— scheduler 直接 `str(result)` 后塞进出站消息。
 
 ### CommandSpec 的形态
 
