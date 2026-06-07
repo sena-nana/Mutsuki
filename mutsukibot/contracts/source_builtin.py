@@ -18,16 +18,12 @@ class SourceKinds:
     """所有 MutsukiBot 框架内置 source kind 常量。"""
 
     IM: ClassVar[SourceKindName]
-    TOOL: ClassVar[SourceKindName]
-    HYBRID: ClassVar[SourceKindName]
 
 
 SourceKindName.bootstrap_facade(
     SourceKinds,
     {
         "IM": "im",
-        "TOOL": "tool",
-        "HYBRID": "hybrid",
     },
     declared_by=_OWNER,
 )

@@ -70,7 +70,7 @@ def _toposort(items: dict[str, tuple[str, ...]]) -> list[str]:
 要点：
 
 - **缺失依赖 fail-loud**——`requires_plugins=[PluginDep(plugin_id="some-other")]` 但 `some-other` 没在本次装载列表里，loader 会抛 `PluginDependencyMissingError`。`requires_operations` / `requires_sources` 找不到提供方也同理。
-- **Operation / Source 依赖会反解为插件依赖**——`A.requires_operations=("todo:default.create",)` 且该 op 由 B 提供，则 DAG 中自动加入 `A -> B`。
+- **Operation / Source 依赖会反解为插件依赖**——`A.requires_operations=("backend:default.notify",)` 且该 op 由 B 提供，则 DAG 中自动加入 `A -> B`。
 - **Operation / Source 静态声明冲突会在装载前失败**——两个 plugin 同时 `provides_operations` 同一 `op_id` 或 `provides_sources` 同一 `source_id` 会抛 `OperationProvisionConflictError` / `SourceProvisionConflictError`。
 - **环检测来自 `graphlib.CycleError`**。`exc.args[1]` 是参与环的节点列表。
 

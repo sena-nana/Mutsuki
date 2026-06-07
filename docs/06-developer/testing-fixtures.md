@@ -125,7 +125,7 @@ from tests.support.dispatcher_contract import assert_dispatcher_clean_after_unlo
 await assert_dispatcher_clean_after_unload(
     loader,
     agent,
-    operations=("todo:default.create",),
+    operations=("backend:default.notify",),
     sources=("inmemory:default",),
 )
 ```

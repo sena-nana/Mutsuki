@@ -4,15 +4,19 @@
 
 * Message 是 Envelope 子类
 * ChannelRef 是 SourceRef 子类
-* ToolEvent 与 Message 共享 Envelope 接口
+* 领域 / 外部后端事件可由插件自定义 Envelope 子类
 * schema_id 自动注册不冲突
 * msgspec.Struct 多层继承构造正常
 """
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+import msgspec
 import pytest
 
+import mutsukibot.contracts as contracts
 from mutsukibot.contracts import (
     Caps,
     ChannelRef,
@@ -23,21 +27,41 @@ from mutsukibot.contracts import (
     Message,
     MessageId,
     SchemaRegistry,
+    SourceKindName,
     SourceKinds,
     SourceRef,
-    ToolEvent,
-    ToolSourceRef,
 )
+
+BackendKind = SourceKindName.register("example.backend", declared_by="tests")
+
+
+class BackendSourceRef(SourceRef):
+    """测试用外部后端来源，由测试/插件侧自行定义而非核心内置。"""
+
+    schema_id: ClassVar[str] = "tests.backend_source_ref"
+    schema_version: ClassVar[str] = "1.0.0"
+
+    stream_id: str = ""
+
+
+class BackendEvent(Envelope):
+    """测试用外部后端事件，由测试/插件侧自行定义而非核心内置。"""
+
+    schema_id: ClassVar[str] = "tests.backend_event"
+    schema_version: ClassVar[str] = "1.0.0"
+
+    event_type: str = ""
+    payload: dict[str, str] = msgspec.field(default_factory=dict)
 
 
 def test_message_is_envelope_subclass() -> None:
     assert issubclass(Message, Envelope)
-    assert issubclass(ToolEvent, Envelope)
+    assert issubclass(BackendEvent, Envelope)
 
 
 def test_channel_ref_is_source_ref_subclass() -> None:
     assert issubclass(ChannelRef, SourceRef)
-    assert issubclass(ToolSourceRef, SourceRef)
+    assert issubclass(BackendSourceRef, SourceRef)
 
 
 def test_message_id_is_envelope_id_alias() -> None:
@@ -81,29 +105,34 @@ def test_construct_message_inherits_envelope_fields() -> None:
     assert m.text == "hi"
 
 
-def test_construct_tool_event() -> None:
-    src = ToolSourceRef(source_id="todo:default", kind=SourceKinds.TOOL)
-    te = ToolEvent(
-        id=EnvelopeId("te-1"),
+def test_construct_custom_backend_event() -> None:
+    src = BackendSourceRef(source_id="backend:todo", kind=BackendKind, stream_id="todo")
+    event = BackendEvent(
+        id=EnvelopeId("be-1"),
         timestamp=2.0,
         source=src,
-        payload_schema_id="mutsukibot.tool_event",
-        event_type="todo.created",
+        payload_schema_id="example.todo.item_created",
+        event_type="item_created",
         payload={"id": "item-1"},
     )
-    assert te.event_type == "todo.created"
-    assert te.payload == {"id": "item-1"}
-    assert isinstance(te.source, ToolSourceRef)
+    assert event.event_type == "item_created"
+    assert event.payload == {"id": "item-1"}
+    assert isinstance(event.source, BackendSourceRef)
 
 
 def test_envelope_subclass_schemas_registered() -> None:
     """所有 Envelope 子类的 schema_id 都已自动登记到 SchemaRegistry。"""
     assert SchemaRegistry.get("mutsukibot.envelope") is Envelope
     assert SchemaRegistry.get("mutsukibot.message") is Message
-    assert SchemaRegistry.get("mutsukibot.tool_event") is ToolEvent
     assert SchemaRegistry.get("mutsukibot.source_ref") is SourceRef
     assert SchemaRegistry.get("mutsukibot.channel_ref") is ChannelRef
-    assert SchemaRegistry.get("mutsukibot.tool_source_ref") is ToolSourceRef
+    assert SchemaRegistry.get("tests.backend_event") is BackendEvent
+    assert SchemaRegistry.get("tests.backend_source_ref") is BackendSourceRef
+
+
+def test_core_no_longer_exports_tool_event_contracts() -> None:
+    assert not hasattr(contracts, "ToolEvent")
+    assert not hasattr(contracts, "ToolSourceRef")
 
 
 def test_message_text_property_concatenates_text_parts() -> None:

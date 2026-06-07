@@ -20,8 +20,8 @@ Dispatcher 是 Operation / Source 路由入口。
 ```python
 ctx.dispatch.register_operation(...)
 ctx.dispatch.register_source(...)
-await ctx.dispatch.invoke("todo:default.create", {"text": "买菜"}, ctx=ctx)
-await ctx.dispatch.invoke_in_agent("agent-b", "todo:default.list", {}, ctx=ctx)
+await ctx.dispatch.invoke("backend:default.notify", {"message": "observed"}, ctx=ctx)
+await ctx.dispatch.invoke_in_agent("agent-b", "memory:agent-b.recall", {}, ctx=ctx)
 await ctx.dispatch.publish(envelope)
 ```
 

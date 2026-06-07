@@ -10,7 +10,6 @@
 | [`echo.smoke`](#echosmoke) | 端到端冒烟入口 |
 | [`inmemory_endpoint`](#inmemory_endpoint) | `InMemoryEndpointPlugin`（测试用 IM endpoint） |
 | [`onebot_v11`](#onebot_v11) | `OneBotV11Plugin`（OneBot v11 反向 WS reference plugin） |
-| [`todo`](#todo) | `TodoPlugin`（tool endpoint 范例） |
 
 详见 [跑通 Echo](../03-quickstart/run-echo.md) · [第一个插件](../03-quickstart/first-plugin.md)。
 
@@ -106,18 +105,3 @@ class OneBotV11Plugin(Plugin[_OneBotV11Config]):
 ```
 
 OneBot v11 的具体 wire 协议只在这个 plugin 内部出现。
-
-## todo
-
-[__init__.py](../../mutsukibot/plugins/todo/__init__.py)
-
-```python
-class TodoPlugin(Plugin[_TodoConfig]):
-    id = "mutsukibot-todo"
-    version = "0.2.0"
-    capabilities = [Capability(name=Caps.PERSIST)]
-    provides_operations = (_OP_CREATE, _OP_LIST, _OP_COMPLETE)
-    Config = _TodoConfig
-```
-
-`TodoPlugin` 是 tool endpoint 的参考实现，用于验证跨 endpoint 调用和 dispatcher 卸载清理。

@@ -236,8 +236,8 @@ Source 描述 Envelope 从哪里来。Source 不是 handler，不执行业务逻
 
 ### 包含内容
 
-- `source_id`：如 `qq:bot1`、`todo:default`。
-- kind：IM、TOOL、HYBRID 或领域扩展类型。
+- `source_id`：如 `qq:bot1`、`backend:default`。
+- kind：IM 或 bridge / 领域插件注册的扩展类型。
 - capabilities：该来源能产生的内容能力。
 - description。
 
@@ -271,8 +271,8 @@ Source 描述 Envelope 从哪里来。Source 不是 handler，不执行业务逻
 
 ### 含义
 
-Envelope 是通用入站 / 出站载体。IM Message、ToolEvent、领域 stimulus 都应是
-Envelope 或 Envelope 的领域特化。
+Envelope 是通用入站 / 出站载体。IM Message、外部后端事件、领域 stimulus 都应是
+Envelope 或 Envelope 的领域特化。Core 不内置应用后端事件 schema。
 
 ### 包含内容
 
@@ -291,7 +291,7 @@ Envelope 或 Envelope 的领域特化。
 ### 可被替换或扩展
 
 - payload schema。
-- Message、ToolEvent、领域事件结构。
+- Message、bridge 自定义后端事件、领域事件结构。
 - Replayability 声明。
 
 ### 如何协同

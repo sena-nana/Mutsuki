@@ -13,7 +13,6 @@ from mutsukibot.contracts.capability_builtin import Caps
 from mutsukibot.contracts.scope import (
     ByCapability,
     BySchema,
-    BySchemaPrefix,
     BySourceKind,
     ScopeName,
 )
@@ -27,8 +26,6 @@ class Scopes:
 
     IM_TEXT: ClassVar[ScopeName]
     IM_ANY: ClassVar[ScopeName]
-    TOOL_INVOKE: ClassVar[ScopeName]
-    TOOL_EVENT: ClassVar[ScopeName]
 
 
 Scopes.IM_TEXT = ScopeName.register(
@@ -43,16 +40,5 @@ Scopes.IM_ANY = ScopeName.register(
     declared_by=_OWNER,
     rule=BySchema("mutsukibot.message") & BySourceKind(SourceKinds.IM),
 )
-Scopes.TOOL_INVOKE = ScopeName.register(
-    "tool.invoke",
-    declared_by=_OWNER,
-    rule=BySchemaPrefix("mutsukibot.tool_event") & BySourceKind(SourceKinds.TOOL),
-)
-Scopes.TOOL_EVENT = ScopeName.register(
-    "tool.event",
-    declared_by=_OWNER,
-    rule=BySchema("mutsukibot.tool_event") & BySourceKind(SourceKinds.TOOL),
-)
-
 
 __all__ = ["Scopes"]

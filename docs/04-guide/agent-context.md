@@ -111,8 +111,8 @@ async def subscribe_demo(self, ctx: AgentContext) -> str:
 
 ```python
 result = await ctx.dispatch.invoke(
-    "todo:default.create",
-    {"text": "买菜"},
+    "backend:default.notify",
+    {"message": "agent observed an external event"},
     ctx=ctx,
 )
 ```

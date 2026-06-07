@@ -23,8 +23,12 @@ from mutsukibot.contracts import (
     ScopeName,
     ScopeRule,
     Scopes,
+    SourceKindName,
     SourceKinds,
 )
+
+BackendKind = SourceKindName.register("tests.backend", declared_by="tests")
+AuditKind = SourceKindName.register("tests.audit", declared_by="tests")
 
 
 def _msg(
@@ -70,7 +74,7 @@ def test_by_source_id_matches() -> None:
 def test_by_source_kind_matches() -> None:
     rule = BySourceKind(SourceKinds.IM)
     assert rule.check(_msg(kind=SourceKinds.IM))
-    assert not rule.check(_msg(kind=SourceKinds.TOOL))
+    assert not rule.check(_msg(kind=BackendKind))
 
 
 def test_by_capability_matches() -> None:
@@ -93,7 +97,7 @@ def test_and_requires_both() -> None:
     rule = BySchema("mutsukibot.message") & BySourceKind(SourceKinds.IM)
     assert rule.check(_msg(schema="mutsukibot.message", kind=SourceKinds.IM))
     assert not rule.check(_msg(schema="other", kind=SourceKinds.IM))
-    assert not rule.check(_msg(schema="mutsukibot.message", kind=SourceKinds.TOOL))
+    assert not rule.check(_msg(schema="mutsukibot.message", kind=BackendKind))
 
 
 def test_or_takes_either() -> None:
@@ -107,12 +111,12 @@ def test_complex_boolean_preserves_semantics() -> None:
     """`(A | B) & (C | D)` 必须严格按 (A OR B) AND (C OR D) 求值，
     不退化为四项 OR（与 PermissionRule 同语义）。"""
     rule = (BySchema("a") | BySchema("b")) & (
-        BySourceKind(SourceKinds.IM) | BySourceKind(SourceKinds.TOOL)
+        BySourceKind(SourceKinds.IM) | BySourceKind(BackendKind)
     )
     assert rule.check(_msg(schema="a", kind=SourceKinds.IM))
-    assert rule.check(_msg(schema="b", kind=SourceKinds.TOOL))
-    # schema 在 (a, b) 但 kind 不在 (IM, TOOL) —— HYBRID 不在 OR
-    assert not rule.check(_msg(schema="a", kind=SourceKinds.HYBRID))
+    assert rule.check(_msg(schema="b", kind=BackendKind))
+    # schema 在 (a, b) 但 kind 不在 (IM, BackendKind) —— AuditKind 不在 OR
+    assert not rule.check(_msg(schema="a", kind=AuditKind))
     # kind 命中但 schema 不在
     assert not rule.check(_msg(schema="z", kind=SourceKinds.IM))
 
@@ -147,8 +151,17 @@ def test_scopes_im_text_matches_im_text_message() -> None:
 def test_scopes_im_text_rejects_non_im() -> None:
     rule = Scopes.IM_TEXT.to_rule()
     assert not rule.check(
-        _msg(schema="mutsukibot.message", kind=SourceKinds.TOOL, caps=(Caps.IM_TEXT,))
+        _msg(schema="mutsukibot.message", kind=BackendKind, caps=(Caps.IM_TEXT,))
     )
+
+
+def test_core_no_longer_exposes_tool_scopes_or_source_kinds() -> None:
+    assert not hasattr(SourceKinds, "TOOL")
+    assert not hasattr(SourceKinds, "HYBRID")
+    assert not hasattr(Caps, "TOOL_INVOKE")
+    assert not hasattr(Caps, "TOOL_EVENT")
+    assert not hasattr(Scopes, "TOOL_INVOKE")
+    assert not hasattr(Scopes, "TOOL_EVENT")
 
 
 def test_scope_name_register_rejects_unknown_construction() -> None:

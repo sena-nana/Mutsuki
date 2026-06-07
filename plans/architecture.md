@@ -205,24 +205,26 @@ Awake Traces
   → Agent atomic_swap → Updated future cognition
 ```
 
-### 7.4 工具型软件接口路径（v0.2 引入）
+### 7.4 外部后端事件桥接路径（当前边界）
 
 ```text
-External Software Event
-  → reference plugin 后台 task（attach 到 PluginScope）
-  → ctx.dispatch.publish(ToolEvent(payload_schema_id="todo.created",
-                                    source=ToolSourceRef(source_id="todo:default")))
+External Backend Event
+  → bridge plugin 后台 task（attach 到 PluginScope）
+  → bridge plugin 定义 BackendEvent / BackendSourceRef / SourceKindName("example.backend")
+  → ctx.dispatch.publish(BackendEvent(payload_schema_id="example.backend.item_changed",
+                                      source=BackendSourceRef(source_id="backend:default")))
   → Dispatcher
-  → 匹配 Agent.accepts (ScopeRule，如 BySchemaPrefix("todo.") | BySourceKind(SourceKinds.TOOL))
+  → 匹配 Agent.accepts (ScopeRule，如 BySchemaPrefix("example.backend."))
   → Agent inbox
   → 匹配 plugin.consumes
   → plugin handler
-  → ctx.dispatch.invoke("qq:bot1.send_msg", {...})  # 跨 transport 调用
-  → "qq:bot1.send_msg" handler in QQ plugin
-  → external QQ
+  → ctx.dispatch.invoke("backend:default.notify", {...})  # Agent 表达行动
+  → bridge plugin handler
+  → external backend
 ```
 
 关键性质：
 - **dispatch.invoke 是 inline await**（参见 [contracts.md §18.2](contracts.md) 与 §5 sub-ms 风险），保 v0.5+ Yume `thought → kernel → runtime` 链路不被异步队列拖慢
-- **Agent 易识别在操作哪个 transport**：op_id 字面量（"qq:bot1.send_msg" / "todo:default.create"）在调用现场可见
+- **Agent 易识别在操作哪个外部能力**：op_id 字面量（如 `"qq:bot1.send_msg"` / `"backend:default.notify"`）在调用现场可见
+- **Core 不持有业务数据权威**：真实 todo / 文件 / 应用状态属于外部后端或领域插件；Core 只接收事件、路由给 Agent，并通过 Operation 表达 Agent 可采取的动作
 - 资源（socket / SDK client）走 [`Handle[T]`](contracts.md#11-通用-by-ref-payload-协议) attach 到 PluginScope（hard rule #14）—— plugin 卸载时 finalizer 自动关闭

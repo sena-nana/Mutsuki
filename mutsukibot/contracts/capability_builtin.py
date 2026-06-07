@@ -17,8 +17,8 @@ _OWNER = "mutsukibot.core"
 class Caps:
     """所有 MutsukiBot 框架内置 capability 常量。
 
-    ``IM_*`` / ``TOOL_*`` 系列（v0.2 引入）取代旧的 ``AdapterCapability``
-    StrEnum；详见 [contracts.md §4](../../plans/contracts.md#4-capability-命名)。
+    ``IM_*`` 系列（v0.2 引入）取代旧的 ``AdapterCapability`` StrEnum；
+    非 IM / 领域能力由插件用 ``CapabilityName.register(...)`` 自行声明。
     """
 
     READ_MESSAGE: ClassVar[CapabilityName]
@@ -38,8 +38,6 @@ class Caps:
     IM_CARD: ClassVar[CapabilityName]
     IM_REACTION: ClassVar[CapabilityName]
     IM_TYPING: ClassVar[CapabilityName]
-    TOOL_INVOKE: ClassVar[CapabilityName]
-    TOOL_EVENT: ClassVar[CapabilityName]
 
 
 CapabilityName.bootstrap_facade(
@@ -62,8 +60,6 @@ CapabilityName.bootstrap_facade(
         "IM_CARD": "im.card",
         "IM_REACTION": "im.reaction",
         "IM_TYPING": "im.typing",
-        "TOOL_INVOKE": "tool.invoke",
-        "TOOL_EVENT": "tool.event",
     },
     declared_by=_OWNER,
 )

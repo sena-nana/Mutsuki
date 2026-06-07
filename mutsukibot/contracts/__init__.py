@@ -13,7 +13,7 @@ from mutsukibot.contracts.capability import (
 )
 from mutsukibot.contracts.capability_builtin import Caps
 from mutsukibot.contracts.decision import Decision
-from mutsukibot.contracts.envelope import Envelope, SourceRef, ToolEvent, ToolSourceRef
+from mutsukibot.contracts.envelope import Envelope, SourceRef
 from mutsukibot.contracts.error import Error, ErrorCode, Errs, RecoveryAction
 from mutsukibot.contracts.event import Event, SpanStatus, TraceSpan
 from mutsukibot.contracts.ids import (
@@ -145,8 +145,6 @@ __all__ = [
     "SourceRef",
     "SpanId",
     "SpanStatus",
-    "ToolEvent",
-    "ToolSourceRef",
     "TraceId",
     "TraceSpan",
     "UnknownCapabilityError",

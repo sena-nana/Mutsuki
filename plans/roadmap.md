@@ -2,9 +2,9 @@
 
 本文件回答：**当前在哪个版本、做什么、不做什么、何时进入下一版本**。
 
-## 当前版本：v0.2 通用 Agent 框架改造
+## 当前边界：Agent 事件行动核
 
-**目标**：删除旧 Adapter 抽象，改为 Plugin + 注册式 Operation/Source/Dispatcher，并用 in-memory / todo / OneBot v11 reference plugins 验证 transport 与 tool endpoint 形态。**v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。**
+**目标**：Core 收束为 Agent 运行核心：接收外部后端或协议桥转换后的 Envelope，驱动 Agent 决策，并通过 Operation 表达可采取的动作。Core 保留 Plugin + 注册式 Operation/Source/Dispatcher，但不内置应用后端 / CRUD endpoint / tool event 语义。历史 v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。
 
 ## 历史版本：v0.0 骨架
 
@@ -95,9 +95,9 @@
 - D9b：`provides_operations` / `provides_sources` / `requires_operations` / `requires_sources` 静态声明 + DAG 拓扑 + dispatcher undeclared 运行时校验
 - D12：`@command` 与 Operation 统一，scheduler 命令路径走 dispatcher
 - envelope 二次分发：`Plugin.consumes` ScopeRule + `on_envelope` hook
-- Reference 插件：`InMemoryEndpointPlugin` / `TodoPlugin` / `QqToTodoPlugin`（含 hard rule #14 Handle 演示）
+- Reference 插件：`InMemoryEndpointPlugin` / OneBot reference plugin；旧 `TodoPlugin` / `QqToTodoPlugin` 后端化样板已从 Core 包裁剪，迁移为外部后端桥接示例。
 - 测试：130 通过（v0.1 74 + Phase A 36 + Phase B 20）
-- 三个 smoke 端到端：`echo` / `todo` / `qq_to_todo`（跨 endpoint 协作 + DAG 自动排序）
+- 当前 smoke 端到端：`echo` / `cross_agent` / OneBot reference 测试；外部后端协作通过自定义 SourceKind / Envelope / Operation 测试 fixture 覆盖。
 - Phase C 多 Agent 广播：
   - `mutsukibot/core/agent_registry.py`：进程全局弱引用 `AgentRegistry`
   - `Agent.__post_init__` 自动注册；`Dispatcher.publish()` 广播给所有 awake 且 `accepts` 匹配的 Agent

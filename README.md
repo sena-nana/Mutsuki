@@ -2,9 +2,9 @@
 
 > 为 Yume / mind-sim 提供运行核心，并通过插件组合实现传统 Bot 框架能力的 Agent 中心框架。
 
-**当前版本：v0.2 通用 Agent 框架收尾**
+**当前边界：Agent 事件行动核**
 
-v0.2 删除旧 Adapter 抽象，改为 Plugin + Operation/Source/Dispatcher：内置 in-memory endpoint、todo endpoint、跨 endpoint 桥接、跨 Agent 广播，以及 OneBot v11 反向 WebSocket reference plugin。运行 `uv run python -m mutsukibot.plugins.echo.smoke` 验证最小闭环。详见 [plans/version-reports/v0.2.md](plans/version-reports/v0.2.md)。
+MutsukiBot Core 接收外部后端或协议桥转换后的事件，驱动 Agent 决策，并通过 Operation 表达 Agent 可采取的动作。Core 不内置应用后端 / CRUD endpoint / tool event 语义；真实业务状态由外部后端或领域插件持有。运行 `uv run python -m mutsukibot.plugins.echo.smoke` 验证最小闭环。
 
 ## 阅读入口
 

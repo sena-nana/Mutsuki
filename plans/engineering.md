@@ -155,13 +155,14 @@ core 提供：
 - core 在装载时校验配置；**无 schema 的插件不允许装载**。
 - 自动生成面板字段（v0.x 后由 dashboard 插件消费）。
 
-### 4.7 Endpoint 能力协商（v0.2 改写）
+### 4.7 Source 能力协商（v0.2 改写，当前收束）
 
-> **v0.1 → v0.2 变更**：原 Adapter `StrEnum` `AdapterCapability` 已删除；能力名改注册式 `CapabilityName`，命名空间下移到 `im.*` / `tool.*`（详 [contracts.md §4](contracts.md#4-capability-命名)）。
+> **v0.1 → v0.2 变更**：原 Adapter `StrEnum` `AdapterCapability` 已删除；能力名改注册式 `CapabilityName`。Core 只内置 IM 与通用运行能力；外部后端 / MCP / 文件系统 / 浏览器等非 IM 能力由 bridge 或领域插件自行注册。
 
-- Source / Operation 通过 `capabilities` 字段声明能力清单：`Caps.IM_TEXT` / `Caps.IM_IMAGE` / `Caps.TOOL_INVOKE` 等（注册式，领域插件可扩展）。
+- Source / Operation 通过 `capabilities` 字段声明能力清单：`Caps.IM_TEXT` / `Caps.IM_IMAGE` 等（注册式，领域插件可扩展）。
 - 插件 publish envelope 时声明 `capabilities_required`，dispatcher 用作 ScopeRule 匹配键之一（`ByCapability`）。
 - **插件禁止硬假设平台能力**：消费 envelope 时必须用 ScopeRule（如 `ByCapability(Caps.IM_TEXT)`）显式声明前置条件，缺失即不接收。
+- **Core 不提供应用后端能力名或 CRUD endpoint**：真实业务状态由外部后端或领域插件持有，通过自定义 SourceKind / Envelope / Operation 与 Agent core 交互。
 - 详 [contracts.md §14-§18](contracts.md)。
 
 ### 4.8 双协议分离
