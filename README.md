@@ -13,6 +13,7 @@ MutsukiBot Core 接收外部后端或协议桥转换后的 Envelope，驱动 Age
 - [plans/architecture.md](plans/architecture.md) —— 方向、Agent 一等公民、分层、与 Yume / mind-sim 的关系
 - [plans/engineering.md](plans/engineering.md) —— 技术栈、目录、插件模型、横切公约
 - [plans/contracts.md](plans/contracts.md) —— 内部协议草案
+- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) —— Tauri / Rust runtime 与 Python 插件生态的分层边界
 
 任何变更前请按上述顺序阅读相关文档；若变更没有契约位置或设计文档归属，先设计或更新契约。
 

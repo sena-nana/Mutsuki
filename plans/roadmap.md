@@ -198,6 +198,13 @@
 | v0.9 | Web 控制面板插件、配置面板自动生成 |
 | v1.0 | 完整 Yume v0.4 行为可在 MutsukiBot 上复现，文档冻结 |
 
+### Rust / Python 分层方向（不锁版本）
+
+Tauri 桌面形态下，后续可把通用 Agent runtime mechanics 逐步下沉到 Rust，并保留
+Python 作为 Mutsuki 插件、Yume、LLM 与外部协议桥宿主。该方向同时要求 Rust
+runtime 可不依赖 Python 插件系统，被 Lilia 式工程 Agent 作为轻量运行底座直接
+复用。详细边界见 [rust-python-runtime-boundary.md](rust-python-runtime-boundary.md)。
+
 每个 v0.x 完成时产出 `plans/version-reports/v0.x.md`：方向、完成项、基线、运行检查、效果检查、下版门槛。
 
 ## 反向论证（红线）

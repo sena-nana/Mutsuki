@@ -72,6 +72,17 @@ plugins → core → contracts
 - 外部协议定义（OneBot / MCP / ChatCompletion 等）只能出现在 reference plugin 中，不得渗入 `core` / `contracts`。
 - 反模式：把「LLM 调用 / 记忆 / 情感」做进 `core` —— 这是 v1 mind-sim 的教训之一。
 
+### 3.1 Rust / Python 分层方向
+
+Tauri 桌面形态下，MutsukiBot 可演进为 Rust runtime mechanics + Python
+能力生态的双层架构。Rust 层负责可复用的 Agent 生命周期、调度、路由、资源治理
+与 trace 因果链；Python 层继续负责插件装载、动态 Operation handler、Yume /
+LLM / 外部协议桥与实际 by-ref 对象所有权。
+
+该方向的目标不是把 Mutsuki 的插件语义写进 Rust，而是形成一个也可被 Lilia 式
+工程 Agent 直接复用的通用 `AgentRuntime`。详细边界、接口与迁移路线见
+[rust-python-runtime-boundary.md](rust-python-runtime-boundary.md)。
+
 ## 4. 与 Yume / mind-sim 的关系
 
 Yume 与 mind-sim **既是目标用例，也是目标插件生态**。其原本的紧耦合实现路径将被解构为多个 MutsukiBot 插件，按契约组合复现原设计意图。
