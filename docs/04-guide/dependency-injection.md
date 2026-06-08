@@ -49,7 +49,7 @@ claim 顺序由 `_DEFAULT_PARAMS` 决定（[dependency.py:169](../../mutsukibot/
 5. 对每个参数构造 `ParameterInfo`，依次问每个 `Param.claim(info)`，第一个成功的进 `resolved` 列表
 6. 没有任何 Param 认领 → 抛 `UnresolvedParameterError`
 
-`PluginMeta` 在收集命令时调用 `Dependent.parse` 并把结果缓存到 `marker.dependent`（[plugin.py:347](../../mutsukibot/core/plugin.py#L347)）。这样 scheduler 调度时**完全不需要做反射**——所有 Param 的 claim 与签名解析都在类定义时跑过。
+`PluginMeta` 在收集命令时调用 `Dependent.parse` 并把结果缓存到 `marker.dependent`。这样 Operation 调用时**完全不需要做反射**——所有 Param 的 claim 与签名解析都在类定义时跑过。
 
 ### solve：发生在每次调用时
 
@@ -70,11 +70,11 @@ async def solve(
     return await self.call(**kwargs)
 ```
 
-每个 Param 拿到完整 ctx + extras，自己挑需要的。`bound_self` 用于绑定方法调用：scheduler 传 `bound_self=plugin` 让方法看到真正的 `self`（[scheduler.py:167](../../mutsukibot/runtime/scheduler.py#L167)）。
+每个 Param 拿到完整 ctx + extras，自己挑需要的。`bound_self` 用于绑定方法调用：Agent 在注册 `@command` 派生的 Operation 时包装 handler，调用 `dependent.solve(ctx, bound_self=plugin, **payload)`，让方法看到真正的 `self`。
 
 ### extras 是什么
 
-调度器从 shell-style 命令行解析出的位置参数，按 `parameters_schema` 的 properties 顺序对齐成 dict，传给 solve（[scheduler.py:152-155](../../mutsukibot/runtime/scheduler.py#L152-L155)）：
+文本命令 reference extension 从 shell-style 命令行解析出的位置参数，按 `parameters_schema` 的 properties 顺序对齐成 dict，传给 dispatcher / Operation handler：
 
 ```python
 param_names = list(spec.parameters_schema.get("properties", {}))
@@ -111,7 +111,7 @@ class MyPlugin(Plugin[Config]):
         ...
 ```
 
-调度时 scheduler 给 `extras = {"text": ..., "repeats": ...}`，solve 后变成：
+文本命令调用时 command router 给 `payload = {"text": ..., "repeats": ...}`，Operation handler 再传给 `solve`，结果变成：
 
 | 参数 | Param | 来源 |
 |---|---|---|
@@ -150,4 +150,4 @@ async def process_hosted(
 - **`RefArg(kind="...")` 会强制校验 kind**。payload 路径和 `ResourceHost` 路径都会检查 `RefDescriptor.kind`；不匹配会 fail-loud 为 `ref.kind_mismatch`。
 - **`ResourceHost` 路径需要先注册服务**。使用 `RefArg(source=RefArgSource.RESOURCE_HOST)` 时，`ctx.services` 里必须有对应 name 的 `ResourceHost`，否则会抛结构化 `service.not_found`。
 - **claim 顺序固定**。如果你既写 `Annotated[..., RefArg(...)]` 又给默认值 `Inject()`，RefParam 先赢（它在 `_DEFAULT_PARAMS` 排第二，ServiceParam 第三）。
-- **同一个签名在 PluginMeta 解析后就冻结了**。在 `__init__` / `on_load` 里动态修改方法签名不会被框架感知 —— scheduler 只看缓存好的 `marker.dependent`。
+- **同一个签名在 PluginMeta 解析后就冻结了**。在 `__init__` / `on_load` 里动态修改方法签名不会被框架感知 —— Operation handler 只看缓存好的 `marker.dependent`。

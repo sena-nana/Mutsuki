@@ -15,9 +15,8 @@ import asyncio
 from typing import TYPE_CHECKING, Final
 
 from mutsukibot.contracts.envelope import Envelope
-from mutsukibot.contracts.event import SpanStatus
 from mutsukibot.contracts.lifecycle import LifecyclePhase
-from mutsukibot.core.trace import trace_span
+from mutsukibot.runtime.envelope_dispatch import dispatch_envelope_to_consumers
 
 if TYPE_CHECKING:
     from mutsukibot.core.agent import Agent
@@ -81,35 +80,7 @@ class AgentScheduler:
                 await self._dispatch_to_plugins(item)
 
     async def _dispatch_to_plugins(self, envelope: Envelope) -> None:
-        """按 plugin.consumes 把 envelope 派发到所有匹配的 plugin。
-
-        每个 plugin 独立 trace span。on_envelope 抛错不连带其他 plugin —— 仅
-        记录结构化 Error 到 trace span attributes，让 observability 可见。
-        """
-        for entry in self.agent.plugins:
-            plugin = entry.plugin
-            consumes: tuple = plugin.__class__.consumes
-            if not consumes:
-                continue
-            if not any(rule.check(envelope) for rule in consumes):
-                continue
-            attributes: dict[str, str | int | float | bool] = {
-                "agent_id": str(self.agent.agent_id),
-                "envelope_id": str(envelope.id),
-                "envelope_schema": envelope.payload_schema_id,
-                "source_id": envelope.source.source_id,
-            }
-            ctx = self.agent.make_context()
-            async with trace_span(
-                ctx,
-                f"plugin.{plugin.id}.on_envelope",
-                attributes=attributes,
-            ) as span:
-                try:
-                    await plugin.on_envelope(envelope)
-                except Exception as exc:
-                    span.status = SpanStatus.ERROR
-                    span.attributes["exception_type"] = type(exc).__qualname__
-                    span.attributes["exception_repr"] = repr(exc)
+        """按 plugin.consumes 把 envelope 派发到所有匹配的 plugin。"""
+        await dispatch_envelope_to_consumers(self.agent, envelope)
 
 __all__ = ["AgentScheduler"]

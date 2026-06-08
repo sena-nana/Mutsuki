@@ -74,25 +74,16 @@ class Perms:
 
 注意 `_agent_owner` 的实现里，**`ctx.message is None` 时返回 True**——这意味着生命周期钩子里调用是允许的。命令路径里 `message` 一定有值。
 
-### 调度器侧 await check
+### Dispatcher 侧 await check
 
-[scheduler.py:139-149](../../mutsukibot/runtime/scheduler.py#L139-L149)：
+Operation invoke 时，dispatcher 在执行 handler 前检查 permission：
 
 ```python
-if not await marker.perms.check(ctx):
-    await self._emit_error(
-        msg,
-        Error(
-            code=Errs.PERMISSION_DENIED,
-            source=plugin.id,
-            route=f"command.{spec.name}",
-            evidence={"perms_rule": spec.perms_rule_id or ""},
-        ),
-    )
-    return
+if not await entry.perms.check(ctx):
+    raise OperationInvokeError(Error(...))
 ```
 
-permission 检查发生在 capability 检查之后、参数解析之前。失败立即返回 `Errs.PERMISSION_DENIED`。
+permission 检查发生在 capability 检查之后、handler 调用之前。失败立即返回 `Errs.PERMISSION_DENIED`。
 
 ### `@command(perms=...)` 接受三种值
 

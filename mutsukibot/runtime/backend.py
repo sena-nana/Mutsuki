@@ -17,12 +17,12 @@ from mutsukibot.contracts.agent_profile import StrategyResult, StrategyResultSta
 from mutsukibot.contracts.base import Contract
 from mutsukibot.contracts.envelope import Envelope
 from mutsukibot.contracts.error import Error, Errs
-from mutsukibot.contracts.event import SpanStatus
 from mutsukibot.contracts.ids import AgentId, RefId
 from mutsukibot.contracts.operation import OperationDescriptor
 from mutsukibot.contracts.refpayload import RefDescriptor
 from mutsukibot.contracts.source import SourceDescriptor
 from mutsukibot.core.dispatcher import OperationInvokeError
+from mutsukibot.runtime.envelope_dispatch import dispatch_envelope_to_consumers
 
 _T = TypeVar("_T")
 
@@ -196,8 +196,9 @@ class PythonAgentBackend:
     """Adapter that exposes existing Python Agents as runtime backends.
 
     The adapter is intentionally small: it delegates operation execution to the
-    existing dispatcher and keeps lifecycle/strategy hooks in Python. It is a
-    bridge for a future Rust runtime, not a replacement for ``PluginLoader``.
+    existing dispatcher and reuses the shared envelope consumer fan-out. It is
+    a bridge for a future Rust runtime, not a replacement for ``PluginLoader``
+    or an owner of separate plugin routing semantics.
     """
 
     def __init__(self, agents: dict[AgentId, Any] | None = None) -> None:
@@ -229,31 +230,7 @@ class PythonAgentBackend:
         envelope: Envelope,
     ) -> StrategyResult:
         agent = self._agent(agent_id)
-        for entry in agent.plugins:
-            plugin = entry.plugin
-            consumes: tuple = plugin.__class__.consumes
-            if not consumes or not any(rule.check(envelope) for rule in consumes):
-                continue
-            attributes: dict[str, str | int | float | bool] = {
-                "agent_id": str(agent.agent_id),
-                "envelope_id": str(envelope.id),
-                "envelope_schema": envelope.payload_schema_id,
-                "source_id": envelope.source.source_id,
-            }
-            ctx = agent.make_context()
-            from mutsukibot.core.trace import trace_span
-
-            async with trace_span(
-                ctx,
-                f"plugin.{plugin.id}.on_envelope",
-                attributes=attributes,
-            ) as span:
-                try:
-                    await plugin.on_envelope(envelope)
-                except Exception as exc:
-                    span.status = SpanStatus.ERROR
-                    span.attributes["exception_type"] = type(exc).__qualname__
-                    span.attributes["exception_repr"] = repr(exc)
+        await dispatch_envelope_to_consumers(agent, envelope)
         return StrategyResult(status=StrategyResultStatus.WAIT_INPUT)
 
     async def next_step(self, agent_id: AgentId) -> StrategyResult:

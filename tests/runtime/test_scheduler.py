@@ -1,4 +1,4 @@
-"""AgentScheduler 关键回归：异常透传 + 错误码分级。"""
+"""AgentScheduler 与 command router 关键回归。"""
 
 from __future__ import annotations
 
@@ -88,14 +88,14 @@ def test_classify_generic_exception_maps_to_execution_failed() -> None:
 
 def test_classify_never_returns_plugin_definition_error() -> None:
     """PLUGIN_DEFINITION_ERROR 仅由 PluginMeta 在类定义阶段使用，
-    scheduler 路径不应再产生它（避免运维误以为是定义层 bug）。"""
+    command router 路径不应再产生它（避免运维误以为是定义层 bug）。"""
     for exc in (ServiceNotFoundError("x"), KeyError("y"), ValueError("z"), RuntimeError("w")):
         err = _classify_command_exception(exc, "p", "c")
         assert err.code != Errs.PLUGIN_DEFINITION_ERROR
 
 
 @pytest.mark.asyncio
-async def test_handle_message_emits_classified_error_for_command_body_exception() -> None:
+async def test_command_router_emits_dispatcher_error_for_command_body_exception() -> None:
     agent = _new_agent()
     loader = PluginLoader(
         allow={_BoomPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
@@ -118,14 +118,14 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     assert msgs, "至少有一条出错消息"
     text = "".join(m.text for m in msgs)
     # 命令体 ValueError 应当映射到 OPERATION_HANDLER_RAISED（v0.2 dispatcher
-    # 路径）。dispatcher 把 handler 异常包成结构化 Error，scheduler 直接转写。
+    # 路径）。dispatcher 把 handler 异常包成结构化 Error，command router 转写。
     assert Errs.OPERATION_HANDLER_RAISED in text
     assert "ValueError" in text
     invoke_spans = [s for s in spans if s.name == "dispatch.invoke"]
-    scheduler_command_spans = [s for s in spans if s.name == "plugin.test-boom.boom"]
+    legacy_command_spans = [s for s in spans if s.name == "plugin.test-boom.boom"]
     assert len(invoke_spans) == 1
     assert invoke_spans[0].status == SpanStatus.ERROR
-    assert scheduler_command_spans == []
+    assert legacy_command_spans == []
 
     await scheduler.stop()
     await loader.unload_from(agent)
@@ -321,10 +321,10 @@ async def test_command_success_emits_only_dispatch_invoke_operation_span() -> No
 
     assert any("done" in m.text for m in msgs)
     invoke_spans = [s for s in spans if s.name == "dispatch.invoke"]
-    scheduler_command_spans = [s for s in spans if s.name == "plugin.test-slow.slow"]
+    legacy_command_spans = [s for s in spans if s.name == "plugin.test-slow.slow"]
     assert len(invoke_spans) == 1
     assert invoke_spans[0].status == SpanStatus.OK
-    assert scheduler_command_spans == []
+    assert legacy_command_spans == []
 
     await scheduler.stop()
     await loader.unload_from(agent)

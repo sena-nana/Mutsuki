@@ -99,18 +99,20 @@ ErrorCode.bootstrap_facade(
 )
 ```
 
-### Scheduler 的异常分类
+### Command Router 与 Dispatcher 的异常分类
 
-调度器在命令里捕获到任何 `Exception` 都不会让它逃逸 —— 由 [_classify_command_exception](../../mutsukibot/runtime/scheduler.py#L222-L264) 映射成 `Error`：
+文本命令路径位于 reference extension：[`TextCommandRouterPlugin`](../../mutsukibot_ext/command/__init__.py)。它解析文本、调用 dispatcher，并把结构化错误写成出站消息。命令体经 dispatcher 调用时，handler 抛出的未捕获异常会先由 dispatcher 包成 `Errs.OPERATION_HANDLER_RAISED`。
+
+command router 自己捕获到的非 dispatcher 异常由 `_classify_command_exception(...)` 映射成 `Error`：
 
 | 捕获到的异常 | 映射到 |
 |---|---|
 | `HandleLeakError` | `Errs.HANDLE_LEAK`，复用其内置 evidence |
-| `ServiceNotFoundError` | `Errs.PLUGIN_DEFINITION_ERROR`，evidence reason = `service_not_found` |
-| `KeyError`（缺参数） | `Errs.PLUGIN_DEFINITION_ERROR`，evidence reason = `missing_arg` |
-| 其他 | `Errs.PLUGIN_DEFINITION_ERROR`，evidence 包含 `exception_type` / `exception_repr` |
+| `ServiceNotFoundError` | `Errs.SERVICE_NOT_FOUND`，evidence reason = `service_not_found` |
+| `KeyError`（缺参数） | `Errs.COMMAND_INVALID_ARGS`，evidence reason = `missing_arg` |
+| 其他 | `Errs.COMMAND_EXECUTION_FAILED`，evidence 包含 `exception_type` / `exception_repr` |
 
-错误 message 写到出站：[scheduler.py:196-208](../../mutsukibot/runtime/scheduler.py#L196-L208) 的 `_emit_error` 把 `Error` 序列化成 `[error <code>] <evidence>` 文本投到 outbox。Trace span 同时设 status=ERROR 并发到 bus（[scheduler.py:170-185](../../mutsukibot/runtime/scheduler.py#L170-L185)）。
+错误 message 写到出站：command router 的 `_emit_error` 把 `Error` 序列化成 `[error <code>] <evidence>` 文本投到 outbox。Operation 执行事实由 dispatcher 的 `dispatch.invoke` trace span 表达；generic envelope consumer 的失败由 `plugin.<id>.on_envelope` span 标记为 ERROR。
 
 ### RecoveryAction
 
@@ -182,8 +184,8 @@ YUME_KERNEL_TIMEOUT = ErrorCode.register(
 ## 常见陷阱
 
 - **`evidence` 只接受标量**——`str | int | float | bool`。要塞 list / dict 必须先 `json.dumps`（参考 [scope.py 的 cleanup_failures_json](../../mutsukibot/core/scope.py#L155-L160) 处理方式）。
-- **不要把 `Error` 当 Python 异常抛**。`Error` 是 `Contract`（msgspec.Struct），不是 `Exception`。要抛 → 用一个 wrapper 异常（`HandleLeakError(leaked, error=...)` 这种）携带它。Scheduler 期望命令里抛 Python 异常，由它去分类成 `Error`。
+- **不要把 `Error` 当 Python 异常抛**。`Error` 是 `Contract`（msgspec.Struct），不是 `Exception`。要抛 → 用一个 wrapper 异常（`HandleLeakError(leaked, error=...)` 这种）携带它。command router 与 dispatcher 期望命令里抛 Python 异常，由它们去分类成 `Error`。
 - **`cause` 是 `Error | None`，不是 Python `__cause__`**。用 `raise X from Y` 链接 Python 异常，`Error.cause` 用来链接结构化错误。两者独立。
 - **`Errs.*` 在 import 时立即触发注册**。`from mutsukibot.contracts.error import Errs` 这一行就跑了 `bootstrap_facade`。所以 `ErrorCode("permission.denied")` 在 import 之后才能成功；之前会抛 `UnknownErrorCodeError`。
-- **避免从 `Errs.PLUGIN_DEFINITION_ERROR` 推断具体原因**。这个 code 是默认 fallback，scheduler 给所有未分类异常都用它。要区分原因看 `evidence["reason"]`（`service_not_found` / `missing_arg` / `command_raised`）。
+- **避免从旧的 `Errs.PLUGIN_DEFINITION_ERROR` 推断命令运行时原因**。当前命令运行错误分别使用 `service.not_found`、`command.invalid_args`、`command.execution_failed` 或 dispatcher 的 `operation.handler_raised`。要区分原因看 `code` 与 `evidence["reason"]`。
 - **错误码字符串不应频繁变化**。它们出现在 alerting 规则、grep 脚本、测试断言里。要废弃一个错误码，先注册新的并迁移调用方，最后再删除旧引用。

@@ -1,7 +1,6 @@
 """Plugin.consumes —— envelope 二次分发到 plugin.on_envelope。
 
-验证 D3（plugin.consumes 声明位）与 scheduler 的 ``_dispatch_to_plugins``
-分发逻辑：
+验证 D3（plugin.consumes 声明位）与共享 envelope consumer fan-out 逻辑：
 
 * consumes=() 的 plugin 不收 envelope
 * ScopeRule 匹配的 plugin 收到 on_envelope 调用

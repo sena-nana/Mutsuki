@@ -8,13 +8,13 @@ Capability 是插件**静态声明**的"我能做什么"。它是一个注册式
 
 - 注册类型：[mutsukibot/contracts/capability.py](../../mutsukibot/contracts/capability.py)
 - 内置常量门面：[mutsukibot/contracts/capability_builtin.py](../../mutsukibot/contracts/capability_builtin.py)
-- 调度器侧守卫：[mutsukibot/core/capability_guard.py](../../mutsukibot/core/capability_guard.py)
+- Operation 调用守卫：[mutsukibot/core/capability_guard.py](../../mutsukibot/core/capability_guard.py)
 
 ## 解决什么问题
 
 传统框架里"插件能不能调用网络"这种事情靠文档约定 —— 没人在加载时检查。结果生产环境出现 LLM 插件偷偷起本地 socket、调试插件持有 GPU 不释放等情形。
 
-MutsukiBot 的 hard rule #7：**未申报 capability 即调用视为违规**。所有"敏感能力"必须先在 manifest 里列出来；命令再用 `requires_capabilities=...` 进一步细粒度声明；调度器在 dispatch 前做"required ⊆ declared"检查。
+MutsukiBot 的 hard rule #7：**未申报 capability 即调用视为违规**。所有"敏感能力"必须先在 manifest 里列出来；Operation 再用 `requires_capabilities=...` 进一步细粒度声明；dispatcher 在 invoke 前做"required ⊆ declared"检查。
 
 这同时给 Yume 这类 agent 一个清晰的入口去做"我现在能做什么"的内省 —— 它们可以从插件 manifest 直接读出能力图。
 
@@ -71,7 +71,7 @@ class Capability(Contract):
 
 `quantity` 用来表达"能用多少"——比如 `{"tokens_per_min": 100000}`、`{"bytes": 1_000_000_000}`。`policy` 表达额外约束 —— 比如 `{"allowed_hosts": "api.openai.com,api.anthropic.com"}`。
 
-v0.1 的调度器只校验 `name`；`quantity` / `policy` 当作 manifest 元数据让上层（配额系统、审计）使用。
+当前 dispatcher 调用路径只校验 `name`；`quantity` / `policy` 当作 manifest 元数据让上层（配额系统、审计）使用。
 
 ### 守卫：required ⊆ declared
 
@@ -97,12 +97,12 @@ def check_capabilities(
         raise CapabilityNotDeclaredError(missing, err)
 ```
 
-调度器在每条命令分发前调用（[scheduler.py:126-136](../../mutsukibot/runtime/scheduler.py#L126-L136)）：
+dispatcher 在 Operation invoke 路径调用：
 
 - `declared` = 插件类的 `capabilities` 列表的 name 集合
 - `required` = 命令 `@command(requires_capabilities=...)` 列表
 
-任何 `required` 不在 `declared` 里的 capability 都会让调度拒绝执行，把 `Error(code=Errs.CAPABILITY_NOT_DECLARED)` 投到出站消息。
+任何 `required` 不在 `declared` 里的 capability 都会让调用拒绝执行，抛出携带 `Error(code=Errs.CAPABILITY_NOT_DECLARED)` 的结构化 wrapper。
 
 ## 用法示例
 
@@ -160,7 +160,7 @@ CapabilityName.bootstrap_facade(
 ## 常见陷阱
 
 - **构造未注册的 `CapabilityName` 会立即抛错**。导入时序很重要：如果你在某模块顶层 `Caps.READ_MESSAGE`，必须保证 `mutsukibot.contracts.capability_builtin` 已经被导入过（通常 `from mutsukibot import Caps` 或 `from mutsukibot.contracts import Caps` 就够了）。
-- **`requires_capabilities` 不会自动收录到插件 declared**。命令声明 `requires_capabilities=(Caps.PERSIST,)`，但插件 `capabilities` 没列 `PERSIST` —— 调度器拒绝执行。
+- **`requires_capabilities` 不会自动收录到插件 declared**。Operation 声明 `requires_capabilities=(Caps.PERSIST,)`，但插件 `capabilities` 没列 `PERSIST` —— dispatcher 拒绝执行。
 - **不同 owner 注册同名 capability 会冲突**。两家插件都想叫 "memory"，第二家在 `register` 时抛 `CapabilityConflictError`。约定带前缀（`yume.memory`、`mind_sim.memory`）。
 - **manifest 里的 quantity 仍只是声明元数据**。真正的容量计数走 `ResourceHost.declare_capacity()` / `acquire()`；超额时会触发 `Errs.CAPABILITY_EXHAUSTED`。
-- **守卫只在调度命令时跑**。在 `on_load` / `on_unload` 里直接做敏感操作不会被拦 —— 这是当前实现限制。把敏感操作放命令里走调度路径才能享受守卫。
+- **守卫只在 Operation 调用时跑**。在 `on_load` / `on_unload` 里直接做敏感操作不会被拦 —— 这是当前实现限制。把敏感操作放 Operation 里走 dispatcher 路径才能享受守卫。

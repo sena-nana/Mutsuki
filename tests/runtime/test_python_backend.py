@@ -6,8 +6,10 @@ import msgspec
 import pytest
 
 from mutsukibot import Capability, Caps, Perms, Plugin, command
+from mutsukibot.contracts import BySchema, Envelope, SourceKinds, SourceRef
 from mutsukibot.contracts.error import Errs
-from mutsukibot.contracts.ids import AgentId, RefId
+from mutsukibot.contracts.event import SpanStatus, TraceSpan
+from mutsukibot.contracts.ids import AgentId, EnvelopeId, RefId
 from mutsukibot.contracts.refpayload import RefDescriptor
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.loader import PluginLoader
@@ -44,12 +46,47 @@ class _BackendPlugin(Plugin[_Config]):
         raise ValueError("boom")
 
 
+class _BackendConsumerPlugin(Plugin[_Config]):
+    id: ClassVar[str] = "test-python-backend-consumer"
+    version: ClassVar[str] = "0.0.1"
+    capabilities: ClassVar[list[Capability]] = [Capability(name=Caps.READ_MESSAGE)]
+    consumes: ClassVar[tuple] = (BySchema("test.backend.input"),)
+    Config = _Config
+    received: ClassVar[list[Envelope]] = []
+
+    async def on_envelope(self, envelope: Envelope) -> None:
+        type(self).received.append(envelope)
+
+
+class _BackendCrashConsumerPlugin(Plugin[_Config]):
+    id: ClassVar[str] = "test-python-backend-crash-consumer"
+    version: ClassVar[str] = "0.0.1"
+    capabilities: ClassVar[list[Capability]] = [Capability(name=Caps.READ_MESSAGE)]
+    consumes: ClassVar[tuple] = (BySchema("test.backend.input"),)
+    Config = _Config
+
+    async def on_envelope(self, envelope: Envelope) -> None:
+        raise RuntimeError("backend consumer boom")
+
+
 def _new_agent() -> Agent:
     return Agent(
         agent_id=AgentId("py-backend-agent"),
         clock=SystemClock(),
         id_gen=DeterministicIdGen(),
         rng=SeededRng(seed=0),
+    )
+
+
+def _backend_envelope() -> Envelope:
+    return Envelope(
+        id=EnvelopeId("env-backend-1"),
+        timestamp=0.0,
+        source=SourceRef(
+            source_id="backend:test",
+            kind=SourceKinds.IM,
+        ),
+        payload_schema_id="test.backend.input",
     )
 
 
@@ -176,6 +213,48 @@ async def test_python_backend_wraps_operation_invoke_error() -> None:
         await backend.invoke(agent.agent_id, snapshot.key, {})
 
     assert exc.value.error.code == Errs.OPERATION_HANDLER_RAISED
+    await loader.unload_from(agent)
+
+
+@pytest.mark.asyncio
+async def test_python_backend_on_input_uses_shared_consumer_fanout() -> None:
+    _BackendConsumerPlugin.received = []
+    agent = _new_agent()
+    loader = PluginLoader(
+        allow={_BackendConsumerPlugin.id, _BackendCrashConsumerPlugin.id}
+    )
+    await loader.load_into(
+        agent,
+        [_BackendCrashConsumerPlugin, _BackendConsumerPlugin],
+    )
+    backend = PythonAgentBackend({agent.agent_id: agent})
+    spans: list[TraceSpan] = []
+
+    async def _on_span(payload: object) -> None:
+        if isinstance(payload, TraceSpan):
+            spans.append(payload)
+
+    agent.bus.subscribe("trace.span", _on_span)
+    result = await backend.on_input(agent.agent_id, _backend_envelope())
+
+    assert result.status.value == "wait_input"
+    assert len(_BackendConsumerPlugin.received) == 1
+    crash_spans = [
+        span
+        for span in spans
+        if span.name == f"plugin.{_BackendCrashConsumerPlugin.id}.on_envelope"
+    ]
+    consumer_spans = [
+        span
+        for span in spans
+        if span.name == f"plugin.{_BackendConsumerPlugin.id}.on_envelope"
+    ]
+    assert len(crash_spans) == 1
+    assert crash_spans[0].status == SpanStatus.ERROR
+    assert crash_spans[0].attributes["exception_type"] == "RuntimeError"
+    assert len(consumer_spans) == 1
+    assert consumer_spans[0].status == SpanStatus.OK
+
     await loader.unload_from(agent)
 
 

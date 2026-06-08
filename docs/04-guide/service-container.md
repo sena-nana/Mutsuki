@@ -58,7 +58,7 @@ def resolve(self, contract: type, *, name: str | None = None) -> Any:
     return bucket[0][1]
 ```
 
-不指定 name 就拿第一个。`ServiceNotFoundError` 是 `KeyError` 的子类。Scheduler 的异常分类器会把它映射成 `Errs.PLUGIN_DEFINITION_ERROR` 并标 `reason="service_not_found"`（[scheduler.py:235-244](../../mutsukibot/runtime/scheduler.py#L235-L244)）。
+不指定 name 就拿第一个。`ServiceNotFoundError` 是 `KeyError` 的子类。文本命令 reference extension 的异常分类器会把它映射成 `Errs.SERVICE_NOT_FOUND` 并标 `reason="service_not_found"`。
 
 ### Inject() 注入流程
 
@@ -147,6 +147,6 @@ class WebSearchPlugin(Plugin[_Cfg]):
 
 - **`unregister` 不会自动发生**。即便插件被卸载，scope 也不会自己卸载服务 —— 你必须把 unregister 显式登记到 `scope.add_service_registration(...)`。否则服务会留在容器里悬空。
 - **同契约多实例时，`resolve(name=None)` 拿第一个**。这通常是你想要的（"主实例"），但要避免依赖隐含的注册顺序。多实例场景请显式给名字。
-- **解析失败抛的是 `ServiceNotFoundError`（`KeyError` 子类）**。在命令里这会被 scheduler 包成结构化 `Error`；在 `on_load` 里这会直接传播让 loader 装载失败。
+- **解析失败抛的是 `ServiceNotFoundError`（`KeyError` 子类）**。在文本命令里这会被 command router 包成结构化 `Error`；在 `on_load` 里这会直接传播让 loader 装载失败。
 - **服务的契约类型推荐用 `Protocol` 或 ABC**，不要用具体类。这样替换实现时签名不变。
 - **不要把 `AgentContext` 注册成服务**。它是 per-call 对象，不是单例；要拿全局共享 state 用真服务。

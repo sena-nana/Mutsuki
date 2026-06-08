@@ -114,7 +114,7 @@ if sig_param.default is inspect.Parameter.empty:
 
 ### 返回值
 
-如果函数声明了返回类型，`return_schema` 会按同样规则生成（[plugin.py:260-262](../../mutsukibot/core/plugin.py#L260-L262)）。当前 runtime 不做返回值强制校验 —— scheduler 直接 `str(result)` 后塞进出站消息。
+如果函数声明了返回类型，`return_schema` 会按同样规则生成（[plugin.py:260-262](../../mutsukibot/core/plugin.py#L260-L262)）。当前 runtime 不做返回值强制校验；文本命令 reference extension 会把 Operation 返回值 `str(result)` 后塞进出站消息。
 
 ### CommandSpec 的形态
 
@@ -189,4 +189,4 @@ async def search(
 - **`Arg(desc=...)` 是 fallback，不是首选**。优先写 docstring；`Arg` 用来表达约束。
 - **复杂类型暂时退化为 string**。v0.1 schema 合成不递归处理嵌套结构（list / dict / 自定义 Struct）。如果你需要传结构化参数，目前的实践是定义一个 service 接口而不是命令参数。
 - **`func_qualname` 用于错误归因**，比如 trace 里出现 `plugin.mutsukibot-echo.echo`，方便回溯到源码 —— 不要为了 LLM 友好就给函数起特殊名字。
-- **schema 与人类命令解析共用同一份**。Scheduler 用 `parameters_schema` 的 properties 顺序把 shell-style 位置参数对齐到 kwargs（[scheduler.py:152-155](../../mutsukibot/runtime/scheduler.py#L152-L155)），并按 `type` 做粗粒度强转（int / float / bool）。所以**参数声明顺序 = 命令位置参数顺序**。
+- **schema 与人类命令解析共用同一份**。`TextCommandRouterPlugin` 用 `parameters_schema` 的 properties 顺序把 shell-style 位置参数对齐到 kwargs，并按 `type` 做粗粒度强转（int / float / bool）。所以**参数声明顺序 = 命令位置参数顺序**。

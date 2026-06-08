@@ -63,16 +63,17 @@ class TraceContext:
     parent_span_id: SpanId | None = None
 ```
 
-`trace_id` 跨整个外部触发链路保持不变，`span_id` 标识当前这一跳，`parent_span_id` 指向调用方的 span。Scheduler 在每条命令开始时新建 trace_ctx（[scheduler.py:108-111](../../mutsukibot/runtime/scheduler.py#L108-L111)）；插件需要嵌套调用时应当继承当前 ctx 的 `trace_id`、把当前 `span_id` 作为子调用的 `parent_span_id`。
+`trace_id` 跨整个外部触发链路保持不变，`span_id` 标识当前这一跳，`parent_span_id` 指向调用方的 span。文本命令入口由 [`TextCommandRouterPlugin`](../../mutsukibot_ext/command/__init__.py) 构造命令调用 ctx；generic envelope consumer 由 [`dispatch_envelope_to_consumers`](../../mutsukibot/runtime/envelope_dispatch.py) 构造 consumer ctx。插件需要嵌套调用时应当继承当前 ctx 的 `trace_id`、把当前 `span_id` 作为子调用的 `parent_span_id`。
 
 ### 谁来构造它
 
-两条路径：
+主要路径：
 
-1. **命令路由**：`AgentScheduler._handle_message` 显式构造（[scheduler.py:112-123](../../mutsukibot/runtime/scheduler.py#L112-L123)），`scope` = 命令所属插件的 scope。
-2. **生命周期钩子**：`Agent.make_context()`（[agent.py:74-96](../../mutsukibot/core/agent.py#L74-L96)）使用 agent 自有 fallback scope，`message=None`。
+1. **命令路由**：`TextCommandRouterPlugin` 解析文本后调用 `Agent.make_context(message=msg)`，再走 `ctx.dispatch.invoke(...)`。
+2. **Envelope consumer**：scheduler 与 Rust/Python backend adapter 共用 `dispatch_envelope_to_consumers(...)`，按 `Plugin.consumes` fan-out 到 `plugin.on_envelope(...)`。
+3. **生命周期钩子**：`Agent.make_context()` 使用 agent 自有 fallback scope，`message=None`。
 
-两条路径都会**新建** `TraceContext` —— 没有 parent_span_id 即代表外部触发的根 span。
+这些路径都会**新建** `TraceContext` —— 没有 parent_span_id 即代表外部触发的根 span。
 
 ## 用法示例
 
@@ -133,4 +134,4 @@ sub_trace = TraceContext(
 - **`ctx.message is None` 是合法状态**。lifespan 钩子里收到的 ctx 没有触发消息。命令路径里它一定有值，但写防御代码时仍要判 None（pyright 会提醒）。
 - **`extras` 不是跨调用 state**。它是 per-call 字典，命令返回后就被丢弃。要持久化状态用 `self.config` 或 `ctx.services.register(...)`。
 - **不要把 `ctx` 缓存到 `self`**。它代表"这一次调用"的副作用域；下一次调用是新 ctx，scope / trace_ctx 都不一样。
-- **`ctx.scope` 在命令路径里 = 命令所属插件的 scope**，不是 agent 全局 scope。这意味着你在命令里注册的订阅会随插件卸载而清理 —— 这通常是你想要的行为。
+- **`ctx.scope` 默认是 agent fallback scope**。Operation 执行与插件资源仍由注册时绑定的 `PluginScope` 负责回收；在命令或 consumer 内注册长期副作用时，优先使用当前插件自身的 `self.scope`。
