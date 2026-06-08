@@ -18,10 +18,8 @@ import asyncio
 from pathlib import Path
 from tempfile import gettempdir
 
-from mutsukibot.contracts import Scopes
 from mutsukibot.contracts.ids import AgentId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
-from mutsukibot.contracts.message import ChannelRef
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.observability import JsonlTraceWriter
@@ -29,6 +27,8 @@ from mutsukibot.plugins.echo import EchoPlugin
 from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import NanoIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.command import TextCommandRouterPlugin
+from mutsukibot_ext.im import ChannelRef, IMScopes
 
 
 async def main() -> None:
@@ -37,14 +37,18 @@ async def main() -> None:
         clock=SystemClock(),
         id_gen=NanoIdGen(),
         rng=SeededRng(seed=0),
-        accepts=(Scopes.IM_TEXT.to_rule(),),
+        accepts=(IMScopes.TEXT.to_rule(),),
     )
     trace_path = Path(gettempdir()) / "mutsukibot-echo-smoke.jsonl"
     writer = JsonlTraceWriter(trace_path)
     writer.attach(agent.bus)
 
-    loader = PluginLoader(allow={EchoPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, EchoPlugin])
+    loader = PluginLoader(
+        allow={EchoPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(
+        agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, EchoPlugin]
+    )
 
     print(f"[smoke] agent {agent.agent_id} phase={agent.phase}")
     print(f"[smoke] loaded plugins: {[p.plugin.id for p in agent.plugins]}")

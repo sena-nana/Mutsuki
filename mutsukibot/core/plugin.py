@@ -1,10 +1,10 @@
-"""Plugin 元类 + ``@command`` 装饰器。
+"""Plugin 元类 + ``@operation`` 装饰器。
 
 面向用户的 API 故意保持极小：
 
 * 子类化 :class:`Plugin`，声明 ``ClassVar`` ``id`` / ``version`` /
   ``capabilities``，以及一个嵌套的 ``Config(msgspec.Struct)``。
-* 用 :func:`command` 装饰命令方法。
+* 用 :func:`operation` 装饰可调用能力方法。
 
 其他全部由 :class:`PluginMeta` 在 class 定义阶段完成（manifest 构造、命令
 收集、schema 合成、docstring 解析、注册到 :data:`PluginRegistry`）。
@@ -78,13 +78,13 @@ class PluginDefinitionError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# @command 装饰器（声明侧的标记）
+# @operation 装饰器（声明侧的标记）
 # ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class _CommandMarker:
-    """由 ``@command`` 附加在方法上，供元类后续收集。
+    """由 ``@operation`` / legacy ``@command`` 附加在方法上，供元类后续收集。
 
     ``dependent`` 与 ``spec`` 在 :class:`PluginMeta` 解析阶段一次性填入，
     scheduler 命令分发时直接复用，避免 per-tick 重复 inspect / 线性查表。
@@ -100,7 +100,7 @@ class _CommandMarker:
     spec: CommandSpec | None = None
 
 
-def command(
+def operation(
     *,
     name: str | None = None,
     desc: str | None = None,
@@ -108,9 +108,9 @@ def command(
     requires_capabilities: tuple[CapabilityName, ...] = (),
     is_tool: bool = True,
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
-    """把一个 async 方法标记为 Plugin 命令（默认同时是 LLM tool）。
+    """把一个 async 方法标记为 Plugin Operation（默认同时是 LLM tool）。
 
-    装饰器只在函数对象上挂元数据；真正的 :class:`CommandSpec` 由
+    装饰器只在函数对象上挂元数据；真正的 :class:`OperationDescriptor` 由
     :class:`PluginMeta` 在所属类体求值完毕后构建 —— 那时候方法 docstring、
     签名、所属类都已就位。
     """
@@ -139,6 +139,29 @@ def command(
         return fn
 
     return decorator
+
+
+def command(
+    *,
+    name: str | None = None,
+    desc: str | None = None,
+    perms: PermissionRule | PermissionName | None = None,
+    requires_capabilities: tuple[CapabilityName, ...] = (),
+    is_tool: bool = True,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+    """Deprecated alias for :func:`operation`.
+
+    Text command routing now lives in :mod:`mutsukibot_ext.command`; core only
+    declares Operations.
+    """
+
+    return operation(
+        name=name,
+        desc=desc,
+        perms=perms,
+        requires_capabilities=requires_capabilities,
+        is_tool=is_tool,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +363,7 @@ class PluginMeta(ABCMeta):
                 error=err,
             )
 
-        # 3) 收集 @command 标记的方法，构造 CommandSpec。
+        # 3) 收集 @operation / legacy @command 标记的方法，构造 OperationDescriptor。
         commands: list[CommandSpec] = []
         markers: dict[str, _CommandMarker] = {}
         for attr, value in namespace.items():
@@ -378,7 +401,7 @@ class PluginMeta(ABCMeta):
         cls.__command_markers__ = markers  # type: ignore[attr-defined]
 
         # 3b) v0.2 新增静态字段（D9b）：consumes / provides_* / requires_*
-        # @command 装饰的方法自动汇入 provides_operations，与显式声明合并。
+        # @operation 装饰的方法自动汇入 provides_operations，与显式声明合并。
         consumes_raw = cls.__dict__.get("consumes", ()) or ()
         consumes: tuple[ScopeRule, ...] = tuple(consumes_raw)
         for rule in consumes:
@@ -500,7 +523,8 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
 
     框架在 :meth:`__init__`（由 loader 调用）注入 ``self.agent``、
     ``self.config``、``self.scope``、``self.services``、``self.bus``。
-    被 :func:`command` 装饰的方法同时成为人类命令路由和 LLM tool。
+    被 :func:`operation` 装饰的方法成为 dispatcher Operation。文本命令
+    路由由 ``mutsukibot_ext.command`` 这类扩展提供。
     """
 
     id: ClassVar[str]
@@ -558,8 +582,8 @@ class Plugin(ABC, Generic[C], metaclass=PluginMeta):
         默认空实现 —— 仅命令型插件（``consumes=()``）保持无操作。
 
         envelope 类型为 :class:`mutsukibot.contracts.envelope.Envelope` 基类；
-        子类需要的 IM 字段通过 ``isinstance(envelope, Message)`` 收窄获取。
+        子类 envelope 字段由对应 extension / 领域契约自行收窄获取。
         """
 
 
-__all__ = ["Plugin", "PluginDefinitionError", "PluginMeta", "command"]
+__all__ = ["Plugin", "PluginDefinitionError", "PluginMeta", "command", "operation"]

@@ -13,11 +13,7 @@ from mutsukibot.contracts import (
     AgentParticipation,
     AgentProfile,
     Caps,
-    ChannelRef,
-    ContentKind,
-    ContentPart,
     Envelope,
-    Message,
     MessageId,
     Scopes,
     SourceKinds,
@@ -27,6 +23,7 @@ from mutsukibot.core.agent import Agent
 from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot_ext.im import ChannelRef, ContentKind, ContentPart, Message
 
 
 def _agent(agent_id: str, *, priority: int) -> Agent:

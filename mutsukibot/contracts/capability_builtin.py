@@ -17,8 +17,8 @@ _OWNER = "mutsukibot.core"
 class Caps:
     """所有 MutsukiBot 框架内置 capability 常量。
 
-    ``IM_*`` 系列描述即时通讯 transport 能力；非 IM / 领域能力由插件用
-    ``CapabilityName.register(...)`` 自行声明。
+    协议或领域能力由 extension / plugin 用 ``CapabilityName.register(...)``
+    自行声明。
     """
 
     READ_MESSAGE: ClassVar[CapabilityName]
@@ -30,6 +30,8 @@ class Caps:
     HOLD_REF: ClassVar[CapabilityName]
     BORROW_REF: ClassVar[CapabilityName]
     PRODUCE_REF_STREAM: ClassVar[CapabilityName]
+    # Deprecated compatibility aliases; canonical names live in
+    # ``mutsukibot_ext.im.IMCaps``.
     IM_TEXT: ClassVar[CapabilityName]
     IM_IMAGE: ClassVar[CapabilityName]
     IM_AUDIO: ClassVar[CapabilityName]
@@ -52,17 +54,20 @@ CapabilityName.bootstrap_facade(
         "HOLD_REF": "hold_ref",
         "BORROW_REF": "borrow_ref",
         "PRODUCE_REF_STREAM": "produce_ref_stream",
-        "IM_TEXT": "im.text",
-        "IM_IMAGE": "im.image",
-        "IM_AUDIO": "im.audio",
-        "IM_FILE": "im.file",
-        "IM_MARKDOWN": "im.markdown",
-        "IM_CARD": "im.card",
-        "IM_REACTION": "im.reaction",
-        "IM_TYPING": "im.typing",
     },
     declared_by=_OWNER,
 )
+
+from mutsukibot_ext.im import IMCaps
+
+Caps.IM_TEXT = IMCaps.TEXT
+Caps.IM_IMAGE = IMCaps.IMAGE
+Caps.IM_AUDIO = IMCaps.AUDIO
+Caps.IM_FILE = IMCaps.FILE
+Caps.IM_MARKDOWN = IMCaps.MARKDOWN
+Caps.IM_CARD = IMCaps.CARD
+Caps.IM_REACTION = IMCaps.REACTION
+Caps.IM_TYPING = IMCaps.TYPING
 
 
 __all__ = ["Caps"]

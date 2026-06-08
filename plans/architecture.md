@@ -4,10 +4,10 @@
 
 ## 1. 项目方向
 
-MutsukiBot 是 Agent 中心的 Bot 框架，**不是** 「事件总线 + 命令处理器」式的传统 Bot。设计目的双重：
+MutsukiBot 是 Agent runtime kernel，**不是** 「事件总线 + 命令处理器」式的传统 Bot。设计目的双重：
 
 1. 为 Yume 与 mind-sim 提供运行核心。
-2. 通过插件组合实现传统 Bot 框架能力。
+2. 通过 extension / 插件组合实现传统 Bot 框架能力。
 
 Yume / mind-sim 自身的实现路径也将被解构为 MutsukiBot 之上的**零散插件**。它们既是目标用例，也是目标插件生态。
 
@@ -52,15 +52,15 @@ plugins → core → contracts
 
 `observability` 不被任何层依赖，也不依赖任何层的内部实现，只通过事件总线 / trace 通道旁路订阅。把 observability 从依赖图中剥离是「卸载 observability 不影响主链路」的前提。
 
-**v0.2 关键变更**：删除独立 Adapter 抽象。原"协议适配层"的职责由 reference plugin 承担：plugin 通过 `dispatch.register_source(...)` + `dispatch.register_operation(...)` 暴露与外界的连接。详 [contracts.md §14-§18](contracts.md)。
+**当前关键变更**：删除独立 Adapter 抽象，并将 IM / 文本 command 特化语义移出 core。原"协议适配层"的职责由 reference extension / plugin 承担：plugin 通过 `dispatch.register_source(...)` + `dispatch.register_operation(...)` 暴露与外界的连接。详 [contracts.md §14-§18](contracts.md)。
 
 各层职责（v0.2）：
 
-- `mutsukibot/contracts` —— 稳定内部协议。详见 [contracts.md](contracts.md)。
+- `mutsukibot/contracts` —— 稳定核心协议。IM `Message` 等协议特化位于 `mutsukibot_ext.im`，核心仅保留过渡 shim。
 - `mutsukibot/core` —— Agent 运行时本体：注册中心、调度器、Context 工厂、服务容器、生命周期编排、插件 DAG 加载、事务原语、**Dispatcher**（Operation/Source 注册 + envelope 路由）。
 - `mutsukibot/runtime` —— 事件循环策略、并发控制、进程/线程隔离、资源 quota、决定性时间与 ID 源。**Runtime 不决定 Agent 行为**。
-- 独立 Adapter 层 —— **v0.2 删除**。原 IM/平台 SDK 适配职责由 reference plugin（`mutsukibot/plugins/inmemory_endpoint/` 等）通过 dispatcher 注册 Source + Operation 实现。
-- `mutsukibot/plugins` —— 所有可装可卸的能力（命令、Matcher、记忆、情感、睡眠、LLM 桥接、Yume 模块、**transport reference plugins**）。
+- 独立 Adapter 层 —— **v0.2 删除**。原 IM/平台 SDK 适配职责由 reference extension / plugin（`mutsukibot_ext.im`、`mutsukibot/plugins/inmemory_endpoint/` 等）通过 dispatcher 注册 Source + Operation 实现。
+- `mutsukibot/plugins` / `mutsukibot_ext` —— 所有可装可卸的能力（IM、文本 command、记忆、情感、睡眠、LLM 桥接、Yume 模块、transport reference plugins）。
 - `mutsukibot/services` —— 跨插件共享的具名服务，参考 Koishi 服务注入。服务必须有契约。
 - `mutsukibot/observability` —— trace、audit、metrics、事件总线观测。
 - `mutsukibot/common` —— 纯工具，禁止承载业务逻辑。

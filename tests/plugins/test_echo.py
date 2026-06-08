@@ -15,6 +15,7 @@ from mutsukibot.plugins.echo import EchoPlugin
 from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.command import TextCommandRouterPlugin
 
 
 def _new_agent() -> Agent:
@@ -38,8 +39,10 @@ def _get_inmem(agent: Agent) -> InMemoryEndpointPlugin:
 async def test_full_lifecycle() -> None:
     agent = _new_agent()
 
-    loader = PluginLoader(allow={EchoPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, EchoPlugin])
+    loader = PluginLoader(
+        allow={EchoPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, EchoPlugin])
     scheduler = AgentScheduler(agent)
     await scheduler.start()
     assert agent.phase == LifecyclePhase.AWAKE

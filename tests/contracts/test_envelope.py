@@ -19,18 +19,15 @@ import pytest
 import mutsukibot.contracts as contracts
 from mutsukibot.contracts import (
     Caps,
-    ChannelRef,
-    ContentKind,
-    ContentPart,
     Envelope,
     EnvelopeId,
-    Message,
     MessageId,
     SchemaRegistry,
     SourceKindName,
     SourceKinds,
     SourceRef,
 )
+from mutsukibot_ext.im import ChannelRef, ContentKind, ContentPart, Message
 
 BackendKind = SourceKindName.register("example.backend", declared_by="tests")
 

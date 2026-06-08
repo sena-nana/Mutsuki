@@ -28,6 +28,7 @@ from mutsukibot.core.dispatcher import (
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.core.scope import PluginScope
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot_ext.im import ChannelRef, ContentKind, ContentPart, Message
 
 
 def _new_agent() -> Agent:
@@ -174,7 +175,7 @@ async def test_register_source_visible_in_list_and_status() -> None:
 @pytest.mark.asyncio
 async def test_publish_unknown_source_raises_unregistered() -> None:
     """publish 时 envelope.source.source_id 不在已注册集 → source.unregistered。"""
-    from mutsukibot.contracts import ChannelRef, ContentKind, ContentPart, Message, MessageId
+    from mutsukibot.contracts import MessageId
 
     agent = _new_agent()
     msg = Message(

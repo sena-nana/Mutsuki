@@ -2,9 +2,9 @@
 
 本文件回答：**当前在哪个版本、做什么、不做什么、何时进入下一版本**。
 
-## 当前边界：Agent 事件行动核
+## 当前边界：Agent runtime kernel
 
-**目标**：Core 收束为 Agent 运行核心：接收外部后端或协议桥转换后的 Envelope，驱动 Agent 决策，并通过 Operation 表达可采取的动作。Core 保留 Plugin + 注册式 Operation/Source/Dispatcher，但不内置应用后端 / CRUD endpoint / tool event 语义。历史 v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。
+**目标**：Core 收束为领域中立 Agent 运行核心：接收外部后端或协议桥转换后的 Envelope，驱动 Agent 决策，并通过 Operation 表达可采取的动作。Core 保留 Plugin + 注册式 Operation/Source/Dispatcher，但不内置 IM、文本 command、应用后端 / CRUD endpoint / tool event 语义；IM 与文本命令路径位于 `mutsukibot_ext.im` / `mutsukibot_ext.command` reference extension。历史 v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。
 
 ## 历史版本：v0.0 骨架
 

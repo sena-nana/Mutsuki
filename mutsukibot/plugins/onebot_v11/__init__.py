@@ -16,22 +16,25 @@ import msgspec
 
 from mutsukibot import Capability, Caps, Plugin
 from mutsukibot.contracts import (
-    ChannelRef,
-    ContentKind,
-    ContentPart,
     Handle,
-    Message,
     MessageId,
     OperationDescriptor,
     Perms,
     RefDescriptor,
     RefId,
     SourceDescriptor,
-    SourceKinds,
 )
 from mutsukibot.contracts.error import Error, Errs
 from mutsukibot.core.dispatcher import OperationInvokeError
 from mutsukibot.core.handle import RefCountedHandle
+from mutsukibot_ext.im import (
+    ChannelRef,
+    ContentKind,
+    ContentPart,
+    IMCaps,
+    IMSourceKinds,
+    Message,
+)
 
 _DEFAULT_SOURCE_ID = "onebot:v11.default"
 _OP_SEND_MSG = OperationDescriptor(
@@ -55,8 +58,8 @@ _OP_SEND_MSG = OperationDescriptor(
 )
 _ONEBOT_SOURCE = SourceDescriptor(
     source_id=_DEFAULT_SOURCE_ID,
-    kind=SourceKinds.IM,
-    capabilities=(Caps.IM_TEXT,),
+    kind=IMSourceKinds.IM,
+    capabilities=(IMCaps.TEXT,),
     description="OneBot v11 reverse WebSocket IM source.",
 )
 
@@ -202,12 +205,12 @@ class OneBotV11Plugin(Plugin[_OneBotV11Config]):
             timestamp=timestamp,
             source=ChannelRef(
                 source_id=source_id,
-                kind=SourceKinds.IM,
+                kind=IMSourceKinds.IM,
                 channel_id=channel_id,
                 user_id=str(event.get("user_id")) if event.get("user_id") is not None else None,
             ),
             payload_schema_id="mutsukibot.message",
-            capabilities_required=(Caps.IM_TEXT,),
+            capabilities_required=(IMCaps.TEXT,),
             parts=(ContentPart(kind=ContentKind.TEXT, text=text, metadata=metadata),),
         )
 
@@ -330,6 +333,8 @@ class OneBotV11Plugin(Plugin[_OneBotV11Config]):
     async def _outbox_pump(self) -> None:
         while True:
             msg = await self.agent.outbox.get()
+            if not isinstance(msg, Message):
+                continue
             if msg.source.source_id != self.config.source_id:
                 continue
             payload = _payload_from_outbound(msg)

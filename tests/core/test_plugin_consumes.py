@@ -33,6 +33,7 @@ from mutsukibot.core.loader import PluginLoader
 from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.im import Message
 
 
 class _Conf(msgspec.Struct, kw_only=True):
@@ -111,8 +112,6 @@ async def test_matching_consumes_receives_envelope() -> None:
     await asyncio.sleep(0.2)
 
     assert len(_RecorderPlugin.received) == 1
-    from mutsukibot.contracts import Message
-
     received = _RecorderPlugin.received[0]
     assert isinstance(received, Message)
     assert received.text == "hello world"

@@ -16,9 +16,7 @@ from mutsukibot.contracts import (
     BySourceId,
     BySourceKind,
     Caps,
-    ChannelRef,
     Envelope,
-    Message,
     MessageId,
     ScopeName,
     ScopeRule,
@@ -26,6 +24,7 @@ from mutsukibot.contracts import (
     SourceKindName,
     SourceKinds,
 )
+from mutsukibot_ext.im import ChannelRef, Message
 
 BackendKind = SourceKindName.register("tests.backend", declared_by="tests")
 AuditKind = SourceKindName.register("tests.audit", declared_by="tests")

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
 
 if TYPE_CHECKING:
-    from mutsukibot.contracts.message import Message
+    from mutsukibot.contracts.envelope import Envelope
     from mutsukibot.core.bus import Bus
     from mutsukibot.core.container import ServiceContainer
     from mutsukibot.core.dispatcher import Dispatcher
@@ -48,7 +48,9 @@ class AgentContext:
     bus: "Bus"
     dispatch: "Dispatcher"
     trace_ctx: TraceContext
-    message: "Message | None" = None
+    # Compatibility field name: historically this held an IM Message. Core now
+    # treats it as the triggering Envelope; IM extensions may pass Message here.
+    message: "Envelope | None" = None
     extras: dict[str, object] = field(default_factory=dict)
 
 

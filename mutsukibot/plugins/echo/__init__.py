@@ -11,7 +11,7 @@ from typing import Annotated, ClassVar
 
 import msgspec
 
-from mutsukibot import Capability, Caps, Perms, Plugin, command
+from mutsukibot import Capability, Caps, Perms, Plugin, operation
 from mutsukibot.contracts import Arg
 
 
@@ -30,7 +30,7 @@ class EchoPlugin(Plugin[_EchoConfig]):
     ]
     Config = _EchoConfig
 
-    @command(perms=Perms.PUBLIC)
+    @operation(perms=Perms.PUBLIC)
     async def echo(
         self,
         text: str,

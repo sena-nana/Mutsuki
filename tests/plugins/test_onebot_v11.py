@@ -8,7 +8,7 @@ import msgspec
 import pytest
 
 from mutsukibot import Capability, Caps, Plugin, command
-from mutsukibot.contracts import AgentId, ChannelRef, Message, Scopes
+from mutsukibot.contracts import AgentId, Scopes
 from mutsukibot.contracts.error import Errs
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.agent_registry import AgentRegistry
@@ -16,6 +16,8 @@ from mutsukibot.core.dispatcher import OperationInvokeError
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.command import TextCommandRouterPlugin
+from mutsukibot_ext.im import ChannelRef, Message
 from tests.support.dispatcher_contract import assert_dispatcher_clean_after_unload
 
 
@@ -209,10 +211,12 @@ async def test_reverse_ws_event_reaches_agent_and_outbox_pump_sends_reply() -> N
     from mutsukibot.plugins.onebot_v11 import OneBotV11Plugin
 
     agent = _agent("onebot-smoke")
-    loader = PluginLoader(allow={OneBotV11Plugin.id, _EchoPlugin.id})
+    loader = PluginLoader(
+        allow={OneBotV11Plugin.id, _EchoPlugin.id, TextCommandRouterPlugin.id}
+    )
     await loader.load_into(
         agent,
-        [OneBotV11Plugin, _EchoPlugin],
+        [OneBotV11Plugin, TextCommandRouterPlugin, _EchoPlugin],
         configs={OneBotV11Plugin.id: {"host": "127.0.0.1", "port": 0}},
     )
     plugin = next(

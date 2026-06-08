@@ -7,16 +7,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
-
-from mutsukibot.contracts.capability_builtin import Caps
-from mutsukibot.contracts.scope import (
-    ByCapability,
-    BySchema,
-    BySourceKind,
-    ScopeName,
-)
-from mutsukibot.contracts.source_builtin import SourceKinds
+from mutsukibot.contracts.scope import ScopeName
 
 _OWNER = "mutsukibot.core"
 
@@ -24,21 +15,17 @@ _OWNER = "mutsukibot.core"
 class Scopes:
     """所有 MutsukiBot 框架内置 ScopeName 常量。"""
 
-    IM_TEXT: ClassVar[ScopeName]
-    IM_ANY: ClassVar[ScopeName]
+    # Deprecated compatibility aliases; canonical names live in
+    # ``mutsukibot_ext.im.IMScopes``.
+    IM_TEXT: ScopeName
+    IM_ANY: ScopeName
 
 
-Scopes.IM_TEXT = ScopeName.register(
-    "im.text",
-    declared_by=_OWNER,
-    rule=BySchema("mutsukibot.message")
-    & BySourceKind(SourceKinds.IM)
-    & ByCapability(Caps.IM_TEXT),
-)
-Scopes.IM_ANY = ScopeName.register(
-    "im.any",
-    declared_by=_OWNER,
-    rule=BySchema("mutsukibot.message") & BySourceKind(SourceKinds.IM),
-)
+ScopeName.bootstrap_facade(Scopes, {}, declared_by=_OWNER)
+
+from mutsukibot_ext.im import IMScopes
+
+Scopes.IM_TEXT = IMScopes.TEXT
+Scopes.IM_ANY = IMScopes.ANY
 
 __all__ = ["Scopes"]

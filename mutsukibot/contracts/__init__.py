@@ -33,7 +33,6 @@ from mutsukibot.contracts.ids import (
     TraceId,
 )
 from mutsukibot.contracts.lifecycle import LifecyclePhase
-from mutsukibot.contracts.message import ChannelRef, ContentKind, ContentPart, Message
 from mutsukibot.contracts.operation import OperationDep, OperationDescriptor
 from mutsukibot.contracts.permission import (
     PermissionConflictError,
@@ -104,10 +103,7 @@ __all__ = [
     "CapabilityConflictError",
     "CapabilityName",
     "Caps",
-    "ChannelRef",
     "CommandSpec",
-    "ContentKind",
-    "ContentPart",
     "Contract",
     "ContractDep",
     "Decision",
@@ -121,7 +117,6 @@ __all__ = [
     "Handle",
     "Inject",
     "LifecyclePhase",
-    "Message",
     "MessageId",
     "OperationDep",
     "OperationDescriptor",
@@ -167,3 +162,11 @@ __all__ = [
     "UnknownSourceKindError",
     "register_schema_compatibility",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"ChannelRef", "ContentKind", "ContentPart", "Message"}:
+        from mutsukibot_ext import im
+
+        return getattr(im, name)
+    raise AttributeError(name)

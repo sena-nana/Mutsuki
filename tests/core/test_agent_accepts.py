@@ -10,10 +10,6 @@ import pytest
 
 from mutsukibot.contracts import (
     Caps,
-    ChannelRef,
-    ContentKind,
-    ContentPart,
-    Message,
     MessageId,
     Scopes,
     SourceKinds,
@@ -26,6 +22,8 @@ from mutsukibot.plugins.echo import EchoPlugin
 from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
 from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.command import TextCommandRouterPlugin
+from mutsukibot_ext.im import ChannelRef, ContentKind, ContentPart, Message
 
 
 def _make_agent(*, accepts) -> Agent:
@@ -81,8 +79,10 @@ async def test_outbound_message_preserves_source_id() -> None:
     """v0.1 缺陷修复回归：scheduler 出站 ChannelRef 不再硬编码 'agent'，
     而是从入站 message 复写 source.source_id。"""
     agent = _make_agent(accepts=(Scopes.IM_TEXT.to_rule(),))
-    loader = PluginLoader(allow={EchoPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, EchoPlugin])
+    loader = PluginLoader(
+        allow={EchoPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, EchoPlugin])
     scheduler = AgentScheduler(agent)
     await scheduler.start()
 

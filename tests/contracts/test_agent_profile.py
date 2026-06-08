@@ -11,16 +11,12 @@ from mutsukibot.contracts import (
     AgentParticipation,
     AgentProfile,
     Caps,
-    ChannelRef,
-    ContentKind,
-    ContentPart,
     Decision,
     Envelope,
     EnvelopeId,
     Error,
     Errs,
     ExecutionStrategy,
-    Message,
     SchemaRegistry,
     Scopes,
     SideEffectPolicy,
@@ -32,6 +28,7 @@ from mutsukibot.contracts.ids import AgentId
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.context import AgentContext
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsukibot_ext.im import ChannelRef, ContentKind, ContentPart, Message
 
 
 def _message() -> Message:

@@ -18,7 +18,8 @@ from mutsukibot.core.container import ServiceNotFoundError
 from mutsukibot.core.loader import PluginLoader
 from mutsukibot.plugins.inmemory_endpoint import InMemoryEndpointPlugin
 from mutsukibot.runtime import DeterministicIdGen, SeededRng, SystemClock
-from mutsukibot.runtime.scheduler import AgentScheduler, _classify_command_exception
+from mutsukibot.runtime.scheduler import AgentScheduler
+from mutsukibot_ext.command import TextCommandRouterPlugin, _classify_command_exception
 
 
 class _BoomConfig(msgspec.Struct, kw_only=True):
@@ -95,8 +96,10 @@ def test_classify_never_returns_plugin_definition_error() -> None:
 @pytest.mark.asyncio
 async def test_handle_message_emits_classified_error_for_command_body_exception() -> None:
     agent = _new_agent()
-    loader = PluginLoader(allow={_BoomPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, _BoomPlugin])
+    loader = PluginLoader(
+        allow={_BoomPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, _BoomPlugin])
     scheduler = AgentScheduler(agent)
     spans: list[TraceSpan] = []
 
@@ -131,8 +134,10 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
 async def test_unmatched_command_is_silent_and_emits_trace_span() -> None:
     """普通消息（首词不是任何已注册命令）不应进 outbox，仅写一条 unmatched span。"""
     agent = _new_agent()
-    loader = PluginLoader(allow={_BoomPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, _BoomPlugin])
+    loader = PluginLoader(
+        allow={_BoomPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, _BoomPlugin])
     scheduler = AgentScheduler(agent)
 
     spans: list[TraceSpan] = []
@@ -155,7 +160,7 @@ async def test_unmatched_command_is_silent_and_emits_trace_span() -> None:
 
     # 但应有一条 unmatched trace span
     await asyncio.sleep(0.05)
-    unmatched = [s for s in spans if s.name == "agent.scheduler.unmatched"]
+    unmatched = [s for s in spans if s.name == "command.router.unmatched"]
     assert len(unmatched) == 1
     span = unmatched[0]
     assert span.attributes["unmatched"] is True
@@ -221,8 +226,10 @@ async def test_graceful_shutdown_lets_in_flight_command_complete() -> None:
     """stop() 在调用时若有正在执行的命令，应等它跑完再退出，而不是 cancel 打断。"""
     _SlowPlugin.finished = False
     agent = _new_agent()
-    loader = PluginLoader(allow={_SlowPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, _SlowPlugin])
+    loader = PluginLoader(
+        allow={_SlowPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, _SlowPlugin])
     scheduler = AgentScheduler(agent, shutdown_timeout=2.0)
     await scheduler.start()
 
@@ -248,11 +255,11 @@ async def test_shutdown_timeout_falls_back_to_cancel() -> None:
     scheduler = AgentScheduler(agent, shutdown_timeout=0.1)
     await scheduler.start()
 
-    # 直接 monkey-patch _handle_message 让它永远不返回
+    # 直接 monkey-patch generic envelope fan-out 让它永远不返回
     async def never_returns(_msg: object) -> None:
         await asyncio.sleep(60)
 
-    scheduler._handle_message = never_returns  # type: ignore[method-assign]
+    scheduler._dispatch_to_plugins = never_returns  # type: ignore[method-assign]
 
     inmem = _get_inmem(agent)
     await inmem.send_text("anything")
@@ -270,8 +277,10 @@ async def test_command_success_emits_only_dispatch_invoke_operation_span() -> No
     """命令执行事实只由 dispatcher span 表达，scheduler 不再重复造 command span。"""
     _SlowPlugin.finished = False
     agent = _new_agent()
-    loader = PluginLoader(allow={_SlowPlugin.id, InMemoryEndpointPlugin.id})
-    await loader.load_into(agent, [InMemoryEndpointPlugin, _SlowPlugin])
+    loader = PluginLoader(
+        allow={_SlowPlugin.id, InMemoryEndpointPlugin.id, TextCommandRouterPlugin.id}
+    )
+    await loader.load_into(agent, [InMemoryEndpointPlugin, TextCommandRouterPlugin, _SlowPlugin])
     scheduler = AgentScheduler(agent)
     spans: list[TraceSpan] = []
 

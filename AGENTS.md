@@ -1,10 +1,10 @@
 # MutsukiBot v0.1 项目宪法
 
-MutsukiBot 是一个全新的 **Agent 中心** Bot 框架，融合 Koishi、NoneBot、AstrBot 的优势。当前阶段为 **v0.1 最小可运行骨架**：第一个可装载、可运行、可被测试的 Agent + echo 插件 + in-memory adapter 已落地。详见 [plans/version-reports/v0.1.md](plans/version-reports/v0.1.md)。
+MutsukiBot 是一个全新的 **Agent runtime kernel**，融合 Koishi、NoneBot、AstrBot 的优势但不把 Bot / IM / command 语义放进核心。当前代码已将 IM 与文本命令路径外抽为 reference extension。
 
 ## 一句话定位
 
-为 Yume / mind-sim 提供运行核心，并通过插件组合实现传统 Bot 框架能力的 Agent 中心框架。Yume / mind-sim 自身的实现路径也将被解构为本框架之上的零散插件。
+为 Yume / mind-sim 与 Lilia 式工程 Agent 提供运行核心，并通过 extension / 插件组合实现传统 Bot 框架能力。Yume / mind-sim 自身的实现路径也将被解构为本框架之上的零散插件。
 
 ## 阅读顺序
 
@@ -26,7 +26,7 @@ MutsukiBot 是一个全新的 **Agent 中心** Bot 框架，融合 Koishi、None
 2. **核心不内置业务概念** —— LLM 调用、记忆、情感、睡眠、消息平台都必须是插件，不在 `core` 中实现。
 3. **插件之间禁止直接 import 实现模块** —— 只能通过契约 + 服务通信。
 4. **无副作用热重载** —— 卸载必须回收所有副作用；未通过 `PluginScope` 注册的副作用即视为违规。
-5. **指令即工具** —— 同一个函数声明同时生成「人类可触发命令」与「Agent / LLM 可调用工具」manifest，禁止维护两份。
+5. **Operation 即工具** —— 同一个 Operation 声明可同时服务「人类可触发入口」与「Agent / LLM 可调用工具」manifest，禁止维护两份；文本 command 只是 reference extension 入口。
 6. **无 schema 的插件不允许装载** —— 必须用 `msgspec.Struct` 声明 config schema。
 7. **未申报 capability 即调用视为违规** —— Capability 必须在 manifest 中显式列出。
 8. **结构化错误，不允许吞异常返默认值** —— fallback 必须显式记录原因。

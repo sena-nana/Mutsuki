@@ -12,6 +12,13 @@
 - 偏好显式枚举、强类型 payload、版本 ID、结构化错误，胜过下游需要解析的自由文本字符串。
 - 协议变化必须同 PR 内更新本文件。
 
+**当前收敛规则**：core contracts 只拥有通用 Agent runtime 契约。IM
+`Message / ChannelRef / ContentPart / ContentKind`、`im.*` capability、
+`SourceKinds.IM`、`Scopes.IM_*` 与文本 command 路由已外抽到
+`mutsukibot_ext.im` / `mutsukibot_ext.command`；core 仅保留一轮兼容 shim。
+`@operation` 是核心声明糖，`@command` 是兼容别名，文本命令入口由 extension
+负责。
+
 ## 1. 核心契约对象（v0.0 必须草拟）
 
 | 对象 | 用途 | 关键字段（草案） |

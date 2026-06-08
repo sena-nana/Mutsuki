@@ -27,22 +27,22 @@ from typing import ClassVar
 import msgspec
 
 from mutsukibot import Capability, Caps, Plugin
-from mutsukibot.contracts import (
+from mutsukibot.contracts import MessageId, SourceDescriptor
+from mutsukibot_ext.im import (
     ChannelRef,
     ContentKind,
     ContentPart,
+    IMCaps,
+    IMSourceKinds,
     Message,
-    MessageId,
-    SourceDescriptor,
-    SourceKinds,
 )
 
 # hard-coded source 描述符 —— 必须在类级声明（D9b 静态契约），同时运行时
 # on_load 中用同一对象注册，保证 declared/registered 一致。
 _INMEMORY_SOURCE = SourceDescriptor(
     source_id="inmemory:default",
-    kind=SourceKinds.IM,
-    capabilities=(Caps.IM_TEXT,),
+    kind=IMSourceKinds.IM,
+    capabilities=(IMCaps.TEXT,),
     description="In-memory IM transport for tests and smoke scripts.",
 )
 
@@ -81,12 +81,12 @@ class InMemoryEndpointPlugin(Plugin[_InMemoryConfig]):
             timestamp=self.agent.clock.now(),
             source=ChannelRef(
                 source_id=_INMEMORY_SOURCE.source_id,
-                kind=SourceKinds.IM,
+                kind=IMSourceKinds.IM,
                 channel_id=self.config.channel,
                 user_id=self.config.user,
             ),
             payload_schema_id="mutsukibot.message",
-            capabilities_required=(Caps.IM_TEXT,),
+            capabilities_required=(IMCaps.TEXT,),
             parts=(ContentPart(kind=ContentKind.TEXT, text=text),),
         )
         await self.agent.dispatch.publish(msg)
@@ -100,7 +100,8 @@ class InMemoryEndpointPlugin(Plugin[_InMemoryConfig]):
         while loop.time() < deadline:
             try:
                 msg = await asyncio.wait_for(self.agent.outbox.get(), timeout=0.05)
-                out.append(msg)
+                if isinstance(msg, Message):
+                    out.append(msg)
             except TimeoutError:
                 if out:
                     return out

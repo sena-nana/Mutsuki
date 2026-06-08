@@ -1,4 +1,4 @@
-"""MutsukiBot —— Agent 中心 Bot 框架运行核心。
+"""MutsukiBot —— Agent runtime kernel.
 
 公开门面 re-export 最常用的符号。插件作者应该从 ``mutsukibot`` 与
 ``mutsukibot.contracts`` 导入，而不是直接深入到子模块。
@@ -20,7 +20,7 @@ from mutsukibot.contracts.permission_builtin import Perms
 from mutsukibot.contracts.plugin import Arg, Inject, RefArg, RefArgSource
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.context import AgentContext
-from mutsukibot.core.plugin import Plugin, command
+from mutsukibot.core.plugin import Plugin, command, operation
 
 __all__ = [
     "Agent",
@@ -42,4 +42,5 @@ __all__ = [
     "StrategyResult",
     "StrategyResultStatus",
     "command",
+    "operation",
 ]

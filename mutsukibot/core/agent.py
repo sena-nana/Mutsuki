@@ -25,9 +25,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from mutsukibot.contracts.agent_profile import AgentParticipation, AgentProfile
+from mutsukibot.contracts.envelope import Envelope
 from mutsukibot.contracts.ids import AgentId, SpanId, TraceId
 from mutsukibot.contracts.lifecycle import LifecyclePhase
-from mutsukibot.contracts.message import Message
 from mutsukibot.contracts.scope import ScopeRule
 from mutsukibot.core.agent_registry import AgentRegistry
 from mutsukibot.core.bus import Bus
@@ -90,11 +90,11 @@ class Agent:
     services: ServiceContainer = field(default_factory=ServiceContainer)
     bus: Bus = field(default_factory=Bus)
     lifespan: Lifespan = field(default_factory=Lifespan)
-    # inbox 类型放宽到 object，让 scheduler 既能投 Message / Envelope 也能
-    # 投控制 sentinel（如 graceful shutdown 用的 _STOP）。outbox 保持
-    # Message 严格类型 —— transport plugin 是消费者，需要类型保护。
+    # inbox 类型放宽到 object，让 scheduler 既能投 Envelope 也能投控制
+    # sentinel（如 graceful shutdown 用的 _STOP）。outbox 使用通用 Envelope；
+    # protocol extensions 可在自身边界收窄为 Message 等领域 envelope。
     inbox: asyncio.Queue[object] = field(default_factory=asyncio.Queue)
-    outbox: asyncio.Queue[Message] = field(default_factory=asyncio.Queue)
+    outbox: asyncio.Queue[Envelope] = field(default_factory=asyncio.Queue)
     phase: LifecyclePhase = LifecyclePhase.AWAKE
     plugins: list[_LoadedPlugin] = field(default_factory=list)
     _agent_scope: PluginScope | None = field(default=None, repr=False)
@@ -124,7 +124,7 @@ class Agent:
             self._dispatch = Dispatcher(self)
         return self._dispatch
 
-    def make_context(self, message: Message | None = None) -> AgentContext:
+    def make_context(self, message: Envelope | None = None) -> AgentContext:
         trace_ctx = TraceContext(
             trace_id=TraceId(self.id_gen.next("trace")),
             span_id=SpanId(self.id_gen.next("span")),
