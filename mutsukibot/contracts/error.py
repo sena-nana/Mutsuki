@@ -108,6 +108,9 @@ class Errs:
     # v0.3 后续 —— trace 回放 / 记录错误码
     TRACE_RECORD_INVALID: ClassVar[ErrorCode]
     TRACE_REPLAY_FAILED: ClassVar[ErrorCode]
+    # Rust / Python runtime backend boundary
+    RUNTIME_BACKEND_FAILED: ClassVar[ErrorCode]
+    RUNTIME_BACKEND_GENERATION_MISMATCH: ClassVar[ErrorCode]
 
 
 ErrorCode.bootstrap_facade(
@@ -150,6 +153,8 @@ ErrorCode.bootstrap_facade(
         "AGENT_NOT_FOUND": "agent.not_found",
         "TRACE_RECORD_INVALID": "trace.record_invalid",
         "TRACE_REPLAY_FAILED": "trace.replay_failed",
+        "RUNTIME_BACKEND_FAILED": "runtime.backend_failed",
+        "RUNTIME_BACKEND_GENERATION_MISMATCH": "runtime.backend_generation_mismatch",
     },
     declared_by=_OWNER,
 )

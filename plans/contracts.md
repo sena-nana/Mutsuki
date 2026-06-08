@@ -51,6 +51,10 @@
 | `SourceDep` | 插件依赖外部 Source 的声明 | `source_id`、`required_caps` |
 | `ScopeRule` | envelope 路由谓词（与 `PermissionRule` 同模式） | `_Leaf / _And / _Or` AST + `check(envelope) -> bool`（详见 §17） |
 | `ScopeName` | 已注册的命名 scope（门面 `Scopes`） | `RegisteredString` 子类 |
+| `RuntimeBackend` | Rust AgentRuntime 与上层能力宿主之间的协议边界 | `StrategyBackend`、`OperationBackend`、`ResourceBackend`（详见 §22） |
+| `OperationSnapshot` | 外部 runtime 可持有的 Operation 纯协议快照 | `descriptor`、`status`、`key: OperationHandlerKey`（详见 §22） |
+| `OperationHandlerKey` | Python handler 的可序列化间接键 | `plugin_id`、`plugin_generation`、`op_id`、`handler_id`（详见 §22） |
+| `LeaseToken` | 跨边界资源租约 token | `token_id`、`ref_id`、`owner`（详见 §22） |
 
 ## 2. PluginManifest
 
@@ -135,6 +139,8 @@ Error:
 | `resource.policy_conflict` | ResourceHost 同一策略同时由 config 与显式 callable 提供 |
 | `trace.record_invalid` | JSONL trace 记录无法转换为 `TraceSpan` |
 | `trace.replay_failed` | trace replay kit 发现重复 span、父链缺失、时间区间非法等因果错误 |
+| `runtime.backend_failed` | Rust / Python backend 边界调用失败，且无法归入更具体错误码 |
+| `runtime.backend_generation_mismatch` | 外部 runtime 使用的 Operation handler key 已过期，通常由 plugin reload 造成 |
 
 ## 4. Capability 命名
 
@@ -913,3 +919,134 @@ StrategyResult (Contract):
 
 第一片不实现稳定 `(source_id, session_id) -> agent_id` binding、observer 副作用
 运行时拒绝链、strategy 卸载清理或 scheduler 接管；这些保留为后续切片验收。
+
+## 22. RuntimeBackend 边界（Rust / Python 分层第一片）
+
+> **设计原则**：Rust runtime 可持有 Agent 状态、调度、路由、Operation 元数据、
+> trace 与资源治理事实；Python backend 持有动态插件、真实 handler、真实
+> `Handle[T]` 与领域能力。跨边界只传纯协议。
+
+### 22.1 OperationHandlerKey
+
+```text
+OperationHandlerKey (Contract):
+  schema_id: "mutsukibot.runtime.operation_handler_key"
+  schema_version: "1.0.0"
+
+  plugin_id: str
+  plugin_generation: int
+  op_id: str
+  handler_id: str
+```
+
+约束：
+
+- key 是 Python handler 的间接引用，不是 callable。
+- Rust / 外部 runtime 可以保存 key，但不能保存 Python 函数对象。
+- plugin reload / unload 必须使旧 generation 失效。
+- 使用旧 generation 调用时返回 `runtime.backend_generation_mismatch`，不得自动
+  fallback 到新 handler。
+
+### 22.2 OperationSnapshot / SourceSnapshot
+
+```text
+OperationSnapshot (Contract):
+  descriptor: OperationDescriptor
+  status: active | unhealthy | unregistering | not_found
+  key: OperationHandlerKey
+
+SourceSnapshot (Contract):
+  descriptor: SourceDescriptor
+  plugin_id: str
+  plugin_generation: int
+```
+
+约束：
+
+- snapshot 必须可序列化；不得包含 Python callable、scope、socket、SDK client
+  或真实 `Handle[T]`。
+- `OperationDescriptor` 仍是工具、命令与跨能力调用的统一入口。
+- `Dispatcher.list_operation_snapshots()` 是 Python dispatcher 对外部 runtime 的
+  metadata 出口；`Dispatcher.invoke_with_backend_key(...)` 是 key 调用入口。
+
+### 22.3 StrategyBackend
+
+```text
+StrategyBackend:
+  on_awake(agent_id) -> Awaitable[None]
+  on_input(agent_id, envelope) -> Awaitable[StrategyResult]
+  next_step(agent_id) -> Awaitable[StrategyResult]
+  on_stop(agent_id) -> Awaitable[None]
+```
+
+约束：
+
+- runtime lifecycle 使用提交语义：`on_awake` 与 operation registry refresh 都成功后，
+  Agent 才能进入可路由的 `awake` 状态；失败时必须保持非路由状态并记录
+  `agent.awake` error span。
+- backend 不得修改 `agent_id`、owner、participation 或 accepts。
+- backend 调 Operation 必须走 `OperationBackend.invoke` 或 Python 内
+  `ctx.dispatch.invoke(...)`，不得直接 import 兄弟插件实现。
+- 返回失败必须通过 `StrategyResult.error` 或结构化 `Error` 表达。
+
+### 22.4 OperationBackend
+
+```text
+OperationBackend:
+  list_operations(agent_id) -> Result[tuple[OperationSnapshot, ...], Error]
+  invoke(agent_id, key, payload) -> Awaitable[Any]
+  operation_status(agent_id, key) -> active | unhealthy | unregistering | not_found
+```
+
+Mutsuki Python backend 调用现有 `Dispatcher`；native backend 可自行实现工具表。
+
+约束：
+
+- `invoke` 必须验证 `plugin_id / plugin_generation / op_id / handler_id` 全部匹配。
+- `list_operations` 是 backend 边界调用，不是无失败的本地读；snapshot 获取失败
+  必须返回结构化 `runtime.backend_failed`，Rust `start_agent` 不得提交 `awake`。
+- key 不匹配时 fail-loud 为 `runtime.backend_generation_mismatch`。
+- handler 抛错仍遵守 Dispatcher 结构化错误规则；不得吞异常返回默认值。
+- Python backend adapter 是跨边界错误归一化入口：`OperationInvokeError` 必须包装为
+  backend 结构化错误返回；无法归入更具体错误码的异常映射为
+  `runtime.backend_failed`，并在 evidence 中记录异常类型与 repr。
+
+### 22.5 ResourceBackend / ResourceGate
+
+```text
+LeaseToken (Contract):
+  token_id: str
+  ref_id: RefId
+  owner: str
+
+ResourceSnapshot (Contract):
+  descriptor: RefDescriptor
+  owner: str
+  lease_count: int
+
+ResourceBackend:
+  register(descriptor, owner) -> Awaitable[RefId]
+  acquire(ref_id, requester) -> Awaitable[LeaseToken]
+  release(token) -> Awaitable[None]
+  list_records(owner | None) -> tuple[ResourceSnapshot, ...]
+```
+
+第一片事实分工：
+
+- Rust `ResourceGate` 只管理 `RefDescriptor`、owner、lease token 与 lease count。
+- Python `ResourceHost` / `Handle[T]` 仍持有真实对象与 finalizer。
+- 跨进程边界只能传 `RefDescriptor`、`ref_id`、`LeaseToken` 和可序列化 payload；
+  不得传 `RefPayload.handle`。
+- `LeaseToken` 是绑定凭证，`token_id / ref_id / owner` 必须整体匹配已登记 lease。
+  仅凭相同 `token_id` 不得 release；不匹配时结构化失败，evidence 记录
+  `reason=lease_token_mismatch`。
+- `token_id` 不得使用简单可预测顺序号；MVP 可使用随机 ID，后续需要回放时再接入
+  runtime 注入的 deterministic id source。
+
+### 22.6 Rust crate 对应关系
+
+- `crates/mutsuki-runtime-contracts` 映射本节纯协议结构，并提供
+  `ScopeRuleSpec.matches(envelope)`。
+- `crates/mutsuki-runtime-core` 实现 `AgentRuntime`、backend trait、Operation
+  registry、`ResourceGate` 与 trace bookkeeping。
+- Rust core crate 不依赖 Python；Python adapter 位于 `mutsukibot.runtime.backend`。

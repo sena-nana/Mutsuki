@@ -13,6 +13,9 @@
 - **pyyaml** —— 配置文件加载
 - **pytest** + **pytest-asyncio** —— 测试
 - **ruff** + **pyright** + **pyrefly** —— lint 与双类型检查器（pyright `standard` 模式 + Meta pyrefly 严格变性检查；CI 必须两者都通过）
+- **Rust 2024 + Cargo workspace** —— Tauri / native runtime mechanics 第一片；只承载
+  Agent runtime 纯机制与跨边界纯协议，不承载 Python 插件、Yume、LLM、IM 或工程
+  Agent 产品语义。
 
 **禁止**：在 v0.0 阶段引入除上述以外的运行时依赖。任何新依赖须在 PR 中说明对核心目标的贡献。
 
@@ -25,6 +28,11 @@ MutsukiBot/
   LICENSE
   pyproject.toml
   uv.lock
+  Cargo.toml                  # Rust workspace，仅用于 runtime mechanics / contracts
+  Cargo.lock
+  crates/
+    mutsuki-runtime-contracts/ # Rust 纯协议：Agent / Envelope / ScopeRuleSpec / Operation snapshot / Trace / Ref descriptor
+    mutsuki-runtime-core/      # Rust 运行机制：AgentRuntime / ResourceGate / backend traits
   config/
     default.yaml
   plans/
@@ -39,7 +47,7 @@ MutsukiBot/
     __init__.py
     contracts/               # 仅类型定义，无运行时副作用
     core/
-    runtime/
+    runtime/                  # Python 决定性 runtime + Rust/Python backend 边界 adapter
     plugins/                 # 一等公民插件（核心仓库内可有 reference 实现，v0.1 起）
     services/
     observability/
@@ -47,6 +55,24 @@ MutsukiBot/
 ```
 
 > v0.0 仅产出 `AGENTS.md`、`README.md`、`plans/*`、`pyproject.toml`。`mutsukibot/` 与 `tests/` 在 v0.1 引入第一个可运行模块时再创建。
+
+### 2.1 Rust / Python runtime 文件边界
+
+- `crates/mutsuki-runtime-contracts` 只定义可序列化纯数据结构。允许出现
+  `AgentSpec`、`Envelope`、`ScopeRuleSpec`、`OperationSnapshot`、`TraceSpan`、
+  `RefDescriptor`、`LeaseToken`；禁止出现 Python callable、`Handle[T]` 实体、
+  socket / SDK client 或领域对象。
+- `crates/mutsuki-runtime-core` 只实现 runtime mechanics：Agent lifecycle、
+  inbox tick、ScopeRule 路由、owner 选择、Operation metadata registry、trace
+  bookkeeping、`ResourceGate` 租约治理。禁止 import Python 或写入 Yume / IM /
+  LLM / 产品工具语义。
+- `mutsukibot/runtime/backend.py` 是 Python 侧 backend 边界。它暴露
+  `StrategyBackend` / `OperationBackend` / `ResourceBackend` 协议和
+  `PythonAgentBackend` adapter；adapter 可调用现有 Python Dispatcher，但跨边界只
+  暴露 snapshot 与 handler 间接键。
+- `mutsukibot/core/dispatcher.py` 仍持有真实 Python handler。对 Rust / 外部
+  runtime 只提供 `list_operation_snapshots()`、`list_source_snapshots()` 与
+  `invoke_with_backend_key(...)`；旧 generation key 必须结构化失败。
 
 ## 3. 插件模型
 

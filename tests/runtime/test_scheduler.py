@@ -13,6 +13,7 @@ from mutsukibot.contracts import Scopes
 from mutsukibot.contracts.error import Errs
 from mutsukibot.contracts.event import SpanStatus, TraceSpan
 from mutsukibot.contracts.ids import AgentId
+from mutsukibot.contracts.lifecycle import LifecyclePhase
 from mutsukibot.core.agent import Agent
 from mutsukibot.core.container import ServiceNotFoundError
 from mutsukibot.core.loader import PluginLoader
@@ -127,6 +128,28 @@ async def test_handle_message_emits_classified_error_for_command_body_exception(
     assert scheduler_command_spans == []
 
     await scheduler.stop()
+    await loader.unload_from(agent)
+
+
+@pytest.mark.asyncio
+async def test_start_failure_keeps_agent_out_of_routing() -> None:
+    agent = _new_agent()
+    loader = PluginLoader(allow={InMemoryEndpointPlugin.id})
+    await loader.load_into(agent, [InMemoryEndpointPlugin])
+    scheduler = AgentScheduler(agent)
+
+    async def fail_awake(_ctx: object) -> None:
+        raise RuntimeError("awake failed")
+
+    agent.lifespan.on_awake.append(fail_awake)
+
+    with pytest.raises(RuntimeError, match="awake failed"):
+        await scheduler.start()
+
+    assert agent.phase == LifecyclePhase.SLEEP
+    inmem = _get_inmem(agent)
+    await inmem.send_text("hello")
+    assert agent.inbox.empty()
     await loader.unload_from(agent)
 
 

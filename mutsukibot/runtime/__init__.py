@@ -4,6 +4,20 @@
 :func:`time.time` / :func:`uuid.uuid4` / :mod:`random`，必须通过 context。
 """
 
+from mutsukibot.runtime.backend import (
+    BackendInvokeError,
+    BackendOperationStatus,
+    LeaseToken,
+    OperationBackend,
+    OperationHandlerKey,
+    OperationSnapshot,
+    PythonAgentBackend,
+    PythonResourceBackend,
+    ResourceBackend,
+    ResourceSnapshot,
+    SourceSnapshot,
+    StrategyBackend,
+)
 from mutsukibot.runtime.clock import (
     Clock,
     ManualClock,
@@ -15,12 +29,24 @@ from mutsukibot.runtime.rng import RNG, SeededRng
 
 __all__ = [
     "RNG",
+    "BackendInvokeError",
+    "BackendOperationStatus",
     "Clock",
     "DeterministicIdGen",
     "IdGen",
+    "LeaseToken",
     "ManualClock",
     "ManualClockWaiterOverflow",
     "NanoIdGen",
+    "OperationBackend",
+    "OperationHandlerKey",
+    "OperationSnapshot",
+    "PythonAgentBackend",
+    "PythonResourceBackend",
+    "ResourceBackend",
+    "ResourceSnapshot",
     "SeededRng",
+    "SourceSnapshot",
+    "StrategyBackend",
     "SystemClock",
 ]

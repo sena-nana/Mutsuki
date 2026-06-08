@@ -43,8 +43,9 @@ class AgentScheduler:
 
     async def start(self) -> None:
         ctx = self.agent.make_context()
-        self.agent.phase = LifecyclePhase.AWAKE
+        self.agent.phase = LifecyclePhase.SLEEP
         await self.agent.lifespan.fire("awake", ctx)
+        self.agent.phase = LifecyclePhase.AWAKE
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:

@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import logging
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 from mutsukibot.contracts.error import Error, Errs
 from mutsukibot.contracts.operation import OperationDescriptor
@@ -87,6 +88,8 @@ class _OperationEntry:
     perms: PermissionRule
     plugin_scope: "PluginScope"
     plugin_id: str
+    plugin_generation: int
+    handler_id: str
     status: OperationStatus = OperationStatus.ACTIVE
 
 
@@ -95,6 +98,7 @@ class _SourceEntry:
     descriptor: SourceDescriptor
     plugin_scope: "PluginScope"
     plugin_id: str
+    plugin_generation: int
     status: SourceStatus = SourceStatus.ACTIVE
 
 
@@ -144,9 +148,7 @@ class OperationUndeclaredError(Exception):
     """
 
     def __init__(self, op_id: str, error: Error) -> None:
-        super().__init__(
-            f"operation {op_id!r} 未在 provides_operations 静态声明集内"
-        )
+        super().__init__(f"operation {op_id!r} 未在 provides_operations 静态声明集内")
         self.op_id = op_id
         self.error = error
 
@@ -155,9 +157,7 @@ class SourceUndeclaredError(Exception):
     """运行时注册的 source_id 未在 plugin manifest ``provides_sources`` 静态声明。"""
 
     def __init__(self, source_id: str, error: Error) -> None:
-        super().__init__(
-            f"source {source_id!r} 未在 provides_sources 静态声明集内"
-        )
+        super().__init__(f"source {source_id!r} 未在 provides_sources 静态声明集内")
         self.source_id = source_id
         self.error = error
 
@@ -223,6 +223,28 @@ class Dispatcher:
         self._sources: dict[str, _SourceEntry] = {}
         # 短名 → op_id 集合，供 lookup_operation 做"echo → echo.echo" 后缀匹配
         self._op_name_index: dict[str, set[str]] = {}
+        self._plugin_generations: dict[str, int] = {}
+        self._generation_bumps_by_scope: WeakKeyDictionary["PluginScope", set[str]] = (
+            WeakKeyDictionary()
+        )
+
+    def _generation_for(self, plugin_id: str) -> int:
+        return self._plugin_generations.setdefault(plugin_id, 0)
+
+    def _bump_generation(self, plugin_id: str) -> None:
+        self._plugin_generations[plugin_id] = self._generation_for(plugin_id) + 1
+
+    def _bump_generation_once_for_scope(
+        self,
+        *,
+        plugin_id: str,
+        plugin_scope: "PluginScope",
+    ) -> None:
+        bumped_plugins = self._generation_bumps_by_scope.setdefault(plugin_scope, set())
+        if plugin_id in bumped_plugins:
+            return
+        bumped_plugins.add(plugin_id)
+        self._bump_generation(plugin_id)
 
     # ----- 注册 API ------------------------------------------------------
 
@@ -258,21 +280,22 @@ class Dispatcher:
             )
             raise OperationConflictError(op_id, err)
 
+        generation = self._generation_for(descriptor.plugin_id)
         entry = _OperationEntry(
             descriptor=descriptor,
             handler=handler,
             perms=perms,
             plugin_scope=plugin_scope,
             plugin_id=descriptor.plugin_id,
+            plugin_generation=generation,
+            handler_id=f"{descriptor.plugin_id}:{op_id}:{generation}",
         )
         self._operations[op_id] = entry
         # 短名索引
         last_seg = op_id.rsplit(".", 1)[-1]
         self._op_name_index.setdefault(last_seg, set()).add(op_id)
         # 自动反注册（plugin 卸载时 PluginScope.close 触发）
-        plugin_scope.add_dispatch_registration(
-            lambda: self._unregister_operation(op_id)
-        )
+        plugin_scope.add_dispatch_registration(lambda: self._unregister_operation(op_id))
 
     def register_source(
         self,
@@ -304,15 +327,15 @@ class Dispatcher:
             )
             raise SourceConflictError(source_id, err)
 
+        generation = self._generation_for(plugin_id)
         entry = _SourceEntry(
             descriptor=descriptor,
             plugin_scope=plugin_scope,
             plugin_id=plugin_id,
+            plugin_generation=generation,
         )
         self._sources[source_id] = entry
-        plugin_scope.add_dispatch_registration(
-            lambda: self._unregister_source(source_id)
-        )
+        plugin_scope.add_dispatch_registration(lambda: self._unregister_source(source_id))
 
     def _unregister_operation(self, op_id: str) -> None:
         entry = self._operations.pop(op_id, None)
@@ -324,9 +347,18 @@ class Dispatcher:
             bucket.discard(op_id)
             if not bucket:
                 del self._op_name_index[last_seg]
+        self._bump_generation_once_for_scope(
+            plugin_id=entry.plugin_id,
+            plugin_scope=entry.plugin_scope,
+        )
 
     def _unregister_source(self, source_id: str) -> None:
-        self._sources.pop(source_id, None)
+        entry = self._sources.pop(source_id, None)
+        if entry is not None:
+            self._bump_generation_once_for_scope(
+                plugin_id=entry.plugin_id,
+                plugin_scope=entry.plugin_scope,
+            )
 
     # ----- 查询 API ------------------------------------------------------
 
@@ -358,6 +390,45 @@ class Dispatcher:
 
     def list_sources(self) -> tuple[SourceDescriptor, ...]:
         return tuple(e.descriptor for e in self._sources.values())
+
+    def list_operation_snapshots(self):
+        """Return pure protocol snapshots for external runtime backends.
+
+        The snapshots contain only serializable metadata and a stable indirect
+        handler key. They never expose Python callables.
+        """
+        from mutsukibot.runtime.backend import (
+            BackendOperationStatus,
+            OperationHandlerKey,
+            OperationSnapshot,
+        )
+
+        return tuple(
+            OperationSnapshot(
+                descriptor=e.descriptor,
+                status=BackendOperationStatus(e.status.value),
+                key=OperationHandlerKey(
+                    plugin_id=e.plugin_id,
+                    plugin_generation=e.plugin_generation,
+                    op_id=e.descriptor.op_id,
+                    handler_id=e.handler_id,
+                ),
+            )
+            for e in self._operations.values()
+        )
+
+    def list_source_snapshots(self):
+        """Return pure protocol source snapshots for external runtime backends."""
+        from mutsukibot.runtime.backend import SourceSnapshot
+
+        return tuple(
+            SourceSnapshot(
+                descriptor=e.descriptor,
+                plugin_id=e.plugin_id,
+                plugin_generation=e.plugin_generation,
+            )
+            for e in self._sources.values()
+        )
 
     def has_operation(self, op_id: str) -> bool:
         return op_id in self._operations
@@ -470,6 +541,44 @@ class Dispatcher:
                     },
                 )
                 raise OperationInvokeError(err) from exc
+
+    async def invoke_with_backend_key(
+        self,
+        key,
+        payload: dict[str, Any] | None = None,
+        *,
+        ctx: "AgentContext",
+    ) -> Any:
+        """Invoke through an external-runtime handler key.
+
+        This is the Python side of the Rust/Python boundary. The caller must
+        pass the key obtained from ``list_operation_snapshots``. If a plugin was
+        reloaded, the generation changes and stale keys fail loudly.
+        """
+        from mutsukibot.runtime.backend import (
+            BackendInvokeError,
+            generation_mismatch_error,
+        )
+
+        entry = self._operations.get(key.op_id)
+        actual_generation = (
+            self._generation_for(key.plugin_id) if entry is None else entry.plugin_generation
+        )
+        if (
+            entry is None
+            or entry.plugin_id != key.plugin_id
+            or entry.plugin_generation != key.plugin_generation
+            or entry.handler_id != key.handler_id
+        ):
+            raise BackendInvokeError(
+                generation_mismatch_error(
+                    plugin_id=key.plugin_id,
+                    op_id=key.op_id,
+                    expected=key.plugin_generation,
+                    actual=actual_generation,
+                )
+            )
+        return await self.invoke(key.op_id, payload or {}, ctx=ctx)
 
     async def invoke_in_agent(
         self,

@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "crates/mutsuki-runtime-contracts",
+    "crates/mutsuki-runtime-core",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
