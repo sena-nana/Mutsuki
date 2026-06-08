@@ -1,4 +1,4 @@
-# Legacy MutsukiBot Python Framework
+# MutsukiBot Python Reference Framework
 
 This folder contains the earlier Python implementation of MutsukiBot:
 
@@ -9,9 +9,9 @@ This folder contains the earlier Python implementation of MutsukiBot:
 - Python examples
 - Python packaging metadata
 
-It is kept as legacy / reference material after the root project moved to a
+It is kept as a reference and migration layer after the root project moved to a
 Rust-first runtime framework. Work on the current runtime should happen in the
-root Cargo workspace. Work on this folder should be treated as optional legacy
-maintenance.
+root Cargo workspace. This folder is not the root runtime implementation, but it
+is not marked as disposable or deprecated by its directory name.
 
 Run Python checks from this directory, not from the repository root.

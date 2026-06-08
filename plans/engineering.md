@@ -2,14 +2,14 @@
 
 本文件描述当前工作树的事实：根目录是 **Rust-first Agent runtime
 framework**。早期 Python 框架实现已经移动到
-`python/legacy-mutsukibot/`，只作为 legacy / reference material 保留。
+`python/reference-mutsukibot/`，作为旧 Python 实现的参考与迁移层保留。
 
 ## 1. 技术栈
 
 - **Rust 2024 + Cargo workspace**：根级主框架。
 - **serde / serde_json**：跨 host 与可持久化 snapshot 的纯协议序列化。
 - **thiserror**：结构化 runtime failure wrapper。
-- **Python 3.13 + uv**：仅用于 `python/legacy-mutsukibot/` 的旧实现与参考测试；
+- **Python 3.13 + uv**：仅用于 `python/reference-mutsukibot/` 的旧实现与参考测试；
   不再是根级 runtime 依赖。
 
 根级 Rust crates 禁止依赖 Python、PyO3、动态插件系统、外部 IM 协议 SDK、LLM
@@ -35,7 +35,7 @@ MutsukiBot/
     rust-python-runtime-boundary.md
     version-reports/
   python/
-    legacy-mutsukibot/          # 旧 Python 框架、扩展、测试、docs、examples
+    reference-mutsukibot/       # 旧 Python 框架、扩展、测试、docs、examples 的参考与迁移层
 ```
 
 ## 3. Rust Crate 边界
@@ -70,7 +70,7 @@ client、真实 `Handle[T]` 或领域对象。
 
 - Agent 是一等运行时实体；生命周期状态由 `AgentRuntime` 维护。
 - 核心不内置业务概念；LLM、记忆、情感、睡眠、IM、MCP、ChatCompletion 等只能在
-  host / reference plugin / legacy Python 层表达。
+  host / reference plugin / Python reference 层表达。
 - Operation 是工具、命令和跨能力调用的统一 runtime 概念；Rust 侧只持有
   `OperationSnapshot` 与 `OperationHandlerKey`。
 - Source 必须先注册；未注册 Source 的 envelope publish 必须 fail-loud 为
@@ -91,6 +91,6 @@ client、真实 `Handle[T]` 或领域对象。
 cargo test
 ```
 
-改动 legacy Python 时，从 `python/legacy-mutsukibot` 目录运行对应 Python 验证。
+改动 Python reference 层时，从 `python/reference-mutsukibot` 目录运行对应 Python 验证。
 根级成功说明 Rust framework 可构建和通过 Rust contract / runtime / host 测试；
-不得用 legacy Python 测试代替 Rust 主框架验证。
+不得用 Python reference 层测试代替 Rust 主框架验证。

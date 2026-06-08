@@ -2,7 +2,7 @@
 
 本文件回答：当前仓库目标、完成门槛、后续方向。当前工作树以 **Rust framework
 完整可使用** 为主目标；早期 Python 框架代码已移动到
-`python/legacy-mutsukibot/`，不再是根级主链。
+`python/reference-mutsukibot/`，作为旧 Python 实现的参考与迁移层，不再是根级主链。
 
 ## 当前边界：Rust-first Agent Runtime Kernel
 
@@ -36,9 +36,9 @@
 - Rust host 覆盖：
   - native in-memory Source / Operation backend。
   - 无 Python 情况下跑通 Agent start、publish、tick、invoke、stop。
-- Python legacy：
+- Python reference：
   - 旧 `mutsukibot`、`mutsukibot_ext`、Python tests、docs、examples、`pyproject.toml`
-    与 `uv.lock` 已移动到 `python/legacy-mutsukibot/`。
+    与 `uv.lock` 已移动到 `python/reference-mutsukibot/`。
 
 ## 当前完成门槛
 
@@ -65,9 +65,9 @@ Rust framework 被视为当前目标完成，必须同时满足：
 - 引入可替换 election policy trait，但 policy 只能排序已通过 lifecycle + accepts
   过滤的候选。
 
-### Optional：Legacy Python Adapter
+### Optional：Python Reference Adapter
 
-- 如果后续需要继续承载 Python 插件生态，在 `python/legacy-mutsukibot` 内维护
+- 如果后续需要继续承载 Python 插件生态，在 `python/reference-mutsukibot` 内维护
   sidecar / adapter，不得让根级 Rust crates 依赖 Python。
 - Python 侧只能通过纯协议与 backend key 和 Rust runtime 交互，不得跨边界传
   callable、socket、SDK client、真实 `Handle[T]` 或领域对象。

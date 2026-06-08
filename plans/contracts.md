@@ -1,7 +1,7 @@
 # MutsukiBot Runtime Contracts
 
 本文件记录当前根级 Rust runtime 的内部协议。旧 Python `msgspec` contracts 已移动到
-`python/legacy-mutsukibot/`，不再定义根级主链。
+`python/reference-mutsukibot/`，作为参考与迁移材料，不再定义根级主链。
 
 ## 1. 协议总则
 

@@ -1,7 +1,7 @@
 # MutsukiBot 概念边界图谱
 
 本文描述当前 Rust-first runtime 的核心概念。旧 Python 插件框架概念仅保留在
-`python/legacy-mutsukibot/` 中作为参考。
+`python/reference-mutsukibot/` 中作为参考与迁移材料。
 
 ## 1. Agent
 
@@ -84,7 +84,7 @@ resource 因果链。Trace sink 可以由 host 提供，但 sink 失败不应反
 ## 7. Domain Boundary
 
 Rust crates 只承载通用运行机制，不承载 Yume、mind-sim、IM、MCP、LLM、工程工具、
-Codex、OneBot 等业务语义。需要这些能力时，由 host / sidecar / legacy reference
+Codex、OneBot 等业务语义。需要这些能力时，由 host / sidecar / Python reference
 通过 Source、Operation、Resource lease 组合表达。
 
 ## 8. 放置规则

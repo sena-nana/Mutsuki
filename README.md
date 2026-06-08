@@ -9,9 +9,10 @@ runtime contracts, the reusable `AgentRuntime` kernel, and a native host helper
 that can run an Agent loop without Python.
 
 Python code from the earlier framework has been moved to
-[`python/legacy-mutsukibot`](python/legacy-mutsukibot). Treat it as legacy /
-reference material for plugin-host ideas, transport examples, and migration
-checks. It is no longer the root runtime implementation.
+[`python/reference-mutsukibot`](python/reference-mutsukibot). Treat it as a
+reference and migration layer for plugin-host ideas, transport examples, and
+Python checks. It is no longer the root runtime implementation, but the name
+does not imply the code is deprecated or disposable.
 
 ## Crates
 
@@ -30,8 +31,8 @@ checks. It is no longer the root runtime implementation.
 cargo test
 ```
 
-Optional legacy Python checks live under `python/legacy-mutsukibot` and should
-be run from that folder when intentionally working on legacy/reference code.
+Optional Python reference checks live under `python/reference-mutsukibot` and
+should be run from that folder when intentionally working on that layer.
 
 ## Reading Order
 
@@ -40,7 +41,7 @@ be run from that folder when intentionally working on legacy/reference code.
 - [plans/architecture.md](plans/architecture.md) - runtime direction and domain boundaries
 - [plans/engineering.md](plans/engineering.md) - workspace layout and implementation rules
 - [plans/contracts.md](plans/contracts.md) - internal contract surface
-- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) - legacy Python boundary and optional host rules
+- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) - Python reference boundary and optional host rules
 
 ## License
 

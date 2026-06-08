@@ -1,8 +1,8 @@
 # Rust / Python Runtime Boundary
 
 本文件记录当前事实：根级 MutsukiBot 是 Rust-first runtime framework。Python 代码已
-移动到 `python/legacy-mutsukibot/`，仅作为 legacy / reference material；它不是根级
-主运行时。
+移动到 `python/reference-mutsukibot/`，作为旧 Python 实现的参考与迁移层；它不是
+根级主运行时，也不代表废弃内容。
 
 ## 1. 当前实现
 
@@ -11,7 +11,7 @@
   Source registry、routing、trace bookkeeping、`ResourceGate`。
 - `crates/mutsuki-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
   Agent loop。
-- `python/legacy-mutsukibot`：旧 Python framework、reference extensions、tests、
+- `python/reference-mutsukibot`：旧 Python framework、reference extensions、tests、
   docs、examples。
 
 ## 2. Rust 主链
@@ -61,10 +61,10 @@ release_resource(token) -> Result<(), RuntimeFailure>
 list_records(owner) -> Vec<ResourceRecord>
 ```
 
-## 4. Python Legacy Boundary
+## 4. Python Reference Boundary
 
-Legacy Python may be revived as an optional host/sidecar, but it must obey the
-same backend boundary:
+The Python reference layer may be used to build an optional host/sidecar, but it
+must obey the same backend boundary:
 
 - Rust runtime never imports Python modules.
 - Cross-boundary data is limited to serializable contracts, backend keys, resource
@@ -88,7 +88,7 @@ The Rust-first framework is acceptable only when:
 
 ## 6. Future Optional Work
 
-- Add an explicit process/RPC boundary for Python sidecar only if legacy Python capability hosting
+- Add an explicit process/RPC boundary for Python sidecar only if Python reference capability hosting
   is needed.
 - Add cancellation/deadline propagation across backend calls.
 - Add Rust trace replay / contract kit parity with the old Python testing helpers.
