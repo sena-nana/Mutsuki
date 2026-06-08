@@ -1,22 +1,47 @@
 # MutsukiBot
 
-> 为 Yume / mind-sim、Lilia 式工程 Agent 与传统 Bot 能力提供领域中立的 Agent runtime kernel。
+> A domain-neutral Agent runtime kernel implemented as a Rust framework.
 
-**当前边界：Agent 事件行动核**
+**Current boundary: Rust-first runtime kernel**
 
-MutsukiBot Core 接收外部后端或协议桥转换后的 Envelope，驱动 Agent 决策，并通过 Operation 表达 Agent 可采取的动作。Core 不内置 IM、文本命令、应用后端 / CRUD endpoint / tool event 语义；这些都位于 extension 或领域插件中。运行 `uv run python -m mutsukibot.plugins.echo.smoke` 验证 IM + command reference extension 闭环。
+The root workspace is now the Rust framework surface. It provides serializable
+runtime contracts, the reusable `AgentRuntime` kernel, and a native host helper
+that can run an Agent loop without Python.
 
-## 阅读入口
+Python code from the earlier framework has been moved to
+[`python/legacy-mutsukibot`](python/legacy-mutsukibot). Treat it as legacy /
+reference material for plugin-host ideas, transport examples, and migration
+checks. It is no longer the root runtime implementation.
 
-- [AGENTS.md](AGENTS.md) —— 项目宪法 + 索引 + 不可违反的最高规则
-- [plans/roadmap.md](plans/roadmap.md) —— 当前版本目标、范围、门控、后续方向
-- [plans/architecture.md](plans/architecture.md) —— 方向、Agent 一等公民、分层、与 Yume / mind-sim 的关系
-- [plans/engineering.md](plans/engineering.md) —— 技术栈、目录、插件模型、横切公约
-- [plans/contracts.md](plans/contracts.md) —— 内部协议草案
-- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) —— Tauri / Rust runtime 与 Python 插件生态的分层边界
+## Crates
 
-任何变更前请按上述顺序阅读相关文档；若变更没有契约位置或设计文档归属，先设计或更新契约。
+- `crates/mutsuki-runtime-contracts` - pure serializable contracts:
+  Agent, Envelope, ScopeRule, Operation / Source snapshots, trace, errors, and
+  resource descriptors.
+- `crates/mutsuki-runtime-core` - runtime mechanics:
+  lifecycle, inbox ticks, routing, operation registry, source registry,
+  trace bookkeeping, and resource lease governance.
+- `crates/mutsuki-runtime-host` - native Rust host helper:
+  in-memory operation/source backend for direct framework use and smoke tests.
+
+## Verification
+
+```powershell
+cargo test
+```
+
+Optional legacy Python checks live under `python/legacy-mutsukibot` and should
+be run from that folder when intentionally working on legacy/reference code.
+
+## Reading Order
+
+- [AGENTS.md](AGENTS.md) - project constitution and hard rules
+- [plans/roadmap.md](plans/roadmap.md) - current Rust-first target and gates
+- [plans/architecture.md](plans/architecture.md) - runtime direction and domain boundaries
+- [plans/engineering.md](plans/engineering.md) - workspace layout and implementation rules
+- [plans/contracts.md](plans/contracts.md) - internal contract surface
+- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) - legacy Python boundary and optional host rules
 
 ## License
 
-见 [LICENSE](LICENSE)。
+See [LICENSE](LICENSE).

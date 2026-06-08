@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use mutsuki_runtime_contracts::{
     AgentId, AgentParticipation, AgentPhase, AgentSpec, ERR_AGENT_NOT_FOUND,
-    ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH, Envelope, LeaseToken,
-    OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord,
-    RuntimeError, ScalarValue, SourceSnapshot, SpanStatus, StrategyResult, TraceSpan,
+    ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH,
+    ERR_SOURCE_UNREGISTERED, Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot,
+    OperationStatus, RefDescriptor, ResourceRecord, RuntimeError, ScalarValue, SourceSnapshot,
+    SpanStatus, StrategyResult, TraceSpan,
 };
 use serde_json::Value;
 use thiserror::Error;
-use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackendPayload {
@@ -41,6 +41,7 @@ pub trait StrategyBackend {
 
 pub trait OperationBackend {
     fn list_operations(&self, agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>>;
+    fn list_sources(&self, agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>>;
     fn invoke(
         &mut self,
         agent_id: &str,
@@ -51,17 +52,47 @@ pub trait OperationBackend {
 }
 
 pub trait ResourceBackend {
-    fn list_records(&self) -> Vec<ResourceRecord>;
+    fn register_resource(
+        &mut self,
+        descriptor: RefDescriptor,
+        owner: &str,
+    ) -> RuntimeResult<String>;
+    fn acquire_resource(&mut self, ref_id: &str, requester: &str) -> RuntimeResult<LeaseToken>;
+    fn release_resource(&mut self, token: &LeaseToken) -> RuntimeResult<()>;
+    fn list_records(&self, owner: Option<&str>) -> Vec<ResourceRecord>;
 }
 
 pub trait RuntimeBackend: StrategyBackend + OperationBackend {}
 
 impl<T> RuntimeBackend for T where T: StrategyBackend + OperationBackend {}
 
+pub trait IdSource {
+    fn next_id(&mut self, prefix: &str) -> String;
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SequentialIdSource {
+    next: u64,
+}
+
+impl SequentialIdSource {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl IdSource for SequentialIdSource {
+    fn next_id(&mut self, prefix: &str) -> String {
+        self.next += 1;
+        format!("{prefix}-{:026}", self.next)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResourceGate {
     records: HashMap<String, ResourceRecord>,
     leases: HashMap<String, LeaseToken>,
+    id_source: SequentialIdSource,
 }
 
 impl Default for ResourceGate {
@@ -75,6 +106,15 @@ impl ResourceGate {
         Self {
             records: HashMap::new(),
             leases: HashMap::new(),
+            id_source: SequentialIdSource::new(),
+        }
+    }
+
+    pub fn with_id_source(id_source: SequentialIdSource) -> Self {
+        Self {
+            records: HashMap::new(),
+            leases: HashMap::new(),
+            id_source,
         }
     }
 
@@ -105,7 +145,7 @@ impl ResourceGate {
         })?;
         record.lease_count += 1;
         let token = LeaseToken {
-            token_id: format!("lease-{}", Uuid::new_v4()),
+            token_id: self.id_source.next_id("lease"),
             ref_id: ref_id.to_string(),
             owner: requester.into(),
         };
@@ -164,9 +204,40 @@ impl ResourceGate {
     }
 
     pub fn list_records(&self) -> Vec<ResourceRecord> {
-        let mut records: Vec<ResourceRecord> = self.records.values().cloned().collect();
+        self.list_records_for(None)
+    }
+
+    pub fn list_records_for(&self, owner: Option<&str>) -> Vec<ResourceRecord> {
+        let mut records: Vec<ResourceRecord> = self
+            .records
+            .values()
+            .filter(|record| owner.is_none_or(|target| record.owner == target))
+            .cloned()
+            .collect();
         records.sort_by(|a, b| a.descriptor.ref_id.cmp(&b.descriptor.ref_id));
         records
+    }
+}
+
+impl ResourceBackend for ResourceGate {
+    fn register_resource(
+        &mut self,
+        descriptor: RefDescriptor,
+        owner: &str,
+    ) -> RuntimeResult<String> {
+        Ok(self.register(descriptor, owner))
+    }
+
+    fn acquire_resource(&mut self, ref_id: &str, requester: &str) -> RuntimeResult<LeaseToken> {
+        self.acquire(ref_id, requester)
+    }
+
+    fn release_resource(&mut self, token: &LeaseToken) -> RuntimeResult<()> {
+        self.release(token)
+    }
+
+    fn list_records(&self, owner: Option<&str>) -> Vec<ResourceRecord> {
+        self.list_records_for(owner)
     }
 }
 
@@ -197,9 +268,10 @@ impl TraceBook {
             "agent_id".to_string(),
             ScalarValue::String(agent_id.to_string()),
         );
+        let span_id = format!("span-{}", self.next_span);
         let span = TraceSpan {
             trace_id: format!("trace-{agent_id}"),
-            span_id: format!("span-{}", self.next_span),
+            span_id,
             parent_span_id,
             name: name.into(),
             start: self.next_span as f64,
@@ -254,15 +326,56 @@ impl AgentRuntime {
                 .record(agent_id, "agent.awake", None, SpanStatus::Error);
             return Err(err);
         }
-        if let Err(err) = self.refresh_operations(agent_id, backend) {
-            self.trace
-                .record(agent_id, "agent.awake", None, SpanStatus::Error);
-            return Err(err);
-        }
+        let operation_snapshots = match backend.list_operations(agent_id) {
+            Ok(snapshots) => snapshots,
+            Err(err) => {
+                self.trace
+                    .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                return Err(err);
+            }
+        };
+        let source_snapshots = match backend.list_sources(agent_id) {
+            Ok(snapshots) => snapshots,
+            Err(err) => {
+                self.trace
+                    .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                return Err(err);
+            }
+        };
+        self.operation_registry.insert(
+            agent_id.to_string(),
+            Self::operation_registry_from(operation_snapshots),
+        );
+        self.ingest_sources(agent_id, source_snapshots);
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Awake;
         self.trace
             .record(agent_id, "agent.awake", None, SpanStatus::Ok);
+        Ok(())
+    }
+
+    pub fn refresh_operations<B: OperationBackend>(
+        &mut self,
+        agent_id: &str,
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        self.agent(agent_id)?;
+        let snapshots = backend.list_operations(agent_id)?;
+        self.operation_registry.insert(
+            agent_id.to_string(),
+            Self::operation_registry_from(snapshots),
+        );
+        Ok(())
+    }
+
+    pub fn refresh_sources<B: OperationBackend>(
+        &mut self,
+        agent_id: &str,
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        self.agent(agent_id)?;
+        let snapshots = backend.list_sources(agent_id)?;
+        self.ingest_sources(agent_id, snapshots);
         Ok(())
     }
 
@@ -284,17 +397,18 @@ impl AgentRuntime {
     }
 
     pub fn publish(&mut self, envelope: Envelope) -> RuntimeResult<Vec<AgentId>> {
+        if !self.has_registered_source(&envelope.source.source_id) {
+            self.trace.record(
+                "runtime",
+                "runtime.source_unregistered",
+                None,
+                SpanStatus::Error,
+            );
+            return Err(source_unregistered_failure(&envelope));
+        }
         let mut matched = Vec::new();
         for (agent_id, agent) in &mut self.agents {
-            if agent.phase != AgentPhase::Awake {
-                continue;
-            }
-            if agent
-                .spec
-                .accepts
-                .iter()
-                .any(|rule| rule.matches(&envelope))
-            {
+            if Self::agent_accepts(agent, &envelope) {
                 agent.inbox.push_back(envelope.clone());
                 matched.push(agent_id.clone());
             }
@@ -302,18 +416,21 @@ impl AgentRuntime {
         if matched.is_empty() {
             self.trace
                 .record("runtime", "runtime.scope_no_match", None, SpanStatus::Error);
+            return Err(scope_no_match_failure(&envelope));
         }
         Ok(matched)
     }
 
     pub fn select_accepting(&self, envelope: &Envelope) -> Option<AgentId> {
+        if !self.has_registered_source(&envelope.source.source_id) {
+            return None;
+        }
         let mut candidates: Vec<&AgentState> = self
             .agents
             .values()
             .filter(|agent| {
-                agent.phase == AgentPhase::Awake
+                Self::agent_accepts(agent, envelope)
                     && agent.spec.participation == AgentParticipation::PrimaryCandidate
-                    && agent.spec.accepts.iter().any(|rule| rule.matches(envelope))
             })
             .collect();
         candidates.sort_by(|a, b| {
@@ -336,40 +453,38 @@ impl AgentRuntime {
         };
         let result = match envelope {
             Some(envelope) => {
-                self.trace
+                let input_span = self
+                    .trace
                     .record(agent_id, "agent.input", None, SpanStatus::Ok);
-                backend.on_input(agent_id, &envelope)?
+                let result = backend.on_input(agent_id, &envelope)?;
+                let status = if result.error.is_some() {
+                    SpanStatus::Error
+                } else {
+                    SpanStatus::Ok
+                };
+                self.trace
+                    .record(agent_id, "agent.strategy", Some(input_span.span_id), status);
+                result
             }
-            None => backend.next_step(agent_id)?,
+            None => {
+                let tick_span =
+                    self.trace
+                        .record(agent_id, "agent.next_step", None, SpanStatus::Ok);
+                let result = backend.next_step(agent_id)?;
+                let status = if result.error.is_some() {
+                    SpanStatus::Error
+                } else {
+                    SpanStatus::Ok
+                };
+                self.trace
+                    .record(agent_id, "agent.strategy", Some(tick_span.span_id), status);
+                result
+            }
         };
-        if result.error.is_some() {
-            self.trace
-                .record(agent_id, "agent.strategy", None, SpanStatus::Error);
-        } else {
-            self.trace
-                .record(agent_id, "agent.strategy", None, SpanStatus::Ok);
-        }
         for emitted in &result.emitted {
             self.publish(emitted.clone())?;
         }
         Ok(result)
-    }
-
-    pub fn refresh_operations<B: OperationBackend>(
-        &mut self,
-        agent_id: &str,
-        backend: &B,
-    ) -> RuntimeResult<()> {
-        self.agent(agent_id)?;
-        let snapshots = backend.list_operations(agent_id)?;
-        self.operation_registry.insert(
-            agent_id.to_string(),
-            snapshots
-                .into_iter()
-                .map(|snapshot| (snapshot.descriptor.op_id.clone(), snapshot))
-                .collect(),
-        );
-        Ok(())
     }
 
     pub fn invoke_operation<B: OperationBackend>(
@@ -405,9 +520,21 @@ impl AgentRuntime {
             );
             return Err(RuntimeFailure::new(err));
         }
-        self.trace
+        let invoke_span = self
+            .trace
             .record(agent_id, "operation.invoke", None, SpanStatus::Ok);
-        backend.invoke(agent_id, &snapshot.key, payload)
+        match backend.invoke(agent_id, &snapshot.key, payload) {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                self.trace.record(
+                    agent_id,
+                    "operation.invoke.error",
+                    Some(invoke_span.span_id),
+                    SpanStatus::Error,
+                );
+                Err(err)
+            }
+        }
     }
 
     pub fn ingest_sources(&mut self, agent_id: &str, sources: Vec<SourceSnapshot>) {
@@ -428,6 +555,12 @@ impl AgentRuntime {
 
     pub fn trace_spans(&self) -> &[TraceSpan] {
         self.trace.spans()
+    }
+
+    pub fn source_snapshots(&self, agent_id: &str) -> Option<&[SourceSnapshot]> {
+        self.source_registry
+            .get(agent_id)
+            .map(std::vec::Vec::as_slice)
     }
 
     pub fn resources(&self) -> &ResourceGate {
@@ -457,6 +590,28 @@ impl AgentRuntime {
             ))
         })
     }
+
+    fn has_registered_source(&self, source_id: &str) -> bool {
+        self.source_registry.values().any(|sources| {
+            sources
+                .iter()
+                .any(|source| source.descriptor.source_id == source_id)
+        })
+    }
+
+    fn agent_accepts(agent: &AgentState, envelope: &Envelope) -> bool {
+        agent.phase == AgentPhase::Awake
+            && agent.spec.accepts.iter().any(|rule| rule.matches(envelope))
+    }
+
+    fn operation_registry_from(
+        snapshots: Vec<OperationSnapshot>,
+    ) -> HashMap<String, OperationSnapshot> {
+        snapshots
+            .into_iter()
+            .map(|snapshot| (snapshot.descriptor.op_id.clone(), snapshot))
+            .collect()
+    }
 }
 
 fn error(
@@ -479,10 +634,37 @@ pub fn scope_no_match_error() -> RuntimeError {
     error(ERR_SCOPE_NO_MATCH, "runtime.route", "runtime.publish")
 }
 
+fn source_unregistered_failure(envelope: &Envelope) -> RuntimeFailure {
+    let mut err = error(
+        ERR_SOURCE_UNREGISTERED,
+        "runtime.source_registry",
+        format!("runtime.publish.{}", envelope.source.source_id),
+    );
+    err.evidence.insert(
+        "source_id".into(),
+        ScalarValue::String(envelope.source.source_id.clone()),
+    );
+    RuntimeFailure::new(err)
+}
+
+fn scope_no_match_failure(envelope: &Envelope) -> RuntimeFailure {
+    let mut err = scope_no_match_error();
+    err.route = format!("runtime.publish.{}", envelope.source.source_id);
+    err.evidence.insert(
+        "source_id".into(),
+        ScalarValue::String(envelope.source.source_id.clone()),
+    );
+    err.evidence.insert(
+        "payload_schema_id".into(),
+        ScalarValue::String(envelope.payload_schema_id.clone()),
+    );
+    RuntimeFailure::new(err)
+}
+
 #[cfg(test)]
 mod tests {
     use mutsuki_runtime_contracts::{
-        OperationDescriptor, ScopeRuleSpec, SourceRef, StrategyResultStatus,
+        OperationDescriptor, ScopeRuleSpec, SourceDescriptor, SourceRef, StrategyResultStatus,
     };
     use serde_json::json;
 
@@ -495,7 +677,9 @@ mod tests {
         inputs: usize,
         invocations: usize,
         operations: Vec<OperationSnapshot>,
+        sources: Vec<SourceSnapshot>,
         fail_list_operations: bool,
+        fail_list_sources: bool,
         fail_awake: bool,
     }
 
@@ -548,6 +732,17 @@ mod tests {
             Ok(self.operations.clone())
         }
 
+        fn list_sources(&self, _agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>> {
+            if self.fail_list_sources {
+                return Err(RuntimeFailure::new(error(
+                    ERR_RUNTIME_BACKEND_FAILED,
+                    "native",
+                    "native.list_sources",
+                )));
+            }
+            Ok(self.sources.clone())
+        }
+
         fn invoke(
             &mut self,
             _agent_id: &str,
@@ -592,12 +787,34 @@ mod tests {
         }
     }
 
+    fn backend() -> NativeBackend {
+        NativeBackend {
+            sources: vec![SourceSnapshot {
+                descriptor: SourceDescriptor {
+                    source_id: "source:default".into(),
+                    kind: "test".into(),
+                    capabilities: Vec::new(),
+                    description: String::new(),
+                },
+                plugin_id: "native".into(),
+                plugin_generation: 0,
+            }],
+            ..NativeBackend::default()
+        }
+    }
+
     #[test]
     fn runtime_routes_and_ticks_agent_input() {
         let mut runtime = AgentRuntime::new();
-        let mut backend = NativeBackend::default();
+        let mut backend = backend();
         runtime.register_agent(agent("agent-a", 0)).unwrap();
         runtime.start_agent("agent-a", &mut backend).unwrap();
+        assert_eq!(
+            runtime.source_snapshots("agent-a").unwrap()[0]
+                .descriptor
+                .source_id,
+            "source:default"
+        );
 
         let matched = runtime.publish(envelope()).unwrap();
         assert_eq!(matched, vec!["agent-a".to_string()]);
@@ -612,12 +829,56 @@ mod tests {
                 .iter()
                 .any(|s| s.name == "agent.input")
         );
+        let input_span = runtime
+            .trace_spans()
+            .iter()
+            .find(|span| span.name == "agent.input")
+            .unwrap();
+        let strategy_span = runtime
+            .trace_spans()
+            .iter()
+            .find(|span| span.name == "agent.strategy")
+            .unwrap();
+        assert_eq!(
+            strategy_span.parent_span_id.as_deref(),
+            Some(input_span.span_id.as_str())
+        );
+    }
+
+    #[test]
+    fn runtime_rejects_unregistered_source_before_routing() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unknown = envelope();
+        unknown.source.source_id = "source:unknown".into();
+
+        let err = runtime.publish(unknown).unwrap_err();
+        assert_eq!(err.error().code, ERR_SOURCE_UNREGISTERED);
+        assert_eq!(runtime.inbox_len("agent-a"), Some(0));
+    }
+
+    #[test]
+    fn runtime_returns_scope_no_match_for_registered_source_without_accepting_agent() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unmatched = envelope();
+        unmatched.payload_schema_id = "other.input".into();
+
+        let err = runtime.publish(unmatched).unwrap_err();
+        assert_eq!(err.error().code, ERR_SCOPE_NO_MATCH);
+        assert_eq!(runtime.inbox_len("agent-a"), Some(0));
     }
 
     #[test]
     fn runtime_selects_primary_candidate_by_priority_then_id() {
         let mut runtime = AgentRuntime::new();
-        let mut backend = NativeBackend::default();
+        let mut backend = backend();
         runtime.register_agent(agent("agent-b", 1)).unwrap();
         runtime.register_agent(agent("agent-a", 1)).unwrap();
         runtime.start_agent("agent-a", &mut backend).unwrap();
@@ -630,9 +891,22 @@ mod tests {
     }
 
     #[test]
+    fn runtime_select_accepting_ignores_unregistered_source() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unknown = envelope();
+        unknown.source.source_id = "source:unknown".into();
+
+        assert_eq!(runtime.select_accepting(&unknown), None);
+    }
+
+    #[test]
     fn runtime_invokes_operation_through_backend_key() {
         let mut runtime = AgentRuntime::new();
-        let mut backend = NativeBackend::default();
+        let mut backend = backend();
         backend.operations.push(OperationSnapshot {
             descriptor: OperationDescriptor {
                 op_id: "test.noop".into(),
@@ -665,9 +939,23 @@ mod tests {
     }
 
     #[test]
+    fn runtime_returns_structured_error_for_missing_operation() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let err = runtime
+            .invoke_operation("agent-a", "test.missing", json!({}), &mut backend)
+            .unwrap_err();
+        assert_eq!(err.error().code, ERR_OPERATION_NOT_FOUND);
+        assert_eq!(backend.invocations, 0);
+    }
+
+    #[test]
     fn runtime_native_backend_smoke_without_external_plugin_host() {
         let mut runtime = AgentRuntime::new();
-        let mut backend = NativeBackend::default();
+        let mut backend = backend();
         runtime.register_agent(agent("native-agent", 0)).unwrap();
         runtime.start_agent("native-agent", &mut backend).unwrap();
         let result = runtime.tick_once("native-agent", &mut backend).unwrap();
@@ -695,11 +983,42 @@ mod tests {
 
         let lease = gate.acquire(&ref_id, "agent-a").unwrap();
         assert_eq!(lease.ref_id, "ref-1");
+        assert_eq!(lease.token_id, "lease-00000000000000000000000001");
         assert_eq!(gate.list_records()[0].lease_count, 1);
-        assert!(!lease.token_id.starts_with("lease-1"));
 
         gate.release(&lease).unwrap();
         assert_eq!(gate.list_records()[0].lease_count, 0);
+    }
+
+    #[test]
+    fn resource_backend_filters_records_by_owner() {
+        let mut gate = ResourceGate::new();
+        gate.register(
+            RefDescriptor {
+                ref_id: "ref-a".into(),
+                kind: "domain.resource".into(),
+                schema_id_target: "domain.resource".into(),
+                schema_version_target: "1.0.0".into(),
+                attributes: BTreeMap::new(),
+                lineage: Vec::new(),
+            },
+            "owner-a",
+        );
+        gate.register(
+            RefDescriptor {
+                ref_id: "ref-b".into(),
+                kind: "domain.resource".into(),
+                schema_id_target: "domain.resource".into(),
+                schema_version_target: "1.0.0".into(),
+                attributes: BTreeMap::new(),
+                lineage: Vec::new(),
+            },
+            "owner-b",
+        );
+
+        let owner_a = <ResourceGate as ResourceBackend>::list_records(&gate, Some("owner-a"));
+        assert_eq!(owner_a.len(), 1);
+        assert_eq!(owner_a[0].descriptor.ref_id, "ref-a");
     }
 
     #[test]
@@ -707,14 +1026,15 @@ mod tests {
         let mut runtime = AgentRuntime::new();
         let mut backend = NativeBackend {
             fail_awake: true,
-            ..NativeBackend::default()
+            ..backend()
         };
         runtime.register_agent(agent("agent-a", 0)).unwrap();
 
         let err = runtime.start_agent("agent-a", &mut backend).unwrap_err();
         assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
         assert_eq!(runtime.phase("agent-a"), Some(&AgentPhase::Spawn));
-        assert_eq!(runtime.publish(envelope()).unwrap(), Vec::<String>::new());
+        let publish_err = runtime.publish(envelope()).unwrap_err();
+        assert_eq!(publish_err.error().code, ERR_SOURCE_UNREGISTERED);
         assert_eq!(runtime.inbox_len("agent-a"), Some(0));
         assert!(
             runtime
@@ -729,14 +1049,15 @@ mod tests {
         let mut runtime = AgentRuntime::new();
         let mut backend = NativeBackend {
             fail_list_operations: true,
-            ..NativeBackend::default()
+            ..backend()
         };
         runtime.register_agent(agent("agent-a", 0)).unwrap();
 
         let err = runtime.start_agent("agent-a", &mut backend).unwrap_err();
         assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
         assert_eq!(runtime.phase("agent-a"), Some(&AgentPhase::Spawn));
-        assert_eq!(runtime.publish(envelope()).unwrap(), Vec::<String>::new());
+        let publish_err = runtime.publish(envelope()).unwrap_err();
+        assert_eq!(publish_err.error().code, ERR_SOURCE_UNREGISTERED);
         assert_eq!(runtime.inbox_len("agent-a"), Some(0));
         assert!(runtime.operation_snapshot("agent-a", "test.noop").is_none());
         assert!(
@@ -745,6 +1066,41 @@ mod tests {
                 .iter()
                 .any(|span| span.name == "agent.awake" && span.status == SpanStatus::Error)
         );
+    }
+
+    #[test]
+    fn failed_source_refresh_does_not_commit_operation_or_source_registry() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        backend.fail_list_sources = true;
+        backend.operations.push(OperationSnapshot {
+            descriptor: OperationDescriptor {
+                op_id: "test.noop".into(),
+                name: "noop".into(),
+                description: String::new(),
+                plugin_id: "test".into(),
+                func_qualname: String::new(),
+                parameters_schema: json!({}),
+                return_schema: json!({}),
+                perms_rule_id: None,
+                requires_capabilities: Vec::new(),
+                is_tool: true,
+            },
+            status: OperationStatus::Active,
+            key: OperationHandlerKey {
+                plugin_id: "test".into(),
+                plugin_generation: 0,
+                op_id: "test.noop".into(),
+                handler_id: "test:test.noop:0".into(),
+            },
+        });
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+
+        let err = runtime.start_agent("agent-a", &mut backend).unwrap_err();
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        assert_eq!(runtime.phase("agent-a"), Some(&AgentPhase::Spawn));
+        assert!(runtime.operation_snapshot("agent-a", "test.noop").is_none());
+        assert!(runtime.source_snapshots("agent-a").is_none());
     }
 
     #[test]

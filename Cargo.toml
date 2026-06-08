@@ -2,6 +2,7 @@
 members = [
     "crates/mutsuki-runtime-contracts",
     "crates/mutsuki-runtime-core",
+    "crates/mutsuki-runtime-host",
 ]
 resolver = "2"
 

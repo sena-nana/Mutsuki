@@ -1,226 +1,89 @@
 # MutsukiBot 路线图
 
-本文件回答：**当前在哪个版本、做什么、不做什么、何时进入下一版本**。
+本文件回答：当前仓库目标、完成门槛、后续方向。当前工作树以 **Rust framework
+完整可使用** 为主目标；早期 Python 框架代码已移动到
+`python/legacy-mutsukibot/`，不再是根级主链。
 
-## 当前边界：Agent runtime kernel
+## 当前边界：Rust-first Agent Runtime Kernel
 
-**目标**：Core 收束为领域中立 Agent 运行核心：接收外部后端或协议桥转换后的 Envelope，驱动 Agent 决策，并通过 Operation 表达可采取的动作。Core 保留 Plugin + 注册式 Operation/Source/Dispatcher，但不内置 IM、文本 command、应用后端 / CRUD endpoint / tool event 语义；IM 与文本命令路径位于 `mutsukibot_ext.im` / `mutsukibot_ext.command` reference extension。历史 v0.2 已完成；产出报告见 [version-reports/v0.2.md](version-reports/v0.2.md)。
+根级 workspace 由三个 crate 组成：
 
-## 历史版本：v0.0 骨架
+- `crates/mutsuki-runtime-contracts`：纯协议与序列化结构。
+- `crates/mutsuki-runtime-core`：运行时内核，负责 Agent lifecycle、routing、
+  tick、Operation / Source registry、trace、ResourceGate。
+- `crates/mutsuki-runtime-host`：native Rust host helper，用于不依赖 Python
+  PluginHost 的可运行 smoke 和集成入口。
 
-**目标**：建立项目宪法、分层、契约草案与规则文档，为后续实现提供唯一事实来源。**不写实现代码**。
+当前目标不是“把旧 Python Core 包一层 Rust 壳”，而是让 Rust runtime 本身具备
+可直接嵌入应用的完整骨架：上层 host 只提供策略和能力实现，runtime 持有运行时
+状态、调度、路由、source/operation metadata、资源租约和 trace 事实。
 
-### v0.0 范围（In Scope）
+## 已完成基线
 
-| 文件 | 状态 |
-|---|---|
-| `AGENTS.md` | 项目宪法 + 索引 |
-| `README.md` | 一句话定位 |
-| `plans/roadmap.md` | 本文件 |
-| `plans/architecture.md` | 方向、Agent 一等公民、分层、与 Yume / mind-sim 关系、拆解风险 |
-| `plans/engineering.md` | 技术栈、目录、插件模型、横切公约实现层规则、测试基础设施 |
-| `plans/contracts.md` | 内部协议草案（核心契约对象骨架） |
-| `pyproject.toml` | 最小依赖与工具链配置 |
+- Rust contracts 覆盖 `AgentSpec`、`Envelope`、`ScopeRuleSpec`、
+  `OperationDescriptor`、`SourceDescriptor`、`OperationSnapshot`、
+  `SourceSnapshot`、`StrategyResult`、`RuntimeError`、`TraceSpan`、
+  `RefDescriptor`、`LeaseToken`、`ResourceRecord`。
+- Rust core 覆盖：
+  - `spawn -> awake -> sleep -> stop` 生命周期。
+  - `publish` 路由与 `Agent.accepts` 显式匹配。
+  - Source registry 校验；未注册 source fail-loud 为 `source.unregistered`。
+  - Operation metadata registry 与 backend key 间接调用。
+  - 启动事务：`on_awake` 或 registry refresh 失败时不提交 `awake`。
+  - `ResourceGate` 管理 descriptor、owner、lease token、lease count。
+  - 租约 token 由注入式 ID source 生成，不使用全局 UUID。
+  - trace span 记录 Agent input / strategy / operation 等关键运行点。
+- Rust host 覆盖：
+  - native in-memory Source / Operation backend。
+  - 无 Python 情况下跑通 Agent start、publish、tick、invoke、stop。
+- Python legacy：
+  - 旧 `mutsukibot`、`mutsukibot_ext`、Python tests、docs、examples、`pyproject.toml`
+    与 `uv.lock` 已移动到 `python/legacy-mutsukibot/`。
 
-### v0.0 不做（Out of Scope）
+## 当前完成门槛
 
-- 任何实现代码（`mutsukibot/` 目录暂不创建）
-- LLM provider 集成
-- 任何具体消息平台 transport plugin（OneBot / QQ / Discord / Telegram 等）
-- 持久化层
-- Web 控制面板
-- 国际化
-- 性能基准
-- Yume / mind-sim 任何插件的实现
+Rust framework 被视为当前目标完成，必须同时满足：
 
-### v0.0 验收标准
+- `cargo test` 在根目录通过。
+- Rust runtime 可在不装载 Python 的情况下由 native host 跑通最小 Agent loop。
+- Source 未注册、operation 缺失、backend generation mismatch、资源 token mismatch
+  都以结构化错误失败。
+- Resource acquire / release 计数正确，lease token 由 runtime/host ID source 生成。
+- Trace 至少能证明 input -> strategy 与 operation 错误链路的父子关系。
+- Rust crates 中不出现 Yume、latent、tensor、gpu、Lilia、Codex、OneBot、MCP 等
+  领域或产品专用执行分支。
+- 根级 README / plans 不再把 Python Core 描述为当前主运行时。
 
-任意新协作者读完 `AGENTS.md + plans/*` 能复述：
+## 下一步
 
-1. MutsukiBot 是什么 / 不是什么
-2. 与 Koishi / NoneBot / AstrBot 的借鉴边界
-3. 与 Yume / mind-sim 的关系
-4. Yume / mind-sim 为何能拆插件，以及拆解的风险与对策
-5. 下一步做什么（v0.1 范围）
+### R5：Native Framework Hardening
 
-文档自身不包含实现代码或 API 形态描述（避免锁死）。
+- 增加 runtime event stream，让 host 能订阅 lifecycle / routing / resource / trace
+  事件，而不是直接读内部结构。
+- 为 `ResourceGate` 增加容量治理和 `capability.exhausted` 门控。
+- 将 trace closure helper 移植到 Rust 测试工具，覆盖重复 span、父链缺失、时间区间。
+- 引入可替换 election policy trait，但 policy 只能排序已通过 lifecycle + accepts
+  过滤的候选。
 
-## 下一版本：v0.1 最小可运行骨架
+### Optional：Legacy Python Adapter
 
-**目标**：第一个可装载、可运行、可被测试的 Agent + 一个回声插件 + 一个 in-memory transport reference plugin。
-
-### v0.1 候选范围
-
-- `mutsukibot/contracts/` 锁定 v0.1 字段（在 [contracts.md](contracts.md) 草案上加版本字段），含通用 by-ref 协议骨架：`RefPayload[T]` / `Handle[T]` / `RefDescriptor` / `BackpressureChannel[T]` / `Replayability` 声明
-- `mutsukibot/core/`：
-  - 注册中心（Agent / Plugin / Service registry）
-  - 调度器（最小 `tick` 循环）
-  - Context 工厂
-  - 服务容器（支持 by-value / by-ref）
-  - 插件 DAG 加载器
-  - `PluginScope` 与 `TransactionScope`，含 `Handle` 自动释放与泄漏检测
-- `mutsukibot/runtime/`：
-  - 决定性时间与 ID 源
-  - 事件循环包装
-  - 同步点检查
-- `mutsukibot/plugins/`：
-  - In-memory transport reference plugin（测试基础设施）
-- `mutsukibot/plugins/`：
-  - 一个 echo 命令插件（同时是 LLM tool，验证「指令即工具」hard rule）
-- `mutsukibot/observability/`：
-  - 结构化 trace 写入器（含因果链）
-- `tests/`：
-  - 基线契约测试套件
-  - echo 插件冒烟测试
-  - 热重载测试（验证 `PluginScope` 完整回收）
-  - by-ref 协议测试：用 stub `Handle` 验证瞬态引用在 ≥2 插件间通过 `RefPayload` 传递、scope 关闭时自动释放、序列化 / 跨域时正确报错
-
-### v0.1 门控
-
-- 一个 Agent 能 spawn → awake → 处理一条 echo → sleep → stop
-- echo 插件能被人类触发，也能作为 LLM tool 被调用
-- 热重载 echo 插件 100 次后无资源泄漏
-- 所有横切公约 lint 规则就位
-- Yume v0.4 的某个 `StimulusEvent → ExpressionDecision` 样本能用 v0.1 契约表达（即使没有 Yume 插件实现，也要能序列化 / 反序列化通过）
-- 通用 by-ref 协议自洽：用 stub 引用模拟一条「插件 A 产生 ref → 插件 B 借用 ref → scope 关闭自动释放」链路，全程核心代码不出现任何领域字样
-
-## 已完成版本：v0.2 通用 Agent 框架改造
-
-**已完成**（Phase A + Phase B + Phase C）—— 把 Adapter 抽象拆解为 Plugin + 注册式 Operation/Source（Option IV，详见
-[contracts.md §14-§18](contracts.md) 与 plan 文档 D1/D9/D9b/D12/D13）：
-
-- 契约层：`Envelope` / `SourceRef` / `Operation` / `Source` / `ScopeRule` / `Dispatcher` 五节协议
-- Hard Rule #13（accepts 显式拒绝）+ #14（I/O 资源外置）
-- Dispatcher 实现：register_operation / register_source / lookup_operation / invoke (inline await) / publish 广播筛选
-- D9b：`provides_operations` / `provides_sources` / `requires_operations` / `requires_sources` 静态声明 + DAG 拓扑 + dispatcher undeclared 运行时校验
-- D12：`@command` 与 Operation 统一，scheduler 命令路径走 dispatcher
-- envelope 二次分发：`Plugin.consumes` ScopeRule + `on_envelope` hook
-- Reference 插件：`InMemoryEndpointPlugin` / OneBot reference plugin；旧 `TodoPlugin` / `QqToTodoPlugin` 后端化样板已从 Core 包裁剪，迁移为外部后端桥接示例。
-- 测试：130 通过（v0.1 74 + Phase A 36 + Phase B 20）
-- 当前 smoke 端到端：`echo` / `cross_agent` / OneBot reference 测试；外部后端协作通过自定义 SourceKind / Envelope / Operation 测试 fixture 覆盖。
-- Phase C 多 Agent 广播：
-  - `mutsukibot/core/agent_registry.py`：进程全局弱引用 `AgentRegistry`
-  - `Agent.__post_init__` 自动注册；`Dispatcher.publish()` 广播给所有 awake 且 `accepts` 匹配的 Agent
-  - `mutsukibot/plugins/cross_agent_smoke.py` 验证 control / audit 双 Agent 同收 IM envelope
-- 配置 schema 自动校验：
-  - `PluginLoader.load_into(..., configs=Mapping[str, object])` 接受原始 mapping / payload
-  - 装载前用 `msgspec.convert(..., type=cls.Config)` 转换并校验
-  - 配置错误 fail-loud 为 `plugin.config_invalid`，外层仍包装成 `PluginLoadFailedError`
-
-**v0.2 收尾完成项**：
-
-- OneBot v11 反向 WebSocket reference plugin：只在 plugin 内处理 OneBot 外部协议，Source/Operation 通过 dispatcher 暴露，server/connection 走 `Handle` + `PluginScope`。
-- hard rule #14 lint：扫描 Plugin 子类字段，拒绝裸持 raw socket / SDK client / websocket server/connection。
-- dispatcher.invoke microbenchmark gate：建立 sub-ms 早期基线。
-- Operation/Source 反注册 contract helper：复用断言 plugin 卸载后 dispatcher 无残留。
-- docs 同步：adapter 文档迁移为 transport plugin / endpoint / dispatcher 文档。
-
-## 下一阶段：v0.3 MVP 多 Agent 与资源协商
-
-**目标**：在 v0.2 Dispatcher / Source / Operation 基础上补齐最小可用的多 Agent
-协作与资源生命周期能力，作为后续 Yume / mind-sim 插件拆解的运行时底座。
-
-### v0.3 MVP 范围
-
-- `dispatch.invoke_in_agent(agent_id, op_id, payload)`：显式跨 Agent 调用，仍保持
-  inline await，不经队列。
-- `AgentRegistry` 增加确定性候选选择：按 priority + agent_id 选择可接收某
-  envelope 的目标 Agent，为后续优先级 / 选举策略留接口。
-- `ResourceHost`：进程内资源托管服务，返回 `Handle[T]`，资源可跨 plugin reload
-  存活，租约归还后再释放物理资源。
-- 最小资源协商：按 `CapabilityName` 声明容量，`acquire/release` 返回可观测租约；
-  超额 fail-loud 为结构化 `capability.exhausted`。
-- `Saga` 扩展：主链失败 + 补偿失败时携带结构化 `Error(code="transaction.compensation_failed")`。
-
-### v0.3 MVP 不做
-
-- 不做分布式 ResourceHost、不做跨进程资源迁移。
-- 不做复杂选举算法；v0.3 只提供确定性排序与显式 winner。
-- 不做类型化 Handle 自动注入的完整实现；保留为 v0.3 后续或 v0.4。
-
-### v0.3 MVP 验收
-
-- 跨 Agent 调用能调用另一个 Agent 已注册 Operation，目标不存在 / op 不存在均结构化失败。
-- ResourceHost 创建的 Handle 可在 plugin scope 卸载后继续由 host 持有，host 关闭时释放。
-- 资源租约超额时返回 `capability.exhausted`，释放后可再次获取。
-- Agent 选举在相同输入下稳定，priority 高者胜出，平手按 agent_id。
-- `pytest`、`ruff`、`pyright`、`pyrefly` 与现有 smoke 均通过。
-
-### v0.3 后续一：资源注入与 trace（已完成）
-
-- `Dependent` 支持 `Annotated[Handle[T], RefArg(...)]` 类型化注入。
-- `RefArg(source=payload)` 校验 payload 中的 `Handle` / `RefPayload` 与声明 kind 一致。
-- `RefArg(source=resource_host)` 通过 `ResourceHost` 服务按 `ref_id` 解析句柄，并写 `resource_host.get_handle` span。
-- `ResourceHost` 增加句柄索引、`ResourceRecord`、可插拔 eviction / keepalive policy。
-- `ResourceHost.acquire_for` / `release_for` 与 `dispatch.invoke` / `invoke_in_agent` 发出 trace span，跨 Agent 调用保持 parent-child 因果链。
-- 阶段报告见 [version-reports/v0.3.1.md](version-reports/v0.3.1.md)。
-
-### v0.3 后续二：trace 回放闭环（已完成）
-
-- `JsonlTraceWriter` / `JsonlTraceReader` 形成同构 JSONL trace 记录链路。
-- `mutsukibot.testing.replay_trace_spans(...)` 作为可复用契约测试 kit，校验重复 span、父链闭包、非法时间区间和确定性排序。
-- 结构化错误码补齐：`trace.record_invalid` / `trace.replay_failed`。
-- 阶段报告见 [version-reports/v0.3.2.md](version-reports/v0.3.2.md)。
-
-### v0.3 后续三：选举策略插件化（已完成）
-
-- `AgentElectionPolicy` 把固定 `priority + agent_id` 选择提升为可替换策略。
-- `AgentRegistry.install_election_policy(...)` 支持插件安装策略并返回 scope disposer。
-- registry 仍固定执行 lifecycle + `Agent.accepts` 过滤，策略只排序候选。
-- 阶段报告见 [version-reports/v0.3.3.md](version-reports/v0.3.3.md)。
-
-### v0.3 后续四：ResourceHost 策略参数治理（已完成）
-
-- `ResourceHostPolicyConfig` / `ResourceRecordSelector` 作为治理配置契约，统一描述
-  eviction / keepalive 的选择条件。
-- `ResourceHost` 接收配置化策略并进行严格校验：拒绝未知字段、空 selector 与
-  显式 config/callable 冲突。
-- 阶段报告见 [version-reports/v0.3.4.md](version-reports/v0.3.4.md)。
-
-### v0.4：Contract test kit 与跨插件因果 trace（已完成）
-
-- `mutsukibot.testing.contract_kit` 提供可复用的契约断言入口：
-  `assert_trace_tree_closed`、`assert_cross_agent_trace_chain`、`assert_dispatcher_clean`。
-- `tests/core/test_dispatcher_cross_agent.py` 直接复用 kit 断言跨 Agent trace 链，
-  形成可迁移的因果闭环样本。
-- 阶段报告见 [version-reports/v0.4.md](version-reports/v0.4.md)。
-
-## 后续版本（仅方向，不锁字段）
-
-| 版本 | 主题 |
-|---|---|
-| v0.3 后续 | ResourceHost 策略参数治理（已完成） |
-| v0.4 | Contract test kit、跨插件因果 trace 完整闭环（已完成） |
-| v0.5 | 第一个 Yume 插件落地（`mutsukibot-yume-architecture` + `mutsukibot-yume-kernel` 文本模式）；门控含「latent / 任意非序列化引用在 ≥2 插件间通过通用 `RefPayload` 协议传递，核心代码与 trace 字段中不出现 `latent` / `tensor` / `gpu` 字样」 |
-| v0.6 | LLM 桥接插件（多 Provider）、`mutsukibot-yume-runtime` 文本推理 |
-| v0.7 | `mutsukibot-yume-evolution` 睡眠插件（事务化） |
-| v0.8 | mind-sim 插件首批落地 |
-| v0.9 | Web 控制面板插件、配置面板自动生成 |
-| v1.0 | 完整 Yume v0.4 行为可在 MutsukiBot 上复现，文档冻结 |
-
-### Rust / Python 分层方向（不锁版本）
-
-Tauri 桌面形态下，后续可把通用 Agent runtime mechanics 逐步下沉到 Rust，并保留
-Python 作为 Mutsuki 插件、Yume、LLM 与外部协议桥宿主。该方向同时要求 Rust
-runtime 可不依赖 Python 插件系统，被 Lilia 式工程 Agent 作为轻量运行底座直接
-复用。详细边界见 [rust-python-runtime-boundary.md](rust-python-runtime-boundary.md)。
-
-每个 v0.x 完成时产出 `plans/version-reports/v0.x.md`：方向、完成项、基线、运行检查、效果检查、下版门槛。
+- 如果后续需要继续承载 Python 插件生态，在 `python/legacy-mutsukibot` 内维护
+  sidecar / adapter，不得让根级 Rust crates 依赖 Python。
+- Python 侧只能通过纯协议与 backend key 和 Rust runtime 交互，不得跨边界传
+  callable、socket、SDK client、真实 `Handle[T]` 或领域对象。
 
 ## 反向论证（红线）
 
-若任一版本出现以下需求，应**修 MutsukiBot 契约**而不是把能力塞回 Yume / mind-sim 内部：
+出现以下情况应修 runtime 契约，而不是把业务语义塞回 core：
 
-- 必须把 latent handle 序列化才能跨插件传
-- 必须让全部消息走异步队列
-- 必须让 sleep 流程通过松耦合事件链表达
-- 必须让插件直接 import 兄弟插件实现模块
-- 必须在 `core` 中内置某个业务概念（LLM / 记忆 / 情感等）
-
-这是判定 MutsukiBot 设计是否还在正轨的指针。
+- Rust runtime 需要理解 latent、KV cache、LLM provider、IM wire shape 或产品工具。
+- 为了跨边界调用而序列化真实 `Handle[T]`。
+- Source 未声明也能路由，或 backend key 过期后自动 fallback 到新 handler。
+- trace 断链但没有结构化错误解释。
+- 为性能绕过 capability、permission、scope、source 或 trace 拦截链。
 
 ## Plan 同步规则
 
 - 代码即事实，plans 是契约 + 决策。
-- 公共契约 / 插件协议 / 生命周期阶段 / 服务接口变化 → 同 PR 内更新 `plans/`。
-- plans 保持精简，过期讨论删除，但接口契约与决策必须保留。
+- 公共契约、生命周期、backend trait、资源治理或目录边界变化必须同 PR 更新 plans。
+- 历史版本报告保留历史上下文；当前事实以本文件和 `engineering.md` 为准。
