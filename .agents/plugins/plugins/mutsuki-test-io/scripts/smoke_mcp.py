@@ -151,9 +151,7 @@ async def main() -> int:
             "start_process",
             {
                 "command": [
-                    "uv",
-                    "run",
-                    "python",
+                    sys.executable,
                     "-u",
                     str(
                         REPO_ROOT
@@ -166,6 +164,8 @@ async def main() -> int:
                     ),
                     "--agent-id",
                     "agent-a",
+                    "--stub-output",
+                    '{"status":"wait_input"}',
                 ],
                 "cwd": "python/mutsuki-runtime-python",
             },

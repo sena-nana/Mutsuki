@@ -41,6 +41,15 @@ class CodexRunner(Protocol):
 
 
 @dataclass
+class _StaticStrategyRunner:
+    output: str
+
+    async def run_decision(self, prompt: str) -> str:
+        _ = prompt
+        return self.output
+
+
+@dataclass
 class SubprocessCodexRunner:
     command: Sequence[str] = ("codex", "exec")
     cwd: str | None = None
@@ -281,8 +290,13 @@ def _str_field(payload: Mapping[str, JsonValue], field_name: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Codex as a Mutsuki StrategyBackend.")
     parser.add_argument("--agent-id", action="append", required=True)
+    parser.add_argument(
+        "--stub-output",
+        help="Use deterministic StrategyResult JSON for smoke tests instead of codex exec.",
+    )
     args = parser.parse_args(argv)
-    host = build_backend_host(args.agent_id)
+    runner = _StaticStrategyRunner(args.stub_output) if args.stub_output is not None else None
+    host = build_backend_host(args.agent_id, runner)
     run_stdio_server(host, sys.stdin, sys.stdout)
     return 0
 

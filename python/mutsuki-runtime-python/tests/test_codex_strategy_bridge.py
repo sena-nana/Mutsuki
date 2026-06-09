@@ -6,9 +6,12 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from mutsuki_runtime_python.backend import BackendInvokeError
 from mutsuki_runtime_python.contracts import (
     ERR_RUNTIME_BACKEND_FAILED,
     Envelope,
+    OperationDescriptor,
+    RuntimeError,
     SourceRef,
     StrategyResultStatus,
     to_json_dict,
@@ -46,6 +49,15 @@ class StubCodexRunner:
         return self.output
 
 
+class FailingCodexRunner:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    async def run_decision(self, prompt: str) -> str:
+        _ = prompt
+        raise self.exc
+
+
 def _envelope() -> Envelope:
     return Envelope(
         id="env-1",
@@ -71,6 +83,92 @@ async def test_codex_strategy_backend_on_input_returns_strategy_result() -> None
     assert runner.prompts
     assert '"agent_id":"agent-a"' in runner.prompts[0]
     assert '"phase":"on_input"' in runner.prompts[0]
+
+
+async def test_codex_strategy_backend_extracts_json_from_surrounding_text() -> None:
+    bridge = _load_bridge()
+    strategy = bridge.CodexStrategyBackend(StubCodexRunner('thinking\n{"status":"wait_input"}\n'))
+
+    result = await strategy.on_input("agent-a", _envelope())
+
+    assert result.status == StrategyResultStatus.WAIT_INPUT
+    assert result.error is None
+
+
+async def test_codex_strategy_backend_empty_output_returns_structured_failure() -> None:
+    bridge = _load_bridge()
+    strategy = bridge.CodexStrategyBackend(StubCodexRunner(""))
+
+    result = await strategy.on_input("agent-a", _envelope())
+
+    assert result.status == StrategyResultStatus.FAILED
+    assert result.error is not None
+    assert result.error.route == "codex.output.decode"
+    assert result.error.evidence["reason"] == "empty_output"
+
+
+async def test_codex_strategy_backend_missing_or_invalid_status_fails_loud() -> None:
+    bridge = _load_bridge()
+    missing_status = bridge.CodexStrategyBackend(StubCodexRunner("{}"))
+    invalid_status = bridge.CodexStrategyBackend(StubCodexRunner('{"status":"completed"}'))
+
+    missing_result = await missing_status.on_input("agent-a", _envelope())
+    invalid_result = await invalid_status.on_input("agent-a", _envelope())
+
+    assert missing_result.status == StrategyResultStatus.FAILED
+    assert missing_result.error is not None
+    assert missing_result.error.route == "codex.output.status"
+    assert invalid_result.status == StrategyResultStatus.FAILED
+    assert invalid_result.error is not None
+    assert invalid_result.error.route == "codex.output.status"
+
+
+async def test_codex_strategy_backend_runner_exception_is_structured_failure() -> None:
+    bridge = _load_bridge()
+    strategy = bridge.CodexStrategyBackend(FailingCodexRunner(ValueError("boom")))
+
+    result = await strategy.on_input("agent-a", _envelope())
+
+    assert result.status == StrategyResultStatus.FAILED
+    assert result.error is not None
+    assert result.error.code == ERR_RUNTIME_BACKEND_FAILED
+    assert result.error.route == "codex.runner"
+    assert result.error.evidence["exception_type"] == "ValueError"
+
+
+async def test_codex_strategy_backend_backend_invoke_error_is_preserved() -> None:
+    bridge = _load_bridge()
+    error = RuntimeError(
+        code=ERR_RUNTIME_BACKEND_FAILED,
+        source="codex-test-runner",
+        route="codex.exec",
+        evidence={"exit_code": 7},
+    )
+    strategy = bridge.CodexStrategyBackend(FailingCodexRunner(BackendInvokeError(error)))
+
+    result = await strategy.on_input("agent-a", _envelope())
+
+    assert result.status == StrategyResultStatus.FAILED
+    assert result.error == error
+
+
+async def test_codex_strategy_backend_next_step_prompt_and_session_cleanup() -> None:
+    bridge = _load_bridge()
+    runner = StubCodexRunner('{"status":"wait_input"}')
+    strategy = bridge.CodexStrategyBackend(runner)
+
+    await strategy.on_awake("agent-a")
+    await strategy.on_input("agent-a", _envelope())
+    await strategy.next_step("agent-a")
+
+    assert len(runner.prompts) == 2
+    assert '"phase":"next_step"' in runner.prompts[1]
+    assert '"history":[{"event":"input"' in runner.prompts[1]
+    assert "agent-a" in strategy.sessions
+
+    await strategy.on_stop("agent-a")
+
+    assert "agent-a" not in strategy.sessions
 
 
 async def test_codex_strategy_backend_invalid_json_returns_structured_failure() -> None:
@@ -140,6 +238,26 @@ async def test_codex_bridge_registers_codex_source_not_operation() -> None:
     assert sources[0].descriptor.source_id == "codex:local"
     assert sources[0].plugin_id == "mutsuki-codex-core"
     assert operations == ()
+
+
+async def test_codex_bridge_registers_multiple_agents_and_prompt_operations() -> None:
+    bridge = _load_bridge()
+    operation = bridge.PythonBackendHost().register_operation(
+        OperationDescriptor(op_id="test.echo", name="echo", plugin_id="test"),
+        lambda payload: payload,
+    )
+    runner = StubCodexRunner('{"status":"wait_input"}')
+    host = bridge.build_backend_host(["agent-a", "agent-b"], runner, (operation,))
+
+    await host.on_awake("agent-a")
+    await host.on_awake("agent-b")
+    await host.next_step("agent-b")
+
+    assert host.awake_count("agent-a") == 1
+    assert host.awake_count("agent-b") == 1
+    assert host.list_sources("agent-a")[0].descriptor.source_id == "codex:local"
+    assert host.list_operations("agent-a") == ()
+    assert '"op_id":"test.echo"' in runner.prompts[0]
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

@@ -300,6 +300,76 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_backend_drives_agent_runtime_lifecycle_with_scripted_responses() {
+        let response = [
+            json!({"id": "req-1", "ok": true, "result": null}).to_string(),
+            json!({"id": "req-2", "ok": true, "result": []}).to_string(),
+            json!({"id": "req-3", "ok": true, "result": [source_snapshot("source:test")]})
+                .to_string(),
+            json!({"id": "req-4", "ok": true, "result": StrategyResult::wait_input()})
+                .to_string(),
+            json!({"id": "req-5", "ok": true, "result": null}).to_string(),
+        ]
+        .join("\n")
+            + "\n";
+        let reader = Cursor::new(response.into_bytes());
+        let writer = Vec::new();
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut runtime = AgentRuntime::new();
+
+        runtime.register_agent(agent()).unwrap();
+        runtime
+            .start_agent("native-agent", &mut backend)
+            .unwrap();
+        assert_eq!(
+            runtime.source_snapshots("native-agent").unwrap()[0]
+                .descriptor
+                .source_id,
+            "source:test"
+        );
+
+        assert_eq!(runtime.publish(envelope()).unwrap(), vec!["native-agent"]);
+        let result = runtime.tick_once("native-agent", &mut backend).unwrap();
+        runtime.stop_agent("native-agent", &mut backend).unwrap();
+
+        assert_eq!(
+            result.status,
+            mutsuki_runtime_contracts::StrategyResultStatus::WaitInput
+        );
+        let events = runtime.events();
+        assert!(events.iter().any(|event| event.name == "agent.awake"));
+        assert!(events.iter().any(|event| event.name == "runtime.publish"));
+        assert!(events.iter().any(|event| event.name == "agent.input"));
+        assert!(events.iter().any(|event| event.name == "agent.stop"));
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+
+        let (_reader, writer) = backend.into_inner();
+        let requests = String::from_utf8(writer)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "on_awake",
+                "list_operations",
+                "list_sources",
+                "on_input",
+                "on_stop",
+            ]
+        );
+        assert_eq!(requests[3]["params"]["envelope"]["source"]["source_id"], "source:test");
+    }
+
+    #[test]
     fn jsonl_backend_operation_status_preserves_explicit_not_found() {
         let response = json!({
             "id": "req-1",
