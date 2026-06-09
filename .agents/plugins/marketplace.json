@@ -1,0 +1,20 @@
+{
+  "name": "nanobot",
+  "interface": {
+    "displayName": "Nanobot"
+  },
+  "plugins": [
+    {
+      "name": "mutsuki-codex-core",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mutsuki-codex-core"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
