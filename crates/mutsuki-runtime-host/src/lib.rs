@@ -3,19 +3,22 @@ mod jsonl;
 mod operation;
 
 pub use host::NativeRuntimeHost;
-pub use jsonl::JsonlCapabilityBackend;
+pub use jsonl::JsonlRuntimeBackend;
 pub use operation::NativeOperation;
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::io::Cursor;
+    use std::io::{BufReader, BufWriter};
+    use std::path::Path;
+    use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
     use mutsuki_runtime_contracts::{
-        AgentParticipation, AgentSpec, Envelope, OperationDescriptor, OperationHandlerKey,
-        OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord, RuntimeError,
-        RuntimeEventKind, ScalarValue, ScopeRuleSpec, SideEffectPolicy, SourceDescriptor,
-        SourceRef, SourceSnapshot, StrategyResult,
+        AgentParticipation, AgentPhase, AgentSpec, Envelope, OperationDescriptor,
+        OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord,
+        RuntimeError, RuntimeEventKind, ScalarValue, ScopeRuleSpec, SideEffectPolicy,
+        SourceDescriptor, SourceRef, SourceSnapshot, StrategyResult, StrategyResultStatus,
     };
     use mutsuki_runtime_core::{
         AgentRuntime, BackendPayload, OperationBackend, ResourceBackend, StrategyBackend,
@@ -38,6 +41,20 @@ mod tests {
         }
     }
 
+    fn codex_agent() -> AgentSpec {
+        AgentSpec {
+            agent_id: "codex-agent".into(),
+            owner: None,
+            priority: 0,
+            participation: AgentParticipation::PrimaryCandidate,
+            accepts: vec![ScopeRuleSpec::BySourceId {
+                source_id: "codex:local".into(),
+            }],
+            strategy_id: "mutsuki-codex-core".into(),
+            side_effect_policy: SideEffectPolicy::ReadOnly,
+        }
+    }
+
     fn envelope() -> Envelope {
         Envelope {
             id: "env-1".into(),
@@ -50,6 +67,107 @@ mod tests {
             payload_schema_id: "test.input".into(),
             capabilities_required: Vec::new(),
             payload: Value::Null,
+        }
+    }
+
+    fn codex_envelope() -> Envelope {
+        Envelope {
+            id: "env-codex-1".into(),
+            timestamp: 1.0,
+            source: SourceRef {
+                source_id: "codex:local".into(),
+                kind: "codex.strategy".into(),
+                metadata: BTreeMap::new(),
+            },
+            payload_schema_id: "codex.input".into(),
+            capabilities_required: Vec::new(),
+            payload: json!({"prompt": "decide"}),
+        }
+    }
+
+    struct PythonJsonlBackendProcess {
+        child: Child,
+    }
+
+    impl PythonJsonlBackendProcess {
+        fn spawn(
+            stub_output: &str,
+        ) -> (
+            Self,
+            JsonlRuntimeBackend<BufReader<ChildStdout>, BufWriter<ChildStdin>>,
+        ) {
+            let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let repo_root = crate_root
+                .parent()
+                .and_then(|path| path.parent())
+                .expect("host crate must live under crates/");
+            let script = repo_root
+                .join(".agents")
+                .join("plugins")
+                .join("plugins")
+                .join("mutsuki-codex-core")
+                .join("scripts")
+                .join("mutsuki_codex_strategy_backend.py");
+            assert!(
+                script.is_file(),
+                "missing Python backend script: {script:?}"
+            );
+            let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+            let mut child = Command::new(python)
+                .arg(&script)
+                .arg("--agent-id")
+                .arg("codex-agent")
+                .arg("--stub-output")
+                .arg(stub_output)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("failed to spawn Python codex strategy backend");
+            let stdout = child
+                .stdout
+                .take()
+                .expect("Python backend stdout must be piped");
+            let stdin = child
+                .stdin
+                .take()
+                .expect("Python backend stdin must be piped");
+            (
+                Self { child },
+                JsonlRuntimeBackend::new(BufReader::new(stdout), BufWriter::new(stdin)),
+            )
+        }
+    }
+
+    fn tick_codex_python_backend(stub_output: &str) -> (AgentRuntime, StrategyResult) {
+        let (_process, mut backend) = PythonJsonlBackendProcess::spawn(stub_output);
+        let mut runtime = AgentRuntime::new();
+
+        runtime.register_agent(codex_agent()).unwrap();
+        runtime.start_agent("codex-agent", &mut backend).unwrap();
+        assert_eq!(runtime.phase("codex-agent"), Some(&AgentPhase::Awake));
+        assert_eq!(
+            runtime.source_snapshots("codex-agent").unwrap()[0]
+                .descriptor
+                .source_id,
+            "codex:local"
+        );
+        assert_eq!(
+            runtime.publish(codex_envelope()).unwrap(),
+            vec!["codex-agent"]
+        );
+
+        let result = runtime.tick_once("codex-agent", &mut backend).unwrap();
+        runtime.stop_agent("codex-agent", &mut backend).unwrap();
+        (runtime, result)
+    }
+
+    impl Drop for PythonJsonlBackendProcess {
+        fn drop(&mut self) {
+            if let Ok(None) = self.child.try_wait() {
+                let _ = self.child.kill();
+            }
+            let _ = self.child.wait();
         }
     }
 
@@ -220,7 +338,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
 
         let result = backend.next_step("agent-a").unwrap();
         assert_eq!(
@@ -249,7 +367,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
 
         let err = backend.on_awake("agent-a").unwrap_err();
         assert_eq!(
@@ -269,7 +387,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         let result = backend
@@ -291,7 +409,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlCapabilityBackend::new(reader, writer);
+        let backend = JsonlRuntimeBackend::new(reader, writer);
 
         let operations = backend.list_operations("agent-a").unwrap();
 
@@ -313,7 +431,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
         let mut runtime = AgentRuntime::new();
 
         runtime.register_agent(agent()).unwrap();
@@ -370,6 +488,55 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_runtime_backend_smoke_drives_codex_python_process_roundtrip_and_failure() {
+        let (runtime, result) = tick_codex_python_backend(r#"{"status":"wait_input"}"#);
+
+        assert_eq!(result.status, StrategyResultStatus::WaitInput);
+        assert!(result.error.is_none());
+        let events = runtime.events();
+        assert!(events.iter().any(|event| event.name == "agent.awake"));
+        assert!(events.iter().any(|event| event.name == "runtime.publish"));
+        assert!(events.iter().any(|event| event.name == "agent.input"));
+        assert!(events.iter().any(|event| event.name == "agent.stop"));
+
+        let failure_output = json!({
+            "status": "failed",
+            "error": {
+                "code": mutsuki_runtime_contracts::ERR_RUNTIME_BACKEND_FAILED,
+                "source": "mutsuki-codex-core",
+                "route": "codex.exec",
+                "lost_capability": null,
+                "recovery": null,
+                "cause": null,
+                "evidence": {"exit_code": 7, "stderr": "boom"},
+            },
+        })
+        .to_string();
+        let (runtime, result) = tick_codex_python_backend(&failure_output);
+
+        assert_eq!(result.status, StrategyResultStatus::Failed);
+        let error = result.error.as_ref().unwrap();
+        assert_eq!(
+            error.code,
+            mutsuki_runtime_contracts::ERR_RUNTIME_BACKEND_FAILED
+        );
+        assert_eq!(error.source, "mutsuki-codex-core");
+        assert_eq!(error.route, "codex.exec");
+        assert_eq!(error.evidence.get("exit_code"), Some(&ScalarValue::Int(7)));
+        assert_eq!(
+            error.evidence.get("stderr"),
+            Some(&ScalarValue::String("boom".into()))
+        );
+
+        let event = runtime
+            .events()
+            .into_iter()
+            .find(|event| event.name == "agent.input.error")
+            .unwrap();
+        assert_eq!(event.error.as_ref().unwrap(), error);
+    }
+
+    #[test]
     fn jsonl_capability_backend_operation_status_preserves_explicit_not_found() {
         let response = json!({
             "id": "req-1",
@@ -380,7 +547,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlCapabilityBackend::new(reader, writer);
+        let backend = JsonlRuntimeBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -404,7 +571,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlCapabilityBackend::new(reader, writer);
+        let backend = JsonlRuntimeBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -417,7 +584,7 @@ mod tests {
     fn jsonl_capability_backend_operation_status_protocol_error_is_unhealthy() {
         let reader = Cursor::new(b"\n".to_vec());
         let writer = Vec::new();
-        let backend = JsonlCapabilityBackend::new(reader, writer);
+        let backend = JsonlRuntimeBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -442,7 +609,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
 
         let registered = backend
             .register_resource(ref_descriptor("ref-1", "domain.resource"), "resource-host")
@@ -482,7 +649,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlCapabilityBackend::new(reader, writer);
+        let backend = JsonlRuntimeBackend::new(reader, writer);
 
         let all = backend.try_list_records(None).unwrap();
         let owner_b = backend.try_list_records(Some("owner-b")).unwrap();
@@ -519,7 +686,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlCapabilityBackend::new(reader, writer);
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
 
         let err = backend
             .acquire_resource("ref-missing", "agent-a")
