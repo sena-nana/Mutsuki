@@ -6,7 +6,7 @@
 
 [AGENTS.md](../../AGENTS.md) 列了 12 条不可违反的规则。每个 PR 评审都对照，违反即拒合入：
 
-1. **Agent 是一等运行时实体**——拥有身份、Context、生命周期、独立调度循环；Agent ≠ 会话 ≠ LLM 调用
+1. **Agent 是一等运行时实体**——拥有身份、生命周期和调度边界；Agent ≠ 会话 ≠ LLM 调用
 2. **核心不内置业务概念**——LLM 调用、记忆、情感、睡眠、消息平台都必须是插件，不在 `core` 中实现
 3. **插件之间禁止直接 import 实现模块**——只能通过契约 + 服务通信
 4. **无副作用热重载**——卸载必须回收所有副作用；未通过 `PluginScope` 注册的副作用即视为违规
@@ -15,7 +15,7 @@
 7. **未申报 capability 即调用视为违规**——Capability 必须在 manifest 中显式列出
 8. **结构化错误，不允许吞异常返默认值**——fallback 必须显式记录原因
 9. **决定性时间与 ID 由 runtime 注入**——插件禁止直接用 `time.time()` / `uuid.uuid4()` / `random` 全局源
-10. **同步点显式化**——禁止隐式阻塞，必须走 runtime scheduler
+10. **同步点显式化**——禁止隐式阻塞；Rust 主链通过 `AgentRuntime` tick / backend 边界推进，Python reference 通过 runtime scheduler 推进
 11. **双协议分离**——外部协议（OneBot / MCP / ChatCompletion 等）只能出现在 transport plugin / 桥接插件中，不得渗透 `core` / `contracts`
 12. **Borrow with Discipline**——借鉴 Koishi / NoneBot / AstrBot 的心智，**不照搬代码或 API 形态**；每个机制必须能解释自己对「Agent 一等公民、解耦、可扩展」中至少一项的贡献
 
@@ -23,14 +23,14 @@
 
 | 规则 | 落地点 |
 |---|---|
-| #1 Agent 一等 | [`Agent`](../../mutsukibot/core/agent.py) dataclass + [`AgentScheduler`](../../mutsukibot/runtime/scheduler.py) |
+| #1 Agent 一等 | Rust [`AgentRuntime`](../../../crates/mutsuki-runtime-core/src/agent_runtime.rs) + Python reference [`Agent`](../../mutsukibot/core/agent.py) / [`AgentScheduler`](../../mutsukibot/runtime/scheduler.py) |
 | #2 核心域中立 | [tests/contracts/test_no_domain_leakage.py](../../tests/contracts/) 强制 core 不出现 latent / vram 等领域字样 |
 | #3 契约通信 | [`ServiceContainer.resolve`](../../mutsukibot/core/container.py) 按契约类型解析；契约类在 [`mutsukibot.contracts`](../../mutsukibot/contracts/) 独立模块 |
 | #4 无副作用热重载 | [`PluginScope.close`](../../mutsukibot/core/scope.py) 反向清理 + 泄漏检测；100 次反复装卸的回归用例 |
 | #5 指令即工具 | [`_build_command_spec`](../../mutsukibot/core/plugin.py) 从一份签名同时合成命令 schema 与 LLM tool schema |
 | #6 必有 schema | [`PluginMeta`](../../mutsukibot/core/plugin.py) 在类定义时校验嵌套 `Config(msgspec.Struct)` 必存 |
 | #7 显式 capability | [`check_capabilities`](../../mutsukibot/core/capability_guard.py) 在调度时 enforce required ⊆ declared |
-| #8 结构化错误 | [`Error`](../../mutsukibot/contracts/error.py) 是 Contract（msgspec.Struct）；scheduler 把 Python 异常分类成 `Error` |
+| #8 结构化错误 | Rust `RuntimeError` / `RuntimeFailure` 是根级错误事实；Python reference [`Error`](../../mutsukibot/contracts/error.py) 是 Contract（msgspec.Struct），reference scheduler 把 Python 异常分类成 `Error` |
 | #9 注入式 runtime | [`Agent.__init__`](../../mutsukibot/core/agent.py) 强制传入 `clock` / `id_gen` / `rng`；插件从 `ctx.*` 拿 |
 | #10 同步点显式 | 当前靠 ruff ASYNC 规则、code review 与插件契约测试约束；运行时拦截仍是后续项 |
 | #11 双协议分离 | 外部协议只出现在 reference transport plugin；core / contracts 没有任何外部协议字样 |
@@ -46,7 +46,7 @@
 
 1. **自然承载内在状态**——agent 持有 services、scope、bus、句柄，卸载 agent = 卸载它的全部资源
 2. **生命周期可观察**——`phase` 让外部代码区分"这个 agent 现在能不能用"
-3. **可主动行动**——agent 自己有一个 tick 循环，可以从外部触发也可以从内部 timer 触发
+3. **可主动行动**——Rust 主链可由 host 驱动 `AgentRuntime.tick_once(...)`，Python reference agent 可由 `AgentScheduler` 驱动 tick 循环；外部触发和内部 timer 都落在显式调度边界上
 
 ### 为什么 core 必须 domain-neutral
 

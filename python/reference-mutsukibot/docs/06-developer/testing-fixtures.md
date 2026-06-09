@@ -74,7 +74,10 @@ await inmem.send_text("echo hello")
 msgs = await inmem.drain_outbox(timeout=0.5)
 ```
 
-## 标准 lifecycle 测试模板
+## Python reference 标准 lifecycle 测试模板
+
+这个模板测试 `python/reference-mutsukibot` 的旧插件链路。当前 Rust 主链的 native
+smoke 覆盖在 `mutsuki-runtime-host`，根级验证入口是 `cargo test`。
 
 ```python
 from mutsukibot.contracts import AgentId, Scopes

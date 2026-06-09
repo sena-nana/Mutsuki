@@ -1,8 +1,12 @@
-# 跑通 Echo
+# 跑通 Echo（Python reference）
+
+本 quickstart 使用 `python/reference-mutsukibot` 的旧 Python reference 插件链路。
+如果目标是验证当前 Rust core smoke，请以根目录 `cargo test` 和
+`mutsuki-runtime-host` 的 native smoke 覆盖为准，而不是 Python `AgentScheduler`。
 
 ## 目标
 
-用 `EchoPlugin` + `InMemoryEndpointPlugin` 走完一遍 v0.2 消息闭环：构造 Agent → 装载 endpoint 与命令插件 → 启动调度器 → publish 一条 IM `Message` → 从 outbox 拿回响应 → 看 trace。
+用 `EchoPlugin` + `InMemoryEndpointPlugin` 走完一遍 Python reference 消息闭环：构造 Agent → 装载 endpoint 与命令插件 → 启动 Python reference `AgentScheduler` → publish 一条 IM `Message` → 从 outbox 拿回响应 → 看 trace。
 
 ## 一行命令
 
@@ -60,7 +64,7 @@ InMemoryEndpointPlugin.send_text("echo hello")
   -> AgentRegistry.iter_accepting(message)
   -> agent.inbox.put(message)
 
-AgentScheduler._loop
+Python reference AgentScheduler._loop
   -> plugin.on_envelope hooks
   -> command text route: "echo" -> "mutsukibot-echo.echo"
   -> Dispatcher.invoke(...)

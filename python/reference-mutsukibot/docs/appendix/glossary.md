@@ -6,11 +6,11 @@ MutsukiBot 文档里高频出现的概念按字母序速查。链接指向最详
 
 **Adapter** —— v0.1 的旧抽象，v0.2 已删除。外部传输现在写成 transport plugin，通过 Source / Operation 接入。详见 [写一个 transport plugin](../06-developer/writing-transport-plugin.md)。
 
-**Agent** —— MutsukiBot 的一等运行时实体。有身份、生命周期、独立调度循环。详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
+**Agent** —— MutsukiBot 的一等运行时实体。有身份、生命周期和调度边界。当前 Rust 主链由 `AgentRuntime` 维护 lifecycle / routing / tick；Python reference 层由 `AgentScheduler` 驱动兼容 tick 循环。详见 [Agent 与生命周期](../04-guide/agent-and-lifecycle.md)。
 
 **AgentContext** —— 单次调用上下文。插件命令以 `ctx` 形式接收，是访问 clock / id_gen / rng / services / scope / bus / trace 的唯一入口。详见 [AgentContext](../04-guide/agent-context.md)。
 
-**AgentScheduler** —— 驱动 Agent tick 循环的对象。从 `inbox` 取消息，路由到命令，把结果发到 `outbox`；Operation 执行 trace 由 dispatcher 统一产出。详见 [API · runtime.scheduler](../07-api/runtime.md#scheduler)。
+**AgentScheduler** —— Python reference 层驱动旧 `Agent` `asyncio` tick 循环的对象。从 `inbox` 取消息，路由到命令，把结果发到 `outbox`；Operation 执行 trace 由 dispatcher 统一产出。当前 Rust core 中没有公开名为 `AgentScheduler` 的类型，对应能力由 `AgentRuntime` 方法与 host tick loop 表达。详见 [API · runtime.scheduler](../07-api/runtime.md#scheduler)。
 
 **Arg** —— 命令参数的 `Annotated` 元数据，承载约束（min/max/regex/choices）+ 兜底描述。详见 [命令与 Schema](../04-guide/command-and-schema.md)。
 

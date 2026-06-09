@@ -70,7 +70,7 @@ class TraceContext:
 主要路径：
 
 1. **命令路由**：`TextCommandRouterPlugin` 解析文本后调用 `Agent.make_context(message=msg)`，再走 `ctx.dispatch.invoke(...)`。
-2. **Envelope consumer**：scheduler 与 Rust/Python backend adapter 共用 `dispatch_envelope_to_consumers(...)`，按 `Plugin.consumes` fan-out 到 `plugin.on_envelope(...)`。
+2. **Envelope consumer**：Python reference scheduler 与 Rust/Python backend adapter 共用 `dispatch_envelope_to_consumers(...)`，按 `Plugin.consumes` fan-out 到 `plugin.on_envelope(...)`。
 3. **生命周期钩子**：`Agent.make_context()` 使用 agent 自有 fallback scope，`message=None`。
 
 这些路径都会**新建** `TraceContext` —— 没有 parent_span_id 即代表外部触发的根 span。

@@ -72,9 +72,9 @@ async def close(self) -> None:
 
 为什么 cleanup 失败不静默：单步失败如果中断，后面的清理就不会跑 —— 等于换了一种泄漏形式。这里选择"全跑完，把所有失败汇总到 evidence 抛一次"。
 
-### Agent 自有 fallback scope
+### Python reference Agent 自有 fallback scope
 
-Agent 还有一个独立 scope（`_agent_scope`）专门给 lifespan 钩子用，由 `AgentScheduler.stop` 调用 `close_agent_scope` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。这条路径目前不参与泄漏统计 —— 但同一套 close 流程，所以行为一致。
+Python reference Agent 还有一个独立 scope（`_agent_scope`）专门给 lifespan 钩子用，由 `AgentScheduler.stop` 调用 `close_agent_scope` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。这条路径目前不参与泄漏统计 —— 但同一套 close 流程，所以行为一致。
 
 ### 100 次热重载冒烟
 
@@ -140,5 +140,5 @@ class LeakyPlugin(Plugin[_Cfg]):
 - **重新装载同一个 Plugin 类时小心 Operation 冲突**。如果上一轮 `scope.close()` 没跑完，dispatcher 里的旧 Operation / Source 可能还没反注册，新实例会在注册时 fail-loud。建议先 `unload_from` 完整跑完再 `load_into`。
 - **`HandleLeakError.evidence` 里 `cleanup_failures_json` 是字符串**——是把 list[dict] `json.dumps` 后塞进去的，因为 `Error.evidence` 只接受标量。读的时候 `json.loads` 还原。
 - **测试里随机出现的"泄漏"通常是 `add_subscription` 漏了**——`bus.subscribe` 返回的 unsub 闭包没登记到 scope，订阅没卸载，下次发布事件时旧实例的 handler 还在跑。手工 grep `bus.subscribe(` 没跟在 `scope.add_subscription` 附近的位置。
-- **不要在 `scope.close` 之后再 await `agent.bus.publish`**——订阅可能已经被反向卸载了。落 trace span 应该发生在 close 之前（如 scheduler 的 finally 块）。
+- **不要在 `scope.close` 之后再 await `agent.bus.publish`**——订阅可能已经被反向卸载了。落 trace span 应该发生在 close 之前（如 Python reference scheduler 的 finally 块）。
 - **`PluginRegistry` 是类注册表，不是实例表**。卸载实例不会触碰 `PluginRegistry`；卸载只是去掉运行实例，类定义仍可被加载。

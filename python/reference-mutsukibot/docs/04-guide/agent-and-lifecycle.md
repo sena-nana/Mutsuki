@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-`Agent` 是 MutsukiBot 里的**一等运行时实体** —— 不是会话、不是 LLM 调用、不是平台连接，而是带身份的常驻对象。它有自己的 `agent_id`、自己的事件总线、自己的入站 / 出站队列、自己的插件集合，以及一个独立的 tick 调度器（一个 `asyncio.Task`）。
+`Agent` 是 MutsukiBot 里的**一等运行时实体** —— 不是会话、不是 LLM 调用、不是平台连接，而是带身份的常驻对象。当前 Rust 主链由 `AgentRuntime` 持有 lifecycle / routing / inbox tick 事实；本页代码示例描述 Python reference `Agent`，它有自己的 `agent_id`、事件总线、入站 / 出站队列、插件集合，以及由 Python reference `AgentScheduler` 驱动的 `asyncio` tick 循环。
 
 代码：[mutsukibot/core/agent.py](../../mutsukibot/core/agent.py)。
 
@@ -52,11 +52,11 @@ class Agent:
 
 | 阶段 | 含义 | 触发点 |
 |---|---|---|
-| `AWAKE` | 调度器启动，开始接收命令 | `AgentScheduler.start()` |
-| `SLEEP` | 调度器暂停 | `AgentScheduler.stop()` 早段 |
+| `AWAKE` | Python reference 调度器启动，开始接收命令 | `AgentScheduler.start()` |
+| `SLEEP` | Python reference 调度器暂停 | `AgentScheduler.stop()` 早段 |
 | `STOP` | 完全停止，插件已卸载 | `AgentScheduler.stop()` 末段 |
 
-`Agent` 构造后默认处于 `AWAKE`，并会自动登记到 `AgentRegistry`。调度器 `start()` 会再次设置为 `AWAKE` 并触发 `on_awake`；`stop()` 依次触发 `on_sleep` / `on_stop`，并把 phase 落到 `STOP`。
+Python reference `Agent` 构造后默认处于 `AWAKE`，并会自动登记到 `AgentRegistry`。reference 调度器 `start()` 会再次设置为 `AWAKE` 并触发 `on_awake`；`stop()` 依次触发 `on_sleep` / `on_stop`，并把 phase 落到 `STOP`。当前 Rust `AgentRuntime.start_agent(...)` 则以提交语义刷新 Operation / Source registry，成功后进入 `awake`；`stop_agent(...)` 进入 `sleep`、调用 backend `on_stop` 后进入 `stop`。
 
 ### 命令路由：Dispatcher Operation
 
@@ -76,11 +76,11 @@ def attach_plugin(self, plugin: "Plugin", scope: PluginScope) -> None:
         )
 ```
 
-调度器分发文本消息时取首词，通过 `agent.dispatch.lookup_operation(...)` 找到 op_id，再用 `agent.dispatch.invoke(...)` inline await 执行。这样人类命令、跨 plugin RPC、外部工具调用共享同一条 Operation 路径。
+Python reference 调度器分发文本消息时取首词，通过 `agent.dispatch.lookup_operation(...)` 找到 op_id，再用 `agent.dispatch.invoke(...)` inline await 执行。这样人类命令、跨 plugin RPC、外部工具调用共享同一条 Operation 路径。当前 Rust core 的对应路径是 `AgentRuntime.invoke_operation(...)` 通过 `OperationHandlerKey` 间接调用 host/backend，不保存真实 handler。
 
 ### 多 Agent 广播与目标选择：AgentRegistry
 
-`Agent.__post_init__` 会把自身登记到进程内 `AgentRegistry`。`Dispatcher.publish(envelope)` 校验 source 已注册后，不再只投给当前 Agent，而是枚举所有 `phase == AWAKE` 且 `accepts` 命中的 Agent，并把同一 envelope 投进它们的 inbox。
+Python reference `Agent.__post_init__` 会把自身登记到进程内 `AgentRegistry`。`Dispatcher.publish(envelope)` 校验 source 已注册后，不再只投给当前 Agent，而是枚举所有 `phase == AWAKE` 且 `accepts` 命中的 Agent，并把同一 envelope 投进它们的 inbox。当前 Rust 主链的同类事实由 `AgentRuntime.publish(...)` 和 `select_accepting(...)` 维护。
 
 这让 control Agent、audit Agent、观察型 Agent 能在同一进程内同时接收一条 transport envelope。可运行验收入口见 [cross_agent_smoke.py](../../mutsukibot/plugins/cross_agent_smoke.py)。
 
@@ -98,7 +98,7 @@ if self._agent_scope is None:
 scope = self._agent_scope
 ```
 
-为什么这么做：早期版本里，没有命令上下文时（如 `lifespan.fire`）我们直接借用第一个加载插件的 scope —— 结果那个插件被卸载时把 agent 的 lifespan 钩子上下文也带走了。现在 fallback scope 与任何插件解耦，由 `AgentScheduler.stop()` 显式 `await self.agent.close_agent_scope()` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。
+为什么这么做：早期版本里，没有命令上下文时（如 `lifespan.fire`）我们直接借用第一个加载插件的 scope —— 结果那个插件被卸载时把 agent 的 lifespan 钩子上下文也带走了。现在 fallback scope 与任何插件解耦，由 Python reference `AgentScheduler.stop()` 显式 `await self.agent.close_agent_scope()` 关闭（[scheduler.py:65](../../mutsukibot/runtime/scheduler.py#L65)）。
 
 命令路由路径先由 `Agent.make_context()` 创建 agent fallback scope；真正执行时 `Dispatcher.invoke()` 会依据 Operation 注册时绑定的 `PluginScope` 进行权限 / 能力检查和调用。
 
@@ -124,7 +124,7 @@ agent = Agent(
 接下来通常的流程：
 
 1. `await PluginLoader().load_into(agent, [...])` 装载插件
-2. `await AgentScheduler(agent).start()` 启动 tick 循环
+2. `await AgentScheduler(agent).start()` 启动 Python reference tick 循环
 3. 通过 transport reference plugin 发布 envelope，从 `agent.outbox` 取响应
 4. `await scheduler.stop()` + `await loader.unload_from(agent)` 收尾
 
@@ -135,5 +135,5 @@ agent = Agent(
 - **不要绕开注入直接 `time.time()` / `uuid.uuid4()` / `random.random()`**。这是 hard rule #9，违反会让 `ManualClock` + `DeterministicIdGen` 的可重放测试失效。所有运行时来源都从 `AgentContext` 拿（详见 [AgentContext](agent-context.md)）。
 - **不要直接复用 `agent.bus.subscribe(...)` 的返回值**。一定要把它登记到当前 scope（命令里是 `ctx.scope.add_subscription(unsub)`），否则插件卸载后订阅还在，会被 `HandleLeakError` 拒绝（详见 [PluginScope](plugin-scope.md)）。
 - **不要忘记 `accepts`**。空 tuple 会显式拒绝所有 envelope，这是 hard rule #13；只需要 Operation invoke 的工具型 Agent 可以保持空 accepts。
-- **`agent.phase` 由调度器维护，不要手动写**。Lifespan 钩子里读 phase 是安全的；写 phase 是 bug。
-- **一个 Agent 只能由一个 `AgentScheduler` 驱动**。当前实现没做互斥 —— 由调用方约定。
+- **Python reference `agent.phase` 由调度器维护，不要手动写**。Lifespan 钩子里读 phase 是安全的；写 phase 是 bug。Rust 主链中 phase 由 `AgentRuntime` 维护。
+- **一个 Python reference Agent 只能由一个 `AgentScheduler` 驱动**。当前实现没做互斥 —— 由调用方约定。

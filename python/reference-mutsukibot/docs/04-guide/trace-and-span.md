@@ -37,13 +37,13 @@ class TraceContext:
 
 | 字段 | 含义 | 谁分配 |
 |---|---|---|
-| `trace_id` | 整个外部触发链路的标识 | 链路最外层（adapter / scheduler）一次性分配，传递不变 |
+| `trace_id` | 整个外部触发链路的标识 | 链路最外层（adapter / Python reference scheduler）一次性分配，传递不变 |
 | `span_id` | 当前这一跳的标识 | 每一跳新建 |
 | `parent_span_id` | 调用方的 span_id | 调用方传入；外部触发的根 span 为 None |
 
-### Scheduler / Dispatcher emit span 的时机
+### Python reference Scheduler / Dispatcher emit span 的时机
 
-[scheduler.py](../../mutsukibot/runtime/scheduler.py) 负责把 IM 文本解析成 Operation payload，并调用 dispatcher：
+[scheduler.py](../../mutsukibot/runtime/scheduler.py) 是 Python reference 层的兼容调度器，负责把 IM 文本解析成 Operation payload，并调用 dispatcher：
 
 ```python
 ctx = self.agent.make_context(message=msg)
@@ -56,9 +56,9 @@ except OperationInvokeError as exc:
 
 要点：
 
-- **Operation 执行事实只由 dispatcher span 表达**。人类命令、跨 plugin RPC 和外部工具调用共享 `dispatch.invoke` span，避免 scheduler 再造一份 `plugin.<id>.<command>` 重复事实。
-- **普通消息未匹配命令时**，scheduler 会发 `agent.scheduler.unmatched` span，且不写 outbox。
-- **插件 envelope consumer** 由 scheduler 分发，但 span 通过 `core.trace.trace_span(...)` 统一创建，名称为 `plugin.<id>.on_envelope`。
+- **Operation 执行事实只由 dispatcher span 表达**。人类命令、跨 plugin RPC 和外部工具调用共享 `dispatch.invoke` span，避免 Python reference scheduler 再造一份 `plugin.<id>.<command>` 重复事实。
+- **普通消息未匹配命令时**，Python reference scheduler 会发 `agent.scheduler.unmatched` span，且不写 outbox。
+- **插件 envelope consumer** 由 Python reference scheduler 分发，但 span 通过 `core.trace.trace_span(...)` 统一创建，名称为 `plugin.<id>.on_envelope`。
 - **start / end 来自 `agent.clock.now()`**——意味着 ManualClock 测试里 span 的时间也是确定的。
 
 ### Dispatcher / ResourceHost span
@@ -107,7 +107,7 @@ class Event(Contract):
     parent_span_id: SpanId | None = None
 ```
 
-—— 它把 trace 三段揉进了通用事件里。v0.1 的 scheduler 只 publish `TraceSpan`（不是 `Event`），但 `Event` 的形状已经预留：插件之间发布业务事件时可用它，让 trace 写入器一并处理。
+—— 它把 trace 三段揉进了通用事件里。旧 v0.1 Python reference scheduler 只 publish `TraceSpan`（不是 `Event`），但 `Event` 的形状已经预留：插件之间发布业务事件时可用它，让 trace 写入器一并处理。
 
 ### JsonlTraceWriter / Reader
 
@@ -210,7 +210,7 @@ frames = assert_trace_tree_closed(spans)
 
 ## 常见陷阱
 
-- **不要复用 trace_id**。同一外部触发整链共享一个 trace_id；新触发要新分配（scheduler 自动做）。手工嵌套调用记得**继承** trace_id，不是新建。
+- **不要复用 trace_id**。同一外部触发整链共享一个 trace_id；新触发要新分配（Python reference scheduler 自动做）。手工嵌套调用记得**继承** trace_id，不是新建。
 - **start / end 用 `clock.now()`，不要用 `clock.monotonic()`**。span 字段是墙钟时间，给观察者做绝对时间排序与跨进程关联。
 - **`attributes` 只接受标量**——结构化字段塞 `json.dumps(...)`。
 - **`parent_span_id` 是 None 不一定是 bug**——根 span 就是 None。需要强制闭合父链时，用 `assert_trace_tree_closed(...)` 或 `replay_trace_spans(..., require_known_parents=True)`。

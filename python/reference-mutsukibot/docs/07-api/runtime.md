@@ -1,6 +1,9 @@
-# API · `mutsukibot.runtime`
+# API · `mutsukibot.runtime`（Python reference）
 
-注入到 `AgentContext` 的运行时来源：时钟、ID 生成器、RNG、调度器。
+本页描述 `python/reference-mutsukibot` 中旧 Python reference runtime 的 API：
+注入到 `AgentContext` 的运行时来源、兼容调度器和 Python backend 边界。当前根级
+事实源是 Rust workspace；Rust core 中没有公开名为 `AgentScheduler` 的类型，
+调度 / 路由语义由 `AgentRuntime` 方法与 host tick loop 组合表达。
 
 来源：[mutsukibot/runtime/__init__.py](../../mutsukibot/runtime/__init__.py)。
 
@@ -11,7 +14,7 @@
 | [`clock`](#clock) | `Clock` / `SystemClock` / `ManualClock` / `ManualClockWaiterOverflow` |
 | [`idgen`](#idgen) | `IdGen` / `NanoIdGen` / `DeterministicIdGen` |
 | [`rng`](#rng) | `RNG` / `SeededRng` |
-| [`scheduler`](#scheduler) | `AgentScheduler` |
+| [`scheduler`](#scheduler) | Python reference `AgentScheduler` |
 | [`backend`](#backend) | `StrategyBackend` / `OperationBackend` / `ResourceBackend` / `PythonAgentBackend` |
 
 详见 [确定性运行时](../05-advanced/deterministic-runtime.md) · [写自定义运行时](../06-developer/writing-runtime.md)。
@@ -83,6 +86,9 @@ class SeededRng:
 
 [scheduler.py](../../mutsukibot/runtime/scheduler.py)
 
+这是 Python reference 层的兼容 `AgentScheduler`，用于驱动旧 Python `Agent` 的
+`asyncio` tick 循环。不要把它理解成当前根级 Rust runtime 的主调度器。
+
 ```python
 class AgentScheduler:
     def __init__(self, agent: Agent)
@@ -91,13 +97,26 @@ class AgentScheduler:
     # 内部：_loop / _handle_message / _emit_result / _emit_error
 ```
 
-行为：
+Python reference 行为：
 
 - `start()` —— 先进入非路由准备态，fire `on_awake` 钩子；成功后提交
   `phase=AWAKE` 并起 `_loop` task，失败时保持非路由状态
 - `stop()` —— 投递 stop sentinel，优雅等待当前消息处理；超时后才 cancel task，随后 fire `on_sleep` → `phase=STOP` → fire `on_stop`，关 agent fallback scope
 - `_loop` —— 直接 `await agent.inbox.get()`；stop sentinel 负责唤醒退出
 - `_handle_message`：parse → `dispatch.lookup_operation` → `dispatch.invoke` → outbox；Operation 执行 span 由 dispatcher 统一产出
+
+Rust 对应能力：
+
+- `AgentRuntime.register_agent(...)` 创建 `spawn` 状态 Agent。
+- `AgentRuntime.start_agent(...)` 以提交语义执行 `on_awake`、刷新 Operation / Source registry，成功后进入 `awake`。
+- `AgentRuntime.publish(...)` 校验已注册 Source，并投递给 `awake + accepts` 命中的 Agent。
+- `AgentRuntime.select_accepting(...)` 在已注册 Source 前提下选择 `primary_candidate` winner。
+- `AgentRuntime.tick_once(...)` 从 inbox 取 envelope 或执行 `next_step`，记录 input / strategy trace，并发布 strategy emitted envelopes。
+- `AgentRuntime.invoke_operation(...)` 通过 `OperationHandlerKey` 间接调用 backend，不保存真实 handler。
+- `AgentRuntime.stop_agent(...)` 进入 `sleep`，调用 backend `on_stop` 后进入 `stop`。
+
+`mutsuki-runtime-host` 提供 native in-memory host helper，可在不依赖 Python 的情况下
+注册 Source / Operation 并跑通最小 Agent loop；根级验证入口是 `cargo test`。
 
 异常分类：`HandleLeakError` → `HANDLE_LEAK`；`ServiceNotFoundError` → `SERVICE_NOT_FOUND`；`KeyError` → `COMMAND_INVALID_ARGS`；其他 → `COMMAND_EXECUTION_FAILED`。通过 dispatcher 调用的命令体异常会先被 dispatcher 包装为 `OPERATION_HANDLER_RAISED`。
 

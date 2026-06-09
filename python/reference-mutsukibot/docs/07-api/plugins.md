@@ -1,6 +1,7 @@
-# API · `mutsukibot.plugins`
+# API · `mutsukibot.plugins`（Python reference）
 
-仓库内置参考插件。
+`python/reference-mutsukibot` 内置参考插件。当前 Rust 主链不依赖这些 Python 插件；
+它们用于迁移、对照和 Python reference smoke。
 
 ## 模块地图
 
@@ -64,7 +65,7 @@ if __name__ == "__main__":
 uv run python -m mutsukibot.plugins.echo.smoke
 ```
 
-完整流程：构造 Agent + JsonlTraceWriter + 装载 EchoPlugin + 启动 scheduler + 投 "echo hello" + 收响应 + 卸载。trace 落到 `<gettempdir()>/mutsukibot-echo-smoke.jsonl`。
+完整流程：构造 Python reference Agent + JsonlTraceWriter + 装载 EchoPlugin + 启动 Python reference scheduler + 投 "echo hello" + 收响应 + 卸载。trace 落到 `<gettempdir()>/mutsukibot-echo-smoke.jsonl`。
 
 `smoke.py` 同时是 v0.1 门控的运行检查（参见 [v0.1 报告](../../plans/version-reports/v0.1.md)）。
 

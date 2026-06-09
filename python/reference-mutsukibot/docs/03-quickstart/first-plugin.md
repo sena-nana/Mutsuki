@@ -1,4 +1,8 @@
-# 第一个插件
+# 第一个插件（Python reference）
+
+本 quickstart 面向 `python/reference-mutsukibot` 的旧 Python reference 插件 API。
+如果目标是验证当前 Rust core smoke，请以根目录 `cargo test` 和
+`mutsuki-runtime-host` 的 native smoke 覆盖为准，而不是 Python `AgentScheduler`。
 
 ## 目标
 
@@ -135,7 +139,8 @@ uv run python -m mutsukibot.plugins.greet.smoke
 -> '你好, WORLD！'
 ```
 
-第二行的 `world` 全大写，因为我们在命令里多传了 `true`，被 scheduler 按 `parameters_schema` 强转成 bool（[scheduler.py:217-218](../../mutsukibot/runtime/scheduler.py#L217-L218)）。
+第二行的 `world` 全大写，因为我们在命令里多传了 `true`，被 Python reference
+`AgentScheduler` 按 `parameters_schema` 强转成 bool（[scheduler.py:217-218](../../mutsukibot/runtime/scheduler.py#L217-L218)）。
 
 ## 步骤三：理解 PluginMeta 在背后做了什么
 
@@ -250,7 +255,7 @@ uv run pytest tests/plugins/test_greet.py
 - 元数据（id / version / capabilities / Config）是 `ClassVar`，元类负责校验
 - 参数约束写在 `Annotated[..., Arg(...)]`，描述写在 docstring
 - 副作用（订阅 / 定时器 / 服务）必须登记到 `self.scope`
-- 命令路径是 `Message → Dispatcher.publish → scheduler → Dispatcher.invoke → solve → outbox + trace`
+- 命令路径是 `Message → Dispatcher.publish → Python reference AgentScheduler → Dispatcher.invoke → solve → outbox + trace`
 
 ## 下一步
 

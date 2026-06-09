@@ -2,9 +2,14 @@
 
 ## 一句话定位
 
-**MutsukiBot 是一个 Agent 中心的 Bot 框架，给 Yume / mind-sim 提供运行核心，同时通过插件组合复刻传统 Bot 框架的能力。**
+**MutsukiBot 当前根级实现是 Rust-first Agent runtime framework；本目录记录旧 Python framework / plugin host 的 reference 形态。**
 
 —— 摘自 [README.md](../../README.md)。
+
+旧 Python framework 已移动到 `python/reference-mutsukibot/`，用于迁移、对照和复用
+插件宿主思路。当前主运行核心见根级 README 与 `plans/`：Rust `AgentRuntime` 负责
+Agent lifecycle、Source / Operation registry、routing、tick、trace 与 resource lease，
+native host 可不依赖 Python 跑通最小 Agent loop。
 
 ## 与传统 Bot 框架的差别
 
@@ -12,7 +17,9 @@
 
 MutsukiBot 的核心叫 "Agent"：
 
-- 有自己的 `agent_id`、生命周期阶段、独立调度循环
+- 有自己的 `agent_id`、生命周期阶段和调度边界；Rust 主链由 `AgentRuntime`
+  维护 lifecycle / routing / tick，Python reference 层由 `AgentScheduler` 驱动
+  `asyncio` tick 循环
 - 拥有自己的 ServiceContainer / Bus / inbox / outbox
 - 是常驻对象，可以 spawn → awake → sleep → stop
 - 持有的资源（订阅 / 句柄 / 显存）通过 `PluginScope` 自动回收
@@ -23,6 +30,23 @@ MutsukiBot 的核心叫 "Agent"：
 
 ## 分层
 
+当前根级 Rust-first 分层：
+
+```text
+Application / Host
+  -> mutsuki-runtime-host (optional native helper)
+  -> mutsuki-runtime-core
+  -> mutsuki-runtime-contracts
+
+python/reference-mutsukibot
+  -> optional reference / migration material only
+
+python/mutsuki-runtime-python
+  -> optional Python backend kit / sidecar foundation only
+```
+
+Python reference 内部仍保留早期 framework 的分层，供迁移和对照：
+
 ```
 plugins → core → contracts
                      ↑
@@ -31,19 +55,20 @@ plugins → core → contracts
 observability ╌╌> （仅 pub/sub，不被任何层依赖）
 ```
 
-来源：[plans/architecture.md](../../plans/architecture.md)。
+当前根级事实来源：[plans/architecture.md](../../plans/architecture.md)。
 
-| 层 | 职责 | v0.1 内容 |
+| Python reference 层 | 职责 | 旧 v0.x 内容 |
 |---|---|---|
 | `contracts/` | 稳定的内部协议（仅类型，无运行时副作用） | Message / Event / Capability / Permission / Error / RefPayload / PluginManifest / ... |
-| `core/` | Agent 运行时、注册表、调度器、容器、scope、loader | Agent / PluginMeta / Bus / PluginScope / ServiceContainer / Saga / ... |
-| `runtime/` | 横向支撑：Clock / IdGen / RNG / Scheduler | SystemClock + ManualClock / NanoIdGen + DeterministicIdGen / SeededRng / AgentScheduler |
+| `core/` | Python reference Agent、注册表、容器、scope、loader | Agent / PluginMeta / Bus / PluginScope / ServiceContainer / Saga / ... |
+| `runtime/` | Python reference 横向支撑：Clock / IdGen / RNG / Scheduler | SystemClock + ManualClock / NanoIdGen + DeterministicIdGen / SeededRng / AgentScheduler |
 | `plugins/` | 一切可装可卸的能力（命令、记忆、LLM、Yume 模块、transport plugin） | EchoPlugin / InMemoryEndpointPlugin |
 | `observability/` | trace / audit / metrics —— 通过 bus 订阅，不被任何层依赖 | JsonlTraceWriter |
 
 ## 当前已交付能力
 
-完整列表在 [plans/version-reports/v0.1.md](../../plans/version-reports/v0.1.md)。简版：
+下面是 Python reference 层的旧 v0.x 能力摘要。完整历史列表在
+[plans/version-reports/v0.1.md](../../plans/version-reports/v0.1.md)。简版：
 
 - **Agent 闭环**：`spawn → awake → 处理 echo → sleep → stop`
 - **PluginMeta + @command**：类定义时校验、收集、构造 manifest，插件作者只写最小代码
@@ -88,6 +113,7 @@ observability ╌╌> （仅 pub/sub，不被任何层依赖）
 
 ## 下一步
 
-- 想跑起来 → [安装](../02-installation/installation.md) → [跑通 Echo](../03-quickstart/run-echo.md)
+- 想跑 Rust 主链 → 根目录 `cargo test`
+- 想跑 Python reference → [安装](../02-installation/installation.md) → [跑通 Echo](../03-quickstart/run-echo.md)
 - 想理解为什么这么设计 → [设计哲学](design-philosophy.md)
 - 已经熟悉 NoneBot，想知道差别 → [与 NoneBot 的对比](comparison-with-nonebot.md)
