@@ -39,6 +39,10 @@
 - Python reference：
   - 旧 `mutsukibot`、`mutsukibot_ext`、Python tests、docs、examples、`pyproject.toml`
     与 `uv.lock` 已移动到 `python/reference-mutsukibot/`。
+- Python backend kit：
+  - `python/mutsuki-runtime-python/` 提供 Rust contracts 的 Python wire-shape 镜像、
+    进程内 backend host、descriptor-only resource backend 和测试夹具。
+  - 该包不依赖旧 `python/reference-mutsukibot/`，也不定义第二套 Python runtime。
 
 ## 当前完成门槛
 
@@ -65,12 +69,12 @@ Rust framework 被视为当前目标完成，必须同时满足：
 - 引入可替换 election policy trait，但 policy 只能排序已通过 lifecycle + accepts
   过滤的候选。
 
-### Optional：Python Reference Adapter
+### Python Backend Kit Hardening
 
-- 如果后续需要继续承载 Python 插件生态，在 `python/reference-mutsukibot` 内维护
-  sidecar / adapter，不得让根级 Rust crates 依赖 Python。
-- Python 侧只能通过纯协议与 backend key 和 Rust runtime 交互，不得跨边界传
-  callable、socket、SDK client、真实 `Handle[T]` 或领域对象。
+- 为 `python/mutsuki-runtime-python` 增加显式进程 / RPC 边界前，保持进程内 backend
+  与 Rust trait 语义一致。
+- Python 侧只能通过纯协议、backend key、descriptor 和 lease token 与 Rust runtime
+  交互，不得跨边界传 callable、socket、SDK client、真实 `Handle[T]` 或领域对象。
 
 ## 反向论证（红线）
 

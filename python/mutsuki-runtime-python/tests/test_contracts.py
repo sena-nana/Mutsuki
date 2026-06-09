@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+from mutsuki_runtime_python.contracts import (
+    AgentParticipation,
+    AgentSpec,
+    Envelope,
+    OperationDescriptor,
+    OperationHandlerKey,
+    OperationSnapshot,
+    OperationStatus,
+    ScopeRuleSpec,
+    SideEffectPolicy,
+    SourceDescriptor,
+    SourceRef,
+    SourceSnapshot,
+    SpanStatus,
+    StrategyResult,
+    StrategyResultStatus,
+    TraceSpan,
+    from_json_dict,
+    to_json_dict,
+)
+from mutsuki_runtime_python.testing import assert_json_roundtrip
+
+
+def _envelope() -> Envelope:
+    return Envelope(
+        id="env-1",
+        timestamp=1.0,
+        source=SourceRef(
+            source_id="source:test",
+            kind="test",
+            metadata={"stream": "main", "partition": 1, "trusted": True},
+        ),
+        payload_schema_id="test.input.created",
+        capabilities_required=("read", "write"),
+        payload={"value": "ok"},
+    )
+
+
+def test_operation_descriptor_matches_rust_wire_shape() -> None:
+    descriptor = OperationDescriptor(
+        op_id="echo.echo",
+        name="echo",
+        description="Echo input",
+        plugin_id="echo",
+        func_qualname="EchoPlugin.echo",
+        parameters_schema={"type": "object"},
+        return_schema={"type": "string"},
+        perms_rule_id="public",
+        requires_capabilities=("send_message",),
+        is_tool=True,
+    )
+
+    assert to_json_dict(descriptor) == {
+        "op_id": "echo.echo",
+        "name": "echo",
+        "description": "Echo input",
+        "plugin_id": "echo",
+        "func_qualname": "EchoPlugin.echo",
+        "parameters_schema": {"type": "object"},
+        "return_schema": {"type": "string"},
+        "perms_rule_id": "public",
+        "requires_capabilities": ["send_message"],
+        "is_tool": True,
+    }
+    assert_json_roundtrip(OperationDescriptor, descriptor)
+
+
+def test_agent_spec_defaults_match_serde_defaults() -> None:
+    decoded = from_json_dict(AgentSpec, {"agent_id": "agent-a"})
+
+    assert decoded == AgentSpec(
+        agent_id="agent-a",
+        owner=None,
+        priority=0,
+        participation=AgentParticipation.PRIMARY_CANDIDATE,
+        accepts=(),
+        strategy_id="",
+        side_effect_policy=SideEffectPolicy.READ_ONLY,
+    )
+
+
+def test_scope_rule_uses_tagged_rust_shape_and_matches_envelopes() -> None:
+    envelope = _envelope()
+    rule = ScopeRuleSpec.all(
+        (
+            ScopeRuleSpec.by_schema_prefix("test.input."),
+            ScopeRuleSpec.any(
+                (
+                    ScopeRuleSpec.by_schema("missing"),
+                    ScopeRuleSpec.by_source_id("source:test"),
+                )
+            ),
+            ScopeRuleSpec.by_source_kind("test"),
+            ScopeRuleSpec.by_capability("write"),
+            ScopeRuleSpec.by_source_field("stream", "main"),
+        )
+    )
+
+    assert rule.matches(envelope)
+    assert ScopeRuleSpec.never().matches(envelope) is False
+    assert ScopeRuleSpec.always().matches(envelope)
+    assert ScopeRuleSpec.by_source_field("partition", 1).matches(envelope)
+    assert ScopeRuleSpec.by_capability("missing").matches(envelope) is False
+    assert to_json_dict(rule) == {
+        "type": "all",
+        "parts": [
+            {"type": "by_schema_prefix", "prefix": "test.input."},
+            {
+                "type": "any",
+                "parts": [
+                    {"type": "by_schema", "schema_id": "missing"},
+                    {"type": "by_source_id", "source_id": "source:test"},
+                ],
+            },
+            {"type": "by_source_kind", "kind": "test"},
+            {"type": "by_capability", "capability": "write"},
+            {"type": "by_source_field", "field": "stream", "value": "main"},
+        ],
+    }
+    assert_json_roundtrip(ScopeRuleSpec, rule)
+
+
+def test_nested_contract_roundtrips() -> None:
+    descriptor = OperationDescriptor(op_id="plugin.echo", name="echo", plugin_id="plugin")
+    snapshot = OperationSnapshot(
+        descriptor=descriptor,
+        status=OperationStatus.ACTIVE,
+        key=OperationHandlerKey(
+            plugin_id="plugin",
+            plugin_generation=0,
+            op_id="plugin.echo",
+            handler_id="plugin:plugin.echo:0",
+        ),
+    )
+    source = SourceSnapshot(
+        descriptor=SourceDescriptor(source_id="source:test", kind="test"),
+        plugin_id="plugin",
+        plugin_generation=0,
+    )
+    result = StrategyResult(
+        status=StrategyResultStatus.CONTINUE,
+        decision={"next": "wait"},
+        emitted=(_envelope(),),
+    )
+    trace = TraceSpan(
+        trace_id="trace-1",
+        span_id="span-1",
+        parent_span_id=None,
+        name="agent.input",
+        start=1.0,
+        end=2.0,
+        attributes={"agent_id": "agent-a"},
+        status=SpanStatus.OK,
+    )
+
+    assert_json_roundtrip(OperationSnapshot, snapshot)
+    assert_json_roundtrip(SourceSnapshot, source)
+    assert_json_roundtrip(StrategyResult, result)
+    assert_json_roundtrip(TraceSpan, trace)

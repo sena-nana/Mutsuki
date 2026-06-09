@@ -7,6 +7,8 @@
 
 - 根级协议对象由 `crates/mutsuki-runtime-contracts` 定义，使用 serde
   serialize / deserialize。
+- `python/mutsuki-runtime-python` 镜像这些协议对象的 Python wire shape，但 Rust
+  contracts 仍是事实源。
 - 协议对象必须是纯数据，不包含 callable、socket、SDK client、真实 handle 或领域对象。
 - Rust core 只解释通用 runtime 字段，不解释领域 payload、resource attributes 或外部 wire shape。
 - 失败使用 `RuntimeError` + `RuntimeFailure`，错误码必须稳定可断言。
@@ -122,6 +124,8 @@ ResourceBackend:
 - `crates/mutsuki-runtime-contracts`：本文件的纯协议结构。
 - `crates/mutsuki-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
 - `crates/mutsuki-runtime-host`：native in-memory host helper 和无 Python smoke。
+- `python/mutsuki-runtime-python`：Python backend kit，提供 contracts mirror、进程内
+  backend host、resource backend 和测试夹具；不定义 Rust runtime 事实。
 
 ## 11. 禁止事项
 

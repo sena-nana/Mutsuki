@@ -1,0 +1,65 @@
+# Python Backend Kit MVP
+
+本文件记录新版 Python 端的 MVP 边界。根级主链仍是 Rust-first runtime；Python
+端只提供可被 Rust runtime / host 通过纯协议驱动的 backend kit。
+
+## 1. 定位
+
+- 包目录：`python/mutsuki-runtime-python/`
+- 发行名：`mutsuki-runtime-python`
+- 导入名：`mutsuki_runtime_python`
+
+该包不是旧 Python framework 的回迁，也不是第二套 runtime。它只承载：
+
+- Rust contracts 的 Python wire-shape 镜像。
+- 进程内 `StrategyBackend` / `OperationBackend` / `ResourceBackend` 协议与实现。
+- Python-owned operation handler、strategy hook 和 resource lease 的测试夹具。
+
+`python/reference-mutsukibot/` 继续作为旧实现参考与迁移材料存在；新版包不得依赖
+旧 `mutsukibot` core、dispatcher、PluginLoader 或 extension。
+
+## 2. MVP 结构
+
+```text
+python/mutsuki-runtime-python/
+  pyproject.toml
+  src/mutsuki_runtime_python/
+    contracts.py   # Rust serde wire-shape mirror
+    backend.py     # backend protocols and structured error wrapper
+    host.py        # in-process PythonBackendHost
+    resource.py    # descriptor-only resource lease backend
+    testing.py     # deterministic fixtures and smoke helper
+  tests/
+```
+
+MVP 只实现进程内边界。JSONL / stdio / HTTP RPC sidecar 后续再单独设计；当前
+contracts、snapshot 和 backend key 形状必须保持可映射到未来 RPC。
+
+## 3. Contract Rules
+
+- Python contracts 以当前 Rust `mutsuki-runtime-contracts` 为事实源。
+- `ScopeRuleSpec` 使用 Rust 一致的 tagged JSON shape，例如
+  `{"type":"by_schema","schema_id":"test.input"}`。
+- 枚举值使用 `snake_case`，默认字段按 serde 行为补齐。
+- operation snapshot 只能包含 descriptor、status 和 `OperationHandlerKey`；不得序列化
+  Python callable。
+- stale backend key 必须 fail-loud 为 `runtime.backend_generation_mismatch`，不得 fallback
+  到新 handler。
+- resource backend 只保存 `RefDescriptor`、owner、`LeaseToken` 和 lease count；真实对象、
+  finalizer、socket、SDK client、数据库连接等不进入 runtime 边界。
+
+## 4. Verification
+
+Python backend kit 改动需在 `python/mutsuki-runtime-python` 运行：
+
+```powershell
+uv run ruff check src tests
+uv run pyright src tests
+uv run pytest
+```
+
+若同时改动 Rust contracts / core / host，仍需在仓库根目录运行：
+
+```powershell
+cargo test
+```

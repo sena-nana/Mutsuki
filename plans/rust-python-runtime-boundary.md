@@ -11,6 +11,8 @@
   Source registry、routing、trace bookkeeping、`ResourceGate`。
 - `crates/mutsuki-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
   Agent loop。
+- `python/mutsuki-runtime-python`：新版 Python backend kit，镜像 Rust contracts，提供
+  进程内 Python backend host 与 descriptor-only resource backend。
 - `python/reference-mutsukibot`：旧 Python framework、reference extensions、tests、
   docs、examples。
 
@@ -61,7 +63,19 @@ release_resource(token) -> Result<(), RuntimeFailure>
 list_records(owner) -> Vec<ResourceRecord>
 ```
 
-## 4. Python Reference Boundary
+## 4. Python Backend Kit Boundary
+
+`python/mutsuki-runtime-python` 是当前 Python 端 MVP。它必须遵守：
+
+- Rust runtime never imports Python modules.
+- Python contracts mirror Rust serde wire shape; Rust contracts remain the source of truth.
+- Python-owned callable stays inside `PythonBackendHost`; snapshots only expose descriptor,
+  status, and `OperationHandlerKey`.
+- Resource backend only tracks descriptor, owner, lease token, and lease count.
+- Lease token IDs come from an injected ID source, not global time / UUID / random.
+- Stale operation keys fail as `runtime.backend_generation_mismatch`.
+
+## 5. Python Reference Boundary
 
 The Python reference layer may be used to build an optional host/sidecar, but it
 must obey the same backend boundary:
@@ -74,7 +88,7 @@ must obey the same backend boundary:
 - Plugin reload / unload must invalidate old handler generations. Stale keys fail as
   `runtime.backend_generation_mismatch`.
 
-## 5. Current Acceptance
+## 6. Current Acceptance
 
 The Rust-first framework is acceptable only when:
 
@@ -86,10 +100,10 @@ The Rust-first framework is acceptable only when:
 - Trace spans preserve at least local parent-child relationships for Agent input and strategy.
 - Rust crates remain domain-neutral.
 
-## 6. Future Optional Work
+## 7. Future Optional Work
 
-- Add an explicit process/RPC boundary for Python sidecar only if Python reference capability hosting
-  is needed.
+- Add an explicit process/RPC boundary for Python sidecar only after the in-process backend kit
+  contract is stable.
 - Add cancellation/deadline propagation across backend calls.
 - Add Rust trace replay / contract kit parity with the old Python testing helpers.
 - Add resource quota policies and capacity errors.

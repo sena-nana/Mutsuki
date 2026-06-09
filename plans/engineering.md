@@ -9,8 +9,9 @@ framework**。早期 Python 框架实现已经移动到
 - **Rust 2024 + Cargo workspace**：根级主框架。
 - **serde / serde_json**：跨 host 与可持久化 snapshot 的纯协议序列化。
 - **thiserror**：结构化 runtime failure wrapper。
-- **Python 3.13 + uv**：仅用于 `python/reference-mutsukibot/` 的旧实现与参考测试；
-  不再是根级 runtime 依赖。
+- **Python 3.13 + uv**：用于 `python/reference-mutsukibot/` 的旧实现与参考测试，
+  以及 `python/mutsuki-runtime-python/` 的新版 backend kit；二者都不是根级 Rust
+  runtime 依赖。
 
 根级 Rust crates 禁止依赖 Python、PyO3、动态插件系统、外部 IM 协议 SDK、LLM
 provider、Yume / mind-sim / Lilia 产品语义。
@@ -35,6 +36,7 @@ MutsukiBot/
     rust-python-runtime-boundary.md
     version-reports/
   python/
+    mutsuki-runtime-python/    # 新版 Python backend kit：contracts mirror / host / resource / tests
     reference-mutsukibot/       # 旧 Python 框架、扩展、测试、docs、examples 的参考与迁移层
 ```
 
@@ -51,6 +53,9 @@ MutsukiBot/
 - `mutsuki-runtime-host` 提供 native Rust backend / host helper。它可以注册
   Source 与 Operation，驱动 `AgentRuntime` 跑通最小 Agent loop，不依赖
   Python PluginHost。
+- `python/mutsuki-runtime-python` 提供新版 Python backend kit。它镜像 Rust
+  contracts，保存 Python-owned handler，并通过 backend key 暴露 operation/source
+  snapshot；它不拥有 Rust runtime 状态事实。
 
 ## 4. Backend 边界
 
@@ -62,15 +67,16 @@ Runtime 通过 trait 与上层能力宿主通信：
 - `ResourceBackend`：`register_resource` / `acquire_resource` /
   `release_resource` / `list_records`。
 
-Backend 可以是 native Rust host，也可以是后续 Python sidecar adapter。Rust
-runtime 只保存可序列化 snapshot 与 handler key，不保存 callable、socket、SDK
-client、真实 `Handle[T]` 或领域对象。
+Backend 可以是 native Rust host，也可以由 `python/mutsuki-runtime-python` 提供的
+Python backend kit / 后续 sidecar adapter 承载。Rust runtime 只保存可序列化
+snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Handle[T]` 或
+领域对象。
 
 ## 5. 横切公约
 
 - Agent 是一等运行时实体；生命周期状态由 `AgentRuntime` 维护。
 - 核心不内置业务概念；LLM、记忆、情感、睡眠、IM、MCP、ChatCompletion 等只能在
-  host / reference plugin / Python reference 层表达。
+  host / reference plugin / Python backend kit / Python reference 层表达。
 - Operation 是工具、命令和跨能力调用的统一 runtime 概念；Rust 侧只持有
   `OperationSnapshot` 与 `OperationHandlerKey`。
 - Source 必须先注册；未注册 Source 的 envelope publish 必须 fail-loud 为
@@ -89,6 +95,14 @@ client、真实 `Handle[T]` 或领域对象。
 
 ```powershell
 cargo test
+```
+
+改动 Python backend kit 时，从 `python/mutsuki-runtime-python` 目录运行：
+
+```powershell
+uv run ruff check src tests
+uv run pyright src tests
+uv run pytest
 ```
 
 改动 Python reference 层时，从 `python/reference-mutsukibot` 目录运行对应 Python 验证。
