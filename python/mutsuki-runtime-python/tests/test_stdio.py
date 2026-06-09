@@ -152,6 +152,20 @@ async def test_stdio_rejects_unknown_method_and_malformed_request_structured() -
     assert malformed_error["code"] == ERR_RUNTIME_BACKEND_FAILED
 
 
+async def test_stdio_rejects_runtime_control_methods_as_unknown_backend_methods() -> None:
+    server = StdioJsonlBackendServer(_host(), _resource_backend())
+
+    for method in ("runtime.query.events", "runtime.command.publish", "runtime.events.drain"):
+        response = await server.handle_request({"id": method, "method": method, "params": {}})
+
+        assert response["ok"] is False
+        error = _dict_value(response["error"])
+        evidence = _dict_value(error["evidence"])
+        assert error["code"] == ERR_RUNTIME_BACKEND_FAILED
+        assert evidence["reason"] == "unknown_method"
+        assert evidence["method"] == method
+
+
 async def test_stdio_stale_operation_key_returns_generation_mismatch() -> None:
     host = _host()
     stale = host.list_operations("agent-a")[0]

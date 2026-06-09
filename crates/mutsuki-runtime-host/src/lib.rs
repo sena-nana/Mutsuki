@@ -3,6 +3,8 @@ mod jsonl;
 mod operation;
 
 pub use host::NativeRuntimeHost;
+pub use jsonl::JsonlCapabilityBackend;
+#[allow(deprecated)]
 pub use jsonl::JsonlRuntimeBackend;
 pub use operation::NativeOperation;
 
@@ -210,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_decodes_strategy_and_writes_request() {
+    fn jsonl_capability_backend_decodes_strategy_and_writes_request() {
         let response = json!({
             "id": "req-1",
             "ok": true,
@@ -220,7 +222,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
 
         let result = backend.next_step("agent-a").unwrap();
         assert_eq!(
@@ -235,7 +237,13 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_maps_failure_response_to_runtime_failure() {
+    #[allow(deprecated)]
+    fn jsonl_runtime_backend_alias_still_compiles_for_compatibility() {
+        let _backend = JsonlRuntimeBackend::new(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn jsonl_capability_backend_maps_failure_response_to_runtime_failure() {
         let response = json!({
             "id": "req-1",
             "ok": false,
@@ -249,7 +257,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
 
         let err = backend.on_awake("agent-a").unwrap_err();
         assert_eq!(
@@ -259,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_invokes_operation_as_json_payload() {
+    fn jsonl_capability_backend_invokes_operation_as_json_payload() {
         let response = json!({
             "id": "req-1",
             "ok": true,
@@ -269,7 +277,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         let result = backend
@@ -280,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_lists_operation_snapshots() {
+    fn jsonl_capability_backend_lists_operation_snapshots() {
         let snapshot = operation_snapshot("test.echo", OperationStatus::Active);
         let response = json!({
             "id": "req-1",
@@ -291,7 +299,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlRuntimeBackend::new(reader, writer);
+        let backend = JsonlCapabilityBackend::new(reader, writer);
 
         let operations = backend.list_operations("agent-a").unwrap();
 
@@ -300,27 +308,24 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_drives_agent_runtime_lifecycle_with_scripted_responses() {
+    fn jsonl_capability_backend_drives_agent_runtime_lifecycle_with_scripted_responses() {
         let response = [
             json!({"id": "req-1", "ok": true, "result": null}).to_string(),
             json!({"id": "req-2", "ok": true, "result": []}).to_string(),
             json!({"id": "req-3", "ok": true, "result": [source_snapshot("source:test")]})
                 .to_string(),
-            json!({"id": "req-4", "ok": true, "result": StrategyResult::wait_input()})
-                .to_string(),
+            json!({"id": "req-4", "ok": true, "result": StrategyResult::wait_input()}).to_string(),
             json!({"id": "req-5", "ok": true, "result": null}).to_string(),
         ]
         .join("\n")
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
         let mut runtime = AgentRuntime::new();
 
         runtime.register_agent(agent()).unwrap();
-        runtime
-            .start_agent("native-agent", &mut backend)
-            .unwrap();
+        runtime.start_agent("native-agent", &mut backend).unwrap();
         assert_eq!(
             runtime.source_snapshots("native-agent").unwrap()[0]
                 .descriptor
@@ -366,11 +371,14 @@ mod tests {
                 "on_stop",
             ]
         );
-        assert_eq!(requests[3]["params"]["envelope"]["source"]["source_id"], "source:test");
+        assert_eq!(
+            requests[3]["params"]["envelope"]["source"]["source_id"],
+            "source:test"
+        );
     }
 
     #[test]
-    fn jsonl_backend_operation_status_preserves_explicit_not_found() {
+    fn jsonl_capability_backend_operation_status_preserves_explicit_not_found() {
         let response = json!({
             "id": "req-1",
             "ok": true,
@@ -380,7 +388,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlRuntimeBackend::new(reader, writer);
+        let backend = JsonlCapabilityBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -390,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_operation_status_failure_is_unhealthy() {
+    fn jsonl_capability_backend_operation_status_failure_is_unhealthy() {
         let response = json!({
             "id": "req-1",
             "ok": false,
@@ -404,7 +412,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlRuntimeBackend::new(reader, writer);
+        let backend = JsonlCapabilityBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -414,10 +422,10 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_operation_status_protocol_error_is_unhealthy() {
+    fn jsonl_capability_backend_operation_status_protocol_error_is_unhealthy() {
         let reader = Cursor::new(b"\n".to_vec());
         let writer = Vec::new();
-        let backend = JsonlRuntimeBackend::new(reader, writer);
+        let backend = JsonlCapabilityBackend::new(reader, writer);
         let key = operation_key("test.echo");
 
         assert_eq!(
@@ -427,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_dispatches_resource_register_acquire_and_release() {
+    fn jsonl_capability_backend_dispatches_resource_register_acquire_and_release() {
         let token = mutsuki_runtime_contracts::LeaseToken {
             token_id: "lease-1".into(),
             ref_id: "ref-1".into(),
@@ -442,7 +450,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
 
         let registered = backend
             .register_resource(ref_descriptor("ref-1", "domain.resource"), "resource-host")
@@ -468,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_lists_resource_records_with_optional_owner_filter() {
+    fn jsonl_capability_backend_lists_resource_records_with_optional_owner_filter() {
         let all_records = vec![
             resource_record("ref-a", "domain.resource", "owner-a", 0),
             resource_record("ref-b", "domain.resource", "owner-b", 1),
@@ -482,7 +490,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let backend = JsonlRuntimeBackend::new(reader, writer);
+        let backend = JsonlCapabilityBackend::new(reader, writer);
 
         let all = backend.try_list_records(None).unwrap();
         let owner_b = backend.try_list_records(Some("owner-b")).unwrap();
@@ -505,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn jsonl_backend_resource_failure_preserves_backend_error() {
+    fn jsonl_capability_backend_resource_failure_preserves_backend_error() {
         let response = json!({
             "id": "req-1",
             "ok": false,
@@ -519,7 +527,7 @@ mod tests {
             + "\n";
         let reader = Cursor::new(response.into_bytes());
         let writer = Vec::new();
-        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+        let mut backend = JsonlCapabilityBackend::new(reader, writer);
 
         let err = backend
             .acquire_resource("ref-missing", "agent-a")

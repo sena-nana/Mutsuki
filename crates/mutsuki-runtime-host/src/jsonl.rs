@@ -12,9 +12,15 @@ use mutsuki_runtime_core::{
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-pub struct JsonlRuntimeBackend<R, W> {
+pub struct JsonlCapabilityBackend<R, W> {
     inner: RefCell<JsonlTransport<R, W>>,
 }
+
+#[deprecated(
+    since = "0.1.0",
+    note = "use JsonlCapabilityBackend; the JSONL adapter belongs to the capability backend plane"
+)]
+pub type JsonlRuntimeBackend<R, W> = JsonlCapabilityBackend<R, W>;
 
 struct JsonlTransport<R, W> {
     reader: R,
@@ -22,7 +28,7 @@ struct JsonlTransport<R, W> {
     next_request: u64,
 }
 
-impl<R, W> JsonlRuntimeBackend<R, W> {
+impl<R, W> JsonlCapabilityBackend<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
         Self {
             inner: RefCell::new(JsonlTransport {
@@ -39,7 +45,7 @@ impl<R, W> JsonlRuntimeBackend<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> JsonlRuntimeBackend<R, W> {
+impl<R: BufRead, W: Write> JsonlCapabilityBackend<R, W> {
     fn request(&self, method: &str, params: Value) -> RuntimeResult<Value> {
         let mut inner = self.inner.borrow_mut();
         inner.next_request += 1;
@@ -85,7 +91,7 @@ impl<R: BufRead, W: Write> JsonlRuntimeBackend<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
+impl<R: BufRead, W: Write> StrategyBackend for JsonlCapabilityBackend<R, W> {
     fn on_awake(&mut self, agent_id: &str) -> RuntimeResult<()> {
         self.request("on_awake", json!({"agent_id": agent_id}))?;
         Ok(())
@@ -108,7 +114,7 @@ impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> OperationBackend for JsonlRuntimeBackend<R, W> {
+impl<R: BufRead, W: Write> OperationBackend for JsonlCapabilityBackend<R, W> {
     fn list_operations(&self, _agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>> {
         self.request_as("list_operations", json!({"agent_id": _agent_id}))
     }
@@ -139,7 +145,7 @@ impl<R: BufRead, W: Write> OperationBackend for JsonlRuntimeBackend<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> ResourceBackend for JsonlRuntimeBackend<R, W> {
+impl<R: BufRead, W: Write> ResourceBackend for JsonlCapabilityBackend<R, W> {
     fn register_resource(
         &mut self,
         descriptor: RefDescriptor,
@@ -188,7 +194,7 @@ fn backend_failure_with_evidence(
 ) -> RuntimeFailure {
     let mut error = RuntimeError::new(
         mutsuki_runtime_contracts::ERR_RUNTIME_BACKEND_FAILED,
-        "jsonl_runtime_backend",
+        "jsonl_capability_backend",
         route,
     );
     error.evidence.insert(

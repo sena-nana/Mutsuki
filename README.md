@@ -49,7 +49,7 @@ registry facts, resource governance, trace, and events stay in Rust.
 - `python/mutsuki-runtime-python` - optional Python backend kit:
   pure contract mirrors, in-process backend host, descriptor-only resource
   backend, stdio JSONL server, Python plugin/capability host fixtures, and
-  runtime-caller contract mirrors.
+  documented future runtime-caller boundaries.
 
 ## Verification
 
