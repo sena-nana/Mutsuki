@@ -268,6 +268,9 @@ impl AgentRuntime {
                 priority: agent.spec.priority,
             })
             .collect();
+        if candidates.is_empty() {
+            return None;
+        }
         let selected = policy.select(&candidates)?;
         candidates
             .iter()
