@@ -101,7 +101,7 @@ class StdioJsonlBackendServer:
             result = await self._host.invoke(
                 self._str_param(params, "agent_id"),
                 from_json_dict(OperationHandlerKey, self._mapping_param(params, "key")),
-                self._json_param(params, "payload", None),
+                self._json_param(params, "payload"),
             )
             return result
         if method == "operation_status":
@@ -127,9 +127,7 @@ class StdioJsonlBackendServer:
             )
             return None
         if method == "resource.list":
-            owner = params.get("owner")
-            if owner is not None and not isinstance(owner, str):
-                raise TypeError("owner expects str or null")
+            owner = self._nullable_str_param(params, "owner")
             return [to_json_dict(item) for item in self._resource_backend.list_records(owner)]
         raise BackendInvokeError(
             RuntimeError(
@@ -148,7 +146,9 @@ class StdioJsonlBackendServer:
 
     @staticmethod
     def _request_id(request: dict[str, object]) -> str:
-        request_id = request.get("id")
+        if "id" not in request:
+            raise TypeError("id is required")
+        request_id = request["id"]
         if not isinstance(request_id, str):
             raise TypeError("id expects str")
         return request_id
@@ -161,14 +161,18 @@ class StdioJsonlBackendServer:
 
     @staticmethod
     def _method(request: dict[str, object]) -> str:
-        method = request.get("method")
+        if "method" not in request:
+            raise TypeError("method is required")
+        method = request["method"]
         if not isinstance(method, str):
             raise TypeError("method expects str")
         return method
 
     @staticmethod
     def _params(request: dict[str, object]) -> dict[str, object]:
-        params = request.get("params", {})
+        if "params" not in request:
+            raise TypeError("params is required")
+        params = request["params"]
         if not isinstance(params, dict):
             raise TypeError("params expects mapping")
         return params
@@ -188,9 +192,19 @@ class StdioJsonlBackendServer:
         return value
 
     @staticmethod
-    def _json_param(params: dict[str, object], key: str, default: JsonValue = None) -> JsonValue:
-        value = params.get(key, default)
-        return _as_json_value(value)
+    def _nullable_str_param(params: dict[str, object], key: str) -> str | None:
+        if key not in params:
+            raise TypeError(f"{key} is required")
+        value = params[key]
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{key} expects str or null")
+        return value
+
+    @staticmethod
+    def _json_param(params: dict[str, object], key: str) -> JsonValue:
+        if key not in params:
+            raise TypeError(f"{key} is required")
+        return _as_json_value(params[key])
 
     @staticmethod
     def _error_response(request_id: str | None, error: RuntimeError) -> dict[str, JsonValue]:

@@ -10,9 +10,7 @@ pub struct RefDescriptor {
     pub kind: String,
     pub schema_id_target: String,
     pub schema_version_target: String,
-    #[serde(default)]
     pub attributes: BTreeMap<String, ScalarValue>,
-    #[serde(default)]
     pub lineage: Vec<RefId>,
 }
 
@@ -27,6 +25,5 @@ pub struct LeaseToken {
 pub struct ResourceRecord {
     pub descriptor: RefDescriptor,
     pub owner: String,
-    #[serde(default)]
     pub lease_count: u64,
 }

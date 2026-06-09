@@ -10,6 +10,9 @@
 - `python/mutsuki-runtime-python` 镜像这些协议对象的 Python wire shape，但 Rust
   contracts 仍是事实源。
 - 协议对象必须是纯数据，不包含 callable、socket、SDK client、真实 handle 或领域对象。
+- 协议反序列化是严格 wire shape：所有字段必须显式出现；可空字段用 `null`
+  表示，无内容的 list / map / payload 也必须显式传 `[]` / `{}` / `null`，不得通过缺字段
+  触发旧默认值兼容。
 - Rust core 只解释通用 runtime 字段，不解释领域 payload、resource attributes 或外部 wire shape。
 - 失败使用 `RuntimeError` + `RuntimeFailure`，错误码必须稳定可断言。
 
@@ -153,6 +156,8 @@ ResourceBackend:
 - `python/mutsuki-runtime-python` 提供 stdio JSONL 进程边界，复用纯 contracts 与
   backend key。
 - 请求形状：`{"id":"req-1","method":"invoke","params":{...}}`。
+- `id`、`method`、`params` 必须显式存在；`invoke.payload` 与 `resource.list.owner`
+  也必须显式存在，其中 `payload` 与 `owner` 可为 `null`。
 - 成功响应：`{"id":"req-1","ok":true,"result":...}`。
 - 失败响应：`{"id":"req-1","ok":false,"error": RuntimeError}`。
 - 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_operations`、

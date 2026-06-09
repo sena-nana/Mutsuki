@@ -287,8 +287,9 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
     envelope = {
         "id": "env-1",
         "timestamp": 1.0,
-        "source": {"source_id": "codex:local", "kind": "codex.strategy"},
+        "source": {"source_id": "codex:local", "kind": "codex.strategy", "metadata": {}},
         "payload_schema_id": "codex.input",
+        "capabilities_required": [],
         "payload": {"prompt": "hello"},
     }
 

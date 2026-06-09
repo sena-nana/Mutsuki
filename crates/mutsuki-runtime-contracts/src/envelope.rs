@@ -9,7 +9,6 @@ use crate::{EnvelopeId, ScalarValue};
 pub struct SourceRef {
     pub source_id: String,
     pub kind: String,
-    #[serde(default)]
     pub metadata: BTreeMap<String, ScalarValue>,
 }
 
@@ -18,10 +17,7 @@ pub struct Envelope {
     pub id: EnvelopeId,
     pub timestamp: f64,
     pub source: SourceRef,
-    #[serde(default)]
     pub payload_schema_id: String,
-    #[serde(default)]
     pub capabilities_required: Vec<String>,
-    #[serde(default)]
     pub payload: Value,
 }

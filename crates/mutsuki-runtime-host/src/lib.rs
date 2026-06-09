@@ -4,8 +4,6 @@ mod operation;
 
 pub use host::NativeRuntimeHost;
 pub use jsonl::JsonlCapabilityBackend;
-#[allow(deprecated)]
-pub use jsonl::JsonlRuntimeBackend;
 pub use operation::NativeOperation;
 
 #[cfg(test)]
@@ -234,12 +232,6 @@ mod tests {
         let request: serde_json::Value = serde_json::from_slice(&writer).unwrap();
         assert_eq!(request["method"], "next_step");
         assert_eq!(request["params"]["agent_id"], "agent-a");
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn jsonl_runtime_backend_alias_still_compiles_for_compatibility() {
-        let _backend = JsonlRuntimeBackend::new(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
     }
 
     #[test]

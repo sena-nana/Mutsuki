@@ -20,10 +20,7 @@ pub struct RuntimeEvent {
     pub sequence: u64,
     pub kind: RuntimeEventKind,
     pub name: String,
-    #[serde(default)]
     pub agent_id: Option<AgentId>,
-    #[serde(default)]
     pub attributes: BTreeMap<String, ScalarValue>,
-    #[serde(default)]
     pub error: Option<RuntimeError>,
 }

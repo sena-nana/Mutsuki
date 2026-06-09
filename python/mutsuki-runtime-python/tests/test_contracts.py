@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
 from mutsuki_runtime_python.contracts import (
-    AgentParticipation,
     AgentSpec,
     Envelope,
     OperationDescriptor,
@@ -12,7 +13,6 @@ from mutsuki_runtime_python.contracts import (
     RuntimeEvent,
     RuntimeEventKind,
     ScopeRuleSpec,
-    SideEffectPolicy,
     SourceDescriptor,
     SourceRef,
     SourceSnapshot,
@@ -70,18 +70,54 @@ def test_operation_descriptor_matches_rust_wire_shape() -> None:
     assert_json_roundtrip(OperationDescriptor, descriptor)
 
 
-def test_agent_spec_defaults_match_serde_defaults() -> None:
-    decoded = from_json_dict(AgentSpec, {"agent_id": "agent-a"})
+@pytest.mark.parametrize(
+    ("contract_type", "payload"),
+    [
+        (AgentSpec, {"agent_id": "agent-a"}),
+        (
+            Envelope,
+            {
+                "id": "env-1",
+                "timestamp": 1.0,
+                "source": {"source_id": "source:test", "kind": "test", "metadata": {}},
+            },
+        ),
+        (OperationDescriptor, {"op_id": "plugin.echo", "name": "echo"}),
+        (StrategyResult, {"status": "wait_input"}),
+        (TraceSpan, {"trace_id": "trace-1", "span_id": "span-1"}),
+        (RuntimeEvent, {"sequence": 1, "kind": "trace", "name": "trace.span"}),
+    ],
+)
+def test_contract_decoders_reject_missing_fields(
+    contract_type: type[object],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(TypeError):
+        from_json_dict(contract_type, payload)
 
-    assert decoded == AgentSpec(
-        agent_id="agent-a",
-        owner=None,
-        priority=0,
-        participation=AgentParticipation.PRIMARY_CANDIDATE,
-        accepts=(),
-        strategy_id="",
-        side_effect_policy=SideEffectPolicy.READ_ONLY,
-    )
+
+@pytest.mark.parametrize(
+    ("contract_type", "payload"),
+    [
+        (ScopeRuleSpec, {"type": "all"}),
+        (ScopeRuleSpec, {"type": "by_schema"}),
+        (
+            RuntimeError,
+            {
+                "code": "runtime.backend_failed",
+                "source": "test",
+                "route": "test.route",
+                "evidence": {},
+            },
+        ),
+    ],
+)
+def test_contract_decoders_reject_missing_variant_and_nullable_fields(
+    contract_type: type[object],
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(TypeError):
+        from_json_dict(contract_type, payload)
 
 
 def test_scope_rule_uses_tagged_rust_shape_and_matches_envelopes() -> None:

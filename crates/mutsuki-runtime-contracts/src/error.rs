@@ -9,13 +9,9 @@ pub struct RuntimeError {
     pub code: String,
     pub source: String,
     pub route: String,
-    #[serde(default)]
     pub lost_capability: Option<String>,
-    #[serde(default)]
     pub recovery: Option<String>,
-    #[serde(default)]
     pub cause: Option<Box<RuntimeError>>,
-    #[serde(default)]
     pub evidence: BTreeMap<String, ScalarValue>,
 }
 

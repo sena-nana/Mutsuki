@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from io import StringIO
 
 from mutsuki_runtime_python.contracts import (
@@ -29,6 +30,12 @@ def _dict_value(value: object) -> dict[str, object]:
 
 def _resource_ref_id(record: object) -> object:
     return _dict_value(_dict_value(record)["descriptor"])["ref_id"]
+
+
+def _assert_backend_failed(response: Mapping[str, object]) -> None:
+    assert response["ok"] is False
+    error = _dict_value(response["error"])
+    assert error["code"] == ERR_RUNTIME_BACKEND_FAILED
 
 
 def _host() -> PythonBackendHost:
@@ -141,15 +148,35 @@ async def test_stdio_rejects_unknown_method_and_malformed_request_structured() -
 
     unknown = await server.handle_request({"id": "req-1", "method": "missing", "params": {}})
     malformed = await server.handle_request({"id": "req-2", "method": "invoke", "params": []})
+    missing_params = await server.handle_request({"id": "req-3", "method": "next_step"})
 
     assert unknown["ok"] is False
     unknown_error = _dict_value(unknown["error"])
     unknown_evidence = _dict_value(unknown_error["evidence"])
     assert unknown_error["code"] == ERR_RUNTIME_BACKEND_FAILED
     assert unknown_evidence["reason"] == "unknown_method"
-    assert malformed["ok"] is False
-    malformed_error = _dict_value(malformed["error"])
-    assert malformed_error["code"] == ERR_RUNTIME_BACKEND_FAILED
+    _assert_backend_failed(malformed)
+    _assert_backend_failed(missing_params)
+
+
+async def test_stdio_rejects_missing_required_backend_params_structured() -> None:
+    host = _host()
+    snapshot = host.list_operations("agent-a")[0]
+    server = StdioJsonlBackendServer(host, _resource_backend())
+
+    missing_payload = await server.handle_request(
+        {
+            "id": "req-1",
+            "method": "invoke",
+            "params": {"agent_id": "agent-a", "key": to_json_dict(snapshot.key)},
+        }
+    )
+    missing_owner = await server.handle_request(
+        {"id": "req-2", "method": "resource.list", "params": {}}
+    )
+
+    _assert_backend_failed(missing_payload)
+    _assert_backend_failed(missing_owner)
 
 
 async def test_stdio_rejects_runtime_control_methods_as_unknown_backend_methods() -> None:

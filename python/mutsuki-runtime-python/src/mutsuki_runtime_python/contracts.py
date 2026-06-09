@@ -71,33 +71,39 @@ def _as_mapping(data: object, contract: str) -> Mapping[str, object]:
     return data
 
 
-def _as_str(value: object, field_name: str, default: str = "") -> str:
+def _field(data: Mapping[str, object], field_name: str) -> object:
+    if field_name not in data:
+        raise TypeError(f"{field_name} is required")
+    return data[field_name]
+
+
+def _as_str(value: object, field_name: str) -> str:
     if value is None:
-        return default
+        raise TypeError(f"{field_name} expects str")
     if not isinstance(value, str):
         raise TypeError(f"{field_name} expects str")
     return value
 
 
-def _as_int(value: object, field_name: str, default: int = 0) -> int:
+def _as_int(value: object, field_name: str) -> int:
     if value is None:
-        return default
+        raise TypeError(f"{field_name} expects int")
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"{field_name} expects int")
     return value
 
 
-def _as_float(value: object, field_name: str, default: float = 0.0) -> float:
+def _as_float(value: object, field_name: str) -> float:
     if value is None:
-        return default
+        raise TypeError(f"{field_name} expects number")
     if not isinstance(value, int | float) or isinstance(value, bool):
         raise TypeError(f"{field_name} expects number")
     return float(value)
 
 
-def _as_bool(value: object, field_name: str, default: bool = False) -> bool:
+def _as_bool(value: object, field_name: str) -> bool:
     if value is None:
-        return default
+        raise TypeError(f"{field_name} expects bool")
     if not isinstance(value, bool):
         raise TypeError(f"{field_name} expects bool")
     return value
@@ -111,7 +117,7 @@ def _as_scalar(value: object, field_name: str) -> ScalarValue:
 
 def _as_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
     if value is None:
-        return ()
+        raise TypeError(f"{field_name} expects a sequence")
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
         raise TypeError(f"{field_name} expects a sequence")
     return tuple(_as_str(item, field_name) for item in value)
@@ -129,7 +135,7 @@ def _as_json_value(value: object) -> JsonValue:
 
 def _as_json_dict(value: object, field_name: str) -> JsonDict:
     if value is None:
-        return {}
+        raise TypeError(f"{field_name} expects a mapping")
     if not isinstance(value, Mapping):
         raise TypeError(f"{field_name} expects a mapping")
     converted = _as_json_value(value)
@@ -140,7 +146,7 @@ def _as_json_dict(value: object, field_name: str) -> JsonDict:
 
 def _as_scalar_dict(value: object, field_name: str) -> dict[str, ScalarValue]:
     if value is None:
-        return {}
+        raise TypeError(f"{field_name} expects a mapping")
     if not isinstance(value, Mapping):
         raise TypeError(f"{field_name} expects a mapping")
     return {str(key): _as_scalar(item, field_name) for key, item in value.items()}
@@ -242,11 +248,11 @@ class ScopeRuleSpec:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "ScopeRuleSpec")
-        rule_type = _as_str(raw.get("type"), "type")
+        rule_type = _as_str(_field(raw, "type"), "type")
         if rule_type in {"always", "never"}:
             return cls(type=rule_type)
         if rule_type in {"all", "any"}:
-            parts = raw.get("parts", ())
+            parts = _field(raw, "parts")
             if not isinstance(parts, Sequence) or isinstance(parts, str | bytes | bytearray):
                 raise TypeError("parts expects a sequence")
             decoded = tuple(
@@ -254,19 +260,19 @@ class ScopeRuleSpec:
             )
             return cls(type=rule_type, parts=decoded)
         if rule_type == "by_schema":
-            return cls.by_schema(_as_str(raw.get("schema_id"), "schema_id"))
+            return cls.by_schema(_as_str(_field(raw, "schema_id"), "schema_id"))
         if rule_type == "by_schema_prefix":
-            return cls.by_schema_prefix(_as_str(raw.get("prefix"), "prefix"))
+            return cls.by_schema_prefix(_as_str(_field(raw, "prefix"), "prefix"))
         if rule_type == "by_source_id":
-            return cls.by_source_id(_as_str(raw.get("source_id"), "source_id"))
+            return cls.by_source_id(_as_str(_field(raw, "source_id"), "source_id"))
         if rule_type == "by_source_kind":
-            return cls.by_source_kind(_as_str(raw.get("kind"), "kind"))
+            return cls.by_source_kind(_as_str(_field(raw, "kind"), "kind"))
         if rule_type == "by_capability":
-            return cls.by_capability(_as_str(raw.get("capability"), "capability"))
+            return cls.by_capability(_as_str(_field(raw, "capability"), "capability"))
         if rule_type == "by_source_field":
             return cls.by_source_field(
-                _as_str(raw.get("field"), "field"),
-                _as_scalar(raw.get("value"), "value"),
+                _as_str(_field(raw, "field"), "field"),
+                _as_scalar(_field(raw, "value"), "value"),
             )
         raise ValueError(f"unknown scope rule type: {rule_type}")
 
@@ -323,9 +329,9 @@ class SourceRef:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "SourceRef")
         return cls(
-            source_id=_as_str(raw.get("source_id"), "source_id"),
-            kind=_as_str(raw.get("kind"), "kind"),
-            metadata=_as_scalar_dict(raw.get("metadata"), "metadata"),
+            source_id=_as_str(_field(raw, "source_id"), "source_id"),
+            kind=_as_str(_field(raw, "kind"), "kind"),
+            metadata=_as_scalar_dict(_field(raw, "metadata"), "metadata"),
         )
 
 
@@ -341,16 +347,16 @@ class Envelope:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "Envelope")
-        source = raw.get("source")
+        source = _field(raw, "source")
         return cls(
-            id=_as_str(raw.get("id"), "id"),
-            timestamp=_as_float(raw.get("timestamp"), "timestamp"),
+            id=_as_str(_field(raw, "id"), "id"),
+            timestamp=_as_float(_field(raw, "timestamp"), "timestamp"),
             source=SourceRef.from_json_dict(_as_mapping(source, "source")),
-            payload_schema_id=_as_str(raw.get("payload_schema_id"), "payload_schema_id"),
+            payload_schema_id=_as_str(_field(raw, "payload_schema_id"), "payload_schema_id"),
             capabilities_required=_as_str_tuple(
-                raw.get("capabilities_required"), "capabilities_required"
+                _field(raw, "capabilities_required"), "capabilities_required"
             ),
-            payload=_as_json_value(raw.get("payload")),
+            payload=_as_json_value(_field(raw, "payload")),
         )
 
 
@@ -367,26 +373,26 @@ class AgentSpec:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "AgentSpec")
-        raw_accepts = raw.get("accepts", ())
+        raw_accepts = _field(raw, "accepts")
         if not isinstance(raw_accepts, Sequence) or isinstance(
             raw_accepts, str | bytes | bytearray
         ):
             raise TypeError("accepts expects a sequence")
-        owner = raw.get("owner")
+        owner = _field(raw, "owner")
         return cls(
-            agent_id=_as_str(raw.get("agent_id"), "agent_id"),
+            agent_id=_as_str(_field(raw, "agent_id"), "agent_id"),
             owner=None if owner is None else _as_str(owner, "owner"),
-            priority=_as_int(raw.get("priority"), "priority"),
+            priority=_as_int(_field(raw, "priority"), "priority"),
             participation=AgentParticipation(
-                _as_str(raw.get("participation"), "participation", "primary_candidate")
+                _as_str(_field(raw, "participation"), "participation")
             ),
             accepts=tuple(
                 ScopeRuleSpec.from_json_dict(_as_mapping(item, "ScopeRuleSpec"))
                 for item in raw_accepts
             ),
-            strategy_id=_as_str(raw.get("strategy_id"), "strategy_id"),
+            strategy_id=_as_str(_field(raw, "strategy_id"), "strategy_id"),
             side_effect_policy=SideEffectPolicy(
-                _as_str(raw.get("side_effect_policy"), "side_effect_policy", "read_only")
+                _as_str(_field(raw, "side_effect_policy"), "side_effect_policy")
             ),
         )
 
@@ -407,22 +413,22 @@ class OperationDescriptor:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "OperationDescriptor")
-        perms_rule_id = raw.get("perms_rule_id")
+        perms_rule_id = _field(raw, "perms_rule_id")
         return cls(
-            op_id=_as_str(raw.get("op_id"), "op_id"),
-            name=_as_str(raw.get("name"), "name"),
-            description=_as_str(raw.get("description"), "description"),
-            plugin_id=_as_str(raw.get("plugin_id"), "plugin_id"),
-            func_qualname=_as_str(raw.get("func_qualname"), "func_qualname"),
-            parameters_schema=_as_json_dict(raw.get("parameters_schema"), "parameters_schema"),
-            return_schema=_as_json_dict(raw.get("return_schema"), "return_schema"),
+            op_id=_as_str(_field(raw, "op_id"), "op_id"),
+            name=_as_str(_field(raw, "name"), "name"),
+            description=_as_str(_field(raw, "description"), "description"),
+            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
+            func_qualname=_as_str(_field(raw, "func_qualname"), "func_qualname"),
+            parameters_schema=_as_json_dict(_field(raw, "parameters_schema"), "parameters_schema"),
+            return_schema=_as_json_dict(_field(raw, "return_schema"), "return_schema"),
             perms_rule_id=None
             if perms_rule_id is None
             else _as_str(perms_rule_id, "perms_rule_id"),
             requires_capabilities=_as_str_tuple(
-                raw.get("requires_capabilities"), "requires_capabilities"
+                _field(raw, "requires_capabilities"), "requires_capabilities"
             ),
-            is_tool=_as_bool(raw.get("is_tool"), "is_tool", True),
+            is_tool=_as_bool(_field(raw, "is_tool"), "is_tool"),
         )
 
 
@@ -437,10 +443,10 @@ class SourceDescriptor:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "SourceDescriptor")
         return cls(
-            source_id=_as_str(raw.get("source_id"), "source_id"),
-            kind=_as_str(raw.get("kind"), "kind"),
-            capabilities=_as_str_tuple(raw.get("capabilities"), "capabilities"),
-            description=_as_str(raw.get("description"), "description"),
+            source_id=_as_str(_field(raw, "source_id"), "source_id"),
+            kind=_as_str(_field(raw, "kind"), "kind"),
+            capabilities=_as_str_tuple(_field(raw, "capabilities"), "capabilities"),
+            description=_as_str(_field(raw, "description"), "description"),
         )
 
 
@@ -455,10 +461,10 @@ class OperationHandlerKey:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "OperationHandlerKey")
         return cls(
-            plugin_id=_as_str(raw.get("plugin_id"), "plugin_id"),
-            plugin_generation=_as_int(raw.get("plugin_generation"), "plugin_generation"),
-            op_id=_as_str(raw.get("op_id"), "op_id"),
-            handler_id=_as_str(raw.get("handler_id"), "handler_id"),
+            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
+            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
+            op_id=_as_str(_field(raw, "op_id"), "op_id"),
+            handler_id=_as_str(_field(raw, "handler_id"), "handler_id"),
         )
 
 
@@ -473,10 +479,10 @@ class OperationSnapshot:
         raw = _as_mapping(data, "OperationSnapshot")
         return cls(
             descriptor=OperationDescriptor.from_json_dict(
-                _as_mapping(raw.get("descriptor"), "descriptor")
+                _as_mapping(_field(raw, "descriptor"), "descriptor")
             ),
-            status=OperationStatus(_as_str(raw.get("status"), "status")),
-            key=OperationHandlerKey.from_json_dict(_as_mapping(raw.get("key"), "key")),
+            status=OperationStatus(_as_str(_field(raw, "status"), "status")),
+            key=OperationHandlerKey.from_json_dict(_as_mapping(_field(raw, "key"), "key")),
         )
 
 
@@ -491,10 +497,10 @@ class SourceSnapshot:
         raw = _as_mapping(data, "SourceSnapshot")
         return cls(
             descriptor=SourceDescriptor.from_json_dict(
-                _as_mapping(raw.get("descriptor"), "descriptor")
+                _as_mapping(_field(raw, "descriptor"), "descriptor")
             ),
-            plugin_id=_as_str(raw.get("plugin_id"), "plugin_id"),
-            plugin_generation=_as_int(raw.get("plugin_generation"), "plugin_generation"),
+            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
+            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
         )
 
 
@@ -511,21 +517,21 @@ class RuntimeError:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "RuntimeError")
-        cause = raw.get("cause")
+        lost_capability = _field(raw, "lost_capability")
+        recovery = _field(raw, "recovery")
+        cause = _field(raw, "cause")
         return cls(
-            code=_as_str(raw.get("code"), "code"),
-            source=_as_str(raw.get("source"), "source"),
-            route=_as_str(raw.get("route"), "route"),
+            code=_as_str(_field(raw, "code"), "code"),
+            source=_as_str(_field(raw, "source"), "source"),
+            route=_as_str(_field(raw, "route"), "route"),
             lost_capability=None
-            if raw.get("lost_capability") is None
-            else _as_str(raw.get("lost_capability"), "lost_capability"),
-            recovery=None
-            if raw.get("recovery") is None
-            else _as_str(raw.get("recovery"), "recovery"),
+            if lost_capability is None
+            else _as_str(lost_capability, "lost_capability"),
+            recovery=None if recovery is None else _as_str(recovery, "recovery"),
             cause=None
             if cause is None
             else RuntimeError.from_json_dict(_as_mapping(cause, "cause")),
-            evidence=_as_scalar_dict(raw.get("evidence"), "evidence"),
+            evidence=_as_scalar_dict(_field(raw, "evidence"), "evidence"),
         )
 
 
@@ -543,15 +549,15 @@ class StrategyResult:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "StrategyResult")
-        raw_emitted = raw.get("emitted", ())
+        raw_emitted = _field(raw, "emitted")
         if not isinstance(raw_emitted, Sequence) or isinstance(
             raw_emitted, str | bytes | bytearray
         ):
             raise TypeError("emitted expects a sequence")
-        error = raw.get("error")
+        error = _field(raw, "error")
         return cls(
-            status=StrategyResultStatus(_as_str(raw.get("status"), "status")),
-            decision=_as_json_value(raw.get("decision")),
+            status=StrategyResultStatus(_as_str(_field(raw, "status"), "status")),
+            decision=_as_json_value(_field(raw, "decision")),
             emitted=tuple(
                 Envelope.from_json_dict(_as_mapping(item, "Envelope")) for item in raw_emitted
             ),
@@ -574,14 +580,14 @@ class RefDescriptor:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "RefDescriptor")
         return cls(
-            ref_id=_as_str(raw.get("ref_id"), "ref_id"),
-            kind=_as_str(raw.get("kind"), "kind"),
-            schema_id_target=_as_str(raw.get("schema_id_target"), "schema_id_target"),
+            ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+            kind=_as_str(_field(raw, "kind"), "kind"),
+            schema_id_target=_as_str(_field(raw, "schema_id_target"), "schema_id_target"),
             schema_version_target=_as_str(
-                raw.get("schema_version_target"), "schema_version_target"
+                _field(raw, "schema_version_target"), "schema_version_target"
             ),
-            attributes=_as_scalar_dict(raw.get("attributes"), "attributes"),
-            lineage=_as_str_tuple(raw.get("lineage"), "lineage"),
+            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
+            lineage=_as_str_tuple(_field(raw, "lineage"), "lineage"),
         )
 
 
@@ -595,9 +601,9 @@ class LeaseToken:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "LeaseToken")
         return cls(
-            token_id=_as_str(raw.get("token_id"), "token_id"),
-            ref_id=_as_str(raw.get("ref_id"), "ref_id"),
-            owner=_as_str(raw.get("owner"), "owner"),
+            token_id=_as_str(_field(raw, "token_id"), "token_id"),
+            ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+            owner=_as_str(_field(raw, "owner"), "owner"),
         )
 
 
@@ -612,10 +618,10 @@ class ResourceRecord:
         raw = _as_mapping(data, "ResourceRecord")
         return cls(
             descriptor=RefDescriptor.from_json_dict(
-                _as_mapping(raw.get("descriptor"), "descriptor")
+                _as_mapping(_field(raw, "descriptor"), "descriptor")
             ),
-            owner=_as_str(raw.get("owner"), "owner"),
-            lease_count=_as_int(raw.get("lease_count"), "lease_count"),
+            owner=_as_str(_field(raw, "owner"), "owner"),
+            lease_count=_as_int(_field(raw, "lease_count"), "lease_count"),
         )
 
 
@@ -633,19 +639,19 @@ class TraceSpan:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "TraceSpan")
-        end = raw.get("end")
-        parent_span_id = raw.get("parent_span_id")
+        end = _field(raw, "end")
+        parent_span_id = _field(raw, "parent_span_id")
         return cls(
-            trace_id=_as_str(raw.get("trace_id"), "trace_id"),
-            span_id=_as_str(raw.get("span_id"), "span_id"),
+            trace_id=_as_str(_field(raw, "trace_id"), "trace_id"),
+            span_id=_as_str(_field(raw, "span_id"), "span_id"),
             parent_span_id=None
             if parent_span_id is None
             else _as_str(parent_span_id, "parent_span_id"),
-            name=_as_str(raw.get("name"), "name"),
-            start=_as_float(raw.get("start"), "start"),
+            name=_as_str(_field(raw, "name"), "name"),
+            start=_as_float(_field(raw, "start"), "start"),
             end=None if end is None else _as_float(end, "end"),
-            attributes=_as_scalar_dict(raw.get("attributes"), "attributes"),
-            status=SpanStatus(_as_str(raw.get("status"), "status", "ok")),
+            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
+            status=SpanStatus(_as_str(_field(raw, "status"), "status")),
         )
 
 
@@ -661,14 +667,14 @@ class RuntimeEvent:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "RuntimeEvent")
-        error = raw.get("error")
-        agent_id = raw.get("agent_id")
+        error = _field(raw, "error")
+        agent_id = _field(raw, "agent_id")
         return cls(
-            sequence=_as_int(raw.get("sequence"), "sequence"),
-            kind=RuntimeEventKind(_as_str(raw.get("kind"), "kind")),
-            name=_as_str(raw.get("name"), "name"),
+            sequence=_as_int(_field(raw, "sequence"), "sequence"),
+            kind=RuntimeEventKind(_as_str(_field(raw, "kind"), "kind")),
+            name=_as_str(_field(raw, "name"), "name"),
             agent_id=None if agent_id is None else _as_str(agent_id, "agent_id"),
-            attributes=_as_scalar_dict(raw.get("attributes"), "attributes"),
+            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
             error=None
             if error is None
             else RuntimeError.from_json_dict(_as_mapping(error, "error")),

@@ -31,9 +31,14 @@ pub use trace::{SpanStatus, TraceSpan};
 mod tests {
     use std::collections::BTreeMap;
 
+    use serde::de::DeserializeOwned;
     use serde_json::Value;
 
     use super::*;
+
+    fn assert_missing_fields_fail<T: DeserializeOwned>(value: serde_json::Value) {
+        assert!(serde_json::from_value::<T>(value).is_err());
+    }
 
     #[test]
     fn scope_rule_matches_envelope_by_schema_and_capability() {
@@ -106,19 +111,34 @@ mod tests {
     }
 
     #[test]
-    fn runtime_event_defaults_optional_shape_fields() {
-        let decoded: RuntimeEvent = serde_json::from_value(serde_json::json!({
+    fn missing_contract_fields_fail_deserialization() {
+        assert_missing_fields_fail::<AgentSpec>(serde_json::json!({
+            "agent_id": "agent-a"
+        }));
+        assert_missing_fields_fail::<Envelope>(serde_json::json!({
+                "id": "env-1",
+                "timestamp": 0.0,
+                "source": {
+                    "source_id": "source:test",
+                    "kind": "test",
+                    "metadata": {}
+                }
+        }));
+        assert_missing_fields_fail::<OperationDescriptor>(serde_json::json!({
+            "op_id": "test.echo",
+            "name": "echo"
+        }));
+        assert_missing_fields_fail::<StrategyResult>(serde_json::json!({
+            "status": "wait_input"
+        }));
+        assert_missing_fields_fail::<TraceSpan>(serde_json::json!({
+            "trace_id": "trace-1",
+            "span_id": "span-1"
+        }));
+        assert_missing_fields_fail::<RuntimeEvent>(serde_json::json!({
             "sequence": 7,
             "kind": "trace",
             "name": "trace.span"
-        }))
-        .unwrap();
-
-        assert_eq!(decoded.sequence, 7);
-        assert_eq!(decoded.kind, RuntimeEventKind::Trace);
-        assert_eq!(decoded.name, "trace.span");
-        assert_eq!(decoded.agent_id, None);
-        assert!(decoded.attributes.is_empty());
-        assert_eq!(decoded.error, None);
+        }));
     }
 }

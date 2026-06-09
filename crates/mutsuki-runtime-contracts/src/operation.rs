@@ -5,35 +5,21 @@ use serde_json::Value;
 pub struct OperationDescriptor {
     pub op_id: String,
     pub name: String,
-    #[serde(default)]
     pub description: String,
-    #[serde(default)]
     pub plugin_id: String,
-    #[serde(default)]
     pub func_qualname: String,
-    #[serde(default)]
     pub parameters_schema: Value,
-    #[serde(default)]
     pub return_schema: Value,
-    #[serde(default)]
     pub perms_rule_id: Option<String>,
-    #[serde(default)]
     pub requires_capabilities: Vec<String>,
-    #[serde(default = "default_is_tool")]
     pub is_tool: bool,
-}
-
-fn default_is_tool() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SourceDescriptor {
     pub source_id: String,
     pub kind: String,
-    #[serde(default)]
     pub capabilities: Vec<String>,
-    #[serde(default)]
     pub description: String,
 }
 

@@ -16,12 +16,6 @@ pub struct JsonlCapabilityBackend<R, W> {
     inner: RefCell<JsonlTransport<R, W>>,
 }
 
-#[deprecated(
-    since = "0.1.0",
-    note = "use JsonlCapabilityBackend; the JSONL adapter belongs to the capability backend plane"
-)]
-pub type JsonlRuntimeBackend<R, W> = JsonlCapabilityBackend<R, W>;
-
 struct JsonlTransport<R, W> {
     reader: R,
     writer: W,

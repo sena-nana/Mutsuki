@@ -15,11 +15,8 @@ pub enum StrategyResultStatus {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StrategyResult {
     pub status: StrategyResultStatus,
-    #[serde(default)]
     pub decision: Option<Value>,
-    #[serde(default)]
     pub emitted: Vec<Envelope>,
-    #[serde(default)]
     pub error: Option<RuntimeError>,
 }
 
