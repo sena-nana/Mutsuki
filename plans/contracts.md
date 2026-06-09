@@ -160,7 +160,29 @@ ResourceBackend:
   `resource.acquire`、`resource.release`、`resource.list`。
 - Rust core 不依赖 Python；Rust host 的 JSONL adapter 只依赖泛型 line IO 与 serde JSON。
 
-## 12. 标准错误码
+## 12. Future Runtime-Control Boundary
+
+未来若将 Rust runtime 作为远程执行内核暴露给其他项目，必须新增独立的
+runtime-control protocol。该协议属于 Caller -> Rust Runtime Kernel，不得复用
+`backend.*` 方法名来表达 runtime 调度。
+
+v1 只记录边界，不要求当前代码实现新 RPC。建议命名空间：
+
+- `runtime.query.*`：同步只读查询，例如 agent phase、operation/source snapshot、
+  event snapshot、trace snapshot、resource records。
+- `runtime.command.*`：会改变 runtime 状态的命令，例如 register/start/stop agent、
+  publish envelope、tick、invoke operation、resource acquire/release。默认进入 Rust
+  runtime queue 或 turn 边界处理。
+- `runtime.events.*`：event snapshot、drain 或订阅。
+- `backend.*`：仍只表示 Rust Runtime Kernel -> Capability Backend，包括当前
+  `on_awake`、`on_input`、`next_step`、`invoke` 和 `resource.*` backend 方法。
+
+`runtime.*` 与 `backend.*` 可以共享 request id、trace context、deadline、JSON
+request/response 外壳和 `RuntimeError`，但不能共享状态所有权。Rust runtime 是
+lifecycle、routing、registry、ResourceGate、trace 和 event sequence 的唯一事实源；
+backend handler 不得同步重入同一个 runtime 的状态推进 API。
+
+## 13. 标准错误码
 
 | code | 场景 |
 |---|---|
@@ -173,7 +195,7 @@ ResourceBackend:
 | `ref.not_found` | resource / lease 不存在，或 token mismatch 归一化失败 |
 | `capability.exhausted` | resource quota 或 capability 门控耗尽 |
 
-## 13. Crate 对应
+## 14. Crate 对应
 
 - `crates/mutsuki-runtime-contracts`：本文件的纯协议结构。
 - `crates/mutsuki-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
@@ -181,7 +203,7 @@ ResourceBackend:
 - `python/mutsuki-runtime-python`：Python backend kit，提供 contracts mirror、进程内
   backend host、resource backend 和测试夹具；不定义 Rust runtime 事实。
 
-## 14. 禁止事项
+## 15. 禁止事项
 
 - Rust contracts / core 中不得出现外部协议 wire shape 或产品语义。
 - 不得跨 runtime 边界传 callable、真实 handle、socket、SDK client、数据库连接或模型对象。

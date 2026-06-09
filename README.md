@@ -20,6 +20,20 @@ Rust contracts and provides an in-process Python backend host for strategy,
 operation, and resource lease experiments. It is not a standalone runtime and
 does not depend on the old reference package.
 
+The long-term integration shape is:
+
+```text
+Caller
+  -> Rust Runtime Kernel
+  -> Capability Backend
+```
+
+Callers can be Rust applications, Python plugin entries, HTTP services, CLIs, or
+other projects. Capability backends can be native Rust hosts, Python sidecars, or
+remote services. Python may act as both a runtime caller and a backend provider,
+but `AgentRuntime` remains the only runtime kernel: lifecycle, routing, inboxes,
+registry facts, resource governance, trace, and events stay in Rust.
+
 ## Crates
 
 - `crates/mutsuki-runtime-contracts` - pure serializable contracts:
@@ -34,7 +48,8 @@ does not depend on the old reference package.
   a generic stdio JSONL backend adapter.
 - `python/mutsuki-runtime-python` - optional Python backend kit:
   pure contract mirrors, in-process backend host, descriptor-only resource
-  backend, stdio JSONL server, and Python test fixtures.
+  backend, stdio JSONL server, Python plugin/capability host fixtures, and
+  runtime-caller contract mirrors.
 
 ## Verification
 

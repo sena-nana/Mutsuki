@@ -13,8 +13,15 @@
 
 - Rust contracts 的 Python wire-shape 镜像。
 - 进程内 `StrategyBackend` / `OperationBackend` / `ResourceBackend` 协议与实现。
-- Python-owned operation handler、strategy hook 和 resource lease 的测试夹具。
+- Python-owned operation handler、strategy hook、source provider 和 resource host 的
+  测试夹具。
 - stdio JSONL request/response server，作为第一版显式进程边界。
+
+`PythonBackendHost` 的长期定位是 Python plugin / capability host：它可以保存
+Python callable、插件 metadata、strategy hook 和 Source / Operation snapshot 的生成
+材料，但不得拥有 routing、lifecycle、Agent inbox、runtime event sequence 或
+ResourceGate quota 事实。Python 侧如需作为外部入口发布事件，应通过未来 `runtime.*`
+caller API 进入 Rust runtime。
 
 `python/reference-mutsukibot/` 继续作为旧实现参考与迁移材料存在；新版包不得依赖
 旧 `mutsukibot` core、dispatcher、PluginLoader 或 extension。
@@ -51,6 +58,10 @@ sidecar supervisor 后续再单独设计；当前 contracts、snapshot 和 backe
 - resource backend 只保存 `RefDescriptor`、owner、`LeaseToken` 和 lease count；真实对象、
   finalizer、socket、SDK client、数据库连接等不进入 runtime 边界。
 - stdio JSONL response 必须用 `RuntimeError` 表达失败，不输出 raw traceback 作为协议字段。
+- Python backend kit 不实现 `AgentRuntime`、routing、accepts matching、agent election、
+  inbox tick 或 trace/event sequence；这些职责属于 Rust runtime。
+- Python 插件可作为 runtime caller，但状态变更必须走 Rust runtime 的 command / queue
+  边界，不能在 backend handler 内同步重入同一个 runtime 的状态推进 API。
 
 ## 4. Stdio JSONL Boundary
 
@@ -60,6 +71,8 @@ sidecar supervisor 后续再单独设计；当前 contracts、snapshot 和 backe
 - 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_operations`、
   `list_sources`、`invoke`、`operation_status`、`resource.register`、
   `resource.acquire`、`resource.release`、`resource.list`。
+- 该边界是 `backend.*` 语义：Rust runtime 调 Python capability host。未来
+  Caller 调远程 Rust runtime 的 `runtime.*` control protocol 必须单独定义。
 
 ## 5. Verification
 
