@@ -1,17 +1,20 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use mutsuki_runtime_contracts::{
     AgentId, AgentParticipation, AgentPhase, AgentSpec, ERR_AGENT_NOT_FOUND,
-    ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, Envelope, OperationSnapshot,
-    OperationStatus, RuntimeError, ScalarValue, SourceSnapshot, SpanStatus, StrategyResult,
+    ERR_OPERATION_NOT_FOUND, Envelope, OperationSnapshot, OperationStatus, RuntimeError,
+    RuntimeEvent, RuntimeEventKind, ScalarValue, SourceSnapshot, SpanStatus, StrategyResult,
     TraceSpan,
 };
 use serde_json::Value;
 
 use crate::backend::{BackendPayload, OperationBackend, RuntimeBackend};
+use crate::election::{ElectionCandidate, ElectionPolicy, PriorityElectionPolicy};
 use crate::error::{
-    RuntimeFailure, RuntimeResult, scope_no_match_failure, source_unregistered_failure,
+    RuntimeFailure, RuntimeResult, operation_not_active_failure, scope_no_match_failure,
+    source_unregistered_failure,
 };
+use crate::event::EventBook;
 use crate::resource_gate::ResourceGate;
 use crate::trace::TraceBook;
 
@@ -22,13 +25,27 @@ pub struct AgentState {
     pub inbox: VecDeque<Envelope>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AgentRuntime {
     agents: HashMap<AgentId, AgentState>,
     operation_registry: HashMap<AgentId, HashMap<String, OperationSnapshot>>,
     source_registry: HashMap<AgentId, Vec<SourceSnapshot>>,
     resource_gate: ResourceGate,
     trace: TraceBook,
+    events: EventBook,
+}
+
+impl Default for AgentRuntime {
+    fn default() -> Self {
+        Self {
+            agents: HashMap::new(),
+            operation_registry: HashMap::new(),
+            source_registry: HashMap::new(),
+            resource_gate: ResourceGate::with_runtime_event_drafts(),
+            trace: TraceBook::default(),
+            events: EventBook::default(),
+        }
+    }
 }
 
 impl AgentRuntime {
@@ -39,12 +56,19 @@ impl AgentRuntime {
     pub fn register_agent(&mut self, spec: AgentSpec) -> RuntimeResult<()> {
         let agent_id = spec.agent_id.clone();
         self.agents.insert(
-            agent_id,
+            agent_id.clone(),
             AgentState {
                 spec,
                 phase: AgentPhase::Spawn,
                 inbox: VecDeque::new(),
             },
+        );
+        self.emit_agent(
+            RuntimeEventKind::Lifecycle,
+            "agent.register",
+            &agent_id,
+            BTreeMap::new(),
+            None,
         );
         Ok(())
     }
@@ -58,6 +82,13 @@ impl AgentRuntime {
         if let Err(err) = backend.on_awake(agent_id) {
             self.trace
                 .record(agent_id, "agent.awake", None, SpanStatus::Error);
+            self.emit_failure(
+                RuntimeEventKind::Lifecycle,
+                "agent.awake.error",
+                Some(agent_id),
+                BTreeMap::new(),
+                &err,
+            );
             return Err(err);
         }
         let operation_snapshots = match backend.list_operations(agent_id) {
@@ -65,6 +96,13 @@ impl AgentRuntime {
             Err(err) => {
                 self.trace
                     .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                self.emit_failure(
+                    RuntimeEventKind::Backend,
+                    "backend.list_operations.error",
+                    Some(agent_id),
+                    BTreeMap::new(),
+                    &err,
+                );
                 return Err(err);
             }
         };
@@ -73,6 +111,13 @@ impl AgentRuntime {
             Err(err) => {
                 self.trace
                     .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                self.emit_failure(
+                    RuntimeEventKind::Backend,
+                    "backend.list_sources.error",
+                    Some(agent_id),
+                    BTreeMap::new(),
+                    &err,
+                );
                 return Err(err);
             }
         };
@@ -85,6 +130,13 @@ impl AgentRuntime {
         agent.phase = AgentPhase::Awake;
         self.trace
             .record(agent_id, "agent.awake", None, SpanStatus::Ok);
+        self.emit_agent(
+            RuntimeEventKind::Lifecycle,
+            "agent.awake",
+            agent_id,
+            BTreeMap::new(),
+            None,
+        );
         Ok(())
     }
 
@@ -122,11 +174,36 @@ impl AgentRuntime {
         agent.phase = AgentPhase::Sleep;
         self.trace
             .record(agent_id, "agent.sleep", None, SpanStatus::Ok);
-        backend.on_stop(agent_id)?;
+        self.emit_agent(
+            RuntimeEventKind::Lifecycle,
+            "agent.sleep",
+            agent_id,
+            BTreeMap::new(),
+            None,
+        );
+        if let Err(err) = backend.on_stop(agent_id) {
+            self.trace
+                .record(agent_id, "agent.stop", None, SpanStatus::Error);
+            self.emit_failure(
+                RuntimeEventKind::Lifecycle,
+                "agent.stop.error",
+                Some(agent_id),
+                BTreeMap::new(),
+                &err,
+            );
+            return Err(err);
+        }
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Stop;
         self.trace
             .record(agent_id, "agent.stop", None, SpanStatus::Ok);
+        self.emit_agent(
+            RuntimeEventKind::Lifecycle,
+            "agent.stop",
+            agent_id,
+            BTreeMap::new(),
+            None,
+        );
         Ok(())
     }
 
@@ -138,7 +215,15 @@ impl AgentRuntime {
                 None,
                 SpanStatus::Error,
             );
-            return Err(source_unregistered_failure(&envelope));
+            let err = source_unregistered_failure(&envelope);
+            self.emit_failure(
+                RuntimeEventKind::Routing,
+                "runtime.source_unregistered",
+                None,
+                source_attributes(&envelope),
+                &err,
+            );
+            return Err(err);
         }
         let mut matched = Vec::new();
         for (agent_id, agent) in &mut self.agents {
@@ -150,30 +235,57 @@ impl AgentRuntime {
         if matched.is_empty() {
             self.trace
                 .record("runtime", "runtime.scope_no_match", None, SpanStatus::Error);
-            return Err(scope_no_match_failure(&envelope));
+            let err = scope_no_match_failure(&envelope);
+            self.emit_failure(
+                RuntimeEventKind::Routing,
+                "runtime.scope_no_match",
+                None,
+                source_attributes(&envelope),
+                &err,
+            );
+            return Err(err);
         }
+        let mut attributes = source_attributes(&envelope);
+        attributes.insert("matched".into(), ScalarValue::Int(matched.len() as i64));
+        self.emit(
+            RuntimeEventKind::Routing,
+            "runtime.publish",
+            None,
+            attributes,
+            None,
+        );
         Ok(matched)
     }
 
     pub fn select_accepting(&self, envelope: &Envelope) -> Option<AgentId> {
+        self.select_accepting_with_policy(envelope, &PriorityElectionPolicy)
+    }
+
+    pub fn select_accepting_with_policy<P: ElectionPolicy>(
+        &self,
+        envelope: &Envelope,
+        policy: &P,
+    ) -> Option<AgentId> {
         if !self.has_registered_source(&envelope.source.source_id) {
             return None;
         }
-        let mut candidates: Vec<&AgentState> = self
+        let candidates: Vec<ElectionCandidate> = self
             .agents
             .values()
             .filter(|agent| {
                 Self::agent_accepts(agent, envelope)
                     && agent.spec.participation == AgentParticipation::PrimaryCandidate
             })
+            .map(|agent| ElectionCandidate {
+                agent_id: agent.spec.agent_id.clone(),
+                priority: agent.spec.priority,
+            })
             .collect();
-        candidates.sort_by(|a, b| {
-            b.spec
-                .priority
-                .cmp(&a.spec.priority)
-                .then_with(|| a.spec.agent_id.cmp(&b.spec.agent_id))
-        });
-        candidates.first().map(|agent| agent.spec.agent_id.clone())
+        let selected = policy.select(&candidates)?;
+        candidates
+            .iter()
+            .any(|candidate| candidate.agent_id == selected)
+            .then_some(selected)
     }
 
     pub fn tick_once<B: RuntimeBackend>(
@@ -190,7 +302,25 @@ impl AgentRuntime {
                 let input_span = self
                     .trace
                     .record(agent_id, "agent.input", None, SpanStatus::Ok);
-                let result = backend.on_input(agent_id, &envelope)?;
+                let result = match backend.on_input(agent_id, &envelope) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        self.trace.record(
+                            agent_id,
+                            "agent.strategy",
+                            Some(input_span.span_id),
+                            SpanStatus::Error,
+                        );
+                        self.emit_failure(
+                            RuntimeEventKind::Routing,
+                            "agent.input.error",
+                            Some(agent_id),
+                            source_attributes(&envelope),
+                            &err,
+                        );
+                        return Err(err);
+                    }
+                };
                 let status = if result.error.is_some() {
                     SpanStatus::Error
                 } else {
@@ -198,13 +328,44 @@ impl AgentRuntime {
                 };
                 self.trace
                     .record(agent_id, "agent.strategy", Some(input_span.span_id), status);
+                let error = result.error.clone();
+                let name = if error.is_some() {
+                    "agent.input.error"
+                } else {
+                    "agent.input"
+                };
+                self.emit_agent(
+                    RuntimeEventKind::Routing,
+                    name,
+                    agent_id,
+                    source_attributes(&envelope),
+                    error,
+                );
                 result
             }
             None => {
                 let tick_span =
                     self.trace
                         .record(agent_id, "agent.next_step", None, SpanStatus::Ok);
-                let result = backend.next_step(agent_id)?;
+                let result = match backend.next_step(agent_id) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        self.trace.record(
+                            agent_id,
+                            "agent.strategy",
+                            Some(tick_span.span_id),
+                            SpanStatus::Error,
+                        );
+                        self.emit_failure(
+                            RuntimeEventKind::Lifecycle,
+                            "agent.next_step.error",
+                            Some(agent_id),
+                            BTreeMap::new(),
+                            &err,
+                        );
+                        return Err(err);
+                    }
+                };
                 let status = if result.error.is_some() {
                     SpanStatus::Error
                 } else {
@@ -212,6 +373,19 @@ impl AgentRuntime {
                 };
                 self.trace
                     .record(agent_id, "agent.strategy", Some(tick_span.span_id), status);
+                let error = result.error.clone();
+                let name = if error.is_some() {
+                    "agent.next_step.error"
+                } else {
+                    "agent.next_step"
+                };
+                self.emit_agent(
+                    RuntimeEventKind::Lifecycle,
+                    name,
+                    agent_id,
+                    BTreeMap::new(),
+                    error,
+                );
                 result
             }
         };
@@ -243,28 +417,43 @@ impl AgentRuntime {
             ))
         })?;
         if snapshot.status != OperationStatus::Active {
-            let mut err = RuntimeError::new(
-                ERR_RUNTIME_BACKEND_FAILED,
-                &snapshot.descriptor.plugin_id,
-                format!("runtime.invoke.{agent_id}.{op_id}"),
+            let err = operation_not_active_failure(snapshot, agent_id, op_id);
+            self.emit_agent(
+                RuntimeEventKind::Operation,
+                "operation.invoke.error",
+                agent_id,
+                op_status_attributes(op_id, &snapshot.status),
+                Some(err.error().clone()),
             );
-            err.evidence.insert(
-                "operation_status".into(),
-                ScalarValue::String(format!("{:?}", snapshot.status)),
-            );
-            return Err(RuntimeFailure::new(err));
+            return Err(err);
         }
         let invoke_span = self
             .trace
             .record(agent_id, "operation.invoke", None, SpanStatus::Ok);
         match backend.invoke(agent_id, &snapshot.key, payload) {
-            Ok(result) => Ok(result),
+            Ok(result) => {
+                self.emit_agent(
+                    RuntimeEventKind::Operation,
+                    "operation.invoke",
+                    agent_id,
+                    op_attributes(op_id),
+                    None,
+                );
+                Ok(result)
+            }
             Err(err) => {
                 self.trace.record(
                     agent_id,
                     "operation.invoke.error",
                     Some(invoke_span.span_id),
                     SpanStatus::Error,
+                );
+                self.emit_agent(
+                    RuntimeEventKind::Operation,
+                    "operation.invoke.error",
+                    agent_id,
+                    op_attributes(op_id),
+                    Some(err.error().clone()),
                 );
                 Err(err)
             }
@@ -289,6 +478,16 @@ impl AgentRuntime {
 
     pub fn trace_spans(&self) -> &[TraceSpan] {
         self.trace.spans()
+    }
+
+    pub fn events(&self) -> Vec<RuntimeEvent> {
+        self.events
+            .snapshot_with_drafts(self.resource_gate.event_drafts())
+    }
+
+    pub fn drain_events(&mut self) -> Vec<RuntimeEvent> {
+        self.flush_resource_events();
+        self.events.drain()
     }
 
     pub fn source_snapshots(&self, agent_id: &str) -> Option<&[SourceSnapshot]> {
@@ -346,4 +545,77 @@ impl AgentRuntime {
             .map(|snapshot| (snapshot.descriptor.op_id.clone(), snapshot))
             .collect()
     }
+
+    fn emit(
+        &mut self,
+        kind: RuntimeEventKind,
+        name: impl Into<String>,
+        agent_id: Option<AgentId>,
+        attributes: BTreeMap<String, ScalarValue>,
+        error: Option<RuntimeError>,
+    ) {
+        self.flush_resource_events();
+        self.events.record(kind, name, agent_id, attributes, error);
+    }
+
+    fn emit_agent(
+        &mut self,
+        kind: RuntimeEventKind,
+        name: impl Into<String>,
+        agent_id: &str,
+        attributes: BTreeMap<String, ScalarValue>,
+        error: Option<RuntimeError>,
+    ) {
+        self.emit(kind, name, Some(agent_id.to_string()), attributes, error);
+    }
+
+    fn emit_failure(
+        &mut self,
+        kind: RuntimeEventKind,
+        name: impl Into<String>,
+        agent_id: Option<&str>,
+        attributes: BTreeMap<String, ScalarValue>,
+        failure: &RuntimeFailure,
+    ) {
+        self.emit(
+            kind,
+            name,
+            agent_id.map(str::to_string),
+            attributes,
+            Some(failure.error().clone()),
+        );
+    }
+
+    fn flush_resource_events(&mut self) {
+        self.events
+            .append_drafts(self.resource_gate.drain_event_drafts());
+    }
+}
+
+fn source_attributes(envelope: &Envelope) -> BTreeMap<String, ScalarValue> {
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "source_id".into(),
+        ScalarValue::String(envelope.source.source_id.clone()),
+    );
+    attributes.insert(
+        "payload_schema_id".into(),
+        ScalarValue::String(envelope.payload_schema_id.clone()),
+    );
+    attributes
+}
+
+fn op_attributes(op_id: &str) -> BTreeMap<String, ScalarValue> {
+    let mut attributes = BTreeMap::new();
+    attributes.insert("op_id".into(), ScalarValue::String(op_id.to_string()));
+    attributes
+}
+
+fn op_status_attributes(op_id: &str, status: &OperationStatus) -> BTreeMap<String, ScalarValue> {
+    let mut attributes = op_attributes(op_id);
+    attributes.insert(
+        "operation_status".into(),
+        ScalarValue::String(format!("{status:?}")),
+    );
+    attributes
 }

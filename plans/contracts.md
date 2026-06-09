@@ -31,6 +31,7 @@
 | `StrategyResult` | `status`、`decision`、`emitted`、`error` |
 | `RuntimeError` | `code`、`source`、`route`、`lost_capability`、`recovery`、`cause`、`evidence` |
 | `TraceSpan` | `trace_id`、`span_id`、`parent_span_id`、`name`、`start`、`end`、`attributes`、`status` |
+| `RuntimeEvent` | `sequence`、`kind`、`name`、`agent_id`、`attributes`、`error` |
 | `RefDescriptor` | `ref_id`、`kind`、`schema_id_target`、`schema_version_target`、`attributes`、`lineage` |
 | `LeaseToken` | `token_id`、`ref_id`、`owner` |
 | `ResourceRecord` | `descriptor`、`owner`、`lease_count` |
@@ -90,10 +91,18 @@ ResourceBackend:
 - snapshot 非 `active` 返回结构化 backend failure，并记录 operation status。
 - backend 必须验证 `OperationHandlerKey`；旧 generation 或 key mismatch 必须返回
   `runtime.backend_generation_mismatch`。
+- `operation_status` trait 不返回 structured failure；JSONL host adapter 在 transport /
+  protocol / backend 查询失败时必须降级为 `unhealthy`，不得伪装为 `not_found`。
 
 ## 7. Resource
 
 - `ResourceGate` 管理 `RefDescriptor`、owner、lease token、lease count。
+- `ResourceGate` 可配置 `ResourceQuotaPolicy`：`max_leases_by_ref` 与
+  `max_leases_by_kind`；acquire 时先检查 `ref_id`，再检查 resource `kind`。
+- `max_leases_by_kind` 表示同一 resource `kind` 的活跃 lease 总量上限，不是单个
+  `ref_id` 的局部计数。
+- 容量耗尽必须返回 `capability.exhausted`，并在 evidence 记录 `dimension`、
+  `ref_id`、`kind`、`current`、`max`、`requester`；失败 acquire 不得增加租约计数。
 - `LeaseToken` 是绑定凭证；`token_id / ref_id / owner` 必须整体匹配才能 release。
 - 伪造 token 或 stale token 必须结构化失败，并在 evidence 中记录
   `reason=lease_token_mismatch`（适用时）。
@@ -105,9 +114,44 @@ ResourceBackend:
 - Runtime 记录 lifecycle、input、strategy、operation 等 span。
 - Span 必须包含 `trace_id`、`span_id`、可选 `parent_span_id`。
 - Agent input 与 strategy span 必须能形成本地父子关系。
-- 后续 Rust contract kit 应补齐完整 trace closure / replay 检查。
+- Rust trace closure helper 必须能报告重复 span、父链缺失、父子 trace 不一致和
+  `end < start` 的时间区间错误。
 
-## 9. 标准错误码
+## 9. Runtime Event Stream
+
+- Runtime event stream 使用 `RuntimeEvent` 纯协议记录 lifecycle / routing / operation /
+  resource / trace / backend 事件。
+- `sequence` 由 runtime 全局分配，是确定性递增顺序；resource events 属于
+  `AgentRuntime` event stream，standalone `ResourceGate` 不维护 event stream 或 pending
+  drafts。不要求 v1 使用 wall-clock timestamp。
+- `tick_once` 调用 backend 后按 outcome 记录事件；backend `Err` 或 `StrategyResult.error`
+  必须记录为 `agent.input.error` / `agent.next_step.error` 并携带 structured error，不得
+  先写入 `error=None` 的成功事件。
+- 事件可以携带 scalar attributes 与结构化 `RuntimeError`，但不得包含 callable、真实
+  handle、socket、SDK client 或领域对象。
+- Host 可通过 runtime 暴露的 event snapshot / drain API 获取事件；事件失败不得改变
+  主链路语义。
+
+## 10. Election Policy
+
+- 默认 election policy 保持 `priority` 降序、`agent_id` 升序。
+- 可替换 policy 只能排序 runtime 已过滤的候选：source 已注册、agent awake、accepts
+  匹配且 participation 为 `primary_candidate`。
+- policy 返回非候选 agent 时视为未选择，不得绕过 lifecycle / accepts 过滤。
+
+## 11. Python Stdio JSONL Boundary
+
+- `python/mutsuki-runtime-python` 提供 stdio JSONL 进程边界，复用纯 contracts 与
+  backend key。
+- 请求形状：`{"id":"req-1","method":"invoke","params":{...}}`。
+- 成功响应：`{"id":"req-1","ok":true,"result":...}`。
+- 失败响应：`{"id":"req-1","ok":false,"error": RuntimeError}`。
+- 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_operations`、
+  `list_sources`、`invoke`、`operation_status`、`resource.register`、
+  `resource.acquire`、`resource.release`、`resource.list`。
+- Rust core 不依赖 Python；Rust host 的 JSONL adapter 只依赖泛型 line IO 与 serde JSON。
+
+## 12. 标准错误码
 
 | code | 场景 |
 |---|---|
@@ -118,8 +162,9 @@ ResourceBackend:
 | `source.unregistered` | envelope source 未注册 |
 | `scope.no_match` | 已注册 source 但无 awake + accepts 匹配 Agent |
 | `ref.not_found` | resource / lease 不存在，或 token mismatch 归一化失败 |
+| `capability.exhausted` | resource quota 或 capability 门控耗尽 |
 
-## 10. Crate 对应
+## 13. Crate 对应
 
 - `crates/mutsuki-runtime-contracts`：本文件的纯协议结构。
 - `crates/mutsuki-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
@@ -127,7 +172,7 @@ ResourceBackend:
 - `python/mutsuki-runtime-python`：Python backend kit，提供 contracts mirror、进程内
   backend host、resource backend 和测试夹具；不定义 Rust runtime 事实。
 
-## 11. 禁止事项
+## 14. 禁止事项
 
 - Rust contracts / core 中不得出现外部协议 wire shape 或产品语义。
 - 不得跨 runtime 边界传 callable、真实 handle、socket、SDK client、数据库连接或模型对象。

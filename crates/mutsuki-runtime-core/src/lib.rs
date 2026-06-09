@@ -1,6 +1,8 @@
 mod agent_runtime;
 mod backend;
+mod election;
 mod error;
+mod event;
 mod id;
 mod resource_gate;
 mod trace;
@@ -9,21 +11,23 @@ pub use agent_runtime::{AgentRuntime, AgentState};
 pub use backend::{
     BackendPayload, OperationBackend, ResourceBackend, RuntimeBackend, StrategyBackend,
 };
+pub use election::{ElectionCandidate, ElectionPolicy, PriorityElectionPolicy};
 pub use error::{RuntimeFailure, RuntimeResult, scope_no_match_error};
 pub use id::{IdSource, SequentialIdSource};
-pub use resource_gate::ResourceGate;
-pub use trace::TraceBook;
+pub use resource_gate::{ResourceGate, ResourceQuotaPolicy};
+pub use trace::{TraceBook, TraceClosureIssue, validate_trace_closure};
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use mutsuki_runtime_contracts::{
-        AgentParticipation, AgentPhase, AgentSpec, ERR_OPERATION_NOT_FOUND,
-        ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH, ERR_SOURCE_UNREGISTERED, Envelope,
-        LeaseToken, OperationDescriptor, OperationHandlerKey, OperationSnapshot, OperationStatus,
-        RefDescriptor, RuntimeError, ScalarValue, ScopeRuleSpec, SourceDescriptor, SourceRef,
-        SourceSnapshot, SpanStatus, StrategyResult, StrategyResultStatus,
+        AgentId, AgentParticipation, AgentPhase, AgentSpec, ERR_CAPABILITY_EXHAUSTED,
+        ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH,
+        ERR_SOURCE_UNREGISTERED, Envelope, LeaseToken, OperationDescriptor, OperationHandlerKey,
+        OperationSnapshot, OperationStatus, RefDescriptor, RuntimeError, RuntimeEventKind,
+        ScalarValue, ScopeRuleSpec, SourceDescriptor, SourceRef, SourceSnapshot, SpanStatus,
+        StrategyResult, StrategyResultStatus, TraceSpan,
     };
     use serde_json::{Value, json};
 
@@ -40,6 +44,10 @@ mod tests {
         fail_list_operations: bool,
         fail_list_sources: bool,
         fail_awake: bool,
+        fail_input: bool,
+        fail_next_step: bool,
+        input_result_error: bool,
+        fail_stop: bool,
     }
 
     impl StrategyBackend for NativeBackend {
@@ -60,20 +68,53 @@ mod tests {
             _agent_id: &str,
             _envelope: &Envelope,
         ) -> RuntimeResult<StrategyResult> {
+            if self.fail_input {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    ERR_RUNTIME_BACKEND_FAILED,
+                    "native",
+                    "native.on_input",
+                )));
+            }
             self.inputs += 1;
+            let error = self.input_result_error.then(|| {
+                RuntimeError::new(
+                    ERR_RUNTIME_BACKEND_FAILED,
+                    "native",
+                    "native.on_input.result",
+                )
+            });
+            let status = if error.is_some() {
+                StrategyResultStatus::Failed
+            } else {
+                StrategyResultStatus::Completed
+            };
             Ok(StrategyResult {
-                status: StrategyResultStatus::Completed,
+                status,
                 decision: None,
                 emitted: Vec::new(),
-                error: None,
+                error,
             })
         }
 
         fn next_step(&mut self, _agent_id: &str) -> RuntimeResult<StrategyResult> {
+            if self.fail_next_step {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    ERR_RUNTIME_BACKEND_FAILED,
+                    "native",
+                    "native.next_step",
+                )));
+            }
             Ok(StrategyResult::wait_input())
         }
 
         fn on_stop(&mut self, _agent_id: &str) -> RuntimeResult<()> {
+            if self.fail_stop {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    ERR_RUNTIME_BACKEND_FAILED,
+                    "native",
+                    "native.on_stop",
+                )));
+            }
             self.stopped += 1;
             Ok(())
         }
@@ -148,17 +189,64 @@ mod tests {
 
     fn backend() -> NativeBackend {
         NativeBackend {
-            sources: vec![SourceSnapshot {
-                descriptor: SourceDescriptor {
-                    source_id: "source:default".into(),
-                    kind: "test".into(),
-                    capabilities: Vec::new(),
-                    description: String::new(),
-                },
-                plugin_id: "native".into(),
-                plugin_generation: 0,
-            }],
+            sources: vec![source_snapshot("source:default")],
             ..NativeBackend::default()
+        }
+    }
+
+    fn source_snapshot(source_id: &str) -> SourceSnapshot {
+        SourceSnapshot {
+            descriptor: SourceDescriptor {
+                source_id: source_id.into(),
+                kind: "test".into(),
+                capabilities: Vec::new(),
+                description: String::new(),
+            },
+            plugin_id: "native".into(),
+            plugin_generation: 0,
+        }
+    }
+
+    fn operation_descriptor(op_id: &str) -> OperationDescriptor {
+        OperationDescriptor {
+            op_id: op_id.into(),
+            name: op_id.rsplit('.').next().unwrap_or(op_id).into(),
+            description: String::new(),
+            plugin_id: "test".into(),
+            func_qualname: String::new(),
+            parameters_schema: json!({}),
+            return_schema: json!({}),
+            perms_rule_id: None,
+            requires_capabilities: Vec::new(),
+            is_tool: true,
+        }
+    }
+
+    fn operation_key(op_id: &str) -> OperationHandlerKey {
+        OperationHandlerKey {
+            plugin_id: "test".into(),
+            plugin_generation: 0,
+            op_id: op_id.into(),
+            handler_id: format!("test:{op_id}:0"),
+        }
+    }
+
+    fn operation_snapshot(op_id: &str, status: OperationStatus) -> OperationSnapshot {
+        OperationSnapshot {
+            descriptor: operation_descriptor(op_id),
+            status,
+            key: operation_key(op_id),
+        }
+    }
+
+    fn ref_descriptor(ref_id: &str, kind: &str) -> RefDescriptor {
+        RefDescriptor {
+            ref_id: ref_id.into(),
+            kind: kind.into(),
+            schema_id_target: kind.into(),
+            schema_version_target: "1.0.0".into(),
+            attributes: BTreeMap::new(),
+            lineage: Vec::new(),
         }
     }
 
@@ -201,6 +289,159 @@ mod tests {
         assert_eq!(
             strategy_span.parent_span_id.as_deref(),
             Some(input_span.span_id.as_str())
+        );
+    }
+
+    #[test]
+    fn runtime_records_input_backend_failure_as_error_event() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = NativeBackend {
+            fail_input: true,
+            ..backend()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        runtime.publish(envelope()).unwrap();
+
+        let err = runtime.tick_once("agent-a", &mut backend).unwrap_err();
+
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        let events = runtime.events();
+        assert!(!events.iter().any(|event| event.name == "agent.input"));
+        let event = events
+            .iter()
+            .find(|event| event.name == "agent.input.error")
+            .unwrap();
+        assert_eq!(
+            event.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+        assert!(
+            runtime
+                .trace_spans()
+                .iter()
+                .any(|span| span.name == "agent.strategy" && span.status == SpanStatus::Error)
+        );
+    }
+
+    #[test]
+    fn runtime_records_next_step_backend_failure_as_error_event() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = NativeBackend {
+            fail_next_step: true,
+            ..backend()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let err = runtime.tick_once("agent-a", &mut backend).unwrap_err();
+
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        let events = runtime.events();
+        assert!(!events.iter().any(|event| event.name == "agent.next_step"));
+        let event = events
+            .iter()
+            .find(|event| event.name == "agent.next_step.error")
+            .unwrap();
+        assert_eq!(
+            event.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+        assert!(
+            runtime
+                .trace_spans()
+                .iter()
+                .any(|span| span.name == "agent.strategy" && span.status == SpanStatus::Error)
+        );
+    }
+
+    #[test]
+    fn runtime_records_strategy_result_error_as_error_event_without_changing_return() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = NativeBackend {
+            input_result_error: true,
+            ..backend()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        runtime.publish(envelope()).unwrap();
+
+        let result = runtime.tick_once("agent-a", &mut backend).unwrap();
+
+        assert_eq!(result.status, StrategyResultStatus::Failed);
+        assert_eq!(
+            result.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+        let events = runtime.events();
+        assert!(!events.iter().any(|event| event.name == "agent.input"));
+        let event = events
+            .iter()
+            .find(|event| event.name == "agent.input.error")
+            .unwrap();
+        assert_eq!(
+            event.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+        assert!(
+            runtime
+                .trace_spans()
+                .iter()
+                .any(|span| span.name == "agent.strategy" && span.status == SpanStatus::Error)
+        );
+    }
+
+    #[test]
+    fn runtime_records_successful_idle_tick_as_next_step_event() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let result = runtime.tick_once("agent-a", &mut backend).unwrap();
+
+        assert_eq!(result.status, StrategyResultStatus::WaitInput);
+        let events = runtime.events();
+        assert!(events.iter().any(|event| event.name == "agent.next_step"));
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.name == "agent.next_step.error")
+        );
+    }
+
+    #[test]
+    fn runtime_records_stop_backend_failure_as_error_event() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = NativeBackend {
+            fail_stop: true,
+            ..backend()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let err = runtime.stop_agent("agent-a", &mut backend).unwrap_err();
+
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        assert_eq!(runtime.phase("agent-a"), Some(&AgentPhase::Sleep));
+        assert_eq!(backend.stopped, 0);
+        let events = runtime.events();
+        assert!(events.iter().any(|event| event.name == "agent.sleep"));
+        assert!(!events.iter().any(|event| event.name == "agent.stop"));
+        let event = events
+            .iter()
+            .find(|event| event.name == "agent.stop.error")
+            .unwrap();
+        assert_eq!(event.kind, RuntimeEventKind::Lifecycle);
+        assert_eq!(
+            event.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+        assert!(
+            runtime
+                .trace_spans()
+                .iter()
+                .any(|span| span.name == "agent.stop" && span.status == SpanStatus::Error)
         );
     }
 
@@ -266,27 +507,9 @@ mod tests {
     fn runtime_invokes_operation_through_backend_key() {
         let mut runtime = AgentRuntime::new();
         let mut backend = backend();
-        backend.operations.push(OperationSnapshot {
-            descriptor: OperationDescriptor {
-                op_id: "test.noop".into(),
-                name: "noop".into(),
-                description: String::new(),
-                plugin_id: "test".into(),
-                func_qualname: String::new(),
-                parameters_schema: json!({}),
-                return_schema: json!({}),
-                perms_rule_id: None,
-                requires_capabilities: Vec::new(),
-                is_tool: true,
-            },
-            status: OperationStatus::Active,
-            key: OperationHandlerKey {
-                plugin_id: "test".into(),
-                plugin_generation: 0,
-                op_id: "test.noop".into(),
-                handler_id: "test:test.noop:0".into(),
-            },
-        });
+        backend
+            .operations
+            .push(operation_snapshot("test.noop", OperationStatus::Active));
         runtime.register_agent(agent("agent-a", 0)).unwrap();
         runtime.start_agent("agent-a", &mut backend).unwrap();
 
@@ -312,6 +535,42 @@ mod tests {
     }
 
     #[test]
+    fn runtime_records_inactive_operation_as_error_event_without_invoking_backend() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        backend
+            .operations
+            .push(operation_snapshot("test.noop", OperationStatus::Unhealthy));
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let err = runtime
+            .invoke_operation("agent-a", "test.noop", json!({}), &mut backend)
+            .unwrap_err();
+
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        assert_eq!(
+            err.error().evidence.get("operation_status"),
+            Some(&ScalarValue::String("Unhealthy".into()))
+        );
+        assert_eq!(backend.invocations, 0);
+        let event = runtime
+            .events()
+            .into_iter()
+            .find(|event| event.name == "operation.invoke.error")
+            .unwrap();
+        assert_eq!(event.kind, RuntimeEventKind::Operation);
+        assert_eq!(
+            event.attributes.get("operation_status"),
+            Some(&ScalarValue::String("Unhealthy".into()))
+        );
+        assert_eq!(
+            event.error.as_ref().unwrap().code,
+            ERR_RUNTIME_BACKEND_FAILED
+        );
+    }
+
+    #[test]
     fn runtime_native_backend_smoke_without_external_plugin_host() {
         let mut runtime = AgentRuntime::new();
         let mut backend = backend();
@@ -328,17 +587,7 @@ mod tests {
     #[test]
     fn resource_gate_tracks_descriptor_leases_without_handles() {
         let mut gate = ResourceGate::new();
-        let ref_id = gate.register(
-            RefDescriptor {
-                ref_id: "ref-1".into(),
-                kind: "domain.resource".into(),
-                schema_id_target: "domain.resource".into(),
-                schema_version_target: "1.0.0".into(),
-                attributes: BTreeMap::new(),
-                lineage: Vec::new(),
-            },
-            "backend",
-        );
+        let ref_id = gate.register(ref_descriptor("ref-1", "domain.resource"), "backend");
 
         let lease = gate.acquire(&ref_id, "agent-a").unwrap();
         assert_eq!(lease.ref_id, "ref-1");
@@ -352,28 +601,8 @@ mod tests {
     #[test]
     fn resource_backend_filters_records_by_owner() {
         let mut gate = ResourceGate::new();
-        gate.register(
-            RefDescriptor {
-                ref_id: "ref-a".into(),
-                kind: "domain.resource".into(),
-                schema_id_target: "domain.resource".into(),
-                schema_version_target: "1.0.0".into(),
-                attributes: BTreeMap::new(),
-                lineage: Vec::new(),
-            },
-            "owner-a",
-        );
-        gate.register(
-            RefDescriptor {
-                ref_id: "ref-b".into(),
-                kind: "domain.resource".into(),
-                schema_id_target: "domain.resource".into(),
-                schema_version_target: "1.0.0".into(),
-                attributes: BTreeMap::new(),
-                lineage: Vec::new(),
-            },
-            "owner-b",
-        );
+        gate.register(ref_descriptor("ref-a", "domain.resource"), "owner-a");
+        gate.register(ref_descriptor("ref-b", "domain.resource"), "owner-b");
 
         let owner_a = <ResourceGate as ResourceBackend>::list_records(&gate, Some("owner-a"));
         assert_eq!(owner_a.len(), 1);
@@ -432,27 +661,9 @@ mod tests {
         let mut runtime = AgentRuntime::new();
         let mut backend = backend();
         backend.fail_list_sources = true;
-        backend.operations.push(OperationSnapshot {
-            descriptor: OperationDescriptor {
-                op_id: "test.noop".into(),
-                name: "noop".into(),
-                description: String::new(),
-                plugin_id: "test".into(),
-                func_qualname: String::new(),
-                parameters_schema: json!({}),
-                return_schema: json!({}),
-                perms_rule_id: None,
-                requires_capabilities: Vec::new(),
-                is_tool: true,
-            },
-            status: OperationStatus::Active,
-            key: OperationHandlerKey {
-                plugin_id: "test".into(),
-                plugin_generation: 0,
-                op_id: "test.noop".into(),
-                handler_id: "test:test.noop:0".into(),
-            },
-        });
+        backend
+            .operations
+            .push(operation_snapshot("test.noop", OperationStatus::Active));
         runtime.register_agent(agent("agent-a", 0)).unwrap();
 
         let err = runtime.start_agent("agent-a", &mut backend).unwrap_err();
@@ -465,17 +676,7 @@ mod tests {
     #[test]
     fn resource_gate_rejects_forged_lease_token_without_releasing() {
         let mut gate = ResourceGate::new();
-        let ref_id = gate.register(
-            RefDescriptor {
-                ref_id: "ref-1".into(),
-                kind: "domain.resource".into(),
-                schema_id_target: "domain.resource".into(),
-                schema_version_target: "1.0.0".into(),
-                attributes: BTreeMap::new(),
-                lineage: Vec::new(),
-            },
-            "backend",
-        );
+        let ref_id = gate.register(ref_descriptor("ref-1", "domain.resource"), "backend");
 
         let lease = gate.acquire(&ref_id, "agent-a").unwrap();
         let forged = LeaseToken {
@@ -494,5 +695,280 @@ mod tests {
 
         gate.release(&lease).unwrap();
         assert_eq!(gate.list_records()[0].lease_count, 0);
+    }
+
+    #[test]
+    fn standalone_resource_gate_does_not_collect_event_drafts() {
+        let mut gate = ResourceGate::new();
+        let ref_id = gate.register(ref_descriptor("ref-1", "domain.resource"), "resource-host");
+        let lease = gate.acquire(&ref_id, "agent-a").unwrap();
+        gate.release(&lease).unwrap();
+
+        assert!(gate.event_drafts().is_empty());
+    }
+
+    #[test]
+    fn runtime_emits_deterministic_events_for_lifecycle_routing_and_operation() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        backend
+            .operations
+            .push(operation_snapshot("test.noop", OperationStatus::Active));
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        runtime.publish(envelope()).unwrap();
+        runtime.tick_once("agent-a", &mut backend).unwrap();
+        runtime
+            .invoke_operation("agent-a", "test.noop", json!({}), &mut backend)
+            .unwrap();
+        runtime.stop_agent("agent-a", &mut backend).unwrap();
+
+        let events = runtime.events();
+        assert!(events.iter().any(|event| event.name == "agent.awake"));
+        assert!(events.iter().any(|event| event.name == "runtime.publish"));
+        assert!(events.iter().any(|event| event.name == "agent.input"));
+        assert!(events.iter().any(|event| event.name == "operation.invoke"));
+        assert!(events.iter().any(|event| event.name == "agent.stop"));
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        let drained = runtime.drain_events();
+        assert_eq!(drained.len(), events.len());
+        assert!(
+            drained
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        assert!(runtime.events().is_empty());
+    }
+
+    #[test]
+    fn runtime_assigns_global_event_sequence_to_pending_resource_events() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        let ref_id = runtime
+            .resources_mut()
+            .register(ref_descriptor("ref-1", "domain.resource"), "resource-host");
+        let lease = runtime.resources_mut().acquire(&ref_id, "agent-a").unwrap();
+
+        let snapshot = runtime.events();
+        assert!(
+            snapshot
+                .iter()
+                .any(|event| event.name == "resource.register")
+        );
+        assert!(
+            snapshot
+                .iter()
+                .any(|event| event.name == "resource.acquire")
+        );
+        assert!(
+            snapshot
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+
+        let drained = runtime.drain_events();
+        assert_eq!(drained, snapshot);
+        assert!(runtime.events().is_empty());
+
+        runtime.resources_mut().release(&lease).unwrap();
+        runtime.publish(envelope()).unwrap();
+        let events = runtime.events();
+        let release_index = events
+            .iter()
+            .position(|event| event.name == "resource.release")
+            .unwrap();
+        let publish_index = events
+            .iter()
+            .position(|event| event.name == "runtime.publish")
+            .unwrap();
+        assert!(release_index < publish_index);
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+    }
+
+    #[test]
+    fn runtime_emits_structured_routing_error_events() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unknown = envelope();
+        unknown.source.source_id = "source:unknown".into();
+        let err = runtime.publish(unknown).unwrap_err();
+        assert_eq!(err.error().code, ERR_SOURCE_UNREGISTERED);
+
+        let events = runtime.events();
+        let event = events
+            .iter()
+            .find(|event| event.name == "runtime.source_unregistered")
+            .unwrap();
+        assert_eq!(event.kind, RuntimeEventKind::Routing);
+        assert_eq!(event.error.as_ref().unwrap().code, ERR_SOURCE_UNREGISTERED);
+    }
+
+    #[test]
+    fn resource_gate_enforces_ref_quota_without_incrementing_leases() {
+        let mut policy = ResourceQuotaPolicy::default();
+        policy.max_leases_by_ref.insert("ref-1".into(), 1);
+        let mut gate = ResourceGate::with_quota_policy(policy);
+        let ref_id = gate.register(ref_descriptor("ref-1", "domain.resource"), "backend");
+
+        let lease = gate.acquire(&ref_id, "agent-a").unwrap();
+        let err = gate.acquire(&ref_id, "agent-b").unwrap_err();
+        assert_eq!(err.error().code, ERR_CAPABILITY_EXHAUSTED);
+        assert_eq!(
+            err.error().evidence.get("dimension"),
+            Some(&ScalarValue::String("ref_id".into()))
+        );
+        assert_eq!(gate.list_records()[0].lease_count, 1);
+
+        gate.release(&lease).unwrap();
+    }
+
+    #[test]
+    fn resource_gate_enforces_kind_quota_and_ref_quota_takes_precedence() {
+        let mut policy = ResourceQuotaPolicy::default();
+        policy
+            .max_leases_by_kind
+            .insert("domain.resource".into(), 1);
+        let mut gate = ResourceGate::with_quota_policy(policy.clone());
+        gate.register(ref_descriptor("ref-1", "domain.resource"), "backend");
+        gate.register(ref_descriptor("ref-2", "domain.resource"), "backend");
+        gate.acquire("ref-1", "agent-a").unwrap();
+        let kind_err = gate.acquire("ref-2", "agent-b").unwrap_err();
+        assert_eq!(
+            kind_err.error().evidence.get("dimension"),
+            Some(&ScalarValue::String("kind".into()))
+        );
+        assert_eq!(
+            kind_err.error().evidence.get("current"),
+            Some(&ScalarValue::Int(1))
+        );
+        let records = gate.list_records();
+        assert_eq!(
+            records.iter().map(|record| record.lease_count).sum::<u64>(),
+            1
+        );
+
+        policy.max_leases_by_ref.insert("ref-1".into(), 1);
+        let mut gate = ResourceGate::with_quota_policy(policy);
+        gate.register(ref_descriptor("ref-1", "domain.resource"), "backend");
+        gate.acquire("ref-1", "agent-a").unwrap();
+        let ref_err = gate.acquire("ref-1", "agent-b").unwrap_err();
+        assert_eq!(
+            ref_err.error().evidence.get("dimension"),
+            Some(&ScalarValue::String("ref_id".into()))
+        );
+    }
+
+    #[test]
+    fn trace_closure_helper_reports_expected_issues() {
+        let spans = vec![
+            TraceSpan {
+                trace_id: "trace-a".into(),
+                span_id: "span-1".into(),
+                parent_span_id: None,
+                name: "root".into(),
+                start: 1.0,
+                end: Some(2.0),
+                attributes: BTreeMap::new(),
+                status: SpanStatus::Ok,
+            },
+            TraceSpan {
+                trace_id: "trace-a".into(),
+                span_id: "span-1".into(),
+                parent_span_id: None,
+                name: "dupe".into(),
+                start: 3.0,
+                end: Some(2.0),
+                attributes: BTreeMap::new(),
+                status: SpanStatus::Ok,
+            },
+            TraceSpan {
+                trace_id: "trace-b".into(),
+                span_id: "span-2".into(),
+                parent_span_id: Some("span-1".into()),
+                name: "wrong-trace".into(),
+                start: 1.0,
+                end: Some(1.0),
+                attributes: BTreeMap::new(),
+                status: SpanStatus::Ok,
+            },
+            TraceSpan {
+                trace_id: "trace-a".into(),
+                span_id: "span-3".into(),
+                parent_span_id: Some("missing".into()),
+                name: "missing-parent".into(),
+                start: 1.0,
+                end: Some(1.0),
+                attributes: BTreeMap::new(),
+                status: SpanStatus::Ok,
+            },
+        ];
+
+        let issues = validate_trace_closure(&spans);
+        assert!(issues.contains(&TraceClosureIssue::DuplicateSpanId {
+            span_id: "span-1".into()
+        }));
+        assert!(issues.contains(&TraceClosureIssue::InvalidInterval {
+            span_id: "span-1".into()
+        }));
+        assert!(issues.contains(&TraceClosureIssue::ParentTraceMismatch {
+            span_id: "span-2".into(),
+            parent_span_id: "span-1".into()
+        }));
+        assert!(issues.contains(&TraceClosureIssue::MissingParent {
+            span_id: "span-3".into(),
+            parent_span_id: "missing".into()
+        }));
+    }
+
+    #[test]
+    fn custom_election_policy_only_selects_prefiltered_candidates() {
+        struct PreferB;
+
+        impl ElectionPolicy for PreferB {
+            fn select(&self, candidates: &[ElectionCandidate]) -> Option<AgentId> {
+                candidates
+                    .iter()
+                    .find(|candidate| candidate.agent_id == "agent-b")
+                    .map(|candidate| candidate.agent_id.clone())
+                    .or_else(|| Some("sleeping-agent".into()))
+            }
+        }
+
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 10)).unwrap();
+        runtime.register_agent(agent("agent-b", 1)).unwrap();
+        runtime.register_agent(agent("sleeping-agent", 99)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        runtime.start_agent("agent-b", &mut backend).unwrap();
+
+        assert_eq!(
+            runtime.select_accepting(&envelope()),
+            Some("agent-a".into())
+        );
+        assert_eq!(
+            runtime.select_accepting_with_policy(&envelope(), &PreferB),
+            Some("agent-b".into())
+        );
+
+        let mut unmatched = envelope();
+        unmatched.payload_schema_id = "other.input".into();
+        assert_eq!(
+            runtime.select_accepting_with_policy(&unmatched, &PreferB),
+            None
+        );
     }
 }

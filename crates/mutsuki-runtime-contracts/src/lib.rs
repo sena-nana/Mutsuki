@@ -2,6 +2,7 @@ mod agent;
 mod common;
 mod envelope;
 mod error;
+mod event;
 mod operation;
 mod resource;
 mod scope;
@@ -12,10 +13,11 @@ pub use agent::{AgentParticipation, AgentPhase, AgentSpec, SideEffectPolicy};
 pub use common::{AgentId, EnvelopeId, RefId, ScalarValue, SpanId, TraceId};
 pub use envelope::{Envelope, SourceRef};
 pub use error::{
-    ERR_AGENT_NOT_FOUND, ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED,
-    ERR_RUNTIME_BACKEND_GENERATION_MISMATCH, ERR_SCOPE_NO_MATCH, ERR_SOURCE_UNREGISTERED,
-    RuntimeError,
+    ERR_AGENT_NOT_FOUND, ERR_CAPABILITY_EXHAUSTED, ERR_OPERATION_NOT_FOUND,
+    ERR_RUNTIME_BACKEND_FAILED, ERR_RUNTIME_BACKEND_GENERATION_MISMATCH, ERR_SCOPE_NO_MATCH,
+    ERR_SOURCE_UNREGISTERED, RuntimeError,
 };
+pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use operation::{
     OperationDescriptor, OperationHandlerKey, OperationSnapshot, OperationStatus, SourceDescriptor,
     SourceSnapshot,
@@ -79,5 +81,27 @@ mod tests {
         let json = serde_json::to_string(&descriptor).unwrap();
         let decoded: OperationDescriptor = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, descriptor);
+    }
+
+    #[test]
+    fn runtime_event_roundtrip_json() {
+        let mut attributes = BTreeMap::new();
+        attributes.insert(
+            "source_id".into(),
+            ScalarValue::String("source:test".into()),
+        );
+        let event = RuntimeEvent {
+            sequence: 1,
+            kind: RuntimeEventKind::Routing,
+            name: "runtime.publish".into(),
+            agent_id: Some("agent-a".into()),
+            attributes,
+            error: None,
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: RuntimeEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, event);
+        assert_eq!(ERR_CAPABILITY_EXHAUSTED, "capability.exhausted");
     }
 }

@@ -14,6 +14,7 @@
 - Rust contracts 的 Python wire-shape 镜像。
 - 进程内 `StrategyBackend` / `OperationBackend` / `ResourceBackend` 协议与实现。
 - Python-owned operation handler、strategy hook 和 resource lease 的测试夹具。
+- stdio JSONL request/response server，作为第一版显式进程边界。
 
 `python/reference-mutsukibot/` 继续作为旧实现参考与迁移材料存在；新版包不得依赖
 旧 `mutsukibot` core、dispatcher、PluginLoader 或 extension。
@@ -28,12 +29,14 @@ python/mutsuki-runtime-python/
     backend.py     # backend protocols and structured error wrapper
     host.py        # in-process PythonBackendHost
     resource.py    # descriptor-only resource lease backend
+    stdio.py       # stdio JSONL backend server
     testing.py     # deterministic fixtures and smoke helper
   tests/
 ```
 
-MVP 只实现进程内边界。JSONL / stdio / HTTP RPC sidecar 后续再单独设计；当前
-contracts、snapshot 和 backend key 形状必须保持可映射到未来 RPC。
+MVP 已实现进程内边界与 stdio JSONL 进程边界。HTTP RPC、取消、deadline 和长期
+sidecar supervisor 后续再单独设计；当前 contracts、snapshot 和 backend key 形状必须
+保持可映射到未来 RPC。
 
 ## 3. Contract Rules
 
@@ -47,8 +50,18 @@ contracts、snapshot 和 backend key 形状必须保持可映射到未来 RPC。
   到新 handler。
 - resource backend 只保存 `RefDescriptor`、owner、`LeaseToken` 和 lease count；真实对象、
   finalizer、socket、SDK client、数据库连接等不进入 runtime 边界。
+- stdio JSONL response 必须用 `RuntimeError` 表达失败，不输出 raw traceback 作为协议字段。
 
-## 4. Verification
+## 4. Stdio JSONL Boundary
+
+- 请求形状：`{"id":"req-1","method":"invoke","params":{...}}`。
+- 成功响应：`{"id":"req-1","ok":true,"result":...}`。
+- 失败响应：`{"id":"req-1","ok":false,"error": RuntimeError}`。
+- 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_operations`、
+  `list_sources`、`invoke`、`operation_status`、`resource.register`、
+  `resource.acquire`、`resource.release`、`resource.list`。
+
+## 5. Verification
 
 Python backend kit 改动需在 `python/mutsuki-runtime-python` 运行：
 

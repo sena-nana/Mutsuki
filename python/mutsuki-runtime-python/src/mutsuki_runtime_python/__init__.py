@@ -8,6 +8,7 @@ from mutsuki_runtime_python.backend import (
 )
 from mutsuki_runtime_python.contracts import (
     ERR_AGENT_NOT_FOUND,
+    ERR_CAPABILITY_EXHAUSTED,
     ERR_OPERATION_NOT_FOUND,
     ERR_REF_NOT_FOUND,
     ERR_RUNTIME_BACKEND_FAILED,
@@ -26,6 +27,8 @@ from mutsuki_runtime_python.contracts import (
     RefDescriptor,
     ResourceRecord,
     RuntimeError,
+    RuntimeEvent,
+    RuntimeEventKind,
     ScopeRuleSpec,
     SideEffectPolicy,
     SourceDescriptor,
@@ -42,9 +45,11 @@ from mutsuki_runtime_python.contracts import (
 )
 from mutsuki_runtime_python.host import PythonBackendHost
 from mutsuki_runtime_python.resource import IdSource, PythonResourceBackend
+from mutsuki_runtime_python.stdio import StdioJsonlBackendServer, run_stdio_server
 
 __all__ = [
     "ERR_AGENT_NOT_FOUND",
+    "ERR_CAPABILITY_EXHAUSTED",
     "ERR_OPERATION_NOT_FOUND",
     "ERR_REF_NOT_FOUND",
     "ERR_RUNTIME_BACKEND_FAILED",
@@ -69,18 +74,22 @@ __all__ = [
     "ResourceBackend",
     "ResourceRecord",
     "RuntimeError",
+    "RuntimeEvent",
+    "RuntimeEventKind",
     "ScopeRuleSpec",
     "SideEffectPolicy",
     "SourceDescriptor",
     "SourceRef",
     "SourceSnapshot",
     "SpanStatus",
+    "StdioJsonlBackendServer",
     "StrategyBackend",
     "StrategyResult",
     "StrategyResultStatus",
     "TraceSpan",
     "from_json_bytes",
     "from_json_dict",
+    "run_stdio_server",
     "to_json_bytes",
     "to_json_dict",
 ]

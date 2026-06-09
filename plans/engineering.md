@@ -44,18 +44,18 @@ MutsukiBot/
 
 - `mutsuki-runtime-contracts` 只定义可序列化纯数据结构：
   `AgentSpec`、`Envelope`、`ScopeRuleSpec`、`OperationSnapshot`、
-  `SourceSnapshot`、`TraceSpan`、`RuntimeError`、`RefDescriptor`、
+  `SourceSnapshot`、`TraceSpan`、`RuntimeEvent`、`RuntimeError`、`RefDescriptor`、
   `LeaseToken`、`ResourceRecord`。
 - `mutsuki-runtime-core` 实现 runtime mechanics：
   Agent lifecycle、inbox tick、ScopeRule 路由、source 注册校验、Operation
   metadata registry、backend key 调用、trace bookkeeping、`ResourceGate`
-  租约治理。
+  租约治理、runtime event stream、trace closure helper 和 election policy。
 - `mutsuki-runtime-host` 提供 native Rust backend / host helper。它可以注册
-  Source 与 Operation，驱动 `AgentRuntime` 跑通最小 Agent loop，不依赖
-  Python PluginHost。
+  Source 与 Operation，驱动 `AgentRuntime` 跑通最小 Agent loop；它也提供泛型
+  stdio JSONL backend adapter，但不依赖 Python PluginHost。
 - `python/mutsuki-runtime-python` 提供新版 Python backend kit。它镜像 Rust
   contracts，保存 Python-owned handler，并通过 backend key 暴露 operation/source
-  snapshot；它不拥有 Rust runtime 状态事实。
+  snapshot，且提供 stdio JSONL 进程边界；它不拥有 Rust runtime 状态事实。
 
 ## 4. Backend 边界
 
@@ -86,6 +86,12 @@ snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Ha
 - 错误必须使用 `RuntimeError` / `RuntimeFailure` 结构化表达，不吞异常式返回默认值。
 - Trace span 必须保留 `trace_id` / `span_id` / `parent_span_id`，用于证明 Agent
   input、strategy、operation、resource 的因果链。
+- Runtime event stream 必须只记录纯协议事件，不携带真实资源对象或 callable；事件
+  `sequence` 由 runtime 全局分配。Resource events 只属于 `AgentRuntime` 事件流，
+  standalone `ResourceGate` 不维护 event stream 或 pending drafts。
+- Resource quota 耗尽必须 fail-loud 为 `capability.exhausted`，不得静默创建租约；
+  `kind` quota 按同 kind 全部活跃 lease 总量计算。
+- Election policy 只能排序已过滤候选，不得绕过 source / lifecycle / accepts。
 - Rust crates 不得出现 Yume、latent、tensor、gpu、Lilia、Codex、OneBot、MCP 等
   领域或产品专用执行分支。
 

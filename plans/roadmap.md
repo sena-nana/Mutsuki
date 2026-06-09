@@ -31,8 +31,13 @@
   - Operation metadata registry 与 backend key 间接调用。
   - 启动事务：`on_awake` 或 registry refresh 失败时不提交 `awake`。
   - `ResourceGate` 管理 descriptor、owner、lease token、lease count。
+  - `ResourceGate` 支持按 `ref_id` / resource `kind` 的租约容量门控，耗尽时
+    结构化失败为 `capability.exhausted`。
   - 租约 token 由注入式 ID source 生成，不使用全局 UUID。
+  - runtime event stream 记录 lifecycle / routing / operation / resource 等事件。
   - trace span 记录 Agent input / strategy / operation 等关键运行点。
+  - Rust trace closure helper 可检查重复 span、父链缺失、trace 不一致和时间区间。
+  - Agent election policy 可替换，但只排序已通过 lifecycle + accepts 的候选。
 - Rust host 覆盖：
   - native in-memory Source / Operation backend。
   - 无 Python 情况下跑通 Agent start、publish、tick、invoke、stop。
@@ -42,6 +47,8 @@
 - Python backend kit：
   - `python/mutsuki-runtime-python/` 提供 Rust contracts 的 Python wire-shape 镜像、
     进程内 backend host、descriptor-only resource backend 和测试夹具。
+  - 提供 stdio JSONL 进程边界，可将 Python-owned strategy / operation / resource
+    backend 暴露为纯协议请求响应。
   - 该包不依赖旧 `python/reference-mutsukibot/`，也不定义第二套 Python runtime。
 
 ## 当前完成门槛
@@ -62,17 +69,16 @@ Rust framework 被视为当前目标完成，必须同时满足：
 
 ### R5：Native Framework Hardening
 
-- 增加 runtime event stream，让 host 能订阅 lifecycle / routing / resource / trace
-  事件，而不是直接读内部结构。
-- 为 `ResourceGate` 增加容量治理和 `capability.exhausted` 门控。
-- 将 trace closure helper 移植到 Rust 测试工具，覆盖重复 span、父链缺失、时间区间。
-- 引入可替换 election policy trait，但 policy 只能排序已通过 lifecycle + accepts
-  过滤的候选。
+- 已完成 runtime event stream、ResourceGate `ref_id` / `kind` 容量治理、Rust trace
+  closure helper 和可替换 election policy。
+- 后续可继续补事件订阅 sink、跨进程 trace replay 和更细维度资源治理。
 
 ### Python Backend Kit Hardening
 
 - 为 `python/mutsuki-runtime-python` 增加显式进程 / RPC 边界前，保持进程内 backend
   与 Rust trait 语义一致。
+- stdio JSONL 边界已作为首个显式进程协议落地；HTTP、取消、deadline 和长期
+  sidecar supervision 后续单独设计。
 - Python 侧只能通过纯协议、backend key、descriptor 和 lease token 与 Rust runtime
   交互，不得跨边界传 callable、socket、SDK client、真实 `Handle[T]` 或领域对象。
 

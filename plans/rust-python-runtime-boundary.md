@@ -8,11 +8,12 @@
 
 - `crates/mutsuki-runtime-contracts`：纯协议结构与 `ScopeRuleSpec.matches(...)`。
 - `crates/mutsuki-runtime-core`：`AgentRuntime`、backend traits、Operation /
-  Source registry、routing、trace bookkeeping、`ResourceGate`。
+  Source registry、routing、trace bookkeeping、runtime event stream、election policy、
+  `ResourceGate`。
 - `crates/mutsuki-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
-  Agent loop。
+  Agent loop；另提供 stdio JSONL backend adapter。
 - `python/mutsuki-runtime-python`：新版 Python backend kit，镜像 Rust contracts，提供
-  进程内 Python backend host 与 descriptor-only resource backend。
+  进程内 Python backend host、descriptor-only resource backend 与 stdio JSONL server。
 - `python/reference-mutsukibot`：旧 Python framework、reference extensions、tests、
   docs、examples。
 
@@ -28,7 +29,7 @@ Envelope
   -> StrategyBackend.on_input or next_step
   -> OperationBackend.invoke by OperationHandlerKey
   -> StrategyResult
-  -> Runtime trace/resource state updates
+  -> Runtime trace/resource/event state updates
 ```
 
 Rust runtime 是 lifecycle、routing、registry、resource lease 与 trace 事实源。Host
@@ -95,15 +96,16 @@ The Rust-first framework is acceptable only when:
 - `cargo test` passes at root.
 - `mutsuki-runtime-host` demonstrates native Agent start/publish/tick/invoke/stop without Python.
 - Source registry rejects unregistered envelope sources.
-- Resource leases reject forged token triples.
+- Resource leases reject forged token triples and enforce configured `ref_id` / `kind` quotas
+  as `capability.exhausted`.
 - Lease token generation is runtime-owned, not a global UUID call.
 - Trace spans preserve at least local parent-child relationships for Agent input and strategy.
+- Runtime events expose lifecycle / routing / operation / resource facts as pure contracts.
 - Rust crates remain domain-neutral.
 
 ## 7. Future Optional Work
 
-- Add an explicit process/RPC boundary for Python sidecar only after the in-process backend kit
-  contract is stable.
+- HTTP or long-running Python sidecar supervision on top of the current stdio JSONL boundary.
 - Add cancellation/deadline propagation across backend calls.
 - Add Rust trace replay / contract kit parity with the old Python testing helpers.
-- Add resource quota policies and capacity errors.
+- Add more resource quota dimensions beyond current `ref_id` / `kind` limits.

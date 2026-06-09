@@ -24,15 +24,17 @@ does not depend on the old reference package.
 
 - `crates/mutsuki-runtime-contracts` - pure serializable contracts:
   Agent, Envelope, ScopeRule, Operation / Source snapshots, trace, errors, and
-  resource descriptors.
+  resource descriptors, plus runtime events.
 - `crates/mutsuki-runtime-core` - runtime mechanics:
   lifecycle, inbox ticks, routing, operation registry, source registry,
-  trace bookkeeping, and resource lease governance.
+  trace bookkeeping, event stream, election policy, trace closure checks, and
+  resource lease governance.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
-  in-memory operation/source backend for direct framework use and smoke tests.
+  in-memory operation/source backend for direct framework use, smoke tests, and
+  a generic stdio JSONL backend adapter.
 - `python/mutsuki-runtime-python` - optional Python backend kit:
   pure contract mirrors, in-process backend host, descriptor-only resource
-  backend, and Python test fixtures.
+  backend, stdio JSONL server, and Python test fixtures.
 
 ## Verification
 

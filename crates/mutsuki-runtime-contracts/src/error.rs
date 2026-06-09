@@ -43,3 +43,4 @@ pub const ERR_RUNTIME_BACKEND_FAILED: &str = "runtime.backend_failed";
 pub const ERR_RUNTIME_BACKEND_GENERATION_MISMATCH: &str = "runtime.backend_generation_mismatch";
 pub const ERR_SCOPE_NO_MATCH: &str = "scope.no_match";
 pub const ERR_SOURCE_UNREGISTERED: &str = "source.unregistered";
+pub const ERR_CAPABILITY_EXHAUSTED: &str = "capability.exhausted";

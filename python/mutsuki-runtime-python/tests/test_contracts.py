@@ -8,6 +8,9 @@ from mutsuki_runtime_python.contracts import (
     OperationHandlerKey,
     OperationSnapshot,
     OperationStatus,
+    RuntimeError,
+    RuntimeEvent,
+    RuntimeEventKind,
     ScopeRuleSpec,
     SideEffectPolicy,
     SourceDescriptor,
@@ -159,3 +162,58 @@ def test_nested_contract_roundtrips() -> None:
     assert_json_roundtrip(SourceSnapshot, source)
     assert_json_roundtrip(StrategyResult, result)
     assert_json_roundtrip(TraceSpan, trace)
+
+
+def test_runtime_event_matches_rust_wire_shape() -> None:
+    event = RuntimeEvent(
+        sequence=1,
+        kind=RuntimeEventKind.ROUTING,
+        name="runtime.publish",
+        agent_id="agent-a",
+        attributes={"source_id": "source:test"},
+        error=RuntimeError(
+            code="scope.no_match",
+            source="runtime.route",
+            route="runtime.publish.source:test",
+        ),
+    )
+
+    assert to_json_dict(event) == {
+        "sequence": 1,
+        "kind": "routing",
+        "name": "runtime.publish",
+        "agent_id": "agent-a",
+        "attributes": {"source_id": "source:test"},
+        "error": {
+            "code": "scope.no_match",
+            "source": "runtime.route",
+            "route": "runtime.publish.source:test",
+            "lost_capability": None,
+            "recovery": None,
+            "cause": None,
+            "evidence": {},
+        },
+    }
+    assert_json_roundtrip(RuntimeEvent, event)
+
+
+def test_top_level_package_exports_new_runtime_surface() -> None:
+    from mutsuki_runtime_python import (
+        ERR_CAPABILITY_EXHAUSTED as exported_error,
+    )
+    from mutsuki_runtime_python import (
+        RuntimeEvent as ExportedRuntimeEvent,
+    )
+    from mutsuki_runtime_python import (
+        RuntimeEventKind as ExportedRuntimeEventKind,
+    )
+    from mutsuki_runtime_python import (
+        StdioJsonlBackendServer,
+        run_stdio_server,
+    )
+
+    assert exported_error == "capability.exhausted"
+    assert ExportedRuntimeEvent is RuntimeEvent
+    assert ExportedRuntimeEventKind is RuntimeEventKind
+    assert StdioJsonlBackendServer.__name__ == "StdioJsonlBackendServer"
+    assert callable(run_stdio_server)

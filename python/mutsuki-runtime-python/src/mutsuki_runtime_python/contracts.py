@@ -11,6 +11,7 @@ JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "Jso
 JsonDict = dict[str, JsonValue]
 
 ERR_AGENT_NOT_FOUND = "agent.not_found"
+ERR_CAPABILITY_EXHAUSTED = "capability.exhausted"
 ERR_OPERATION_NOT_FOUND = "operation.not_found"
 ERR_REF_NOT_FOUND = "ref.not_found"
 ERR_RUNTIME_BACKEND_FAILED = "runtime.backend_failed"
@@ -53,6 +54,15 @@ class StrategyResultStatus(StrEnum):
 class SpanStatus(StrEnum):
     OK = "ok"
     ERROR = "error"
+
+
+class RuntimeEventKind(StrEnum):
+    LIFECYCLE = "lifecycle"
+    ROUTING = "routing"
+    OPERATION = "operation"
+    RESOURCE = "resource"
+    TRACE = "trace"
+    BACKEND = "backend"
 
 
 def _as_mapping(data: object, contract: str) -> Mapping[str, object]:
@@ -636,4 +646,30 @@ class TraceSpan:
             end=None if end is None else _as_float(end, "end"),
             attributes=_as_scalar_dict(raw.get("attributes"), "attributes"),
             status=SpanStatus(_as_str(raw.get("status"), "status", "ok")),
+        )
+
+
+@dataclass(frozen=True)
+class RuntimeEvent:
+    sequence: int
+    kind: RuntimeEventKind
+    name: str
+    agent_id: str | None = None
+    attributes: dict[str, ScalarValue] = field(default_factory=dict)
+    error: RuntimeError | None = None
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "RuntimeEvent")
+        error = raw.get("error")
+        agent_id = raw.get("agent_id")
+        return cls(
+            sequence=_as_int(raw.get("sequence"), "sequence"),
+            kind=RuntimeEventKind(_as_str(raw.get("kind"), "kind")),
+            name=_as_str(raw.get("name"), "name"),
+            agent_id=None if agent_id is None else _as_str(agent_id, "agent_id"),
+            attributes=_as_scalar_dict(raw.get("attributes"), "attributes"),
+            error=None
+            if error is None
+            else RuntimeError.from_json_dict(_as_mapping(error, "error")),
         )
