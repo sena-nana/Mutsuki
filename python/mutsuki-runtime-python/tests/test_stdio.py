@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from io import StringIO
 
 from mutsuki_runtime_python.contracts import (
@@ -9,6 +10,7 @@ from mutsuki_runtime_python.contracts import (
     Envelope,
     LeaseToken,
     OperationDescriptor,
+    OperationStatus,
     RefDescriptor,
     SourceDescriptor,
     SourceRef,
@@ -23,6 +25,10 @@ from mutsuki_runtime_python.stdio import StdioJsonlBackendServer
 def _dict_value(value: object) -> dict[str, object]:
     assert isinstance(value, dict)
     return value
+
+
+def _resource_ref_id(record: object) -> object:
+    return _dict_value(_dict_value(record)["descriptor"])["ref_id"]
 
 
 def _host() -> PythonBackendHost:
@@ -169,6 +175,54 @@ async def test_stdio_stale_operation_key_returns_generation_mismatch() -> None:
     assert response_error["code"] == ERR_RUNTIME_BACKEND_GENERATION_MISMATCH
 
 
+async def test_stdio_operation_status_returns_snake_case_status() -> None:
+    host = _host()
+    snapshot = host.list_operations("agent-a")[0]
+    server = StdioJsonlBackendServer(host, _resource_backend())
+
+    response = await server.handle_request(
+        {
+            "id": "req-1",
+            "method": "operation_status",
+            "params": {"agent_id": "agent-a", "key": to_json_dict(snapshot.key)},
+        }
+    )
+
+    assert response == {"id": "req-1", "ok": True, "result": OperationStatus.ACTIVE.value}
+
+
+async def test_stdio_resource_list_supports_null_and_owner_filter() -> None:
+    resource_backend = _resource_backend()
+    await resource_backend.register_resource(_descriptor(), "owner-a")
+    await resource_backend.register_resource(
+        RefDescriptor(
+            ref_id="ref-2",
+            kind="domain.resource",
+            schema_id_target="domain.resource",
+            schema_version_target="1.0.0",
+        ),
+        "owner-b",
+    )
+    server = StdioJsonlBackendServer(_host(), resource_backend)
+
+    all_response = await server.handle_request(
+        {"id": "req-1", "method": "resource.list", "params": {"owner": None}}
+    )
+    owner_response = await server.handle_request(
+        {"id": "req-2", "method": "resource.list", "params": {"owner": "owner-b"}}
+    )
+
+    assert all_response["ok"] is True
+    all_records = all_response["result"]
+    assert isinstance(all_records, list)
+    assert [_resource_ref_id(record) for record in all_records] == ["ref-1", "ref-2"]
+    assert owner_response["ok"] is True
+    owner_records = owner_response["result"]
+    assert isinstance(owner_records, list)
+    assert len(owner_records) == 1
+    assert _resource_ref_id(owner_records[0]) == "ref-2"
+
+
 async def test_stdio_serve_reads_and_writes_jsonl() -> None:
     server = StdioJsonlBackendServer(_host(), _resource_backend())
     input_stream = StringIO(
@@ -180,3 +234,17 @@ async def test_stdio_serve_reads_and_writes_jsonl() -> None:
 
     assert '"id":"req-1"' in output_stream.getvalue()
     assert '"ok":true' in output_stream.getvalue()
+
+
+async def test_stdio_serve_malformed_json_decode_returns_structured_error() -> None:
+    server = StdioJsonlBackendServer(_host(), _resource_backend())
+    input_stream = StringIO('{"id":"req-1","method":\n')
+    output_stream = StringIO()
+
+    await server.serve(input_stream, output_stream)
+
+    response = _dict_value(json.loads(output_stream.getvalue()))
+    error = _dict_value(response["error"])
+    assert response["id"] is None
+    assert response["ok"] is False
+    assert error["code"] == ERR_RUNTIME_BACKEND_FAILED

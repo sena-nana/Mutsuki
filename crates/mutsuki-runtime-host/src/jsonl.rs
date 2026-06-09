@@ -2,12 +2,14 @@ use std::cell::RefCell;
 use std::io::{BufRead, Write};
 
 use mutsuki_runtime_contracts::{
-    Envelope, OperationHandlerKey, OperationSnapshot, OperationStatus, RuntimeError,
-    SourceSnapshot, StrategyResult,
+    Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor,
+    ResourceRecord, RuntimeError, SourceSnapshot, StrategyResult,
 };
 use mutsuki_runtime_core::{
-    BackendPayload, OperationBackend, RuntimeFailure, RuntimeResult, StrategyBackend,
+    BackendPayload, OperationBackend, ResourceBackend, RuntimeFailure, RuntimeResult,
+    StrategyBackend,
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 pub struct JsonlRuntimeBackend<R, W> {
@@ -72,6 +74,15 @@ impl<R: BufRead, W: Write> JsonlRuntimeBackend<R, W> {
             None => Err(protocol_error("response missing ok flag")),
         }
     }
+
+    pub fn try_list_records(&self, owner: Option<&str>) -> RuntimeResult<Vec<ResourceRecord>> {
+        self.request_as("resource.list", json!({"owner": owner}))
+    }
+
+    fn request_as<T: DeserializeOwned>(&self, method: &str, params: Value) -> RuntimeResult<T> {
+        let result = self.request(method, params)?;
+        serde_json::from_value(result).map_err(protocol_decode_failure)
+    }
 }
 
 impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
@@ -81,16 +92,14 @@ impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
     }
 
     fn on_input(&mut self, agent_id: &str, envelope: &Envelope) -> RuntimeResult<StrategyResult> {
-        let result = self.request(
+        self.request_as(
             "on_input",
             json!({"agent_id": agent_id, "envelope": envelope}),
-        )?;
-        serde_json::from_value(result).map_err(protocol_decode_failure)
+        )
     }
 
     fn next_step(&mut self, agent_id: &str) -> RuntimeResult<StrategyResult> {
-        let result = self.request("next_step", json!({"agent_id": agent_id}))?;
-        serde_json::from_value(result).map_err(protocol_decode_failure)
+        self.request_as("next_step", json!({"agent_id": agent_id}))
     }
 
     fn on_stop(&mut self, agent_id: &str) -> RuntimeResult<()> {
@@ -101,13 +110,11 @@ impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
 
 impl<R: BufRead, W: Write> OperationBackend for JsonlRuntimeBackend<R, W> {
     fn list_operations(&self, _agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>> {
-        let result = self.request("list_operations", json!({"agent_id": _agent_id}))?;
-        serde_json::from_value(result).map_err(protocol_decode_failure)
+        self.request_as("list_operations", json!({"agent_id": _agent_id}))
     }
 
     fn list_sources(&self, _agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>> {
-        let result = self.request("list_sources", json!({"agent_id": _agent_id}))?;
-        serde_json::from_value(result).map_err(protocol_decode_failure)
+        self.request_as("list_sources", json!({"agent_id": _agent_id}))
     }
 
     fn invoke(
@@ -124,12 +131,41 @@ impl<R: BufRead, W: Write> OperationBackend for JsonlRuntimeBackend<R, W> {
     }
 
     fn operation_status(&self, _agent_id: &str, _key: &OperationHandlerKey) -> OperationStatus {
-        self.request(
+        self.request_as(
             "operation_status",
             json!({"agent_id": _agent_id, "key": _key}),
         )
-        .and_then(|result| serde_json::from_value(result).map_err(protocol_decode_failure))
         .unwrap_or(OperationStatus::Unhealthy)
+    }
+}
+
+impl<R: BufRead, W: Write> ResourceBackend for JsonlRuntimeBackend<R, W> {
+    fn register_resource(
+        &mut self,
+        descriptor: RefDescriptor,
+        owner: &str,
+    ) -> RuntimeResult<String> {
+        self.request_as(
+            "resource.register",
+            json!({"descriptor": descriptor, "owner": owner}),
+        )
+    }
+
+    fn acquire_resource(&mut self, ref_id: &str, requester: &str) -> RuntimeResult<LeaseToken> {
+        self.request_as(
+            "resource.acquire",
+            json!({"ref_id": ref_id, "requester": requester}),
+        )
+    }
+
+    fn release_resource(&mut self, token: &LeaseToken) -> RuntimeResult<()> {
+        self.request("resource.release", json!({"token": token}))?;
+        Ok(())
+    }
+
+    fn list_records(&self, owner: Option<&str>) -> Vec<ResourceRecord> {
+        self.try_list_records(owner)
+            .expect("stdio JSONL resource.list failed")
     }
 }
 

@@ -13,10 +13,13 @@ mod tests {
 
     use mutsuki_runtime_contracts::{
         AgentParticipation, AgentSpec, Envelope, OperationDescriptor, OperationHandlerKey,
-        OperationSnapshot, OperationStatus, RuntimeError, ScopeRuleSpec, SideEffectPolicy,
-        SourceDescriptor, SourceRef, SourceSnapshot, StrategyResult,
+        OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord, RuntimeError,
+        ScopeRuleSpec, SideEffectPolicy, SourceDescriptor, SourceRef, SourceSnapshot,
+        StrategyResult,
     };
-    use mutsuki_runtime_core::{AgentRuntime, BackendPayload, OperationBackend, StrategyBackend};
+    use mutsuki_runtime_core::{
+        AgentRuntime, BackendPayload, OperationBackend, ResourceBackend, StrategyBackend,
+    };
     use serde_json::{Value, json};
 
     use super::*;
@@ -93,6 +96,25 @@ mod tests {
             descriptor: operation_descriptor(op_id),
             status,
             key: operation_key(op_id),
+        }
+    }
+
+    fn ref_descriptor(ref_id: &str, kind: &str) -> RefDescriptor {
+        RefDescriptor {
+            ref_id: ref_id.into(),
+            kind: kind.into(),
+            schema_id_target: kind.into(),
+            schema_version_target: "1.0.0".into(),
+            attributes: BTreeMap::new(),
+            lineage: Vec::new(),
+        }
+    }
+
+    fn resource_record(ref_id: &str, kind: &str, owner: &str, lease_count: u64) -> ResourceRecord {
+        ResourceRecord {
+            descriptor: ref_descriptor(ref_id, kind),
+            owner: owner.into(),
+            lease_count,
         }
     }
 
@@ -300,5 +322,108 @@ mod tests {
             backend.operation_status("agent-a", &key),
             OperationStatus::Unhealthy
         );
+    }
+
+    #[test]
+    fn jsonl_backend_dispatches_resource_register_acquire_and_release() {
+        let token = mutsuki_runtime_contracts::LeaseToken {
+            token_id: "lease-1".into(),
+            ref_id: "ref-1".into(),
+            owner: "agent-a".into(),
+        };
+        let response = [
+            json!({"id": "req-1", "ok": true, "result": "ref-1"}).to_string(),
+            json!({"id": "req-2", "ok": true, "result": token}).to_string(),
+            json!({"id": "req-3", "ok": true, "result": null}).to_string(),
+        ]
+        .join("\n")
+            + "\n";
+        let reader = Cursor::new(response.into_bytes());
+        let writer = Vec::new();
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+
+        let registered = backend
+            .register_resource(ref_descriptor("ref-1", "domain.resource"), "resource-host")
+            .unwrap();
+        let acquired = backend.acquire_resource("ref-1", "agent-a").unwrap();
+        backend.release_resource(&acquired).unwrap();
+
+        assert_eq!(registered, "ref-1");
+        assert_eq!(acquired.token_id, "lease-1");
+        let (_reader, writer) = backend.into_inner();
+        let written = String::from_utf8(writer).unwrap();
+        let requests = written
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(requests[0]["method"], "resource.register");
+        assert_eq!(requests[0]["params"]["descriptor"]["ref_id"], "ref-1");
+        assert_eq!(requests[0]["params"]["owner"], "resource-host");
+        assert_eq!(requests[1]["method"], "resource.acquire");
+        assert_eq!(requests[1]["params"]["requester"], "agent-a");
+        assert_eq!(requests[2]["method"], "resource.release");
+        assert_eq!(requests[2]["params"]["token"]["token_id"], "lease-1");
+    }
+
+    #[test]
+    fn jsonl_backend_lists_resource_records_with_optional_owner_filter() {
+        let all_records = vec![
+            resource_record("ref-a", "domain.resource", "owner-a", 0),
+            resource_record("ref-b", "domain.resource", "owner-b", 1),
+        ];
+        let owner_records = vec![resource_record("ref-b", "domain.resource", "owner-b", 1)];
+        let response = [
+            json!({"id": "req-1", "ok": true, "result": all_records}).to_string(),
+            json!({"id": "req-2", "ok": true, "result": owner_records}).to_string(),
+        ]
+        .join("\n")
+            + "\n";
+        let reader = Cursor::new(response.into_bytes());
+        let writer = Vec::new();
+        let backend = JsonlRuntimeBackend::new(reader, writer);
+
+        let all = backend.try_list_records(None).unwrap();
+        let owner_b = backend.try_list_records(Some("owner-b")).unwrap();
+
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            owner_b,
+            vec![resource_record("ref-b", "domain.resource", "owner-b", 1)]
+        );
+        let (_reader, writer) = backend.into_inner();
+        let written = String::from_utf8(writer).unwrap();
+        let requests = written
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(requests[0]["method"], "resource.list");
+        assert!(requests[0]["params"]["owner"].is_null());
+        assert_eq!(requests[1]["method"], "resource.list");
+        assert_eq!(requests[1]["params"]["owner"], "owner-b");
+    }
+
+    #[test]
+    fn jsonl_backend_resource_failure_preserves_backend_error() {
+        let response = json!({
+            "id": "req-1",
+            "ok": false,
+            "error": RuntimeError::new(
+                "ref.not_found",
+                "python_resource_backend",
+                "python.resource.acquire.ref-missing"
+            ),
+        })
+        .to_string()
+            + "\n";
+        let reader = Cursor::new(response.into_bytes());
+        let writer = Vec::new();
+        let mut backend = JsonlRuntimeBackend::new(reader, writer);
+
+        let err = backend
+            .acquire_resource("ref-missing", "agent-a")
+            .unwrap_err();
+
+        assert_eq!(err.error().code, "ref.not_found");
+        assert_eq!(err.error().source, "python_resource_backend");
     }
 }
