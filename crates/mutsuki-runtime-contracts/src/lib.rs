@@ -104,4 +104,21 @@ mod tests {
         assert_eq!(decoded, event);
         assert_eq!(ERR_CAPABILITY_EXHAUSTED, "capability.exhausted");
     }
+
+    #[test]
+    fn runtime_event_defaults_optional_shape_fields() {
+        let decoded: RuntimeEvent = serde_json::from_value(serde_json::json!({
+            "sequence": 7,
+            "kind": "trace",
+            "name": "trace.span"
+        }))
+        .unwrap();
+
+        assert_eq!(decoded.sequence, 7);
+        assert_eq!(decoded.kind, RuntimeEventKind::Trace);
+        assert_eq!(decoded.name, "trace.span");
+        assert_eq!(decoded.agent_id, None);
+        assert!(decoded.attributes.is_empty());
+        assert_eq!(decoded.error, None);
+    }
 }

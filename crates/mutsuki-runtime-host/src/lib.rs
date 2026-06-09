@@ -14,8 +14,8 @@ mod tests {
     use mutsuki_runtime_contracts::{
         AgentParticipation, AgentSpec, Envelope, OperationDescriptor, OperationHandlerKey,
         OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord, RuntimeError,
-        ScopeRuleSpec, SideEffectPolicy, SourceDescriptor, SourceRef, SourceSnapshot,
-        StrategyResult,
+        RuntimeEventKind, ScalarValue, ScopeRuleSpec, SideEffectPolicy, SourceDescriptor,
+        SourceRef, SourceSnapshot, StrategyResult,
     };
     use mutsuki_runtime_core::{
         AgentRuntime, BackendPayload, OperationBackend, ResourceBackend, StrategyBackend,
@@ -147,6 +147,38 @@ mod tests {
 
         runtime.stop_agent("native-agent", &mut host).unwrap();
         assert_eq!(host.stop_count(), 1);
+    }
+
+    #[test]
+    fn native_host_exposes_core_runtime_events_after_driving_agent() {
+        let mut runtime = AgentRuntime::new();
+        let mut host = NativeRuntimeHost::new();
+        host.register_source(source_snapshot("source:test"));
+
+        host.start_agent(&mut runtime, agent()).unwrap();
+        runtime.publish(envelope()).unwrap();
+
+        let events = runtime.events();
+        assert!(
+            events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+        let publish = events
+            .iter()
+            .find(|event| event.name == "runtime.publish")
+            .unwrap();
+        assert_eq!(publish.kind, RuntimeEventKind::Routing);
+        assert!(publish.error.is_none());
+        assert_eq!(
+            publish.attributes.get("source_id"),
+            Some(&ScalarValue::String("source:test".into()))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == RuntimeEventKind::Trace && event.name == "trace.span")
+        );
     }
 
     #[test]

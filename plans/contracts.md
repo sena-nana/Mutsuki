@@ -31,7 +31,7 @@
 | `StrategyResult` | `status`、`decision`、`emitted`、`error` |
 | `RuntimeError` | `code`、`source`、`route`、`lost_capability`、`recovery`、`cause`、`evidence` |
 | `TraceSpan` | `trace_id`、`span_id`、`parent_span_id`、`name`、`start`、`end`、`attributes`、`status` |
-| `RuntimeEvent` | `sequence`、`kind`、`name`、`agent_id`、`attributes`、`error` |
+| `RuntimeEvent` | `sequence`、`kind`、`name`、`agent_id`、`attributes`、`error`；v1 不含 wall-clock timestamp |
 | `RefDescriptor` | `ref_id`、`kind`、`schema_id_target`、`schema_version_target`、`attributes`、`lineage` |
 | `LeaseToken` | `token_id`、`ref_id`、`owner` |
 | `ResourceRecord` | `descriptor`、`owner`、`lease_count` |
@@ -120,13 +120,22 @@ ResourceBackend:
 ## 9. Runtime Event Stream
 
 - Runtime event stream 使用 `RuntimeEvent` 纯协议记录 lifecycle / routing / operation /
-  resource / trace / backend 事件。
-- `sequence` 由 runtime 全局分配，是确定性递增顺序；resource events 属于
-  `AgentRuntime` event stream，standalone `ResourceGate` 不维护 event stream 或 pending
-  drafts。不要求 v1 使用 wall-clock timestamp。
+  resource / trace / backend 事件。`kind` 表示事件分类，`name` 表示稳定事件名。
+- `sequence` 由 runtime 全局分配，是确定性递增顺序；`drain_events()` 清空已读事件，
+  但不得重置或复用 sequence。不要求 v1 使用 wall-clock timestamp。
+- Trace 事实源仍是 `TraceSpan`；每次 runtime 记录 span 时同步产生一个
+  `kind=trace`、`name=trace.span` 的事件。该事件 `attributes` 至少包含 `trace_id`、
+  `span_id`、`span_name`、`start`、`end`（span 有 end 时）与 `status`，有父 span 时
+  包含 `parent_span_id`。
+- Resource events 属于 `AgentRuntime` event stream。runtime-owned `ResourceGate` 可以
+  暂存内部 event draft，下一次 snapshot / drain / runtime event emit 时由
+  `AgentRuntime` 统一分配 sequence；standalone `ResourceGate` 不维护可观察 event stream，
+  也不收集 draft。
 - `tick_once` 调用 backend 后按 outcome 记录事件；backend `Err` 或 `StrategyResult.error`
   必须记录为 `agent.input.error` / `agent.next_step.error` 并携带 structured error，不得
   先写入 `error=None` 的成功事件。
+- Resource acquire / release 的成功和失败都必须记录为 `resource.*` /
+  `resource.*.error`；失败事件必须携带 structured `RuntimeError`。
 - 事件可以携带 scalar attributes 与结构化 `RuntimeError`，但不得包含 callable、真实
   handle、socket、SDK client 或领域对象。
 - Host 可通过 runtime 暴露的 event snapshot / drain API 获取事件；事件失败不得改变

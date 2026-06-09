@@ -745,6 +745,114 @@ mod tests {
     }
 
     #[test]
+    fn runtime_event_sequence_continues_after_drain() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let drained = runtime.drain_events();
+        let last_sequence = drained.last().unwrap().sequence;
+        runtime.publish(envelope()).unwrap();
+
+        let events = runtime.events();
+        assert!(events[0].sequence > last_sequence);
+    }
+
+    #[test]
+    fn runtime_emits_trace_span_events_with_span_shape() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let events = runtime.events();
+        let trace_index = events
+            .iter()
+            .position(|event| {
+                event.kind == RuntimeEventKind::Trace
+                    && event.name == "trace.span"
+                    && event.attributes.get("span_name")
+                        == Some(&ScalarValue::String("agent.awake".into()))
+            })
+            .unwrap();
+        let awake_index = events
+            .iter()
+            .position(|event| event.name == "agent.awake")
+            .unwrap();
+        let event = &events[trace_index];
+
+        assert!(trace_index < awake_index);
+        assert_eq!(event.agent_id.as_deref(), Some("agent-a"));
+        assert!(event.error.is_none());
+        assert_eq!(
+            event.attributes.get("trace_id"),
+            Some(&ScalarValue::String("trace-agent-a".into()))
+        );
+        assert!(event.attributes.contains_key("span_id"));
+        assert_eq!(
+            event.attributes.get("status"),
+            Some(&ScalarValue::String("ok".into()))
+        );
+    }
+
+    #[test]
+    fn runtime_trace_events_for_unregistered_source_are_not_agent_scoped() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unknown = envelope();
+        unknown.source.source_id = "source:unknown".into();
+        runtime.publish(unknown).unwrap_err();
+
+        let events = runtime.events();
+        let event = events
+            .iter()
+            .find(|event| {
+                event.kind == RuntimeEventKind::Trace
+                    && event.name == "trace.span"
+                    && event.attributes.get("span_name")
+                        == Some(&ScalarValue::String("runtime.source_unregistered".into()))
+            })
+            .unwrap();
+        assert_eq!(event.agent_id, None);
+        assert_eq!(
+            event.attributes.get("trace_id"),
+            Some(&ScalarValue::String("trace-runtime".into()))
+        );
+    }
+
+    #[test]
+    fn runtime_trace_events_for_scope_no_match_are_not_agent_scoped() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        let mut unmatched = envelope();
+        unmatched.payload_schema_id = "other.input".into();
+        runtime.publish(unmatched).unwrap_err();
+
+        let events = runtime.events();
+        let event = events
+            .iter()
+            .find(|event| {
+                event.kind == RuntimeEventKind::Trace
+                    && event.name == "trace.span"
+                    && event.attributes.get("span_name")
+                        == Some(&ScalarValue::String("runtime.scope_no_match".into()))
+            })
+            .unwrap();
+        assert_eq!(event.agent_id, None);
+        assert_eq!(
+            event.attributes.get("trace_id"),
+            Some(&ScalarValue::String("trace-runtime".into()))
+        );
+    }
+
+    #[test]
     fn runtime_assigns_global_event_sequence_to_pending_resource_events() {
         let mut runtime = AgentRuntime::new();
         let mut backend = backend();
@@ -792,6 +900,48 @@ mod tests {
             events
                 .windows(2)
                 .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
+    }
+
+    #[test]
+    fn runtime_emits_structured_resource_error_events() {
+        let mut runtime = AgentRuntime::new();
+
+        let acquire_err = runtime
+            .resources_mut()
+            .acquire("ref-missing", "agent-a")
+            .unwrap_err();
+        assert_eq!(acquire_err.error().code, "ref.not_found");
+        let events = runtime.events();
+        let event = events
+            .iter()
+            .find(|event| event.name == "resource.acquire.error")
+            .unwrap();
+        assert_eq!(event.kind, RuntimeEventKind::Resource);
+        assert_eq!(event.error.as_ref().unwrap().code, "ref.not_found");
+        assert_eq!(
+            event.attributes.get("ref_id"),
+            Some(&ScalarValue::String("ref-missing".into()))
+        );
+
+        runtime.drain_events();
+        let stale = LeaseToken {
+            token_id: "lease-missing".into(),
+            ref_id: "ref-missing".into(),
+            owner: "agent-a".into(),
+        };
+        let release_err = runtime.resources_mut().release(&stale).unwrap_err();
+        assert_eq!(release_err.error().code, "ref.not_found");
+        let events = runtime.events();
+        let event = events
+            .iter()
+            .find(|event| event.name == "resource.release.error")
+            .unwrap();
+        assert_eq!(event.kind, RuntimeEventKind::Resource);
+        assert_eq!(event.error.as_ref().unwrap().code, "ref.not_found");
+        assert_eq!(
+            event.attributes.get("token_id"),
+            Some(&ScalarValue::String("lease-missing".into()))
         );
     }
 

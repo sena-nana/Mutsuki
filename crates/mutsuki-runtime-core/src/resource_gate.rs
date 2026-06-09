@@ -89,13 +89,22 @@ impl ResourceGate {
         ref_id: &str,
         requester: impl Into<String>,
     ) -> RuntimeResult<LeaseToken> {
-        let record = self.records.get(ref_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
-                "ref.not_found",
-                "runtime.resource_gate",
-                format!("runtime.resource.acquire.{ref_id}"),
-            ))
-        })?;
+        let record = match self.records.get(ref_id) {
+            Some(record) => record,
+            None => {
+                let err = RuntimeError::new(
+                    "ref.not_found",
+                    "runtime.resource_gate",
+                    format!("runtime.resource.acquire.{ref_id}"),
+                );
+                self.record_event(
+                    "resource.acquire.error",
+                    resource_ref_attributes(ref_id),
+                    Some(err.clone()),
+                );
+                return Err(RuntimeFailure::new(err));
+            }
+        };
         let requester = requester.into();
         if let Some(err) = self.quota_error(record, &requester) {
             self.record_event(
@@ -125,13 +134,22 @@ impl ResourceGate {
     }
 
     pub fn release(&mut self, token: &LeaseToken) -> RuntimeResult<()> {
-        let stored = self.leases.get(&token.token_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
-                "ref.not_found",
-                "runtime.resource_gate",
-                format!("runtime.resource.release.{}", token.token_id),
-            ))
-        })?;
+        let stored = match self.leases.get(&token.token_id) {
+            Some(stored) => stored,
+            None => {
+                let err = RuntimeError::new(
+                    "ref.not_found",
+                    "runtime.resource_gate",
+                    format!("runtime.resource.release.{}", token.token_id),
+                );
+                self.record_event(
+                    "resource.release.error",
+                    resource_token_attributes(&token.ref_id, &token.token_id),
+                    Some(err.clone()),
+                );
+                return Err(RuntimeFailure::new(err));
+            }
+        };
         if stored != token {
             let mut err = RuntimeError::new(
                 "ref.not_found",

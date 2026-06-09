@@ -87,8 +87,10 @@ snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Ha
 - Trace span 必须保留 `trace_id` / `span_id` / `parent_span_id`，用于证明 Agent
   input、strategy、operation、resource 的因果链。
 - Runtime event stream 必须只记录纯协议事件，不携带真实资源对象或 callable；事件
-  `sequence` 由 runtime 全局分配。Resource events 只属于 `AgentRuntime` 事件流，
-  standalone `ResourceGate` 不维护 event stream 或 pending drafts。
+  `sequence` 由 runtime 全局分配，drain 后也不能回退或复用。Trace span 以
+  `TraceSpan` 为事实源，并同步投影为 `trace.span` event。Resource events 只属于
+  `AgentRuntime` 事件流；runtime-owned `ResourceGate` 可暂存内部 event draft，standalone
+  `ResourceGate` 不维护可观察 event stream，也不收集 draft。
 - Resource quota 耗尽必须 fail-loud 为 `capability.exhausted`，不得静默创建租约；
   `kind` quota 按同 kind 全部活跃 lease 总量计算。
 - Election policy 只能排序已过滤候选，不得绕过 source / lifecycle / accepts。

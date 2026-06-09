@@ -80,8 +80,7 @@ impl AgentRuntime {
     ) -> RuntimeResult<()> {
         self.agent(agent_id)?;
         if let Err(err) = backend.on_awake(agent_id) {
-            self.trace
-                .record(agent_id, "agent.awake", None, SpanStatus::Error);
+            self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
             self.emit_failure(
                 RuntimeEventKind::Lifecycle,
                 "agent.awake.error",
@@ -94,8 +93,7 @@ impl AgentRuntime {
         let operation_snapshots = match backend.list_operations(agent_id) {
             Ok(snapshots) => snapshots,
             Err(err) => {
-                self.trace
-                    .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
                 self.emit_failure(
                     RuntimeEventKind::Backend,
                     "backend.list_operations.error",
@@ -109,8 +107,7 @@ impl AgentRuntime {
         let source_snapshots = match backend.list_sources(agent_id) {
             Ok(snapshots) => snapshots,
             Err(err) => {
-                self.trace
-                    .record(agent_id, "agent.awake", None, SpanStatus::Error);
+                self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
                 self.emit_failure(
                     RuntimeEventKind::Backend,
                     "backend.list_sources.error",
@@ -128,8 +125,7 @@ impl AgentRuntime {
         self.ingest_sources(agent_id, source_snapshots);
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Awake;
-        self.trace
-            .record(agent_id, "agent.awake", None, SpanStatus::Ok);
+        self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Ok);
         self.emit_agent(
             RuntimeEventKind::Lifecycle,
             "agent.awake",
@@ -172,8 +168,7 @@ impl AgentRuntime {
     ) -> RuntimeResult<()> {
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Sleep;
-        self.trace
-            .record(agent_id, "agent.sleep", None, SpanStatus::Ok);
+        self.record_agent_trace(agent_id, "agent.sleep", None, SpanStatus::Ok);
         self.emit_agent(
             RuntimeEventKind::Lifecycle,
             "agent.sleep",
@@ -182,8 +177,7 @@ impl AgentRuntime {
             None,
         );
         if let Err(err) = backend.on_stop(agent_id) {
-            self.trace
-                .record(agent_id, "agent.stop", None, SpanStatus::Error);
+            self.record_agent_trace(agent_id, "agent.stop", None, SpanStatus::Error);
             self.emit_failure(
                 RuntimeEventKind::Lifecycle,
                 "agent.stop.error",
@@ -195,8 +189,7 @@ impl AgentRuntime {
         }
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Stop;
-        self.trace
-            .record(agent_id, "agent.stop", None, SpanStatus::Ok);
+        self.record_agent_trace(agent_id, "agent.stop", None, SpanStatus::Ok);
         self.emit_agent(
             RuntimeEventKind::Lifecycle,
             "agent.stop",
@@ -209,12 +202,7 @@ impl AgentRuntime {
 
     pub fn publish(&mut self, envelope: Envelope) -> RuntimeResult<Vec<AgentId>> {
         if !self.has_registered_source(&envelope.source.source_id) {
-            self.trace.record(
-                "runtime",
-                "runtime.source_unregistered",
-                None,
-                SpanStatus::Error,
-            );
+            self.record_runtime_trace("runtime.source_unregistered", None, SpanStatus::Error);
             let err = source_unregistered_failure(&envelope);
             self.emit_failure(
                 RuntimeEventKind::Routing,
@@ -233,8 +221,7 @@ impl AgentRuntime {
             }
         }
         if matched.is_empty() {
-            self.trace
-                .record("runtime", "runtime.scope_no_match", None, SpanStatus::Error);
+            self.record_runtime_trace("runtime.scope_no_match", None, SpanStatus::Error);
             let err = scope_no_match_failure(&envelope);
             self.emit_failure(
                 RuntimeEventKind::Routing,
@@ -299,13 +286,12 @@ impl AgentRuntime {
         };
         let result = match envelope {
             Some(envelope) => {
-                let input_span = self
-                    .trace
-                    .record(agent_id, "agent.input", None, SpanStatus::Ok);
+                let input_span =
+                    self.record_agent_trace(agent_id, "agent.input", None, SpanStatus::Ok);
                 let result = match backend.on_input(agent_id, &envelope) {
                     Ok(result) => result,
                     Err(err) => {
-                        self.trace.record(
+                        self.record_agent_trace(
                             agent_id,
                             "agent.strategy",
                             Some(input_span.span_id),
@@ -326,8 +312,12 @@ impl AgentRuntime {
                 } else {
                     SpanStatus::Ok
                 };
-                self.trace
-                    .record(agent_id, "agent.strategy", Some(input_span.span_id), status);
+                self.record_agent_trace(
+                    agent_id,
+                    "agent.strategy",
+                    Some(input_span.span_id),
+                    status,
+                );
                 let error = result.error.clone();
                 let name = if error.is_some() {
                     "agent.input.error"
@@ -345,12 +335,11 @@ impl AgentRuntime {
             }
             None => {
                 let tick_span =
-                    self.trace
-                        .record(agent_id, "agent.next_step", None, SpanStatus::Ok);
+                    self.record_agent_trace(agent_id, "agent.next_step", None, SpanStatus::Ok);
                 let result = match backend.next_step(agent_id) {
                     Ok(result) => result,
                     Err(err) => {
-                        self.trace.record(
+                        self.record_agent_trace(
                             agent_id,
                             "agent.strategy",
                             Some(tick_span.span_id),
@@ -371,8 +360,12 @@ impl AgentRuntime {
                 } else {
                     SpanStatus::Ok
                 };
-                self.trace
-                    .record(agent_id, "agent.strategy", Some(tick_span.span_id), status);
+                self.record_agent_trace(
+                    agent_id,
+                    "agent.strategy",
+                    Some(tick_span.span_id),
+                    status,
+                );
                 let error = result.error.clone();
                 let name = if error.is_some() {
                     "agent.next_step.error"
@@ -427,10 +420,10 @@ impl AgentRuntime {
             );
             return Err(err);
         }
-        let invoke_span = self
-            .trace
-            .record(agent_id, "operation.invoke", None, SpanStatus::Ok);
-        match backend.invoke(agent_id, &snapshot.key, payload) {
+        let key = snapshot.key.clone();
+        let invoke_span =
+            self.record_agent_trace(agent_id, "operation.invoke", None, SpanStatus::Ok);
+        match backend.invoke(agent_id, &key, payload) {
             Ok(result) => {
                 self.emit_agent(
                     RuntimeEventKind::Operation,
@@ -442,7 +435,7 @@ impl AgentRuntime {
                 Ok(result)
             }
             Err(err) => {
-                self.trace.record(
+                self.record_agent_trace(
                     agent_id,
                     "operation.invoke.error",
                     Some(invoke_span.span_id),
@@ -586,6 +579,46 @@ impl AgentRuntime {
         );
     }
 
+    fn record_agent_trace(
+        &mut self,
+        agent_id: &str,
+        name: impl Into<String>,
+        parent_span_id: Option<String>,
+        status: SpanStatus,
+    ) -> TraceSpan {
+        self.record_trace(agent_id, Some(agent_id), name, parent_span_id, status)
+    }
+
+    fn record_runtime_trace(
+        &mut self,
+        name: impl Into<String>,
+        parent_span_id: Option<String>,
+        status: SpanStatus,
+    ) -> TraceSpan {
+        self.record_trace("runtime", None, name, parent_span_id, status)
+    }
+
+    fn record_trace(
+        &mut self,
+        trace_actor_id: &str,
+        event_agent_id: Option<&str>,
+        name: impl Into<String>,
+        parent_span_id: Option<String>,
+        status: SpanStatus,
+    ) -> TraceSpan {
+        let span = self
+            .trace
+            .record(trace_actor_id, name, parent_span_id, status);
+        self.emit(
+            RuntimeEventKind::Trace,
+            "trace.span",
+            event_agent_id.map(str::to_string),
+            trace_attributes(&span),
+            None,
+        );
+        span
+    }
+
     fn flush_resource_events(&mut self) {
         self.events
             .append_drafts(self.resource_gate.drain_event_drafts());
@@ -616,6 +649,37 @@ fn op_status_attributes(op_id: &str, status: &OperationStatus) -> BTreeMap<Strin
     attributes.insert(
         "operation_status".into(),
         ScalarValue::String(format!("{status:?}")),
+    );
+    attributes
+}
+
+fn trace_attributes(span: &TraceSpan) -> BTreeMap<String, ScalarValue> {
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "trace_id".into(),
+        ScalarValue::String(span.trace_id.clone()),
+    );
+    attributes.insert("span_id".into(), ScalarValue::String(span.span_id.clone()));
+    if let Some(parent_span_id) = &span.parent_span_id {
+        attributes.insert(
+            "parent_span_id".into(),
+            ScalarValue::String(parent_span_id.clone()),
+        );
+    }
+    attributes.insert("span_name".into(), ScalarValue::String(span.name.clone()));
+    attributes.insert("start".into(), ScalarValue::Float(span.start));
+    if let Some(end) = span.end {
+        attributes.insert("end".into(), ScalarValue::Float(end));
+    }
+    attributes.insert(
+        "status".into(),
+        ScalarValue::String(
+            match &span.status {
+                SpanStatus::Ok => "ok",
+                SpanStatus::Error => "error",
+            }
+            .into(),
+        ),
     );
     attributes
 }
