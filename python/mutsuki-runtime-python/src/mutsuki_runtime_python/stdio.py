@@ -91,12 +91,16 @@ class StdioJsonlBackendServer:
         if method == "on_stop":
             await self._host.on_stop(self._str_param(params, "agent_id"))
             return None
+        if method == "list_plugins":
+            return [to_json_dict(item) for item in self._host.list_plugins()]
         if method == "list_operations":
-            agent_id = self._str_param(params, "agent_id")
-            return [to_json_dict(item) for item in self._host.list_operations(agent_id)]
+            enabled_plugin_ids = self._str_sequence_param(params, "enabled_plugin_ids")
+            return [
+                to_json_dict(item) for item in self._host.list_operations(enabled_plugin_ids)
+            ]
         if method == "list_sources":
-            agent_id = self._str_param(params, "agent_id")
-            return [to_json_dict(item) for item in self._host.list_sources(agent_id)]
+            enabled_plugin_ids = self._str_sequence_param(params, "enabled_plugin_ids")
+            return [to_json_dict(item) for item in self._host.list_sources(enabled_plugin_ids)]
         if method == "invoke":
             result = await self._host.invoke(
                 self._str_param(params, "agent_id"),
@@ -199,6 +203,20 @@ class StdioJsonlBackendServer:
         if value is not None and not isinstance(value, str):
             raise TypeError(f"{key} expects str or null")
         return value
+
+    @staticmethod
+    def _str_sequence_param(params: dict[str, object], key: str) -> tuple[str, ...]:
+        if key not in params:
+            raise TypeError(f"{key} is required")
+        value = params[key]
+        if not isinstance(value, list | tuple):
+            raise TypeError(f"{key} expects sequence")
+        result: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise TypeError(f"{key} expects str items")
+            result.append(item)
+        return tuple(result)
 
     @staticmethod
     def _json_param(params: dict[str, object], key: str) -> JsonValue:

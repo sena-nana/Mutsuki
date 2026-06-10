@@ -9,17 +9,18 @@ mod scope;
 mod strategy;
 mod trace;
 
-pub use agent::{AgentParticipation, AgentPhase, AgentSpec, SideEffectPolicy};
+pub use agent::{AgentParticipation, AgentPhase, AgentSnapshot, AgentSpec, SideEffectPolicy};
 pub use common::{AgentId, EnvelopeId, RefId, ScalarValue, SpanId, TraceId};
 pub use envelope::{Envelope, SourceRef};
 pub use error::{
-    ERR_AGENT_NOT_FOUND, ERR_CAPABILITY_EXHAUSTED, ERR_OPERATION_NOT_FOUND,
-    ERR_RUNTIME_BACKEND_FAILED, ERR_RUNTIME_BACKEND_GENERATION_MISMATCH, ERR_SCOPE_NO_MATCH,
-    ERR_SOURCE_UNREGISTERED, RuntimeError,
+    ERR_AGENT_NOT_FOUND, ERR_CAPABILITY_EXHAUSTED, ERR_OPERATION_NOT_FOUND, ERR_PLUGIN_DISABLED,
+    ERR_PLUGIN_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, ERR_RUNTIME_BACKEND_GENERATION_MISMATCH,
+    ERR_SCOPE_NO_MATCH, ERR_SOURCE_UNREGISTERED, RuntimeError,
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use operation::{
-    OperationDescriptor, OperationHandlerKey, OperationSnapshot, OperationStatus, SourceDescriptor,
+    OperationDescriptor, OperationHandlerKey, OperationSnapshot, OperationStatus,
+    PluginAccessState, PluginDescriptor, PluginSnapshot, PluginStatus, SourceDescriptor,
     SourceSnapshot,
 };
 pub use resource::{LeaseToken, RefDescriptor, ResourceRecord};
@@ -86,6 +87,33 @@ mod tests {
         let json = serde_json::to_string(&descriptor).unwrap();
         let decoded: OperationDescriptor = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, descriptor);
+
+        let plugin = PluginSnapshot {
+            descriptor: PluginDescriptor {
+                plugin_id: "echo".into(),
+                generation: 1,
+                name: "Echo".into(),
+                description: "Echo plugin".into(),
+                version: "1.0.0".into(),
+                capabilities: vec!["operation".into()],
+                metadata: BTreeMap::new(),
+            },
+            status: PluginStatus::Enabled,
+        };
+        let access = PluginAccessState {
+            enabled_plugin_ids: vec!["echo".into()],
+            disabled_plugin_ids: vec!["disabled".into()],
+        };
+        assert_eq!(
+            serde_json::from_str::<PluginSnapshot>(&serde_json::to_string(&plugin).unwrap())
+                .unwrap(),
+            plugin
+        );
+        assert_eq!(
+            serde_json::from_str::<PluginAccessState>(&serde_json::to_string(&access).unwrap())
+                .unwrap(),
+            access
+        );
     }
 
     #[test]
@@ -127,6 +155,9 @@ mod tests {
         assert_missing_fields_fail::<OperationDescriptor>(serde_json::json!({
             "op_id": "test.echo",
             "name": "echo"
+        }));
+        assert_missing_fields_fail::<PluginDescriptor>(serde_json::json!({
+            "plugin_id": "test"
         }));
         assert_missing_fields_fail::<StrategyResult>(serde_json::json!({
             "status": "wait_input"

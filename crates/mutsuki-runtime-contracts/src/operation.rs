@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ScalarValue;
+use std::collections::BTreeMap;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationDescriptor {
     pub op_id: String,
@@ -52,4 +55,35 @@ pub struct SourceSnapshot {
     pub descriptor: SourceDescriptor,
     pub plugin_id: String,
     pub plugin_generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginDescriptor {
+    pub plugin_id: String,
+    pub generation: u64,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    pub capabilities: Vec<String>,
+    pub metadata: BTreeMap<String, ScalarValue>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginStatus {
+    Enabled,
+    Disabled,
+    Unhealthy,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginSnapshot {
+    pub descriptor: PluginDescriptor,
+    pub status: PluginStatus,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginAccessState {
+    pub enabled_plugin_ids: Vec<String>,
+    pub disabled_plugin_ids: Vec<String>,
 }

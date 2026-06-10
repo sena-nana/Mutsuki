@@ -8,7 +8,7 @@
 
 - `crates/mutsuki-runtime-contracts`：纯协议结构与 `ScopeRuleSpec.matches(...)`。
 - `crates/mutsuki-runtime-core`：`AgentRuntime`、backend traits、Operation /
-  Source registry、routing、trace bookkeeping、runtime event stream、election policy、
+  插件启用 / 禁用状态、Source registry、routing、trace bookkeeping、runtime event stream、election policy、
   `ResourceGate`。
 - `crates/mutsuki-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
   Agent loop；另提供 stdio JSONL backend adapter。
@@ -30,7 +30,7 @@ Caller
 - Caller 是运行时调用方，可以是 Rust 应用、Python 插件入口、HTTP 服务、CLI 或其他
   项目。Caller 只能通过 runtime API 控制或查询 Rust runtime。
 - Rust Runtime Kernel 是唯一 runtime 事实源，负责 Agent lifecycle、routing、inbox、
-  Source / Operation registry snapshot、ResourceGate、trace 和 runtime event stream。
+  Plugin / Source / Operation registry snapshot、ResourceGate、trace 和 runtime event stream。
 - Capability Backend 是能力宿主，可以是 native Rust host、Python sidecar、旧
   Python reference 的迁移 adapter 或其他远程服务。它只提供策略、Operation handler、
   Source snapshot 和资源对象访问能力。
@@ -101,8 +101,9 @@ on_stop(agent_id) -> Result<(), RuntimeFailure>
 ### OperationBackend
 
 ```text
-list_operations(agent_id) -> Result<Vec<OperationSnapshot>, RuntimeFailure>
-list_sources(agent_id) -> Result<Vec<SourceSnapshot>, RuntimeFailure>
+list_plugins() -> Result<Vec<PluginSnapshot>, RuntimeFailure>
+list_operations(enabled_plugin_ids) -> Result<Vec<OperationSnapshot>, RuntimeFailure>
+list_sources(enabled_plugin_ids) -> Result<Vec<SourceSnapshot>, RuntimeFailure>
 invoke(agent_id, key, payload) -> Result<BackendPayload, RuntimeFailure>
 operation_status(agent_id, key) -> OperationStatus
 ```

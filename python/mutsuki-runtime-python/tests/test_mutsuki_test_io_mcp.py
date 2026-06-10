@@ -313,7 +313,7 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
     session_id = started["session_id"]
 
     try:
-        sources = await _tool_call(
+        plugins = await _tool_call(
             server,
             2,
             "jsonl_request",
@@ -321,13 +321,13 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
                 "session_id": session_id,
                 "request": {
                     "id": "req-1",
-                    "method": "list_sources",
-                    "params": {"agent_id": "agent-a"},
+                    "method": "list_plugins",
+                    "params": {},
                 },
                 "timeout_ms": 5000,
             },
         )
-        awake = await _tool_call(
+        sources = await _tool_call(
             server,
             3,
             "jsonl_request",
@@ -335,6 +335,20 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
                 "session_id": session_id,
                 "request": {
                     "id": "req-2",
+                    "method": "list_sources",
+                    "params": {"enabled_plugin_ids": ["mutsuki-codex-core"]},
+                },
+                "timeout_ms": 5000,
+            },
+        )
+        awake = await _tool_call(
+            server,
+            4,
+            "jsonl_request",
+            {
+                "session_id": session_id,
+                "request": {
+                    "id": "req-3",
                     "method": "on_awake",
                     "params": {"agent_id": "agent-a"},
                 },
@@ -343,12 +357,12 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
         )
         input_result = await _tool_call(
             server,
-            4,
+            5,
             "jsonl_request",
             {
                 "session_id": session_id,
                 "request": {
-                    "id": "req-3",
+                    "id": "req-4",
                     "method": "on_input",
                     "params": {"agent_id": "agent-a", "envelope": envelope},
                 },
@@ -357,12 +371,12 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
         )
         next_step = await _tool_call(
             server,
-            5,
+            6,
             "jsonl_request",
             {
                 "session_id": session_id,
                 "request": {
-                    "id": "req-4",
+                    "id": "req-5",
                     "method": "next_step",
                     "params": {"agent_id": "agent-a"},
                 },
@@ -371,12 +385,12 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
         )
         stop = await _tool_call(
             server,
-            6,
+            7,
             "jsonl_request",
             {
                 "session_id": session_id,
                 "request": {
-                    "id": "req-5",
+                    "id": "req-6",
                     "method": "on_stop",
                     "params": {"agent_id": "agent-a"},
                 },
@@ -385,14 +399,16 @@ async def test_mutsuki_test_io_drives_codex_backend_stdio_lifecycle() -> None:
         )
     finally:
         if session_id in server.sessions:
-            await _tool_call(server, 7, "stop_process", {"session_id": session_id})
+            await _tool_call(server, 8, "stop_process", {"session_id": session_id})
 
+    assert plugins["response"]["ok"] is True
+    assert plugins["response"]["result"][0]["descriptor"]["plugin_id"] == "mutsuki-codex-core"
     assert sources["response"]["ok"] is True
     assert sources["response"]["result"][0]["descriptor"]["source_id"] == "codex:local"
-    assert awake["response"] == {"id": "req-2", "ok": True, "result": None}
+    assert awake["response"] == {"id": "req-3", "ok": True, "result": None}
     assert input_result["response"]["ok"] is True
     assert input_result["response"]["result"]["status"] == "wait_input"
     assert next_step["response"]["ok"] is True
     assert next_step["response"]["result"]["status"] == "wait_input"
-    assert stop["response"] == {"id": "req-5", "ok": True, "result": None}
+    assert stop["response"] == {"id": "req-6", "ok": True, "result": None}
     assert session_id not in server.sessions

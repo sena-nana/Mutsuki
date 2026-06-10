@@ -44,6 +44,12 @@ class OperationStatus(StrEnum):
     NOT_FOUND = "not_found"
 
 
+class PluginStatus(StrEnum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+    UNHEALTHY = "unhealthy"
+
+
 class StrategyResultStatus(StrEnum):
     CONTINUE = "continue"
     WAIT_INPUT = "wait_input"
@@ -398,6 +404,22 @@ class AgentSpec:
 
 
 @dataclass(frozen=True)
+class AgentSnapshot:
+    spec: AgentSpec
+    phase: AgentPhase
+    inbox_len: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "AgentSnapshot")
+        return cls(
+            spec=AgentSpec.from_json_dict(_as_mapping(_field(raw, "spec"), "spec")),
+            phase=AgentPhase(_as_str(_field(raw, "phase"), "phase")),
+            inbox_len=_as_int(_field(raw, "inbox_len"), "inbox_len"),
+        )
+
+
+@dataclass(frozen=True)
 class OperationDescriptor:
     op_id: str
     name: str
@@ -501,6 +523,64 @@ class SourceSnapshot:
             ),
             plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
             plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
+        )
+
+
+@dataclass(frozen=True)
+class PluginDescriptor:
+    plugin_id: str
+    generation: int
+    name: str
+    description: str = ""
+    version: str = ""
+    capabilities: tuple[str, ...] = ()
+    metadata: dict[str, ScalarValue] = field(default_factory=dict)
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "PluginDescriptor")
+        return cls(
+            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
+            generation=_as_int(_field(raw, "generation"), "generation"),
+            name=_as_str(_field(raw, "name"), "name"),
+            description=_as_str(_field(raw, "description"), "description"),
+            version=_as_str(_field(raw, "version"), "version"),
+            capabilities=_as_str_tuple(_field(raw, "capabilities"), "capabilities"),
+            metadata=_as_scalar_dict(_field(raw, "metadata"), "metadata"),
+        )
+
+
+@dataclass(frozen=True)
+class PluginSnapshot:
+    descriptor: PluginDescriptor
+    status: PluginStatus
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "PluginSnapshot")
+        return cls(
+            descriptor=PluginDescriptor.from_json_dict(
+                _as_mapping(_field(raw, "descriptor"), "descriptor")
+            ),
+            status=PluginStatus(_as_str(_field(raw, "status"), "status")),
+        )
+
+
+@dataclass(frozen=True)
+class PluginAccessState:
+    enabled_plugin_ids: tuple[str, ...] = ()
+    disabled_plugin_ids: tuple[str, ...] = ()
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "PluginAccessState")
+        return cls(
+            enabled_plugin_ids=_as_str_tuple(
+                _field(raw, "enabled_plugin_ids"), "enabled_plugin_ids"
+            ),
+            disabled_plugin_ids=_as_str_tuple(
+                _field(raw, "disabled_plugin_ids"), "disabled_plugin_ids"
+            ),
         )
 
 

@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::io::{BufRead, Write};
 
 use mutsuki_runtime_contracts::{
-    Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor,
-    ResourceRecord, RuntimeError, SourceSnapshot, StrategyResult,
+    Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot, OperationStatus, PluginSnapshot,
+    RefDescriptor, ResourceRecord, RuntimeError, SourceSnapshot, StrategyResult,
 };
 use mutsuki_runtime_core::{
     BackendPayload, OperationBackend, ResourceBackend, RuntimeFailure, RuntimeResult,
@@ -109,12 +109,25 @@ impl<R: BufRead, W: Write> StrategyBackend for JsonlRuntimeBackend<R, W> {
 }
 
 impl<R: BufRead, W: Write> OperationBackend for JsonlRuntimeBackend<R, W> {
-    fn list_operations(&self, _agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>> {
-        self.request_as("list_operations", json!({"agent_id": _agent_id}))
+    fn list_plugins(&self) -> RuntimeResult<Vec<PluginSnapshot>> {
+        self.request_as("list_plugins", json!({}))
     }
 
-    fn list_sources(&self, _agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>> {
-        self.request_as("list_sources", json!({"agent_id": _agent_id}))
+    fn list_operations(
+        &self,
+        enabled_plugin_ids: &[String],
+    ) -> RuntimeResult<Vec<OperationSnapshot>> {
+        self.request_as(
+            "list_operations",
+            json!({"enabled_plugin_ids": enabled_plugin_ids}),
+        )
+    }
+
+    fn list_sources(&self, enabled_plugin_ids: &[String]) -> RuntimeResult<Vec<SourceSnapshot>> {
+        self.request_as(
+            "list_sources",
+            json!({"enabled_plugin_ids": enabled_plugin_ids}),
+        )
     }
 
     fn invoke(

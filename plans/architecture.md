@@ -13,7 +13,7 @@ Rust runtime 负责运行机制：
 
 - Agent lifecycle 与状态事实。
 - Envelope 路由和 accepts 匹配。
-- Source / Operation metadata registry。
+- runtime 级插件启用 / 禁用状态，以及 Source / Operation metadata registry。
 - Backend key 间接调用。
 - Resource descriptor / lease / count 治理。
 - Trace span 因果链 bookkeeping。
@@ -73,7 +73,7 @@ Agent 是运行时实体，而不是会话、消息、LLM 调用或命令 handle
 - lifecycle phase
 - priority / participation / accepts
 - inbox
-- Operation / Source snapshots
+- 插件启用状态下接入的 Operation / Source snapshots
 - trace 与资源治理关联事实
 
 Agent 行为由 backend 推进：
@@ -87,6 +87,11 @@ Backend 不能修改 Agent identity、owner、participation 或 accepts；这些
 边界事实。
 
 ## 4. Operation 与 Source
+
+插件接入是 runtime 级事实。Caller 可以实时启用 / 禁用插件；只有 enabled 插件
+提供的 Source / Operation 会进入 runtime registry。Rust core 只保存
+`PluginSnapshot`、`PluginAccessState`、`OperationSnapshot` 和 `SourceSnapshot`，
+不扫描、安装或加载插件。
 
 Operation 是工具、命令和跨能力调用的统一 runtime 概念。Rust runtime 只保存：
 
@@ -147,13 +152,13 @@ examples，方便迁移和对照。它不再是当前主实现，但不是废弃
 - 与 Rust contracts 对齐的 Python dataclass wire shape。
 - `StrategyBackend`、`OperationBackend`、`ResourceBackend` 协议。
 - 进程内 `PythonBackendHost`，用于注册 Python-owned operation handler、source
-  snapshot 和 strategy hook。
+  snapshot、plugin snapshot 和 strategy hook。
 - `PythonResourceBackend`，只保存 descriptor、lease token 和 lease count。
 - `StdioJsonlBackendServer`，通过 JSONL request/response 暴露显式进程边界。
 
 该包不复刻 AgentRuntime，不实现 routing / lifecycle / trace 的 Rust 事实源，也不
-依赖旧 `mutsukibot` core。Python 侧长期只保管插件行为、真实资源对象、外部协议接入
-和 Python 异常到 `RuntimeError` 的映射。stdio JSONL 是当前显式 backend 进程边界；
+依赖旧 `mutsukibot` core。Python 侧长期只保管插件元信息、插件行为、真实资源对象、
+外部协议接入和 Python 异常到 `RuntimeError` 的映射。stdio JSONL 是当前显式 backend 进程边界；
 后续若增加 HTTP 或长期 sidecar supervisor，只能复用这些纯协议对象与 backend key。
 
 若未来恢复 Python PluginHost：

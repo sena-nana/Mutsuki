@@ -9,6 +9,7 @@ from mutsuki_runtime_python.contracts import (
     OperationHandlerKey,
     OperationSnapshot,
     OperationStatus,
+    PluginSnapshot,
     RefDescriptor,
     ResourceRecord,
     RuntimeError,
@@ -36,9 +37,15 @@ class StrategyBackend(Protocol):
 
 
 class OperationBackend(Protocol):
-    def list_operations(self, agent_id: str) -> tuple[OperationSnapshot, ...]: ...
+    def list_plugins(self) -> tuple[PluginSnapshot, ...]: ...
 
-    def list_sources(self, agent_id: str) -> tuple[SourceSnapshot, ...]: ...
+    def list_operations(
+        self, enabled_plugin_ids: tuple[str, ...] | list[str]
+    ) -> tuple[OperationSnapshot, ...]: ...
+
+    def list_sources(
+        self, enabled_plugin_ids: tuple[str, ...] | list[str]
+    ) -> tuple[SourceSnapshot, ...]: ...
 
     async def invoke(
         self,

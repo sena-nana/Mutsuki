@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
     AgentSpec, ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_GENERATION_MISMATCH, Envelope,
-    OperationHandlerKey, OperationSnapshot, OperationStatus, RuntimeError, SourceSnapshot,
-    StrategyResult, StrategyResultStatus,
+    OperationHandlerKey, OperationSnapshot, OperationStatus, PluginDescriptor, PluginSnapshot,
+    PluginStatus, RuntimeError, SourceSnapshot, StrategyResult, StrategyResultStatus,
 };
 use mutsuki_runtime_core::{
     AgentRuntime, BackendPayload, OperationBackend, RuntimeFailure, RuntimeResult, StrategyBackend,
@@ -15,6 +15,7 @@ use crate::NativeOperation;
 #[derive(Default)]
 pub struct NativeRuntimeHost {
     operations: HashMap<String, NativeOperation>,
+    plugins: HashMap<String, PluginSnapshot>,
     sources: Vec<SourceSnapshot>,
     inputs: Vec<Envelope>,
     awake_count: usize,
@@ -27,11 +28,20 @@ impl NativeRuntimeHost {
     }
 
     pub fn register_operation(&mut self, operation: NativeOperation) {
+        let plugin_id = operation.snapshot.key.plugin_id.clone();
+        let generation = operation.snapshot.key.plugin_generation;
+        self.ensure_plugin(&plugin_id, generation);
         self.operations
             .insert(operation.snapshot.descriptor.op_id.clone(), operation);
     }
 
+    pub fn register_plugin(&mut self, plugin: PluginSnapshot) {
+        self.plugins
+            .insert(plugin.descriptor.plugin_id.clone(), plugin);
+    }
+
     pub fn register_source(&mut self, source: SourceSnapshot) {
+        self.ensure_plugin(&source.plugin_id, source.plugin_generation);
         self.sources.push(source);
     }
 
@@ -66,6 +76,23 @@ impl NativeRuntimeHost {
         runtime.register_agent(spec)?;
         runtime.start_agent(&agent_id, self)
     }
+
+    fn ensure_plugin(&mut self, plugin_id: &str, generation: u64) {
+        self.plugins
+            .entry(plugin_id.to_string())
+            .or_insert_with(|| PluginSnapshot {
+                descriptor: PluginDescriptor {
+                    plugin_id: plugin_id.to_string(),
+                    generation,
+                    name: plugin_id.to_string(),
+                    description: String::new(),
+                    version: String::new(),
+                    capabilities: Vec::new(),
+                    metadata: Default::default(),
+                },
+                status: PluginStatus::Enabled,
+            });
+    }
 }
 
 impl StrategyBackend for NativeRuntimeHost {
@@ -95,16 +122,29 @@ impl StrategyBackend for NativeRuntimeHost {
 }
 
 impl OperationBackend for NativeRuntimeHost {
-    fn list_operations(&self, _agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>> {
+    fn list_plugins(&self) -> RuntimeResult<Vec<PluginSnapshot>> {
+        Ok(self.plugins.values().cloned().collect())
+    }
+
+    fn list_operations(
+        &self,
+        enabled_plugin_ids: &[String],
+    ) -> RuntimeResult<Vec<OperationSnapshot>> {
         Ok(self
             .operations
             .values()
+            .filter(|operation| enabled_plugin_ids.contains(&operation.snapshot.key.plugin_id))
             .map(|operation| operation.snapshot.clone())
             .collect())
     }
 
-    fn list_sources(&self, _agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>> {
-        Ok(self.sources.clone())
+    fn list_sources(&self, enabled_plugin_ids: &[String]) -> RuntimeResult<Vec<SourceSnapshot>> {
+        Ok(self
+            .sources
+            .iter()
+            .filter(|source| enabled_plugin_ids.contains(&source.plugin_id))
+            .cloned()
+            .collect())
     }
 
     fn invoke(

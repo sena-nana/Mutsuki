@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
-    Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor,
-    ResourceRecord, SourceSnapshot, StrategyResult,
+    Envelope, LeaseToken, OperationHandlerKey, OperationSnapshot, OperationStatus, PluginSnapshot,
+    RefDescriptor, ResourceRecord, SourceSnapshot, StrategyResult,
 };
 use serde_json::Value;
 
@@ -20,8 +20,12 @@ pub trait StrategyBackend {
 }
 
 pub trait OperationBackend {
-    fn list_operations(&self, agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>>;
-    fn list_sources(&self, agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>>;
+    fn list_plugins(&self) -> RuntimeResult<Vec<PluginSnapshot>>;
+    fn list_operations(
+        &self,
+        enabled_plugin_ids: &[String],
+    ) -> RuntimeResult<Vec<OperationSnapshot>>;
+    fn list_sources(&self, enabled_plugin_ids: &[String]) -> RuntimeResult<Vec<SourceSnapshot>>;
     fn invoke(
         &mut self,
         agent_id: &str,

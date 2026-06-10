@@ -16,9 +16,10 @@ mod tests {
 
     use mutsuki_runtime_contracts::{
         AgentParticipation, AgentPhase, AgentSpec, Envelope, OperationDescriptor,
-        OperationHandlerKey, OperationSnapshot, OperationStatus, RefDescriptor, ResourceRecord,
-        RuntimeError, RuntimeEventKind, ScalarValue, ScopeRuleSpec, SideEffectPolicy,
-        SourceDescriptor, SourceRef, SourceSnapshot, StrategyResult, StrategyResultStatus,
+        OperationHandlerKey, OperationSnapshot, OperationStatus, PluginDescriptor, PluginSnapshot,
+        PluginStatus, RefDescriptor, ResourceRecord, RuntimeError, RuntimeEventKind, ScalarValue,
+        ScopeRuleSpec, SideEffectPolicy, SourceDescriptor, SourceRef, SourceSnapshot,
+        StrategyResult, StrategyResultStatus,
     };
     use mutsuki_runtime_core::{
         AgentRuntime, BackendPayload, OperationBackend, ResourceBackend, StrategyBackend,
@@ -191,6 +192,21 @@ mod tests {
             },
             plugin_id: "native".into(),
             plugin_generation: 0,
+        }
+    }
+
+    fn plugin_snapshot(plugin_id: &str) -> PluginSnapshot {
+        PluginSnapshot {
+            descriptor: PluginDescriptor {
+                plugin_id: plugin_id.into(),
+                generation: 0,
+                name: plugin_id.into(),
+                description: String::new(),
+                version: String::new(),
+                capabilities: Vec::new(),
+                metadata: BTreeMap::new(),
+            },
+            status: PluginStatus::Enabled,
         }
     }
 
@@ -421,7 +437,7 @@ mod tests {
         let writer = Vec::new();
         let backend = JsonlRuntimeBackend::new(reader, writer);
 
-        let operations = backend.list_operations("agent-a").unwrap();
+        let operations = backend.list_operations(&["test".to_string()]).unwrap();
 
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0].descriptor.op_id, "test.echo");
@@ -431,11 +447,12 @@ mod tests {
     fn jsonl_capability_backend_drives_agent_runtime_lifecycle_with_scripted_responses() {
         let response = [
             json!({"id": "req-1", "ok": true, "result": null}).to_string(),
-            json!({"id": "req-2", "ok": true, "result": []}).to_string(),
-            json!({"id": "req-3", "ok": true, "result": [source_snapshot("source:test")]})
+            json!({"id": "req-2", "ok": true, "result": [plugin_snapshot("native")]}).to_string(),
+            json!({"id": "req-3", "ok": true, "result": []}).to_string(),
+            json!({"id": "req-4", "ok": true, "result": [source_snapshot("source:test")]})
                 .to_string(),
-            json!({"id": "req-4", "ok": true, "result": StrategyResult::wait_input()}).to_string(),
-            json!({"id": "req-5", "ok": true, "result": null}).to_string(),
+            json!({"id": "req-5", "ok": true, "result": StrategyResult::wait_input()}).to_string(),
+            json!({"id": "req-6", "ok": true, "result": null}).to_string(),
         ]
         .join("\n")
             + "\n";
@@ -485,6 +502,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "on_awake",
+                "list_plugins",
                 "list_operations",
                 "list_sources",
                 "on_input",
@@ -492,7 +510,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            requests[3]["params"]["envelope"]["source"]["source_id"],
+            requests[4]["params"]["envelope"]["source"]["source_id"],
             "source:test"
         );
     }

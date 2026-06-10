@@ -21,6 +21,7 @@
 | 对象 | 关键字段 / 语义 |
 |---|---|
 | `AgentSpec` | `agent_id`、`owner`、`priority`、`participation`、`accepts`、`strategy_id`、`side_effect_policy` |
+| `AgentSnapshot` | `spec`、`phase`、`inbox_len` |
 | `AgentPhase` | `spawn`、`awake`、`sleep`、`stop` |
 | `AgentParticipation` | `primary_candidate`、`observer`、`explicit_helper` |
 | `Envelope` | `id`、`timestamp`、`source`、`payload_schema_id`、`capabilities_required`、`payload` |
@@ -31,6 +32,9 @@
 | `OperationHandlerKey` | `plugin_id`、`plugin_generation`、`op_id`、`handler_id` |
 | `OperationSnapshot` | `descriptor`、`status`、`key` |
 | `SourceSnapshot` | `descriptor`、`plugin_id`、`plugin_generation` |
+| `PluginDescriptor` | `plugin_id`、`generation`、`name`、`description`、`version`、`capabilities`、`metadata` |
+| `PluginSnapshot` | `descriptor`、`status` |
+| `PluginAccessState` | `enabled_plugin_ids`、`disabled_plugin_ids` |
 | `StrategyResult` | `status`、`decision`、`emitted`、`error` |
 | `RuntimeError` | `code`、`source`、`route`、`lost_capability`、`recovery`、`cause`、`evidence` |
 | `TraceSpan` | `trace_id`、`span_id`、`parent_span_id`、`name`、`start`、`end`、`attributes`、`status` |
@@ -52,8 +56,9 @@ StrategyBackend:
   on_stop(agent_id) -> Result<(), RuntimeFailure>
 
 OperationBackend:
-  list_operations(agent_id) -> Result<Vec<OperationSnapshot>, RuntimeFailure>
-  list_sources(agent_id) -> Result<Vec<SourceSnapshot>, RuntimeFailure>
+  list_plugins() -> Result<Vec<PluginSnapshot>, RuntimeFailure>
+  list_operations(enabled_plugin_ids) -> Result<Vec<OperationSnapshot>, RuntimeFailure>
+  list_sources(enabled_plugin_ids) -> Result<Vec<SourceSnapshot>, RuntimeFailure>
   invoke(agent_id, key, payload) -> Result<BackendPayload, RuntimeFailure>
   operation_status(agent_id, key) -> OperationStatus
 
@@ -69,16 +74,33 @@ ResourceBackend:
 - `register_agent(spec)` 创建 `spawn` 状态 Agent。
 - `start_agent(agent_id, backend)` 使用提交语义：
   - `backend.on_awake` 成功。
-  - `backend.list_operations` 成功并提交 operation registry。
-  - `backend.list_sources` 成功并提交 source registry。
+  - runtime 插件接入状态已初始化；未显式设置时使用 backend 返回的 enabled 插件。
+  - 插件、operation、source registry 全部刷新成功。
   - 全部成功后才进入 `awake`。
 - 启动失败时 Agent 保持非路由状态；operation/source registry 不提交为可用事实。
 - `stop_agent` 进入 `sleep`，调用 `backend.on_stop` 后进入 `stop`。
 
-## 5. Routing
+## 5. Plugin Access
 
-- `publish(envelope)` 首先校验 `envelope.source.source_id` 已在任一 Source registry
-  中注册。
+- 插件接入是 runtime 级启用 / 禁用状态，不是按 Agent allow-list。
+- `set_enabled_plugins(plugin_ids, backend)` 设置当前 enabled 插件集合，并刷新
+  plugin / operation / source registry。
+- `enable_plugins(plugin_ids, backend)` 与 `disable_plugins(plugin_ids, backend)` 是对当前集合的增量更新。
+- 空 enabled 集合表示不接入任何插件；后续 operation registry 与 source registry 为空。
+- 只有 enabled 且 status 为 `enabled` 的插件可提供 operation/source。
+- backend 返回 disabled 插件的 operation/source 必须 fail-loud 为 `plugin.disabled`。
+- operation/source 引用不存在的插件必须 fail-loud 为 `plugin.not_found`。
+- operation/source generation 与 `PluginDescriptor.generation` 不一致必须返回
+  `runtime.backend_generation_mismatch`。
+- 插件接入刷新失败时不提交半成品 registry；旧 registry 保持可用，并记录
+  `plugin.access.update.error` event。
+- 调用方可查询 `PluginAccessState`、当前 plugin snapshots、enabled/disabled 插件、
+  operation/source snapshots 和 `AgentSnapshot`。
+
+## 6. Routing
+
+- `publish(envelope)` 首先校验 `envelope.source.source_id` 已在当前 runtime Source
+  registry 中注册。
 - 未注册 Source 必须返回 `source.unregistered`。
 - Source 已注册后，runtime 只投递给 `phase == awake` 且任一 `accepts` 匹配的 Agent。
 - `accepts` 为空等价于不接收任何 envelope。
@@ -86,18 +108,18 @@ ResourceBackend:
 - Source 已注册后，`select_accepting(envelope)` 只从 `primary_candidate` 中选择
   owner，排序为 priority 降序、`agent_id` 升序。
 
-## 6. Operation
+## 7. Operation
 
 - Runtime 持有 `OperationSnapshot`，不持有 handler。
 - 调用路径为 `invoke_operation(agent_id, op_id, payload, backend)`。
-- op 不存在返回 `operation.not_found`。
+- op 不存在返回 `operation.not_found`；禁用插件后的 operation 因从 registry 移除而走该错误。
 - snapshot 非 `active` 返回结构化 backend failure，并记录 operation status。
 - backend 必须验证 `OperationHandlerKey`；旧 generation 或 key mismatch 必须返回
   `runtime.backend_generation_mismatch`。
 - `operation_status` trait 不返回 structured failure；JSONL host adapter 在 transport /
   protocol / backend 查询失败时必须降级为 `unhealthy`，不得伪装为 `not_found`。
 
-## 7. Resource
+## 8. Resource
 
 - `ResourceGate` 管理 `RefDescriptor`、owner、lease token、lease count。
 - `ResourceGate` 可配置 `ResourceQuotaPolicy`：`max_leases_by_ref` 与
@@ -112,7 +134,7 @@ ResourceBackend:
 - 租约 token 由注入式 ID source 生成；不得直接调用全局 UUID / random。
 - `list_records(owner)` 必须支持按 owner 过滤。
 
-## 8. Trace
+## 9. Trace
 
 - Runtime 记录 lifecycle、input、strategy、operation 等 span。
 - Span 必须包含 `trace_id`、`span_id`、可选 `parent_span_id`。
@@ -120,10 +142,10 @@ ResourceBackend:
 - Rust trace closure helper 必须能报告重复 span、父链缺失、父子 trace 不一致和
   `end < start` 的时间区间错误。
 
-## 9. Runtime Event Stream
+## 10. Runtime Event Stream
 
 - Runtime event stream 使用 `RuntimeEvent` 纯协议记录 lifecycle / routing / operation /
-  resource / trace / backend 事件。`kind` 表示事件分类，`name` 表示稳定事件名。
+  plugin / resource / trace / backend 事件。`kind` 表示事件分类，`name` 表示稳定事件名。
 - `sequence` 由 runtime 全局分配，是确定性递增顺序；`drain_events()` 清空已读事件，
   但不得重置或复用 sequence。不要求 v1 使用 wall-clock timestamp。
 - Trace 事实源仍是 `TraceSpan`；每次 runtime 记录 span 时同步产生一个
@@ -144,28 +166,29 @@ ResourceBackend:
 - Host 可通过 runtime 暴露的 event snapshot / drain API 获取事件；事件失败不得改变
   主链路语义。
 
-## 10. Election Policy
+## 11. Election Policy
 
 - 默认 election policy 保持 `priority` 降序、`agent_id` 升序。
 - 可替换 policy 只能排序 runtime 已过滤的候选：source 已注册、agent awake、accepts
   匹配且 participation 为 `primary_candidate`。
 - policy 返回非候选 agent 时视为未选择，不得绕过 lifecycle / accepts 过滤。
 
-## 11. Python Stdio JSONL Boundary
+## 12. Python Stdio JSONL Boundary
 
 - `python/mutsuki-runtime-python` 提供 stdio JSONL 进程边界，复用纯 contracts 与
   backend key。
 - 请求形状：`{"id":"req-1","method":"invoke","params":{...}}`。
-- `id`、`method`、`params` 必须显式存在；`invoke.payload` 与 `resource.list.owner`
-  也必须显式存在，其中 `payload` 与 `owner` 可为 `null`。
+- `id`、`method`、`params` 必须显式存在；`invoke.payload`、`resource.list.owner`、
+  `list_operations.enabled_plugin_ids` 与 `list_sources.enabled_plugin_ids` 也必须显式存在，
+  其中 `payload` 与 `owner` 可为 `null`。
 - 成功响应：`{"id":"req-1","ok":true,"result":...}`。
 - 失败响应：`{"id":"req-1","ok":false,"error": RuntimeError}`。
-- 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_operations`、
+- 支持方法：`on_awake`、`on_input`、`next_step`、`on_stop`、`list_plugins`、`list_operations`、
   `list_sources`、`invoke`、`operation_status`、`resource.register`、
   `resource.acquire`、`resource.release`、`resource.list`。
 - Rust core 不依赖 Python；Rust host 的 JSONL adapter 只依赖泛型 line IO 与 serde JSON。
 
-## 12. Future Runtime-Control Boundary
+## 13. Future Runtime-Control Boundary
 
 未来若将 Rust runtime 作为远程执行内核暴露给其他项目，必须新增独立的
 runtime-control protocol。该协议属于 Caller -> Rust Runtime Kernel，不得复用
@@ -187,12 +210,14 @@ request/response 外壳和 `RuntimeError`，但不能共享状态所有权。Rus
 lifecycle、routing、registry、ResourceGate、trace 和 event sequence 的唯一事实源；
 backend handler 不得同步重入同一个 runtime 的状态推进 API。
 
-## 13. 标准错误码
+## 14. 标准错误码
 
 | code | 场景 |
 |---|---|
 | `agent.not_found` | Agent 不存在 |
 | `operation.not_found` | Operation 不存在 |
+| `plugin.disabled` | backend 返回 disabled 或未启用插件的 operation/source |
+| `plugin.not_found` | operation/source 引用不存在的插件 |
 | `runtime.backend_failed` | backend 调用失败，且无法归入更具体错误 |
 | `runtime.backend_generation_mismatch` | handler key generation 或 identity 不匹配 |
 | `source.unregistered` | envelope source 未注册 |
@@ -200,7 +225,7 @@ backend handler 不得同步重入同一个 runtime 的状态推进 API。
 | `ref.not_found` | resource / lease 不存在，或 token mismatch 归一化失败 |
 | `capability.exhausted` | resource quota 或 capability 门控耗尽 |
 
-## 14. Crate 对应
+## 15. Crate 对应
 
 - `crates/mutsuki-runtime-contracts`：本文件的纯协议结构。
 - `crates/mutsuki-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
@@ -208,7 +233,7 @@ backend handler 不得同步重入同一个 runtime 的状态推进 API。
 - `python/mutsuki-runtime-python`：Python backend kit，提供 contracts mirror、进程内
   backend host、resource backend 和测试夹具；不定义 Rust runtime 事实。
 
-## 15. 禁止事项
+## 16. 禁止事项
 
 - Rust contracts / core 中不得出现外部协议 wire shape 或产品语义。
 - 不得跨 runtime 边界传 callable、真实 handle、socket、SDK client、数据库连接或模型对象。

@@ -25,9 +25,10 @@ mod tests {
         AgentId, AgentParticipation, AgentPhase, AgentSpec, ERR_CAPABILITY_EXHAUSTED,
         ERR_OPERATION_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH,
         ERR_SOURCE_UNREGISTERED, Envelope, LeaseToken, OperationDescriptor, OperationHandlerKey,
-        OperationSnapshot, OperationStatus, RefDescriptor, RuntimeError, RuntimeEventKind,
-        ScalarValue, ScopeRuleSpec, SourceDescriptor, SourceRef, SourceSnapshot, SpanStatus,
-        StrategyResult, StrategyResultStatus, TraceSpan,
+        OperationSnapshot, OperationStatus, PluginDescriptor, PluginSnapshot, PluginStatus,
+        RefDescriptor, RuntimeError, RuntimeEventKind, ScalarValue, ScopeRuleSpec,
+        SourceDescriptor, SourceRef, SourceSnapshot, SpanStatus, StrategyResult,
+        StrategyResultStatus, TraceSpan,
     };
     use serde_json::{Value, json};
 
@@ -41,6 +42,7 @@ mod tests {
         invocations: usize,
         operations: Vec<OperationSnapshot>,
         sources: Vec<SourceSnapshot>,
+        plugins: Vec<PluginSnapshot>,
         fail_list_operations: bool,
         fail_list_sources: bool,
         fail_awake: bool,
@@ -121,7 +123,40 @@ mod tests {
     }
 
     impl OperationBackend for NativeBackend {
-        fn list_operations(&self, _agent_id: &str) -> RuntimeResult<Vec<OperationSnapshot>> {
+        fn list_plugins(&self) -> RuntimeResult<Vec<PluginSnapshot>> {
+            let mut plugins: BTreeMap<String, u64> = BTreeMap::new();
+            for source in &self.sources {
+                plugins.insert(source.plugin_id.clone(), source.plugin_generation);
+            }
+            for operation in &self.operations {
+                plugins.insert(
+                    operation.key.plugin_id.clone(),
+                    operation.key.plugin_generation,
+                );
+            }
+            let mut snapshots: Vec<PluginSnapshot> = plugins
+                .into_iter()
+                .map(|(plugin_id, generation)| PluginSnapshot {
+                    descriptor: PluginDescriptor {
+                        plugin_id: plugin_id.clone(),
+                        generation,
+                        name: plugin_id,
+                        description: String::new(),
+                        version: String::new(),
+                        capabilities: Vec::new(),
+                        metadata: BTreeMap::new(),
+                    },
+                    status: PluginStatus::Enabled,
+                })
+                .collect();
+            snapshots.extend(self.plugins.iter().cloned());
+            Ok(snapshots)
+        }
+
+        fn list_operations(
+            &self,
+            enabled_plugin_ids: &[String],
+        ) -> RuntimeResult<Vec<OperationSnapshot>> {
             if self.fail_list_operations {
                 return Err(RuntimeFailure::new(RuntimeError::new(
                     ERR_RUNTIME_BACKEND_FAILED,
@@ -129,10 +164,18 @@ mod tests {
                     "native.list_operations",
                 )));
             }
-            Ok(self.operations.clone())
+            Ok(self
+                .operations
+                .iter()
+                .filter(|operation| enabled_plugin_ids.contains(&operation.key.plugin_id))
+                .cloned()
+                .collect())
         }
 
-        fn list_sources(&self, _agent_id: &str) -> RuntimeResult<Vec<SourceSnapshot>> {
+        fn list_sources(
+            &self,
+            enabled_plugin_ids: &[String],
+        ) -> RuntimeResult<Vec<SourceSnapshot>> {
             if self.fail_list_sources {
                 return Err(RuntimeFailure::new(RuntimeError::new(
                     ERR_RUNTIME_BACKEND_FAILED,
@@ -140,7 +183,12 @@ mod tests {
                     "native.list_sources",
                 )));
             }
-            Ok(self.sources.clone())
+            Ok(self
+                .sources
+                .iter()
+                .filter(|source| enabled_plugin_ids.contains(&source.plugin_id))
+                .cloned()
+                .collect())
         }
 
         fn invoke(
@@ -237,6 +285,31 @@ mod tests {
             status,
             key: operation_key(op_id),
         }
+    }
+
+    fn operation_snapshot_for_plugin(
+        plugin_id: &str,
+        op_id: &str,
+        status: OperationStatus,
+    ) -> OperationSnapshot {
+        let mut descriptor = operation_descriptor(op_id);
+        descriptor.plugin_id = plugin_id.into();
+        OperationSnapshot {
+            descriptor,
+            status,
+            key: OperationHandlerKey {
+                plugin_id: plugin_id.into(),
+                plugin_generation: 0,
+                op_id: op_id.into(),
+                handler_id: format!("{plugin_id}:{op_id}:0"),
+            },
+        }
+    }
+
+    fn source_snapshot_for_plugin(plugin_id: &str, source_id: &str) -> SourceSnapshot {
+        let mut snapshot = source_snapshot(source_id);
+        snapshot.plugin_id = plugin_id.into();
+        snapshot
     }
 
     fn ref_descriptor(ref_id: &str, kind: &str) -> RefDescriptor {
@@ -521,6 +594,188 @@ mod tests {
     }
 
     #[test]
+    fn runtime_enables_and_disables_plugins_for_agent_behavior() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = NativeBackend {
+            operations: vec![
+                operation_snapshot_for_plugin("plugin-a", "plugin-a.echo", OperationStatus::Active),
+                operation_snapshot_for_plugin("plugin-b", "plugin-b.echo", OperationStatus::Active),
+            ],
+            sources: vec![
+                source_snapshot_for_plugin("plugin-a", "source:a"),
+                source_snapshot_for_plugin("plugin-b", "source:b"),
+            ],
+            ..NativeBackend::default()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime
+            .set_enabled_plugins(vec!["plugin-a".into()], &backend)
+            .unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-a.echo")
+                .is_some()
+        );
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-b.echo")
+                .is_none()
+        );
+        assert_eq!(runtime.enabled_plugin_snapshots().len(), 1);
+        assert_eq!(
+            runtime.enabled_plugin_snapshots()[0].descriptor.plugin_id,
+            "plugin-a"
+        );
+        assert!(
+            runtime
+                .disabled_plugin_snapshots()
+                .iter()
+                .any(|plugin| plugin.descriptor.plugin_id == "plugin-b")
+        );
+
+        runtime
+            .disable_plugins(&["plugin-a".to_string()], &backend)
+            .unwrap();
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-a.echo")
+                .is_none()
+        );
+        let err = runtime
+            .invoke_operation("agent-a", "plugin-a.echo", json!({}), &mut backend)
+            .unwrap_err();
+        assert_eq!(err.error().code, ERR_OPERATION_NOT_FOUND);
+
+        let mut from_disabled_source = envelope();
+        from_disabled_source.source.source_id = "source:a".into();
+        let err = runtime.publish(from_disabled_source).unwrap_err();
+        assert_eq!(err.error().code, ERR_SOURCE_UNREGISTERED);
+    }
+
+    #[test]
+    fn plugin_access_refresh_failure_preserves_previous_registry() {
+        let mut runtime = AgentRuntime::new();
+        let backend = NativeBackend {
+            operations: vec![operation_snapshot_for_plugin(
+                "plugin-a",
+                "plugin-a.echo",
+                OperationStatus::Active,
+            )],
+            sources: vec![source_snapshot_for_plugin("plugin-a", "source:a")],
+            ..NativeBackend::default()
+        };
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime
+            .set_enabled_plugins(vec!["plugin-a".into()], &backend)
+            .unwrap();
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-a.echo")
+                .is_some()
+        );
+
+        let failing = NativeBackend {
+            fail_list_sources: true,
+            operations: vec![operation_snapshot_for_plugin(
+                "plugin-b",
+                "plugin-b.echo",
+                OperationStatus::Active,
+            )],
+            sources: vec![source_snapshot_for_plugin("plugin-b", "source:b")],
+            ..NativeBackend::default()
+        };
+        let err = runtime
+            .set_enabled_plugins(vec!["plugin-b".into()], &failing)
+            .unwrap_err();
+
+        assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-a.echo")
+                .is_some()
+        );
+        assert!(
+            runtime
+                .operation_snapshot("agent-a", "plugin-b.echo")
+                .is_none()
+        );
+        assert_eq!(
+            runtime.plugin_access_state().enabled_plugin_ids,
+            vec!["plugin-a".to_string()]
+        );
+        assert!(
+            runtime
+                .events()
+                .iter()
+                .any(|event| event.name == "plugin.access.update.error")
+        );
+    }
+
+    #[test]
+    fn enabling_missing_or_disabled_plugin_fails_without_committing_access_state() {
+        let mut runtime = AgentRuntime::new();
+        let backend = NativeBackend {
+            operations: vec![operation_snapshot_for_plugin(
+                "plugin-a",
+                "plugin-a.echo",
+                OperationStatus::Active,
+            )],
+            sources: vec![source_snapshot_for_plugin("plugin-a", "source:a")],
+            plugins: vec![PluginSnapshot {
+                descriptor: PluginDescriptor {
+                    plugin_id: "plugin-disabled".into(),
+                    generation: 0,
+                    name: "disabled".into(),
+                    description: String::new(),
+                    version: String::new(),
+                    capabilities: Vec::new(),
+                    metadata: BTreeMap::new(),
+                },
+                status: PluginStatus::Disabled,
+            }],
+            ..NativeBackend::default()
+        };
+
+        runtime
+            .set_enabled_plugins(vec!["plugin-a".into()], &backend)
+            .unwrap();
+        let missing = runtime
+            .set_enabled_plugins(vec!["plugin-missing".into()], &backend)
+            .unwrap_err();
+        assert_eq!(missing.error().code, "plugin.not_found");
+        assert_eq!(
+            runtime.plugin_access_state().enabled_plugin_ids,
+            vec!["plugin-a".to_string()]
+        );
+
+        let disabled = runtime
+            .set_enabled_plugins(vec!["plugin-disabled".into()], &backend)
+            .unwrap_err();
+        assert_eq!(disabled.error().code, "plugin.disabled");
+        assert_eq!(
+            runtime.plugin_access_state().enabled_plugin_ids,
+            vec!["plugin-a".to_string()]
+        );
+    }
+
+    #[test]
+    fn runtime_reports_agent_snapshots() {
+        let mut runtime = AgentRuntime::new();
+        let mut backend = backend();
+        runtime.register_agent(agent("agent-a", 0)).unwrap();
+        runtime.start_agent("agent-a", &mut backend).unwrap();
+        runtime.publish(envelope()).unwrap();
+
+        let snapshots = runtime.agent_snapshots();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].spec.agent_id, "agent-a");
+        assert_eq!(snapshots[0].phase, AgentPhase::Awake);
+        assert_eq!(snapshots[0].inbox_len, 1);
+    }
+
+    #[test]
     fn runtime_returns_structured_error_for_missing_operation() {
         let mut runtime = AgentRuntime::new();
         let mut backend = backend();
@@ -670,7 +925,7 @@ mod tests {
         assert_eq!(err.error().code, ERR_RUNTIME_BACKEND_FAILED);
         assert_eq!(runtime.phase("agent-a"), Some(&AgentPhase::Spawn));
         assert!(runtime.operation_snapshot("agent-a", "test.noop").is_none());
-        assert!(runtime.source_snapshots("agent-a").is_none());
+        assert!(runtime.source_snapshots("agent-a").unwrap().is_empty());
     }
 
     #[test]

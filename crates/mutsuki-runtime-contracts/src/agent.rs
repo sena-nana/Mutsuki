@@ -36,3 +36,10 @@ pub struct AgentSpec {
     pub strategy_id: String,
     pub side_effect_policy: SideEffectPolicy,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentSnapshot {
+    pub spec: AgentSpec,
+    pub phase: AgentPhase,
+    pub inbox_len: usize,
+}

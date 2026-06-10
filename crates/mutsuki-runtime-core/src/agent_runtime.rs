@@ -1,17 +1,18 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use mutsuki_runtime_contracts::{
-    AgentId, AgentParticipation, AgentPhase, AgentSpec, ERR_AGENT_NOT_FOUND,
-    ERR_OPERATION_NOT_FOUND, Envelope, OperationSnapshot, OperationStatus, RuntimeError,
-    RuntimeEvent, RuntimeEventKind, ScalarValue, SourceSnapshot, SpanStatus, StrategyResult,
-    TraceSpan,
+    AgentId, AgentParticipation, AgentPhase, AgentSnapshot, AgentSpec, ERR_AGENT_NOT_FOUND,
+    ERR_OPERATION_NOT_FOUND, Envelope, OperationSnapshot, OperationStatus, PluginAccessState,
+    PluginSnapshot, PluginStatus, RuntimeError, RuntimeEvent, RuntimeEventKind, ScalarValue,
+    SourceSnapshot, SpanStatus, StrategyResult, TraceSpan,
 };
 use serde_json::Value;
 
 use crate::backend::{BackendPayload, OperationBackend, RuntimeBackend};
 use crate::election::{ElectionCandidate, ElectionPolicy, PriorityElectionPolicy};
 use crate::error::{
-    RuntimeFailure, RuntimeResult, operation_not_active_failure, scope_no_match_failure,
+    RuntimeFailure, RuntimeResult, operation_not_active_failure, plugin_disabled_failure,
+    plugin_generation_mismatch_failure, plugin_not_found_failure, scope_no_match_failure,
     source_unregistered_failure,
 };
 use crate::event::EventBook;
@@ -28,8 +29,11 @@ pub struct AgentState {
 #[derive(Clone, Debug)]
 pub struct AgentRuntime {
     agents: HashMap<AgentId, AgentState>,
-    operation_registry: HashMap<AgentId, HashMap<String, OperationSnapshot>>,
-    source_registry: HashMap<AgentId, Vec<SourceSnapshot>>,
+    plugin_registry: Vec<PluginSnapshot>,
+    plugin_access_state: PluginAccessState,
+    plugin_access_initialized: bool,
+    operation_registry: HashMap<String, OperationSnapshot>,
+    source_registry: Vec<SourceSnapshot>,
     resource_gate: ResourceGate,
     trace: TraceBook,
     events: EventBook,
@@ -39,8 +43,11 @@ impl Default for AgentRuntime {
     fn default() -> Self {
         Self {
             agents: HashMap::new(),
+            plugin_registry: Vec::new(),
+            plugin_access_state: PluginAccessState::default(),
+            plugin_access_initialized: false,
             operation_registry: HashMap::new(),
-            source_registry: HashMap::new(),
+            source_registry: Vec::new(),
             resource_gate: ResourceGate::with_runtime_event_drafts(),
             trace: TraceBook::default(),
             events: EventBook::default(),
@@ -90,39 +97,17 @@ impl AgentRuntime {
             );
             return Err(err);
         }
-        let operation_snapshots = match backend.list_operations(agent_id) {
-            Ok(snapshots) => snapshots,
-            Err(err) => {
-                self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
-                self.emit_failure(
-                    RuntimeEventKind::Backend,
-                    "backend.list_operations.error",
-                    Some(agent_id),
-                    BTreeMap::new(),
-                    &err,
-                );
-                return Err(err);
-            }
-        };
-        let source_snapshots = match backend.list_sources(agent_id) {
-            Ok(snapshots) => snapshots,
-            Err(err) => {
-                self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
-                self.emit_failure(
-                    RuntimeEventKind::Backend,
-                    "backend.list_sources.error",
-                    Some(agent_id),
-                    BTreeMap::new(),
-                    &err,
-                );
-                return Err(err);
-            }
-        };
-        self.operation_registry.insert(
-            agent_id.to_string(),
-            Self::operation_registry_from(operation_snapshots),
-        );
-        self.ingest_sources(agent_id, source_snapshots);
+        if let Err(err) = self.ensure_plugin_access_initialized(backend) {
+            self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Error);
+            self.emit_failure(
+                RuntimeEventKind::Plugin,
+                "plugin.access.update.error",
+                Some(agent_id),
+                BTreeMap::new(),
+                &err,
+            );
+            return Err(err);
+        }
         let agent = self.agent_mut(agent_id)?;
         agent.phase = AgentPhase::Awake;
         self.record_agent_trace(agent_id, "agent.awake", None, SpanStatus::Ok);
@@ -142,12 +127,7 @@ impl AgentRuntime {
         backend: &B,
     ) -> RuntimeResult<()> {
         self.agent(agent_id)?;
-        let snapshots = backend.list_operations(agent_id)?;
-        self.operation_registry.insert(
-            agent_id.to_string(),
-            Self::operation_registry_from(snapshots),
-        );
-        Ok(())
+        self.refresh_plugin_registries(backend)
     }
 
     pub fn refresh_sources<B: OperationBackend>(
@@ -156,9 +136,57 @@ impl AgentRuntime {
         backend: &B,
     ) -> RuntimeResult<()> {
         self.agent(agent_id)?;
-        let snapshots = backend.list_sources(agent_id)?;
-        self.ingest_sources(agent_id, snapshots);
-        Ok(())
+        self.refresh_plugin_registries(backend)
+    }
+
+    pub fn enable_plugins<B: OperationBackend>(
+        &mut self,
+        plugin_ids: &[String],
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        let mut enabled = self.plugin_access_state.enabled_plugin_ids.clone();
+        for plugin_id in plugin_ids {
+            if !enabled.contains(plugin_id) {
+                enabled.push(plugin_id.clone());
+            }
+        }
+        self.set_enabled_plugins(enabled, backend)
+    }
+
+    pub fn disable_plugins<B: OperationBackend>(
+        &mut self,
+        plugin_ids: &[String],
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        let disabled: HashSet<&String> = plugin_ids.iter().collect();
+        let enabled = self
+            .plugin_access_state
+            .enabled_plugin_ids
+            .iter()
+            .filter(|plugin_id| !disabled.contains(plugin_id))
+            .cloned()
+            .collect();
+        self.set_enabled_plugins(enabled, backend)
+    }
+
+    pub fn set_enabled_plugins<B: OperationBackend>(
+        &mut self,
+        enabled_plugin_ids: Vec<String>,
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        match self.refresh_plugin_registries_with(backend, enabled_plugin_ids) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                self.emit_failure(
+                    RuntimeEventKind::Plugin,
+                    "plugin.access.update.error",
+                    None,
+                    BTreeMap::new(),
+                    &err,
+                );
+                Err(err)
+            }
+        }
     }
 
     pub fn stop_agent<B: RuntimeBackend>(
@@ -398,14 +426,8 @@ impl AgentRuntime {
         payload: Value,
         backend: &mut B,
     ) -> RuntimeResult<BackendPayload> {
-        let registry = self.operation_registry.get(agent_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
-                ERR_OPERATION_NOT_FOUND,
-                "runtime.operation_registry",
-                format!("runtime.invoke.{agent_id}.{op_id}"),
-            ))
-        })?;
-        let snapshot = registry.get(op_id).ok_or_else(|| {
+        self.agent(agent_id)?;
+        let snapshot = self.operation_registry.get(op_id).ok_or_else(|| {
             RuntimeFailure::new(RuntimeError::new(
                 ERR_OPERATION_NOT_FOUND,
                 "runtime.operation_registry",
@@ -456,8 +478,8 @@ impl AgentRuntime {
         }
     }
 
-    pub fn ingest_sources(&mut self, agent_id: &str, sources: Vec<SourceSnapshot>) {
-        self.source_registry.insert(agent_id.to_string(), sources);
+    pub fn ingest_sources(&mut self, _agent_id: &str, sources: Vec<SourceSnapshot>) {
+        self.source_registry = sources;
     }
 
     pub fn phase(&self, agent_id: &str) -> Option<&AgentPhase> {
@@ -469,7 +491,12 @@ impl AgentRuntime {
     }
 
     pub fn operation_snapshot(&self, agent_id: &str, op_id: &str) -> Option<&OperationSnapshot> {
-        self.operation_registry.get(agent_id)?.get(op_id)
+        self.agents.contains_key(agent_id).then_some(())?;
+        self.operation_registry.get(op_id)
+    }
+
+    pub fn operation_snapshots(&self) -> Vec<&OperationSnapshot> {
+        self.operation_registry.values().collect()
     }
 
     pub fn trace_spans(&self) -> &[TraceSpan] {
@@ -487,9 +514,46 @@ impl AgentRuntime {
     }
 
     pub fn source_snapshots(&self, agent_id: &str) -> Option<&[SourceSnapshot]> {
-        self.source_registry
-            .get(agent_id)
-            .map(std::vec::Vec::as_slice)
+        self.agents
+            .contains_key(agent_id)
+            .then_some(self.source_registry.as_slice())
+    }
+
+    pub fn source_snapshots_all(&self) -> &[SourceSnapshot] {
+        &self.source_registry
+    }
+
+    pub fn plugin_access_state(&self) -> &PluginAccessState {
+        &self.plugin_access_state
+    }
+
+    pub fn plugin_snapshots(&self) -> &[PluginSnapshot] {
+        &self.plugin_registry
+    }
+
+    pub fn enabled_plugin_snapshots(&self) -> Vec<&PluginSnapshot> {
+        self.plugin_registry
+            .iter()
+            .filter(|plugin| plugin.status == PluginStatus::Enabled)
+            .collect()
+    }
+
+    pub fn disabled_plugin_snapshots(&self) -> Vec<&PluginSnapshot> {
+        self.plugin_registry
+            .iter()
+            .filter(|plugin| plugin.status == PluginStatus::Disabled)
+            .collect()
+    }
+
+    pub fn agent_snapshots(&self) -> Vec<AgentSnapshot> {
+        self.agents
+            .values()
+            .map(|agent| AgentSnapshot {
+                spec: agent.spec.clone(),
+                phase: agent.phase.clone(),
+                inbox_len: agent.inbox.len(),
+            })
+            .collect()
     }
 
     pub fn resources(&self) -> &ResourceGate {
@@ -521,11 +585,9 @@ impl AgentRuntime {
     }
 
     fn has_registered_source(&self, source_id: &str) -> bool {
-        self.source_registry.values().any(|sources| {
-            sources
-                .iter()
-                .any(|source| source.descriptor.source_id == source_id)
-        })
+        self.source_registry
+            .iter()
+            .any(|source| source.descriptor.source_id == source_id)
     }
 
     fn agent_accepts(agent: &AgentState, envelope: &Envelope) -> bool {
@@ -540,6 +602,148 @@ impl AgentRuntime {
             .into_iter()
             .map(|snapshot| (snapshot.descriptor.op_id.clone(), snapshot))
             .collect()
+    }
+
+    fn ensure_plugin_access_initialized<B: OperationBackend>(
+        &mut self,
+        backend: &B,
+    ) -> RuntimeResult<()> {
+        if self.plugin_access_initialized {
+            return self.refresh_plugin_registries(backend);
+        }
+        let plugins = backend.list_plugins()?;
+        let enabled_plugin_ids = plugins
+            .iter()
+            .filter(|plugin| plugin.status == PluginStatus::Enabled)
+            .map(|plugin| plugin.descriptor.plugin_id.clone())
+            .collect();
+        self.commit_plugin_registries(backend, plugins, enabled_plugin_ids)
+    }
+
+    fn refresh_plugin_registries<B: OperationBackend>(&mut self, backend: &B) -> RuntimeResult<()> {
+        let enabled_plugin_ids = self.plugin_access_state.enabled_plugin_ids.clone();
+        self.refresh_plugin_registries_with(backend, enabled_plugin_ids)
+    }
+
+    fn refresh_plugin_registries_with<B: OperationBackend>(
+        &mut self,
+        backend: &B,
+        enabled_plugin_ids: Vec<String>,
+    ) -> RuntimeResult<()> {
+        let plugins = backend.list_plugins()?;
+        self.commit_plugin_registries(backend, plugins, enabled_plugin_ids)
+    }
+
+    fn commit_plugin_registries<B: OperationBackend>(
+        &mut self,
+        backend: &B,
+        plugins: Vec<PluginSnapshot>,
+        enabled_plugin_ids: Vec<String>,
+    ) -> RuntimeResult<()> {
+        let plugin_index: HashMap<String, PluginSnapshot> = plugins
+            .iter()
+            .map(|plugin| (plugin.descriptor.plugin_id.clone(), plugin.clone()))
+            .collect();
+        let enabled: HashSet<String> = enabled_plugin_ids.iter().cloned().collect();
+        for plugin_id in &enabled_plugin_ids {
+            let plugin = plugin_index.get(plugin_id).ok_or_else(|| {
+                plugin_not_found_failure(plugin_id, format!("runtime.plugin.access.{plugin_id}"))
+            })?;
+            if plugin.status != PluginStatus::Enabled {
+                return Err(plugin_disabled_failure(
+                    plugin_id,
+                    format!("runtime.plugin.access.{plugin_id}"),
+                ));
+            }
+        }
+        let operations = backend.list_operations(&enabled_plugin_ids)?;
+        let sources = backend.list_sources(&enabled_plugin_ids)?;
+        for operation in &operations {
+            Self::validate_plugin_binding(
+                &plugin_index,
+                &enabled,
+                &operation.key.plugin_id,
+                operation.key.plugin_generation,
+                format!("runtime.plugin.operation.{}", operation.key.op_id),
+            )?;
+            if operation.descriptor.plugin_id != operation.key.plugin_id {
+                return Err(plugin_not_found_failure(
+                    &operation.descriptor.plugin_id,
+                    format!("runtime.plugin.operation.{}", operation.descriptor.op_id),
+                ));
+            }
+        }
+        for source in &sources {
+            Self::validate_plugin_binding(
+                &plugin_index,
+                &enabled,
+                &source.plugin_id,
+                source.plugin_generation,
+                format!("runtime.plugin.source.{}", source.descriptor.source_id),
+            )?;
+        }
+        let disabled_plugin_ids = plugins
+            .iter()
+            .filter(|plugin| !enabled.contains(&plugin.descriptor.plugin_id))
+            .map(|plugin| plugin.descriptor.plugin_id.clone())
+            .collect();
+        self.plugin_access_initialized = true;
+        self.plugin_access_state.enabled_plugin_ids = enabled_plugin_ids;
+        self.plugin_access_state.disabled_plugin_ids = disabled_plugin_ids;
+        self.plugin_registry = plugins
+            .into_iter()
+            .map(|mut plugin| {
+                if enabled.contains(&plugin.descriptor.plugin_id) {
+                    plugin.status = PluginStatus::Enabled;
+                } else if plugin.status == PluginStatus::Enabled {
+                    plugin.status = PluginStatus::Disabled;
+                }
+                plugin
+            })
+            .collect();
+        self.operation_registry = Self::operation_registry_from(operations);
+        self.source_registry = sources;
+        let mut attributes = BTreeMap::new();
+        attributes.insert(
+            "enabled_plugin_count".into(),
+            ScalarValue::Int(self.plugin_access_state.enabled_plugin_ids.len() as i64),
+        );
+        attributes.insert(
+            "disabled_plugin_count".into(),
+            ScalarValue::Int(self.plugin_access_state.disabled_plugin_ids.len() as i64),
+        );
+        self.emit(
+            RuntimeEventKind::Plugin,
+            "plugin.access.update",
+            None,
+            attributes,
+            None,
+        );
+        Ok(())
+    }
+
+    fn validate_plugin_binding(
+        plugin_index: &HashMap<String, PluginSnapshot>,
+        enabled: &HashSet<String>,
+        plugin_id: &str,
+        plugin_generation: u64,
+        route: String,
+    ) -> RuntimeResult<()> {
+        let plugin = plugin_index
+            .get(plugin_id)
+            .ok_or_else(|| plugin_not_found_failure(plugin_id, route.clone()))?;
+        if !enabled.contains(plugin_id) || plugin.status != PluginStatus::Enabled {
+            return Err(plugin_disabled_failure(plugin_id, route));
+        }
+        if plugin.descriptor.generation != plugin_generation {
+            return Err(plugin_generation_mismatch_failure(
+                plugin_id,
+                plugin.descriptor.generation,
+                plugin_generation,
+                route,
+            ));
+        }
+        Ok(())
     }
 
     fn emit(

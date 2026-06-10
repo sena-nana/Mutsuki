@@ -9,6 +9,10 @@ from mutsuki_runtime_python.contracts import (
     OperationHandlerKey,
     OperationSnapshot,
     OperationStatus,
+    PluginAccessState,
+    PluginDescriptor,
+    PluginSnapshot,
+    PluginStatus,
     RuntimeError,
     RuntimeEvent,
     RuntimeEventKind,
@@ -86,6 +90,8 @@ def test_operation_descriptor_matches_rust_wire_shape() -> None:
         (StrategyResult, {"status": "wait_input"}),
         (TraceSpan, {"trace_id": "trace-1", "span_id": "span-1"}),
         (RuntimeEvent, {"sequence": 1, "kind": "trace", "name": "trace.span"}),
+        (PluginDescriptor, {"plugin_id": "plugin"}),
+        (PluginAccessState, {"enabled_plugin_ids": ["plugin"]}),
     ],
 )
 def test_contract_decoders_reject_missing_fields(
@@ -198,6 +204,27 @@ def test_nested_contract_roundtrips() -> None:
     assert_json_roundtrip(SourceSnapshot, source)
     assert_json_roundtrip(StrategyResult, result)
     assert_json_roundtrip(TraceSpan, trace)
+
+
+def test_plugin_contract_roundtrips() -> None:
+    descriptor = PluginDescriptor(
+        plugin_id="plugin",
+        generation=7,
+        name="Plugin",
+        description="Test plugin",
+        version="1.0.0",
+        capabilities=("source", "operation"),
+        metadata={"owned_by": "lilia", "priority": 1},
+    )
+    snapshot = PluginSnapshot(descriptor=descriptor, status=PluginStatus.ENABLED)
+    access = PluginAccessState(
+        enabled_plugin_ids=("plugin",),
+        disabled_plugin_ids=("disabled-plugin",),
+    )
+
+    assert_json_roundtrip(PluginDescriptor, descriptor)
+    assert_json_roundtrip(PluginSnapshot, snapshot)
+    assert_json_roundtrip(PluginAccessState, access)
 
 
 def test_runtime_event_matches_rust_wire_shape() -> None:

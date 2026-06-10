@@ -44,11 +44,12 @@ MutsukiBot/
 
 - `mutsuki-runtime-contracts` 只定义可序列化纯数据结构：
   `AgentSpec`、`Envelope`、`ScopeRuleSpec`、`OperationSnapshot`、
-  `SourceSnapshot`、`TraceSpan`、`RuntimeEvent`、`RuntimeError`、`RefDescriptor`、
-  `LeaseToken`、`ResourceRecord`。
+  `SourceSnapshot`、`PluginSnapshot`、`PluginAccessState`、`AgentSnapshot`、
+  `TraceSpan`、`RuntimeEvent`、`RuntimeError`、`RefDescriptor`、`LeaseToken`、
+  `ResourceRecord`。
 - `mutsuki-runtime-core` 实现 runtime mechanics：
-  Agent lifecycle、inbox tick、ScopeRule 路由、source 注册校验、Operation
-  metadata registry、backend key 调用、trace bookkeeping、`ResourceGate`
+  Agent lifecycle、inbox tick、ScopeRule 路由、runtime 级插件启用 / 禁用、
+  source 注册校验、Operation metadata registry、backend key 调用、trace bookkeeping、`ResourceGate`
   租约治理、runtime event stream、trace closure helper 和 election policy。
 - `mutsuki-runtime-host` 提供 native Rust backend / host helper。它可以注册
   Source 与 Operation，驱动 `AgentRuntime` 跑通最小 Agent loop；它也提供泛型
@@ -63,7 +64,7 @@ Runtime 通过 trait 与上层能力宿主通信：
 
 - `StrategyBackend`：`on_awake` / `on_input` / `next_step` / `on_stop`。
 - `OperationBackend`：`list_operations` / `list_sources` / `invoke` /
-  `operation_status`。
+  `operation_status`，并通过 `list_plugins` 暴露插件元信息。
 - `ResourceBackend`：`register_resource` / `acquire_resource` /
   `release_resource` / `list_records`。
 
@@ -79,6 +80,8 @@ snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Ha
   host / reference plugin / Python backend kit / Python reference 层表达。
 - Operation 是工具、命令和跨能力调用的统一 runtime 概念；Rust 侧只持有
   `OperationSnapshot` 与 `OperationHandlerKey`。
+- 插件接入是 runtime 级启用 / 禁用状态；Rust core 只保存插件元信息和启用状态，
+  不负责扫描、安装或加载插件。
 - Source 必须先注册；未注册 Source 的 envelope publish 必须 fail-loud 为
   `source.unregistered`。
 - 决定性时间、ID、随机源必须由 runtime / host 注入；`ResourceGate` 不使用全局

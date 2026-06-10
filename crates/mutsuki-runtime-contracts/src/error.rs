@@ -35,6 +35,8 @@ impl RuntimeError {
 
 pub const ERR_AGENT_NOT_FOUND: &str = "agent.not_found";
 pub const ERR_OPERATION_NOT_FOUND: &str = "operation.not_found";
+pub const ERR_PLUGIN_DISABLED: &str = "plugin.disabled";
+pub const ERR_PLUGIN_NOT_FOUND: &str = "plugin.not_found";
 pub const ERR_RUNTIME_BACKEND_FAILED: &str = "runtime.backend_failed";
 pub const ERR_RUNTIME_BACKEND_GENERATION_MISMATCH: &str = "runtime.backend_generation_mismatch";
 pub const ERR_SCOPE_NO_MATCH: &str = "scope.no_match";

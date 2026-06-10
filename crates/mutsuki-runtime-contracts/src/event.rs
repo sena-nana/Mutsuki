@@ -10,6 +10,7 @@ pub enum RuntimeEventKind {
     Lifecycle,
     Routing,
     Operation,
+    Plugin,
     Resource,
     Trace,
     Backend,

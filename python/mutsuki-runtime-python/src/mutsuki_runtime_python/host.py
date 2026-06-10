@@ -15,6 +15,9 @@ from mutsuki_runtime_python.contracts import (
     OperationHandlerKey,
     OperationSnapshot,
     OperationStatus,
+    PluginDescriptor,
+    PluginSnapshot,
+    PluginStatus,
     RuntimeError,
     SourceSnapshot,
     StrategyResult,
@@ -49,6 +52,7 @@ class PythonBackendHost:
         self._strategies: dict[str, StrategyBackend] = {}
         self._operations: dict[str, tuple[OperationSnapshot, OperationHandler]] = {}
         self._sources: list[SourceSnapshot] = []
+        self._plugins: dict[str, PluginSnapshot] = {}
         self._plugin_generations: dict[str, int] = {}
         self._received_inputs: dict[str, list[Envelope]] = {}
         self._awake_count: dict[str, int] = {}
@@ -67,6 +71,14 @@ class PythonBackendHost:
             source.plugin_generation,
             self._plugin_generations.get(source.plugin_id, 0),
         )
+        self._ensure_plugin(source.plugin_id, source.plugin_generation)
+
+    def register_plugin(self, plugin: PluginSnapshot) -> None:
+        self._plugins[plugin.descriptor.plugin_id] = plugin
+        self._plugin_generations[plugin.descriptor.plugin_id] = max(
+            plugin.descriptor.generation,
+            self._plugin_generations.get(plugin.descriptor.plugin_id, 0),
+        )
 
     def register_operation(
         self,
@@ -79,6 +91,7 @@ class PythonBackendHost:
         plugin_id = descriptor.plugin_id
         generation = max(plugin_generation, self._plugin_generations.get(plugin_id, 0))
         self._plugin_generations[plugin_id] = generation
+        self._ensure_plugin(plugin_id, generation)
         snapshot = OperationSnapshot(
             descriptor=descriptor,
             status=status,
@@ -135,13 +148,24 @@ class PythonBackendHost:
         await strategy.on_stop(agent_id)
         self._stop_count[agent_id] = self._stop_count.get(agent_id, 0) + 1
 
-    def list_operations(self, agent_id: str) -> tuple[OperationSnapshot, ...]:
-        self._ensure_agent(agent_id)
-        return tuple(snapshot for snapshot, _handler in self._operations.values())
+    def list_plugins(self) -> tuple[PluginSnapshot, ...]:
+        return tuple(self._plugins.values())
 
-    def list_sources(self, agent_id: str) -> tuple[SourceSnapshot, ...]:
-        self._ensure_agent(agent_id)
-        return tuple(self._sources)
+    def list_operations(
+        self, enabled_plugin_ids: tuple[str, ...] | list[str] | str
+    ) -> tuple[OperationSnapshot, ...]:
+        enabled = self._enabled_set(enabled_plugin_ids)
+        return tuple(
+            snapshot
+            for snapshot, _handler in self._operations.values()
+            if snapshot.key.plugin_id in enabled
+        )
+
+    def list_sources(
+        self, enabled_plugin_ids: tuple[str, ...] | list[str] | str
+    ) -> tuple[SourceSnapshot, ...]:
+        enabled = self._enabled_set(enabled_plugin_ids)
+        return tuple(source for source in self._sources if source.plugin_id in enabled)
 
     async def invoke(
         self,
@@ -234,6 +258,33 @@ class PythonBackendHost:
                 evidence={"agent_id": agent_id},
             )
         )
+
+    def _ensure_plugin(self, plugin_id: str, generation: int) -> None:
+        self._plugins.setdefault(
+            plugin_id,
+            PluginSnapshot(
+                descriptor=PluginDescriptor(
+                    plugin_id=plugin_id,
+                    generation=generation,
+                    name=plugin_id,
+                    description="",
+                    version="",
+                    capabilities=(),
+                    metadata={},
+                ),
+                status=PluginStatus.ENABLED,
+            ),
+        )
+
+    def _enabled_set(self, enabled_plugin_ids: tuple[str, ...] | list[str] | str) -> set[str]:
+        if isinstance(enabled_plugin_ids, str):
+            self._ensure_agent(enabled_plugin_ids)
+            return {
+                plugin.descriptor.plugin_id
+                for plugin in self._plugins.values()
+                if plugin.status is PluginStatus.ENABLED
+            }
+        return set(enabled_plugin_ids)
 
     @staticmethod
     def _handler_id(plugin_id: str, op_id: str, generation: int) -> str:

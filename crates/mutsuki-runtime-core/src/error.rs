@@ -1,5 +1,6 @@
 use mutsuki_runtime_contracts::{
-    ERR_RUNTIME_BACKEND_FAILED, ERR_SCOPE_NO_MATCH, ERR_SOURCE_UNREGISTERED, Envelope,
+    ERR_PLUGIN_DISABLED, ERR_PLUGIN_NOT_FOUND, ERR_RUNTIME_BACKEND_FAILED,
+    ERR_RUNTIME_BACKEND_GENERATION_MISMATCH, ERR_SCOPE_NO_MATCH, ERR_SOURCE_UNREGISTERED, Envelope,
     OperationSnapshot, RuntimeError, ScalarValue,
 };
 use thiserror::Error;
@@ -68,5 +69,50 @@ pub(crate) fn scope_no_match_failure(envelope: &Envelope) -> RuntimeFailure {
         "payload_schema_id".into(),
         ScalarValue::String(envelope.payload_schema_id.clone()),
     );
+    RuntimeFailure::new(err)
+}
+
+pub(crate) fn plugin_disabled_failure(plugin_id: &str, route: impl Into<String>) -> RuntimeFailure {
+    let mut err = RuntimeError::new(ERR_PLUGIN_DISABLED, "runtime.plugin_registry", route);
+    err.evidence.insert(
+        "plugin_id".into(),
+        ScalarValue::String(plugin_id.to_string()),
+    );
+    RuntimeFailure::new(err)
+}
+
+pub(crate) fn plugin_not_found_failure(
+    plugin_id: &str,
+    route: impl Into<String>,
+) -> RuntimeFailure {
+    let mut err = RuntimeError::new(ERR_PLUGIN_NOT_FOUND, "runtime.plugin_registry", route);
+    err.evidence.insert(
+        "plugin_id".into(),
+        ScalarValue::String(plugin_id.to_string()),
+    );
+    RuntimeFailure::new(err)
+}
+
+pub(crate) fn plugin_generation_mismatch_failure(
+    plugin_id: &str,
+    expected: u64,
+    actual: u64,
+    route: impl Into<String>,
+) -> RuntimeFailure {
+    let mut err = RuntimeError::new(
+        ERR_RUNTIME_BACKEND_GENERATION_MISMATCH,
+        "runtime.plugin_registry",
+        route,
+    );
+    err.evidence.insert(
+        "plugin_id".into(),
+        ScalarValue::String(plugin_id.to_string()),
+    );
+    err.evidence.insert(
+        "expected_generation".into(),
+        ScalarValue::Int(expected as i64),
+    );
+    err.evidence
+        .insert("actual_generation".into(), ScalarValue::Int(actual as i64));
     RuntimeFailure::new(err)
 }
