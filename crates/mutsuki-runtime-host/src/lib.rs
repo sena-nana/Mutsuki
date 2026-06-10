@@ -112,8 +112,18 @@ mod tests {
                 script.is_file(),
                 "missing Python backend script: {script:?}"
             );
-            let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
-            let mut child = Command::new(python)
+            let mut command = if let Ok(python) = std::env::var("PYTHON") {
+                Command::new(python)
+            } else {
+                let mut command = Command::new("uv");
+                command
+                    .arg("run")
+                    .arg("--project")
+                    .arg(repo_root.join("python").join("mutsuki-runtime-python"))
+                    .arg("python");
+                command
+            };
+            let mut child = command
                 .arg(&script)
                 .arg("--agent-id")
                 .arg("codex-agent")

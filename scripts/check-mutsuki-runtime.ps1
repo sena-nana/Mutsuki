@@ -74,13 +74,18 @@ Invoke-MutsukiCheck `
 Invoke-MutsukiCheck `
     -Name "codex bridge smoke" `
     -WorkingDirectory $RepoRoot `
-    -Command "python" `
-    -Arguments @(".agents/plugins/plugins/mutsuki-codex-core/scripts/smoke_bridge.py")
+    -Command "uv" `
+    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-codex-core/scripts/smoke_bridge.py")
+Invoke-MutsukiCheck `
+    -Name "claude bridge smoke" `
+    -WorkingDirectory $RepoRoot `
+    -Command "uv" `
+    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-claude-core/scripts/smoke_bridge.py")
 Invoke-MutsukiCheck `
     -Name "test io smoke" `
     -WorkingDirectory $RepoRoot `
-    -Command "python" `
-    -Arguments @(".agents/plugins/plugins/mutsuki-test-io/scripts/smoke_mcp.py")
+    -Command "uv" `
+    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-test-io/scripts/smoke_mcp.py")
 
 Write-Host ""
 Write-Host "==> Summary"

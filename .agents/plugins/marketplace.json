@@ -17,6 +17,18 @@
       "category": "Productivity"
     },
     {
+      "name": "mutsuki-claude-core",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mutsuki-claude-core"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
       "name": "mutsuki-test-io",
       "source": {
         "source": "local",
