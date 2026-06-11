@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -263,3 +265,94 @@ async def test_codex_bridge_registers_multiple_agents_and_prompt_operations() ->
 def _as_dict(value: Any) -> dict[str, Any]:
     assert isinstance(value, dict)
     return value
+
+
+async def test_codex_bridge_load_operation_snapshot_list_from_json() -> None:
+    """_load_operation_snapshot_list parses valid JSON input."""
+    bridge = _load_bridge()
+    raw = [
+        {
+            "descriptor": {
+                "op_id": "test.echo",
+                "name": "echo",
+                "description": "",
+                "plugin_id": "test",
+                "func_qualname": "",
+                "parameters_schema": {},
+                "return_schema": {},
+                "perms_rule_id": None,
+                "requires_capabilities": [],
+                "is_tool": True,
+            },
+            "status": "active",
+            "key": {
+                "plugin_id": "test",
+                "plugin_generation": 0,
+                "op_id": "test.echo",
+                "handler_id": "test:test.echo:0",
+            },
+        }
+    ]
+    snapshots = bridge._load_operation_snapshot_list(raw)
+    assert len(snapshots) == 1
+    assert snapshots[0].descriptor.op_id == "test.echo"
+    assert snapshots[0].descriptor.plugin_id == "test"
+    assert snapshots[0].key.plugin_generation == 0
+
+
+async def test_codex_bridge_load_operation_snapshot_list_invalid_type() -> None:
+    """_load_operation_snapshot_list raises TypeError for non-list input."""
+    bridge = _load_bridge()
+    try:
+        bridge._load_operation_snapshot_list({"not": "a list"})  # type: ignore[arg-type]
+        assert False, "expected TypeError"
+    except TypeError:
+        pass
+
+
+
+
+async def test_codex_bridge_cli_stdin_loads_operations_and_passes_to_prompt() -> None:
+    """--operation-snapshots-stdin reads first stdin line as ops JSON."""
+    bridge = _load_bridge()
+    first_line = json.dumps([
+        {
+            "descriptor": {
+                "op_id": "stdin.echo",
+                "name": "stdin-echo",
+                "description": "From stdin",
+                "plugin_id": "stdin-test",
+                "func_qualname": "",
+                "parameters_schema": {},
+                "return_schema": {},
+                "perms_rule_id": None,
+                "requires_capabilities": [],
+                "is_tool": True,
+            },
+            "status": "active",
+            "key": {
+                "plugin_id": "stdin-test",
+                "plugin_generation": 0,
+                "op_id": "stdin.echo",
+                "handler_id": "stdin-test:stdin.echo:0",
+            },
+        }
+    ])
+
+    # Simulate stdin: first line = ops JSON, then JSONL request
+    saved_stdin = sys.stdin
+    try:
+        sys.stdin = io.StringIO(first_line + "\n")
+        runner = StubCodexRunner('{"status":"wait_input"}')
+        host = bridge.build_backend_host(
+            ["agent-a"],
+            runner,
+            bridge._load_operation_snapshot_list(json.loads(first_line)),
+        )
+        await host.on_awake("agent-a")
+        await host.on_input("agent-a", _envelope())
+        assert '"op_id":"stdin.echo"' in runner.prompts[0]
+        assert '"plugin_id":"stdin-test"' in runner.prompts[0]
+        assert '"description":"From stdin"' in runner.prompts[0]
+    finally:
+        sys.stdin = saved_stdin

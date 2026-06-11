@@ -239,6 +239,13 @@ def backend_error(
     )
 
 
+def _load_operation_snapshot_list(raw: object) -> list[OperationSnapshot]:
+    """Parse a JSON list of OperationSnapshot objects from CLI input."""
+    if not isinstance(raw, list):
+        raise TypeError("expected a JSON array of OperationSnapshot")
+    return [OperationSnapshot.from_json_dict(item) for item in raw]
+
+
 def _first_json_object(raw: str) -> dict[str, JsonValue]:
     decoder = json.JSONDecoder()
     text = raw.strip()
@@ -294,9 +301,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--stub-output",
         help="Use deterministic StrategyResult JSON for smoke tests instead of codex exec.",
     )
+    parser.add_argument(
+        "--operation-snapshots",
+        type=Path,
+        action="append",
+        dest="operation_snapshot_paths",
+        default=[],
+        help="Path to a JSON file containing a list of OperationSnapshot objects. Can be specified multiple times.",
+    )
+    parser.add_argument(
+        "--operation-snapshots-stdin",
+        action="store_true",
+        dest="operation_snapshots_stdin",
+        default=False,
+        help="Read a JSON array of OperationSnapshot objects from the first line of stdin, then continue with JSONL protocol on remaining stdin.",
+    )
     args = parser.parse_args(argv)
     runner = _StaticStrategyRunner(args.stub_output) if args.stub_output is not None else None
-    host = build_backend_host(args.agent_id, runner)
+    operations: list[OperationSnapshot] = []
+    for path in args.operation_snapshot_paths:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        operations.extend(_load_operation_snapshot_list(raw))
+    if args.operation_snapshots_stdin:
+        first_line = sys.stdin.readline()
+        raw = json.loads(first_line)
+        operations.extend(_load_operation_snapshot_list(raw))
+    host = build_backend_host(args.agent_id, runner, operations)
     run_stdio_server(host, sys.stdin, sys.stdout)
     return 0
 
