@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -23,7 +25,11 @@ def test_local_plugin_marketplace_entries_are_installable() -> None:
     plugins = marketplace["plugins"]
     assert isinstance(plugins, list)
     names = {item["name"] for item in plugins}
-    assert {"mutsukicore-codex-core", "mutsukicore-test-io"} <= names
+    assert {
+        "mutsukicore-codex-core",
+        "mutsukicore-claude-core",
+        "mutsukicore-test-io",
+    } <= names
 
     for item in plugins:
         assert isinstance(item, dict)
@@ -60,13 +66,43 @@ def test_test_io_mcp_config_points_to_existing_server_script() -> None:
     assert (plugin_path / args[0]).is_file()
 
 
-def test_codex_core_manifest_exposes_strategy_skill_without_mcp_tools() -> None:
-    plugin_path = _repo_root() / ".agents" / "plugins" / "plugins" / "mutsukicore-codex-core"
+@pytest.mark.parametrize(
+    ("plugin_name", "display_name", "skill_dir", "script_name", "extra_capability"),
+    [
+        (
+            "mutsukicore-codex-core",
+            "MutsukiCore Codex Core",
+            "mutsukicore-agent",
+            "mutsukicore_codex_strategy_backend.py",
+            None,
+        ),
+        (
+            "mutsukicore-claude-core",
+            "MutsukiCore Claude Core",
+            "mutsukicore-claude-core",
+            "smoke_bridge.py",
+            "Claude",
+        ),
+    ],
+)
+def test_strategy_core_manifests_expose_strategy_skill_without_mcp_tools(
+    plugin_name: str,
+    display_name: str,
+    skill_dir: str,
+    script_name: str,
+    extra_capability: str | None,
+) -> None:
+    plugin_path = _repo_root() / ".agents" / "plugins" / "plugins" / plugin_name
     manifest = _read_json(plugin_path / ".codex-plugin" / "plugin.json")
 
-    assert manifest["name"] == "mutsukicore-codex-core"
+    assert manifest["name"] == plugin_name
+    assert manifest["interface"]["displayName"] == display_name
+    assert manifest["interface"]["category"] == "Productivity"
+    assert "Strategy backend" in manifest["interface"]["capabilities"]
+    if extra_capability is not None:
+        assert extra_capability in manifest["interface"]["capabilities"]
     assert "mcpServers" not in manifest
-    skill = plugin_path / "skills" / "mutsukicore-agent" / "SKILL.md"
-    script = plugin_path / "scripts" / "mutsukicore_codex_strategy_backend.py"
+    skill = plugin_path / "skills" / skill_dir / "SKILL.md"
+    script = plugin_path / "scripts" / script_name
     assert skill.is_file()
     assert script.is_file()

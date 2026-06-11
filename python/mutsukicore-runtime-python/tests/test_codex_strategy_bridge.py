@@ -8,6 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from mutsukicore_runtime_python.backend import BackendInvokeError
 from mutsukicore_runtime_python.contracts import (
     ERR_RUNTIME_BACKEND_FAILED,
@@ -303,13 +305,8 @@ async def test_codex_bridge_load_operation_snapshot_list_from_json() -> None:
 async def test_codex_bridge_load_operation_snapshot_list_invalid_type() -> None:
     """_load_operation_snapshot_list raises TypeError for non-list input."""
     bridge = _load_bridge()
-    try:
+    with pytest.raises(TypeError):
         bridge._load_operation_snapshot_list({"not": "a list"})  # type: ignore[arg-type]
-        assert False, "expected TypeError"
-    except TypeError:
-        pass
-
-
 
 
 async def test_codex_bridge_cli_stdin_loads_operations_and_passes_to_prompt() -> None:
