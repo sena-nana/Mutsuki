@@ -57,6 +57,10 @@ MutsukiCore/
 - `python/mutsukicore-runtime-python` 提供新版 Python backend kit。它镜像 Rust
   contracts，保存 Python-owned handler，并通过 backend key 暴露 operation/source
   snapshot，且提供 stdio JSONL 进程边界；它不拥有 Rust runtime 状态事实。
+- Rust crate 的单元测试按边界拆在各 crate 的 `src/tests/` 下。Core 测试按
+  runtime flow、plugin access、resource、event/trace 与 election 分组；host 测试按
+  native host、JSONL adapter 和进程边界分组。Host 进程边界测试只使用领域中立的
+  JSONL strategy fixture，不依赖产品插件目录或业务专用进程 smoke。
 
 ## 4. Backend 边界
 
@@ -105,6 +109,7 @@ snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Ha
 根级必跑：
 
 ```powershell
+cargo fmt --check
 cargo test
 ```
 
