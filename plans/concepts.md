@@ -1,7 +1,7 @@
-# MutsukiBot 概念边界图谱
+# MutsukiCore 概念边界图谱
 
 本文描述当前 Rust-first runtime 的核心概念。旧 Python 插件框架概念仅保留在
-`python/reference-mutsukibot/` 中作为参考与迁移材料。
+`python/reference-mutsukicore/` 中作为参考与迁移材料。
 
 ## 1. Agent
 

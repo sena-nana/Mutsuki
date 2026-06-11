@@ -1,13 +1,13 @@
-# MutsukiBot Runtime Contracts
+# MutsukiCore Runtime Contracts
 
 本文件记录当前根级 Rust runtime 的内部协议。旧 Python `msgspec` contracts 已移动到
-`python/reference-mutsukibot/`，作为参考与迁移材料，不再定义根级主链。
+`python/reference-mutsukicore/`，作为参考与迁移材料，不再定义根级主链。
 
 ## 1. 协议总则
 
-- 根级协议对象由 `crates/mutsuki-runtime-contracts` 定义，使用 serde
+- 根级协议对象由 `crates/mutsukicore-runtime-contracts` 定义，使用 serde
   serialize / deserialize。
-- `python/mutsuki-runtime-python` 镜像这些协议对象的 Python wire shape，但 Rust
+- `python/mutsukicore-runtime-python` 镜像这些协议对象的 Python wire shape，但 Rust
   contracts 仍是事实源。
 - 协议对象必须是纯数据，不包含 callable、socket、SDK client、真实 handle 或领域对象。
 - 协议反序列化是严格 wire shape：所有字段必须显式出现；可空字段用 `null`
@@ -175,7 +175,7 @@ ResourceBackend:
 
 ## 12. Python Stdio JSONL Boundary
 
-- `python/mutsuki-runtime-python` 提供 stdio JSONL 进程边界，复用纯 contracts 与
+- `python/mutsukicore-runtime-python` 提供 stdio JSONL 进程边界，复用纯 contracts 与
   backend key。
 - 请求形状：`{"id":"req-1","method":"invoke","params":{...}}`。
 - `id`、`method`、`params` 必须显式存在；`invoke.payload`、`resource.list.owner`、
@@ -227,10 +227,10 @@ backend handler 不得同步重入同一个 runtime 的状态推进 API。
 
 ## 15. Crate 对应
 
-- `crates/mutsuki-runtime-contracts`：本文件的纯协议结构。
-- `crates/mutsuki-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
-- `crates/mutsuki-runtime-host`：native in-memory host helper 和无 Python smoke。
-- `python/mutsuki-runtime-python`：Python backend kit，提供 contracts mirror、进程内
+- `crates/mutsukicore-runtime-contracts`：本文件的纯协议结构。
+- `crates/mutsukicore-runtime-core`：AgentRuntime、backend traits、ResourceGate、trace bookkeeping。
+- `crates/mutsukicore-runtime-host`：native in-memory host helper 和无 Python smoke。
+- `python/mutsukicore-runtime-python`：Python backend kit，提供 contracts mirror、进程内
   backend host、resource backend 和测试夹具；不定义 Rust runtime 事实。
 
 ## 16. 禁止事项

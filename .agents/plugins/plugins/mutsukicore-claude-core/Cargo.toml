@@ -1,0 +1,14 @@
+[package]
+name = "mutsukicore-claude-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+mutsukicore-runtime-contracts = { path = "../../../../crates/mutsukicore-runtime-contracts" }
+mutsukicore-runtime-core = { path = "../../../../crates/mutsukicore-runtime-core" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

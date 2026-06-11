@@ -1,17 +1,17 @@
-# MutsukiBot 路线图
+# MutsukiCore 路线图
 
 本文件回答：当前仓库目标、完成门槛、后续方向。当前工作树以 **Rust framework
 完整可使用** 为主目标；早期 Python 框架代码已移动到
-`python/reference-mutsukibot/`，作为旧 Python 实现的参考与迁移层，不再是根级主链。
+`python/reference-mutsukicore/`，作为旧 Python 实现的参考与迁移层，不再是根级主链。
 
 ## 当前边界：Rust-first Agent Runtime Kernel
 
 根级 workspace 由三个 crate 组成：
 
-- `crates/mutsuki-runtime-contracts`：纯协议与序列化结构。
-- `crates/mutsuki-runtime-core`：运行时内核，负责 Agent lifecycle、routing、
+- `crates/mutsukicore-runtime-contracts`：纯协议与序列化结构。
+- `crates/mutsukicore-runtime-core`：运行时内核，负责 Agent lifecycle、routing、
   tick、Operation / Source registry、trace、ResourceGate。
-- `crates/mutsuki-runtime-host`：native Rust host helper，用于不依赖 Python
+- `crates/mutsukicore-runtime-host`：native Rust host helper，用于不依赖 Python
   PluginHost 的可运行 smoke 和集成入口。
 
 当前目标不是“把旧 Python Core 包一层 Rust 壳”，而是让 Rust runtime 本身具备
@@ -42,14 +42,14 @@
   - native in-memory Source / Operation backend。
   - 无 Python 情况下跑通 Agent start、publish、tick、invoke、stop。
 - Python reference：
-  - 旧 `mutsukibot`、`mutsukibot_ext`、Python tests、docs、examples、`pyproject.toml`
-    与 `uv.lock` 已移动到 `python/reference-mutsukibot/`。
+  - 旧 `mutsukicore`、`mutsukicore_ext`、Python tests、docs、examples、`pyproject.toml`
+    与 `uv.lock` 已移动到 `python/reference-mutsukicore/`。
 - Python backend kit：
-  - `python/mutsuki-runtime-python/` 提供 Rust contracts 的 Python wire-shape 镜像、
+  - `python/mutsukicore-runtime-python/` 提供 Rust contracts 的 Python wire-shape 镜像、
     进程内 backend host、descriptor-only resource backend 和测试夹具。
   - 提供 stdio JSONL 进程边界，可将 Python-owned strategy / operation / resource
     backend 暴露为纯协议请求响应。
-  - 该包不依赖旧 `python/reference-mutsukibot/`，也不定义第二套 Python runtime。
+  - 该包不依赖旧 `python/reference-mutsukicore/`，也不定义第二套 Python runtime。
 
 ## 当前完成门槛
 
@@ -75,7 +75,7 @@ Rust framework 被视为当前目标完成，必须同时满足：
 
 ### Python Backend Kit Hardening
 
-- 为 `python/mutsuki-runtime-python` 增加显式进程 / RPC 边界前，保持进程内 backend
+- 为 `python/mutsukicore-runtime-python` 增加显式进程 / RPC 边界前，保持进程内 backend
   与 Rust trait 语义一致。
 - stdio JSONL 边界已作为首个显式进程协议落地；HTTP、取消、deadline 和长期
   sidecar supervision 后续单独设计。

@@ -5,9 +5,9 @@
 
 ## 1. 定位
 
-- 包目录：`python/mutsuki-runtime-python/`
-- 发行名：`mutsuki-runtime-python`
-- 导入名：`mutsuki_runtime_python`
+- 包目录：`python/mutsukicore-runtime-python/`
+- 发行名：`mutsukicore-runtime-python`
+- 导入名：`mutsukicore_runtime_python`
 
 该包不是旧 Python framework 的回迁，也不是第二套 runtime。它只承载：
 
@@ -23,15 +23,15 @@ Python callable、插件 metadata、strategy hook 和 Source / Operation snapsho
 ResourceGate quota 事实。Python 侧如需作为外部入口发布事件，应通过未来 `runtime.*`
 caller API 进入 Rust runtime。
 
-`python/reference-mutsukibot/` 继续作为旧实现参考与迁移材料存在；新版包不得依赖
-旧 `mutsukibot` core、dispatcher、PluginLoader 或 extension。
+`python/reference-mutsukicore/` 继续作为旧实现参考与迁移材料存在；新版包不得依赖
+旧 `mutsukicore` core、dispatcher、PluginLoader 或 extension。
 
 ## 2. MVP 结构
 
 ```text
-python/mutsuki-runtime-python/
+python/mutsukicore-runtime-python/
   pyproject.toml
-  src/mutsuki_runtime_python/
+  src/mutsukicore_runtime_python/
     contracts.py   # Rust serde wire-shape mirror
     backend.py     # backend protocols and structured error wrapper
     host.py        # in-process PythonBackendHost
@@ -47,7 +47,7 @@ sidecar supervisor 后续再单独设计；当前 contracts、snapshot 和 backe
 
 ## 3. Contract Rules
 
-- Python contracts 以当前 Rust `mutsuki-runtime-contracts` 为事实源。
+- Python contracts 以当前 Rust `mutsukicore-runtime-contracts` 为事实源。
 - `ScopeRuleSpec` 使用 Rust 一致的 tagged JSON shape，例如
   `{"type":"by_schema","schema_id":"test.input"}`。
 - 枚举值使用 `snake_case`，默认字段按 serde 行为补齐。
@@ -76,7 +76,7 @@ sidecar supervisor 后续再单独设计；当前 contracts、snapshot 和 backe
 
 ## 5. Verification
 
-Python backend kit 改动需在 `python/mutsuki-runtime-python` 运行：
+Python backend kit 改动需在 `python/mutsukicore-runtime-python` 运行：
 
 ```powershell
 uv run ruff check src tests
