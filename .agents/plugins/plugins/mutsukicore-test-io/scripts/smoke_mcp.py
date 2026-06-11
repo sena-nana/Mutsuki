@@ -180,7 +180,7 @@ async def main() -> int:
                 "request": {
                     "id": "req-1",
                     "method": "list_sources",
-                    "params": {"agent_id": "agent-a"},
+                    "params": {"enabled_plugin_ids": ["mutsukicore-codex-core"]},
                 },
                 "timeout_ms": 15000,
             },

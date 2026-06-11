@@ -59,17 +59,17 @@ Invoke-MutsukiCheck `
     -Name "python ruff" `
     -WorkingDirectory $PythonRuntime `
     -Command "uv" `
-    -Arguments @("run", "ruff", "check", "src", "tests")
+    -Arguments @("run", "python", "-m", "ruff", "check", "src", "tests")
 Invoke-MutsukiCheck `
     -Name "python pyright" `
     -WorkingDirectory $PythonRuntime `
     -Command "uv" `
-    -Arguments @("run", "pyright", "src", "tests")
+    -Arguments @("run", "python", "-m", "pyright", "src", "tests")
 Invoke-MutsukiCheck `
     -Name "python pytest" `
     -WorkingDirectory $PythonRuntime `
     -Command "uv" `
-    -Arguments @("run", "pytest")
+    -Arguments @("run", "python", "-m", "pytest")
 
 Invoke-MutsukiCheck `
     -Name "codex bridge smoke" `

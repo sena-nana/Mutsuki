@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mutsukicore_runtime_python.contracts import StrategyResultStatus
 from mutsukicore_runtime_python.stdio import StdioJsonlBackendServer
 
-from mutsukicore_codex_strategy_backend import build_backend_host
+from mutsukicore_codex_strategy_backend import PLUGIN_ID, build_backend_host
 
 
 class StubCodexRunner:
@@ -29,7 +29,11 @@ async def _smoke() -> None:
     host = build_backend_host(["agent-a"], StubCodexRunner())
     server = StdioJsonlBackendServer(host)
     source_response = await server.handle_request(
-        {"id": "req-1", "method": "list_sources", "params": {"agent_id": "agent-a"}}
+        {
+            "id": "req-1",
+            "method": "list_sources",
+            "params": {"enabled_plugin_ids": [PLUGIN_ID]},
+        }
     )
     input_response = await server.handle_request(
         {
