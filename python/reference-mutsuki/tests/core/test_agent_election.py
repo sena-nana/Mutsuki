@@ -1,0 +1,233 @@
+"""v0.3: deterministic accepting-agent selection."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import ClassVar
+
+import msgspec
+import pytest
+
+from mutsuki import Capability, Plugin
+from mutsuki.contracts import (
+    AgentParticipation,
+    AgentProfile,
+    Caps,
+    Envelope,
+    MessageId,
+    Scopes,
+    SourceKinds,
+)
+from mutsuki.contracts.ids import AgentId
+from mutsuki.core.agent import Agent
+from mutsuki.core.agent_registry import AgentRegistry
+from mutsuki.core.loader import PluginLoader
+from mutsuki.runtime import DeterministicIdGen, SeededRng, SystemClock
+from mutsuki_ext.im import ChannelRef, ContentKind, ContentPart, Message
+
+
+def _agent(agent_id: str, *, priority: int) -> Agent:
+    return Agent(
+        agent_id=AgentId(agent_id),
+        clock=SystemClock(),
+        id_gen=DeterministicIdGen(),
+        rng=SeededRng(seed=0),
+        accepts=(Scopes.IM_TEXT.to_rule(),),
+        priority=priority,
+    )
+
+
+def _profiled_agent(
+    agent_id: str,
+    *,
+    participation: AgentParticipation,
+    priority: int = 0,
+) -> Agent:
+    return Agent(
+        agent_id=AgentId(agent_id),
+        clock=SystemClock(),
+        id_gen=DeterministicIdGen(),
+        rng=SeededRng(seed=0),
+        profile=AgentProfile(
+            profile_id=f"tests.{agent_id}",
+            participation=participation,
+            accepts=(Scopes.IM_TEXT.to_rule(),),
+        ),
+        priority=priority,
+    )
+
+
+def _message() -> Message:
+    return Message(
+        id=MessageId("m1"),
+        timestamp=0.0,
+        source=ChannelRef(
+            source_id="inmemory:default",
+            kind=SourceKinds.IM,
+            channel_id="c",
+        ),
+        payload_schema_id="mutsuki.message",
+        capabilities_required=(Caps.IM_TEXT,),
+        parts=(ContentPart(kind=ContentKind.TEXT, text="hi"),),
+    )
+
+
+class _ElectionConfig(msgspec.Struct, kw_only=True):
+    pass
+
+
+class _ReverseElectionPlugin(Plugin[_ElectionConfig]):
+    id: ClassVar[str] = "test-reverse-election"
+    version: ClassVar[str] = "0.0.1"
+    capabilities: ClassVar[list[Capability]] = [Capability(name=Caps.READ_MESSAGE)]
+    Config = _ElectionConfig
+
+    async def on_load(self) -> None:
+        self.scope.add_dispose(
+            AgentRegistry.install_election_policy(
+                _ReverseElectionPolicy(),
+                owner=self.id,
+            )
+        )
+
+
+class _ReverseElectionPolicy:
+    def rank(
+        self,
+        envelope: Envelope,
+        candidates: Sequence[Agent],
+    ) -> tuple[Agent, ...]:
+        _ = envelope
+        return tuple(
+            sorted(candidates, key=lambda agent: str(agent.agent_id), reverse=True)
+        )
+
+
+def test_select_accepting_prefers_highest_priority_then_agent_id() -> None:
+    AgentRegistry.clear()
+    try:
+        _agent("zeta", priority=10)
+        alpha = _agent("alpha", priority=10)
+        _agent("middle", priority=1)
+
+        selected = AgentRegistry.select_accepting(_message())
+
+        assert selected is alpha
+    finally:
+        AgentRegistry.clear()
+
+
+def test_rank_accepting_returns_stable_order() -> None:
+    AgentRegistry.clear()
+    try:
+        agents = (
+            _agent("b", priority=1),
+            _agent("a", priority=1),
+            _agent("c", priority=2),
+        )
+
+        ranked = AgentRegistry.rank_accepting(_message())
+
+        assert [str(agent.agent_id) for agent in ranked] == ["c", "a", "b"]
+        assert agents[0].agent_id == "b"
+    finally:
+        AgentRegistry.clear()
+
+
+def test_observer_is_not_selected_as_owner_even_when_accepts_matches() -> None:
+    AgentRegistry.clear()
+    try:
+        primary = _profiled_agent(
+            "primary",
+            participation=AgentParticipation.PRIMARY_CANDIDATE,
+            priority=0,
+        )
+        observer = _profiled_agent(
+            "observer",
+            participation=AgentParticipation.OBSERVER,
+            priority=100,
+        )
+
+        selected = AgentRegistry.select_accepting(_message())
+        accepting = AgentRegistry.iter_accepting(_message())
+
+        assert selected is primary
+        assert observer.participation == AgentParticipation.OBSERVER
+        assert [str(agent.agent_id) for agent in accepting] == ["observer", "primary"]
+    finally:
+        AgentRegistry.clear()
+
+
+def test_explicit_helper_is_not_selected_as_owner_even_when_accepts_matches() -> None:
+    AgentRegistry.clear()
+    try:
+        primary = _profiled_agent(
+            "primary",
+            participation=AgentParticipation.PRIMARY_CANDIDATE,
+            priority=0,
+        )
+        helper = _profiled_agent(
+            "helper",
+            participation=AgentParticipation.EXPLICIT_HELPER,
+            priority=100,
+        )
+
+        selected = AgentRegistry.select_accepting(_message())
+
+        assert selected is primary
+        assert helper.participation == AgentParticipation.EXPLICIT_HELPER
+    finally:
+        AgentRegistry.clear()
+
+
+def test_installing_election_policy_changes_selection_and_restores_default() -> None:
+    AgentRegistry.clear()
+    try:
+        alpha = _agent("alpha", priority=0)
+        beta = _agent("beta", priority=0)
+        assert str(alpha.agent_id) == "alpha"
+        assert str(beta.agent_id) == "beta"
+
+        baseline = AgentRegistry.select_accepting(_message())
+        assert baseline is not None
+        assert str(baseline.agent_id) == "alpha"
+
+        dispose = AgentRegistry.install_election_policy(
+            _ReverseElectionPolicy(),
+            owner="tests",
+        )
+        try:
+            selected = AgentRegistry.select_accepting(_message())
+            assert selected is not None
+            assert str(selected.agent_id) == "beta"
+        finally:
+            dispose()
+
+        restored = AgentRegistry.select_accepting(_message())
+        assert restored is not None
+        assert str(restored.agent_id) == "alpha"
+    finally:
+        AgentRegistry.clear()
+
+
+@pytest.mark.asyncio
+async def test_plugin_scope_restores_election_policy_on_unload() -> None:
+    AgentRegistry.clear()
+    loader = PluginLoader(allow={_ReverseElectionPlugin.id})
+    caller = _agent("caller", priority=0)
+    target = _agent("target", priority=0)
+    assert str(target.agent_id) == "target"
+
+    try:
+        await loader.load_into(caller, [_ReverseElectionPlugin])
+        selected = AgentRegistry.select_accepting(_message())
+        assert selected is not None
+        assert str(selected.agent_id) == "target"
+
+        await loader.unload_from(caller)
+
+        restored = AgentRegistry.select_accepting(_message())
+        assert restored is not None
+        assert str(restored.agent_id) == "caller"
+    finally:
+        AgentRegistry.clear()

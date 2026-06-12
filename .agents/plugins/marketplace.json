@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "mutsukicore-codex-core",
+      "name": "mutsuki-codex-core",
       "source": {
         "source": "local",
-        "path": "./plugins/mutsukicore-codex-core"
+        "path": "./plugins/mutsuki-codex-core"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -17,10 +17,10 @@
       "category": "Productivity"
     },
     {
-      "name": "mutsukicore-claude-core",
+      "name": "mutsuki-claude-core",
       "source": {
         "source": "local",
-        "path": "./plugins/mutsukicore-claude-core"
+        "path": "./plugins/mutsuki-claude-core"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -29,10 +29,10 @@
       "category": "Productivity"
     },
     {
-      "name": "mutsukicore-test-io",
+      "name": "mutsuki-test-io",
       "source": {
         "source": "local",
-        "path": "./plugins/mutsukicore-test-io"
+        "path": "./plugins/mutsuki-test-io"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -1,4 +1,4 @@
-# MutsukiCore
+# Mutsuki
 
 > A domain-neutral Agent runtime kernel implemented as a Rust framework.
 
@@ -9,13 +9,13 @@ runtime contracts, the reusable `AgentRuntime` kernel, and a native host helper
 that can run an Agent loop without Python.
 
 Python code from the earlier framework has been moved to
-[`python/reference-mutsukicore`](python/reference-mutsukicore). Treat it as a
+[`python/reference-mutsuki`](python/reference-mutsuki). Treat it as a
 reference and migration layer for plugin-host ideas, transport examples, and
 Python checks. It is no longer the root runtime implementation, but the name
 does not imply the code is deprecated or disposable.
 
 The new Python backend kit lives in
-[`python/mutsukicore-runtime-python`](python/mutsukicore-runtime-python). It mirrors the
+[`python/mutsuki-runtime-python`](python/mutsuki-runtime-python). It mirrors the
 Rust contracts and provides an in-process Python backend host for strategy,
 operation, and resource lease experiments. It is not a standalone runtime and
 does not depend on the old reference package.
@@ -36,17 +36,17 @@ registry facts, resource governance, trace, and events stay in Rust.
 
 ## Crates
 
-- `crates/mutsukicore-runtime-contracts` - pure serializable contracts:
+- `crates/mutsuki-runtime-contracts` - pure serializable contracts:
   Agent, Envelope, ScopeRule, Operation / Source snapshots, trace, errors, and
   resource descriptors, plus runtime events.
-- `crates/mutsukicore-runtime-core` - runtime mechanics:
+- `crates/mutsuki-runtime-core` - runtime mechanics:
   lifecycle, inbox ticks, routing, operation registry, source registry,
   trace bookkeeping, event stream, election policy, trace closure checks, and
   resource lease governance.
-- `crates/mutsukicore-runtime-host` - native Rust host helper:
+- `crates/mutsuki-runtime-host` - native Rust host helper:
   in-memory operation/source backend for direct framework use, smoke tests, and
   a generic stdio JSONL backend adapter.
-- `python/mutsukicore-runtime-python` - optional Python backend kit:
+- `python/mutsuki-runtime-python` - optional Python backend kit:
   pure contract mirrors, in-process backend host, descriptor-only resource
   backend, stdio JSONL server, Python plugin/capability host fixtures, and
   documented future runtime-caller boundaries.
@@ -57,10 +57,10 @@ registry facts, resource governance, trace, and events stay in Rust.
 cargo test
 ```
 
-Optional Python reference checks live under `python/reference-mutsukicore` and
+Optional Python reference checks live under `python/reference-mutsuki` and
 should be run from that folder when intentionally working on that layer.
 
-Python backend kit checks live under `python/mutsukicore-runtime-python`:
+Python backend kit checks live under `python/mutsuki-runtime-python`:
 
 ```powershell
 uv run ruff check src tests

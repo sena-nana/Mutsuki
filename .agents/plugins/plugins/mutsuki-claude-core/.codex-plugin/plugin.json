@@ -1,0 +1,22 @@
+{
+  "name": "mutsuki-claude-core",
+  "version": "0.1.0",
+  "description": "Claude-backed StrategyBackend for Mutsuki Agent runtime work.",
+  "author": {
+    "name": "Mutsuki"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mutsuki Claude Core",
+    "shortDescription": "Run Claude as a Mutsuki Agent strategy core.",
+    "longDescription": "Adds a Rust-first Claude StrategyBackend while keeping Mutsuki runtime core domain-neutral.",
+    "developerName": "Mutsuki",
+    "category": "Productivity",
+    "capabilities": [
+      "Agent runtime",
+      "Strategy backend",
+      "Claude"
+    ],
+    "defaultPrompt": "Use Claude as the Mutsuki Agent core."
+  }
+}

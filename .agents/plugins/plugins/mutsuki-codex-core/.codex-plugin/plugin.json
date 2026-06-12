@@ -1,0 +1,21 @@
+{
+  "name": "mutsuki-codex-core",
+  "version": "0.1.0",
+  "description": "Codex-backed StrategyBackend for Mutsuki Agent runtime work.",
+  "author": {
+    "name": "Mutsuki"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mutsuki Codex Core",
+    "shortDescription": "Run Codex as a Mutsuki Agent strategy core.",
+    "longDescription": "Adds a Mutsuki skill and bridge scripts for using Codex as a StrategyBackend while keeping Rust core domain-neutral.",
+    "developerName": "Mutsuki",
+    "category": "Productivity",
+    "capabilities": [
+      "Agent runtime",
+      "Strategy backend"
+    ],
+    "defaultPrompt": "Use Codex as the Mutsuki Agent core."
+  }
+}

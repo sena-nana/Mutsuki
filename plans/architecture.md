@@ -1,10 +1,10 @@
-# MutsukiCore 架构设计
+# Mutsuki 架构设计
 
-MutsukiCore 当前根级实现是一个 **Rust-first Agent runtime framework**。它的目标是
+Mutsuki 当前根级实现是一个 **Rust-first Agent runtime framework**。它的目标是
 为 Yume / mind-sim、工程 Agent 与传统 Bot 能力提供领域中立运行内核，但不把
 任一业务语义写入 core。
 
-早期 Python 框架实现已经移动到 `python/reference-mutsukicore/`。该目录是参考与
+早期 Python 框架实现已经移动到 `python/reference-mutsuki/`。该目录是参考与
 迁移层，不代表废弃内容，也不再定义根级 runtime 主链。
 
 ## 1. 项目方向
@@ -41,15 +41,15 @@ Caller examples:
   Rust application / Python plugin entry / HTTP service / CLI / other project
 
 Rust Runtime Kernel:
-  crates/mutsukicore-runtime-core
-  crates/mutsukicore-runtime-contracts
+  crates/mutsuki-runtime-core
+  crates/mutsuki-runtime-contracts
 
 Capability Backend examples:
-  crates/mutsukicore-runtime-host (optional native helper)
-  python/mutsukicore-runtime-python (Python backend kit / sidecar foundation)
+  crates/mutsuki-runtime-host (optional native helper)
+  python/mutsuki-runtime-python (Python backend kit / sidecar foundation)
   remote service adapter
 
-python/reference-mutsukicore
+python/reference-mutsuki
   -> optional reference / migration material only
 ```
 
@@ -142,12 +142,12 @@ Trace 事实仍以 `TraceSpan` 为事实源，并同步投影为 `trace.span` ev
 
 ## 8. Python Reference
 
-`python/reference-mutsukicore/` 保留旧 Python framework、extension、tests、docs 与
+`python/reference-mutsuki/` 保留旧 Python framework、extension、tests、docs 与
 examples，方便迁移和对照。它不再是当前主实现，但不是废弃目录。
 
 ## 9. Python Backend Kit
 
-`python/mutsukicore-runtime-python/` 是当前新版 Python 端结构。它提供：
+`python/mutsuki-runtime-python/` 是当前新版 Python 端结构。它提供：
 
 - 与 Rust contracts 对齐的 Python dataclass wire shape。
 - `StrategyBackend`、`OperationBackend`、`ResourceBackend` 协议。
@@ -157,7 +157,7 @@ examples，方便迁移和对照。它不再是当前主实现，但不是废弃
 - `StdioJsonlBackendServer`，通过 JSONL request/response 暴露显式进程边界。
 
 该包不复刻 AgentRuntime，不实现 routing / lifecycle / trace 的 Rust 事实源，也不
-依赖旧 `mutsukicore` core。Python 侧长期只保管插件元信息、插件行为、真实资源对象、
+依赖旧 `mutsuki` core。Python 侧长期只保管插件元信息、插件行为、真实资源对象、
 外部协议接入和 Python 异常到 `RuntimeError` 的映射。stdio JSONL 是当前显式 backend 进程边界；
 后续若增加 HTTP 或长期 sidecar supervisor，只能复用这些纯协议对象与 backend key。
 

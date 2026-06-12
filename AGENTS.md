@@ -1,8 +1,8 @@
-# MutsukiCore 项目宪法
+# Mutsuki 项目宪法
 
-MutsukiCore 当前是一个 **Rust-first Agent runtime framework**。根目录只承载领域中立
+Mutsuki 当前是一个 **Rust-first Agent runtime framework**。根目录只承载领域中立
 runtime kernel、纯协议契约和 native host helper；早期 Python 框架实现已经移动到
-`python/reference-mutsukicore/`，作为旧 Python 实现的参考与迁移层，不代表废弃内容。
+`python/reference-mutsuki/`，作为旧 Python 实现的参考与迁移层，不代表废弃内容。
 
 ## 一句话定位
 
@@ -32,7 +32,7 @@ trace 等运行机制；具体业务能力由 host、plugin、sidecar 或 refere
 6. **结构化错误**：fallback 必须显式记录原因；禁止吞异常返回默认值。
 7. **决定性时间与 ID 由 runtime / host 注入**：core 不直接调用全局时间、UUID 或 random 源；资源租约 token 由注入式 ID source 生成。
 8. **I/O 资源外置**：Rust core 不保存 socket、SDK client、数据库连接、Python callable、真实 `Handle[T]` 或领域对象。
-9. **双协议分离**：外部 wire shape 只能在 host / reference plugin / Python sidecar；不得渗入 `crates/mutsukicore-runtime-core` 或 `contracts`。
+9. **双协议分离**：外部 wire shape 只能在 host / reference plugin / Python sidecar；不得渗入 `crates/mutsuki-runtime-core` 或 `contracts`。
 10. **Borrow with Discipline**：按引用传递只通过 `RefDescriptor`、`ref_id`、`LeaseToken` 和 host-owned finalizer 表达；真实对象不跨 runtime 边界。
 
 ## 工作规程
@@ -47,7 +47,7 @@ trace 等运行机制；具体业务能力由 host、plugin、sidecar 或 refere
 ## Rust / Python Reference 边界
 
 - Root Rust crates 不依赖 Python。
-- `python/reference-mutsukicore/` 是旧 Python 框架、扩展、测试、docs 和 examples 的参考与迁移位置。
+- `python/reference-mutsuki/` 是旧 Python 框架、扩展、测试、docs 和 examples 的参考与迁移位置。
 - 如果未来需要 Python sidecar，它只能通过 backend trait / 纯协议与 Rust runtime 通信。
 - 旧 generation key、backend 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的新 handler。
 
@@ -62,7 +62,7 @@ trace 等运行机制；具体业务能力由 host、plugin、sidecar 或 refere
 - 不得以部分检查宣称成功。最终说明必须报告精确执行的验证命令与结果。
 - Rust runtime / contracts / host 改动必须运行：
   - `cargo test`
-- 改动 Python reference 层时，从 `python/reference-mutsukicore` 目录运行对应 Python 验证。
+- 改动 Python reference 层时，从 `python/reference-mutsuki` 目录运行对应 Python 验证。
 - 涉及公共契约、Source / Operation registry、ResourceGate、trace、Agent lifecycle、
   backend trait 的改动必须补充定向测试或说明现有测试覆盖点。
 
@@ -71,6 +71,6 @@ trace 等运行机制；具体业务能力由 host、plugin、sidecar 或 refere
 - Rust 2024 + Cargo workspace 是根级主框架。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13 + uv 仅用于 `python/reference-mutsukicore/`。
+- Python 3.13 + uv 仅用于 `python/reference-mutsuki/`。
 
 详见 [plans/engineering.md](plans/engineering.md)。

@@ -1,20 +1,20 @@
 # Rust / Python Runtime Boundary
 
-本文件记录当前事实：根级 MutsukiCore 是 Rust-first runtime framework。Python 代码已
-移动到 `python/reference-mutsukicore/`，作为旧 Python 实现的参考与迁移层；它不是
+本文件记录当前事实：根级 Mutsuki 是 Rust-first runtime framework。Python 代码已
+移动到 `python/reference-mutsuki/`，作为旧 Python 实现的参考与迁移层；它不是
 根级主运行时，也不代表废弃内容。
 
 ## 1. 当前实现
 
-- `crates/mutsukicore-runtime-contracts`：纯协议结构与 `ScopeRuleSpec.matches(...)`。
-- `crates/mutsukicore-runtime-core`：`AgentRuntime`、backend traits、Operation /
+- `crates/mutsuki-runtime-contracts`：纯协议结构与 `ScopeRuleSpec.matches(...)`。
+- `crates/mutsuki-runtime-core`：`AgentRuntime`、backend traits、Operation /
   插件启用 / 禁用状态、Source registry、routing、trace bookkeeping、runtime event stream、election policy、
   `ResourceGate`。
-- `crates/mutsukicore-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
+- `crates/mutsuki-runtime-host`：native in-memory host helper，可不依赖 Python 跑通
   Agent loop；另提供 stdio JSONL backend adapter。
-- `python/mutsukicore-runtime-python`：新版 Python backend kit，镜像 Rust contracts，提供
+- `python/mutsuki-runtime-python`：新版 Python backend kit，镜像 Rust contracts，提供
   进程内 Python backend host、descriptor-only resource backend 与 stdio JSONL server。
-- `python/reference-mutsukicore`：旧 Python framework、reference extensions、tests、
+- `python/reference-mutsuki`：旧 Python framework、reference extensions、tests、
   docs、examples。
 
 ## 2. 三层结构
@@ -35,7 +35,7 @@ Caller
   Python reference 的迁移 adapter 或其他远程服务。它只提供策略、Operation handler、
   Source snapshot 和资源对象访问能力。
 
-Python 不是第二个 runtime kernel。`python/mutsukicore-runtime-python` 可以同时扮演
+Python 不是第二个 runtime kernel。`python/mutsuki-runtime-python` 可以同时扮演
 runtime caller 与 capability backend：作为 caller 时向 Rust runtime 发布外部事件或查询
 状态；作为 backend 时被 Rust runtime 调用 Python-owned handler 和 resource host。
 
@@ -119,7 +119,7 @@ list_records(owner) -> Vec<ResourceRecord>
 
 ## 7. Python Backend Kit Boundary
 
-`python/mutsukicore-runtime-python` 是当前 Python 端 MVP。它必须遵守：
+`python/mutsuki-runtime-python` 是当前 Python 端 MVP。它必须遵守：
 
 - Rust runtime never imports Python modules.
 - Python contracts mirror Rust serde wire shape; Rust contracts remain the source of truth.
@@ -157,7 +157,7 @@ must obey the same backend boundary:
 The Rust-first framework is acceptable only when:
 
 - `cargo test` passes at root.
-- `mutsukicore-runtime-host` demonstrates native Agent start/publish/tick/invoke/stop without Python.
+- `mutsuki-runtime-host` demonstrates native Agent start/publish/tick/invoke/stop without Python.
 - Source registry rejects unregistered envelope sources.
 - Resource leases reject forged token triples and enforce configured `ref_id` / `kind` quotas
   as `capability.exhausted`.
