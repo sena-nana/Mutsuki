@@ -70,8 +70,7 @@ class PythonResourceManager:
             schema=schema,
             version=1,
             generation=1,
-            access=ResourceAccess(
-                type="mmap_file",
+            access=ResourceAccess.mmap_file(
                 path=str(path),
                 offset=0,
                 len=len(data),
@@ -94,11 +93,7 @@ class PythonResourceManager:
             schema=schema,
             version=1,
             generation=1,
-            access=ResourceAccess(
-                type="blob",
-                store_id="python.resource.blob",
-                key=ref_id,
-            ),
+            access=ResourceAccess.blob(store_id="python.resource.blob", key=ref_id),
             size_hint=len(data),
             content_hash=_simple_hash(data),
             lifetime=ResourceLifetime.PERSISTENT,

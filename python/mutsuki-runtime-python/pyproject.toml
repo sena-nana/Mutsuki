@@ -1,7 +1,7 @@
 [project]
 name = "mutsuki-runtime-python"
 version = "0.1.0"
-description = "Python backend kit for the Mutsuki Rust-first runtime."
+description = "Python runner kit for the Mutsuki Rust-first runtime."
 requires-python = ">=3.13"
 license = { file = "../../LICENSE" }
 readme = "README.md"
