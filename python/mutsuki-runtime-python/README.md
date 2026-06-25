@@ -10,9 +10,9 @@ It mirrors the Rust protocol objects and provides:
 - `PythonResourceManager`
 - test helpers for Python-owned runners
 
-It is not a standalone runtime and does not depend on `python/reference-mutsuki`.
-Python code provides runner behavior and host-owned resources; Rust `CoreRuntime`
-remains the TaskPool, registry, state, trace, and event fact source.
+It is not a standalone runtime. Python code provides runner behavior and
+host-owned resources; Rust `CoreRuntime` remains the TaskPool, registry, state,
+trace, and event fact source.
 
 ## Checks
 

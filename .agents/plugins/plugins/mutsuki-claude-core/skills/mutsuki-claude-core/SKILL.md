@@ -1,11 +1,11 @@
 ---
 name: mutsuki-claude-core
-description: Use when implementing, reviewing, or running the Rust-first Claude StrategyBackend for Mutsuki Agent behavior.
+description: Use when implementing, reviewing, or running the Rust-first Claude effect runner for Mutsuki task behavior.
 ---
 
 # Mutsuki Claude Core Skill
 
-Use this skill when Claude is asked to act as a Mutsuki Agent `StrategyBackend`.
+Use this skill when Claude is asked to act as a Mutsuki effect runner.
 
 ## Runtime Boundary
 

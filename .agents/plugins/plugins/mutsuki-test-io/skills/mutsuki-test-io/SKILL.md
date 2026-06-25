@@ -10,7 +10,7 @@ stdio process, or send JSONL requests while testing Mutsuki behavior.
 
 ## Boundaries
 
-- This plugin is a test harness, not a StrategyBackend.
+- This plugin is a test harness, not a runtime effect runner.
 - Keep Codex, MCP, process handles, sockets, and test-runner objects out of
   Rust `contracts` and `core`.
 - Prefer `jsonl_request` for Mutsuki stdio backend checks.

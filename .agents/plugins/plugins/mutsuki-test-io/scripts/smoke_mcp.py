@@ -160,10 +160,8 @@ async def main() -> int:
                         / "plugins"
                         / "mutsuki-codex-core"
                         / "scripts"
-                        / "mutsuki_codex_strategy_backend.py"
+                        / "mutsuki_codex_runner.py"
                     ),
-                    "--agent-id",
-                    "agent-a",
                     "--stub-output",
                     '{"status":"wait_input"}',
                 ],
@@ -179,14 +177,36 @@ async def main() -> int:
                 "session_id": backend_session,
                 "request": {
                     "id": "req-1",
-                    "method": "list_sources",
-                    "params": {"enabled_plugin_ids": ["mutsuki-codex-core"]},
+                    "method": "runner.step",
+                    "params": {
+                        "runner_id": "mutsuki-codex-core.codex-runner",
+                        "ctx": {"registry_generation": 1, "current_step": 1},
+                        "tasks": [
+                            {
+                                "task_id": "task-1",
+                                "kind": "effect.codex.run",
+                                "priority": 0,
+                                "ready_at_step": None,
+                                "payload": {"prompt": "hello", "agent_id": "agent-a"},
+                                "input_refs": [],
+                                "expected_versions": [],
+                                "correlation_id": None,
+                                "idempotency_key": None,
+                                "runner_hint": None,
+                                "registry_generation": 0,
+                                "required_surfaces": [],
+                                "created_sequence": 0,
+                            }
+                        ],
+                    },
                 },
                 "timeout_ms": 15000,
             },
         )
         assert source_response["response"]["ok"] is True
-        assert source_response["response"]["result"][0]["descriptor"]["source_id"] == "codex:local"
+        event = source_response["response"]["result"][0]["events"][0]
+        assert event["kind"] == "codex.strategy.result"
+        assert event["payload"]["status"] == "wait_input"
         await tool_call(process, 16, "stop_process", {"session_id": backend_session})
     finally:
         process.terminate()

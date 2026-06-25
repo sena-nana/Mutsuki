@@ -1,6 +1,6 @@
 ---
 name: mutsuki-agent
-description: Use when implementing, reviewing, or running Mutsuki Agent behavior where Codex acts as the Agent StrategyBackend rather than as a normal tool operation.
+description: Use when implementing, reviewing, or running Mutsuki effect-runner behavior where Codex handles delegated runtime tasks rather than normal tool operations.
 ---
 
 # Mutsuki Agent Skill
@@ -19,7 +19,7 @@ Before changing behavior, read these repository contracts in order:
 
 ## Runtime Boundary
 
-- Treat Codex as a `StrategyBackend` for a Mutsuki `AgentSpec`, not as a Rust core concept.
+- Treat Codex as an effect runner for Mutsuki tasks, not as a Rust core concept.
 - Keep Agent identity, lifecycle, routing, Source registry, Operation registry, ResourceGate, and trace facts in Mutsuki runtime.
 - Keep Codex, LLM, ChatCompletion, Yume, IM, MCP, SDK clients, sockets, and product semantics out of Rust `contracts` and `core`.
 - Express Codex decisions only through existing `StrategyResult` fields: `status`, `decision`, `emitted`, and `error`.

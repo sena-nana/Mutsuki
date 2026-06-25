@@ -1,14 +1,14 @@
 # Mutsuki 工程实现规则
 
-根目录当前是 Rust-first TaskPool runtime framework。旧 Python 框架在
-`python/reference-mutsuki/` 中保留为迁移参考，不是当前主链。
+根目录当前是 Rust-first TaskPool runtime framework。Python 端只保留当前
+`python/mutsuki-runtime-python/` runner kit。
 
 ## 1. 技术栈
 
 - Rust 2024 + Cargo workspace。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13+ + uv 用于 `python/mutsuki-runtime-python/` 和 reference 测试。
+- Python 3.13+ + uv 用于 `python/mutsuki-runtime-python/`。
 
 Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、LLM provider 或领域语义。
 
@@ -24,7 +24,6 @@ Mutsuki/
   plans/
   python/
     mutsuki-runtime-python/     # Python runner kit and protocol mirror
-    reference-mutsuki/          # old Python framework reference
 ```
 
 ## 3. Crate 边界

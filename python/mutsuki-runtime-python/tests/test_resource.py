@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-from mutsuki_runtime_python.contracts import ValueRef
-from mutsuki_runtime_python.resource import PythonResourceManager
-from mutsuki_runtime_python.runner import RunnerInvokeError
+from mutsuki_runtime_python.contracts.resource import ValueRef
+from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
+
+PythonResourceManager = importlib.import_module(
+    "mutsuki_runtime_python." + "resources.manager"
+).PythonResourceManager
 
 
 def test_resource_manager_packs_small_and_large_values() -> None:

@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import importlib
+
+import pytest
+
 import mutsuki_runtime_python as runtime_python
+import mutsuki_runtime_python.contracts as contracts
 
 
-def test_public_api_no_longer_exports_agent_backend_compatibility_layer() -> None:
-    assert hasattr(runtime_python, "PythonRunnerHost")
-    assert hasattr(runtime_python, "RunnerDescriptor")
-    assert hasattr(runtime_python, "RunnerInvokeError")
-    assert not hasattr(runtime_python, "StrategyBackend")
-    assert not hasattr(runtime_python, "OperationBackend")
-    assert not hasattr(runtime_python, "PythonBackendHost")
-    assert not hasattr(runtime_python, "BackendInvokeError")
+def test_top_level_facades_do_not_export_runtime_symbols() -> None:
+    assert not hasattr(runtime_python, "PythonRunnerHost")
+    assert not hasattr(runtime_python, "RunnerDescriptor")
+    assert not hasattr(runtime_python, "RunnerInvokeError")
+    assert not hasattr(contracts, "Task")
+    assert not hasattr(contracts, "to_json_dict")
+
+
+def test_removed_flat_modules_are_not_importable() -> None:
+    base = "mutsuki_runtime_python"
+    for module_name in (f"{base}.host", f"{base}.runner", f"{base}.resource", f"{base}.stdio"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module_name)

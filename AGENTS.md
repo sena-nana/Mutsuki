@@ -1,8 +1,8 @@
 # Mutsuki 项目宪法
 
 Mutsuki 当前是一个 **Rust-first CoreRuntime framework**。根目录只承载领域中立
-runtime kernel、纯协议契约和 native runner host helper；早期 Python 框架实现保留在
-`python/reference-mutsuki/`，只作为旧实现参考与迁移材料，不代表当前主链。
+runtime kernel、纯协议契约和 native runner host helper；Python 端只保留当前
+`python/mutsuki-runtime-python/` runner kit。
 
 ## 一句话定位
 
@@ -51,7 +51,6 @@ plugin、runner 或 sidecar 组合实现。
 
 - Root Rust crates 不依赖 Python。
 - `python/mutsuki-runtime-python/` 是当前 Python runner kit，必须镜像新 contracts wire shape。
-- `python/reference-mutsuki/` 是旧 Python 框架、扩展、测试、docs 和 examples 的参考与迁移位置。
 - Python sidecar 只能通过 runner step、management cancel/dispose 和 resource broker 纯协议与 Rust runtime 通信。
 - 旧 generation key、runner host 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的新 handler。
 
@@ -79,6 +78,6 @@ plugin、runner 或 sidecar 组合实现。
 - Rust 2024 + Cargo workspace 是根级主框架。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13 + uv 用于 `python/mutsuki-runtime-python/` 和旧 reference。
+- Python 3.13 + uv 用于 `python/mutsuki-runtime-python/`。
 
 详见 [plans/engineering.md](plans/engineering.md)。

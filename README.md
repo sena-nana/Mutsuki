@@ -8,10 +8,6 @@ The root workspace is the Rust framework surface. It provides serializable
 runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
 host helpers.
 
-Python code from the earlier framework has been moved to
-[`python/reference-mutsuki`](python/reference-mutsuki). Treat it as a reference
-and migration layer only.
-
 The current Python runner kit lives in
 [`python/mutsuki-runtime-python`](python/mutsuki-runtime-python). It mirrors the
 Rust contracts and provides `PythonRunnerHost`, `StdioJsonlRunnerServer`, and a

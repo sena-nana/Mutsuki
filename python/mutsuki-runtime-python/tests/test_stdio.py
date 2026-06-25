@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from mutsuki_runtime_python.contracts import RunnerContext, Task, to_json_dict
-from mutsuki_runtime_python.host import PythonRunnerHost
-from mutsuki_runtime_python.stdio import StdioJsonlRunnerServer
-from mutsuki_runtime_python.testing import EchoRunner, echo_descriptor
+from mutsuki_runtime_python.contracts.codec import to_json_dict
+from mutsuki_runtime_python.contracts.runner import RunnerContext
+from mutsuki_runtime_python.contracts.task import Task
+from mutsuki_runtime_python.runners.host import PythonRunnerHost
+from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
+from mutsuki_runtime_python.transport.stdio_jsonl import StdioJsonlRunnerServer
 
 
 @pytest.mark.asyncio

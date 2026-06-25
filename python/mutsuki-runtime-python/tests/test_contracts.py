@@ -2,39 +2,45 @@ from __future__ import annotations
 
 import pytest
 
-from mutsuki_runtime_python.contracts import (
+from mutsuki_runtime_python.contracts.codec import from_json_dict, to_json_dict
+from mutsuki_runtime_python.contracts.plugin import (
     ArtifactType,
-    ContractSurface,
-    ContractSurfaceKind,
     LifecyclePolicy,
     PermissionGrant,
     PluginArtifact,
     PluginManifest,
     PluginProvides,
+    RuntimeLoadPlan,
+    RuntimeProfile,
+)
+from mutsuki_runtime_python.contracts.resource import (
     ResourceAccess,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
     ResourceValue,
+    ValueRef,
+    ValueStorage,
+)
+from mutsuki_runtime_python.contracts.runner import (
     RunnerDescriptor,
     RunnerPurity,
     RunnerResult,
-    RuntimeLoadPlan,
-    RuntimeProfile,
-    StateRef,
+)
+from mutsuki_runtime_python.contracts.state import StateRef, VersionExpectation
+from mutsuki_runtime_python.contracts.surface import (
+    ContractSurface,
+    ContractSurfaceKind,
     SurfaceOccupancy,
     SurfaceOccupancyHandle,
     SurfaceOccupancyHandleKind,
+)
+from mutsuki_runtime_python.contracts.task import (
     Task,
     TaskDemand,
     TaskMatchRule,
-    ValueRef,
-    ValueStorage,
-    VersionExpectation,
-    from_json_dict,
-    to_json_dict,
 )
-from mutsuki_runtime_python.testing import assert_json_roundtrip
+from mutsuki_runtime_python.testing.assertions import assert_json_roundtrip
 
 
 def test_task_and_runner_descriptor_roundtrip() -> None:
