@@ -20,7 +20,7 @@ pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use plugin::{
     ArtifactType, ContractSurface, ContractSurfaceKind, LifecyclePolicy, PermissionGrant,
     PluginArtifact, PluginManifest, PluginProvides, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
-    SurfaceCompatibility, SurfaceOccupancy,
+    SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
     ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime, ResourceRef,

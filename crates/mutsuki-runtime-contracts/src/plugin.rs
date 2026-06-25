@@ -43,6 +43,9 @@ pub struct PluginProvides {
     pub resource_schemas: Vec<String>,
     pub resource_providers: Vec<String>,
     pub effects: Vec<String>,
+    pub streams: Vec<String>,
+    pub subscriptions: Vec<String>,
+    pub timers: Vec<String>,
     pub state_schemas: Vec<String>,
 }
 
@@ -77,6 +80,9 @@ pub enum ContractSurfaceKind {
     ResourceSchema,
     ResourceProvider,
     Effect,
+    Stream,
+    Subscription,
+    Timer,
     TaskDemand,
     StateSchema,
     Lifecycle,
@@ -104,6 +110,24 @@ pub struct SurfaceOccupancy {
     pub subscriptions: u64,
     pub timers: u64,
     pub effect_inflight: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceOccupancyHandleKind {
+    Stream,
+    Subscription,
+    Timer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceOccupancyHandle {
+    pub handle_id: String,
+    pub surface_id: SurfaceId,
+    pub owner_plugin_id: String,
+    pub plugin_generation: u64,
+    pub registry_generation: u64,
+    pub kind: SurfaceOccupancyHandleKind,
 }
 
 impl SurfaceOccupancy {

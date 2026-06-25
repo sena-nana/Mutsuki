@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, DomainEvent, ERR_RUNNER_PURITY_VIOLATION, ERR_STATE_CONFLICT, EffectRequest,
-    RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus, RuntimeError, RuntimeEventKind,
-    RuntimeLoadPlan, ScalarValue, SpanStatus, StateDelta, SurfaceOccupancy, Task, TaskDemand,
+    ResourceRef, RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus, RuntimeError,
+    RuntimeEventKind, RuntimeLoadPlan, ScalarValue, SpanStatus, StateDelta, SurfaceOccupancy,
+    SurfaceOccupancyHandle, Task, TaskDemand,
 };
 use serde_json::Value;
 
@@ -12,6 +13,7 @@ use crate::registry::{
     DisposeBag, PluginGenerationPhase, PluginGenerationState, RegistrySnapshot, ReloadDecision,
     RunnerRegistry, compare_surfaces, validate_runtime_descriptors,
 };
+use crate::task_pool::surface_ids_for_task;
 use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool};
 
 pub trait Runner {
@@ -173,11 +175,9 @@ impl CoreRuntime {
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
         }
-        let deprecated_surface = task
-            .required_surfaces
-            .iter()
-            .find(|surface_id| self.is_surface_deprecated(surface_id))
-            .cloned();
+        let deprecated_surface = surface_ids_for_task(&task)
+            .into_iter()
+            .find(|surface_id| self.is_surface_deprecated(surface_id));
         let task_id = self.tasks.enqueue(task);
         if let Some(surface_id) = deprecated_surface {
             let _ = self.tasks.reject_pending(
@@ -197,6 +197,40 @@ impl CoreRuntime {
             None,
         );
         task_id
+    }
+
+    pub fn open_stream(
+        &mut self,
+        stream_id: &str,
+        schema: &str,
+        provider_id: &str,
+        endpoint: &str,
+    ) -> RuntimeResult<ResourceRef> {
+        let surface_id = format!("stream:{stream_id}");
+        self.ensure_surface_not_deprecated(&surface_id, "runtime.resource_manager")?;
+        Ok(self
+            .resources
+            .create_stream_resource(stream_id, schema, provider_id, endpoint))
+    }
+
+    pub fn close_stream(&mut self, ref_id: &str) -> RuntimeResult<()> {
+        self.resources.close_stream_resource(ref_id)?;
+        Ok(())
+    }
+
+    pub fn register_surface_occupancy(
+        &mut self,
+        handle: SurfaceOccupancyHandle,
+    ) -> RuntimeResult<()> {
+        self.ensure_surface_not_deprecated(&handle.surface_id, "runtime.resource_manager")?;
+        self.resources.register_surface_occupancy(handle)
+    }
+
+    pub fn release_surface_occupancy(
+        &mut self,
+        handle_id: &str,
+    ) -> RuntimeResult<SurfaceOccupancyHandle> {
+        self.resources.release_surface_occupancy(handle_id)
     }
 
     pub fn publish_raw_input(&mut self, task_id: &str, kind: &str, payload: Value) -> String {
@@ -484,6 +518,17 @@ impl CoreRuntime {
         self.surfaces
             .iter()
             .any(|surface| surface.surface_id == surface_id && surface.deprecated)
+    }
+
+    fn ensure_surface_not_deprecated(&self, surface_id: &str, source: &str) -> RuntimeResult<()> {
+        if self.is_surface_deprecated(surface_id) {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
+                source,
+                format!("surface.deprecated.{surface_id}"),
+            )));
+        }
+        Ok(())
     }
 
     fn classify_running_invocations(&self) -> Vec<RunningInvocationDisposition> {

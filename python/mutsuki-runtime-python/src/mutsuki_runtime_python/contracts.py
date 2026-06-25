@@ -95,6 +95,9 @@ class ContractSurfaceKind(StrEnum):
     RESOURCE_SCHEMA = "resource_schema"
     RESOURCE_PROVIDER = "resource_provider"
     EFFECT = "effect"
+    STREAM = "stream"
+    SUBSCRIPTION = "subscription"
+    TIMER = "timer"
     TASK_DEMAND = "task_demand"
     STATE_SCHEMA = "state_schema"
     LIFECYCLE = "lifecycle"
@@ -107,6 +110,12 @@ class SurfaceCompatibility(StrEnum):
     DEPRECATED = "deprecated"
     REMOVED = "removed"
     BREAKING = "breaking"
+
+
+class SurfaceOccupancyHandleKind(StrEnum):
+    STREAM = "stream"
+    SUBSCRIPTION = "subscription"
+    TIMER = "timer"
 
 
 def _as_mapping(data: object, contract: str) -> Mapping[str, object]:
@@ -492,6 +501,7 @@ class ResourceAccess:
     readonly: bool | None = None
     store_id: str | None = None
     key: str | None = None
+    endpoint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -575,6 +585,28 @@ class ContractSurface:
 
 
 @dataclass(frozen=True)
+class SurfaceOccupancyHandle:
+    handle_id: str
+    surface_id: str
+    owner_plugin_id: str
+    plugin_generation: int
+    registry_generation: int
+    kind: SurfaceOccupancyHandleKind
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "SurfaceOccupancyHandle")
+        return cls(
+            handle_id=_as_str(_field(raw, "handle_id"), "handle_id"),
+            surface_id=_as_str(_field(raw, "surface_id"), "surface_id"),
+            owner_plugin_id=_as_str(_field(raw, "owner_plugin_id"), "owner_plugin_id"),
+            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
+            registry_generation=_as_int(_field(raw, "registry_generation"), "registry_generation"),
+            kind=SurfaceOccupancyHandleKind(_as_str(_field(raw, "kind"), "kind")),
+        )
+
+
+@dataclass(frozen=True)
 class RuntimeLoadPlan:
     lock_version: int
     core_api_version: str
@@ -621,6 +653,7 @@ def _resource_access_from_json(raw: Mapping[str, object]) -> ResourceAccess:
         readonly=None if raw.get("readonly") is None else _as_bool(raw.get("readonly"), "readonly"),
         store_id=_optional_str(raw.get("store_id"), "store_id"),
         key=_optional_str(raw.get("key"), "key"),
+        endpoint=_optional_str(raw.get("endpoint"), "endpoint"),
     )
 
 

@@ -75,27 +75,88 @@ fn task_runner_resource_contracts_roundtrip_json() {
 
 #[test]
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
+    let provides = PluginProvides {
+        runners: Vec::new(),
+        task_demands: Vec::new(),
+        resource_schemas: vec!["bytes.v1".into()],
+        resource_providers: vec!["resource.local".into()],
+        effects: vec!["effect.chat.send".into()],
+        streams: vec!["chat.events".into()],
+        subscriptions: vec!["chat.messages".into()],
+        timers: vec!["heartbeat".into()],
+        state_schemas: vec!["state.actor.v1".into()],
+    };
     let plan = RuntimeLoadPlan {
         lock_version: 1,
         core_api_version: "mutsuki-core-v1".into(),
         profile_id: "default".into(),
         profile_hash: "sha256:profile".into(),
         registry_generation: 1,
-        plugins: Vec::new(),
+        plugins: vec![PluginManifest {
+            plugin_id: "plugin-a".into(),
+            version: "0.1.0".into(),
+            api_version: "mutsuki-plugin-v1".into(),
+            artifact: PluginArtifact {
+                artifact_type: ArtifactType::Native,
+                path: "native".into(),
+                sha256: "sha256:native".into(),
+            },
+            provides,
+            requires: Vec::new(),
+            permissions: PermissionGrant {
+                effects: vec!["effect.chat.send".into()],
+                resources: vec!["read".into()],
+            },
+            lifecycle: LifecyclePolicy {
+                reload_policy: "drain_and_swap".into(),
+                unload_timeout_ms: 5000,
+                supports_cancel: true,
+                supports_dispose: true,
+                supports_snapshot: false,
+            },
+            metadata: Default::default(),
+        }],
         load_order: vec!["plugin-a".into()],
         runner_bindings: Default::default(),
-        contract_surfaces: vec![ContractSurface {
-            surface_id: "runner:plugin-a/a".into(),
-            kind: ContractSurfaceKind::Runner,
-            owner_plugin_id: "plugin-a".into(),
-            fingerprint: "sha256:a".into(),
-            deprecated: false,
-        }],
+        contract_surfaces: vec![
+            ContractSurface {
+                surface_id: "runner:plugin-a/a".into(),
+                kind: ContractSurfaceKind::Runner,
+                owner_plugin_id: "plugin-a".into(),
+                fingerprint: "sha256:a".into(),
+                deprecated: false,
+            },
+            ContractSurface {
+                surface_id: "stream:chat.events".into(),
+                kind: ContractSurfaceKind::Stream,
+                owner_plugin_id: "plugin-a".into(),
+                fingerprint: "stream:chat.events".into(),
+                deprecated: false,
+            },
+        ],
     };
 
     let decoded: RuntimeLoadPlan =
         serde_json::from_str(&serde_json::to_string(&plan).unwrap()).unwrap();
     assert_eq!(decoded, plan);
+}
+
+#[test]
+fn surface_occupancy_handle_roundtrips_json() {
+    let handle = SurfaceOccupancyHandle {
+        handle_id: "subscription:1".into(),
+        surface_id: "subscription:chat.messages".into(),
+        owner_plugin_id: "plugin-a".into(),
+        plugin_generation: 2,
+        registry_generation: 7,
+        kind: SurfaceOccupancyHandleKind::Subscription,
+    };
+
+    assert_eq!(
+        serde_json::from_str::<SurfaceOccupancyHandle>(&serde_json::to_string(&handle).unwrap())
+            .unwrap(),
+        handle
+    );
 }
 
 #[test]
@@ -109,6 +170,16 @@ fn missing_new_contract_fields_fail_deserialization() {
     }));
     assert_missing_fields_fail::<RuntimeLoadPlan>(serde_json::json!({
         "lock_version": 1
+    }));
+    assert_missing_fields_fail::<PluginProvides>(serde_json::json!({
+        "runners": [],
+        "task_demands": [],
+        "resource_schemas": [],
+        "resource_providers": [],
+        "effects": []
+    }));
+    assert_missing_fields_fail::<SurfaceOccupancyHandle>(serde_json::json!({
+        "handle_id": "timer:1"
     }));
     assert_missing_fields_fail::<ResourceRef>(serde_json::json!({
         "ref_id": "resource:1"

@@ -27,9 +27,10 @@
 | `ResourceRef` | 大型资源 / mmap / blob / stream / provider-RPC descriptor |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
-| `PluginManifest` | 插件声明 runner、task demand、resource schema/provider、effect、permission、lifecycle |
+| `PluginManifest` | 插件声明 runner、task demand、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
-| `ContractSurface` | runner/task/schema/resource/effect/lifecycle/permission 等热重载比较单元 |
+| `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
+| `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
 | `RuntimeEvent` | sequence、kind、name、subject_id、attributes、error |
 | `TraceSpan` | trace_id、span_id、parent_span_id、name、interval、attributes、status |
 
@@ -130,6 +131,12 @@ Core 热重载必须使用新 registry / plugin generation，不原地替换 run
   提供明确 compensation；不得强行 dispose。
 - removed surface 的 zero occupancy 判定必须来自 TaskPool、ResourceManager 等当前
   事实源，而不是手动缓存。
+- effect occupancy 来自 pending/running `effect.*` task；stream occupancy 来自
+  `ResourceAccess::Stream` 资源和显式 `SurfaceOccupancyHandle`；subscription/timer
+  occupancy 来自显式 `SurfaceOccupancyHandle`。
+- deprecated surface 禁止新增派生占用：task enqueue 必须检查 task kind、effect kind、
+  runner hint 和 required surfaces；stream/subscription/timer 注册入口必须检查目标
+  surface。
 
 已经 orchestration 过的 raw input 不因新增 TaskDemand 自动重新 fan-out；补跑必须显式
 生成 migration/backfill task。

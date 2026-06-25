@@ -10,6 +10,8 @@ from mutsuki_runtime_python.contracts import (
     RunnerDescriptor,
     RunnerPurity,
     RunnerResult,
+    SurfaceOccupancyHandle,
+    SurfaceOccupancyHandleKind,
     Task,
     ValueRef,
     ValueStorage,
@@ -94,11 +96,45 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
     assert_json_roundtrip(RunnerResult, result)
 
 
+def test_stream_resource_ref_roundtrips_endpoint() -> None:
+    stream_ref = ResourceRef(
+        ref_id="resource:stream:1",
+        provider_id="python.resource",
+        resource_kind="chat.events",
+        schema="event.v1",
+        version=1,
+        generation=1,
+        access=ResourceAccess(type="stream", endpoint="stream://chat/events"),
+        size_hint=None,
+        content_hash=None,
+        lifetime=ResourceLifetime.EXTERNAL_MANAGED,
+        lease=None,
+        seal_state=ResourceSealState.SEALED,
+    )
+
+    assert_json_roundtrip(ResourceRef, stream_ref)
+
+
+def test_surface_occupancy_handle_roundtrips() -> None:
+    handle = SurfaceOccupancyHandle(
+        handle_id="timer:heartbeat:1",
+        surface_id="timer:heartbeat",
+        owner_plugin_id="plugin-a",
+        plugin_generation=2,
+        registry_generation=7,
+        kind=SurfaceOccupancyHandleKind.TIMER,
+    )
+
+    assert_json_roundtrip(SurfaceOccupancyHandle, handle)
+
+
 def test_missing_required_contract_fields_fail() -> None:
     with pytest.raises(TypeError):
         from_json_dict(Task, {"task_id": "task-1", "kind": "raw.input"})
     with pytest.raises(TypeError):
         from_json_dict(RunnerDescriptor, {"runner_id": "runner-a"})
+    with pytest.raises(TypeError):
+        from_json_dict(SurfaceOccupancyHandle, {"handle_id": "timer:1"})
 
 
 def test_to_json_dict_rejects_non_object_top_level() -> None:

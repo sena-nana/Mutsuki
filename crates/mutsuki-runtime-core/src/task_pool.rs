@@ -246,12 +246,16 @@ impl TaskPool {
 }
 
 fn surface_ids_for_record(record: &TaskRecord) -> Vec<String> {
-    let mut surface_ids = record.task.required_surfaces.clone();
-    surface_ids.push(format!("task_kind:{}", record.task.kind));
-    if record.task.kind.starts_with("effect.") {
-        surface_ids.push(format!("effect:{}", record.task.kind));
+    surface_ids_for_task(&record.task)
+}
+
+pub fn surface_ids_for_task(task: &Task) -> Vec<String> {
+    let mut surface_ids = task.required_surfaces.clone();
+    surface_ids.push(format!("task_kind:{}", task.kind));
+    if task.kind.starts_with("effect.") {
+        surface_ids.push(format!("effect:{}", task.kind));
     }
-    if let Some(runner_hint) = &record.task.runner_hint {
+    if let Some(runner_hint) = &task.runner_hint {
         surface_ids.push(format!("runner:{runner_hint}"));
     }
     surface_ids.sort();

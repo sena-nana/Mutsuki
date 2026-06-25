@@ -79,3 +79,62 @@ fn jsonl_runner_uses_runner_step_method_surface() {
     assert!(request.contains("\"method\":\"runner.step\""));
     assert!(request.contains("\"registry_generation\":1"));
 }
+
+#[test]
+fn resolver_emits_declared_runtime_surfaces() {
+    let runner_descriptor = descriptor("echo.runner", "raw.input");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.provides.resource_schemas = vec!["bytes.v1".into()];
+    manifest.provides.resource_providers = vec!["resource.local".into()];
+    manifest.provides.effects = vec!["effect.chat.send".into()];
+    manifest.provides.streams = vec!["chat.events".into()];
+    manifest.provides.subscriptions = vec!["chat.messages".into()];
+    manifest.provides.timers = vec!["heartbeat".into()];
+    manifest.provides.state_schemas = vec!["state.actor.v1".into()];
+    let profile = RuntimeProfile {
+        profile_id: "default".into(),
+        enabled_plugins: vec!["plugin-a".into()],
+        bindings: BTreeMap::new(),
+        allow_dynamic_registration: false,
+        allow_hot_reload: true,
+    };
+
+    let plan = crate::resolve_load_plan(&[manifest], &profile);
+
+    assert_surface(
+        &plan,
+        "resource_schema:bytes.v1",
+        ContractSurfaceKind::ResourceSchema,
+    );
+    assert_surface(
+        &plan,
+        "resource_provider:resource.local",
+        ContractSurfaceKind::ResourceProvider,
+    );
+    assert_surface(
+        &plan,
+        "effect:effect.chat.send",
+        ContractSurfaceKind::Effect,
+    );
+    assert_surface(&plan, "stream:chat.events", ContractSurfaceKind::Stream);
+    assert_surface(
+        &plan,
+        "subscription:chat.messages",
+        ContractSurfaceKind::Subscription,
+    );
+    assert_surface(&plan, "timer:heartbeat", ContractSurfaceKind::Timer);
+    assert_surface(
+        &plan,
+        "state_schema:state.actor.v1",
+        ContractSurfaceKind::StateSchema,
+    );
+}
+
+fn assert_surface(plan: &RuntimeLoadPlan, surface_id: &str, kind: ContractSurfaceKind) {
+    assert!(
+        plan.contract_surfaces
+            .iter()
+            .any(|surface| surface.surface_id == surface_id && surface.kind == kind),
+        "missing surface {surface_id}"
+    );
+}

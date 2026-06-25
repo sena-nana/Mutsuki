@@ -153,8 +153,65 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
                 deprecated: false,
             });
         }
+        for (kind, prefix, names) in [
+            (
+                ContractSurfaceKind::ResourceSchema,
+                "resource_schema",
+                &manifest.provides.resource_schemas,
+            ),
+            (
+                ContractSurfaceKind::ResourceProvider,
+                "resource_provider",
+                &manifest.provides.resource_providers,
+            ),
+            (
+                ContractSurfaceKind::Effect,
+                "effect",
+                &manifest.provides.effects,
+            ),
+            (
+                ContractSurfaceKind::Stream,
+                "stream",
+                &manifest.provides.streams,
+            ),
+            (
+                ContractSurfaceKind::Subscription,
+                "subscription",
+                &manifest.provides.subscriptions,
+            ),
+            (
+                ContractSurfaceKind::Timer,
+                "timer",
+                &manifest.provides.timers,
+            ),
+            (
+                ContractSurfaceKind::StateSchema,
+                "state_schema",
+                &manifest.provides.state_schemas,
+            ),
+        ] {
+            push_named_surfaces(&mut surfaces, &manifest.plugin_id, kind, prefix, names);
+        }
     }
     surfaces
+}
+
+fn push_named_surfaces(
+    surfaces: &mut Vec<ContractSurface>,
+    plugin_id: &str,
+    kind: ContractSurfaceKind,
+    prefix: &str,
+    names: &[String],
+) {
+    for name in names {
+        surfaces.push(ContractSurface {
+            surface_id: format!("{prefix}:{name}"),
+            kind: kind.clone(),
+            owner_plugin_id: plugin_id.into(),
+            fingerprint: format!("{prefix}:{name}"),
+            deprecated: false,
+        });
+    }
 }
 
 fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {
@@ -169,11 +226,7 @@ fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {
         },
         provides: PluginProvides {
             runners: vec![runner],
-            task_demands: Vec::new(),
-            resource_schemas: Vec::new(),
-            resource_providers: Vec::new(),
-            effects: Vec::new(),
-            state_schemas: Vec::new(),
+            ..PluginProvides::default()
         },
         requires: Vec::new(),
         permissions: PermissionGrant {
@@ -203,11 +256,7 @@ pub fn runner_manifest(plugin_id: &str, runners: Vec<RunnerDescriptor>) -> Plugi
         },
         provides: PluginProvides {
             runners,
-            task_demands: Vec::new(),
-            resource_schemas: Vec::new(),
-            resource_providers: Vec::new(),
-            effects: Vec::new(),
-            state_schemas: Vec::new(),
+            ..PluginProvides::default()
         },
         requires: Vec::new(),
         permissions: PermissionGrant {

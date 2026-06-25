@@ -6,7 +6,8 @@ use mutsuki_runtime_contracts::{
     ContractSurface, ContractSurfaceKind, ERR_CAPABILITY_EXHAUSTED,
     ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED, ERR_RESOURCE_NOT_FOUND,
     ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime, ResourceRef,
-    ResourceSealState, ResourceValue, RuntimeError, SurfaceOccupancy, ValueRef, ValueStorage,
+    ResourceSealState, ResourceValue, RuntimeError, SurfaceOccupancy, SurfaceOccupancyHandle,
+    SurfaceOccupancyHandleKind, ValueRef, ValueStorage,
 };
 use serde_json::Value;
 
@@ -40,6 +41,7 @@ impl ResourceEntry {
 pub struct ResourceManager {
     values: HashMap<String, (ValueRef, Value)>,
     resources: HashMap<String, ResourceEntry>,
+    occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
     root: PathBuf,
@@ -56,6 +58,7 @@ impl ResourceManager {
         Self {
             values: HashMap::new(),
             resources: HashMap::new(),
+            occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),
             inline_value_max_bytes: 4096,
             root: std::env::temp_dir().join("mutsuki-resource-manager"),
@@ -166,6 +169,74 @@ impl ResourceManager {
         self.resources
             .insert(ref_id, ResourceEntry::new(descriptor.clone(), bytes));
         descriptor
+    }
+
+    pub fn create_stream_resource(
+        &mut self,
+        stream_id: &str,
+        schema: &str,
+        provider_id: &str,
+        endpoint: &str,
+    ) -> ResourceRef {
+        let ref_id = self.id_source.next_id("resource");
+        let descriptor = ResourceRef {
+            ref_id: ref_id.clone(),
+            provider_id: provider_id.into(),
+            resource_kind: stream_id.into(),
+            schema: schema.into(),
+            version: 1,
+            generation: 1,
+            access: ResourceAccess::Stream {
+                endpoint: endpoint.into(),
+            },
+            size_hint: None,
+            content_hash: None,
+            lifetime: ResourceLifetime::ExternalManaged,
+            lease: None,
+            seal_state: ResourceSealState::Sealed,
+        };
+        self.resources
+            .insert(ref_id, ResourceEntry::new(descriptor.clone(), Vec::new()));
+        descriptor
+    }
+
+    pub fn close_stream_resource(&mut self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        match self.resources.get(ref_id) {
+            Some(entry) if matches!(&entry.descriptor.access, ResourceAccess::Stream { .. }) => {
+                Ok(self
+                    .resources
+                    .remove(ref_id)
+                    .expect("stream resource was checked before remove")
+                    .descriptor)
+            }
+            _ => Err(resource_not_found(format!(
+                "resource.stream.close.{ref_id}"
+            ))),
+        }
+    }
+
+    pub fn register_surface_occupancy(
+        &mut self,
+        handle: SurfaceOccupancyHandle,
+    ) -> RuntimeResult<()> {
+        if self.occupancy_handles.contains_key(&handle.handle_id) {
+            return Err(capability_exhausted(format!(
+                "surface.occupancy.{}",
+                handle.handle_id
+            )));
+        }
+        self.occupancy_handles
+            .insert(handle.handle_id.clone(), handle);
+        Ok(())
+    }
+
+    pub fn release_surface_occupancy(
+        &mut self,
+        handle_id: &str,
+    ) -> RuntimeResult<SurfaceOccupancyHandle> {
+        self.occupancy_handles
+            .remove(handle_id)
+            .ok_or_else(|| resource_not_found(format!("surface.occupancy.{handle_id}")))
     }
 
     pub fn read_resource(&self, resource_ref: &ResourceRef) -> RuntimeResult<Vec<u8>> {
@@ -301,6 +372,25 @@ impl ResourceManager {
                         })
                         .count() as u64;
                 }
+                ContractSurfaceKind::Stream => {
+                    item.open_streams = self.open_streams_for_surface(&surface.surface_id)
+                        + self.handles_for_surface(
+                            &surface.surface_id,
+                            SurfaceOccupancyHandleKind::Stream,
+                        );
+                }
+                ContractSurfaceKind::Subscription => {
+                    item.subscriptions = self.handles_for_surface(
+                        &surface.surface_id,
+                        SurfaceOccupancyHandleKind::Subscription,
+                    );
+                }
+                ContractSurfaceKind::Timer => {
+                    item.timers = self.handles_for_surface(
+                        &surface.surface_id,
+                        SurfaceOccupancyHandleKind::Timer,
+                    );
+                }
                 _ => {}
             }
             if !item.is_zero() {
@@ -324,6 +414,24 @@ impl ResourceManager {
             }
         }
         (resource_refs, active_leases)
+    }
+
+    fn open_streams_for_surface(&self, surface_id: &str) -> u64 {
+        self.resources
+            .values()
+            .filter(|entry| {
+                matches!(entry.descriptor.access, ResourceAccess::Stream { .. })
+                    && (surface_id == entry.descriptor.resource_kind
+                        || surface_id == format!("stream:{}", entry.descriptor.resource_kind))
+            })
+            .count() as u64
+    }
+
+    fn handles_for_surface(&self, surface_id: &str, kind: SurfaceOccupancyHandleKind) -> u64 {
+        self.occupancy_handles
+            .values()
+            .filter(|handle| handle.kind == kind && handle.surface_id == surface_id)
+            .count() as u64
     }
 }
 
@@ -349,6 +457,22 @@ fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
         timers: 0,
         effect_inflight: 0,
     }
+}
+
+fn resource_not_found(route: String) -> RuntimeFailure {
+    RuntimeFailure::new(RuntimeError::new(
+        ERR_RESOURCE_NOT_FOUND,
+        "runtime.resource_manager",
+        route,
+    ))
+}
+
+fn capability_exhausted(route: String) -> RuntimeFailure {
+    RuntimeFailure::new(RuntimeError::new(
+        ERR_CAPABILITY_EXHAUSTED,
+        "runtime.resource_manager",
+        route,
+    ))
 }
 
 fn io_failure(err: std::io::Error) -> RuntimeFailure {
