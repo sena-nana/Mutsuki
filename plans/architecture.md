@@ -134,8 +134,16 @@ Cancel 通过 PluginHost management channel 投递给原 generation。DisposeBag
 timer、listener、stream、lease、connection 等插件资源。
 
 Core 提供 `reload_with_runners(new_plan, new_runners)` 用于物化新 generation：
-先校验新 descriptor 与 load plan，再比较 surface，随后 freeze 新 registry、dispose
-旧 registry、重绑定 pending task 的 registry generation，并切换到新 load plan。
+先校验新 descriptor 与 load plan，再创建 shadow registry、比较 live surface
+occupancy，并按 running invocation 污染状态处理旧 generation：
+
+- `clean` / `local dirty`：通过原 runner 的 management cancel 投递给原 generation，
+  task 回到 pending，并在切换后 rebind 到新 registry generation。
+- `polluted` / `unknown dirty`：旧 registry 保留为 draining generation，不接收新
+  task，等待 invocation settle；settle 后才执行 DisposeBag。
+
+切换 active generation 后，新 task 使用新 registry；旧 generation 不原地替换，也不在
+存在污染/未知 running invocation 时提前 dispose。
 
 ## 8. Domain Neutrality
 

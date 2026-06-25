@@ -41,6 +41,21 @@ impl RunnerRegistry {
         descriptors
     }
 
+    pub fn descriptor(
+        &self,
+        runner_id: &str,
+    ) -> Option<mutsuki_runtime_contracts::RunnerDescriptor> {
+        self.runners
+            .get(runner_id)
+            .map(|runner| runner.descriptor().clone())
+    }
+
+    pub fn runner_ids(&self) -> Vec<String> {
+        let mut runner_ids: Vec<_> = self.runners.keys().cloned().collect();
+        runner_ids.sort();
+        runner_ids
+    }
+
     pub fn take_runner(&mut self, runner_id: &str) -> Option<Box<dyn Runner>> {
         self.runners.remove(runner_id)
     }
@@ -77,11 +92,18 @@ pub struct DisposeBag {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PluginGenerationPhase {
+    ShadowStarting,
+    Active,
+    Draining,
+    Disposed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginGenerationState {
     pub plugin_id: String,
     pub generation: u64,
-    pub active: bool,
-    pub draining: bool,
+    pub phase: PluginGenerationPhase,
 }
 
 #[derive(Clone, Debug, PartialEq)]

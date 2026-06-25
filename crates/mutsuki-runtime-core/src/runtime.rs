@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::logs::{EventLog, TraceLog};
 use crate::registry::{
-    DisposeBag, RegistrySnapshot, ReloadDecision, RunnerRegistry, compare_surfaces,
-    validate_runtime_descriptors,
+    DisposeBag, PluginGenerationPhase, PluginGenerationState, RegistrySnapshot, ReloadDecision,
+    RunnerRegistry, compare_surfaces, validate_runtime_descriptors,
 };
 use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool};
 
@@ -71,12 +71,36 @@ impl StateStore {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InvocationPollution {
+    Clean,
+    LocalDirty,
+    Polluted,
+    UnknownDirty,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningInvocationDisposition {
+    pub task_id: String,
+    pub runner_id: String,
+    pub plugin_id: String,
+    pub plugin_generation: u64,
+    pub pollution: InvocationPollution,
+}
+
+struct DrainingGeneration {
+    registry_generation: u64,
+    runner_ids: Vec<String>,
+    registry: RunnerRegistry,
+}
+
 pub struct CoreRuntime {
     load_plan: RuntimeLoadPlan,
     task_demands: Vec<TaskDemand>,
     surfaces: Vec<ContractSurface>,
-    occupancy: Vec<SurfaceOccupancy>,
     registry: RunnerRegistry,
+    draining_generations: Vec<DrainingGeneration>,
+    generation_states: Vec<PluginGenerationState>,
     tasks: TaskPool,
     resources: ResourceManager,
     states: StateStore,
@@ -98,12 +122,15 @@ impl CoreRuntime {
         }
         registry.freeze();
         let task_demands = task_demands_from_plan(&load_plan);
+        let generation_states =
+            generation_states_for_plan(&load_plan, PluginGenerationPhase::Active);
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
             load_plan,
             task_demands,
-            occupancy: Vec::new(),
             registry,
+            draining_generations: Vec::new(),
+            generation_states,
             tasks: TaskPool::default(),
             resources: ResourceManager::new(),
             states: StateStore::default(),
@@ -121,6 +148,25 @@ impl CoreRuntime {
             task_demands: self.task_demands.clone(),
             surfaces: self.surfaces.clone(),
         }
+    }
+
+    pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {
+        &self.generation_states
+    }
+
+    pub fn running_invocations(&self) -> Vec<RunningInvocationDisposition> {
+        self.classify_running_invocations()
+    }
+
+    pub fn draining_generation_count(&self) -> usize {
+        self.draining_generations.len()
+    }
+
+    pub fn surface_occupancy(&self) -> Vec<SurfaceOccupancy> {
+        merge_occupancy(
+            self.tasks.surface_occupancy(),
+            self.resources.surface_occupancy(&self.surfaces),
+        )
     }
 
     pub fn enqueue_task(&mut self, mut task: Task) -> String {
@@ -197,7 +243,7 @@ impl CoreRuntime {
                 "runner.step",
                 None,
                 SpanStatus::Ok,
-                runner_attrs(&descriptor),
+                runner_attrs(&descriptor, &self.load_plan),
             );
             self.events.record(
                 RuntimeEventKind::Trace,
@@ -235,8 +281,8 @@ impl CoreRuntime {
     }
 
     pub fn reload(&mut self, new_plan: RuntimeLoadPlan) -> RuntimeResult<ReloadDecision> {
-        let decision =
-            compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &self.occupancy)?;
+        let occupancy = self.surface_occupancy();
+        let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
@@ -265,8 +311,8 @@ impl CoreRuntime {
             .map(|runner| runner.descriptor().clone())
             .collect();
         validate_runtime_descriptors(&new_plan, &runner_descriptors)?;
-        let decision =
-            compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &self.occupancy)?;
+        let occupancy = self.surface_occupancy();
+        let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
@@ -280,7 +326,63 @@ impl CoreRuntime {
             new_registry.register(runner)?;
         }
         new_registry.freeze();
-        let _disposed = self.registry.dispose_all()?;
+        for shadow_state in
+            generation_states_for_plan(&new_plan, PluginGenerationPhase::ShadowStarting)
+        {
+            if !self.generation_states.iter().any(|state| {
+                state.plugin_id == shadow_state.plugin_id
+                    && state.generation == shadow_state.generation
+            }) {
+                self.generation_states.push(shadow_state);
+            }
+        }
+
+        let old_registry_generation = self.load_plan.registry_generation;
+        let dispositions = self.classify_running_invocations();
+        let old_runner_ids = self.registry.runner_ids();
+        for disposition in &dispositions {
+            match disposition.pollution {
+                InvocationPollution::Clean | InvocationPollution::LocalDirty => {
+                    self.registry
+                        .cancel_runner(&disposition.runner_id, &disposition.task_id)?;
+                    self.tasks
+                        .cancel_running_invocation(&disposition.runner_id, &disposition.task_id);
+                    self.events.record(
+                        RuntimeEventKind::Runner,
+                        "runner.cancel",
+                        Some(disposition.runner_id.clone()),
+                        cancel_attrs(disposition, "reload.cancel_requeue"),
+                        None,
+                    );
+                }
+                InvocationPollution::Polluted | InvocationPollution::UnknownDirty => {
+                    self.events.record(
+                        RuntimeEventKind::Reload,
+                        "plugin.reload.drain_invocation",
+                        Some(disposition.task_id.clone()),
+                        cancel_attrs(disposition, "reload.drain"),
+                        None,
+                    );
+                }
+            }
+        }
+        let mut old_registry = std::mem::take(&mut self.registry);
+        let needs_drain = dispositions.iter().any(|disposition| {
+            matches!(
+                disposition.pollution,
+                InvocationPollution::Polluted | InvocationPollution::UnknownDirty
+            )
+        });
+        if needs_drain {
+            self.draining_generations.push(DrainingGeneration {
+                registry_generation: old_registry_generation,
+                runner_ids: old_runner_ids,
+                registry: old_registry,
+            });
+        } else {
+            let _disposed = old_registry.dispose_all()?;
+            self.mark_generation_phase(old_registry_generation, PluginGenerationPhase::Disposed);
+        }
         self.events.record(
             RuntimeEventKind::Reload,
             "plugin.reload.swap_generation",
@@ -290,6 +392,8 @@ impl CoreRuntime {
         );
         self.apply_load_plan(new_plan);
         self.registry = new_registry;
+        self.set_active_generation_states();
+        self.settle_draining_generations()?;
         Ok(decision)
     }
 
@@ -299,12 +403,14 @@ impl CoreRuntime {
         invocation_id: &str,
     ) -> RuntimeResult<usize> {
         self.registry.cancel_runner(runner_id, invocation_id)?;
-        let returned = self.tasks.cancel_running_for_runner(runner_id);
+        let returned = self
+            .tasks
+            .cancel_running_invocation(runner_id, invocation_id);
         self.events.record(
             RuntimeEventKind::Runner,
             "runner.cancel",
             Some(runner_id.to_string()),
-            BTreeMap::new(),
+            invocation_attrs(runner_id, invocation_id, returned),
             None,
         );
         Ok(returned)
@@ -312,6 +418,10 @@ impl CoreRuntime {
 
     pub fn dispose_plugins(&mut self) -> RuntimeResult<DisposeBag> {
         let bag = self.registry.dispose_all()?;
+        self.mark_generation_phase(
+            self.load_plan.registry_generation,
+            PluginGenerationPhase::Disposed,
+        );
         self.events.record(
             RuntimeEventKind::Plugin,
             "plugin.dispose",
@@ -320,6 +430,30 @@ impl CoreRuntime {
             None,
         );
         Ok(bag)
+    }
+
+    pub fn settle_draining_generations(&mut self) -> RuntimeResult<DisposeBag> {
+        let mut disposed = DisposeBag::default();
+        let mut remaining = Vec::new();
+        let mut disposed_generations = Vec::new();
+        for mut generation in self.draining_generations.drain(..) {
+            let still_running = generation
+                .runner_ids
+                .iter()
+                .any(|runner_id| !self.tasks.running_records_for_runner(runner_id).is_empty());
+            if still_running {
+                remaining.push(generation);
+            } else {
+                let bag = generation.registry.dispose_all()?;
+                disposed.disposed.extend(bag.disposed);
+                disposed_generations.push(generation.registry_generation);
+            }
+        }
+        self.draining_generations = remaining;
+        for registry_generation in disposed_generations {
+            self.mark_generation_phase(registry_generation, PluginGenerationPhase::Disposed);
+        }
+        Ok(disposed)
     }
 
     pub fn tasks(&self) -> &TaskPool {
@@ -350,6 +484,60 @@ impl CoreRuntime {
         self.surfaces
             .iter()
             .any(|surface| surface.surface_id == surface_id && surface.deprecated)
+    }
+
+    fn classify_running_invocations(&self) -> Vec<RunningInvocationDisposition> {
+        self.tasks
+            .running_records()
+            .into_iter()
+            .filter_map(|record| {
+                let runner_id = record.claimed_by.as_ref()?;
+                let descriptor = self.registry.descriptor(runner_id);
+                Some(match descriptor {
+                    Some(descriptor) => RunningInvocationDisposition {
+                        task_id: record.task.task_id.clone(),
+                        runner_id: runner_id.clone(),
+                        plugin_id: descriptor.plugin_id.clone(),
+                        plugin_generation: descriptor.plugin_generation,
+                        pollution: classify_pollution(&record.task, &descriptor),
+                    },
+                    None => RunningInvocationDisposition {
+                        task_id: record.task.task_id.clone(),
+                        runner_id: runner_id.clone(),
+                        plugin_id: "unknown".into(),
+                        plugin_generation: record.task.registry_generation,
+                        pollution: InvocationPollution::UnknownDirty,
+                    },
+                })
+            })
+            .collect()
+    }
+
+    fn mark_generation_phase(&mut self, registry_generation: u64, phase: PluginGenerationPhase) {
+        for state in &mut self.generation_states {
+            if state.generation == registry_generation {
+                state.phase = phase.clone();
+            }
+        }
+    }
+
+    fn set_active_generation_states(&mut self) {
+        let active_generation = self.load_plan.registry_generation;
+        for state in &mut self.generation_states {
+            if state.generation == active_generation {
+                state.phase = PluginGenerationPhase::Active;
+            } else if state.phase == PluginGenerationPhase::Active {
+                state.phase = PluginGenerationPhase::Draining;
+            }
+        }
+        for new_state in generation_states_for_plan(&self.load_plan, PluginGenerationPhase::Active)
+        {
+            if !self.generation_states.iter().any(|state| {
+                state.plugin_id == new_state.plugin_id && state.generation == new_state.generation
+            }) {
+                self.generation_states.push(new_state);
+            }
+        }
     }
 
     fn apply_load_plan(&mut self, new_plan: RuntimeLoadPlan) {
@@ -423,9 +611,28 @@ impl CoreRuntime {
         for task in result.tasks {
             self.enqueue_task(task);
         }
-        if result.status == RunnerStatus::Completed {
-            self.tasks.complete(&result.task_id, &runner.runner_id)?;
-            return Ok(1);
+        match result.status {
+            RunnerStatus::Completed => {
+                self.tasks.complete(&result.task_id, &runner.runner_id)?;
+                return Ok(1);
+            }
+            RunnerStatus::Failed => {
+                self.tasks.fail(
+                    &result.task_id,
+                    &runner.runner_id,
+                    RuntimeError::new(
+                        "runner.failed",
+                        "runtime.result_router",
+                        format!("runner.{}", runner.runner_id),
+                    ),
+                )?;
+                return Ok(1);
+            }
+            RunnerStatus::Cancelled => {
+                self.tasks.cancel_task(&result.task_id, &runner.runner_id)?;
+                return Ok(1);
+            }
+            RunnerStatus::Continue => {}
         }
         Ok(0)
     }
@@ -613,7 +820,10 @@ fn ref_lineage_attrs(
     attrs
 }
 
-fn runner_attrs(runner: &RunnerDescriptor) -> BTreeMap<String, ScalarValue> {
+fn runner_attrs(
+    runner: &RunnerDescriptor,
+    load_plan: &RuntimeLoadPlan,
+) -> BTreeMap<String, ScalarValue> {
     let mut attrs = BTreeMap::new();
     attrs.insert(
         "runner_id".into(),
@@ -627,6 +837,25 @@ fn runner_attrs(runner: &RunnerDescriptor) -> BTreeMap<String, ScalarValue> {
         "plugin_generation".into(),
         ScalarValue::Int(runner.plugin_generation as i64),
     );
+    attrs.insert(
+        "artifact_hash".into(),
+        ScalarValue::String(
+            load_plan
+                .plugins
+                .iter()
+                .find(|plugin| plugin.plugin_id == runner.plugin_id)
+                .map(|plugin| plugin.artifact.sha256.clone())
+                .unwrap_or_else(|| "unknown".into()),
+        ),
+    );
+    attrs.insert(
+        "descriptor_hash".into(),
+        ScalarValue::String(descriptor_fingerprint(runner)),
+    );
+    attrs.insert(
+        "contract_fingerprint".into(),
+        ScalarValue::String(contract_fingerprint(runner, load_plan)),
+    );
     attrs
 }
 
@@ -639,4 +868,144 @@ fn trace_attrs(span: &mutsuki_runtime_contracts::TraceSpan) -> BTreeMap<String, 
     attrs.insert("span_id".into(), ScalarValue::String(span.span_id.clone()));
     attrs.insert("span_name".into(), ScalarValue::String(span.name.clone()));
     attrs
+}
+
+fn classify_pollution(task: &Task, runner: &RunnerDescriptor) -> InvocationPollution {
+    if task.kind.starts_with("effect.") || runner.purity == RunnerPurity::Effectful {
+        return InvocationPollution::Polluted;
+    }
+    if task.kind.starts_with("core.") || runner.purity == RunnerPurity::Committer {
+        return InvocationPollution::Polluted;
+    }
+    if runner.purity != RunnerPurity::Pure {
+        return InvocationPollution::UnknownDirty;
+    }
+    if !task.input_refs.is_empty() || !task.expected_versions.is_empty() {
+        return InvocationPollution::LocalDirty;
+    }
+    InvocationPollution::Clean
+}
+
+fn generation_states_for_plan(
+    load_plan: &RuntimeLoadPlan,
+    phase: PluginGenerationPhase,
+) -> Vec<PluginGenerationState> {
+    load_plan
+        .plugins
+        .iter()
+        .map(|plugin| PluginGenerationState {
+            plugin_id: plugin.plugin_id.clone(),
+            generation: load_plan.registry_generation,
+            phase: phase.clone(),
+        })
+        .collect()
+}
+
+fn merge_occupancy(
+    task_occupancy: Vec<SurfaceOccupancy>,
+    resource_occupancy: Vec<SurfaceOccupancy>,
+) -> Vec<SurfaceOccupancy> {
+    let mut by_surface: BTreeMap<String, SurfaceOccupancy> = BTreeMap::new();
+    for item in task_occupancy.into_iter().chain(resource_occupancy) {
+        let entry = by_surface
+            .entry(item.surface_id.clone())
+            .or_insert_with(|| zero_occupancy(&item.surface_id));
+        entry.pending_tasks += item.pending_tasks;
+        entry.running_invocations += item.running_invocations;
+        entry.resource_refs += item.resource_refs;
+        entry.state_refs += item.state_refs;
+        entry.active_leases += item.active_leases;
+        entry.open_streams += item.open_streams;
+        entry.subscriptions += item.subscriptions;
+        entry.timers += item.timers;
+        entry.effect_inflight += item.effect_inflight;
+    }
+    by_surface.into_values().collect()
+}
+
+fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
+    SurfaceOccupancy {
+        surface_id: surface_id.into(),
+        pending_tasks: 0,
+        running_invocations: 0,
+        resource_refs: 0,
+        state_refs: 0,
+        active_leases: 0,
+        open_streams: 0,
+        subscriptions: 0,
+        timers: 0,
+        effect_inflight: 0,
+    }
+}
+
+fn invocation_attrs(
+    runner_id: &str,
+    invocation_id: &str,
+    returned_to_pending: usize,
+) -> BTreeMap<String, ScalarValue> {
+    let mut attrs = BTreeMap::new();
+    attrs.insert("runner_id".into(), ScalarValue::String(runner_id.into()));
+    attrs.insert(
+        "invocation_id".into(),
+        ScalarValue::String(invocation_id.into()),
+    );
+    attrs.insert(
+        "returned_to_pending".into(),
+        ScalarValue::Int(returned_to_pending as i64),
+    );
+    attrs
+}
+
+fn cancel_attrs(
+    disposition: &RunningInvocationDisposition,
+    policy: &str,
+) -> BTreeMap<String, ScalarValue> {
+    let mut attrs = BTreeMap::new();
+    attrs.insert(
+        "runner_id".into(),
+        ScalarValue::String(disposition.runner_id.clone()),
+    );
+    attrs.insert(
+        "invocation_id".into(),
+        ScalarValue::String(disposition.task_id.clone()),
+    );
+    attrs.insert(
+        "plugin_id".into(),
+        ScalarValue::String(disposition.plugin_id.clone()),
+    );
+    attrs.insert(
+        "plugin_generation".into(),
+        ScalarValue::Int(disposition.plugin_generation as i64),
+    );
+    attrs.insert(
+        "pollution".into(),
+        ScalarValue::String(format!("{:?}", disposition.pollution)),
+    );
+    attrs.insert("policy".into(), ScalarValue::String(policy.into()));
+    attrs
+}
+
+fn descriptor_fingerprint(runner: &RunnerDescriptor) -> String {
+    format!(
+        "runner:{}:{}:{}:{}",
+        runner.runner_id,
+        runner.plugin_id,
+        runner.plugin_generation,
+        runner.accepted_task_kinds.join(",")
+    )
+}
+
+fn contract_fingerprint(runner: &RunnerDescriptor, load_plan: &RuntimeLoadPlan) -> String {
+    let mut fingerprints = Vec::new();
+    for surface_id in &runner.contract_surfaces {
+        let fingerprint = load_plan
+            .contract_surfaces
+            .iter()
+            .find(|surface| &surface.surface_id == surface_id)
+            .map(|surface| surface.fingerprint.clone())
+            .unwrap_or_else(|| "missing".into());
+        fingerprints.push(format!("{surface_id}={fingerprint}"));
+    }
+    fingerprints.sort();
+    fingerprints.join(";")
 }

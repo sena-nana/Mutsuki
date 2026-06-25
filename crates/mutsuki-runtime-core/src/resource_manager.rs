@@ -3,9 +3,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use mutsuki_runtime_contracts::{
-    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED,
-    ERR_RESOURCE_NOT_FOUND, ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime,
-    ResourceRef, ResourceSealState, ResourceValue, RuntimeError, ValueRef, ValueStorage,
+    ContractSurface, ContractSurfaceKind, ERR_CAPABILITY_EXHAUSTED,
+    ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED, ERR_RESOURCE_NOT_FOUND,
+    ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime, ResourceRef,
+    ResourceSealState, ResourceValue, RuntimeError, SurfaceOccupancy, ValueRef, ValueStorage,
 };
 use serde_json::Value;
 
@@ -271,6 +272,82 @@ impl ResourceManager {
         }
         entry.writer = None;
         Ok(entry.descriptor.clone())
+    }
+
+    pub fn surface_occupancy(&self, surfaces: &[ContractSurface]) -> Vec<SurfaceOccupancy> {
+        let mut occupancy = Vec::new();
+        for surface in surfaces {
+            let mut item = zero_occupancy(&surface.surface_id);
+            match surface.kind {
+                ContractSurfaceKind::ResourceSchema => {
+                    let (resource_refs, active_leases) =
+                        self.count_resources_for_surface("resource_schema", &surface.surface_id);
+                    item.resource_refs = resource_refs;
+                    item.active_leases = active_leases;
+                }
+                ContractSurfaceKind::ResourceProvider => {
+                    let (resource_refs, active_leases) =
+                        self.count_resources_for_surface("resource_provider", &surface.surface_id);
+                    item.resource_refs = resource_refs;
+                    item.active_leases = active_leases;
+                }
+                ContractSurfaceKind::Schema => {
+                    item.resource_refs = self
+                        .values
+                        .values()
+                        .filter(|(value_ref, _)| {
+                            surface.surface_id == format!("schema:{}", value_ref.schema)
+                                || surface.surface_id == value_ref.schema
+                        })
+                        .count() as u64;
+                }
+                _ => {}
+            }
+            if !item.is_zero() {
+                occupancy.push(item);
+            }
+        }
+        occupancy
+    }
+
+    fn count_resources_for_surface(&self, prefix: &str, surface_id: &str) -> (u64, u64) {
+        let mut resource_refs = 0;
+        let mut active_leases = 0;
+        for entry in self
+            .resources
+            .values()
+            .filter(|entry| resource_surface_matches(entry, prefix, surface_id))
+        {
+            resource_refs += 1;
+            if entry.writer.is_some() {
+                active_leases += 1;
+            }
+        }
+        (resource_refs, active_leases)
+    }
+}
+
+fn resource_surface_matches(entry: &ResourceEntry, prefix: &str, surface_id: &str) -> bool {
+    let value = match prefix {
+        "resource_schema" => &entry.descriptor.schema,
+        "resource_provider" => &entry.descriptor.provider_id,
+        _ => return false,
+    };
+    surface_id == value || surface_id == format!("{prefix}:{value}")
+}
+
+fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
+    SurfaceOccupancy {
+        surface_id: surface_id.into(),
+        pending_tasks: 0,
+        running_invocations: 0,
+        resource_refs: 0,
+        state_refs: 0,
+        active_leases: 0,
+        open_streams: 0,
+        subscriptions: 0,
+        timers: 0,
+        effect_inflight: 0,
     }
 }
 

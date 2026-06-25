@@ -121,6 +121,16 @@ Contract surface 兼容性：
 - Removed：必须 zero occupancy。
 - Breaking：必须迁移、drain 或 restart。
 
+Core 热重载必须使用新 registry / plugin generation，不原地替换 runner。切换时：
+
+- pending task 可以 rebind 到新 registry generation。
+- clean / local dirty running invocation 应通过原 runner 的 cancel 管理面回到
+  pending，再交给新 generation 重试。
+- polluted / unknown dirty running invocation 必须保留旧 generation drain，或由上层
+  提供明确 compensation；不得强行 dispose。
+- removed surface 的 zero occupancy 判定必须来自 TaskPool、ResourceManager 等当前
+  事实源，而不是手动缓存。
+
 已经 orchestration 过的 raw input 不因新增 TaskDemand 自动重新 fan-out；补跑必须显式
 生成 migration/backfill task。
 

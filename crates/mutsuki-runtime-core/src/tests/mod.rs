@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -94,7 +96,53 @@ fn load_plan(runners: Vec<RunnerDescriptor>, demands: Vec<TaskDemand>) -> Runtim
 struct StaticRunner {
     descriptor: RunnerDescriptor,
     result: Box<dyn Fn(&Task) -> RunnerResult>,
-    disposed: bool,
+}
+
+struct ContinuingRunner {
+    descriptor: RunnerDescriptor,
+    calls: Rc<RefCell<Vec<String>>>,
+}
+
+impl ContinuingRunner {
+    fn new(descriptor: RunnerDescriptor, calls: Rc<RefCell<Vec<String>>>) -> Self {
+        Self { descriptor, calls }
+    }
+}
+
+impl Runner for ContinuingRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
+        Ok(tasks
+            .into_iter()
+            .map(|task| RunnerResult {
+                task_id: task.task_id,
+                deltas: Vec::new(),
+                events: Vec::new(),
+                tasks: Vec::new(),
+                effects: Vec::new(),
+                values: Vec::new(),
+                resources: Vec::new(),
+                status: RunnerStatus::Continue,
+            })
+            .collect())
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.calls
+            .borrow_mut()
+            .push(format!("cancel:{invocation_id}"));
+        Ok(())
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        self.calls
+            .borrow_mut()
+            .push(format!("dispose:{}", self.descriptor.runner_id));
+        Ok(())
+    }
 }
 
 impl StaticRunner {
@@ -102,7 +150,6 @@ impl StaticRunner {
         Self {
             descriptor,
             result: Box::new(result),
-            disposed: false,
         }
     }
 }
@@ -114,11 +161,6 @@ impl Runner for StaticRunner {
 
     fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         Ok(tasks.iter().map(|task| (self.result)(task)).collect())
-    }
-
-    fn dispose(&mut self) -> RuntimeResult<()> {
-        self.disposed = true;
-        Ok(())
     }
 }
 
@@ -452,6 +494,163 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_pending_tasks() {
     assert!(runtime.events().iter().any(|event| {
         event.name == "runner.v2.handled" && event.subject_id.as_deref() == Some("handled-by-v2")
     }));
+}
+
+#[test]
+fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
+    let worker_v1 = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan_v1 = load_plan(vec![worker_v1.clone()], Vec::new());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let runners_v1: Vec<Box<dyn Runner>> = vec![
+        Box::new(ContinuingRunner::new(worker_v1, calls.clone())),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
+    runtime.enqueue_task(Task::new("running-clean", "sim.work", json!({})));
+    runtime.tick_once().unwrap();
+
+    assert_eq!(
+        runtime.running_invocations()[0].pollution,
+        InvocationPollution::Clean
+    );
+
+    let mut worker_v2 = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    worker_v2.plugin_generation = 2;
+    let mut plan_v2 = load_plan(vec![worker_v2.clone()], Vec::new());
+    plan_v2.registry_generation = 2;
+    let runners_v2: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(worker_v2, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(2)),
+    ];
+
+    runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
+
+    assert_eq!(
+        calls.borrow().as_slice(),
+        &["cancel:running-clean", "dispose:worker"]
+    );
+    let record = runtime.tasks().get("running-clean").unwrap();
+    assert_eq!(record.status, TaskStatus::Pending);
+    assert_eq!(record.task.registry_generation, 2);
+    assert_eq!(runtime.draining_generation_count(), 0);
+
+    runtime.tick_once().unwrap();
+    assert_eq!(
+        runtime.tasks().get("running-clean").unwrap().status,
+        TaskStatus::Completed
+    );
+}
+
+#[test]
+fn reload_keeps_polluted_running_invocation_in_draining_generation() {
+    let effect_v1 = runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    let plan_v1 = load_plan(vec![effect_v1.clone()], Vec::new());
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let runners_v1: Vec<Box<dyn Runner>> = vec![
+        Box::new(ContinuingRunner::new(effect_v1, calls.clone())),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
+    runtime.enqueue_task(Task::new("running-effect", "effect.chat.send", json!({})));
+    runtime.tick_once().unwrap();
+
+    assert_eq!(
+        runtime.running_invocations()[0].pollution,
+        InvocationPollution::Polluted
+    );
+
+    let mut effect_v2 =
+        runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    effect_v2.plugin_generation = 2;
+    let mut plan_v2 = load_plan(vec![effect_v2.clone()], Vec::new());
+    plan_v2.registry_generation = 2;
+    let runners_v2: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(effect_v2, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(2)),
+    ];
+
+    runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
+
+    assert!(calls.borrow().is_empty());
+    assert_eq!(runtime.draining_generation_count(), 1);
+    assert_eq!(
+        runtime.tasks().get("running-effect").unwrap().status,
+        TaskStatus::Running
+    );
+    assert!(
+        runtime.plugin_generation_states().iter().any(|state| {
+            state.generation == 1 && state.phase == PluginGenerationPhase::Draining
+        })
+    );
+}
+
+#[test]
+fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
+    let plan = load_plan(Vec::new(), Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
+    runtime.enqueue_task(Task::new("pending-work", "sim.work", json!({})));
+
+    let mut with_surface = plan.clone();
+    with_surface.contract_surfaces.push(ContractSurface {
+        surface_id: "task_kind:sim.work".into(),
+        kind: ContractSurfaceKind::TaskKind,
+        owner_plugin_id: "plugin-a".into(),
+        fingerprint: "task_kind:sim.work".into(),
+        deprecated: false,
+    });
+    runtime.reload(with_surface).unwrap();
+
+    let mut removed = plan;
+    removed.registry_generation = 2;
+    let err = runtime.reload(removed).unwrap_err();
+
+    assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
+    assert!(
+        runtime
+            .surface_occupancy()
+            .iter()
+            .any(|item| { item.surface_id == "task_kind:sim.work" && item.pending_tasks == 1 })
+    );
+}
+
+#[test]
+fn runner_trace_records_plugin_generation_and_contract_facts() {
+    let worker = runner_descriptor("worker", "sim.trace", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(worker, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("trace-task", "sim.trace", json!({})));
+
+    runtime.tick_once().unwrap();
+
+    let span = runtime
+        .trace_spans()
+        .iter()
+        .find(|span| {
+            span.attributes.get("runner_id") == Some(&ScalarValue::String("worker".into()))
+        })
+        .unwrap();
+    assert_eq!(
+        span.attributes.get("plugin_id"),
+        Some(&ScalarValue::String("plugin-a".into()))
+    );
+    assert_eq!(
+        span.attributes.get("plugin_generation"),
+        Some(&ScalarValue::Int(1))
+    );
+    assert!(span.attributes.contains_key("artifact_hash"));
+    assert!(span.attributes.contains_key("descriptor_hash"));
+    assert!(span.attributes.contains_key("contract_fingerprint"));
 }
 
 #[test]
