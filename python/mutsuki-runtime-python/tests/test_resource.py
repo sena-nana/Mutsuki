@@ -2,69 +2,42 @@ from __future__ import annotations
 
 import pytest
 
-from mutsuki_runtime_python.backend import BackendInvokeError
-from mutsuki_runtime_python.contracts import (
-    ERR_REF_NOT_FOUND,
-    LeaseToken,
-    RefDescriptor,
-    to_json_dict,
-)
-from mutsuki_runtime_python.resource import CounterIdSource, PythonResourceBackend
+from mutsuki_runtime_python.contracts import ValueRef
+from mutsuki_runtime_python.resource import PythonResourceManager
+from mutsuki_runtime_python.runner import RunnerInvokeError
 
 
-def _descriptor() -> RefDescriptor:
-    return RefDescriptor(
-        ref_id="ref-1",
-        kind="domain.resource",
-        schema_id_target="domain.resource",
-        schema_version_target="1.0.0",
-        attributes={"kind": "test"},
-        lineage=(),
-    )
+def test_resource_manager_packs_small_and_large_values() -> None:
+    manager = PythonResourceManager(inline_value_max_bytes=16)
+
+    assert manager.pack_value("small.v1", {"a": 1}) == {"a": 1}
+    large = manager.pack_value("large.v1", {"blob": "x" * 100})
+
+    assert isinstance(large, ValueRef)
+    assert manager.get_value(large) == {"blob": "x" * 100}
 
 
-async def test_python_resource_backend_tracks_descriptor_leases_without_handle() -> None:
-    backend = PythonResourceBackend(CounterIdSource())
+def test_resource_manager_supports_mmap_cow_and_exclusive_write_lease() -> None:
+    manager = PythonResourceManager()
+    resource = manager.create_mmap_resource("bytes.v1", b"abc")
 
-    ref_id = await backend.register_resource(_descriptor(), owner="resource-host")
-    lease = await backend.acquire_resource(ref_id, requester="agent-a")
-    records = backend.list_records()
+    assert manager.read_resource(resource) == b"abc"
+    blob = manager.create_blob_resource("blob.v1", b"blob-data")
+    assert blob.access.type == "blob"
+    assert manager.read_resource(blob) == b"blob-data"
+    cow = manager.copy_on_write(resource, b"xyz")
+    assert cow.ref_id != resource.ref_id
+    lease = manager.acquire_write_lease(resource.ref_id, "runner-a", expires_at_step=5)
+    updated = manager.write_with_lease(lease, b"def", current_step=2)
 
-    assert lease == LeaseToken(token_id="lease-0", ref_id="ref-1", owner="agent-a")
-    assert records[0].descriptor == _descriptor()
-    assert records[0].lease_count == 1
-    assert "handle" not in to_json_dict(records[0])
-
-    await backend.release_resource(lease)
-    assert backend.list_records()[0].lease_count == 0
-
-
-async def test_python_resource_backend_unknown_ref_fails_structured() -> None:
-    backend = PythonResourceBackend(CounterIdSource())
-
-    with pytest.raises(BackendInvokeError) as exc_info:
-        await backend.acquire_resource("missing", requester="agent-a")
-
-    assert exc_info.value.error.code == ERR_REF_NOT_FOUND
-    assert exc_info.value.error.evidence["ref_id"] == "missing"
+    assert updated.generation == resource.generation + 1
+    assert manager.read_resource(updated) == b"def"
 
 
-async def test_python_resource_backend_rejects_forged_lease_token() -> None:
-    backend = PythonResourceBackend(CounterIdSource())
-    ref_id = await backend.register_resource(_descriptor(), owner="resource-host")
-    lease = await backend.acquire_resource(ref_id, requester="agent-a")
-    forged = LeaseToken(
-        token_id=lease.token_id,
-        ref_id="ref-other",
-        owner="agent-b",
-    )
+def test_expired_write_lease_fails_loudly() -> None:
+    manager = PythonResourceManager()
+    resource = manager.create_mmap_resource("bytes.v1", b"abc")
+    lease = manager.acquire_write_lease(resource.ref_id, "runner-a", expires_at_step=1)
 
-    with pytest.raises(BackendInvokeError) as exc_info:
-        await backend.release_resource(forged)
-
-    assert exc_info.value.error.code == ERR_REF_NOT_FOUND
-    assert exc_info.value.error.evidence["reason"] == "lease_token_mismatch"
-    assert backend.list_records()[0].lease_count == 1
-
-    await backend.release_resource(lease)
-    assert backend.list_records()[0].lease_count == 0
+    with pytest.raises(RunnerInvokeError):
+        manager.write_with_lease(lease, b"late", current_step=2)

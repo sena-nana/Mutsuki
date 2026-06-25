@@ -1,23 +1,18 @@
 # Mutsuki Runtime Python
 
-`mutsuki-runtime-python` is the Python backend kit for the Rust-first
-Mutsuki runtime. It mirrors the Rust runtime contracts and provides an in-process
-backend host for Python-owned strategy and operation handlers.
+`mutsuki-runtime-python` is the Python runner kit for the Rust-first Mutsuki
+TaskPool runtime.
 
-It is not a standalone Python runtime and does not depend on
-`python/reference-mutsuki`.
+It mirrors the Rust protocol objects and provides:
 
-Python can participate in two roles:
+- `PythonRunnerHost`
+- `StdioJsonlRunnerServer`
+- `PythonResourceManager`
+- test helpers for Python-owned runners
 
-- runtime caller: external Python plugin entries may publish events or query a
-  Rust runtime through future `runtime.*` client APIs.
-- capability backend: Rust runtime can call Python-owned strategy hooks,
-  operations, source providers, and resource hosts through `backend.*` methods.
-
-In both roles, Rust `AgentRuntime` remains the only runtime kernel. Python keeps
-plugin behavior, real Python-owned resources, external protocol adapters, and
-structured error mapping; it does not own routing, lifecycle, inbox ticks,
-runtime registry facts, ResourceGate decisions, trace, or event sequence.
+It is not a standalone runtime and does not depend on `python/reference-mutsuki`.
+Python code provides runner behavior and host-owned resources; Rust `CoreRuntime`
+remains the TaskPool, registry, state, trace, and event fact source.
 
 ## Checks
 

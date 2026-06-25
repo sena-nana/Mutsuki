@@ -1,66 +1,54 @@
 # Mutsuki
 
-> A domain-neutral Agent runtime kernel implemented as a Rust framework.
+> A domain-neutral TaskPool + Plugin Runner runtime kernel implemented as a Rust framework.
 
-**Current boundary: Rust-first runtime kernel**
+**Current boundary: Rust-first TaskPool runtime kernel**
 
-The root workspace is now the Rust framework surface. It provides serializable
-runtime contracts, the reusable `AgentRuntime` kernel, and a native host helper
-that can run an Agent loop without Python.
+The root workspace is the Rust framework surface. It provides serializable
+runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
+host helpers.
 
 Python code from the earlier framework has been moved to
-[`python/reference-mutsuki`](python/reference-mutsuki). Treat it as a
-reference and migration layer for plugin-host ideas, transport examples, and
-Python checks. It is no longer the root runtime implementation, but the name
-does not imply the code is deprecated or disposable.
+[`python/reference-mutsuki`](python/reference-mutsuki). Treat it as a reference
+and migration layer only.
 
-The new Python backend kit lives in
+The current Python runner kit lives in
 [`python/mutsuki-runtime-python`](python/mutsuki-runtime-python). It mirrors the
-Rust contracts and provides an in-process Python backend host for strategy,
-operation, and resource lease experiments. It is not a standalone runtime and
-does not depend on the old reference package.
+Rust contracts and provides `PythonRunnerHost`, `StdioJsonlRunnerServer`, and a
+descriptor-based `PythonResourceManager`.
 
-The long-term integration shape is:
+The runtime shape is:
 
 ```text
-Caller
-  -> Rust Runtime Kernel
-  -> Capability Backend
+RuntimeProfile + PluginManifest
+  -> RuntimeLoadPlan / RuntimeLock
+  -> CoreRuntime
+  -> TaskPool + RunnerRegistry + RunnerLoop + ResultRouter
+  -> StateStore + ResourceManager + EventLog + TraceLog
 ```
-
-Callers can be Rust applications, Python plugin entries, HTTP services, CLIs, or
-other projects. Capability backends can be native Rust hosts, Python sidecars, or
-remote services. Python may act as both a runtime caller and a backend provider,
-but `AgentRuntime` remains the only runtime kernel: lifecycle, routing, inboxes,
-registry facts, resource governance, trace, and events stay in Rust.
 
 ## Crates
 
 - `crates/mutsuki-runtime-contracts` - pure serializable contracts:
-  Agent, Envelope, ScopeRule, Operation / Source snapshots, trace, errors, and
-  resource descriptors, plus runtime events.
+  Task, Runner, StateDelta, EffectRequest, ValueRef, ResourceRef, PluginManifest,
+  RuntimeLoadPlan, ContractSurface, trace, events, and errors.
 - `crates/mutsuki-runtime-core` - runtime mechanics:
-  lifecycle, inbox ticks, routing, operation registry, source registry,
-  trace bookkeeping, event stream, election policy, trace closure checks, and
-  resource lease governance.
+  CoreRuntime, TaskPool, RunnerRegistry, RunnerLoop, ResultRouter, StateStore,
+  ResourceManager, reload surface checks, event log, and trace log.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
-  in-memory operation/source backend for direct framework use, smoke tests, and
-  a generic stdio JSONL backend adapter.
-- `python/mutsuki-runtime-python` - optional Python backend kit:
-  pure contract mirrors, in-process backend host, descriptor-only resource
-  backend, stdio JSONL server, Python plugin/capability host fixtures, and
-  documented future runtime-caller boundaries.
+  native runner host, deterministic load-plan resolver, and stdio JSONL runner client.
+- `python/mutsuki-runtime-python` - optional Python runner kit:
+  pure contract mirrors, Python runner host, stdio JSONL runner server, and
+  descriptor-based resource manager.
 
 ## Verification
 
 ```powershell
+cargo fmt --check
 cargo test
 ```
 
-Optional Python reference checks live under `python/reference-mutsuki` and
-should be run from that folder when intentionally working on that layer.
-
-Python backend kit checks live under `python/mutsuki-runtime-python`:
+Python runner kit checks live under `python/mutsuki-runtime-python`:
 
 ```powershell
 uv run ruff check src tests
@@ -70,13 +58,11 @@ uv run pytest
 
 ## Reading Order
 
-- [AGENTS.md](AGENTS.md) - project constitution and hard rules
-- [plans/roadmap.md](plans/roadmap.md) - current Rust-first target and gates
-- [plans/architecture.md](plans/architecture.md) - runtime direction and domain boundaries
-- [plans/engineering.md](plans/engineering.md) - workspace layout and implementation rules
-- [plans/contracts.md](plans/contracts.md) - internal contract surface
-- [plans/rust-python-runtime-boundary.md](plans/rust-python-runtime-boundary.md) - Python reference boundary and optional host rules
-- [plans/python-backend-mvp.md](plans/python-backend-mvp.md) - current Python backend kit MVP
+- [AGENTS.md](AGENTS.md)
+- [plans/roadmap.md](plans/roadmap.md)
+- [plans/architecture.md](plans/architecture.md)
+- [plans/engineering.md](plans/engineering.md)
+- [plans/contracts.md](plans/contracts.md)
 
 ## License
 

@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import importlib
-import sys
+import mutsuki_runtime_python as runtime_python
 
 
-def test_new_package_does_not_import_reference_mutsuki_core() -> None:
-    for name in tuple(sys.modules):
-        if name == "mutsuki" or name.startswith("mutsuki."):
-            sys.modules.pop(name)
-        if name == "mutsuki_ext" or name.startswith("mutsuki_ext."):
-            sys.modules.pop(name)
-
-    importlib.import_module("mutsuki_runtime_python")
-
-    assert "mutsuki" not in sys.modules
-    assert "mutsuki_ext" not in sys.modules
+def test_public_api_no_longer_exports_agent_backend_compatibility_layer() -> None:
+    assert hasattr(runtime_python, "PythonRunnerHost")
+    assert hasattr(runtime_python, "RunnerDescriptor")
+    assert hasattr(runtime_python, "RunnerInvokeError")
+    assert not hasattr(runtime_python, "StrategyBackend")
+    assert not hasattr(runtime_python, "OperationBackend")
+    assert not hasattr(runtime_python, "PythonBackendHost")
+    assert not hasattr(runtime_python, "BackendInvokeError")

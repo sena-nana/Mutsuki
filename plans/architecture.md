@@ -1,179 +1,143 @@
 # Mutsuki 架构设计
 
-Mutsuki 当前根级实现是一个 **Rust-first Agent runtime framework**。它的目标是
-为 Yume / mind-sim、工程 Agent 与传统 Bot 能力提供领域中立运行内核，但不把
-任一业务语义写入 core。
-
-早期 Python 框架实现已经移动到 `python/reference-mutsuki/`。该目录是参考与
-迁移层，不代表废弃内容，也不再定义根级 runtime 主链。
-
-## 1. 项目方向
-
-Rust runtime 负责运行机制：
-
-- Agent lifecycle 与状态事实。
-- Envelope 路由和 accepts 匹配。
-- runtime 级插件启用 / 禁用状态，以及 Source / Operation metadata registry。
-- Backend key 间接调用。
-- Resource descriptor / lease / count 治理。
-- Trace span 因果链 bookkeeping。
-- Runtime event stream 与可替换 election policy。
-
-Caller / Host / Backend 负责行为语义：
-
-- Native Rust host 可以直接注册 Source / Operation 和 StrategyBackend。
-- Python backend kit 可作为可选 backend / sidecar foundation 存在，但不得被 Rust
-  crates 依赖。
-- Python reference host 只作为旧实现参考与迁移材料存在。
-- Yume、mind-sim、IM、LLM、MCP、ChatCompletion、工程工具等都属于 host /
-  plugin / reference layer。
-- Python 插件入口也可以作为 runtime caller，通过 runtime API 向 Rust kernel 发布事件
-  或查询状态；它不因此成为第二个 runtime kernel。
-
-## 2. 分层
+Mutsuki 的当前根级实现是领域中立的 **TaskPool + Plugin Runner runtime**。
+核心公式：
 
 ```text
-Caller
-  -> Rust Runtime Kernel
-  -> Capability Backend
+CoreRuntime = TaskPool + RunnerRegistry + RunnerLoop + ResultRouter
+            + StateStore + ResourceManager + EventLog + TraceLog
+```
 
-Caller examples:
-  Rust application / Python plugin entry / HTTP service / CLI / other project
+## 1. 分层
 
-Rust Runtime Kernel:
-  crates/mutsuki-runtime-core
-  crates/mutsuki-runtime-contracts
-
-Capability Backend examples:
-  crates/mutsuki-runtime-host (optional native helper)
-  python/mutsuki-runtime-python (Python backend kit / sidecar foundation)
-  remote service adapter
-
-python/reference-mutsuki
-  -> optional reference / migration material only
+```text
+RuntimeProfile + PluginManifest
+  -> external/native resolver
+  -> RuntimeLoadPlan / RuntimeLock
+  -> CoreRuntime boot
+  -> Plugin Runner / Resource Provider / Effect Runner
 ```
 
 依赖方向：
 
-- `contracts` 不依赖 `core` 或 `host`。
-- `core` 依赖 `contracts`，不依赖具体 host、Python、外部协议 SDK 或产品语义。
-- `host` 依赖 `core + contracts`，提供可直接运行的 native helper。
-- Python reference 层不被根级 Rust crates 依赖。
-- Python backend kit 不被根级 Rust crates 依赖；它镜像 contracts 并承载 Python
-  owned backend handler，并提供 stdio JSONL 进程边界；它不拥有 Rust runtime 状态事实。
-- 未来远程 Rust runtime 应通过单独的 `runtime.*` control protocol 暴露给 caller；
-  当前 `backend.*` JSONL 边界只表示 Rust runtime 调 capability backend。
+- `contracts` 只定义 serde 纯协议对象。
+- `core` 依赖 `contracts`，只实现 runtime mechanics。
+- `host` 依赖 `core + contracts`，提供 native runner host 和 JSONL runner client。
+- Python runner kit 镜像 contracts，提供 Python runner host 和 stdio runner server；
+  Rust crates 不依赖 Python。
 
-## 3. Agent 一等公民
+## 2. TaskPool
 
-Agent 是运行时实体，而不是会话、消息、LLM 调用或命令 handler。Rust
-`AgentRuntime` 持有 Agent 的：
+一切待处理内容都是 `Task`。TaskPool 是唯一待处理事实源，取代早期多队列调度形态。
 
-- `agent_id`
-- lifecycle phase
-- priority / participation / accepts
-- inbox
-- 插件启用状态下接入的 Operation / Source snapshots
-- trace 与资源治理关联事实
+Task 只承载控制字段、少量不可变 immediate value 和 ref：
 
-Agent 行为由 backend 推进：
+- `task_id`
+- `kind`
+- `priority`
+- `ready_at_step`
+- `payload`
+- `input_refs`
+- `expected_versions`
+- `correlation_id`
+- `idempotency_key`
+- `runner_hint`
+- `registry_generation`
+- `required_surfaces`
 
-- `StrategyBackend.on_awake`
-- `StrategyBackend.on_input`
-- `StrategyBackend.next_step`
-- `StrategyBackend.on_stop`
+调度排序固定为：
 
-Backend 不能修改 Agent identity、owner、participation 或 accepts；这些是 runtime
-边界事实。
+```text
+ready_at_step asc
+priority desc
+created_sequence asc
+task_id asc
+```
 
-## 4. Operation 与 Source
+## 3. Runner
 
-插件接入是 runtime 级事实。Caller 可以实时启用 / 禁用插件；只有 enabled 插件
-提供的 Source / Operation 会进入 runtime registry。Rust core 只保存
-`PluginSnapshot`、`PluginAccessState`、`OperationSnapshot` 和 `SourceSnapshot`，
-不扫描、安装或加载插件。
+一切执行、编排和外部操作适配单元都是插件提供的 `Runner`。
 
-Operation 是工具、命令和跨能力调用的统一 runtime 概念。Rust runtime 只保存：
+```rust
+fn step(ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>>
+```
 
-- `OperationDescriptor`
-- `OperationStatus`
-- `OperationHandlerKey`
+Runner purity：
 
-真实 handler 属于 backend。runtime 调用 Operation 时必须通过 backend key，不保存
-callable 或外部资源对象。
+- `Pure`：只能返回 task、domain event、state delta、effect request。
+- `Committer`：只处理 `core.*` kernel task。
+- `Effectful`：只处理 `effect.*` 外部副作用 task。
 
-Source 是 Envelope 来源的显式声明。`publish(envelope)` 必须先验证
-`envelope.source.source_id` 已注册；未注册 source 结构化失败为
-`source.unregistered`。
+Core 只根据 descriptor 选择、claim 和调用 runner；不解释业务语义。
 
-## 5. Resource 与 By-Ref
+## 4. ResultRouter
 
-Rust `ResourceGate` 管理资源治理事实：
+RunnerResult 不直接修改事实源。ResultRouter 规范化输出：
 
-- `RefDescriptor`
-- owner
-- `LeaseToken`
-- lease count
-- `ref_id` / resource `kind` 维度的租约容量策略
+- `deltas` -> `core.commit` task -> Committer runner -> StateStore。
+- `events` -> `core.event.append` task -> EventLog。
+- `tasks` -> TaskPool。
+- `effects` -> `effect.*` task -> Effectful runner。
+- `values` / `resources` -> Resource/Event lineage facts。
 
-真实对象、finalizer、socket、SDK client、tensor、KV cache 等不进入 Rust core。
-跨 host 边界只能传 `ref_id`、descriptor、lease token 和可序列化 payload。
+因此普通 runner 并行执行不会直接破坏状态一致性。
 
-## 6. Trace
+## 5. ResourceManager
 
-Runtime 产生结构化 `TraceSpan`，用于证明 lifecycle、input、strategy、operation
-和 resource 的因果链。Trace sink 可以由 host 或 observability layer 提供，但 trace
-失败不得改变主链路行为，除非 trace 结构本身破坏 runtime 契约。
+控制面经过 core，数据面不一定经过 core。TaskPool 不搬运大数据本体。
 
-Rust core 提供 trace closure helper，用于测试或 host 诊断重复 span、父链缺失、
-父子 trace 不一致和无效时间区间。
+资源和值统一以 descriptor 表达：
 
-## 7. Runtime Event 与 Election
+- `ValueRef`：小型结构化、可共享、可版本化值。
+- `ResourceRef`：大型数据、blob、file-backed mmap、stream 或 provider RPC 资源。
+- `StateRef`：跨 task 权威语义状态。
 
-Runtime event stream 以 `RuntimeEvent` 纯协议暴露 lifecycle、routing、operation、
-resource、trace 和 backend 事实。事件使用确定性 sequence，不要求 wall-clock time。
-Trace 事实仍以 `TraceSpan` 为事实源，并同步投影为 `trace.span` event；resource
-事实只在 `AgentRuntime` 拥有的 `ResourceGate` 内暂存为 event draft，随后由 runtime
-统一分配 sequence。Standalone `ResourceGate` 不产出可观察事件。
+默认规则：
 
-默认 Agent election 仍按 priority 降序、agent_id 升序；可替换 election policy 只能
-处理已通过 source 注册、awake、accepts 与 participation 过滤的候选，不得绕过 runtime
-边界事实。
+- small immutable value 可以 inline。
+- 共享、版本化或跨 ABI/进程数据进入 ValueRef/ResourceRef。
+- 共享资源默认 readonly/sealed。
+- 修改产生新 ref 或 StateDelta。
+- 原地写必须 ExclusiveWriteLease。
 
-## 8. Python Reference
+## 6. Plugin Loading
 
-`python/reference-mutsuki/` 保留旧 Python framework、extension、tests、docs 与
-examples，方便迁移和对照。它不再是当前主实现，但不是废弃目录。
+插件声明能力，RuntimeProfile 决定组合，resolver 生成确定性 load plan，core 只校验和物化。
 
-## 9. Python Backend Kit
+Core 不负责：
 
-`python/mutsuki-runtime-python/` 是当前新版 Python 端结构。它提供：
+- 插件扫描、下载、安装。
+- 依赖解算和版本选择。
+- Python/npm/cargo 依赖管理。
+- 运行组合策略。
 
-- 与 Rust contracts 对齐的 Python dataclass wire shape。
-- `StrategyBackend`、`OperationBackend`、`ResourceBackend` 协议。
-- 进程内 `PythonBackendHost`，用于注册 Python-owned operation handler、source
-  snapshot、plugin snapshot 和 strategy hook。
-- `PythonResourceBackend`，只保存 descriptor、lease token 和 lease count。
-- `StdioJsonlBackendServer`，通过 JSONL request/response 暴露显式进程边界。
+Core 负责：
 
-该包不复刻 AgentRuntime，不实现 routing / lifecycle / trace 的 Rust 事实源，也不
-依赖旧 `mutsuki` core。Python 侧长期只保管插件元信息、插件行为、真实资源对象、
-外部协议接入和 Python 异常到 `RuntimeError` 的映射。stdio JSONL 是当前显式 backend 进程边界；
-后续若增加 HTTP 或长期 sidecar supervisor，只能复用这些纯协议对象与 backend key。
+- 校验 `RuntimeLoadPlan`。
+- 校验 runtime descriptor 不超出 lock 授权。
+- 构建并 freeze RunnerRegistry、TaskDemandTable、ResourceProviderRegistry、EffectRegistry。
+- 记录 registry generation、plugin generation 和 contract fingerprint。
 
-若未来恢复 Python PluginHost：
+## 7. Hot Reload
 
-- 可以作为 runtime caller，也可以作为 backend / sidecar，但不能拥有 runtime 事实源。
-- 只能通过纯协议与 Rust runtime 交互；状态推进进入 Rust runtime 的 turn / queue 边界。
-- 不得让 Rust core 保存 Python callable、真实 `Handle[T]`、socket 或 SDK client。
-- 旧 generation key 必须 fail-loud，不允许 fallback 到新 handler。
+热重载使用新 plugin generation，不原地替换对象。
 
-## 10. Domain Neutrality
+Contract surface 兼容性：
 
-Rust crates 不得包含 Yume、latent、tensor、gpu、Lilia、Codex、OneBot、MCP、
-ChatCompletion 等领域或产品专用执行分支。需要这些能力时，在 host / plugin /
-Python backend kit / reference 层通过 contracts、Operation、Source、Resource lease
-组合表达。
+- `Identical`：直接热重载。
+- `Additive`：可热重载。
+- `Deprecated`：可保留兼容处理，但禁止新增占用。
+- `Removed`：必须 zero occupancy。
+- `Breaking`：必须 migration、drain 或 restart。
 
-Yume / Lilia 的人格、记忆、情绪、LLM provider、IM 接入和工程工具能力应作为
-Caller 或 Capability Backend 组合到 runtime 外侧；Rust core 只保留领域中立调度事实。
+Cancel 通过 PluginHost management channel 投递给原 generation。DisposeBag 负责清理
+timer、listener、stream、lease、connection 等插件资源。
+
+Core 提供 `reload_with_runners(new_plan, new_runners)` 用于物化新 generation：
+先校验新 descriptor 与 load plan，再比较 surface，随后 freeze 新 registry、dispose
+旧 registry、重绑定 pending task 的 registry generation，并切换到新 load plan。
+
+## 8. Domain Neutrality
+
+模拟个体不是 runtime 实例，而是上层 Store 中的数据聚合。Rust core 中不得出现
+Yume、LLM、IM、MCP、ChatCompletion、OneBot 等领域或产品专用执行分支。

@@ -1,27 +1,26 @@
-mod agent_runtime;
-mod backend;
-mod election;
 mod error;
-mod event;
 mod id;
-mod resource_gate;
-mod scheduler;
+mod logs;
+mod registry;
+mod resource_manager;
+mod runtime;
+mod task_pool;
 mod trace;
 
-pub use agent_runtime::{AgentRuntime, AgentState};
-pub use backend::{
-    BackendEventSink, BackendPayload, OperationBackend, ResourceBackend, RuntimeBackend,
-    StrategyBackend,
-};
-pub use election::{ElectionCandidate, ElectionPolicy, PriorityElectionPolicy};
-pub use error::{RuntimeFailure, RuntimeResult, scope_no_match_error};
+pub use error::{RuntimeFailure, RuntimeResult};
 pub use id::{IdSource, SequentialIdSource};
-pub use resource_gate::{ResourceGate, ResourceQuotaPolicy};
-pub use scheduler::{
-    AgentScheduler, RuntimeTickOutcome, SchedulerDecision, SchedulerDriver, SchedulerOptions,
-    SchedulerReport, SchedulerStopReason,
+pub use logs::{EventLog, TraceLog};
+pub use registry::{
+    ContractChange, DisposeBag, PluginGenerationState, RegistrySnapshot, ReloadDecision,
+    RunnerRegistry,
 };
-pub use trace::{TraceBook, TraceClosureIssue, validate_trace_closure};
+pub use resource_manager::{PackedValue, ResourceManager};
+pub use runtime::{
+    CoreKernelRunner, CoreRuntime, DefaultOrchestratorRunner, Runner, RunnerContext,
+    RunnerLoopReport,
+};
+pub use task_pool::{TaskPool, TaskRecord};
+pub use trace::{TraceClosureIssue, validate_trace_closure};
 
 #[cfg(test)]
 mod tests;

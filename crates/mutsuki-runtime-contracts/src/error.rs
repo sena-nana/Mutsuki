@@ -33,12 +33,20 @@ impl RuntimeError {
     }
 }
 
-pub const ERR_AGENT_NOT_FOUND: &str = "agent.not_found";
-pub const ERR_OPERATION_NOT_FOUND: &str = "operation.not_found";
 pub const ERR_PLUGIN_DISABLED: &str = "plugin.disabled";
 pub const ERR_PLUGIN_NOT_FOUND: &str = "plugin.not_found";
-pub const ERR_RUNTIME_BACKEND_FAILED: &str = "runtime.backend_failed";
-pub const ERR_RUNTIME_BACKEND_GENERATION_MISMATCH: &str = "runtime.backend_generation_mismatch";
-pub const ERR_SCOPE_NO_MATCH: &str = "scope.no_match";
-pub const ERR_SOURCE_UNREGISTERED: &str = "source.unregistered";
+pub const ERR_RUNTIME_HOST_FAILED: &str = "runtime.host_failed";
+pub const ERR_RUNTIME_HOST_GENERATION_MISMATCH: &str = "runtime.host_generation_mismatch";
 pub const ERR_CAPABILITY_EXHAUSTED: &str = "capability.exhausted";
+pub const ERR_TASK_NOT_FOUND: &str = "task.not_found";
+pub const ERR_TASK_CLAIM_CONFLICT: &str = "task.claim_conflict";
+pub const ERR_RUNNER_NOT_FOUND: &str = "runner.not_found";
+pub const ERR_RUNNER_PURITY_VIOLATION: &str = "runner.purity_violation";
+pub const ERR_REGISTRY_FROZEN: &str = "registry.frozen";
+pub const ERR_REGISTRY_UNAUTHORIZED: &str = "registry.unauthorized";
+pub const ERR_REGISTRY_GENERATION_MISMATCH: &str = "registry.generation_mismatch";
+pub const ERR_STATE_CONFLICT: &str = "state.conflict";
+pub const ERR_RESOURCE_NOT_FOUND: &str = "resource.not_found";
+pub const ERR_RESOURCE_LEASE_EXPIRED: &str = "resource.lease_expired";
+pub const ERR_RESOURCE_GENERATION_MISMATCH: &str = "resource.generation_mismatch";
+pub const ERR_RELOAD_BLOCKED: &str = "plugin.reload_blocked";

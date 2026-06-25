@@ -1,303 +1,49 @@
 from __future__ import annotations
 
-import inspect
-from collections.abc import Awaitable, Callable
-
-from mutsuki_runtime_python.backend import BackendInvokeError, StrategyBackend
 from mutsuki_runtime_python.contracts import (
-    ERR_AGENT_NOT_FOUND,
-    ERR_OPERATION_NOT_FOUND,
-    ERR_RUNTIME_BACKEND_FAILED,
-    ERR_RUNTIME_BACKEND_GENERATION_MISMATCH,
-    Envelope,
-    JsonValue,
-    OperationDescriptor,
-    OperationHandlerKey,
-    OperationSnapshot,
-    OperationStatus,
-    PluginDescriptor,
-    PluginSnapshot,
-    PluginStatus,
+    ERR_RUNNER_NOT_FOUND,
+    RunnerContext,
+    RunnerDescriptor,
+    RunnerResult,
     RuntimeError,
-    SourceSnapshot,
-    StrategyResult,
+    Task,
 )
-
-OperationHandler = Callable[[JsonValue], JsonValue | Awaitable[JsonValue]]
-
-
-class _WaitInputStrategy:
-    async def on_awake(self, agent_id: str) -> None:
-        _ = agent_id
-        return None
-
-    async def on_input(self, agent_id: str, envelope: Envelope) -> StrategyResult:
-        _ = (agent_id, envelope)
-        return StrategyResult.wait_input()
-
-    async def next_step(self, agent_id: str) -> StrategyResult:
-        _ = agent_id
-        return StrategyResult.wait_input()
-
-    async def on_stop(self, agent_id: str) -> None:
-        _ = agent_id
-        return None
+from mutsuki_runtime_python.runner import Runner, RunnerInvokeError
 
 
-class PythonBackendHost:
-    """In-process Python backend host for Rust runtime integration tests."""
-
+class PythonRunnerHost:
     def __init__(self) -> None:
-        self._agents: set[str] = set()
-        self._strategies: dict[str, StrategyBackend] = {}
-        self._operations: dict[str, tuple[OperationSnapshot, OperationHandler]] = {}
-        self._sources: list[SourceSnapshot] = []
-        self._plugins: dict[str, PluginSnapshot] = {}
-        self._plugin_generations: dict[str, int] = {}
-        self._received_inputs: dict[str, list[Envelope]] = {}
-        self._awake_count: dict[str, int] = {}
-        self._stop_count: dict[str, int] = {}
+        self._runners: dict[str, Runner] = {}
 
-    def register_agent(self, agent_id: str, strategy: StrategyBackend | None = None) -> None:
-        self._agents.add(agent_id)
-        self._strategies[agent_id] = strategy or _WaitInputStrategy()
-        self._received_inputs.setdefault(agent_id, [])
-        self._awake_count.setdefault(agent_id, 0)
-        self._stop_count.setdefault(agent_id, 0)
+    def register_runner(self, runner: Runner) -> None:
+        self._runners[runner.descriptor.runner_id] = runner
 
-    def register_source(self, source: SourceSnapshot) -> None:
-        self._sources.append(source)
-        self._plugin_generations[source.plugin_id] = max(
-            source.plugin_generation,
-            self._plugin_generations.get(source.plugin_id, 0),
-        )
-        self._ensure_plugin(source.plugin_id, source.plugin_generation)
+    def descriptors(self) -> tuple[RunnerDescriptor, ...]:
+        return tuple(runner.descriptor for runner in self._runners.values())
 
-    def register_plugin(self, plugin: PluginSnapshot) -> None:
-        self._plugins[plugin.descriptor.plugin_id] = plugin
-        self._plugin_generations[plugin.descriptor.plugin_id] = max(
-            plugin.descriptor.generation,
-            self._plugin_generations.get(plugin.descriptor.plugin_id, 0),
-        )
-
-    def register_operation(
+    async def step_runner(
         self,
-        descriptor: OperationDescriptor,
-        handler: OperationHandler,
-        *,
-        plugin_generation: int = 0,
-        status: OperationStatus = OperationStatus.ACTIVE,
-    ) -> OperationSnapshot:
-        plugin_id = descriptor.plugin_id
-        generation = max(plugin_generation, self._plugin_generations.get(plugin_id, 0))
-        self._plugin_generations[plugin_id] = generation
-        self._ensure_plugin(plugin_id, generation)
-        snapshot = OperationSnapshot(
-            descriptor=descriptor,
-            status=status,
-            key=OperationHandlerKey(
-                plugin_id=plugin_id,
-                plugin_generation=generation,
-                op_id=descriptor.op_id,
-                handler_id=self._handler_id(plugin_id, descriptor.op_id, generation),
-            ),
-        )
-        self._operations[descriptor.op_id] = (snapshot, handler)
-        return snapshot
+        runner_id: str,
+        ctx: RunnerContext,
+        tasks: tuple[Task, ...],
+    ) -> tuple[RunnerResult, ...]:
+        return await self._runner(runner_id).step(ctx, tasks)
 
-    def advance_plugin_generation(self, plugin_id: str) -> int:
-        generation = self._plugin_generations.get(plugin_id, 0) + 1
-        self._plugin_generations[plugin_id] = generation
-        updated: dict[str, tuple[OperationSnapshot, OperationHandler]] = {}
-        for op_id, (snapshot, handler) in self._operations.items():
-            if snapshot.key.plugin_id != plugin_id:
-                updated[op_id] = (snapshot, handler)
-                continue
-            key = OperationHandlerKey(
-                plugin_id=plugin_id,
-                plugin_generation=generation,
-                op_id=snapshot.key.op_id,
-                handler_id=self._handler_id(plugin_id, snapshot.key.op_id, generation),
-            )
-            updated[op_id] = (
-                OperationSnapshot(
-                    descriptor=snapshot.descriptor,
-                    status=snapshot.status,
-                    key=key,
-                ),
-                handler,
-            )
-        self._operations = updated
-        return generation
+    async def cancel_runner(self, runner_id: str, invocation_id: str) -> None:
+        await self._runner(runner_id).cancel(invocation_id)
 
-    async def on_awake(self, agent_id: str) -> None:
-        strategy = self._strategy(agent_id)
-        await strategy.on_awake(agent_id)
-        self._awake_count[agent_id] = self._awake_count.get(agent_id, 0) + 1
+    async def dispose_runner(self, runner_id: str) -> None:
+        await self._runner(runner_id).dispose()
 
-    async def on_input(self, agent_id: str, envelope: Envelope) -> StrategyResult:
-        strategy = self._strategy(agent_id)
-        self._received_inputs.setdefault(agent_id, []).append(envelope)
-        return await strategy.on_input(agent_id, envelope)
-
-    async def next_step(self, agent_id: str) -> StrategyResult:
-        return await self._strategy(agent_id).next_step(agent_id)
-
-    async def on_stop(self, agent_id: str) -> None:
-        strategy = self._strategy(agent_id)
-        await strategy.on_stop(agent_id)
-        self._stop_count[agent_id] = self._stop_count.get(agent_id, 0) + 1
-
-    def list_plugins(self) -> tuple[PluginSnapshot, ...]:
-        return tuple(self._plugins.values())
-
-    def list_operations(
-        self, enabled_plugin_ids: tuple[str, ...] | list[str] | str
-    ) -> tuple[OperationSnapshot, ...]:
-        enabled = self._enabled_set(enabled_plugin_ids)
-        return tuple(
-            snapshot
-            for snapshot, _handler in self._operations.values()
-            if snapshot.key.plugin_id in enabled
-        )
-
-    def list_sources(
-        self, enabled_plugin_ids: tuple[str, ...] | list[str] | str
-    ) -> tuple[SourceSnapshot, ...]:
-        enabled = self._enabled_set(enabled_plugin_ids)
-        return tuple(source for source in self._sources if source.plugin_id in enabled)
-
-    async def invoke(
-        self,
-        agent_id: str,
-        key: OperationHandlerKey,
-        payload: JsonValue = None,
-    ) -> JsonValue:
-        self._ensure_agent(agent_id)
-        operation = self._operations.get(key.op_id)
-        if operation is None:
-            raise BackendInvokeError(
+    def _runner(self, runner_id: str) -> Runner:
+        runner = self._runners.get(runner_id)
+        if runner is None:
+            raise RunnerInvokeError(
                 RuntimeError(
-                    code=ERR_OPERATION_NOT_FOUND,
-                    source="python_backend_host",
-                    route=f"python.invoke.{key.op_id}",
-                    evidence={"agent_id": agent_id, "op_id": key.op_id},
+                    code=ERR_RUNNER_NOT_FOUND,
+                    source="python_runner_host",
+                    route=f"python.runner.{runner_id}",
+                    evidence={"runner_id": runner_id},
                 )
             )
-        snapshot, handler = operation
-        if snapshot.key != key:
-            raise BackendInvokeError(
-                RuntimeError(
-                    code=ERR_RUNTIME_BACKEND_GENERATION_MISMATCH,
-                    source="python_backend_host",
-                    route=f"python.invoke.{key.op_id}",
-                    evidence={
-                        "plugin_id": key.plugin_id,
-                        "op_id": key.op_id,
-                        "expected_generation": snapshot.key.plugin_generation,
-                        "actual_generation": key.plugin_generation,
-                    },
-                )
-            )
-        try:
-            result = handler(payload)
-            if inspect.isawaitable(result):
-                result = await result
-            return self._as_json_value(result)
-        except BackendInvokeError:
-            raise
-        except Exception as exc:
-            raise BackendInvokeError(
-                RuntimeError(
-                    code=ERR_RUNTIME_BACKEND_FAILED,
-                    source="python_backend_host",
-                    route=f"python.invoke.{key.op_id}",
-                    evidence={
-                        "agent_id": agent_id,
-                        "op_id": key.op_id,
-                        "exception_type": type(exc).__qualname__,
-                        "exception_repr": repr(exc),
-                    },
-                )
-            ) from exc
-
-    def operation_status(self, agent_id: str, key: OperationHandlerKey) -> OperationStatus:
-        self._ensure_agent(agent_id)
-        operation = self._operations.get(key.op_id)
-        if operation is None:
-            return OperationStatus.NOT_FOUND
-        snapshot, _handler = operation
-        if snapshot.key != key:
-            return OperationStatus.NOT_FOUND
-        return snapshot.status
-
-    def received_inputs(self, agent_id: str) -> tuple[Envelope, ...]:
-        self._ensure_agent(agent_id)
-        return tuple(self._received_inputs.get(agent_id, ()))
-
-    def awake_count(self, agent_id: str) -> int:
-        self._ensure_agent(agent_id)
-        return self._awake_count.get(agent_id, 0)
-
-    def stop_count(self, agent_id: str) -> int:
-        self._ensure_agent(agent_id)
-        return self._stop_count.get(agent_id, 0)
-
-    def _strategy(self, agent_id: str) -> StrategyBackend:
-        self._ensure_agent(agent_id)
-        return self._strategies[agent_id]
-
-    def _ensure_agent(self, agent_id: str) -> None:
-        if agent_id in self._agents:
-            return
-        raise BackendInvokeError(
-            RuntimeError(
-                code=ERR_AGENT_NOT_FOUND,
-                source="python_backend_host",
-                route=f"python.agent.{agent_id}",
-                evidence={"agent_id": agent_id},
-            )
-        )
-
-    def _ensure_plugin(self, plugin_id: str, generation: int) -> None:
-        self._plugins.setdefault(
-            plugin_id,
-            PluginSnapshot(
-                descriptor=PluginDescriptor(
-                    plugin_id=plugin_id,
-                    generation=generation,
-                    name=plugin_id,
-                    description="",
-                    version="",
-                    capabilities=(),
-                    metadata={},
-                ),
-                status=PluginStatus.ENABLED,
-            ),
-        )
-
-    def _enabled_set(self, enabled_plugin_ids: tuple[str, ...] | list[str] | str) -> set[str]:
-        if isinstance(enabled_plugin_ids, str):
-            self._ensure_agent(enabled_plugin_ids)
-            return {
-                plugin.descriptor.plugin_id
-                for plugin in self._plugins.values()
-                if plugin.status is PluginStatus.ENABLED
-            }
-        return set(enabled_plugin_ids)
-
-    @staticmethod
-    def _handler_id(plugin_id: str, op_id: str, generation: int) -> str:
-        return f"{plugin_id}:{op_id}:{generation}"
-
-    @staticmethod
-    def _as_json_value(value: object) -> JsonValue:
-        if value is None or isinstance(value, bool | int | float | str):
-            return value
-        if isinstance(value, list):
-            return [PythonBackendHost._as_json_value(item) for item in value]
-        if isinstance(value, tuple):
-            return [PythonBackendHost._as_json_value(item) for item in value]
-        if isinstance(value, dict):
-            return {str(key): PythonBackendHost._as_json_value(item) for key, item in value.items()}
-        raise TypeError(f"handler returned non-JSON value: {type(value).__qualname__}")
+        return runner

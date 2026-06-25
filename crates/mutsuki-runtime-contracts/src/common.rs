@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-pub type AgentId = String;
-pub type EnvelopeId = String;
 pub type RefId = String;
+pub type TaskId = String;
+pub type RunnerId = String;
+pub type PluginId = String;
+pub type SurfaceId = String;
 pub type SpanId = String;
 pub type TraceId = String;
 

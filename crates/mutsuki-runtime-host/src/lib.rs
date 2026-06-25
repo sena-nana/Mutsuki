@@ -1,14 +1,8 @@
 mod host;
 mod jsonl;
-mod operation;
-mod process;
 
-pub use host::NativeRuntimeHost;
-pub use jsonl::JsonlRuntimeBackend;
-pub use operation::NativeOperation;
-pub use process::{
-    JsonlProcessExit, JsonlProcessPoll, JsonlProcessRegistry, JsonlProcessStdinStatus,
-};
+pub use host::{NativePluginHost, NativeRunner, resolve_load_plan, runner_manifest};
+pub use jsonl::JsonlRunner;
 
 #[cfg(test)]
 mod tests;

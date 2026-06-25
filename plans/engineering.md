@@ -1,119 +1,53 @@
 # Mutsuki 工程实现规则
 
-本文件描述当前工作树的事实：根目录是 **Rust-first Agent runtime
-framework**。早期 Python 框架实现已经移动到
-`python/reference-mutsuki/`，作为旧 Python 实现的参考与迁移层保留。
+根目录当前是 Rust-first TaskPool runtime framework。旧 Python 框架在
+`python/reference-mutsuki/` 中保留为迁移参考，不是当前主链。
 
 ## 1. 技术栈
 
-- **Rust 2024 + Cargo workspace**：根级主框架。
-- **serde / serde_json**：跨 host 与可持久化 snapshot 的纯协议序列化。
-- **thiserror**：结构化 runtime failure wrapper。
-- **Python 3.13 + uv**：用于 `python/reference-mutsuki/` 的旧实现与参考测试，
-  以及 `python/mutsuki-runtime-python/` 的新版 backend kit；二者都不是根级 Rust
-  runtime 依赖。
+- Rust 2024 + Cargo workspace。
+- serde / serde_json 用于纯协议序列化。
+- thiserror 用于 runtime failure wrapper。
+- Python 3.13+ + uv 用于 `python/mutsuki-runtime-python/` 和 reference 测试。
 
-根级 Rust crates 禁止依赖 Python、PyO3、动态插件系统、外部 IM 协议 SDK、LLM
-provider、Yume / mind-sim / Lilia 产品语义。
+Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、LLM provider 或领域语义。
 
 ## 2. 目录结构
 
 ```text
 Mutsuki/
-  AGENTS.md
-  README.md
   Cargo.toml
-  Cargo.lock
   crates/
-    mutsuki-runtime-contracts/  # 纯协议对象与 ScopeRuleSpec 匹配
-    mutsuki-runtime-core/       # AgentRuntime / ResourceGate / backend traits
-    mutsuki-runtime-host/       # native in-memory host helper / smoke tests
+    mutsuki-runtime-contracts/  # Task / Runner / Resource / Plugin load-plan protocol
+    mutsuki-runtime-core/       # CoreRuntime / TaskPool / RunnerLoop / ResourceManager
+    mutsuki-runtime-host/       # native runner host / JSONL runner client
   plans/
-    roadmap.md
-    architecture.md
-    engineering.md
-    contracts.md
-    rust-python-runtime-boundary.md
-    version-reports/
   python/
-    mutsuki-runtime-python/    # 新版 Python backend kit：contracts mirror / host / resource / tests
-    reference-mutsuki/       # 旧 Python 框架、扩展、测试、docs、examples 的参考与迁移层
+    mutsuki-runtime-python/     # Python runner kit and protocol mirror
+    reference-mutsuki/          # old Python framework reference
 ```
 
-## 3. Rust Crate 边界
+## 3. Crate 边界
 
-- `mutsuki-runtime-contracts` 只定义可序列化纯数据结构：
-  `AgentSpec`、`Envelope`、`ScopeRuleSpec`、`OperationSnapshot`、
-  `SourceSnapshot`、`PluginSnapshot`、`PluginAccessState`、`AgentSnapshot`、
-  `TraceSpan`、`RuntimeEvent`、`RuntimeError`、`RefDescriptor`、`LeaseToken`、
-  `ResourceRecord`。
-- `mutsuki-runtime-core` 实现 runtime mechanics：
-  Agent lifecycle、inbox tick、ScopeRule 路由、runtime 级插件启用 / 禁用、
-  source 注册校验、Operation metadata registry、backend key 调用、trace bookkeeping、`ResourceGate`
-  租约治理、runtime event stream、trace closure helper 和 election policy。
-- `mutsuki-runtime-host` 提供 native Rust backend / host helper。它可以注册
-  Source 与 Operation，驱动 `AgentRuntime` 跑通最小 Agent loop；它也提供泛型
-  stdio JSONL backend adapter，但不依赖 Python PluginHost。
-- `python/mutsuki-runtime-python` 提供新版 Python backend kit。它镜像 Rust
-  contracts，保存 Python-owned handler，并通过 backend key 暴露 operation/source
-  snapshot，且提供 stdio JSONL 进程边界；它不拥有 Rust runtime 状态事实。
-- Rust crate 的单元测试按边界拆在各 crate 的 `src/tests/` 下。Core 测试按
-  runtime flow、plugin access、resource、event/trace 与 election 分组；host 测试按
-  native host、JSONL adapter 和进程边界分组。Host 进程边界测试只使用领域中立的
-  JSONL strategy fixture，不依赖产品插件目录或业务专用进程 smoke。
+- `mutsuki-runtime-contracts`：只定义纯数据结构，不包含 callable、socket、SDK client、
+  真实 handle 或领域对象。
+- `mutsuki-runtime-core`：实现 TaskPool、RunnerRegistry、RunnerLoop、ResultRouter、
+  StateStore、ResourceManager、EventLog、TraceLog、hot-reload surface checks。
+- `mutsuki-runtime-host`：实现 native PluginHost/resolver、native runner wrapper 和
+  stdio JSONL runner client。
+- `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
+  server、Python ResourceManager 测试实现和 typed public API。
 
-## 4. Backend 边界
+## 4. 验证
 
-Runtime 通过 trait 与上层能力宿主通信：
-
-- `StrategyBackend`：`on_awake` / `on_input` / `next_step` / `on_stop`。
-- `OperationBackend`：`list_operations` / `list_sources` / `invoke` /
-  `operation_status`，并通过 `list_plugins` 暴露插件元信息。
-- `ResourceBackend`：`register_resource` / `acquire_resource` /
-  `release_resource` / `list_records`。
-
-Backend 可以是 native Rust host，也可以由 `python/mutsuki-runtime-python` 提供的
-Python backend kit / 后续 sidecar adapter 承载。Rust runtime 只保存可序列化
-snapshot 与 handler key，不保存 callable、socket、SDK client、真实 `Handle[T]` 或
-领域对象。
-
-## 5. 横切公约
-
-- Agent 是一等运行时实体；生命周期状态由 `AgentRuntime` 维护。
-- 核心不内置业务概念；LLM、记忆、情感、睡眠、IM、MCP、ChatCompletion 等只能在
-  host / reference plugin / Python backend kit / Python reference 层表达。
-- Operation 是工具、命令和跨能力调用的统一 runtime 概念；Rust 侧只持有
-  `OperationSnapshot` 与 `OperationHandlerKey`。
-- 插件接入是 runtime 级启用 / 禁用状态；Rust core 只保存插件元信息和启用状态，
-  不负责扫描、安装或加载插件。
-- Source 必须先注册；未注册 Source 的 envelope publish 必须 fail-loud 为
-  `source.unregistered`。
-- 决定性时间、ID、随机源必须由 runtime / host 注入；`ResourceGate` 不使用全局
-  UUID 源，租约 token 由注入式 ID source 生成。
-- 错误必须使用 `RuntimeError` / `RuntimeFailure` 结构化表达，不吞异常式返回默认值。
-- Trace span 必须保留 `trace_id` / `span_id` / `parent_span_id`，用于证明 Agent
-  input、strategy、operation、resource 的因果链。
-- Runtime event stream 必须只记录纯协议事件，不携带真实资源对象或 callable；事件
-  `sequence` 由 runtime 全局分配，drain 后也不能回退或复用。Trace span 以
-  `TraceSpan` 为事实源，并同步投影为 `trace.span` event。Resource events 只属于
-  `AgentRuntime` 事件流；runtime-owned `ResourceGate` 可暂存内部 event draft，standalone
-  `ResourceGate` 不维护可观察 event stream，也不收集 draft。
-- Resource quota 耗尽必须 fail-loud 为 `capability.exhausted`，不得静默创建租约；
-  `kind` quota 按同 kind 全部活跃 lease 总量计算。
-- Election policy 只能排序已过滤候选，不得绕过 source / lifecycle / accepts。
-- Rust crates 不得出现 Yume、latent、tensor、gpu、Lilia、Codex、OneBot、MCP 等
-  领域或产品专用执行分支。
-
-## 6. 验证
-
-根级必跑：
+根级 Rust 改动必须运行：
 
 ```powershell
 cargo fmt --check
 cargo test
 ```
 
-改动 Python backend kit 时，从 `python/mutsuki-runtime-python` 目录运行：
+改动 Python backend kit 时，从 `python/mutsuki-runtime-python` 运行：
 
 ```powershell
 uv run ruff check src tests
@@ -121,6 +55,23 @@ uv run pyright src tests
 uv run pytest
 ```
 
-改动 Python reference 层时，从 `python/reference-mutsuki` 目录运行对应 Python 验证。
-根级成功说明 Rust framework 可构建和通过 Rust contract / runtime / host 测试；
-不得用 Python reference 层测试代替 Rust 主框架验证。
+不得用部分检查宣称成功。
+
+## 5. 横切公约
+
+- TaskPool 是唯一待处理任务事实源。
+- Runner 是唯一执行/编排/外部操作适配单元。
+- 普通 runner 禁止直接副作用。
+- StateStore 只能通过 `core.commit` task 修改。
+- EventLog 只能通过 kernel event append 或 runtime 事件记录修改。
+- Effectful runner 只处理 `effect.*` task。
+- ResourceRef/ValueRef/StateRef 是跨边界 descriptor，不是语言对象引用。
+- registry boot 后 freeze；能力变化必须走新 registry generation。
+- 错误必须结构化，不能吞异常返回默认值。
+- ID、时间、随机源必须可注入或由 runtime/host 控制。
+
+## 6. Git 与范围
+
+- 公共协议、core runtime、ResourceManager、PluginHost、热重载或目录边界变化，提交前必须检查 diff 范围。
+- 不覆盖用户或其他 Agent 的已有改动。
+- 历史 version report 保留历史事实，不要求随当前架构改写。

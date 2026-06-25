@@ -10,51 +10,57 @@ ScalarValue = str | int | float | bool
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonDict = dict[str, JsonValue]
 
-ERR_AGENT_NOT_FOUND = "agent.not_found"
+ERR_RUNTIME_HOST_FAILED = "runtime.host_failed"
 ERR_CAPABILITY_EXHAUSTED = "capability.exhausted"
-ERR_OPERATION_NOT_FOUND = "operation.not_found"
-ERR_REF_NOT_FOUND = "ref.not_found"
-ERR_RUNTIME_BACKEND_FAILED = "runtime.backend_failed"
-ERR_RUNTIME_BACKEND_GENERATION_MISMATCH = "runtime.backend_generation_mismatch"
-ERR_SCOPE_NO_MATCH = "scope.no_match"
-ERR_SOURCE_UNREGISTERED = "source.unregistered"
-
-class AgentPhase(StrEnum):
-    SPAWN = "spawn"
-    AWAKE = "awake"
-    SLEEP = "sleep"
-    STOP = "stop"
+ERR_TASK_NOT_FOUND = "task.not_found"
+ERR_RUNNER_NOT_FOUND = "runner.not_found"
+ERR_REGISTRY_UNAUTHORIZED = "registry.unauthorized"
+ERR_RESOURCE_NOT_FOUND = "resource.not_found"
+ERR_RESOURCE_GENERATION_MISMATCH = "resource.generation_mismatch"
+ERR_RESOURCE_LEASE_EXPIRED = "resource.lease_expired"
+ERR_STATE_CONFLICT = "state.conflict"
+ERR_RELOAD_BLOCKED = "plugin.reload_blocked"
 
 
-class AgentParticipation(StrEnum):
-    PRIMARY_CANDIDATE = "primary_candidate"
-    OBSERVER = "observer"
-    EXPLICIT_HELPER = "explicit_helper"
-
-
-class SideEffectPolicy(StrEnum):
-    READ_ONLY = "read_only"
-    ALLOW_EXTERNAL = "allow_external"
-
-
-class OperationStatus(StrEnum):
-    ACTIVE = "active"
-    UNHEALTHY = "unhealthy"
-    UNREGISTERING = "unregistering"
-    NOT_FOUND = "not_found"
-
-
-class PluginStatus(StrEnum):
-    ENABLED = "enabled"
-    DISABLED = "disabled"
-    UNHEALTHY = "unhealthy"
-
-
-class StrategyResultStatus(StrEnum):
-    CONTINUE = "continue"
-    WAIT_INPUT = "wait_input"
+class TaskStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class RunnerPurity(StrEnum):
+    PURE = "pure"
+    COMMITTER = "committer"
+    EFFECTFUL = "effectful"
+
+
+class RunnerStatus(StrEnum):
+    COMPLETED = "completed"
+    CONTINUE = "continue"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ConflictPolicy(StrEnum):
+    RETRY = "retry"
+    MERGE = "merge"
+    DISCARD = "discard"
+    FAIL = "fail"
+    EMIT_CONFLICT_TASK = "emit_conflict_task"
+
+
+class RuntimeEventKind(StrEnum):
+    TASK = "task"
+    RUNNER = "runner"
+    STATE = "state"
+    EFFECT = "effect"
+    PLUGIN = "plugin"
+    RESOURCE = "resource"
+    TRACE = "trace"
+    RELOAD = "reload"
+    HOST = "host"
 
 
 class SpanStatus(StrEnum):
@@ -62,13 +68,45 @@ class SpanStatus(StrEnum):
     ERROR = "error"
 
 
-class RuntimeEventKind(StrEnum):
+class ResourceLifetime(StrEnum):
+    BORROWED_UNTIL_TASK_END = "borrowed_until_task_end"
+    LEASE_UNTIL = "lease_until"
+    PERSISTENT = "persistent"
+    EXTERNAL_MANAGED = "external_managed"
+
+
+class ValueStorage(StrEnum):
+    INLINE_SMALL = "inline_small"
+    LOCAL_VALUE_STORE = "local_value_store"
+    BLOB = "blob"
+    STREAM = "stream"
+    PROVIDER_RPC = "provider_rpc"
+
+
+class ResourceSealState(StrEnum):
+    WRITABLE = "writable"
+    SEALED = "sealed"
+
+
+class ContractSurfaceKind(StrEnum):
+    RUNNER = "runner"
+    TASK_KIND = "task_kind"
+    SCHEMA = "schema"
+    RESOURCE_SCHEMA = "resource_schema"
+    RESOURCE_PROVIDER = "resource_provider"
+    EFFECT = "effect"
+    TASK_DEMAND = "task_demand"
+    STATE_SCHEMA = "state_schema"
     LIFECYCLE = "lifecycle"
-    ROUTING = "routing"
-    OPERATION = "operation"
-    RESOURCE = "resource"
-    TRACE = "trace"
-    BACKEND = "backend"
+    PERMISSION = "permission"
+
+
+class SurfaceCompatibility(StrEnum):
+    IDENTICAL = "identical"
+    ADDITIVE = "additive"
+    DEPRECATED = "deprecated"
+    REMOVED = "removed"
+    BREAKING = "breaking"
 
 
 def _as_mapping(data: object, contract: str) -> Mapping[str, object]:
@@ -84,32 +122,18 @@ def _field(data: Mapping[str, object], field_name: str) -> object:
 
 
 def _as_str(value: object, field_name: str) -> str:
-    if value is None:
-        raise TypeError(f"{field_name} expects str")
     if not isinstance(value, str):
         raise TypeError(f"{field_name} expects str")
     return value
 
 
 def _as_int(value: object, field_name: str) -> int:
-    if value is None:
-        raise TypeError(f"{field_name} expects int")
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(f"{field_name} expects int")
     return value
 
 
-def _as_float(value: object, field_name: str) -> float:
-    if value is None:
-        raise TypeError(f"{field_name} expects number")
-    if not isinstance(value, int | float) or isinstance(value, bool):
-        raise TypeError(f"{field_name} expects number")
-    return float(value)
-
-
 def _as_bool(value: object, field_name: str) -> bool:
-    if value is None:
-        raise TypeError(f"{field_name} expects bool")
     if not isinstance(value, bool):
         raise TypeError(f"{field_name} expects bool")
     return value
@@ -118,14 +142,12 @@ def _as_bool(value: object, field_name: str) -> bool:
 def _as_scalar(value: object, field_name: str) -> ScalarValue:
     if isinstance(value, str | bool | int | float):
         return value
-    raise TypeError(f"{field_name} expects a scalar value")
+    raise TypeError(f"{field_name} expects scalar")
 
 
 def _as_str_tuple(value: object, field_name: str) -> tuple[str, ...]:
-    if value is None:
-        raise TypeError(f"{field_name} expects a sequence")
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
-        raise TypeError(f"{field_name} expects a sequence")
+        raise TypeError(f"{field_name} expects sequence")
     return tuple(_as_str(item, field_name) for item in value)
 
 
@@ -140,29 +162,21 @@ def _as_json_value(value: object) -> JsonValue:
 
 
 def _as_json_dict(value: object, field_name: str) -> JsonDict:
-    if value is None:
-        raise TypeError(f"{field_name} expects a mapping")
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{field_name} expects a mapping")
     converted = _as_json_value(value)
     if not isinstance(converted, dict):
-        raise TypeError(f"{field_name} expects a mapping")
+        raise TypeError(f"{field_name} expects mapping")
     return converted
 
 
 def _as_scalar_dict(value: object, field_name: str) -> dict[str, ScalarValue]:
-    if value is None:
-        raise TypeError(f"{field_name} expects a mapping")
     if not isinstance(value, Mapping):
-        raise TypeError(f"{field_name} expects a mapping")
+        raise TypeError(f"{field_name} expects mapping")
     return {str(key): _as_scalar(item, field_name) for key, item in value.items()}
 
 
 def _to_json_value(value: object) -> JsonValue:
     if isinstance(value, StrEnum):
         return value.value
-    if isinstance(value, ScopeRuleSpec):
-        return value.to_json_dict()
     if is_dataclass(value):
         return {field.name: _to_json_value(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
@@ -200,391 +214,6 @@ def from_json_bytes[T](contract_type: type[T], data: bytes | bytearray | str) ->
 
 
 @dataclass(frozen=True)
-class ScopeRuleSpec:
-    type: str
-    parts: tuple[ScopeRuleSpec, ...] = ()
-    schema_id: str = ""
-    prefix: str = ""
-    source_id: str = ""
-    kind: str = ""
-    capability: str = ""
-    field: str = ""
-    value: ScalarValue | None = None
-
-    @classmethod
-    def always(cls) -> Self:
-        return cls(type="always")
-
-    @classmethod
-    def never(cls) -> Self:
-        return cls(type="never")
-
-    @classmethod
-    def all(cls, parts: Sequence[ScopeRuleSpec]) -> Self:
-        return cls(type="all", parts=tuple(parts))
-
-    @classmethod
-    def any(cls, parts: Sequence[ScopeRuleSpec]) -> Self:
-        return cls(type="any", parts=tuple(parts))
-
-    @classmethod
-    def by_schema(cls, schema_id: str) -> Self:
-        return cls(type="by_schema", schema_id=schema_id)
-
-    @classmethod
-    def by_schema_prefix(cls, prefix: str) -> Self:
-        return cls(type="by_schema_prefix", prefix=prefix)
-
-    @classmethod
-    def by_source_id(cls, source_id: str) -> Self:
-        return cls(type="by_source_id", source_id=source_id)
-
-    @classmethod
-    def by_source_kind(cls, kind: str) -> Self:
-        return cls(type="by_source_kind", kind=kind)
-
-    @classmethod
-    def by_capability(cls, capability: str) -> Self:
-        return cls(type="by_capability", capability=capability)
-
-    @classmethod
-    def by_source_field(cls, field: str, value: ScalarValue) -> Self:
-        return cls(type="by_source_field", field=field, value=value)
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "ScopeRuleSpec")
-        rule_type = _as_str(_field(raw, "type"), "type")
-        if rule_type in {"always", "never"}:
-            return cls(type=rule_type)
-        if rule_type in {"all", "any"}:
-            parts = _field(raw, "parts")
-            if not isinstance(parts, Sequence) or isinstance(parts, str | bytes | bytearray):
-                raise TypeError("parts expects a sequence")
-            decoded = tuple(
-                cls.from_json_dict(_as_mapping(part, "ScopeRuleSpec")) for part in parts
-            )
-            return cls(type=rule_type, parts=decoded)
-        if rule_type == "by_schema":
-            return cls.by_schema(_as_str(_field(raw, "schema_id"), "schema_id"))
-        if rule_type == "by_schema_prefix":
-            return cls.by_schema_prefix(_as_str(_field(raw, "prefix"), "prefix"))
-        if rule_type == "by_source_id":
-            return cls.by_source_id(_as_str(_field(raw, "source_id"), "source_id"))
-        if rule_type == "by_source_kind":
-            return cls.by_source_kind(_as_str(_field(raw, "kind"), "kind"))
-        if rule_type == "by_capability":
-            return cls.by_capability(_as_str(_field(raw, "capability"), "capability"))
-        if rule_type == "by_source_field":
-            return cls.by_source_field(
-                _as_str(_field(raw, "field"), "field"),
-                _as_scalar(_field(raw, "value"), "value"),
-            )
-        raise ValueError(f"unknown scope rule type: {rule_type}")
-
-    def to_json_dict(self) -> JsonDict:
-        if self.type in {"always", "never"}:
-            return {"type": self.type}
-        if self.type in {"all", "any"}:
-            return {"type": self.type, "parts": [_to_json_value(part) for part in self.parts]}
-        if self.type == "by_schema":
-            return {"type": self.type, "schema_id": self.schema_id}
-        if self.type == "by_schema_prefix":
-            return {"type": self.type, "prefix": self.prefix}
-        if self.type == "by_source_id":
-            return {"type": self.type, "source_id": self.source_id}
-        if self.type == "by_source_kind":
-            return {"type": self.type, "kind": self.kind}
-        if self.type == "by_capability":
-            return {"type": self.type, "capability": self.capability}
-        if self.type == "by_source_field":
-            return {"type": self.type, "field": self.field, "value": self.value}
-        raise ValueError(f"unknown scope rule type: {self.type}")
-
-    def matches(self, envelope: Envelope) -> bool:
-        if self.type == "always":
-            return True
-        if self.type == "never":
-            return False
-        if self.type == "all":
-            return all(part.matches(envelope) for part in self.parts)
-        if self.type == "any":
-            return any(part.matches(envelope) for part in self.parts)
-        if self.type == "by_schema":
-            return envelope.payload_schema_id == self.schema_id
-        if self.type == "by_schema_prefix":
-            return envelope.payload_schema_id.startswith(self.prefix)
-        if self.type == "by_source_id":
-            return envelope.source.source_id == self.source_id
-        if self.type == "by_source_kind":
-            return envelope.source.kind == self.kind
-        if self.type == "by_capability":
-            return self.capability in envelope.capabilities_required
-        if self.type == "by_source_field":
-            return envelope.source.metadata.get(self.field) == self.value
-        return False
-
-
-@dataclass(frozen=True)
-class SourceRef:
-    source_id: str
-    kind: str
-    metadata: dict[str, ScalarValue] = field(default_factory=dict)
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "SourceRef")
-        return cls(
-            source_id=_as_str(_field(raw, "source_id"), "source_id"),
-            kind=_as_str(_field(raw, "kind"), "kind"),
-            metadata=_as_scalar_dict(_field(raw, "metadata"), "metadata"),
-        )
-
-
-@dataclass(frozen=True)
-class Envelope:
-    id: str
-    timestamp: float
-    source: SourceRef
-    payload_schema_id: str = ""
-    capabilities_required: tuple[str, ...] = ()
-    payload: JsonValue = None
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "Envelope")
-        source = _field(raw, "source")
-        return cls(
-            id=_as_str(_field(raw, "id"), "id"),
-            timestamp=_as_float(_field(raw, "timestamp"), "timestamp"),
-            source=SourceRef.from_json_dict(_as_mapping(source, "source")),
-            payload_schema_id=_as_str(_field(raw, "payload_schema_id"), "payload_schema_id"),
-            capabilities_required=_as_str_tuple(
-                _field(raw, "capabilities_required"), "capabilities_required"
-            ),
-            payload=_as_json_value(_field(raw, "payload")),
-        )
-
-
-@dataclass(frozen=True)
-class AgentSpec:
-    agent_id: str
-    owner: str | None = None
-    priority: int = 0
-    participation: AgentParticipation = AgentParticipation.PRIMARY_CANDIDATE
-    accepts: tuple[ScopeRuleSpec, ...] = ()
-    strategy_id: str = ""
-    side_effect_policy: SideEffectPolicy = SideEffectPolicy.READ_ONLY
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "AgentSpec")
-        raw_accepts = _field(raw, "accepts")
-        if not isinstance(raw_accepts, Sequence) or isinstance(
-            raw_accepts, str | bytes | bytearray
-        ):
-            raise TypeError("accepts expects a sequence")
-        owner = _field(raw, "owner")
-        return cls(
-            agent_id=_as_str(_field(raw, "agent_id"), "agent_id"),
-            owner=None if owner is None else _as_str(owner, "owner"),
-            priority=_as_int(_field(raw, "priority"), "priority"),
-            participation=AgentParticipation(
-                _as_str(_field(raw, "participation"), "participation")
-            ),
-            accepts=tuple(
-                ScopeRuleSpec.from_json_dict(_as_mapping(item, "ScopeRuleSpec"))
-                for item in raw_accepts
-            ),
-            strategy_id=_as_str(_field(raw, "strategy_id"), "strategy_id"),
-            side_effect_policy=SideEffectPolicy(
-                _as_str(_field(raw, "side_effect_policy"), "side_effect_policy")
-            ),
-        )
-
-
-@dataclass(frozen=True)
-class AgentSnapshot:
-    spec: AgentSpec
-    phase: AgentPhase
-    inbox_len: int
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "AgentSnapshot")
-        return cls(
-            spec=AgentSpec.from_json_dict(_as_mapping(_field(raw, "spec"), "spec")),
-            phase=AgentPhase(_as_str(_field(raw, "phase"), "phase")),
-            inbox_len=_as_int(_field(raw, "inbox_len"), "inbox_len"),
-        )
-
-
-@dataclass(frozen=True)
-class OperationDescriptor:
-    op_id: str
-    name: str
-    description: str = ""
-    plugin_id: str = ""
-    func_qualname: str = ""
-    parameters_schema: JsonDict = field(default_factory=dict)
-    return_schema: JsonDict = field(default_factory=dict)
-    perms_rule_id: str | None = None
-    requires_capabilities: tuple[str, ...] = ()
-    is_tool: bool = True
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "OperationDescriptor")
-        perms_rule_id = _field(raw, "perms_rule_id")
-        return cls(
-            op_id=_as_str(_field(raw, "op_id"), "op_id"),
-            name=_as_str(_field(raw, "name"), "name"),
-            description=_as_str(_field(raw, "description"), "description"),
-            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
-            func_qualname=_as_str(_field(raw, "func_qualname"), "func_qualname"),
-            parameters_schema=_as_json_dict(_field(raw, "parameters_schema"), "parameters_schema"),
-            return_schema=_as_json_dict(_field(raw, "return_schema"), "return_schema"),
-            perms_rule_id=None
-            if perms_rule_id is None
-            else _as_str(perms_rule_id, "perms_rule_id"),
-            requires_capabilities=_as_str_tuple(
-                _field(raw, "requires_capabilities"), "requires_capabilities"
-            ),
-            is_tool=_as_bool(_field(raw, "is_tool"), "is_tool"),
-        )
-
-
-@dataclass(frozen=True)
-class SourceDescriptor:
-    source_id: str
-    kind: str
-    capabilities: tuple[str, ...] = ()
-    description: str = ""
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "SourceDescriptor")
-        return cls(
-            source_id=_as_str(_field(raw, "source_id"), "source_id"),
-            kind=_as_str(_field(raw, "kind"), "kind"),
-            capabilities=_as_str_tuple(_field(raw, "capabilities"), "capabilities"),
-            description=_as_str(_field(raw, "description"), "description"),
-        )
-
-
-@dataclass(frozen=True)
-class OperationHandlerKey:
-    plugin_id: str
-    plugin_generation: int
-    op_id: str
-    handler_id: str
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "OperationHandlerKey")
-        return cls(
-            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
-            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
-            op_id=_as_str(_field(raw, "op_id"), "op_id"),
-            handler_id=_as_str(_field(raw, "handler_id"), "handler_id"),
-        )
-
-
-@dataclass(frozen=True)
-class OperationSnapshot:
-    descriptor: OperationDescriptor
-    status: OperationStatus
-    key: OperationHandlerKey
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "OperationSnapshot")
-        return cls(
-            descriptor=OperationDescriptor.from_json_dict(
-                _as_mapping(_field(raw, "descriptor"), "descriptor")
-            ),
-            status=OperationStatus(_as_str(_field(raw, "status"), "status")),
-            key=OperationHandlerKey.from_json_dict(_as_mapping(_field(raw, "key"), "key")),
-        )
-
-
-@dataclass(frozen=True)
-class SourceSnapshot:
-    descriptor: SourceDescriptor
-    plugin_id: str
-    plugin_generation: int
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "SourceSnapshot")
-        return cls(
-            descriptor=SourceDescriptor.from_json_dict(
-                _as_mapping(_field(raw, "descriptor"), "descriptor")
-            ),
-            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
-            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
-        )
-
-
-@dataclass(frozen=True)
-class PluginDescriptor:
-    plugin_id: str
-    generation: int
-    name: str
-    description: str = ""
-    version: str = ""
-    capabilities: tuple[str, ...] = ()
-    metadata: dict[str, ScalarValue] = field(default_factory=dict)
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "PluginDescriptor")
-        return cls(
-            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
-            generation=_as_int(_field(raw, "generation"), "generation"),
-            name=_as_str(_field(raw, "name"), "name"),
-            description=_as_str(_field(raw, "description"), "description"),
-            version=_as_str(_field(raw, "version"), "version"),
-            capabilities=_as_str_tuple(_field(raw, "capabilities"), "capabilities"),
-            metadata=_as_scalar_dict(_field(raw, "metadata"), "metadata"),
-        )
-
-
-@dataclass(frozen=True)
-class PluginSnapshot:
-    descriptor: PluginDescriptor
-    status: PluginStatus
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "PluginSnapshot")
-        return cls(
-            descriptor=PluginDescriptor.from_json_dict(
-                _as_mapping(_field(raw, "descriptor"), "descriptor")
-            ),
-            status=PluginStatus(_as_str(_field(raw, "status"), "status")),
-        )
-
-
-@dataclass(frozen=True)
-class PluginAccessState:
-    enabled_plugin_ids: tuple[str, ...] = ()
-    disabled_plugin_ids: tuple[str, ...] = ()
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "PluginAccessState")
-        return cls(
-            enabled_plugin_ids=_as_str_tuple(
-                _field(raw, "enabled_plugin_ids"), "enabled_plugin_ids"
-            ),
-            disabled_plugin_ids=_as_str_tuple(
-                _field(raw, "disabled_plugin_ids"), "disabled_plugin_ids"
-            ),
-        )
-
-
-@dataclass(frozen=True)
 class RuntimeError:
     code: str
     source: str
@@ -597,9 +226,9 @@ class RuntimeError:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = _as_mapping(data, "RuntimeError")
+        cause = _field(raw, "cause")
         lost_capability = _field(raw, "lost_capability")
         recovery = _field(raw, "recovery")
-        cause = _field(raw, "cause")
         return cls(
             code=_as_str(_field(raw, "code"), "code"),
             source=_as_str(_field(raw, "source"), "source"),
@@ -616,58 +245,231 @@ class RuntimeError:
 
 
 @dataclass(frozen=True)
-class StrategyResult:
-    status: StrategyResultStatus
-    decision: JsonValue = None
-    emitted: tuple[Envelope, ...] = ()
-    error: RuntimeError | None = None
-
-    @classmethod
-    def wait_input(cls) -> Self:
-        return cls(status=StrategyResultStatus.WAIT_INPUT)
+class VersionExpectation:
+    ref_id: str
+    expected_version: int
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "StrategyResult")
-        raw_emitted = _field(raw, "emitted")
-        if not isinstance(raw_emitted, Sequence) or isinstance(
-            raw_emitted, str | bytes | bytearray
-        ):
-            raise TypeError("emitted expects a sequence")
-        error = _field(raw, "error")
+        raw = _as_mapping(data, "VersionExpectation")
         return cls(
-            status=StrategyResultStatus(_as_str(_field(raw, "status"), "status")),
-            decision=_as_json_value(_field(raw, "decision")),
-            emitted=tuple(
-                Envelope.from_json_dict(_as_mapping(item, "Envelope")) for item in raw_emitted
-            ),
-            error=None
-            if error is None
-            else RuntimeError.from_json_dict(_as_mapping(error, "error")),
+            ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+            expected_version=_as_int(_field(raw, "expected_version"), "expected_version"),
         )
 
 
 @dataclass(frozen=True)
-class RefDescriptor:
-    ref_id: str
+class Task:
+    task_id: str
     kind: str
-    schema_id_target: str
-    schema_version_target: str
-    attributes: dict[str, ScalarValue] = field(default_factory=dict)
-    lineage: tuple[str, ...] = ()
+    priority: int
+    ready_at_step: int | None
+    payload: JsonValue
+    input_refs: tuple[str, ...]
+    expected_versions: tuple[VersionExpectation, ...]
+    correlation_id: str | None
+    idempotency_key: str | None
+    runner_hint: str | None
+    registry_generation: int
+    required_surfaces: tuple[str, ...]
+    created_sequence: int
+
+    @classmethod
+    def new(cls, task_id: str, kind: str, payload: JsonValue = None) -> Self:
+        return cls(
+            task_id=task_id,
+            kind=kind,
+            priority=0,
+            ready_at_step=None,
+            payload=payload,
+            input_refs=(),
+            expected_versions=(),
+            correlation_id=None,
+            idempotency_key=None,
+            runner_hint=None,
+            registry_generation=0,
+            required_surfaces=(),
+            created_sequence=0,
+        )
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "RefDescriptor")
+        raw = _as_mapping(data, "Task")
+        raw_expected = _field(raw, "expected_versions")
+        if not isinstance(raw_expected, Sequence) or isinstance(
+            raw_expected, str | bytes | bytearray
+        ):
+            raise TypeError("expected_versions expects sequence")
+        ready_at_step = _field(raw, "ready_at_step")
+        correlation_id = _field(raw, "correlation_id")
+        idempotency_key = _field(raw, "idempotency_key")
+        runner_hint = _field(raw, "runner_hint")
         return cls(
-            ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+            task_id=_as_str(_field(raw, "task_id"), "task_id"),
             kind=_as_str(_field(raw, "kind"), "kind"),
-            schema_id_target=_as_str(_field(raw, "schema_id_target"), "schema_id_target"),
-            schema_version_target=_as_str(
-                _field(raw, "schema_version_target"), "schema_version_target"
+            priority=_as_int(_field(raw, "priority"), "priority"),
+            ready_at_step=None
+            if ready_at_step is None
+            else _as_int(ready_at_step, "ready_at_step"),
+            payload=_as_json_value(_field(raw, "payload")),
+            input_refs=_as_str_tuple(_field(raw, "input_refs"), "input_refs"),
+            expected_versions=tuple(
+                VersionExpectation.from_json_dict(_as_mapping(item, "VersionExpectation"))
+                for item in raw_expected
             ),
-            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
-            lineage=_as_str_tuple(_field(raw, "lineage"), "lineage"),
+            correlation_id=None
+            if correlation_id is None
+            else _as_str(correlation_id, "correlation_id"),
+            idempotency_key=None
+            if idempotency_key is None
+            else _as_str(idempotency_key, "idempotency_key"),
+            runner_hint=None if runner_hint is None else _as_str(runner_hint, "runner_hint"),
+            registry_generation=_as_int(_field(raw, "registry_generation"), "registry_generation"),
+            required_surfaces=_as_str_tuple(_field(raw, "required_surfaces"), "required_surfaces"),
+            created_sequence=_as_int(_field(raw, "created_sequence"), "created_sequence"),
+        )
+
+
+@dataclass(frozen=True)
+class RunnerDescriptor:
+    runner_id: str
+    plugin_id: str
+    plugin_generation: int
+    accepted_task_kinds: tuple[str, ...]
+    purity: RunnerPurity
+    input_schema: JsonDict = field(default_factory=dict)
+    output_schema: JsonDict = field(default_factory=dict)
+    metadata: dict[str, ScalarValue] = field(default_factory=dict)
+    contract_surfaces: tuple[str, ...] = ()
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "RunnerDescriptor")
+        return cls(
+            runner_id=_as_str(_field(raw, "runner_id"), "runner_id"),
+            plugin_id=_as_str(_field(raw, "plugin_id"), "plugin_id"),
+            plugin_generation=_as_int(_field(raw, "plugin_generation"), "plugin_generation"),
+            accepted_task_kinds=_as_str_tuple(
+                _field(raw, "accepted_task_kinds"), "accepted_task_kinds"
+            ),
+            purity=RunnerPurity(_as_str(_field(raw, "purity"), "purity")),
+            input_schema=_as_json_dict(_field(raw, "input_schema"), "input_schema"),
+            output_schema=_as_json_dict(_field(raw, "output_schema"), "output_schema"),
+            metadata=_as_scalar_dict(_field(raw, "metadata"), "metadata"),
+            contract_surfaces=_as_str_tuple(_field(raw, "contract_surfaces"), "contract_surfaces"),
+        )
+
+
+@dataclass(frozen=True)
+class RunnerContext:
+    registry_generation: int
+    current_step: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "RunnerContext")
+        return cls(
+            registry_generation=_as_int(_field(raw, "registry_generation"), "registry_generation"),
+            current_step=_as_int(_field(raw, "current_step"), "current_step"),
+        )
+
+
+@dataclass(frozen=True)
+class StateDelta:
+    target_ref: str
+    expected_version: int
+    patch: JsonValue
+    conflict_policy: ConflictPolicy
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "StateDelta")
+        return cls(
+            target_ref=_as_str(_field(raw, "target_ref"), "target_ref"),
+            expected_version=_as_int(_field(raw, "expected_version"), "expected_version"),
+            patch=_as_json_value(_field(raw, "patch")),
+            conflict_policy=ConflictPolicy(
+                _as_str(_field(raw, "conflict_policy"), "conflict_policy")
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class DomainEvent:
+    event_id: str
+    kind: str
+    payload: JsonValue
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "DomainEvent")
+        return cls(
+            event_id=_as_str(_field(raw, "event_id"), "event_id"),
+            kind=_as_str(_field(raw, "kind"), "kind"),
+            payload=_as_json_value(_field(raw, "payload")),
+        )
+
+
+@dataclass(frozen=True)
+class EffectPrecondition:
+    ref_id: str
+    expected_version: int
+
+
+@dataclass(frozen=True)
+class EffectRequest:
+    effect_id: str
+    kind: str
+    payload: JsonValue
+    preconditions: tuple[EffectPrecondition, ...] = ()
+    idempotency_key: str | None = None
+
+
+@dataclass(frozen=True)
+class RunnerResult:
+    task_id: str
+    deltas: tuple[StateDelta, ...] = ()
+    events: tuple[DomainEvent, ...] = ()
+    tasks: tuple[Task, ...] = ()
+    effects: tuple[EffectRequest, ...] = ()
+    values: tuple[ValueRef, ...] = ()
+    resources: tuple[ResourceRef, ...] = ()
+    status: RunnerStatus = RunnerStatus.COMPLETED
+
+    @classmethod
+    def completed(cls, task_id: str) -> Self:
+        return cls(task_id=task_id)
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = _as_mapping(data, "RunnerResult")
+        return cls(
+            task_id=_as_str(_field(raw, "task_id"), "task_id"),
+            deltas=tuple(
+                StateDelta.from_json_dict(_as_mapping(item, "StateDelta"))
+                for item in _sequence(_field(raw, "deltas"), "deltas")
+            ),
+            events=tuple(
+                DomainEvent.from_json_dict(_as_mapping(item, "DomainEvent"))
+                for item in _sequence(_field(raw, "events"), "events")
+            ),
+            tasks=tuple(
+                Task.from_json_dict(_as_mapping(item, "Task"))
+                for item in _sequence(_field(raw, "tasks"), "tasks")
+            ),
+            effects=tuple(
+                _effect_request_from_json(_as_mapping(item, "EffectRequest"))
+                for item in _sequence(_field(raw, "effects"), "effects")
+            ),
+            values=tuple(
+                _value_ref_from_json(_as_mapping(item, "ValueRef"))
+                for item in _sequence(_field(raw, "values"), "values")
+            ),
+            resources=tuple(
+                ResourceRef.from_json_dict(_as_mapping(item, "ResourceRef"))
+                for item in _sequence(_field(raw, "resources"), "resources")
+            ),
+            status=RunnerStatus(_as_str(_field(raw, "status"), "status")),
         )
 
 
@@ -676,63 +478,69 @@ class LeaseToken:
     token_id: str
     ref_id: str
     owner: str
+    mode: str
+    expires_at_step: int | None
+    generation: int
+
+
+@dataclass(frozen=True)
+class ResourceAccess:
+    type: str
+    path: str | None = None
+    offset: int | None = None
+    len: int | None = None
+    readonly: bool | None = None
+    store_id: str | None = None
+    key: str | None = None
+
+
+@dataclass(frozen=True)
+class ResourceRef:
+    ref_id: str
+    provider_id: str
+    resource_kind: str
+    schema: str
+    version: int
+    generation: int
+    access: ResourceAccess
+    size_hint: int | None
+    content_hash: str | None
+    lifetime: ResourceLifetime
+    lease: LeaseToken | None
+    seal_state: ResourceSealState
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "LeaseToken")
+        raw = _as_mapping(data, "ResourceRef")
         return cls(
-            token_id=_as_str(_field(raw, "token_id"), "token_id"),
             ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
-            owner=_as_str(_field(raw, "owner"), "owner"),
+            provider_id=_as_str(_field(raw, "provider_id"), "provider_id"),
+            resource_kind=_as_str(_field(raw, "resource_kind"), "resource_kind"),
+            schema=_as_str(_field(raw, "schema"), "schema"),
+            version=_as_int(_field(raw, "version"), "version"),
+            generation=_as_int(_field(raw, "generation"), "generation"),
+            access=_resource_access_from_json(_as_mapping(_field(raw, "access"), "access")),
+            size_hint=_optional_int(_field(raw, "size_hint"), "size_hint"),
+            content_hash=_optional_str(_field(raw, "content_hash"), "content_hash"),
+            lifetime=ResourceLifetime(_as_str(_field(raw, "lifetime"), "lifetime")),
+            lease=None
+            if _field(raw, "lease") is None
+            else _lease_from_json(_as_mapping(_field(raw, "lease"), "lease")),
+            seal_state=ResourceSealState(_as_str(_field(raw, "seal_state"), "seal_state")),
         )
 
 
 @dataclass(frozen=True)
-class ResourceRecord:
-    descriptor: RefDescriptor
-    owner: str
-    lease_count: int = 0
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "ResourceRecord")
-        return cls(
-            descriptor=RefDescriptor.from_json_dict(
-                _as_mapping(_field(raw, "descriptor"), "descriptor")
-            ),
-            owner=_as_str(_field(raw, "owner"), "owner"),
-            lease_count=_as_int(_field(raw, "lease_count"), "lease_count"),
-        )
-
-
-@dataclass(frozen=True)
-class TraceSpan:
-    trace_id: str
-    span_id: str
-    parent_span_id: str | None = None
-    name: str = ""
-    start: float = 0.0
-    end: float | None = None
-    attributes: dict[str, ScalarValue] = field(default_factory=dict)
-    status: SpanStatus = SpanStatus.OK
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "TraceSpan")
-        end = _field(raw, "end")
-        parent_span_id = _field(raw, "parent_span_id")
-        return cls(
-            trace_id=_as_str(_field(raw, "trace_id"), "trace_id"),
-            span_id=_as_str(_field(raw, "span_id"), "span_id"),
-            parent_span_id=None
-            if parent_span_id is None
-            else _as_str(parent_span_id, "parent_span_id"),
-            name=_as_str(_field(raw, "name"), "name"),
-            start=_as_float(_field(raw, "start"), "start"),
-            end=None if end is None else _as_float(end, "end"),
-            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
-            status=SpanStatus(_as_str(_field(raw, "status"), "status")),
-        )
+class ValueRef:
+    ref_id: str
+    provider_id: str
+    schema: str
+    version: int
+    generation: int
+    size_hint: int | None
+    content_hash: str | None
+    lifetime: ResourceLifetime
+    storage: ValueStorage
 
 
 @dataclass(frozen=True)
@@ -740,22 +548,110 @@ class RuntimeEvent:
     sequence: int
     kind: RuntimeEventKind
     name: str
-    agent_id: str | None = None
-    attributes: dict[str, ScalarValue] = field(default_factory=dict)
-    error: RuntimeError | None = None
+    subject_id: str | None
+    attributes: dict[str, ScalarValue]
+    error: RuntimeError | None
 
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = _as_mapping(data, "RuntimeEvent")
-        error = _field(raw, "error")
-        agent_id = _field(raw, "agent_id")
-        return cls(
-            sequence=_as_int(_field(raw, "sequence"), "sequence"),
-            kind=RuntimeEventKind(_as_str(_field(raw, "kind"), "kind")),
-            name=_as_str(_field(raw, "name"), "name"),
-            agent_id=None if agent_id is None else _as_str(agent_id, "agent_id"),
-            attributes=_as_scalar_dict(_field(raw, "attributes"), "attributes"),
-            error=None
-            if error is None
-            else RuntimeError.from_json_dict(_as_mapping(error, "error")),
-        )
+
+@dataclass(frozen=True)
+class TraceSpan:
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    name: str
+    start: float
+    end: float | None
+    attributes: dict[str, ScalarValue]
+    status: SpanStatus
+
+
+@dataclass(frozen=True)
+class ContractSurface:
+    surface_id: str
+    kind: ContractSurfaceKind
+    owner_plugin_id: str
+    fingerprint: str
+    deprecated: bool
+
+
+@dataclass(frozen=True)
+class RuntimeLoadPlan:
+    lock_version: int
+    core_api_version: str
+    profile_id: str
+    profile_hash: str
+    registry_generation: int
+    plugins: tuple[JsonDict, ...]
+    load_order: tuple[str, ...]
+    runner_bindings: dict[str, str]
+    contract_surfaces: tuple[ContractSurface, ...]
+
+
+def _sequence(value: object, field_name: str) -> Sequence[object]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        raise TypeError(f"{field_name} expects sequence")
+    return value
+
+
+def _optional_str(value: object, field_name: str) -> str | None:
+    return None if value is None else _as_str(value, field_name)
+
+
+def _optional_int(value: object, field_name: str) -> int | None:
+    return None if value is None else _as_int(value, field_name)
+
+
+def _lease_from_json(raw: Mapping[str, object]) -> LeaseToken:
+    return LeaseToken(
+        token_id=_as_str(_field(raw, "token_id"), "token_id"),
+        ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+        owner=_as_str(_field(raw, "owner"), "owner"),
+        mode=_as_str(_field(raw, "mode"), "mode"),
+        expires_at_step=_optional_int(_field(raw, "expires_at_step"), "expires_at_step"),
+        generation=_as_int(_field(raw, "generation"), "generation"),
+    )
+
+
+def _resource_access_from_json(raw: Mapping[str, object]) -> ResourceAccess:
+    return ResourceAccess(
+        type=_as_str(_field(raw, "type"), "type"),
+        path=_optional_str(raw.get("path"), "path"),
+        offset=_optional_int(raw.get("offset"), "offset"),
+        len=_optional_int(raw.get("len"), "len"),
+        readonly=None if raw.get("readonly") is None else _as_bool(raw.get("readonly"), "readonly"),
+        store_id=_optional_str(raw.get("store_id"), "store_id"),
+        key=_optional_str(raw.get("key"), "key"),
+    )
+
+
+def _effect_request_from_json(raw: Mapping[str, object]) -> EffectRequest:
+    return EffectRequest(
+        effect_id=_as_str(_field(raw, "effect_id"), "effect_id"),
+        kind=_as_str(_field(raw, "kind"), "kind"),
+        payload=_as_json_value(_field(raw, "payload")),
+        preconditions=tuple(
+            EffectPrecondition(
+                ref_id=_as_str(_field(_as_mapping(item, "EffectPrecondition"), "ref_id"), "ref_id"),
+                expected_version=_as_int(
+                    _field(_as_mapping(item, "EffectPrecondition"), "expected_version"),
+                    "expected_version",
+                ),
+            )
+            for item in _sequence(_field(raw, "preconditions"), "preconditions")
+        ),
+        idempotency_key=_optional_str(_field(raw, "idempotency_key"), "idempotency_key"),
+    )
+
+
+def _value_ref_from_json(raw: Mapping[str, object]) -> ValueRef:
+    return ValueRef(
+        ref_id=_as_str(_field(raw, "ref_id"), "ref_id"),
+        provider_id=_as_str(_field(raw, "provider_id"), "provider_id"),
+        schema=_as_str(_field(raw, "schema"), "schema"),
+        version=_as_int(_field(raw, "version"), "version"),
+        generation=_as_int(_field(raw, "generation"), "generation"),
+        size_hint=_optional_int(_field(raw, "size_hint"), "size_hint"),
+        content_hash=_optional_str(_field(raw, "content_hash"), "content_hash"),
+        lifetime=ResourceLifetime(_as_str(_field(raw, "lifetime"), "lifetime")),
+        storage=ValueStorage(_as_str(_field(raw, "storage"), "storage")),
+    )

@@ -1,99 +1,79 @@
 # Mutsuki 路线图
 
-本文件回答：当前仓库目标、完成门槛、后续方向。当前工作树以 **Rust framework
-完整可使用** 为主目标；早期 Python 框架代码已移动到
-`python/reference-mutsuki/`，作为旧 Python 实现的参考与迁移层，不再是根级主链。
+Mutsuki 当前目标是 **TaskPool + Plugin Runner** 的 Rust-first runtime kernel。
+早期以 agent inbox 和 backend trait 为中心的主链已经退出当前目标架构，也不作为公共兼容层保留。
 
-## 当前边界：Rust-first Agent Runtime Kernel
+## 当前边界
 
 根级 workspace 由三个 crate 组成：
 
-- `crates/mutsuki-runtime-contracts`：纯协议与序列化结构。
-- `crates/mutsuki-runtime-core`：运行时内核，负责 Agent lifecycle、routing、
-  tick、Operation / Source registry、trace、ResourceGate。
-- `crates/mutsuki-runtime-host`：native Rust host helper，用于不依赖 Python
-  PluginHost 的可运行 smoke 和集成入口。
+- `crates/mutsuki-runtime-contracts`：Task、Runner、Resource、Plugin load-plan、
+  event/trace/error 等纯协议对象。
+- `crates/mutsuki-runtime-core`：`CoreRuntime`、`TaskPool`、`RunnerRegistry`、
+  `RunnerLoop`、`ResultRouter`、`StateStore`、`ResourceManager`、EventLog/TraceLog。
+- `crates/mutsuki-runtime-host`：native runner host、deterministic load-plan resolver
+  和 JSONL runner client。
 
-当前目标不是“把旧 Python Core 包一层 Rust 壳”，而是让 Rust runtime 本身具备
-可直接嵌入应用的完整骨架：上层 host 只提供策略和能力实现，runtime 持有运行时
-状态、调度、路由、source/operation metadata、资源租约和 trace 事实。
+Python runner kit 位于 `python/mutsuki-runtime-python/`，镜像新协议并提供 Python
+runner host、stdio JSONL runner server、ValueRef/ResourceRef 资源管理测试实现。
+`python/reference-mutsuki/` 仍是旧 Python 框架参考层，不是根级 runtime 主链。
 
 ## 已完成基线
 
-- Rust contracts 覆盖 `AgentSpec`、`Envelope`、`ScopeRuleSpec`、
-  `OperationDescriptor`、`SourceDescriptor`、`OperationSnapshot`、
-  `SourceSnapshot`、`StrategyResult`、`RuntimeError`、`TraceSpan`、
-  `RefDescriptor`、`LeaseToken`、`ResourceRecord`。
+- Rust contracts 覆盖 `Task`、`TaskStatus`、`RunnerDescriptor`、`RunnerPurity`、
+  `RunnerResult`、`StateDelta`、`EffectRequest`、`TaskDemand`、`ResourceRef`、
+  `ValueRef`、`RuntimeProfile`、`PluginManifest`、`RuntimeLoadPlan`、
+  `ContractSurface`、`RuntimeEvent`、`TraceSpan`、`RuntimeError`。
 - Rust core 覆盖：
-  - `spawn -> awake -> sleep -> stop` 生命周期。
-  - `publish` 路由与 `Agent.accepts` 显式匹配。
-  - Source registry 校验；未注册 source fail-loud 为 `source.unregistered`。
-  - Operation metadata registry 与 backend key 间接调用。
-  - 启动事务：`on_awake` 或 registry refresh 失败时不提交 `awake`。
-  - `ResourceGate` 管理 descriptor、owner、lease token、lease count。
-  - `ResourceGate` 支持按 `ref_id` / resource `kind` 的租约容量门控，耗尽时
-    结构化失败为 `capability.exhausted`。
-  - 租约 token 由注入式 ID source 生成，不使用全局 UUID。
-  - runtime event stream 记录 lifecycle / routing / operation / resource 等事件。
-  - trace span 记录 Agent input / strategy / operation 等关键运行点。
-  - Rust trace closure helper 可检查重复 span、父链缺失、trace 不一致和时间区间。
-  - Agent election policy 可替换，但只排序已通过 lifecycle + accepts 的候选。
+  - `TaskPool` 统一保存 pending/running/completed/failed task。
+  - ready task claim 排序固定为 `ready_at_step asc -> priority desc ->
+    created_sequence asc -> task_id asc`。
+  - runner 按 task kind、runner hint、purity claim task。
+  - 默认 Orchestrator runner 通过 `TaskDemandTable` fan-out raw input。
+  - Pure runner 输出的 state delta、event、effect request 被 ResultRouter 转为
+    `core.commit`、`core.event.append`、`effect.*` task。
+  - `core.kernel` Committer runner 是 StateStore/EventLog 的提交入口。
+  - `ResourceManager` 支持 inline small value、ValueRef、blob ref、file-backed mmap
+    ref、copy-on-write 和 ExclusiveWriteLease。
+  - registry boot 后 freeze；runner descriptor 必须在 `RuntimeLoadPlan` 授权内。
+  - hot reload 支持 contract surface 比较：Identical、Additive、Deprecated、
+    Removed、Breaking；breaking 会阻断。
+  - `reload_with_runners` 物化新 runner generation，并将 pending task rebind 到新
+    registry generation。
+  - runner cancel 走 management channel，dispose 进入 DisposeBag。
 - Rust host 覆盖：
-  - native in-memory Source / Operation backend。
-  - 无 Python 情况下跑通 Agent start、publish、tick、invoke、stop。
-- Python reference：
-  - 旧 `mutsuki`、`mutsuki_ext`、Python tests、docs、examples、`pyproject.toml`
-    与 `uv.lock` 已移动到 `python/reference-mutsuki/`。
-- Python backend kit：
-  - `python/mutsuki-runtime-python/` 提供 Rust contracts 的 Python wire-shape 镜像、
-    进程内 backend host、descriptor-only resource backend 和测试夹具。
-  - 提供 stdio JSONL 进程边界，可将 Python-owned strategy / operation / resource
-    backend 暴露为纯协议请求响应。
-  - 该包不依赖旧 `python/reference-mutsuki/`，也不定义第二套 Python runtime。
+  - native plugin host 可解析 `RuntimeProfile + PluginManifest` 为 load plan 并启动
+    `CoreRuntime`。
+  - JSONL runner client 使用 `runner.step`、`runner.cancel`、`runner.dispose` 方法面。
+- Python runner kit 覆盖：
+  - 新协议 dataclass mirror 与 JSON roundtrip。
+  - `PythonRunnerHost`、`StdioJsonlRunnerServer`、`PythonResourceManager`。
+  - public API 不再导出早期 backend 兼容层。
 
 ## 当前完成门槛
 
-Rust framework 被视为当前目标完成，必须同时满足：
+当前 Rust/Python runtime framework 被视为可用，必须同时满足：
 
+- `cargo fmt --check` 通过。
 - `cargo test` 在根目录通过。
-- Rust runtime 可在不装载 Python 的情况下由 native host 跑通最小 Agent loop。
-- Source 未注册、operation 缺失、backend generation mismatch、资源 token mismatch
-  都以结构化错误失败。
-- Resource acquire / release 计数正确，lease token 由 runtime/host ID source 生成。
-- Trace 至少能证明 input -> strategy 与 operation 错误链路的父子关系。
-- Rust crates 中不出现 Yume、latent、tensor、gpu、Lilia、Codex、OneBot、MCP 等
-  领域或产品专用执行分支。
-- 根级 README / plans 不再把 Python Core 描述为当前主运行时。
+- `uv run ruff check src tests`、`uv run pyright src tests`、`uv run pytest` 在
+  `python/mutsuki-runtime-python` 下通过。
+- Core 不出现 Yume、LLM、IM、MCP、ChatCompletion 等业务执行分支。
+- TaskPool 只承载控制面和引用，不搬运不可控业务对象。
+- 状态只通过 `core.commit` task 提交；外部副作用只通过 `effect.*` task 处理。
+- ResourceRef/ValueRef 是 descriptor，不是语言对象或裸指针。
+- Plugin/runtime registry 由 load plan 物化，运行中不得动态越权注册能力。
 
 ## 下一步
 
-### R5：Native Framework Hardening
+- 加强真实跨进程 mmap/shared memory/blob provider，而不是当前测试级 file-backed mmap。
+- 扩展 PluginHost resolver 的版本约束、权限审计和 capability provider 选择。
+- 增加长期 sidecar supervision、deadline/cancel propagation 和 effect compensation。
+- 为 removed/deprecated surface 引入更完整的 occupancy 统计源。
 
-- 已完成 runtime event stream、ResourceGate `ref_id` / `kind` 容量治理、Rust trace
-  closure helper 和可替换 election policy。
-- 后续可继续补事件订阅 sink、跨进程 trace replay 和更细维度资源治理。
+## 红线
 
-### Python Backend Kit Hardening
-
-- 为 `python/mutsuki-runtime-python` 增加显式进程 / RPC 边界前，保持进程内 backend
-  与 Rust trait 语义一致。
-- stdio JSONL 边界已作为首个显式进程协议落地；HTTP、取消、deadline 和长期
-  sidecar supervision 后续单独设计。
-- Python 侧只能通过纯协议、backend key、descriptor 和 lease token 与 Rust runtime
-  交互，不得跨边界传 callable、socket、SDK client、真实 `Handle[T]` 或领域对象。
-
-## 反向论证（红线）
-
-出现以下情况应修 runtime 契约，而不是把业务语义塞回 core：
-
-- Rust runtime 需要理解 latent、KV cache、LLM provider、IM wire shape 或产品工具。
-- 为了跨边界调用而序列化真实 `Handle[T]`。
-- Source 未声明也能路由，或 backend key 过期后自动 fallback 到新 handler。
-- trace 断链但没有结构化错误解释。
-- 为性能绕过 capability、permission、scope、source 或 trace 拦截链。
-
-## Plan 同步规则
-
-- 代码即事实，plans 是契约 + 决策。
-- 公共契约、生命周期、backend trait、资源治理或目录边界变化必须同 PR 更新 plans。
-- 历史版本报告保留历史上下文；当前事实以本文件和 `engineering.md` 为准。
+- 不恢复旧实例私有收件队列作为核心事实源。
+- 不把模拟个体、LLM、记忆、情感、IM 或产品 wire shape 写入 Rust core。
+- 不让普通 runner 直接修改 StateStore/EventLog 或执行外部副作用。
+- 不跨 ABI/进程传 Python object、Rust pointer、callable、socket、SDK client 或真实 handle。
