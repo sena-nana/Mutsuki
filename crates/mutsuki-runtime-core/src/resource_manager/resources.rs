@@ -10,6 +10,17 @@ use crate::{IdSource, RuntimeFailure, RuntimeResult};
 use super::{ResourceEntry, ResourceManager, io_failure, resource_not_found, simple_hash};
 
 impl ResourceManager {
+    pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        self.resources
+            .get(ref_id)
+            .map(|entry| entry.descriptor.clone())
+            .ok_or_else(|| resource_not_found(format!("resource.open.{ref_id}")))
+    }
+
+    pub fn map_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        self.open_resource(ref_id)
+    }
+
     pub fn create_mmap_resource(
         &mut self,
         schema: &str,
@@ -130,6 +141,11 @@ impl ResourceManager {
             ResourceAccess::MmapFile { path, .. } => fs::read(path).map_err(io_failure),
             _ => Ok(entry.bytes.clone()),
         }
+    }
+
+    pub fn read_resource_by_id(&self, ref_id: &str) -> RuntimeResult<Vec<u8>> {
+        let descriptor = self.map_resource(ref_id)?;
+        self.read_resource(&descriptor)
     }
 
     pub fn copy_on_write(

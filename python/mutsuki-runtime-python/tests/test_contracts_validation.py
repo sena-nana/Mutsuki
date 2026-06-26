@@ -12,7 +12,7 @@ from mutsuki_runtime_python.contracts.task import Task
 
 def test_missing_required_contract_fields_fail() -> None:
     with pytest.raises(TypeError):
-        from_json_dict(Task, {"task_id": "task-1", "kind": "raw.input"})
+        from_json_dict(Task, {"task_id": "task-1", "protocol_id": "raw.input"})
     with pytest.raises(TypeError):
         from_json_dict(RunnerDescriptor, {"runner_id": "runner-a"})
     with pytest.raises(TypeError):

@@ -38,7 +38,7 @@ def echo_descriptor() -> RunnerDescriptor:
         runner_id="echo.runner",
         plugin_id="plugin.echo",
         plugin_generation=1,
-        accepted_task_kinds=("raw.input",),
+        accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
         contract_surfaces=("runner:echo.runner",),
     )

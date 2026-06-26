@@ -10,11 +10,16 @@ fn assert_missing_fields_fail<T: DeserializeOwned>(value: serde_json::Value) {
 fn task_runner_resource_contracts_roundtrip_json() {
     let task = Task {
         task_id: "task-1".into(),
-        kind: "raw.input.chat_message".into(),
+        protocol_id: "raw.input.chat_message".into(),
         priority: 10,
         ready_at_step: Some(2),
         payload: serde_json::json!({"actor_id": "actor-a"}),
         input_refs: vec!["value:raw-1".into()],
+        output_ref: None,
+        continuation_ref: None,
+        target_binding_id: Some("binding:chat".into()),
+        lease_id: Some("task-lease-1".into()),
+        trace_id: Some("trace-1".into()),
         expected_versions: vec![VersionExpectation {
             ref_id: "state:actor-a".into(),
             expected_version: 7,
@@ -23,7 +28,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         idempotency_key: Some("idem-1".into()),
         runner_hint: Some("orchestrator".into()),
         registry_generation: 3,
-        required_surfaces: vec!["task_kind:raw.input.chat_message".into()],
+        required_surfaces: vec!["task_protocol:raw.input.chat_message".into()],
         created_sequence: 4,
     };
     assert_eq!(
@@ -35,7 +40,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         runner_id: "runner-a".into(),
         plugin_id: "plugin-a".into(),
         plugin_generation: 1,
-        accepted_task_kinds: vec!["raw.input.chat_message".into()],
+        accepted_protocol_ids: vec!["raw.input.chat_message".into()],
         purity: RunnerPurity::Pure,
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: serde_json::json!({"type": "object"}),
@@ -90,7 +95,7 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
             binding_id: "message-handler".into(),
             plugin_id: "plugin-a".into(),
             protocol_id: "im.message.received.v1".into(),
-            target_task_kind: "cap.message.handle".into(),
+            target_protocol_id: "cap.message.handle".into(),
             target_runner_hint: Some("message.runner".into()),
             pool_id: "default".into(),
             priority: 10,
@@ -189,7 +194,7 @@ fn surface_occupancy_handle_roundtrips_json() {
 fn missing_new_contract_fields_fail_deserialization() {
     assert_missing_fields_fail::<Task>(serde_json::json!({
         "task_id": "task-1",
-        "kind": "raw.input"
+        "protocol_id": "raw.input"
     }));
     assert_missing_fields_fail::<RunnerDescriptor>(serde_json::json!({
         "runner_id": "runner-a"

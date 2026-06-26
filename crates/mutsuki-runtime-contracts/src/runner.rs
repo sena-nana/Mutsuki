@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{RefId, ResourceRef, ScalarValue, Task, TaskId, ValueRef};
+use crate::{ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskId, ValueRef};
 use crate::{StateDelta, SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub struct RunnerDescriptor {
     pub runner_id: String,
     pub plugin_id: String,
     pub plugin_generation: u64,
-    pub accepted_task_kinds: Vec<String>,
+    pub accepted_protocol_ids: Vec<ProtocolId>,
     pub purity: RunnerPurity,
     pub input_schema: Value,
     pub output_schema: Value,
@@ -31,6 +31,8 @@ pub struct RunnerDescriptor {
 #[serde(rename_all = "snake_case")]
 pub enum RunnerStatus {
     Completed,
+    Waiting,
+    Blocked,
     Continue,
     Failed,
     Cancelled,

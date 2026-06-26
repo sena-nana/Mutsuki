@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::RefId;
+use crate::{ExecutorId, RefId, ResourceCellId, ResourceLeaseId, TaskId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,6 +77,28 @@ pub struct LeaseToken {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExclusiveWriteLease {
     pub token: LeaseToken,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceCellRef {
+    pub cell_id: ResourceCellId,
+    pub resource_kind: String,
+    pub owner_plugin_id: String,
+    pub schema: String,
+    pub generation: u64,
+    pub health: String,
+    pub reload_policy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLease {
+    pub lease_id: ResourceLeaseId,
+    pub cell_id: ResourceCellId,
+    pub borrower_task_id: TaskId,
+    pub borrower_executor_id: ExecutorId,
+    pub mode: String,
+    pub expires_at_step: Option<u64>,
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

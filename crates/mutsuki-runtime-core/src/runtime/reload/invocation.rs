@@ -61,10 +61,10 @@ impl CoreRuntime {
 }
 
 fn classify_pollution(task: &Task, runner: &RunnerDescriptor) -> InvocationPollution {
-    if task.kind.starts_with("effect.") || runner.purity == RunnerPurity::Effectful {
+    if task.protocol_id.starts_with("effect.") || runner.purity == RunnerPurity::Effectful {
         return InvocationPollution::Polluted;
     }
-    if task.kind.starts_with("core.") || runner.purity == RunnerPurity::Committer {
+    if task.protocol_id.starts_with("core.") || runner.purity == RunnerPurity::Committer {
         return InvocationPollution::Polluted;
     }
     if runner.purity != RunnerPurity::Pure {

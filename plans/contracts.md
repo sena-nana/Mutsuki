@@ -15,17 +15,20 @@
 
 | 对象 | 语义 |
 |---|---|
-| `Task` | 统一待处理控制消息，包含 kind、priority、ready_at_step、payload、refs、expected_versions、registry_generation |
+| `Task` | 统一待处理控制消息，包含 protocol_id、priority、ready_at_step、payload、refs、target_binding_id、lease_id、expected_versions、registry_generation |
+| `TaskLease` | 一次 task step 的执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
 | `TaskStatus` | created、ready、running、waiting、blocked、completed、failed、cancelled、expired、dead_letter |
 | `ProtocolDescriptor` | protocol_id、schema、codec、version、compatibility 等纯数据契约 |
-| `HandlerBinding` | 插件对 protocol 的逻辑消费绑定，指向目标 task kind / runner hint / pool |
-| `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_task_kinds、purity、schema、metadata |
+| `HandlerBinding` | 插件对 protocol 的逻辑消费绑定，指向目标 protocol / runner hint / pool |
+| `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_protocol_ids、purity、schema、metadata |
 | `RunnerPurity` | Pure、Committer、Effectful |
 | `RunnerResult` | task_id、deltas、events、tasks、effects、values、resources、status |
 | `StateDelta` | target_ref、expected_version、patch、conflict_policy |
 | `EffectRequest` | effect_id、kind、payload、preconditions、idempotency_key |
 | `ValueRef` | 小型结构化共享值 descriptor |
 | `ResourceRef` | 大型资源 / mmap / blob / stream / provider-RPC descriptor |
+| `ResourceCellRef` | 长期资源状态单元 descriptor，例如连接池、stream、cookie jar、rate limiter |
+| `ResourceLease` | task step 临时使用 ResourceCell 的租约 |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
 | `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
@@ -35,7 +38,9 @@
 | `RuntimeEvent` | sequence、kind、name、subject_id、attributes、error |
 | `TraceSpan` | trace_id、span_id、parent_span_id、name、interval、attributes、status |
 
-## 3. Runner 接口
+## 3. Task 与 Runner 接口
+
+`Task.protocol_id` 是当前调度事实源。早期 task-kind 兼容字段不再属于当前 wire shape。
 
 ```text
 Runner.step(ctx, tasks) -> Vec<RunnerResult>
@@ -47,6 +52,11 @@ Runner.dispose()
 
 - `registry_generation`
 - `current_step`
+- `executor_id`
+- `task_lease_id`
+
+当前 `tasks` 仍保留 Vec wire shape 以兼容 host/JSONL runner client，但 Core 每次只
+lease 一个 Task 给一个 Executor 调用 Runner。
 
 ## 4. TaskPool
 
@@ -54,13 +64,16 @@ TaskPool claim 必须满足：
 
 - task 是 ready。
 - `ready_at_step` 未设置或已到达。
-- runner 接受 task kind。
+- runner 接受 task protocol id。
 - runner hint 若存在必须匹配。
 - task `registry_generation` 与当前 registry generation 匹配。
 - Effectful runner 只能 claim `effect.*` task。
 - Committer runner 只能 claim `core.*` task。
 - `effect.*` 只能由 Effectful runner claim。
 - `core.*` 只能由 Committer runner claim。
+
+Task claim 成功后必须生成 `TaskLease`，Running 状态必须能追溯 runner、executor 和
+lease id。完成、失败、取消、等待或阻塞当前 task 时，Core 释放该 task lease。
 
 排序：
 
@@ -75,6 +88,7 @@ task_id asc
 
 Pure runner 不直接提交状态或执行副作用：
 
+- `status = completed / failed / cancelled / waiting / blocked` 只改变当前 task 的状态。
 - `deltas` 生成 `core.commit` task。
 - `events` 生成 `core.event.append` task。
 - `effects` 生成 `effect.*` task。
@@ -82,7 +96,8 @@ Pure runner 不直接提交状态或执行副作用：
 - `tasks` 直接进入 TaskPool。复杂编排必须由插件 runner 显式返回这些 task；Core 不根据
   protocol 或 handler binding 自动 fan-out。
 
-Committer runner 是 StateStore/EventLog 的唯一提交入口。
+Committer runner 是 StateStore/EventLog 的唯一提交入口。`Waiting` / `Blocked` 只描述
+当前 task，不表示 TaskGroup、WaitSet、broadcast completion 或 workflow stage。
 
 ## 6. Resource / Value
 
@@ -92,6 +107,8 @@ Task payload 可包含：
 - 小型不可变 inline value。
 - `ValueRef`。
 - `ResourceRef`。
+- `ResourceCellRef`。
+- `ResourceLease`。
 - `StateRef`。
 
 默认一致性规则：
@@ -100,6 +117,7 @@ Task payload 可包含：
 - 修改生成新 ref。
 - 状态修改走 `StateDelta + expected_version`。
 - 原地写必须 ExclusiveWriteLease。
+- runner 可以持有短期 ResourceLease，但不能拥有 ResourceCell。
 - lease 过期、generation mismatch、provider 崩溃必须结构化失败。
 
 ## 7. Plugin Loading
@@ -136,7 +154,7 @@ Core 热重载必须使用新 registry / plugin generation，不原地替换 run
 - effect occupancy 来自 ready/running `effect.*` task；stream occupancy 来自
   `ResourceAccess::Stream` 资源和显式 `SurfaceOccupancyHandle`；subscription/timer
   occupancy 来自显式 `SurfaceOccupancyHandle`。
-- deprecated surface 禁止新增派生占用：task enqueue 必须检查 task kind、effect kind、
+- deprecated surface 禁止新增派生占用：task enqueue 必须检查 task protocol、effect kind、
   runner hint 和 required surfaces；stream/subscription/timer 注册入口必须检查目标
   surface。
 

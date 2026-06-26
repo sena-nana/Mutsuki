@@ -41,3 +41,94 @@ fn resource_manager_supports_value_ref_mmap_cow_and_exclusive_write_lease() {
     assert_eq!(updated.generation, resource.generation + 1);
     assert_eq!(resources.read_resource(&updated).unwrap(), b"def");
 }
+
+#[test]
+fn resource_manager_owns_resource_cells_and_step_leases() {
+    let mut resources = ResourceManager::new();
+    let cell = resources.create_resource_cell(
+        "cell:http:default",
+        "http.connection_pool",
+        "plugin-http",
+        "http.connection_pool.v1",
+        "drain",
+    );
+    assert_eq!(cell.cell_id, "cell:http:default");
+
+    let shared = resources
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-http",
+            "executor-http-1",
+            "shared",
+            Some(12),
+        )
+        .unwrap();
+    assert_eq!(shared.borrower_task_id, "task-http");
+    assert_eq!(shared.borrower_executor_id, "executor-http-1");
+
+    let second_shared = resources
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-http-2",
+            "executor-http-2",
+            "shared",
+            None,
+        )
+        .unwrap();
+    assert!(
+        resources
+            .acquire_resource_lease(
+                &cell.cell_id,
+                "task-http-3",
+                "executor-http-3",
+                "exclusive",
+                None
+            )
+            .is_err()
+    );
+
+    resources.release_resource_lease(&shared).unwrap();
+    resources.release_resource_lease(&second_shared).unwrap();
+    let exclusive = resources
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-http-3",
+            "executor-http-3",
+            "exclusive",
+            None,
+        )
+        .unwrap();
+    resources.release_resource_lease(&exclusive).unwrap();
+}
+
+#[test]
+fn core_resource_facade_wraps_descriptor_and_lease_operations() {
+    let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
+    let mut runtime = super::fixtures::boot_with_kernel(plan);
+    let resource = runtime.create_blob_resource("bytes.v1", b"abc".to_vec());
+
+    assert_eq!(runtime.open_resource(&resource.ref_id).unwrap(), resource);
+    assert_eq!(runtime.map_resource(&resource.ref_id).unwrap(), resource);
+    assert_eq!(runtime.read_resource(&resource.ref_id).unwrap(), b"abc");
+
+    let mmap = runtime
+        .create_mmap_resource("bytes.v1", b"abc".to_vec())
+        .unwrap();
+    let lease = runtime
+        .lock_resource(&mmap.ref_id, "runner-a", Some(3))
+        .unwrap();
+    let updated = runtime.write_resource(&lease, b"def".to_vec()).unwrap();
+    assert_eq!(runtime.read_resource(&updated.ref_id).unwrap(), b"def");
+
+    let cell = runtime.create_resource_cell(
+        "cell:http",
+        "http.connection_pool",
+        "plugin-http",
+        "http.connection_pool.v1",
+        "drain",
+    );
+    let resource_lease = runtime
+        .acquire_resource_lease(&cell.cell_id, "task-http", "executor-http", "shared", None)
+        .unwrap();
+    runtime.release_resource_lease(&resource_lease).unwrap();
+}

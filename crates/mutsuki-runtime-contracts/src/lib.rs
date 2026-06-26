@@ -7,7 +7,10 @@ mod runner;
 mod task;
 mod trace;
 
-pub use common::{PluginId, RefId, RunnerId, ScalarValue, SpanId, SurfaceId, TaskId, TraceId};
+pub use common::{
+    BindingId, ExecutorId, PluginId, ProtocolId, RefId, ResourceCellId, ResourceLeaseId, RunnerId,
+    ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId, TraceId,
+};
 pub use error::{
     ERR_CAPABILITY_EXHAUSTED, ERR_PLUGIN_DISABLED, ERR_PLUGIN_NOT_FOUND, ERR_REGISTRY_FROZEN,
     ERR_REGISTRY_GENERATION_MISMATCH, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
@@ -24,14 +27,17 @@ pub use plugin::{
     SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
-    ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime, ResourceRef,
-    ResourceSealState, ResourceValue, ValueRef, ValueStorage,
+    ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceCellRef, ResourceLease,
+    ResourceLifetime, ResourceRef, ResourceSealState, ResourceValue, ValueRef, ValueStorage,
 };
 pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, RunnerDescriptor, RunnerPurity, RunnerResult,
     RunnerStatus,
 };
-pub use task::{ConflictPolicy, StateDelta, StateRef, Task, TaskStatus, VersionExpectation};
+pub use task::{
+    ConflictPolicy, StateDelta, StateRef, Task, TaskLease, TaskStatus, TaskStepContinuation,
+    VersionExpectation, WakeCondition,
+};
 pub use trace::{SpanStatus, TraceSpan};
 
 #[cfg(test)]

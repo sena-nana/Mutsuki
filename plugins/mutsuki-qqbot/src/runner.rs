@@ -91,7 +91,7 @@ impl Runner for QqOpenApiRunner {
     fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         let mut results = Vec::new();
         for task in tasks {
-            let response = match task.kind.as_str() {
+            let response = match task.protocol_id.as_str() {
                 EFFECT_MESSAGE_SEND => self.service.send_message(
                     parse_payload::<SendMessagePayload>(task.payload.clone()).map_err(|error| {
                         runtime_failure("qqbot.message.send.payload", error.to_string())
@@ -123,11 +123,11 @@ impl Runner for QqOpenApiRunner {
                     ctx.current_step,
                 ),
                 _ => Err(QqOpenApiError::InvalidPayload(format!(
-                    "unsupported task kind {}",
-                    task.kind
+                    "unsupported task protocol {}",
+                    task.protocol_id
                 ))),
             }
-            .map_err(|error| openapi_failure(&task.kind, error))?;
+            .map_err(|error| openapi_failure(&task.protocol_id, error))?;
 
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.events.push(result_event(&task, response));
@@ -142,7 +142,7 @@ fn result_event(task: &Task, response: Value) -> DomainEvent {
         event_id: format!("{}:result", task.task_id),
         kind: "qqbot.openapi.result".into(),
         payload: json!({
-            "task_kind": task.kind,
+            "task_protocol": task.protocol_id,
             "response": response,
         }),
     }

@@ -17,16 +17,20 @@ impl CoreRuntime {
         let mut completed = 0;
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
-            let tasks = self.tasks.claim_ready(
+            let executor_id = format!("executor:{}", descriptor.runner_id);
+            let leased_tasks = self.tasks.claim_ready_for_executor(
                 &descriptor,
+                executor_id.clone(),
                 self.current_step,
                 self.load_plan.registry_generation,
-                8,
+                1,
             );
-            if tasks.is_empty() {
+            if leased_tasks.is_empty() {
                 continue;
             }
-            claimed += tasks.len();
+            claimed += leased_tasks.len();
+            let lease_id = leased_tasks[0].0.lease_id.clone();
+            let tasks: Vec<_> = leased_tasks.into_iter().map(|(_, task)| task).collect();
             if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel"
             {
                 completed += self.process_kernel_tasks(&descriptor, tasks)?;
@@ -45,6 +49,8 @@ impl CoreRuntime {
             let ctx = RunnerContext {
                 registry_generation: self.load_plan.registry_generation,
                 current_step: self.current_step,
+                executor_id,
+                task_lease_id: Some(lease_id),
             };
             let span = self.traces.record(
                 format!("trace-runner-{}", descriptor.runner_id),

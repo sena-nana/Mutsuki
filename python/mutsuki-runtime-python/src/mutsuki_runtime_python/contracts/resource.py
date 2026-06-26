@@ -219,6 +219,56 @@ class ExclusiveWriteLease:
 
 
 @dataclass(frozen=True)
+class ResourceCellRef:
+    cell_id: str
+    resource_kind: str
+    owner_plugin_id: str
+    schema: str
+    generation: int
+    health: str
+    reload_policy: str
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ResourceCellRef")
+        return cls(
+            cell_id=as_str(field_value(raw, "cell_id"), "cell_id"),
+            resource_kind=as_str(field_value(raw, "resource_kind"), "resource_kind"),
+            owner_plugin_id=as_str(field_value(raw, "owner_plugin_id"), "owner_plugin_id"),
+            schema=as_str(field_value(raw, "schema"), "schema"),
+            generation=as_int(field_value(raw, "generation"), "generation"),
+            health=as_str(field_value(raw, "health"), "health"),
+            reload_policy=as_str(field_value(raw, "reload_policy"), "reload_policy"),
+        )
+
+
+@dataclass(frozen=True)
+class ResourceLease:
+    lease_id: str
+    cell_id: str
+    borrower_task_id: str
+    borrower_executor_id: str
+    mode: str
+    expires_at_step: int | None
+    generation: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ResourceLease")
+        return cls(
+            lease_id=as_str(field_value(raw, "lease_id"), "lease_id"),
+            cell_id=as_str(field_value(raw, "cell_id"), "cell_id"),
+            borrower_task_id=as_str(field_value(raw, "borrower_task_id"), "borrower_task_id"),
+            borrower_executor_id=as_str(
+                field_value(raw, "borrower_executor_id"), "borrower_executor_id"
+            ),
+            mode=as_str(field_value(raw, "mode"), "mode"),
+            expires_at_step=optional_int(field_value(raw, "expires_at_step"), "expires_at_step"),
+            generation=as_int(field_value(raw, "generation"), "generation"),
+        )
+
+
+@dataclass(frozen=True)
 class ResourceRef:
     ref_id: str
     provider_id: str

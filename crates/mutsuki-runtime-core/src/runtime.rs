@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, ResourceRef, RuntimeError, RuntimeEventKind, RuntimeLoadPlan,
+    ContractSurface, ExclusiveWriteLease, HandlerBinding, ResourceCellRef, ResourceLease,
+    ResourceRef, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan,
     SurfaceOccupancyHandle, Task,
 };
 use serde_json::Value;
@@ -20,6 +21,15 @@ mod reload;
 mod runner_loop;
 
 pub use reload::{InvocationPollution, RunningInvocationDisposition};
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskResultSnapshot {
+    pub task_id: String,
+    pub status: mutsuki_runtime_contracts::TaskStatus,
+    pub output_ref: Option<String>,
+    pub continuation_ref: Option<String>,
+    pub failure: Option<RuntimeError>,
+}
 
 struct DrainingGeneration {
     registry_generation: u64,
@@ -90,6 +100,24 @@ impl CoreRuntime {
         self.handler_bindings.query_protocol(protocol_id)
     }
 
+    pub fn register_handler_binding(&mut self, binding: HandlerBinding) -> RuntimeResult<()> {
+        let authorized = self
+            .load_plan
+            .plugins
+            .iter()
+            .flat_map(|plugin| plugin.provides.handler_bindings.iter())
+            .any(|declared| declared == &binding);
+        if !authorized {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.handler_binding",
+                format!("handler_binding.{}", binding.binding_id),
+            )));
+        }
+        self.handler_bindings.register_authorized(binding);
+        Ok(())
+    }
+
     pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {
         &self.generation_states
     }
@@ -141,6 +169,87 @@ impl CoreRuntime {
         Ok(())
     }
 
+    pub fn create_blob_resource(&mut self, schema: &str, bytes: Vec<u8>) -> ResourceRef {
+        self.resources.create_blob_resource(schema, bytes)
+    }
+
+    pub fn create_mmap_resource(
+        &mut self,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        self.resources.create_mmap_resource(schema, bytes)
+    }
+
+    pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        self.resources.open_resource(ref_id)
+    }
+
+    pub fn read_resource(&self, ref_id: &str) -> RuntimeResult<Vec<u8>> {
+        self.resources.read_resource_by_id(ref_id)
+    }
+
+    pub fn map_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        self.resources.map_resource(ref_id)
+    }
+
+    pub fn lock_resource(
+        &mut self,
+        ref_id: &str,
+        owner: &str,
+        expires_at_step: Option<u64>,
+    ) -> RuntimeResult<ExclusiveWriteLease> {
+        self.resources
+            .acquire_write_lease(ref_id, owner, expires_at_step)
+    }
+
+    pub fn write_resource(
+        &mut self,
+        lease: &ExclusiveWriteLease,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        self.resources
+            .write_with_lease(lease, bytes, self.current_step)
+    }
+
+    pub fn create_resource_cell(
+        &mut self,
+        cell_id: &str,
+        resource_kind: &str,
+        owner_plugin_id: &str,
+        schema: &str,
+        reload_policy: &str,
+    ) -> ResourceCellRef {
+        self.resources.create_resource_cell(
+            cell_id,
+            resource_kind,
+            owner_plugin_id,
+            schema,
+            reload_policy,
+        )
+    }
+
+    pub fn acquire_resource_lease(
+        &mut self,
+        cell_id: &str,
+        borrower_task_id: &str,
+        borrower_executor_id: &str,
+        mode: &str,
+        expires_at_step: Option<u64>,
+    ) -> RuntimeResult<ResourceLease> {
+        self.resources.acquire_resource_lease(
+            cell_id,
+            borrower_task_id,
+            borrower_executor_id,
+            mode,
+            expires_at_step,
+        )
+    }
+
+    pub fn release_resource_lease(&mut self, lease: &ResourceLease) -> RuntimeResult<()> {
+        self.resources.release_resource_lease(lease)
+    }
+
     pub fn register_surface_occupancy(
         &mut self,
         handle: SurfaceOccupancyHandle,
@@ -158,6 +267,92 @@ impl CoreRuntime {
 
     pub fn publish_raw_input(&mut self, task_id: &str, kind: &str, payload: Value) -> String {
         self.enqueue_task(Task::new(task_id, kind, payload))
+    }
+
+    pub fn submit_task(&mut self, task: Task) -> String {
+        self.enqueue_task(task)
+    }
+
+    pub fn submit_targeted_task(
+        &mut self,
+        task_id: &str,
+        binding_id: &str,
+        payload: Value,
+    ) -> RuntimeResult<String> {
+        let binding = self
+            .handler_bindings
+            .all()
+            .iter()
+            .find(|binding| binding.binding_id == binding_id)
+            .ok_or_else(|| {
+                RuntimeFailure::new(RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                    "runtime.handler_binding",
+                    format!("handler_binding.{binding_id}"),
+                ))
+            })?;
+        let mut task = Task::new(task_id, &binding.target_protocol_id, payload);
+        task.target_binding_id = Some(binding.binding_id.clone());
+        task.runner_hint = binding.target_runner_hint.clone();
+        Ok(self.enqueue_task(task))
+    }
+
+    pub fn task_status(&self, task_id: &str) -> Option<mutsuki_runtime_contracts::TaskStatus> {
+        self.tasks.get(task_id).map(|record| record.status.clone())
+    }
+
+    pub fn task_result(&self, task_id: &str) -> Option<TaskResultSnapshot> {
+        self.tasks.get(task_id).map(|record| TaskResultSnapshot {
+            task_id: record.task.task_id.clone(),
+            status: record.status.clone(),
+            output_ref: record.task.output_ref.clone(),
+            continuation_ref: record.task.continuation_ref.clone(),
+            failure: record.failure.clone(),
+        })
+    }
+
+    pub fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
+        self.events
+            .snapshot()
+            .iter()
+            .filter(|event| event.subject_id.as_deref() == Some(task_id))
+            .collect()
+    }
+
+    pub fn cancel_task(&mut self, task_id: &str) -> RuntimeResult<()> {
+        self.tasks.cancel_by_core(task_id)
+    }
+
+    pub fn wake_task(&mut self, task_id: &str) -> RuntimeResult<()> {
+        self.tasks.wake(task_id)
+    }
+
+    pub fn register_runner(&mut self, runner: Box<dyn Runner>) -> RuntimeResult<()> {
+        self.registry.register(runner)
+    }
+
+    pub fn unregister_runner(&mut self, runner_id: &str) -> RuntimeResult<()> {
+        self.registry.unregister(runner_id)?;
+        Ok(())
+    }
+
+    pub fn runner_heartbeat(
+        &mut self,
+        runner_id: &str,
+        executor_id: &str,
+    ) -> RuntimeResult<crate::registry::RunnerHeartbeat> {
+        self.registry
+            .heartbeat(runner_id, executor_id, self.current_step)
+    }
+
+    pub fn runner_capability(
+        &mut self,
+        runner_id: &str,
+        protocol_ids: Vec<String>,
+        capacity: usize,
+    ) -> RuntimeResult<crate::registry::RunnerCapabilityDeclaration> {
+        self.registry
+            .declare_capability(runner_id, protocol_ids, capacity)
     }
 
     pub fn tasks(&self) -> &TaskPool {

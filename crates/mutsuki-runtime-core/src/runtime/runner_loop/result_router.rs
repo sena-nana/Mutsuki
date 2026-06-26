@@ -76,6 +76,12 @@ impl CoreRuntime {
                 self.tasks.complete(&result.task_id, &runner.runner_id)?;
                 return Ok(1);
             }
+            RunnerStatus::Waiting => {
+                self.tasks.wait(&result.task_id, &runner.runner_id, None)?;
+            }
+            RunnerStatus::Blocked => {
+                self.tasks.block(&result.task_id, &runner.runner_id)?;
+            }
             RunnerStatus::Failed => {
                 self.tasks.fail(
                     &result.task_id,

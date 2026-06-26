@@ -111,7 +111,7 @@ class HandlerBinding:
     binding_id: str
     plugin_id: str
     protocol_id: str
-    target_task_kind: str
+    target_protocol_id: str
     target_runner_hint: str | None
     pool_id: str
     priority: int
@@ -126,7 +126,9 @@ class HandlerBinding:
             binding_id=as_str(field_value(raw, "binding_id"), "binding_id"),
             plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
             protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
-            target_task_kind=as_str(field_value(raw, "target_task_kind"), "target_task_kind"),
+            target_protocol_id=as_str(
+                field_value(raw, "target_protocol_id"), "target_protocol_id"
+            ),
             target_runner_hint=None
             if target_runner_hint is None
             else as_str(target_runner_hint, "target_runner_hint"),

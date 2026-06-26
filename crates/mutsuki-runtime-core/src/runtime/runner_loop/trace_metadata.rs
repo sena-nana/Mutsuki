@@ -60,7 +60,7 @@ fn descriptor_fingerprint(runner: &RunnerDescriptor) -> String {
         runner.runner_id,
         runner.plugin_id,
         runner.plugin_generation,
-        runner.accepted_task_kinds.join(",")
+        runner.accepted_protocol_ids.join(",")
     )
 }
 

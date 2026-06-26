@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_runtime_contracts::{
-    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, LeaseToken, ResourceRef, ResourceValue,
-    RuntimeError, SurfaceOccupancyHandle, ValueRef,
+    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, LeaseToken, ResourceCellRef, ResourceLease,
+    ResourceRef, ResourceValue, RuntimeError, SurfaceOccupancyHandle, ValueRef,
 };
 use serde_json::Value;
 
@@ -13,6 +14,8 @@ mod leases;
 mod occupancy;
 mod resources;
 mod values;
+
+static NEXT_MANAGER_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackedValue {
@@ -26,6 +29,21 @@ struct ResourceEntry {
     descriptor: ResourceRef,
     bytes: Vec<u8>,
     writer: Option<LeaseToken>,
+}
+
+#[derive(Clone, Debug)]
+struct ResourceCellEntry {
+    descriptor: ResourceCellRef,
+    active_leases: HashMap<String, ResourceLease>,
+}
+
+impl ResourceCellEntry {
+    fn new(descriptor: ResourceCellRef) -> Self {
+        Self {
+            descriptor,
+            active_leases: HashMap::new(),
+        }
+    }
 }
 
 impl ResourceEntry {
@@ -42,6 +60,7 @@ impl ResourceEntry {
 pub struct ResourceManager {
     values: HashMap<String, (ValueRef, Value)>,
     resources: HashMap<String, ResourceEntry>,
+    resource_cells: HashMap<String, ResourceCellEntry>,
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
@@ -56,13 +75,17 @@ impl Default for ResourceManager {
 
 impl ResourceManager {
     pub fn new() -> Self {
+        let namespace = NEXT_MANAGER_NAMESPACE.fetch_add(1, Ordering::Relaxed);
         Self {
             values: HashMap::new(),
             resources: HashMap::new(),
+            resource_cells: HashMap::new(),
             occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),
             inline_value_max_bytes: 4096,
-            root: std::env::temp_dir().join("mutsuki-resource-manager"),
+            root: std::env::temp_dir()
+                .join("mutsuki-resource-manager")
+                .join(format!("manager-{namespace}")),
         }
     }
 }

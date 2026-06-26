@@ -22,6 +22,8 @@ pub trait Runner {
 pub struct RunnerContext {
     pub registry_generation: u64,
     pub current_step: u64,
+    pub executor_id: String,
+    pub task_lease_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +43,7 @@ impl CoreKernelRunner {
                 runner_id: "core.kernel".into(),
                 plugin_id: "core".into(),
                 plugin_generation,
-                accepted_task_kinds: vec!["core.commit".into(), "core.event.append".into()],
+                accepted_protocol_ids: vec!["core.commit".into(), "core.event.append".into()],
                 purity: RunnerPurity::Committer,
                 input_schema: serde_json::json!({}),
                 output_schema: serde_json::json!({}),

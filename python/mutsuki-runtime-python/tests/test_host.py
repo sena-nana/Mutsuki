@@ -16,7 +16,12 @@ async def test_python_runner_host_steps_registered_runner() -> None:
 
     results = await host.step_runner(
         "echo.runner",
-        RunnerContext(registry_generation=1, current_step=1),
+        RunnerContext(
+            registry_generation=1,
+            current_step=1,
+            executor_id="executor:test",
+            task_lease_id="task-lease-test",
+        ),
         (Task.new("task-1", "raw.input"),),
     )
 

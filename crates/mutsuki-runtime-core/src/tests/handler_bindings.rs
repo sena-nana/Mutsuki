@@ -6,12 +6,16 @@ use serde_json::json;
 use crate::*;
 
 use super::fixtures::*;
-fn handler_binding(binding_id: &str, protocol_id: &str, target_task_kind: &str) -> HandlerBinding {
+fn handler_binding(
+    binding_id: &str,
+    protocol_id: &str,
+    target_protocol_id: &str,
+) -> HandlerBinding {
     HandlerBinding {
         binding_id: binding_id.into(),
         plugin_id: "plugin-a".into(),
         protocol_id: protocol_id.into(),
-        target_task_kind: target_task_kind.into(),
+        target_protocol_id: target_protocol_id.into(),
         target_runner_hint: None,
         pool_id: "default".into(),
         priority: 0,
@@ -60,7 +64,107 @@ fn handler_bindings_are_queryable_but_do_not_fan_out_tasks() {
 }
 
 #[test]
-fn handler_binding_load_plan_validation_rejects_missing_task_kind() {
+fn core_facade_can_submit_one_targeted_task_from_handler_binding() {
+    let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let mut binding = handler_binding(
+        "message-handler",
+        "im.message.received.v1",
+        "cap.message.handle",
+    );
+    binding.target_runner_hint = Some("message.runner".into());
+    let plan = load_plan(vec![runner.clone()], vec![binding]);
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner, |task| {
+            assert_eq!(task.target_binding_id.as_deref(), Some("message-handler"));
+            assert_eq!(task.protocol_id, "cap.message.handle");
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime
+        .submit_targeted_task("targeted-1", "message-handler", json!({"text": "hello"}))
+        .unwrap();
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.claimed_tasks, 1);
+    assert_eq!(
+        runtime.task_status("targeted-1"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn handler_binding_register_facade_requires_load_plan_authorization() {
+    let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let binding = handler_binding(
+        "message-handler",
+        "im.message.received.v1",
+        "cap.message.handle",
+    );
+    let plan = load_plan(vec![runner.clone()], vec![binding.clone()]);
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime.register_handler_binding(binding).unwrap();
+    let err = runtime
+        .register_handler_binding(handler_binding(
+            "not-authorized",
+            "im.x",
+            "cap.message.handle",
+        ))
+        .unwrap_err();
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
+    let runner = runner_descriptor("worker", "cap.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![runner.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner.clone(), |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    let heartbeat = runtime
+        .runner_heartbeat("worker", "executor-worker-1")
+        .unwrap();
+    assert_eq!(heartbeat.executor_id, "executor-worker-1");
+    let declaration = runtime
+        .runner_capability("worker", vec!["cap.work".into()], 2)
+        .unwrap();
+    assert_eq!(declaration.capacity, 2);
+    assert_eq!(
+        runtime
+            .runner_capability("worker", vec!["cap.other".into()], 1)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_REGISTRY_UNAUTHORIZED
+    );
+
+    let register_err = runtime
+        .register_runner(Box::new(StaticRunner::new(runner.clone(), |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })))
+        .unwrap_err();
+    assert_eq!(register_err.error().code, ERR_REGISTRY_FROZEN);
+    let unregister_err = runtime.unregister_runner("worker").unwrap_err();
+    assert_eq!(unregister_err.error().code, ERR_REGISTRY_FROZEN);
+}
+
+#[test]
+fn handler_binding_load_plan_validation_rejects_missing_protocol() {
     let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
     let plan = load_plan(
         vec![runner.clone()],
@@ -105,7 +209,7 @@ fn handler_binding_load_plan_validation_rejects_bad_runner_hint() {
 }
 
 #[test]
-fn handler_binding_load_plan_validation_rejects_hint_that_cannot_handle_kind() {
+fn handler_binding_load_plan_validation_rejects_hint_that_cannot_handle_protocol() {
     let hinted = runner_descriptor("hinted.runner", "cap.other", RunnerPurity::Pure);
     let target = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
     let mut binding = handler_binding(

@@ -32,6 +32,8 @@ class RunnerPurity(StrEnum):
 
 class RunnerStatus(StrEnum):
     COMPLETED = "completed"
+    WAITING = "waiting"
+    BLOCKED = "blocked"
     CONTINUE = "continue"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -42,7 +44,7 @@ class RunnerDescriptor:
     runner_id: str
     plugin_id: str
     plugin_generation: int
-    accepted_task_kinds: tuple[str, ...]
+    accepted_protocol_ids: tuple[str, ...]
     purity: RunnerPurity
     input_schema: JsonDict = field(default_factory=dict)
     output_schema: JsonDict = field(default_factory=dict)
@@ -56,8 +58,8 @@ class RunnerDescriptor:
             runner_id=as_str(field_value(raw, "runner_id"), "runner_id"),
             plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
             plugin_generation=as_int(field_value(raw, "plugin_generation"), "plugin_generation"),
-            accepted_task_kinds=as_str_tuple(
-                field_value(raw, "accepted_task_kinds"), "accepted_task_kinds"
+            accepted_protocol_ids=as_str_tuple(
+                field_value(raw, "accepted_protocol_ids"), "accepted_protocol_ids"
             ),
             purity=RunnerPurity(as_str(field_value(raw, "purity"), "purity")),
             input_schema=as_json_dict(field_value(raw, "input_schema"), "input_schema"),
@@ -73,15 +75,22 @@ class RunnerDescriptor:
 class RunnerContext:
     registry_generation: int
     current_step: int
+    executor_id: str
+    task_lease_id: str | None
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "RunnerContext")
+        task_lease_id = field_value(raw, "task_lease_id")
         return cls(
             registry_generation=as_int(
                 field_value(raw, "registry_generation"), "registry_generation"
             ),
             current_step=as_int(field_value(raw, "current_step"), "current_step"),
+            executor_id=as_str(field_value(raw, "executor_id"), "executor_id"),
+            task_lease_id=None
+            if task_lease_id is None
+            else as_str(task_lease_id, "task_lease_id"),
         )
 
 

@@ -17,7 +17,7 @@ from mutsuki_runtime_python.contracts.codec import (
 
 class ContractSurfaceKind(StrEnum):
     RUNNER = "runner"
-    TASK_KIND = "task_kind"
+    TASK_PROTOCOL = "task_protocol"
     SCHEMA = "schema"
     RESOURCE_SCHEMA = "resource_schema"
     RESOURCE_PROVIDER = "resource_provider"

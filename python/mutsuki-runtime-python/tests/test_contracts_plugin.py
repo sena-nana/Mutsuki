@@ -28,7 +28,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         runner_id="runner-a",
         plugin_id="plugin-a",
         plugin_generation=1,
-        accepted_task_kinds=("raw.input",),
+        accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
@@ -48,7 +48,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         binding_id="message-handler",
         plugin_id="plugin-a",
         protocol_id="im.message.received.v1",
-        target_task_kind="raw.input",
+        target_protocol_id="raw.input",
         target_runner_hint="runner-a",
         pool_id="default",
         priority=5,
@@ -106,6 +106,13 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 deprecated=False,
             ),
             ContractSurface(
+                surface_id="task_protocol:raw.input",
+                kind=ContractSurfaceKind.TASK_PROTOCOL,
+                owner_plugin_id="plugin-a",
+                fingerprint="task_protocol:raw.input",
+                deprecated=False,
+            ),
+            ContractSurface(
                 surface_id="protocol:im.message.received.v1",
                 kind=ContractSurfaceKind.PROTOCOL,
                 owner_plugin_id="plugin-a",
@@ -137,4 +144,3 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             allow_hot_reload=True,
         ),
     )
-

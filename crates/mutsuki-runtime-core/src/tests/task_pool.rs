@@ -1,4 +1,4 @@
-﻿use mutsuki_runtime_contracts::*;
+use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
 use crate::*;
@@ -28,6 +28,70 @@ fn task_pool_claims_ready_tasks_in_deterministic_order() {
         vec!["a-high", "b-low"]
     );
     assert_eq!(pool.running_count(), 2);
+}
+
+#[test]
+fn task_pool_claims_single_task_with_executor_lease() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    pool.enqueue(Task::new("task-2", "sim.work", json!({})));
+
+    let leased = pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 0, 1);
+
+    assert_eq!(leased.len(), 1);
+    let (lease, task) = &leased[0];
+    assert_eq!(lease.task_id, "task-1");
+    assert_eq!(lease.runner_id, "worker");
+    assert_eq!(lease.executor_id, "executor-1");
+    assert_eq!(task.lease_id.as_deref(), Some(lease.lease_id.as_str()));
+    assert_eq!(pool.running_count(), 1);
+    assert_eq!(
+        pool.get("task-1").unwrap().lease.as_ref().unwrap().lease_id,
+        lease.lease_id
+    );
+}
+
+#[test]
+fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 0, 1);
+
+    pool.wait("task-1", "worker", Some(8)).unwrap();
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Waiting);
+    assert_eq!(pool.get("task-1").unwrap().task.ready_at_step, Some(8));
+
+    pool.wake("task-1").unwrap();
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
+    pool.claim_ready_for_executor(&descriptor, "executor-1", 8, 0, 1);
+
+    pool.block("task-1", "worker").unwrap();
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Blocked);
+    pool.wake("task-1").unwrap();
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
+}
+
+#[test]
+fn core_task_facade_returns_result_snapshot_and_task_events() {
+    let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
+    let mut runtime = super::fixtures::boot_with_kernel(plan);
+
+    runtime.submit_task(Task::new("task-1", "unhandled.protocol", json!({})));
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Ready));
+    assert_eq!(
+        runtime.task_result("task-1").unwrap().status,
+        TaskStatus::Ready
+    );
+    assert!(
+        runtime
+            .task_events("task-1")
+            .iter()
+            .any(|event| event.name == "task.enqueue")
+    );
+    runtime.cancel_task("task-1").unwrap();
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Cancelled));
 }
 
 #[test]

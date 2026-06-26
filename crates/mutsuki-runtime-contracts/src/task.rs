@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{RefId, SurfaceId, TaskId};
+use crate::{BindingId, ExecutorId, ProtocolId, RefId, ResourceRef, RunnerId, SurfaceId, TaskId};
+use crate::{TaskLeaseId, TraceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,11 +28,16 @@ pub struct VersionExpectation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub task_id: TaskId,
-    pub kind: String,
+    pub protocol_id: ProtocolId,
     pub priority: i64,
     pub ready_at_step: Option<u64>,
     pub payload: Value,
     pub input_refs: Vec<RefId>,
+    pub output_ref: Option<RefId>,
+    pub continuation_ref: Option<RefId>,
+    pub target_binding_id: Option<BindingId>,
+    pub lease_id: Option<TaskLeaseId>,
+    pub trace_id: Option<TraceId>,
     pub expected_versions: Vec<VersionExpectation>,
     pub correlation_id: Option<String>,
     pub idempotency_key: Option<String>,
@@ -42,14 +48,20 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(task_id: impl Into<String>, kind: impl Into<String>, payload: Value) -> Self {
+    pub fn new(task_id: impl Into<String>, protocol_id: impl Into<String>, payload: Value) -> Self {
+        let protocol_id = protocol_id.into();
         Self {
             task_id: task_id.into(),
-            kind: kind.into(),
+            protocol_id,
             priority: 0,
             ready_at_step: None,
             payload,
             input_refs: Vec::new(),
+            output_ref: None,
+            continuation_ref: None,
+            target_binding_id: None,
+            lease_id: None,
+            trace_id: None,
             expected_versions: Vec::new(),
             correlation_id: None,
             idempotency_key: None,
@@ -59,6 +71,34 @@ impl Task {
             created_sequence: 0,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskLease {
+    pub lease_id: TaskLeaseId,
+    pub task_id: TaskId,
+    pub runner_id: RunnerId,
+    pub executor_id: ExecutorId,
+    pub registry_generation: u64,
+    pub acquired_at_step: u64,
+    pub expires_at_step: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WakeCondition {
+    Timer { ready_at_step: u64 },
+    RetryAfter { ready_at_step: u64 },
+    ResourceEvent { ref_id: RefId },
+    ExternalSignal { signal_id: String },
+    ManualWake,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TaskStepContinuation {
+    pub continuation: ResourceRef,
+    pub wake: Option<WakeCondition>,
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

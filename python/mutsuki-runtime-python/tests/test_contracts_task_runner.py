@@ -14,24 +14,29 @@ from mutsuki_runtime_python.contracts.runner import (
     RunnerResult,
 )
 from mutsuki_runtime_python.contracts.state import VersionExpectation
-from mutsuki_runtime_python.contracts.task import Task
+from mutsuki_runtime_python.contracts.task import Task, TaskLease
 from mutsuki_runtime_python.testing.assertions import assert_json_roundtrip
 
 
 def test_task_and_runner_descriptor_roundtrip() -> None:
     task = Task(
         task_id="task-1",
-        kind="raw.input",
+        protocol_id="raw.input",
         priority=10,
         ready_at_step=2,
         payload={"actor_id": "actor-a"},
         input_refs=("value:raw-1",),
+        output_ref=None,
+        continuation_ref=None,
+        target_binding_id="binding:raw",
+        lease_id="task-lease-1",
+        trace_id="trace-1",
         expected_versions=(VersionExpectation(ref_id="state:actor", expected_version=1),),
         correlation_id="corr-1",
         idempotency_key="idem-1",
         runner_hint="runner-a",
         registry_generation=3,
-        required_surfaces=("task_kind:raw.input",),
+        required_surfaces=("task_protocol:raw.input",),
         created_sequence=4,
     )
     assert_json_roundtrip(Task, task)
@@ -40,7 +45,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         runner_id="runner-a",
         plugin_id="plugin-a",
         plugin_generation=1,
-        accepted_task_kinds=("raw.input",),
+        accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
@@ -48,6 +53,18 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         contract_surfaces=("runner:runner-a",),
     )
     assert_json_roundtrip(RunnerDescriptor, descriptor)
+    assert_json_roundtrip(
+        TaskLease,
+        TaskLease(
+            lease_id="task-lease-1",
+            task_id="task-1",
+            runner_id="runner-a",
+            executor_id="executor-a",
+            registry_generation=3,
+            acquired_at_step=2,
+            expires_at_step=None,
+        ),
+    )
 
 
 def test_runner_result_roundtrips_value_and_resource_refs() -> None:

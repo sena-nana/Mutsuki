@@ -11,7 +11,7 @@ use crate::gateway::{GatewayAction, GatewayFrame, QqGatewayPump, normalize_gatew
 use crate::manifest::{
     EFFECT_INTERACTION_ACK, EFFECT_MEDIA_UPLOAD, EFFECT_MESSAGE_RECALL, EFFECT_MESSAGE_SEND,
     EFFECT_RUNNER_ID, EFFECT_USER_SHARE_LINK, GATEWAY_NORMALIZER_RUNNER_ID, PLUGIN_ID,
-    RAW_GATEWAY_TASK_KIND, qqbot_manifest,
+    RAW_GATEWAY_PROTOCOL_ID, qqbot_manifest,
 };
 use crate::media::{MediaChunk, QqMediaError, QqMediaProvider};
 use crate::openapi::{
@@ -28,13 +28,13 @@ fn manifest_declares_qqbot_runtime_surfaces() {
     assert!(manifest.provides.runners.iter().any(|runner| {
         runner.runner_id == GATEWAY_NORMALIZER_RUNNER_ID
             && runner.purity == RunnerPurity::Pure
-            && runner.accepted_task_kinds == vec![RAW_GATEWAY_TASK_KIND]
+            && runner.accepted_protocol_ids == vec![RAW_GATEWAY_PROTOCOL_ID]
     }));
     assert!(manifest.provides.runners.iter().any(|runner| {
         runner.runner_id == EFFECT_RUNNER_ID
             && runner.purity == RunnerPurity::Effectful
             && runner
-                .accepted_task_kinds
+                .accepted_protocol_ids
                 .contains(&EFFECT_MESSAGE_SEND.into())
     }));
     for effect in [
@@ -100,7 +100,7 @@ fn gateway_pump_creates_discrete_tasks_and_deduplicates() {
     });
 
     let task = pump.handle_raw_frame(frame.clone(), 9).unwrap().unwrap();
-    assert_eq!(task.kind, RAW_GATEWAY_TASK_KIND);
+    assert_eq!(task.protocol_id, RAW_GATEWAY_PROTOCOL_ID);
     assert_eq!(task.registry_generation, 9);
     assert!(matches!(
         pump.pop_action(),
@@ -166,7 +166,7 @@ fn gateway_runner_emits_normalized_domain_events() {
     let mut runner = QqGatewayNormalizeRunner::new(1);
     let mut task = Task::new(
         "gateway-task",
-        RAW_GATEWAY_TASK_KIND,
+        RAW_GATEWAY_PROTOCOL_ID,
         json!({
             "op": 0,
             "s": 24,
@@ -182,6 +182,8 @@ fn gateway_runner_emits_normalized_domain_events() {
             RunnerContext {
                 registry_generation: 1,
                 current_step: 1,
+                executor_id: "executor:test".into(),
+                task_lease_id: Some("task-lease-test".into()),
             },
             vec![task],
         )
@@ -218,6 +220,8 @@ fn group_message_rejects_c2c_only_fields() {
             RunnerContext {
                 registry_generation: 1,
                 current_step: 1,
+                executor_id: "executor:test".into(),
+                task_lease_id: Some("task-lease-test".into()),
             },
             vec![task],
         )
@@ -260,6 +264,8 @@ fn openapi_runner_refreshes_token_once_after_401() {
             RunnerContext {
                 registry_generation: 1,
                 current_step: 1,
+                executor_id: "executor:test".into(),
+                task_lease_id: Some("task-lease-test".into()),
             },
             vec![task],
         )
@@ -298,6 +304,8 @@ fn media_upload_fails_when_file_info_is_empty() {
             RunnerContext {
                 registry_generation: 1,
                 current_step: 1,
+                executor_id: "executor:test".into(),
+                task_lease_id: Some("task-lease-test".into()),
             },
             vec![task],
         )

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{RunnerDescriptor, ScalarValue, SurfaceId};
+use crate::{BindingId, ProtocolId, RunnerDescriptor, ScalarValue, SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,10 +63,10 @@ pub struct ProtocolDescriptor {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HandlerBinding {
-    pub binding_id: String,
+    pub binding_id: BindingId,
     pub plugin_id: String,
     pub protocol_id: String,
-    pub target_task_kind: String,
+    pub target_protocol_id: ProtocolId,
     pub target_runner_hint: Option<String>,
     pub pool_id: String,
     pub priority: i64,
@@ -100,7 +100,7 @@ pub struct RuntimeProfile {
 #[serde(rename_all = "snake_case")]
 pub enum ContractSurfaceKind {
     Runner,
-    TaskKind,
+    TaskProtocol,
     Schema,
     ResourceSchema,
     ResourceProvider,

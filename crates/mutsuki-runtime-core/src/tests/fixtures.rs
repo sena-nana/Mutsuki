@@ -7,7 +7,11 @@ use serde_json::json;
 
 use crate::*;
 
-pub(super) fn runner_descriptor(id: &str, kind: &str, purity: RunnerPurity) -> RunnerDescriptor {
+pub(super) fn runner_descriptor(
+    id: &str,
+    protocol_id: &str,
+    purity: RunnerPurity,
+) -> RunnerDescriptor {
     RunnerDescriptor {
         runner_id: id.into(),
         plugin_id: if id == "core.kernel" {
@@ -17,7 +21,7 @@ pub(super) fn runner_descriptor(id: &str, kind: &str, purity: RunnerPurity) -> R
         }
         .into(),
         plugin_generation: 1,
-        accepted_task_kinds: vec![kind.into()],
+        accepted_protocol_ids: vec![protocol_id.into()],
         purity,
         input_schema: json!({}),
         output_schema: json!({}),

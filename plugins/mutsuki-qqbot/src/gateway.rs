@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::config::QqBotConfig;
-use crate::manifest::RAW_GATEWAY_TASK_KIND;
+use crate::manifest::RAW_GATEWAY_PROTOCOL_ID;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GatewayFrame {
@@ -141,7 +141,7 @@ impl QqGatewayPump {
                 let task_id = self.next_task_id();
                 self.actions
                     .push_back(GatewayAction::DispatchTask(task_id.clone()));
-                let mut task = Task::new(task_id, RAW_GATEWAY_TASK_KIND, raw);
+                let mut task = Task::new(task_id, RAW_GATEWAY_PROTOCOL_ID, raw);
                 task.registry_generation = registry_generation;
                 Ok(Some(task))
             }

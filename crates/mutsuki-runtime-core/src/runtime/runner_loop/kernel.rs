@@ -16,7 +16,7 @@ impl CoreRuntime {
     ) -> RuntimeResult<usize> {
         let mut completed = 0;
         for task in tasks {
-            match task.kind.as_str() {
+            match task.protocol_id.as_str() {
                 "core.commit" => {
                     let delta: StateDelta =
                         serde_json::from_value(task.payload.clone()).map_err(|err| {

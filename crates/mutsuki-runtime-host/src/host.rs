@@ -99,9 +99,9 @@ pub fn resolve_load_plan(
     let mut runner_bindings = profile.bindings.clone();
     for manifest in &enabled {
         for runner in &manifest.provides.runners {
-            for kind in &runner.accepted_task_kinds {
+            for protocol_id in &runner.accepted_protocol_ids {
                 runner_bindings
-                    .entry(kind.clone())
+                    .entry(protocol_id.clone())
                     .or_insert_with(|| runner.runner_id.clone());
             }
         }
@@ -134,12 +134,12 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
                 fingerprint: format!("runner:{}:{}", runner.runner_id, runner.plugin_generation),
                 deprecated: false,
             });
-            for kind in &runner.accepted_task_kinds {
+            for protocol_id in &runner.accepted_protocol_ids {
                 surfaces.push(ContractSurface {
-                    surface_id: format!("task_kind:{kind}"),
-                    kind: ContractSurfaceKind::TaskKind,
+                    surface_id: format!("task_protocol:{protocol_id}"),
+                    kind: ContractSurfaceKind::TaskProtocol,
                     owner_plugin_id: manifest.plugin_id.clone(),
-                    fingerprint: format!("task_kind:{kind}"),
+                    fingerprint: format!("task_protocol:{protocol_id}"),
                     deprecated: false,
                 });
             }
@@ -160,7 +160,7 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
                 owner_plugin_id: manifest.plugin_id.clone(),
                 fingerprint: format!(
                     "handler_binding:{}:{}:{}",
-                    binding.binding_id, binding.protocol_id, binding.target_task_kind
+                    binding.binding_id, binding.protocol_id, binding.target_protocol_id
                 ),
                 deprecated: false,
             });

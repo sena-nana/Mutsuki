@@ -22,7 +22,14 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
             "method": "runner.step",
             "params": {
                 "runner_id": "echo.runner",
-                "ctx": to_json_dict(RunnerContext(registry_generation=1, current_step=1)),
+                "ctx": to_json_dict(
+                    RunnerContext(
+                        registry_generation=1,
+                        current_step=1,
+                        executor_id="executor:test",
+                        task_lease_id="task-lease-test",
+                    )
+                ),
                 "tasks": [to_json_dict(Task.new("task-1", "raw.input"))],
             },
         }

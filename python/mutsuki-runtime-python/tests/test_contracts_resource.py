@@ -3,6 +3,8 @@ from __future__ import annotations
 from mutsuki_runtime_python.contracts.codec import to_json_dict
 from mutsuki_runtime_python.contracts.resource import (
     ResourceAccess,
+    ResourceCellRef,
+    ResourceLease,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
@@ -107,6 +109,30 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
     assert_json_roundtrip(ResourceValue, ResourceValue.resource_ref_value(resource_ref))
 
 
+def test_resource_cell_and_resource_lease_roundtrip() -> None:
+    cell = ResourceCellRef(
+        cell_id="cell:http:default",
+        resource_kind="http.connection_pool",
+        owner_plugin_id="plugin-http",
+        schema="http.connection_pool.v1",
+        generation=1,
+        health="healthy",
+        reload_policy="drain",
+    )
+    lease = ResourceLease(
+        lease_id="resource-lease-1",
+        cell_id=cell.cell_id,
+        borrower_task_id="task-http",
+        borrower_executor_id="executor-http",
+        mode="shared",
+        expires_at_step=None,
+        generation=1,
+    )
+
+    assert_json_roundtrip(ResourceCellRef, cell)
+    assert_json_roundtrip(ResourceLease, lease)
+
+
 def test_stream_resource_ref_roundtrips_endpoint() -> None:
     stream_ref = ResourceRef(
         ref_id="resource:stream:1",
@@ -124,4 +150,3 @@ def test_stream_resource_ref_roundtrips_endpoint() -> None:
     )
 
     assert_json_roundtrip(ResourceRef, stream_ref)
-

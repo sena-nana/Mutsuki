@@ -12,7 +12,7 @@ fn descriptor(id: &str, kind: &str) -> RunnerDescriptor {
         runner_id: id.into(),
         plugin_id: "plugin-a".into(),
         plugin_generation: 1,
-        accepted_task_kinds: vec![kind.into()],
+        accepted_protocol_ids: vec![kind.into()],
         purity: RunnerPurity::Pure,
         input_schema: json!({}),
         output_schema: json!({}),
@@ -68,6 +68,8 @@ fn jsonl_runner_uses_runner_step_method_surface() {
             RunnerContext {
                 registry_generation: 1,
                 current_step: 1,
+                executor_id: "executor:test".into(),
+                task_lease_id: Some("task-lease-test".into()),
             },
             vec![Task::new("task-1", "raw.input", json!({}))],
         )
@@ -97,7 +99,7 @@ fn resolver_emits_declared_runtime_surfaces() {
         binding_id: "message-handler".into(),
         plugin_id: "plugin-a".into(),
         protocol_id: "im.message.received.v1".into(),
-        target_task_kind: "raw.input".into(),
+        target_protocol_id: "raw.input".into(),
         target_runner_hint: Some("echo.runner".into()),
         pool_id: "default".into(),
         priority: 1,

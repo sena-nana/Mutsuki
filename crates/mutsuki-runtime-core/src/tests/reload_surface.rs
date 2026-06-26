@@ -25,7 +25,7 @@ fn deprecated_surface_blocks_new_task_occupancy() {
 }
 
 #[test]
-fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
+fn removed_task_protocol_surface_uses_live_task_pool_occupancy() {
     let plan = load_plan(Vec::new(), Vec::new());
     let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
@@ -33,10 +33,10 @@ fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
 
     let mut with_surface = plan.clone();
     with_surface.contract_surfaces.push(ContractSurface {
-        surface_id: "task_kind:sim.work".into(),
-        kind: ContractSurfaceKind::TaskKind,
+        surface_id: "task_protocol:sim.work".into(),
+        kind: ContractSurfaceKind::TaskProtocol,
         owner_plugin_id: "plugin-a".into(),
-        fingerprint: "task_kind:sim.work".into(),
+        fingerprint: "task_protocol:sim.work".into(),
         deprecated: false,
     });
     runtime.reload(with_surface).unwrap();
@@ -50,7 +50,7 @@ fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
         runtime
             .surface_occupancy()
             .iter()
-            .any(|item| { item.surface_id == "task_kind:sim.work" && item.ready_tasks == 1 })
+            .any(|item| { item.surface_id == "task_protocol:sim.work" && item.ready_tasks == 1 })
     );
 }
 

@@ -10,7 +10,7 @@ pub const PLUGIN_ID: &str = "mutsuki.qqbot";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const PLUGIN_API_VERSION: &str = "mutsuki-plugin-v1";
 
-pub const RAW_GATEWAY_TASK_KIND: &str = "raw.input.qqbot.gateway";
+pub const RAW_GATEWAY_PROTOCOL_ID: &str = "raw.input.qqbot.gateway";
 
 pub const GATEWAY_NORMALIZER_RUNNER_ID: &str = "mutsuki.qqbot.gateway.normalize";
 pub const EFFECT_RUNNER_ID: &str = "effect.qqbot.openapi";
@@ -30,7 +30,7 @@ pub fn gateway_normalizer_descriptor(plugin_generation: u64) -> RunnerDescriptor
         runner_id: GATEWAY_NORMALIZER_RUNNER_ID.into(),
         plugin_id: PLUGIN_ID.into(),
         plugin_generation,
-        accepted_task_kinds: vec![RAW_GATEWAY_TASK_KIND.into()],
+        accepted_protocol_ids: vec![RAW_GATEWAY_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         input_schema: json!({
             "type": "object",
@@ -43,7 +43,7 @@ pub fn gateway_normalizer_descriptor(plugin_generation: u64) -> RunnerDescriptor
         metadata: metadata("QQBot Gateway dispatch normalizer"),
         contract_surfaces: vec![
             format!("runner:{GATEWAY_NORMALIZER_RUNNER_ID}"),
-            format!("task_kind:{RAW_GATEWAY_TASK_KIND}"),
+            format!("task_protocol:{RAW_GATEWAY_PROTOCOL_ID}"),
         ],
     }
 }
@@ -53,7 +53,7 @@ pub fn openapi_effect_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         runner_id: EFFECT_RUNNER_ID.into(),
         plugin_id: PLUGIN_ID.into(),
         plugin_generation,
-        accepted_task_kinds: effect_task_kinds(),
+        accepted_protocol_ids: effect_protocol_ids(),
         purity: RunnerPurity::Effectful,
         input_schema: json!({
             "type": "object",
@@ -67,7 +67,7 @@ pub fn openapi_effect_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     }
 }
 
-pub fn effect_task_kinds() -> Vec<String> {
+pub fn effect_protocol_ids() -> Vec<String> {
     vec![
         EFFECT_MESSAGE_SEND.into(),
         EFFECT_MEDIA_UPLOAD.into(),
@@ -97,7 +97,7 @@ pub fn qqbot_manifest() -> PluginManifest {
             handler_bindings: Vec::new(),
             resource_schemas: vec!["qqbot.media.v1".into()],
             resource_providers: vec!["qqbot.media.provider".into()],
-            effects: effect_task_kinds(),
+            effects: effect_protocol_ids(),
             streams: vec![STREAM_GATEWAY.into()],
             subscriptions: vec![SUBSCRIPTION_GATEWAY.into()],
             timers: vec![TIMER_GATEWAY_HEARTBEAT.into()],
@@ -105,7 +105,7 @@ pub fn qqbot_manifest() -> PluginManifest {
         },
         requires: Vec::new(),
         permissions: PermissionGrant {
-            effects: effect_task_kinds(),
+            effects: effect_protocol_ids(),
             resources: vec!["qqbot.media.read".into()],
         },
         lifecycle: LifecyclePolicy {

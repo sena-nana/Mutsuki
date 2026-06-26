@@ -1,8 +1,8 @@
 # Mutsuki
 
-> A domain-neutral TaskPool + Plugin Runner runtime kernel implemented as a Rust framework.
+> A domain-neutral single-task runtime kernel implemented as a Rust framework.
 
-**Current boundary: Rust-first TaskPool runtime kernel**
+**Current boundary: Rust-first single-task runtime kernel**
 
 The root workspace is the Rust framework surface. It provides serializable
 runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
@@ -19,18 +19,20 @@ The runtime shape is:
 RuntimeProfile + PluginManifest
   -> RuntimeLoadPlan / RuntimeLock
   -> CoreRuntime
-  -> TaskPool + RunnerRegistry + RunnerLoop + ResultRouter
-  -> StateStore + ResourceManager + EventLog + TraceLog
+  -> TaskPool + TaskLease + RunnerRegistry + Executor dispatch + ResultRouter
+  -> StateStore + ResourceManager / ResourceCell + EventLog + TraceLog
 ```
 
 ## Crates
 
 - `crates/mutsuki-runtime-contracts` - pure serializable contracts:
-  Task, Runner, StateDelta, EffectRequest, ValueRef, ResourceRef, PluginManifest,
-  RuntimeLoadPlan, ContractSurface, trace, events, and errors.
+  Task, TaskLease, Runner, StateDelta, EffectRequest, ValueRef, ResourceRef,
+  ResourceCellRef, ResourceLease, PluginManifest, RuntimeLoadPlan,
+  ContractSurface, trace, events, and errors.
 - `crates/mutsuki-runtime-core` - runtime mechanics:
-  CoreRuntime, TaskPool, RunnerRegistry, RunnerLoop, ResultRouter, StateStore,
-  ResourceManager, reload surface checks, event log, and trace log.
+  CoreRuntime, TaskPool, TaskLease, RunnerRegistry, Executor dispatch,
+  ResultRouter, StateStore, ResourceManager, reload surface checks, event log,
+  and trace log.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
   native runner host, deterministic load-plan resolver, and stdio JSONL runner client.
 - `python/mutsuki-runtime-python` - optional Python runner kit:

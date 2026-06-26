@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
-    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, RunnerDescriptor, RunnerPurity, RuntimeError,
-    SurfaceOccupancy, Task, TaskId, TaskStatus,
+    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerPurity,
+    RuntimeError, SurfaceOccupancy, Task, TaskId, TaskLease, TaskStatus,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -12,6 +12,7 @@ pub struct TaskRecord {
     pub task: Task,
     pub status: TaskStatus,
     pub claimed_by: Option<String>,
+    pub lease: Option<TaskLease>,
     pub failure: Option<RuntimeError>,
 }
 
@@ -34,6 +35,7 @@ impl TaskPool {
                 task,
                 status: TaskStatus::Ready,
                 claimed_by: None,
+                lease: None,
                 failure: None,
             },
         );
@@ -95,6 +97,21 @@ impl TaskPool {
         registry_generation: u64,
         limit: usize,
     ) -> Vec<Task> {
+        self.claim_ready_for_executor(runner, "executor:inline", step, registry_generation, limit)
+            .into_iter()
+            .map(|(_, task)| task)
+            .collect()
+    }
+
+    pub fn claim_ready_for_executor(
+        &mut self,
+        runner: &RunnerDescriptor,
+        executor_id: impl Into<ExecutorId>,
+        step: u64,
+        registry_generation: u64,
+        limit: usize,
+    ) -> Vec<(TaskLease, Task)> {
+        let executor_id = executor_id.into();
         let mut candidates: Vec<Task> = self
             .tasks
             .values()
@@ -117,25 +134,33 @@ impl TaskPool {
                 .then_with(|| a.task_id.cmp(&b.task_id))
         });
         candidates.truncate(limit);
-        for task in &candidates {
+        let mut leased = Vec::new();
+        for mut task in candidates {
             if let Some(record) = self.tasks.get_mut(&task.task_id) {
+                let lease = TaskLease {
+                    lease_id: format!("task-lease-{}-{}", step, task.task_id),
+                    task_id: task.task_id.clone(),
+                    runner_id: runner.runner_id.clone(),
+                    executor_id: executor_id.clone(),
+                    registry_generation,
+                    acquired_at_step: step,
+                    expires_at_step: None,
+                };
                 record.status = TaskStatus::Running;
                 record.claimed_by = Some(runner.runner_id.clone());
+                record.lease = Some(lease.clone());
+                record.task.lease_id = Some(lease.lease_id.clone());
+                task.lease_id = Some(lease.lease_id.clone());
+                leased.push((lease, task));
             }
         }
-        candidates
+        leased
     }
 
     pub fn complete(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
-        let record = self.record_mut(task_id)?;
-        if record.claimed_by.as_deref() != Some(runner_id) {
-            return Err(RuntimeFailure::new(RuntimeError::new(
-                ERR_TASK_CLAIM_CONFLICT,
-                "runtime.task_pool",
-                format!("task.complete.{task_id}"),
-            )));
-        }
+        let record = self.claimed_record_mut(task_id, runner_id, "complete")?;
         record.status = TaskStatus::Completed;
+        record.lease = None;
         Ok(())
     }
 
@@ -145,16 +170,45 @@ impl TaskPool {
         runner_id: &str,
         failure: RuntimeError,
     ) -> RuntimeResult<()> {
+        let record = self.claimed_record_mut(task_id, runner_id, "fail")?;
+        record.status = TaskStatus::Failed;
+        record.lease = None;
+        record.failure = Some(failure);
+        Ok(())
+    }
+
+    pub fn wait(
+        &mut self,
+        task_id: &str,
+        runner_id: &str,
+        ready_at_step: Option<u64>,
+    ) -> RuntimeResult<()> {
+        let record = self.claimed_record_mut(task_id, runner_id, "wait")?;
+        record.status = TaskStatus::Waiting;
+        record.task.ready_at_step = ready_at_step;
+        record.lease = None;
+        Ok(())
+    }
+
+    pub fn block(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
+        let record = self.claimed_record_mut(task_id, runner_id, "block")?;
+        record.status = TaskStatus::Blocked;
+        record.lease = None;
+        Ok(())
+    }
+
+    pub fn wake(&mut self, task_id: &str) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
-        if record.claimed_by.as_deref() != Some(runner_id) {
+        if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.fail.{task_id}"),
+                format!("task.wake.{task_id}"),
             )));
         }
-        record.status = TaskStatus::Failed;
-        record.failure = Some(failure);
+        record.status = TaskStatus::Ready;
+        record.claimed_by = None;
+        record.lease = None;
         Ok(())
     }
 
@@ -180,6 +234,7 @@ impl TaskPool {
             {
                 record.status = TaskStatus::Ready;
                 record.claimed_by = None;
+                record.lease = None;
                 cancelled = 1;
             }
         }
@@ -187,8 +242,18 @@ impl TaskPool {
     }
 
     pub fn cancel_task(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
+        let record = self.claimed_record_mut(task_id, runner_id, "cancel")?;
+        record.status = TaskStatus::Cancelled;
+        record.lease = None;
+        Ok(())
+    }
+
+    pub fn cancel_by_core(&mut self, task_id: &str) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
-        if record.claimed_by.as_deref() != Some(runner_id) {
+        if matches!(
+            record.status,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+        ) {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
@@ -196,6 +261,8 @@ impl TaskPool {
             )));
         }
         record.status = TaskStatus::Cancelled;
+        record.claimed_by = None;
+        record.lease = None;
         Ok(())
     }
 
@@ -222,13 +289,13 @@ impl TaskPool {
                 match record.status {
                     TaskStatus::Ready => {
                         entry.ready_tasks += 1;
-                        if record.task.kind.starts_with("effect.") {
+                        if record.task.protocol_id.starts_with("effect.") {
                             entry.effect_inflight += 1;
                         }
                     }
                     TaskStatus::Running => {
                         entry.running_invocations += 1;
-                        if record.task.kind.starts_with("effect.") {
+                        if record.task.protocol_id.starts_with("effect.") {
                             entry.effect_inflight += 1;
                         }
                     }
@@ -250,6 +317,23 @@ impl TaskPool {
             ))
         })
     }
+
+    fn claimed_record_mut(
+        &mut self,
+        task_id: &str,
+        runner_id: &str,
+        action: &str,
+    ) -> RuntimeResult<&mut TaskRecord> {
+        let record = self.record_mut(task_id)?;
+        if record.claimed_by.as_deref() != Some(runner_id) {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.{action}.{task_id}"),
+            )));
+        }
+        Ok(record)
+    }
 }
 
 fn surface_ids_for_record(record: &TaskRecord) -> Vec<String> {
@@ -258,9 +342,9 @@ fn surface_ids_for_record(record: &TaskRecord) -> Vec<String> {
 
 pub fn surface_ids_for_task(task: &Task) -> Vec<String> {
     let mut surface_ids = task.required_surfaces.clone();
-    surface_ids.push(format!("task_kind:{}", task.kind));
-    if task.kind.starts_with("effect.") {
-        surface_ids.push(format!("effect:{}", task.kind));
+    surface_ids.push(format!("task_protocol:{}", task.protocol_id));
+    if task.protocol_id.starts_with("effect.") {
+        surface_ids.push(format!("effect:{}", task.protocol_id));
     }
     if let Some(runner_hint) = &task.runner_hint {
         surface_ids.push(format!("runner:{runner_hint}"));
@@ -298,24 +382,24 @@ fn runner_accepts(runner: &RunnerDescriptor, task: &Task, registry_generation: u
         }
     }
     if runner.purity == RunnerPurity::Pure
-        && (task.kind.starts_with("effect.") || task.kind.starts_with("core."))
+        && (task.protocol_id.starts_with("effect.") || task.protocol_id.starts_with("core."))
     {
         return false;
     }
-    if runner.purity == RunnerPurity::Effectful && !task.kind.starts_with("effect.") {
+    if runner.purity == RunnerPurity::Effectful && !task.protocol_id.starts_with("effect.") {
         return false;
     }
-    if runner.purity == RunnerPurity::Committer && !task.kind.starts_with("core.") {
+    if runner.purity == RunnerPurity::Committer && !task.protocol_id.starts_with("core.") {
         return false;
     }
-    if task.kind.starts_with("effect.") && runner.purity != RunnerPurity::Effectful {
+    if task.protocol_id.starts_with("effect.") && runner.purity != RunnerPurity::Effectful {
         return false;
     }
-    if task.kind.starts_with("core.") && runner.purity != RunnerPurity::Committer {
+    if task.protocol_id.starts_with("core.") && runner.purity != RunnerPurity::Committer {
         return false;
     }
     runner
-        .accepted_task_kinds
+        .accepted_protocol_ids
         .iter()
-        .any(|kind| kind == &task.kind)
+        .any(|protocol_id| protocol_id == &task.protocol_id)
 }
