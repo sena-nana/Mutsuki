@@ -25,6 +25,7 @@ RuntimeProfile + PluginManifest
   -> TaskLease
   -> Executor invokes Runner.step
   -> ResultRouter / StateStore / ResourceManager
+  -> Rust SDK RuntimeClient / TaskHandleFuture wrapper
 ```
 
 依赖方向：
@@ -32,6 +33,7 @@ RuntimeProfile + PluginManifest
 - `contracts` 只定义 serde 纯协议对象。
 - `core` 依赖 `contracts`，只实现 runtime mechanics。
 - `host` 依赖 `core + contracts`，提供 native runner host 和 JSONL runner client。
+- `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
 - Python runner kit 镜像 contracts，提供 Python runner host 和 stdio runner server；
   Rust crates 不依赖 Python。
 
@@ -75,6 +77,11 @@ Task 具有：
 - `trace_id` / `correlation_id`
 - `registry_generation`
 
+SDK-facing `TaskHandle` 只是 task id、protocol、target binding、trace/correlation 和
+取消策略的 descriptor。Core API 可以返回 handle，但 Core 不把它解释成语言级 Future。
+Core 的 handle-first facade 只是在 submit/status/result/outcome/events/cancel/wake
+上接受该 descriptor；既有 string task id facade 仍保留用于 host 和测试。
+
 `TaskPool` 是 ready task backlog / 调度索引，不是 Runner inbox。没有 runner 时，
 Task 仍然可以保持 Ready 并积压。Runner 不长期拥有 Task。
 
@@ -105,11 +112,25 @@ Task 权威状态、workflow 状态、连接池、长期 stream、lock 或 trans
 当前 Rust core 的 `Runner.step` 仍使用 `Vec<Task>` wire shape 以保持 host/JSONL
 兼容，但调度器每次只租出一个 task 给一个 executor。
 
+Rust SDK 的 `ctx.call(...).await` 编译为：
+
+```text
+生成 child protocol task
+RunnerResult.tasks 显式提交 child
+RunnerResult.task_await 注册 parent -> child wait link
+parent task 进入 Waiting 并释放 TaskLease
+child terminal event 唤醒 parent continuation
+```
+
+这只是 SDK 语法糖；Core 不暴露 `async fn`、`Future` ABI、language executor、
+`join_all`、`select`、`TaskGroup` 或 `WaitSet`。
+
 ## 6. ResultRouter
 
 RunnerResult 不直接修改事实源：
 
 - completed / failed / cancelled / waiting / blocked 更新当前 Task。
+- `task_await` -> 保存当前 task continuation，注册 child terminal wake link。
 - `deltas` -> `core.commit` task -> Committer runner -> StateStore。
 - `events` -> `core.event.append` task -> EventLog。
 - `effects` -> `effect.*` task -> Effectful runner。
@@ -118,6 +139,8 @@ RunnerResult 不直接修改事实源：
 
 复杂编排必须由插件 runner 显式返回后续 task 或监听 TaskEvent 后再提交 task；Core
 不提供 TaskGroup、WaitSet、pipeline.run、broadcast.run、matcher.run 或 actor.send。
+当 `Waiting` 来自 SDK await，Core 只维护单个 child task 到 parent continuation 的
+唤醒索引。
 
 ## 7. ResourceManager
 
@@ -137,6 +160,8 @@ RunnerResult 不直接修改事实源：
 - 修改产生新 ref 或 StateDelta。
 - 原地写必须 ExclusiveWriteLease。
 - Runner 可以持有短期 ResourceLease，但不能拥有 ResourceCell。
+- 短期可变 lease 默认不能跨 SDK await；需要长期持有必须在更高层声明
+  LongLease / Transaction / PinnedResource 等显式机制。
 
 ## 8. Plugin Loading
 

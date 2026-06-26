@@ -15,6 +15,19 @@ impl CoreRuntime {
         runner: &RunnerDescriptor,
         result: RunnerResult,
     ) -> RuntimeResult<usize> {
+        if matches!(&result.status, RunnerStatus::Waiting)
+            && let Some(task_await) = &result.task_await
+        {
+            self.ensure_task_can_suspend(&result.task_id)?;
+            if task_await.parent_task_id != result.task_id {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.result_router",
+                    format!("task.await.parent.{}", result.task_id),
+                )));
+            }
+        }
+
         if runner.purity == RunnerPurity::Pure {
             for delta in result.deltas {
                 self.enqueue_task(commit_task(
@@ -74,28 +87,37 @@ impl CoreRuntime {
         match result.status {
             RunnerStatus::Completed => {
                 self.tasks.complete(&result.task_id, &runner.runner_id)?;
+                self.record_task_terminal_event(&result.task_id, "task.completed", None);
+                self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);
             }
             RunnerStatus::Waiting => {
-                self.tasks.wait(&result.task_id, &runner.runner_id, None)?;
+                if let Some(task_await) = result.task_await {
+                    self.tasks
+                        .wait_on_task(&result.task_id, &runner.runner_id, task_await)?;
+                } else {
+                    self.tasks.wait(&result.task_id, &runner.runner_id, None)?;
+                }
             }
             RunnerStatus::Blocked => {
                 self.tasks.block(&result.task_id, &runner.runner_id)?;
             }
             RunnerStatus::Failed => {
-                self.tasks.fail(
-                    &result.task_id,
-                    &runner.runner_id,
-                    RuntimeError::new(
-                        "runner.failed",
-                        "runtime.result_router",
-                        format!("runner.{}", runner.runner_id),
-                    ),
-                )?;
+                let failure = RuntimeError::new(
+                    "runner.failed",
+                    "runtime.result_router",
+                    format!("runner.{}", runner.runner_id),
+                );
+                self.tasks
+                    .fail(&result.task_id, &runner.runner_id, failure.clone())?;
+                self.record_task_terminal_event(&result.task_id, "task.failed", Some(failure));
+                self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);
             }
             RunnerStatus::Cancelled => {
                 self.tasks.cancel_task(&result.task_id, &runner.runner_id)?;
+                self.record_task_terminal_event(&result.task_id, "task.cancelled", None);
+                self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);
             }
             RunnerStatus::Continue => {}

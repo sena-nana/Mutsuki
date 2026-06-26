@@ -174,6 +174,7 @@ impl Runner for ContinuingRunner {
                 effects: Vec::new(),
                 values: Vec::new(),
                 resources: Vec::new(),
+                task_await: None,
                 status: RunnerStatus::Continue,
             })
             .collect())

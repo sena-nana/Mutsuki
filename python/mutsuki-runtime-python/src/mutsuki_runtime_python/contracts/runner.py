@@ -21,7 +21,7 @@ from mutsuki_runtime_python.contracts.effect import EffectRequest
 from mutsuki_runtime_python.contracts.event import DomainEvent
 from mutsuki_runtime_python.contracts.resource import ResourceRef, ValueRef
 from mutsuki_runtime_python.contracts.state import StateDelta
-from mutsuki_runtime_python.contracts.task import Task
+from mutsuki_runtime_python.contracts.task import Task, TaskAwait
 
 
 class RunnerPurity(StrEnum):
@@ -103,6 +103,7 @@ class RunnerResult:
     effects: tuple[EffectRequest, ...] = ()
     values: tuple[ValueRef, ...] = ()
     resources: tuple[ResourceRef, ...] = ()
+    task_await: TaskAwait | None = None
     status: RunnerStatus = RunnerStatus.COMPLETED
 
     @classmethod
@@ -112,6 +113,7 @@ class RunnerResult:
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "RunnerResult")
+        task_await = field_value(raw, "task_await")
         return cls(
             task_id=as_str(field_value(raw, "task_id"), "task_id"),
             deltas=tuple_from_json(raw, "deltas", StateDelta),
@@ -120,5 +122,8 @@ class RunnerResult:
             effects=tuple_from_json(raw, "effects", EffectRequest),
             values=tuple_from_json(raw, "values", ValueRef),
             resources=tuple_from_json(raw, "resources", ResourceRef),
+            task_await=None
+            if task_await is None
+            else TaskAwait.from_json_dict(as_mapping(task_await, "task_await")),
             status=RunnerStatus(as_str(field_value(raw, "status"), "status")),
         )

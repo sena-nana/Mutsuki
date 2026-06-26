@@ -80,6 +80,8 @@ fn jsonl_runner_uses_runner_step_method_surface() {
     assert_eq!(results[0].task_id, "task-1");
     assert!(request.contains("\"method\":\"runner.step\""));
     assert!(request.contains("\"registry_generation\":1"));
+    assert!(request.contains("\"executor_id\":\"executor:test\""));
+    assert!(request.contains("\"task_lease_id\":\"task-lease-test\""));
 }
 
 #[test]

@@ -37,6 +37,7 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
 
     assert response["ok"] is True
     assert response["result"][0]["task_id"] == "task-1"  # type: ignore[index]
+    assert response["result"][0]["task_await"] is None  # type: ignore[index]
 
 
 @pytest.mark.asyncio

@@ -191,6 +191,67 @@ fn surface_occupancy_handle_roundtrips_json() {
 }
 
 #[test]
+fn task_handle_outcome_and_await_contracts_roundtrip_json() {
+    let handle = TaskHandle {
+        task_id: "child-1".into(),
+        protocol_id: "child.work".into(),
+        target_binding_id: Some("binding:child".into()),
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: Some("trace-1".into()),
+        correlation_id: Some("corr-1".into()),
+    };
+    assert_eq!(
+        serde_json::from_str::<TaskHandle>(&serde_json::to_string(&handle).unwrap()).unwrap(),
+        handle
+    );
+
+    let outcome = TaskOutcome::Completed {
+        task_id: "child-1".into(),
+        output_ref: Some("value:child".into()),
+    };
+    assert_eq!(
+        serde_json::from_str::<TaskOutcome>(&serde_json::to_string(&outcome).unwrap()).unwrap(),
+        outcome
+    );
+
+    let task_await = TaskAwait {
+        parent_task_id: "parent-1".into(),
+        child: handle,
+        continuation: TaskStepContinuation {
+            continuation: ResourceRef {
+                ref_id: "continuation:parent-1".into(),
+                provider_id: "mutsuki.sdk".into(),
+                resource_kind: "continuation".into(),
+                schema: "mutsuki.continuation.v1".into(),
+                version: 1,
+                generation: 1,
+                access: ResourceAccess::Inline,
+                size_hint: None,
+                content_hash: None,
+                lifetime: ResourceLifetime::BorrowedUntilTaskEnd,
+                lease: None,
+                seal_state: ResourceSealState::Sealed,
+            },
+            wake: Some(WakeCondition::ManualWake),
+            reason: Some("sdk.await".into()),
+        },
+        cancel_policy: CancelPolicy::Cascade,
+    };
+    assert_eq!(
+        serde_json::from_str::<TaskAwait>(&serde_json::to_string(&task_await).unwrap()).unwrap(),
+        task_await
+    );
+
+    let mut result = RunnerResult::completed("parent-1");
+    result.task_await = Some(task_await);
+    result.status = RunnerStatus::Waiting;
+    assert_eq!(
+        serde_json::from_str::<RunnerResult>(&serde_json::to_string(&result).unwrap()).unwrap(),
+        result
+    );
+}
+
+#[test]
 fn missing_new_contract_fields_fail_deserialization() {
     assert_missing_fields_fail::<Task>(serde_json::json!({
         "task_id": "task-1",

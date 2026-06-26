@@ -42,6 +42,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-runtime-sdk"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "serde_json",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"

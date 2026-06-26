@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerPurity,
-    RuntimeError, SurfaceOccupancy, Task, TaskId, TaskLease, TaskStatus,
+    RuntimeError, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease, TaskStatus, WakeCondition,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -19,6 +19,8 @@ pub struct TaskRecord {
 #[derive(Clone, Debug, Default)]
 pub struct TaskPool {
     tasks: HashMap<TaskId, TaskRecord>,
+    waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
+    waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     next_sequence: u64,
 }
 
@@ -190,6 +192,37 @@ impl TaskPool {
         Ok(())
     }
 
+    pub fn wait_on_task(
+        &mut self,
+        task_id: &str,
+        runner_id: &str,
+        task_await: TaskAwait,
+    ) -> RuntimeResult<()> {
+        if task_await.parent_task_id != task_id {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.await.parent.{task_id}"),
+            )));
+        }
+        let ready_at_step = ready_step_for_wait(&task_await);
+        let record = self.claimed_record_mut(task_id, runner_id, "wait")?;
+        record.status = TaskStatus::Waiting;
+        record.task.ready_at_step = ready_at_step;
+        record.task.continuation_ref = Some(task_await.continuation.continuation.ref_id.clone());
+        record.lease = None;
+        record.claimed_by = None;
+        self.waits_by_child
+            .entry(task_await.child.task_id.clone())
+            .or_default()
+            .push(task_await.clone());
+        self.waits_by_parent
+            .entry(task_id.to_string())
+            .or_default()
+            .push(task_await);
+        Ok(())
+    }
+
     pub fn block(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
         let record = self.claimed_record_mut(task_id, runner_id, "block")?;
         record.status = TaskStatus::Blocked;
@@ -209,6 +242,7 @@ impl TaskPool {
         record.status = TaskStatus::Ready;
         record.claimed_by = None;
         record.lease = None;
+        self.remove_waits_for_parent(task_id);
         Ok(())
     }
 
@@ -244,6 +278,7 @@ impl TaskPool {
         let record = self.claimed_record_mut(task_id, runner_id, "cancel")?;
         record.status = TaskStatus::Cancelled;
         record.lease = None;
+        self.remove_waits_for_parent(task_id);
         Ok(())
     }
 
@@ -262,7 +297,55 @@ impl TaskPool {
         record.status = TaskStatus::Cancelled;
         record.claimed_by = None;
         record.lease = None;
+        self.remove_waits_for_parent(task_id);
         Ok(())
+    }
+
+    pub fn awaits_for_parent(&self, task_id: &str) -> Vec<TaskAwait> {
+        self.waits_by_parent
+            .get(task_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn take_waits_for_child(&mut self, child_task_id: &str) -> Vec<TaskAwait> {
+        let waits = self
+            .waits_by_child
+            .remove(child_task_id)
+            .unwrap_or_default();
+        for task_await in &waits {
+            let remove_parent = if let Some(parent_waits) =
+                self.waits_by_parent.get_mut(&task_await.parent_task_id)
+            {
+                parent_waits.retain(|item| item.child.task_id != child_task_id);
+                parent_waits.is_empty()
+            } else {
+                false
+            };
+            if remove_parent {
+                self.waits_by_parent.remove(&task_await.parent_task_id);
+            }
+        }
+        waits
+    }
+
+    fn remove_waits_for_parent(&mut self, parent_task_id: &str) {
+        let waits = self
+            .waits_by_parent
+            .remove(parent_task_id)
+            .unwrap_or_default();
+        for task_await in waits {
+            let remove_child =
+                if let Some(child_waits) = self.waits_by_child.get_mut(&task_await.child.task_id) {
+                    child_waits.retain(|item| item.parent_task_id != parent_task_id);
+                    child_waits.is_empty()
+                } else {
+                    false
+                };
+            if remove_child {
+                self.waits_by_child.remove(&task_await.child.task_id);
+            }
+        }
     }
 
     pub fn rebind_ready_generation(&mut self, old_generation: u64, new_generation: u64) -> usize {
@@ -332,6 +415,14 @@ impl TaskPool {
             )));
         }
         Ok(record)
+    }
+}
+
+fn ready_step_for_wait(task_await: &TaskAwait) -> Option<u64> {
+    match &task_await.continuation.wake {
+        Some(WakeCondition::Timer { ready_at_step })
+        | Some(WakeCondition::RetryAfter { ready_at_step }) => Some(*ready_at_step),
+        _ => None,
     }
 }
 

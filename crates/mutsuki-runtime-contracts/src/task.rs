@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{BindingId, ExecutorId, ProtocolId, RefId, ResourceRef, RunnerId, SurfaceId, TaskId};
+use crate::{
+    BindingId, ExecutorId, ProtocolId, RefId, ResourceRef, RunnerId, RuntimeError, SurfaceId,
+    TaskId,
+};
 use crate::{TaskLeaseId, TraceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +87,49 @@ pub struct TaskLease {
     pub expires_at_step: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelPolicy {
+    Cascade,
+    Detach,
+    Shield,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskHandle {
+    pub task_id: TaskId,
+    pub protocol_id: ProtocolId,
+    pub target_binding_id: Option<BindingId>,
+    pub cancel_policy: CancelPolicy,
+    pub trace_id: Option<TraceId>,
+    pub correlation_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum TaskOutcome {
+    Completed {
+        task_id: TaskId,
+        output_ref: Option<RefId>,
+    },
+    Failed {
+        task_id: TaskId,
+        error: RuntimeError,
+    },
+    Cancelled {
+        task_id: TaskId,
+        reason: Option<String>,
+    },
+    Expired {
+        task_id: TaskId,
+        reason: Option<String>,
+    },
+    DeadLetter {
+        task_id: TaskId,
+        reason: Option<String>,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WakeCondition {
@@ -99,6 +145,14 @@ pub struct TaskStepContinuation {
     pub continuation: ResourceRef,
     pub wake: Option<WakeCondition>,
     pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TaskAwait {
+    pub parent_task_id: TaskId,
+    pub child: TaskHandle,
+    pub continuation: TaskStepContinuation,
+    pub cancel_policy: CancelPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

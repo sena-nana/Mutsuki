@@ -108,6 +108,26 @@ impl ResourceManager {
         Ok(())
     }
 
+    pub fn active_mutable_lease_routes_for_task(&self, task_id: &str) -> Vec<String> {
+        let mut routes = Vec::new();
+        for cell in self.resource_cells.values() {
+            for lease in cell.active_leases.values() {
+                if lease.borrower_task_id == task_id && lease.mode == "exclusive" {
+                    routes.push(format!("resource_cell.lease.{}", lease.lease_id));
+                }
+            }
+        }
+        for entry in self.resources.values() {
+            if let Some(writer) = &entry.writer
+                && writer.owner == task_id
+            {
+                routes.push(format!("resource.write_lease.{}", writer.token_id));
+            }
+        }
+        routes.sort();
+        routes
+    }
+
     pub fn acquire_write_lease(
         &mut self,
         ref_id: &str,

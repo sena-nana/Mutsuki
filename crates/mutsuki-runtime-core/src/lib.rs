@@ -18,7 +18,9 @@ pub use registry::{
 };
 pub use resource_manager::{PackedValue, ResourceManager};
 pub use runner::{CoreKernelRunner, Runner, RunnerContext, RunnerLoopReport};
-pub use runtime::{CoreRuntime, InvocationPollution, RunningInvocationDisposition};
+pub use runtime::{
+    CoreRuntime, InvocationPollution, RunningInvocationDisposition, TaskResultSnapshot,
+};
 pub use task_pool::{TaskPool, TaskRecord};
 pub use trace::{TraceClosureIssue, validate_trace_closure};
 

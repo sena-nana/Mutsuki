@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, ExclusiveWriteLease, HandlerBinding, ResourceCellRef, ResourceLease,
-    ResourceRef, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan,
-    SurfaceOccupancyHandle, Task,
+    CancelPolicy, ContractSurface, ExclusiveWriteLease, HandlerBinding, ResourceCellRef,
+    ResourceLease, ResourceRef, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan,
+    ScalarValue, SurfaceOccupancyHandle, Task, TaskHandle, TaskOutcome, TaskStatus,
 };
 use serde_json::Value;
 
@@ -273,6 +273,11 @@ impl CoreRuntime {
         self.enqueue_task(task)
     }
 
+    pub fn submit_task_handle(&mut self, task: Task) -> RuntimeResult<TaskHandle> {
+        let task_id = self.enqueue_task(task);
+        self.task_handle(&task_id)
+    }
+
     pub fn submit_targeted_task(
         &mut self,
         task_id: &str,
@@ -297,8 +302,40 @@ impl CoreRuntime {
         Ok(self.enqueue_task(task))
     }
 
+    pub fn submit_targeted_task_handle(
+        &mut self,
+        task_id: &str,
+        binding_id: &str,
+        payload: Value,
+    ) -> RuntimeResult<TaskHandle> {
+        let task_id = self.submit_targeted_task(task_id, binding_id, payload)?;
+        self.task_handle(&task_id)
+    }
+
+    pub fn task_handle(&self, task_id: &str) -> RuntimeResult<TaskHandle> {
+        let record = self.tasks.get(task_id).ok_or_else(|| {
+            RuntimeFailure::new(RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
+                "runtime.task",
+                format!("task.handle.{task_id}"),
+            ))
+        })?;
+        Ok(TaskHandle {
+            task_id: record.task.task_id.clone(),
+            protocol_id: record.task.protocol_id.clone(),
+            target_binding_id: record.task.target_binding_id.clone(),
+            cancel_policy: CancelPolicy::Cascade,
+            trace_id: record.task.trace_id.clone(),
+            correlation_id: record.task.correlation_id.clone(),
+        })
+    }
+
     pub fn task_status(&self, task_id: &str) -> Option<mutsuki_runtime_contracts::TaskStatus> {
         self.tasks.get(task_id).map(|record| record.status.clone())
+    }
+
+    pub fn task_handle_status(&self, handle: &TaskHandle) -> Option<TaskStatus> {
+        self.task_status(&handle.task_id)
     }
 
     pub fn task_result(&self, task_id: &str) -> Option<TaskResultSnapshot> {
@@ -311,6 +348,53 @@ impl CoreRuntime {
         })
     }
 
+    pub fn task_handle_result(&self, handle: &TaskHandle) -> Option<TaskResultSnapshot> {
+        self.task_result(&handle.task_id)
+    }
+
+    pub fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+        let record = self.tasks.get(task_id).ok_or_else(|| {
+            RuntimeFailure::new(RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
+                "runtime.task",
+                format!("task.outcome.{task_id}"),
+            ))
+        })?;
+        Ok(match record.status {
+            TaskStatus::Completed => Some(TaskOutcome::Completed {
+                task_id: record.task.task_id.clone(),
+                output_ref: record.task.output_ref.clone(),
+            }),
+            TaskStatus::Failed => Some(TaskOutcome::Failed {
+                task_id: record.task.task_id.clone(),
+                error: record.failure.clone().unwrap_or_else(|| {
+                    RuntimeError::new(
+                        "runner.failed",
+                        "runtime.task",
+                        format!("task.outcome.{task_id}"),
+                    )
+                }),
+            }),
+            TaskStatus::Cancelled => Some(TaskOutcome::Cancelled {
+                task_id: record.task.task_id.clone(),
+                reason: record.failure.as_ref().map(|error| error.route.clone()),
+            }),
+            TaskStatus::Expired => Some(TaskOutcome::Expired {
+                task_id: record.task.task_id.clone(),
+                reason: record.failure.as_ref().map(|error| error.route.clone()),
+            }),
+            TaskStatus::DeadLetter => Some(TaskOutcome::DeadLetter {
+                task_id: record.task.task_id.clone(),
+                reason: record.failure.as_ref().map(|error| error.route.clone()),
+            }),
+            _ => None,
+        })
+    }
+
+    pub fn task_handle_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+        self.task_outcome(&handle.task_id)
+    }
+
     pub fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
         self.events
             .snapshot()
@@ -319,12 +403,60 @@ impl CoreRuntime {
             .collect()
     }
 
+    pub fn task_handle_events(&self, handle: &TaskHandle) -> Vec<&RuntimeEvent> {
+        self.task_events(&handle.task_id)
+    }
+
+    pub fn events_after(&self, sequence: u64) -> Vec<&RuntimeEvent> {
+        self.events
+            .snapshot()
+            .iter()
+            .filter(|event| event.sequence > sequence)
+            .collect()
+    }
+
     pub fn cancel_task(&mut self, task_id: &str) -> RuntimeResult<()> {
-        self.tasks.cancel_by_core(task_id)
+        let awaits = self.tasks.awaits_for_parent(task_id);
+        if awaits
+            .iter()
+            .any(|task_await| task_await.cancel_policy != CancelPolicy::Cascade)
+        {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                "task.cancel_policy_unsupported",
+                "runtime.task",
+                format!("task.cancel.{task_id}"),
+            )));
+        }
+        self.tasks.cancel_by_core(task_id)?;
+        self.record_task_terminal_event(task_id, "task.cancelled", None);
+        for task_await in awaits {
+            if matches!(
+                self.task_status(&task_await.child.task_id),
+                Some(
+                    TaskStatus::Created
+                        | TaskStatus::Ready
+                        | TaskStatus::Running
+                        | TaskStatus::Waiting
+                        | TaskStatus::Blocked
+                )
+            ) {
+                self.cancel_task(&task_await.child.task_id)?;
+            }
+        }
+        self.wake_tasks_waiting_on(task_id)?;
+        Ok(())
+    }
+
+    pub fn cancel_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {
+        self.cancel_task(&handle.task_id)
     }
 
     pub fn wake_task(&mut self, task_id: &str) -> RuntimeResult<()> {
         self.tasks.wake(task_id)
+    }
+
+    pub fn wake_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {
+        self.wake_task(&handle.task_id)
     }
 
     pub fn register_runner(&mut self, runner: Box<dyn Runner>) -> RuntimeResult<()> {
@@ -394,5 +526,62 @@ impl CoreRuntime {
             )));
         }
         Ok(())
+    }
+
+    pub(crate) fn ensure_task_can_suspend(&self, task_id: &str) -> RuntimeResult<()> {
+        let active_mutable = self.resources.active_mutable_lease_routes_for_task(task_id);
+        if !active_mutable.is_empty() {
+            let mut error = RuntimeError::new(
+                "resource.lease_cross_await",
+                "runtime.resource_manager",
+                format!("task.await.{task_id}"),
+            );
+            error.evidence.insert(
+                "active_mutable_leases".into(),
+                ScalarValue::String(active_mutable.join(",")),
+            );
+            return Err(RuntimeFailure::new(error));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_task_terminal_event(
+        &mut self,
+        task_id: &str,
+        name: &str,
+        error: Option<RuntimeError>,
+    ) {
+        self.events.record(
+            RuntimeEventKind::Task,
+            name,
+            Some(task_id.to_string()),
+            BTreeMap::new(),
+            error,
+        );
+    }
+
+    pub(crate) fn wake_tasks_waiting_on(&mut self, child_task_id: &str) -> RuntimeResult<usize> {
+        let waits = self.tasks.take_waits_for_child(child_task_id);
+        let mut woken = 0;
+        for task_await in waits {
+            if matches!(
+                self.task_status(&task_await.parent_task_id),
+                Some(TaskStatus::Waiting | TaskStatus::Blocked)
+            ) {
+                self.tasks.wake(&task_await.parent_task_id)?;
+                self.events.record(
+                    RuntimeEventKind::Task,
+                    "task.wake",
+                    Some(task_await.parent_task_id),
+                    BTreeMap::from([(
+                        "child_task_id".into(),
+                        ScalarValue::String(child_task_id.to_string()),
+                    )]),
+                    None,
+                );
+                woken += 1;
+            }
+        }
+        Ok(woken)
     }
 }

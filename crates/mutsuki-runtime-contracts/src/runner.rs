@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskId, ValueRef};
+use crate::{ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskAwait, TaskId, ValueRef};
 use crate::{StateDelta, SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +69,7 @@ pub struct RunnerResult {
     pub effects: Vec<EffectRequest>,
     pub values: Vec<ValueRef>,
     pub resources: Vec<ResourceRef>,
+    pub task_await: Option<TaskAwait>,
     pub status: RunnerStatus,
 }
 
@@ -82,6 +83,7 @@ impl RunnerResult {
             effects: Vec::new(),
             values: Vec::new(),
             resources: Vec::new(),
+            task_await: None,
             status: RunnerStatus::Completed,
         }
     }

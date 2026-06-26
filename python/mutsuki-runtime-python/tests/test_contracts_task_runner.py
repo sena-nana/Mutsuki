@@ -12,9 +12,19 @@ from mutsuki_runtime_python.contracts.runner import (
     RunnerDescriptor,
     RunnerPurity,
     RunnerResult,
+    RunnerStatus,
 )
 from mutsuki_runtime_python.contracts.state import VersionExpectation
-from mutsuki_runtime_python.contracts.task import Task, TaskLease
+from mutsuki_runtime_python.contracts.task import (
+    CancelPolicy,
+    Task,
+    TaskAwait,
+    TaskHandle,
+    TaskLease,
+    TaskOutcome,
+    TaskStepContinuation,
+    WakeCondition,
+)
 from mutsuki_runtime_python.testing.assertions import assert_json_roundtrip
 
 
@@ -105,3 +115,46 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
     )
 
     assert_json_roundtrip(RunnerResult, result)
+
+
+def test_task_handle_outcome_and_await_roundtrip() -> None:
+    handle = TaskHandle(
+        task_id="child-1",
+        protocol_id="child.work",
+        target_binding_id=None,
+        cancel_policy=CancelPolicy.CASCADE,
+        trace_id="trace-1",
+        correlation_id="corr-1",
+    )
+    assert_json_roundtrip(TaskHandle, handle)
+    assert_json_roundtrip(TaskOutcome, TaskOutcome.completed("child-1", "value:child"))
+
+    continuation = TaskStepContinuation(
+        continuation=ResourceRef(
+            ref_id="continuation:parent-1",
+            provider_id="mutsuki.sdk",
+            resource_kind="continuation",
+            schema="mutsuki.continuation.v1",
+            version=1,
+            generation=1,
+            access=ResourceAccess.inline(),
+            size_hint=None,
+            content_hash=None,
+            lifetime=ResourceLifetime.BORROWED_UNTIL_TASK_END,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        ),
+        wake=WakeCondition.manual_wake(),
+        reason="sdk.await",
+    )
+    task_await = TaskAwait(
+        parent_task_id="parent-1",
+        child=handle,
+        continuation=continuation,
+        cancel_policy=CancelPolicy.CASCADE,
+    )
+    assert_json_roundtrip(TaskAwait, task_await)
+    assert_json_roundtrip(
+        RunnerResult,
+        RunnerResult(task_id="parent-1", task_await=task_await, status=RunnerStatus.WAITING),
+    )

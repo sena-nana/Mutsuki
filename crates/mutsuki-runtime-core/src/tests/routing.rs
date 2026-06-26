@@ -189,3 +189,226 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
     assert!(span.attributes.contains_key("descriptor_hash"));
     assert!(span.attributes.contains_key("contract_fingerprint"));
 }
+
+#[test]
+fn waiting_task_is_woken_when_child_reaches_terminal_state() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(parent, |task| {
+            if task.continuation_ref.is_some() {
+                return RunnerResult::completed(task.task_id.clone());
+            }
+            await_child_result(
+                task,
+                Task::new("child-1", "child.work", json!({"from": task.task_id})),
+            )
+        })),
+        Box::new(StaticRunner::new(child, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime.tick_once().unwrap();
+
+    let parent_record = runtime.tasks().get("parent-1").unwrap();
+    assert_eq!(parent_record.status, TaskStatus::Waiting);
+    assert!(parent_record.lease.is_none());
+    assert_eq!(
+        parent_record.task.continuation_ref.as_deref(),
+        Some("continuation:parent")
+    );
+    runtime.tick_once().unwrap();
+
+    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Completed));
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Completed));
+    assert!(
+        runtime
+            .task_events("parent-1")
+            .iter()
+            .any(|event| event.name == "task.wake")
+    );
+}
+
+#[test]
+fn waiting_task_is_woken_when_child_fails_or_is_cancelled() {
+    run_child_terminal_wake_case(RunnerStatus::Failed, TaskStatus::Failed);
+    run_child_terminal_wake_case(RunnerStatus::Cancelled, TaskStatus::Cancelled);
+}
+
+#[test]
+fn cancelling_waiting_parent_cascades_to_child() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(parent, |task| {
+            let child_task = Task::new("child-1", "child.work", json!({}));
+            await_child_result(task, child_task)
+        })),
+        Box::new(StaticRunner::new(child, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime.tick_once().unwrap();
+
+    runtime.cancel_task("parent-1").unwrap();
+
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Cancelled));
+    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Cancelled));
+}
+
+#[test]
+fn task_cannot_suspend_while_holding_mutable_resource_lease() {
+    let worker = runner_descriptor("worker", "parent.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(worker, |task| {
+            await_child_result(task, Task::new("child-1", "child.work", json!({})))
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    let resource = runtime.create_blob_resource("bytes.v1", vec![1, 2, 3]);
+    let _lease = runtime
+        .lock_resource(&resource.ref_id, "parent-1", None)
+        .unwrap();
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, "resource.lease_cross_await");
+    assert!(runtime.tasks().get("child-1").is_none());
+}
+
+#[test]
+fn task_handle_facade_exposes_status_result_cancel_and_events() {
+    let plan = load_plan(Vec::new(), Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    let handle = runtime
+        .submit_task_handle(Task::new("handle-task", "manual.work", json!({})))
+        .unwrap();
+
+    assert_eq!(runtime.task_handle_status(&handle), Some(TaskStatus::Ready));
+    assert_eq!(
+        runtime.task_handle_result(&handle).unwrap().status,
+        TaskStatus::Ready
+    );
+    assert!(runtime.task_handle_outcome(&handle).unwrap().is_none());
+
+    runtime.cancel_task_handle(&handle).unwrap();
+
+    assert_eq!(
+        runtime.task_handle_outcome(&handle).unwrap(),
+        Some(TaskOutcome::Cancelled {
+            task_id: "handle-task".into(),
+            reason: None,
+        })
+    );
+    assert!(
+        runtime
+            .task_handle_events(&handle)
+            .iter()
+            .any(|event| event.name == "task.cancelled")
+    );
+}
+
+fn run_child_terminal_wake_case(
+    child_runner_status: RunnerStatus,
+    expected_child_status: TaskStatus,
+) {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(parent, |task| {
+            if task.continuation_ref.is_some() {
+                return RunnerResult::completed(task.task_id.clone());
+            }
+            let child_task = Task::new("child-1", "child.work", json!({}));
+            await_child_result(task, child_task)
+        })),
+        Box::new(StaticRunner::new(child, move |task| {
+            runner_result_with_status(task, child_runner_status.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime.tick_once().unwrap();
+    runtime.tick_once().unwrap();
+
+    assert_eq!(runtime.task_status("child-1"), Some(expected_child_status));
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Completed));
+    assert!(
+        runtime
+            .task_events("parent-1")
+            .iter()
+            .any(|event| event.name == "task.wake")
+    );
+}
+
+fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
+    let child_handle = TaskHandle {
+        task_id: child.task_id.clone(),
+        protocol_id: child.protocol_id.clone(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: parent.trace_id.clone(),
+        correlation_id: parent.correlation_id.clone(),
+    };
+    let mut result = runner_result_with_status(parent, RunnerStatus::Waiting);
+    result.tasks.push(child);
+    result.task_await = Some(TaskAwait {
+        parent_task_id: parent.task_id.clone(),
+        child: child_handle,
+        continuation: test_continuation("continuation:parent"),
+        cancel_policy: CancelPolicy::Cascade,
+    });
+    result
+}
+
+fn runner_result_with_status(task: &Task, status: RunnerStatus) -> RunnerResult {
+    RunnerResult {
+        task_id: task.task_id.clone(),
+        deltas: Vec::new(),
+        events: Vec::new(),
+        tasks: Vec::new(),
+        effects: Vec::new(),
+        values: Vec::new(),
+        resources: Vec::new(),
+        task_await: None,
+        status,
+    }
+}
+
+fn test_continuation(ref_id: &str) -> TaskStepContinuation {
+    TaskStepContinuation {
+        continuation: ResourceRef {
+            ref_id: ref_id.into(),
+            provider_id: "test".into(),
+            resource_kind: "continuation".into(),
+            schema: "continuation.v1".into(),
+            version: 1,
+            generation: 1,
+            access: ResourceAccess::Inline,
+            size_hint: None,
+            content_hash: None,
+            lifetime: ResourceLifetime::BorrowedUntilTaskEnd,
+            lease: None,
+            seal_state: ResourceSealState::Sealed,
+        },
+        wake: None,
+        reason: Some("await child".into()),
+    }
+}

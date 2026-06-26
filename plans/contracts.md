@@ -17,6 +17,10 @@
 |---|---|
 | `Task` | 统一待处理控制消息，包含 protocol_id、priority、ready_at_step、payload、refs、target_binding_id、lease_id、expected_versions、registry_generation |
 | `TaskLease` | 一次 task step 的执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
+| `TaskHandle` | SDK-facing task descriptor，包含 task id、protocol、target binding、取消策略和 trace/correlation |
+| `TaskAwait` | 当前 task 等待一个 child task 的 continuation registration |
+| `TaskOutcome` | SDK 读取的 terminal task 结果映射 |
+| `CancelPolicy` | SDK await 取消策略，当前默认支持 Cascade，Detach / Shield 为协议预留 |
 | `TaskStatus` | created、ready、running、waiting、blocked、completed、failed、cancelled、expired、dead_letter |
 | `ProtocolDescriptor` | protocol_id、schema、codec、version、compatibility 等纯数据契约 |
 | `HandlerBinding` | 插件对 protocol 的逻辑消费绑定，指向目标 protocol / runner hint / pool |
@@ -58,6 +62,20 @@ Runner.dispose()
 当前 `tasks` 仍保留 Vec wire shape 以兼容 host/JSONL runner client，但 Core 每次只
 lease 一个 Task 给一个 Executor 调用 Runner。
 
+SDK 层可以把 task 原语包装成语言 awaitable：
+
+```text
+Rust SDK: ctx.call(protocol, input).await -> TaskOutcome
+JS/Python SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
+```
+
+Core 不暴露 Rust `Future`、Promise、Coroutine、join/select、TaskGroup、WaitSet 或通用
+executor。
+
+Core 保留既有 string task id facade，同时提供以 `TaskHandle` descriptor 为入口的
+status / result / outcome / events / cancel / wake facade。`TaskHandle` 不代表语言级
+future、真实执行句柄或长期持有的 runtime object。
+
 ## 4. TaskPool
 
 TaskPool claim 必须满足：
@@ -75,6 +93,13 @@ TaskPool claim 必须满足：
 Task claim 成功后必须生成 `TaskLease`，Running 状态必须能追溯 runner、executor 和
 lease id。完成、失败、取消、等待或阻塞当前 task 时，Core 释放该 task lease。
 
+当 runner 返回 `RunnerStatus::Waiting` 且携带 `TaskAwait`：
+
+- Core 保存当前 task `continuation_ref`。
+- Core 注册 child task terminal 状态到 parent task wake 的 wait link。
+- 当前 task 释放 `TaskLease`，runner 不因 await 被长期占用。
+- child task completed / failed / cancelled / expired / dead_letter 后，parent task 被唤醒为 ready/runnable。
+
 排序：
 
 ```text
@@ -89,6 +114,7 @@ task_id asc
 Pure runner 不直接提交状态或执行副作用：
 
 - `status = completed / failed / cancelled / waiting / blocked` 只改变当前 task 的状态。
+- `task_await` 只注册一个 child wait link，不表示 TaskGroup。
 - `deltas` 生成 `core.commit` task。
 - `events` 生成 `core.event.append` task。
 - `effects` 生成 `effect.*` task。
@@ -119,6 +145,8 @@ Task payload 可包含：
 - 原地写必须 ExclusiveWriteLease。
 - runner 可以持有短期 ResourceLease，但不能拥有 ResourceCell。
 - lease 过期、generation mismatch、provider 崩溃必须结构化失败。
+- 短期可变 lease 不允许默认跨 SDK await；await 前存在当前 task 持有的
+  exclusive write lease 或 exclusive ResourceLease 时必须结构化失败。
 
 ## 7. Plugin Loading
 
