@@ -3,7 +3,9 @@ mod id;
 mod logs;
 mod registry;
 mod resource_manager;
+mod runner;
 mod runtime;
+mod state_store;
 mod task_pool;
 mod trace;
 
@@ -15,10 +17,8 @@ pub use registry::{
     PluginGenerationState, RegistrySnapshot, ReloadDecision, RunnerRegistry,
 };
 pub use resource_manager::{PackedValue, ResourceManager};
-pub use runtime::{
-    CoreKernelRunner, CoreRuntime, InvocationPollution, Runner, RunnerContext, RunnerLoopReport,
-    RunningInvocationDisposition,
-};
+pub use runner::{CoreKernelRunner, Runner, RunnerContext, RunnerLoopReport};
+pub use runtime::{CoreRuntime, InvocationPollution, RunningInvocationDisposition};
 pub use task_pool::{TaskPool, TaskRecord};
 pub use trace::{TraceClosureIssue, validate_trace_closure};
 
