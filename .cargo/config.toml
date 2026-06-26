@@ -1,0 +1,5 @@
+[alias]
+c = "check --workspace --all-targets"
+t = "test --workspace --all-targets"
+lint = "clippy --workspace --all-targets -- -D warnings"
+timings = "build --workspace --timings"

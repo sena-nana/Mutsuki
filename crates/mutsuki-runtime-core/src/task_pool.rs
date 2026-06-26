@@ -228,15 +228,14 @@ impl TaskPool {
 
     pub fn cancel_running_invocation(&mut self, runner_id: &str, invocation_id: &str) -> usize {
         let mut cancelled = 0;
-        if let Some(record) = self.tasks.get_mut(invocation_id) {
-            if record.status == TaskStatus::Running
-                && record.claimed_by.as_deref() == Some(runner_id)
-            {
-                record.status = TaskStatus::Ready;
-                record.claimed_by = None;
-                record.lease = None;
-                cancelled = 1;
-            }
+        if let Some(record) = self.tasks.get_mut(invocation_id)
+            && record.status == TaskStatus::Running
+            && record.claimed_by.as_deref() == Some(runner_id)
+        {
+            record.status = TaskStatus::Ready;
+            record.claimed_by = None;
+            record.lease = None;
+            cancelled = 1;
         }
         cancelled
     }
@@ -376,10 +375,10 @@ fn runner_accepts(runner: &RunnerDescriptor, task: &Task, registry_generation: u
     {
         return false;
     }
-    if let Some(hint) = &task.runner_hint {
-        if hint != &runner.runner_id {
-            return false;
-        }
+    if let Some(hint) = &task.runner_hint
+        && hint != &runner.runner_id
+    {
+        return false;
     }
     if runner.purity == RunnerPurity::Pure
         && (task.protocol_id.starts_with("effect.") || task.protocol_id.starts_with("core."))
