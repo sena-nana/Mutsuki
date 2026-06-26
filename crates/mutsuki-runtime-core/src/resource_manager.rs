@@ -447,7 +447,7 @@ fn resource_surface_matches(entry: &ResourceEntry, prefix: &str, surface_id: &st
 fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
     SurfaceOccupancy {
         surface_id: surface_id.into(),
-        pending_tasks: 0,
+        ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,
         state_refs: 0,

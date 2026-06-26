@@ -18,9 +18,10 @@ pub use error::{
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use plugin::{
-    ArtifactType, ContractSurface, ContractSurfaceKind, LifecyclePolicy, PermissionGrant,
-    PluginArtifact, PluginManifest, PluginProvides, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
-    SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
+    ArtifactType, ContractSurface, ContractSurfaceKind, HandlerBinding, LifecyclePolicy,
+    PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, ProtocolDescriptor,
+    RuntimeLoadPlan, RuntimeLock, RuntimeProfile, SurfaceCompatibility, SurfaceOccupancy,
+    SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
     ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceLifetime, ResourceRef,
@@ -30,10 +31,7 @@ pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, RunnerDescriptor, RunnerPurity, RunnerResult,
     RunnerStatus,
 };
-pub use task::{
-    ConflictPolicy, StateDelta, StateRef, Task, TaskDemand, TaskMatchRule, TaskStatus,
-    VersionExpectation,
-};
+pub use task::{ConflictPolicy, StateDelta, StateRef, Task, TaskStatus, VersionExpectation};
 pub use trace::{SpanStatus, TraceSpan};
 
 #[cfg(test)]

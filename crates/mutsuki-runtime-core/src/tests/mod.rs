@@ -26,7 +26,10 @@ fn runner_descriptor(id: &str, kind: &str, purity: RunnerPurity) -> RunnerDescri
     }
 }
 
-fn manifest(runners: Vec<RunnerDescriptor>, demands: Vec<TaskDemand>) -> PluginManifest {
+fn manifest(
+    runners: Vec<RunnerDescriptor>,
+    handler_bindings: Vec<HandlerBinding>,
+) -> PluginManifest {
     PluginManifest {
         plugin_id: "plugin-a".into(),
         version: "0.1.0".into(),
@@ -38,7 +41,8 @@ fn manifest(runners: Vec<RunnerDescriptor>, demands: Vec<TaskDemand>) -> PluginM
         },
         provides: PluginProvides {
             runners,
-            task_demands: demands,
+            protocols: Vec::new(),
+            handler_bindings,
             effects: vec!["effect.chat.send".into()],
             streams: vec!["chat.events".into()],
             subscriptions: vec!["chat.messages".into()],
@@ -63,10 +67,13 @@ fn manifest(runners: Vec<RunnerDescriptor>, demands: Vec<TaskDemand>) -> PluginM
     }
 }
 
-fn load_plan(runners: Vec<RunnerDescriptor>, demands: Vec<TaskDemand>) -> RuntimeLoadPlan {
+fn load_plan(
+    runners: Vec<RunnerDescriptor>,
+    handler_bindings: Vec<HandlerBinding>,
+) -> RuntimeLoadPlan {
     let mut all_runners = runners;
     all_runners.push(CoreKernelRunner::new(1).descriptor().clone());
-    let mut plugins = vec![manifest(all_runners, demands)];
+    let mut plugins = vec![manifest(all_runners, handler_bindings)];
     plugins[0].provides.runners[0].plugin_id = "plugin-a".into();
     RuntimeLoadPlan {
         lock_version: 1,
@@ -240,30 +247,31 @@ fn task_pool_rejects_purity_and_generation_mismatched_claims() {
     assert!(pool.claim_ready(&committer, 1, 1, 8).is_empty());
     assert!(pool.claim_ready(&pure, 1, 2, 8).is_empty());
 
-    assert_eq!(pool.rebind_pending_generation(1, 2), 1);
+    assert_eq!(pool.rebind_ready_generation(1, 2), 1);
     let claimed = pool.claim_ready(&pure, 1, 2, 8);
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].task_id, "work-1");
 }
 
 #[test]
-fn orchestrator_fans_out_raw_input_with_task_demands() {
+fn pure_runner_explicitly_enqueues_derived_tasks() {
     let orchestrator = runner_descriptor("orchestrator", "raw.input.chat", RunnerPurity::Pure);
-    let demand = TaskDemand {
-        demand_id: "memory".into(),
-        plugin_id: "plugin-a".into(),
-        match_rule: TaskMatchRule::Kind {
-            kind: "raw.input.chat".into(),
-        },
-        target_task_kind: "sim.memory.retrieve".into(),
-        target_runner_hint: Some("memory.runner".into()),
-        priority: 5,
-        payload_projection: json!({"mode": "fast"}),
-        input_ref_policy: "copy_refs".into(),
-    };
-    let plan = load_plan(vec![orchestrator.clone()], vec![demand.clone()]);
+    let plan = load_plan(vec![orchestrator.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(DefaultOrchestratorRunner::new(orchestrator, vec![demand])),
+        Box::new(StaticRunner::new(orchestrator, |task| {
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            let mut derived = Task::new(
+                format!("{}:memory", task.task_id),
+                "sim.memory.retrieve",
+                json!({"mode": "fast"}),
+            );
+            derived.priority = 5;
+            derived.input_refs = task.input_refs.clone();
+            derived.runner_hint = Some("memory.runner".into());
+            derived.correlation_id = task.correlation_id.clone();
+            result.tasks.push(derived);
+            result
+        })),
         Box::new(CoreKernelRunner::new(1)),
     ];
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
@@ -279,6 +287,149 @@ fn orchestrator_fans_out_raw_input_with_task_demands() {
             .iter()
             .any(|span| span.name == "runner.step")
     );
+}
+
+#[test]
+fn task_pool_only_claims_ready_tasks() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    let ready = Task::new("ready", "sim.work", json!({}));
+    let waiting = Task::new("waiting", "sim.work", json!({}));
+    let blocked = Task::new("blocked", "sim.work", json!({}));
+    pool.enqueue(ready);
+    pool.enqueue(waiting);
+    pool.enqueue(blocked);
+    pool.get_mut_for_test("waiting").status = TaskStatus::Waiting;
+    pool.get_mut_for_test("blocked").status = TaskStatus::Blocked;
+
+    let claimed = pool.claim_ready(&descriptor, 1, 0, 8);
+
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].task_id, "ready");
+}
+
+fn handler_binding(binding_id: &str, protocol_id: &str, target_task_kind: &str) -> HandlerBinding {
+    HandlerBinding {
+        binding_id: binding_id.into(),
+        plugin_id: "plugin-a".into(),
+        protocol_id: protocol_id.into(),
+        target_task_kind: target_task_kind.into(),
+        target_runner_hint: None,
+        pool_id: "default".into(),
+        priority: 0,
+        policy: "required".into(),
+        metadata: BTreeMap::new(),
+    }
+}
+
+fn boot_error(plan: RuntimeLoadPlan, runners: Vec<Box<dyn Runner>>) -> RuntimeFailure {
+    match CoreRuntime::boot(plan, runners) {
+        Ok(_) => panic!("runtime boot should fail"),
+        Err(error) => error,
+    }
+}
+
+#[test]
+fn handler_bindings_are_queryable_but_do_not_fan_out_tasks() {
+    let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let mut binding = handler_binding(
+        "message-handler",
+        "im.message.received.v1",
+        "cap.message.handle",
+    );
+    binding.target_runner_hint = Some("message.runner".into());
+    binding.priority = 10;
+    let plan = load_plan(vec![runner.clone()], vec![binding.clone()]);
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    assert_eq!(
+        runtime.handler_bindings("im.message.received.v1"),
+        vec![&binding]
+    );
+
+    runtime.publish_raw_input("raw-1", "im.message.received.v1", json!({"text": "hello"}));
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.claimed_tasks, 0);
+    assert!(runtime.tasks().get("raw-1").is_some());
+    assert_eq!(runtime.tasks().get("raw-1:message-handler"), None);
+}
+
+#[test]
+fn handler_binding_load_plan_validation_rejects_missing_task_kind() {
+    let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let plan = load_plan(
+        vec![runner.clone()],
+        vec![handler_binding(
+            "message-handler",
+            "im.message.received.v1",
+            "cap.message.missing",
+        )],
+    );
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn handler_binding_load_plan_validation_rejects_bad_runner_hint() {
+    let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let mut binding = handler_binding(
+        "message-handler",
+        "im.message.received.v1",
+        "cap.message.handle",
+    );
+    binding.target_runner_hint = Some("missing.runner".into());
+    let plan = load_plan(vec![runner.clone()], vec![binding]);
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(runner, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn handler_binding_load_plan_validation_rejects_hint_that_cannot_handle_kind() {
+    let hinted = runner_descriptor("hinted.runner", "cap.other", RunnerPurity::Pure);
+    let target = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
+    let mut binding = handler_binding(
+        "message-handler",
+        "im.message.received.v1",
+        "cap.message.handle",
+    );
+    binding.target_runner_hint = Some("hinted.runner".into());
+    let plan = load_plan(vec![hinted.clone(), target.clone()], vec![binding]);
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(hinted, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(StaticRunner::new(target, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
 }
 
 #[test]
@@ -485,7 +636,7 @@ fn reload_allows_additive_and_blocks_breaking_surfaces() {
 }
 
 #[test]
-fn reload_with_runners_swaps_registry_generation_and_rebinds_pending_tasks() {
+fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
     let worker_v1 = runner_descriptor("worker", "raw.input", RunnerPurity::Pure);
     let plan_v1 = load_plan(vec![worker_v1.clone()], Vec::new());
     let runners_v1: Vec<Box<dyn Runner>> = vec![
@@ -567,7 +718,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
         &["cancel:running-clean", "dispose:worker"]
     );
     let record = runtime.tasks().get("running-clean").unwrap();
-    assert_eq!(record.status, TaskStatus::Pending);
+    assert_eq!(record.status, TaskStatus::Ready);
     assert_eq!(record.task.registry_generation, 2);
     assert_eq!(runtime.draining_generation_count(), 0);
 
@@ -628,7 +779,7 @@ fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
     let plan = load_plan(Vec::new(), Vec::new());
     let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
-    runtime.enqueue_task(Task::new("pending-work", "sim.work", json!({})));
+    runtime.enqueue_task(Task::new("ready-work", "sim.work", json!({})));
 
     let mut with_surface = plan.clone();
     with_surface.contract_surfaces.push(ContractSurface {
@@ -649,7 +800,7 @@ fn removed_task_kind_surface_uses_live_task_pool_occupancy() {
         runtime
             .surface_occupancy()
             .iter()
-            .any(|item| { item.surface_id == "task_kind:sim.work" && item.pending_tasks == 1 })
+            .any(|item| { item.surface_id == "task_kind:sim.work" && item.ready_tasks == 1 })
     );
 }
 
@@ -661,7 +812,7 @@ fn removed_effect_surface_uses_live_effect_inflight_occupancy() {
         ContractSurfaceKind::Effect,
     ));
     let mut runtime = boot_with_kernel(plan.clone());
-    runtime.enqueue_task(Task::new("pending-effect", "effect.chat.send", json!({})));
+    runtime.enqueue_task(Task::new("ready-effect", "effect.chat.send", json!({})));
 
     let removed = remove_surfaces(plan, &["effect:effect.chat.send"]);
 
@@ -881,7 +1032,7 @@ fn removed_surface_requires_zero_occupancy() {
     }];
     let occupancy = vec![SurfaceOccupancy {
         surface_id: "runner:old".into(),
-        pending_tasks: 1,
+        ready_tasks: 1,
         running_invocations: 0,
         resource_refs: 0,
         state_refs: 0,

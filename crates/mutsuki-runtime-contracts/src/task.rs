@@ -6,11 +6,16 @@ use crate::{RefId, SurfaceId, TaskId};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
-    Pending,
+    Created,
+    Ready,
     Running,
+    Waiting,
+    Blocked,
     Completed,
     Failed,
     Cancelled,
+    Expired,
+    DeadLetter,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,34 +84,4 @@ pub struct StateDelta {
     pub expected_version: u64,
     pub patch: Value,
     pub conflict_policy: ConflictPolicy,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TaskDemand {
-    pub demand_id: String,
-    pub plugin_id: String,
-    pub match_rule: TaskMatchRule,
-    pub target_task_kind: String,
-    pub target_runner_hint: Option<String>,
-    pub priority: i64,
-    pub payload_projection: Value,
-    pub input_ref_policy: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TaskMatchRule {
-    Kind { kind: String },
-    KindPrefix { prefix: String },
-    Any,
-}
-
-impl TaskMatchRule {
-    pub fn matches(&self, task: &Task) -> bool {
-        match self {
-            Self::Kind { kind } => task.kind == *kind,
-            Self::KindPrefix { prefix } => task.kind.starts_with(prefix),
-            Self::Any => true,
-        }
-    }
 }

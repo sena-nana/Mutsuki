@@ -4,14 +4,15 @@ use mutsuki_runtime_contracts::{
     ContractSurface, DomainEvent, ERR_RUNNER_PURITY_VIOLATION, ERR_STATE_CONFLICT, EffectRequest,
     ResourceRef, RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus, RuntimeError,
     RuntimeEventKind, RuntimeLoadPlan, ScalarValue, SpanStatus, StateDelta, SurfaceOccupancy,
-    SurfaceOccupancyHandle, Task, TaskDemand,
+    SurfaceOccupancyHandle, Task,
 };
 use serde_json::Value;
 
 use crate::logs::{EventLog, TraceLog};
 use crate::registry::{
-    DisposeBag, PluginGenerationPhase, PluginGenerationState, RegistrySnapshot, ReloadDecision,
-    RunnerRegistry, compare_surfaces, validate_runtime_descriptors,
+    DisposeBag, HandlerBindingRegistry, PluginGenerationPhase, PluginGenerationState,
+    RegistrySnapshot, ReloadDecision, RunnerRegistry, compare_surfaces,
+    validate_runtime_descriptors,
 };
 use crate::task_pool::surface_ids_for_task;
 use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool};
@@ -98,7 +99,7 @@ struct DrainingGeneration {
 
 pub struct CoreRuntime {
     load_plan: RuntimeLoadPlan,
-    task_demands: Vec<TaskDemand>,
+    handler_bindings: HandlerBindingRegistry,
     surfaces: Vec<ContractSurface>,
     registry: RunnerRegistry,
     draining_generations: Vec<DrainingGeneration>,
@@ -123,13 +124,13 @@ impl CoreRuntime {
             registry.register(runner)?;
         }
         registry.freeze();
-        let task_demands = task_demands_from_plan(&load_plan);
+        let handler_bindings = HandlerBindingRegistry::from_load_plan(&load_plan);
         let generation_states =
             generation_states_for_plan(&load_plan, PluginGenerationPhase::Active);
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
             load_plan,
-            task_demands,
+            handler_bindings,
             registry,
             draining_generations: Vec::new(),
             generation_states,
@@ -147,9 +148,16 @@ impl CoreRuntime {
             generation: self.load_plan.registry_generation,
             frozen: true,
             runners: self.registry.descriptors(),
-            task_demands: self.task_demands.clone(),
+            handler_bindings: self.handler_bindings.all().to_vec(),
             surfaces: self.surfaces.clone(),
         }
+    }
+
+    pub fn handler_bindings(
+        &self,
+        protocol_id: &str,
+    ) -> Vec<&mutsuki_runtime_contracts::HandlerBinding> {
+        self.handler_bindings.query_protocol(protocol_id)
     }
 
     pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {
@@ -180,7 +188,7 @@ impl CoreRuntime {
             .find(|surface_id| self.is_surface_deprecated(surface_id));
         let task_id = self.tasks.enqueue(task);
         if let Some(surface_id) = deprecated_surface {
-            let _ = self.tasks.reject_pending(
+            let _ = self.tasks.reject_ready(
                 &task_id,
                 RuntimeError::new(
                     mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
@@ -307,7 +315,7 @@ impl CoreRuntime {
             let report = self.tick_once()?;
             aggregate.claimed_tasks += report.claimed_tasks;
             aggregate.completed_tasks += report.completed_tasks;
-            if self.tasks.pending_count() == 0 && self.tasks.running_count() == 0 {
+            if self.tasks.ready_count() == 0 && self.tasks.running_count() == 0 {
                 break;
             }
         }
@@ -586,11 +594,11 @@ impl CoreRuntime {
     }
 
     fn apply_load_plan(&mut self, new_plan: RuntimeLoadPlan) {
-        self.tasks.rebind_pending_generation(
+        self.tasks.rebind_ready_generation(
             self.load_plan.registry_generation,
             new_plan.registry_generation,
         );
-        self.task_demands = task_demands_from_plan(&new_plan);
+        self.handler_bindings = HandlerBindingRegistry::from_load_plan(&new_plan);
         self.surfaces = new_plan.contract_surfaces.clone();
         self.load_plan = new_plan;
     }
@@ -734,52 +742,6 @@ impl CoreRuntime {
     }
 }
 
-pub struct DefaultOrchestratorRunner {
-    descriptor: RunnerDescriptor,
-    demands: Vec<TaskDemand>,
-}
-
-impl DefaultOrchestratorRunner {
-    pub fn new(descriptor: RunnerDescriptor, demands: Vec<TaskDemand>) -> Self {
-        Self {
-            descriptor,
-            demands,
-        }
-    }
-}
-
-impl Runner for DefaultOrchestratorRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        let mut results = Vec::new();
-        for task in tasks {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            for demand in self
-                .demands
-                .iter()
-                .filter(|demand| demand.match_rule.matches(&task))
-            {
-                let mut derived = Task::new(
-                    format!("{}:{}", task.task_id, demand.demand_id),
-                    demand.target_task_kind.clone(),
-                    demand.payload_projection.clone(),
-                );
-                derived.priority = demand.priority;
-                derived.input_refs = task.input_refs.clone();
-                derived.runner_hint = demand.target_runner_hint.clone();
-                derived.registry_generation = ctx.registry_generation;
-                derived.correlation_id = task.correlation_id.clone();
-                result.tasks.push(derived);
-            }
-            results.push(result);
-        }
-        Ok(results)
-    }
-}
-
 pub struct CoreKernelRunner {
     descriptor: RunnerDescriptor,
 }
@@ -843,14 +805,6 @@ fn effect_task(source_task_id: &str, effect: EffectRequest, generation: u64) -> 
     );
     task.registry_generation = generation;
     task
-}
-
-fn task_demands_from_plan(load_plan: &RuntimeLoadPlan) -> Vec<TaskDemand> {
-    load_plan
-        .plugins
-        .iter()
-        .flat_map(|plugin| plugin.provides.task_demands.iter().cloned())
-        .collect()
 }
 
 fn ref_lineage_attrs(
@@ -955,7 +909,7 @@ fn merge_occupancy(
         let entry = by_surface
             .entry(item.surface_id.clone())
             .or_insert_with(|| zero_occupancy(&item.surface_id));
-        entry.pending_tasks += item.pending_tasks;
+        entry.ready_tasks += item.ready_tasks;
         entry.running_invocations += item.running_invocations;
         entry.resource_refs += item.resource_refs;
         entry.state_refs += item.state_refs;
@@ -971,7 +925,7 @@ fn merge_occupancy(
 fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
     SurfaceOccupancy {
         surface_id: surface_id.into(),
-        pending_tasks: 0,
+        ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,
         state_refs: 0,
@@ -986,7 +940,7 @@ fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
 fn invocation_attrs(
     runner_id: &str,
     invocation_id: &str,
-    returned_to_pending: usize,
+    returned_to_ready: usize,
 ) -> BTreeMap<String, ScalarValue> {
     let mut attrs = BTreeMap::new();
     attrs.insert("runner_id".into(), ScalarValue::String(runner_id.into()));
@@ -995,8 +949,8 @@ fn invocation_attrs(
         ScalarValue::String(invocation_id.into()),
     );
     attrs.insert(
-        "returned_to_pending".into(),
-        ScalarValue::Int(returned_to_pending as i64),
+        "returned_to_ready".into(),
+        ScalarValue::Int(returned_to_ready as i64),
     );
     attrs
 }

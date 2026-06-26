@@ -7,9 +7,11 @@ from typing import Self
 
 from mutsuki_runtime_python.contracts.codec import (
     JsonDict,
+    JsonValue,
     ScalarValue,
     as_bool,
     as_int,
+    as_json_value,
     as_mapping,
     as_scalar_dict,
     as_str,
@@ -20,7 +22,6 @@ from mutsuki_runtime_python.contracts.codec import (
 )
 from mutsuki_runtime_python.contracts.runner import RunnerDescriptor
 from mutsuki_runtime_python.contracts.surface import ContractSurface
-from mutsuki_runtime_python.contracts.task import TaskDemand
 
 
 class ArtifactType(StrEnum):
@@ -82,9 +83,65 @@ class LifecyclePolicy:
 
 
 @dataclass(frozen=True)
+class ProtocolDescriptor:
+    protocol_id: str
+    version: str
+    input_schema: JsonValue
+    output_schema: JsonValue
+    error_schema: JsonValue
+    codec: str
+    compatibility: str
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ProtocolDescriptor")
+        return cls(
+            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
+            version=as_str(field_value(raw, "version"), "version"),
+            input_schema=as_json_value(field_value(raw, "input_schema")),
+            output_schema=as_json_value(field_value(raw, "output_schema")),
+            error_schema=as_json_value(field_value(raw, "error_schema")),
+            codec=as_str(field_value(raw, "codec"), "codec"),
+            compatibility=as_str(field_value(raw, "compatibility"), "compatibility"),
+        )
+
+
+@dataclass(frozen=True)
+class HandlerBinding:
+    binding_id: str
+    plugin_id: str
+    protocol_id: str
+    target_task_kind: str
+    target_runner_hint: str | None
+    pool_id: str
+    priority: int
+    policy: str
+    metadata: dict[str, ScalarValue]
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "HandlerBinding")
+        target_runner_hint = field_value(raw, "target_runner_hint")
+        return cls(
+            binding_id=as_str(field_value(raw, "binding_id"), "binding_id"),
+            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
+            protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
+            target_task_kind=as_str(field_value(raw, "target_task_kind"), "target_task_kind"),
+            target_runner_hint=None
+            if target_runner_hint is None
+            else as_str(target_runner_hint, "target_runner_hint"),
+            pool_id=as_str(field_value(raw, "pool_id"), "pool_id"),
+            priority=as_int(field_value(raw, "priority"), "priority"),
+            policy=as_str(field_value(raw, "policy"), "policy"),
+            metadata=as_scalar_dict(field_value(raw, "metadata"), "metadata"),
+        )
+
+
+@dataclass(frozen=True)
 class PluginProvides:
     runners: tuple[RunnerDescriptor, ...]
-    task_demands: tuple[TaskDemand, ...]
+    protocols: tuple[ProtocolDescriptor, ...]
+    handler_bindings: tuple[HandlerBinding, ...]
     resource_schemas: tuple[str, ...]
     resource_providers: tuple[str, ...]
     effects: tuple[str, ...]
@@ -98,7 +155,8 @@ class PluginProvides:
         raw = as_mapping(data, "PluginProvides")
         return cls(
             runners=tuple_from_json(raw, "runners", RunnerDescriptor),
-            task_demands=tuple_from_json(raw, "task_demands", TaskDemand),
+            protocols=tuple_from_json(raw, "protocols", ProtocolDescriptor),
+            handler_bindings=tuple_from_json(raw, "handler_bindings", HandlerBinding),
             resource_schemas=as_str_tuple(field_value(raw, "resource_schemas"), "resource_schemas"),
             resource_providers=as_str_tuple(
                 field_value(raw, "resource_providers"), "resource_providers"

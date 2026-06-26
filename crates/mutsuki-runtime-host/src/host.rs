@@ -144,12 +144,24 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
                 });
             }
         }
-        for demand in &manifest.provides.task_demands {
+        for protocol in &manifest.provides.protocols {
             surfaces.push(ContractSurface {
-                surface_id: format!("task_demand:{}", demand.demand_id),
-                kind: ContractSurfaceKind::TaskDemand,
+                surface_id: format!("protocol:{}", protocol.protocol_id),
+                kind: ContractSurfaceKind::Protocol,
                 owner_plugin_id: manifest.plugin_id.clone(),
-                fingerprint: format!("demand:{}", demand.demand_id),
+                fingerprint: format!("protocol:{}:{}", protocol.protocol_id, protocol.version),
+                deprecated: false,
+            });
+        }
+        for binding in &manifest.provides.handler_bindings {
+            surfaces.push(ContractSurface {
+                surface_id: format!("handler_binding:{}", binding.binding_id),
+                kind: ContractSurfaceKind::HandlerBinding,
+                owner_plugin_id: manifest.plugin_id.clone(),
+                fingerprint: format!(
+                    "handler_binding:{}:{}:{}",
+                    binding.binding_id, binding.protocol_id, binding.target_task_kind
+                ),
                 deprecated: false,
             });
         }

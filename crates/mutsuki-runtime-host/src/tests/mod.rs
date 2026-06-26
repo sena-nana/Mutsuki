@@ -84,6 +84,26 @@ fn jsonl_runner_uses_runner_step_method_surface() {
 fn resolver_emits_declared_runtime_surfaces() {
     let runner_descriptor = descriptor("echo.runner", "raw.input");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.provides.protocols = vec![ProtocolDescriptor {
+        protocol_id: "im.message.received.v1".into(),
+        version: "1.0.0".into(),
+        input_schema: json!({"type": "object"}),
+        output_schema: json!({"type": "object"}),
+        error_schema: json!({"type": "object"}),
+        codec: "json".into(),
+        compatibility: "semver".into(),
+    }];
+    manifest.provides.handler_bindings = vec![HandlerBinding {
+        binding_id: "message-handler".into(),
+        plugin_id: "plugin-a".into(),
+        protocol_id: "im.message.received.v1".into(),
+        target_task_kind: "raw.input".into(),
+        target_runner_hint: Some("echo.runner".into()),
+        pool_id: "default".into(),
+        priority: 1,
+        policy: "required".into(),
+        metadata: BTreeMap::new(),
+    }];
     manifest.provides.resource_schemas = vec!["bytes.v1".into()];
     manifest.provides.resource_providers = vec!["resource.local".into()];
     manifest.provides.effects = vec!["effect.chat.send".into()];
@@ -101,6 +121,16 @@ fn resolver_emits_declared_runtime_surfaces() {
 
     let plan = crate::resolve_load_plan(&[manifest], &profile);
 
+    assert_surface(
+        &plan,
+        "protocol:im.message.received.v1",
+        ContractSurfaceKind::Protocol,
+    );
+    assert_surface(
+        &plan,
+        "handler_binding:message-handler",
+        ContractSurfaceKind::HandlerBinding,
+    );
     assert_surface(
         &plan,
         "resource_schema:bytes.v1",

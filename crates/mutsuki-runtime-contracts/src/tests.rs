@@ -77,7 +77,26 @@ fn task_runner_resource_contracts_roundtrip_json() {
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
         runners: Vec::new(),
-        task_demands: Vec::new(),
+        protocols: vec![ProtocolDescriptor {
+            protocol_id: "im.message.received.v1".into(),
+            version: "1.0.0".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!({"type": "object"}),
+            error_schema: serde_json::json!({"type": "object"}),
+            codec: "json".into(),
+            compatibility: "semver".into(),
+        }],
+        handler_bindings: vec![HandlerBinding {
+            binding_id: "message-handler".into(),
+            plugin_id: "plugin-a".into(),
+            protocol_id: "im.message.received.v1".into(),
+            target_task_kind: "cap.message.handle".into(),
+            target_runner_hint: Some("message.runner".into()),
+            pool_id: "default".into(),
+            priority: 10,
+            policy: "required".into(),
+            metadata: Default::default(),
+        }],
         resource_schemas: vec!["bytes.v1".into()],
         resource_providers: vec!["resource.local".into()],
         effects: vec!["effect.chat.send".into()],
@@ -127,10 +146,17 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
                 deprecated: false,
             },
             ContractSurface {
-                surface_id: "stream:chat.events".into(),
-                kind: ContractSurfaceKind::Stream,
+                surface_id: "protocol:im.message.received.v1".into(),
+                kind: ContractSurfaceKind::Protocol,
                 owner_plugin_id: "plugin-a".into(),
-                fingerprint: "stream:chat.events".into(),
+                fingerprint: "protocol:im.message.received.v1:1.0.0".into(),
+                deprecated: false,
+            },
+            ContractSurface {
+                surface_id: "handler_binding:message-handler".into(),
+                kind: ContractSurfaceKind::HandlerBinding,
+                owner_plugin_id: "plugin-a".into(),
+                fingerprint: "handler_binding:message-handler".into(),
                 deprecated: false,
             },
         ],
@@ -173,7 +199,8 @@ fn missing_new_contract_fields_fail_deserialization() {
     }));
     assert_missing_fields_fail::<PluginProvides>(serde_json::json!({
         "runners": [],
-        "task_demands": [],
+        "protocols": [],
+        "handler_bindings": [],
         "resource_schemas": [],
         "resource_providers": [],
         "effects": []

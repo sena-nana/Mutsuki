@@ -93,7 +93,8 @@ pub fn qqbot_manifest() -> PluginManifest {
         },
         provides: PluginProvides {
             runners,
-            task_demands: Vec::new(),
+            protocols: Vec::new(),
+            handler_bindings: Vec::new(),
             resource_schemas: vec!["qqbot.media.v1".into()],
             resource_providers: vec!["qqbot.media.provider".into()],
             effects: effect_task_kinds(),

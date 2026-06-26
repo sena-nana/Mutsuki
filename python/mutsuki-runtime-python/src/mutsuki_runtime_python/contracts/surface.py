@@ -25,7 +25,8 @@ class ContractSurfaceKind(StrEnum):
     STREAM = "stream"
     SUBSCRIPTION = "subscription"
     TIMER = "timer"
-    TASK_DEMAND = "task_demand"
+    PROTOCOL = "protocol"
+    HANDLER_BINDING = "handler_binding"
     STATE_SCHEMA = "state_schema"
     LIFECYCLE = "lifecycle"
     PERMISSION = "permission"
@@ -68,7 +69,7 @@ class ContractSurface:
 @dataclass(frozen=True)
 class SurfaceOccupancy:
     surface_id: str
-    pending_tasks: int
+    ready_tasks: int
     running_invocations: int
     resource_refs: int
     state_refs: int
@@ -83,7 +84,7 @@ class SurfaceOccupancy:
         raw = as_mapping(data, "SurfaceOccupancy")
         return cls(
             surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
-            pending_tasks=as_int(field_value(raw, "pending_tasks"), "pending_tasks"),
+            ready_tasks=as_int(field_value(raw, "ready_tasks"), "ready_tasks"),
             running_invocations=as_int(
                 field_value(raw, "running_invocations"), "running_invocations"
             ),
@@ -98,7 +99,7 @@ class SurfaceOccupancy:
 
     def is_zero(self) -> bool:
         return (
-            self.pending_tasks == 0
+            self.ready_tasks == 0
             and self.running_invocations == 0
             and self.resource_refs == 0
             and self.state_refs == 0

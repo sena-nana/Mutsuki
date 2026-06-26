@@ -115,7 +115,8 @@ Core 负责：
 
 - 校验 `RuntimeLoadPlan`。
 - 校验 runtime descriptor 不超出 lock 授权。
-- 构建并 freeze RunnerRegistry、TaskDemandTable、ResourceProviderRegistry、EffectRegistry。
+- 构建并 freeze RunnerRegistry、HandlerBindingRegistry、ResourceProviderRegistry、
+  EffectRegistry。
 - 记录 registry generation、plugin generation 和 contract fingerprint。
 
 ## 7. Hot Reload
@@ -138,7 +139,7 @@ Core 提供 `reload_with_runners(new_plan, new_runners)` 用于物化新 generat
 occupancy，并按 running invocation 污染状态处理旧 generation：
 
 - `clean` / `local dirty`：通过原 runner 的 management cancel 投递给原 generation，
-  task 回到 pending，并在切换后 rebind 到新 registry generation。
+  task 回到 ready，并在切换后 rebind 到新 registry generation。
 - `polluted` / `unknown dirty`：旧 registry 保留为 draining generation，不接收新
   task，等待 invocation settle；settle 后才执行 DisposeBag。
 

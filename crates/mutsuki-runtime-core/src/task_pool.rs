@@ -32,7 +32,7 @@ impl TaskPool {
             task_id.clone(),
             TaskRecord {
                 task,
-                status: TaskStatus::Pending,
+                status: TaskStatus::Ready,
                 claimed_by: None,
                 failure: None,
             },
@@ -50,10 +50,17 @@ impl TaskPool {
         records
     }
 
-    pub fn pending_count(&self) -> usize {
+    #[cfg(test)]
+    pub fn get_mut_for_test(&mut self, task_id: &str) -> &mut TaskRecord {
+        self.tasks
+            .get_mut(task_id)
+            .expect("test task record must exist")
+    }
+
+    pub fn ready_count(&self) -> usize {
         self.tasks
             .values()
-            .filter(|record| record.status == TaskStatus::Pending)
+            .filter(|record| record.status == TaskStatus::Ready)
             .count()
     }
 
@@ -92,7 +99,7 @@ impl TaskPool {
             .tasks
             .values()
             .filter(|record| {
-                record.status == TaskStatus::Pending
+                record.status == TaskStatus::Ready
                     && record
                         .task
                         .ready_at_step
@@ -151,9 +158,9 @@ impl TaskPool {
         Ok(())
     }
 
-    pub fn reject_pending(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
+    pub fn reject_ready(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
-        if record.status != TaskStatus::Pending {
+        if record.status != TaskStatus::Ready {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
@@ -171,7 +178,7 @@ impl TaskPool {
             if record.status == TaskStatus::Running
                 && record.claimed_by.as_deref() == Some(runner_id)
             {
-                record.status = TaskStatus::Pending;
+                record.status = TaskStatus::Ready;
                 record.claimed_by = None;
                 cancelled = 1;
             }
@@ -192,10 +199,10 @@ impl TaskPool {
         Ok(())
     }
 
-    pub fn rebind_pending_generation(&mut self, old_generation: u64, new_generation: u64) -> usize {
+    pub fn rebind_ready_generation(&mut self, old_generation: u64, new_generation: u64) -> usize {
         let mut rebound = 0;
         for record in self.tasks.values_mut() {
-            if record.status == TaskStatus::Pending
+            if record.status == TaskStatus::Ready
                 && record.task.registry_generation == old_generation
             {
                 record.task.registry_generation = new_generation;
@@ -213,8 +220,8 @@ impl TaskPool {
                     .entry(surface_id)
                     .or_insert_with_key(|surface_id| zero_occupancy(surface_id));
                 match record.status {
-                    TaskStatus::Pending => {
-                        entry.pending_tasks += 1;
+                    TaskStatus::Ready => {
+                        entry.ready_tasks += 1;
                         if record.task.kind.starts_with("effect.") {
                             entry.effect_inflight += 1;
                         }
@@ -266,7 +273,7 @@ pub fn surface_ids_for_task(task: &Task) -> Vec<String> {
 fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
     SurfaceOccupancy {
         surface_id: surface_id.into(),
-        pending_tasks: 0,
+        ready_tasks: 0,
         running_invocations: 0,
         resource_refs: 0,
         state_refs: 0,

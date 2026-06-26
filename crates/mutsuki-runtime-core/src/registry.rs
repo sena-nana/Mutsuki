@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    RuntimeError, RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy, TaskDemand,
+    HandlerBinding, RuntimeError, RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
 };
 
 use crate::{Runner, RuntimeFailure, RuntimeResult};
@@ -11,6 +11,39 @@ use crate::{Runner, RuntimeFailure, RuntimeResult};
 pub struct RunnerRegistry {
     runners: HashMap<String, Box<dyn Runner>>,
     frozen: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HandlerBindingRegistry {
+    bindings: Vec<HandlerBinding>,
+}
+
+impl HandlerBindingRegistry {
+    pub fn from_load_plan(load_plan: &RuntimeLoadPlan) -> Self {
+        let mut bindings: Vec<_> = load_plan
+            .plugins
+            .iter()
+            .flat_map(|plugin| plugin.provides.handler_bindings.iter().cloned())
+            .collect();
+        bindings.sort_by(|a, b| {
+            a.protocol_id
+                .cmp(&b.protocol_id)
+                .then_with(|| b.priority.cmp(&a.priority))
+                .then_with(|| a.binding_id.cmp(&b.binding_id))
+        });
+        Self { bindings }
+    }
+
+    pub fn query_protocol(&self, protocol_id: &str) -> Vec<&HandlerBinding> {
+        self.bindings
+            .iter()
+            .filter(|binding| binding.protocol_id == protocol_id)
+            .collect()
+    }
+
+    pub fn all(&self) -> &[HandlerBinding] {
+        &self.bindings
+    }
 }
 
 impl RunnerRegistry {
@@ -111,7 +144,7 @@ pub struct RegistrySnapshot {
     pub generation: u64,
     pub frozen: bool,
     pub runners: Vec<mutsuki_runtime_contracts::RunnerDescriptor>,
-    pub task_demands: Vec<TaskDemand>,
+    pub handler_bindings: Vec<HandlerBinding>,
     pub surfaces: Vec<ContractSurface>,
 }
 
@@ -144,6 +177,65 @@ pub fn validate_runtime_descriptors(
                 "runtime.load_plan",
                 format!("runner.{}", runner.runner_id),
             )));
+        }
+    }
+    validate_handler_bindings(load_plan)?;
+    Ok(())
+}
+
+fn validate_handler_bindings(load_plan: &RuntimeLoadPlan) -> RuntimeResult<()> {
+    let runners: Vec<_> = load_plan
+        .plugins
+        .iter()
+        .flat_map(|plugin| plugin.provides.runners.iter())
+        .collect();
+
+    for binding in load_plan
+        .plugins
+        .iter()
+        .flat_map(|plugin| plugin.provides.handler_bindings.iter())
+    {
+        if !runners.iter().any(|runner| {
+            runner
+                .accepted_task_kinds
+                .contains(&binding.target_task_kind)
+        }) {
+            return Err(RuntimeFailure::new(RuntimeError::new(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.load_plan",
+                format!(
+                    "handler_binding.{}.target_task_kind.{}",
+                    binding.binding_id, binding.target_task_kind
+                ),
+            )));
+        }
+        if let Some(runner_hint) = &binding.target_runner_hint {
+            let Some(runner) = runners
+                .iter()
+                .find(|runner| runner.runner_id == *runner_hint)
+            else {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    ERR_REGISTRY_UNAUTHORIZED,
+                    "runtime.load_plan",
+                    format!(
+                        "handler_binding.{}.target_runner_hint.{}",
+                        binding.binding_id, runner_hint
+                    ),
+                )));
+            };
+            if !runner
+                .accepted_task_kinds
+                .contains(&binding.target_task_kind)
+            {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    ERR_REGISTRY_UNAUTHORIZED,
+                    "runtime.load_plan",
+                    format!(
+                        "handler_binding.{}.target_runner_hint.{}.task_kind.{}",
+                        binding.binding_id, runner_hint, binding.target_task_kind
+                    ),
+                )));
+            }
         }
     }
     Ok(())

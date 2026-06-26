@@ -5,11 +5,13 @@ import pytest
 from mutsuki_runtime_python.contracts.codec import from_json_dict, to_json_dict
 from mutsuki_runtime_python.contracts.plugin import (
     ArtifactType,
+    HandlerBinding,
     LifecyclePolicy,
     PermissionGrant,
     PluginArtifact,
     PluginManifest,
     PluginProvides,
+    ProtocolDescriptor,
     RuntimeLoadPlan,
     RuntimeProfile,
 )
@@ -35,11 +37,7 @@ from mutsuki_runtime_python.contracts.surface import (
     SurfaceOccupancyHandle,
     SurfaceOccupancyHandleKind,
 )
-from mutsuki_runtime_python.contracts.task import (
-    Task,
-    TaskDemand,
-    TaskMatchRule,
-)
+from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.testing.assertions import assert_json_roundtrip
 
 
@@ -208,7 +206,7 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
     assert_json_roundtrip(ResourceValue, ResourceValue.resource_ref_value(resource_ref))
 
 
-def test_plugin_load_plan_profile_and_task_demand_roundtrip() -> None:
+def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> None:
     descriptor = RunnerDescriptor(
         runner_id="runner-a",
         plugin_id="plugin-a",
@@ -220,19 +218,30 @@ def test_plugin_load_plan_profile_and_task_demand_roundtrip() -> None:
         metadata={},
         contract_surfaces=("runner:runner-a",),
     )
-    demand = TaskDemand(
-        demand_id="demand-1",
+    protocol = ProtocolDescriptor(
+        protocol_id="im.message.received.v1",
+        version="1.0.0",
+        input_schema={"type": "object"},
+        output_schema={"type": "object"},
+        error_schema={"type": "object"},
+        codec="json",
+        compatibility="semver",
+    )
+    binding = HandlerBinding(
+        binding_id="message-handler",
         plugin_id="plugin-a",
-        match_rule=TaskMatchRule.kind_prefix("raw."),
+        protocol_id="im.message.received.v1",
         target_task_kind="raw.input",
         target_runner_hint="runner-a",
+        pool_id="default",
         priority=5,
-        payload_projection={"copy": True},
-        input_ref_policy="forward",
+        policy="required",
+        metadata={"rank": 1},
     )
     provides = PluginProvides(
         runners=(descriptor,),
-        task_demands=(demand,),
+        protocols=(protocol,),
+        handler_bindings=(binding,),
         resource_schemas=("bytes.v1",),
         resource_providers=("python.resource",),
         effects=("effect.chat.send",),
@@ -279,12 +288,25 @@ def test_plugin_load_plan_profile_and_task_demand_roundtrip() -> None:
                 fingerprint="sha256:runner",
                 deprecated=False,
             ),
+            ContractSurface(
+                surface_id="protocol:im.message.received.v1",
+                kind=ContractSurfaceKind.PROTOCOL,
+                owner_plugin_id="plugin-a",
+                fingerprint="protocol:im.message.received.v1:1.0.0",
+                deprecated=False,
+            ),
+            ContractSurface(
+                surface_id="handler_binding:message-handler",
+                kind=ContractSurfaceKind.HANDLER_BINDING,
+                owner_plugin_id="plugin-a",
+                fingerprint="handler_binding:message-handler",
+                deprecated=False,
+            ),
         ),
     )
 
-    assert_json_roundtrip(TaskMatchRule, TaskMatchRule.any())
-    assert_json_roundtrip(TaskMatchRule, TaskMatchRule.kind_rule("raw.input"))
-    assert_json_roundtrip(TaskDemand, demand)
+    assert_json_roundtrip(ProtocolDescriptor, protocol)
+    assert_json_roundtrip(HandlerBinding, binding)
     assert_json_roundtrip(PluginProvides, provides)
     assert_json_roundtrip(PluginManifest, manifest)
     assert_json_roundtrip(RuntimeLoadPlan, plan)
@@ -303,7 +325,7 @@ def test_plugin_load_plan_profile_and_task_demand_roundtrip() -> None:
 def test_surface_occupancy_roundtrips() -> None:
     occupancy = SurfaceOccupancy(
         surface_id="runner:runner-a",
-        pending_tasks=0,
+        ready_tasks=0,
         running_invocations=0,
         resource_refs=0,
         state_refs=0,
@@ -358,7 +380,8 @@ def test_missing_required_contract_fields_fail() -> None:
             PluginProvides,
             {
                 "runners": [],
-                "task_demands": [],
+                "protocols": [],
+                "handler_bindings": [],
                 "resource_schemas": [],
                 "resource_providers": [],
                 "effects": [],

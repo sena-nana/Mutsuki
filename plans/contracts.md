@@ -16,8 +16,9 @@
 | 对象 | 语义 |
 |---|---|
 | `Task` | 统一待处理控制消息，包含 kind、priority、ready_at_step、payload、refs、expected_versions、registry_generation |
-| `TaskStatus` | pending、running、completed、failed、cancelled |
-| `TaskDemand` | raw input/event 到目标 task kind 的 fan-out 规则 |
+| `TaskStatus` | created、ready、running、waiting、blocked、completed、failed、cancelled、expired、dead_letter |
+| `ProtocolDescriptor` | protocol_id、schema、codec、version、compatibility 等纯数据契约 |
+| `HandlerBinding` | 插件对 protocol 的逻辑消费绑定，指向目标 task kind / runner hint / pool |
 | `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_task_kinds、purity、schema、metadata |
 | `RunnerPurity` | Pure、Committer、Effectful |
 | `RunnerResult` | task_id、deltas、events、tasks、effects、values、resources、status |
@@ -27,7 +28,7 @@
 | `ResourceRef` | 大型资源 / mmap / blob / stream / provider-RPC descriptor |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
-| `PluginManifest` | 插件声明 runner、task demand、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
+| `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
 | `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
 | `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
@@ -51,7 +52,7 @@ Runner.dispose()
 
 TaskPool claim 必须满足：
 
-- task 是 pending。
+- task 是 ready。
 - `ready_at_step` 未设置或已到达。
 - runner 接受 task kind。
 - runner hint 若存在必须匹配。
@@ -78,7 +79,8 @@ Pure runner 不直接提交状态或执行副作用：
 - `events` 生成 `core.event.append` task。
 - `effects` 生成 `effect.*` task。
 - `values` / `resources` 记录 value/resource lineage。
-- `tasks` 直接进入 TaskPool。
+- `tasks` 直接进入 TaskPool。复杂编排必须由插件 runner 显式返回这些 task；Core 不根据
+  protocol 或 handler binding 自动 fan-out。
 
 Committer runner 是 StateStore/EventLog 的唯一提交入口。
 
@@ -124,22 +126,22 @@ Contract surface 兼容性：
 
 Core 热重载必须使用新 registry / plugin generation，不原地替换 runner。切换时：
 
-- pending task 可以 rebind 到新 registry generation。
+- ready task 可以 rebind 到新 registry generation。
 - clean / local dirty running invocation 应通过原 runner 的 cancel 管理面回到
-  pending，再交给新 generation 重试。
+  ready，再交给新 generation 重试。
 - polluted / unknown dirty running invocation 必须保留旧 generation drain，或由上层
   提供明确 compensation；不得强行 dispose。
 - removed surface 的 zero occupancy 判定必须来自 TaskPool、ResourceManager 等当前
   事实源，而不是手动缓存。
-- effect occupancy 来自 pending/running `effect.*` task；stream occupancy 来自
+- effect occupancy 来自 ready/running `effect.*` task；stream occupancy 来自
   `ResourceAccess::Stream` 资源和显式 `SurfaceOccupancyHandle`；subscription/timer
   occupancy 来自显式 `SurfaceOccupancyHandle`。
 - deprecated surface 禁止新增派生占用：task enqueue 必须检查 task kind、effect kind、
   runner hint 和 required surfaces；stream/subscription/timer 注册入口必须检查目标
   surface。
 
-已经 orchestration 过的 raw input 不因新增 TaskDemand 自动重新 fan-out；补跑必须显式
-生成 migration/backfill task。
+`HandlerBinding` 是查询索引，不是 Core 内置分发规则。已经由插件编排过的输入不因新增
+binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task。
 
 ## 9. 标准错误码
 

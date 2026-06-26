@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{RunnerDescriptor, ScalarValue, SurfaceId, TaskDemand};
+use crate::{RunnerDescriptor, ScalarValue, SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,7 +39,8 @@ pub struct LifecyclePolicy {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PluginProvides {
     pub runners: Vec<RunnerDescriptor>,
-    pub task_demands: Vec<TaskDemand>,
+    pub protocols: Vec<ProtocolDescriptor>,
+    pub handler_bindings: Vec<HandlerBinding>,
     pub resource_schemas: Vec<String>,
     pub resource_providers: Vec<String>,
     pub effects: Vec<String>,
@@ -47,6 +48,30 @@ pub struct PluginProvides {
     pub subscriptions: Vec<String>,
     pub timers: Vec<String>,
     pub state_schemas: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProtocolDescriptor {
+    pub protocol_id: String,
+    pub version: String,
+    pub input_schema: serde_json::Value,
+    pub output_schema: serde_json::Value,
+    pub error_schema: serde_json::Value,
+    pub codec: String,
+    pub compatibility: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HandlerBinding {
+    pub binding_id: String,
+    pub plugin_id: String,
+    pub protocol_id: String,
+    pub target_task_kind: String,
+    pub target_runner_hint: Option<String>,
+    pub pool_id: String,
+    pub priority: i64,
+    pub policy: String,
+    pub metadata: BTreeMap<String, ScalarValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,7 +108,8 @@ pub enum ContractSurfaceKind {
     Stream,
     Subscription,
     Timer,
-    TaskDemand,
+    Protocol,
+    HandlerBinding,
     StateSchema,
     Lifecycle,
     Permission,
@@ -101,7 +127,7 @@ pub struct ContractSurface {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceOccupancy {
     pub surface_id: SurfaceId,
-    pub pending_tasks: u64,
+    pub ready_tasks: u64,
     pub running_invocations: u64,
     pub resource_refs: u64,
     pub state_refs: u64,
@@ -132,7 +158,7 @@ pub struct SurfaceOccupancyHandle {
 
 impl SurfaceOccupancy {
     pub fn is_zero(&self) -> bool {
-        self.pending_tasks == 0
+        self.ready_tasks == 0
             && self.running_invocations == 0
             && self.resource_refs == 0
             && self.state_refs == 0

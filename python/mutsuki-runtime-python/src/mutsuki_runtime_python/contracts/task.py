@@ -14,18 +14,22 @@ from mutsuki_runtime_python.contracts.codec import (
     as_str,
     as_str_tuple,
     field_value,
-    required_optional,
     tuple_from_json,
 )
 from mutsuki_runtime_python.contracts.state import VersionExpectation
 
 
 class TaskStatus(StrEnum):
-    PENDING = "pending"
+    CREATED = "created"
+    READY = "ready"
     RUNNING = "running"
+    WAITING = "waiting"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    DEAD_LETTER = "dead_letter"
 
 
 @dataclass(frozen=True)
@@ -61,7 +65,6 @@ class Task:
             required_surfaces=(),
             created_sequence=0,
         )
-
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "Task")
@@ -93,75 +96,4 @@ class Task:
                 field_value(raw, "required_surfaces"), "required_surfaces"
             ),
             created_sequence=as_int(field_value(raw, "created_sequence"), "created_sequence"),
-        )
-
-
-@dataclass(frozen=True)
-class TaskMatchRule:
-    type: str
-    kind: str | None = None
-    prefix: str | None = None
-
-    @classmethod
-    def kind_rule(cls, kind: str) -> Self:
-        return cls(type="kind", kind=kind)
-
-    @classmethod
-    def kind_prefix(cls, prefix: str) -> Self:
-        return cls(type="kind_prefix", prefix=prefix)
-
-    @classmethod
-    def any(cls) -> Self:
-        return cls(type="any")
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = as_mapping(data, "TaskMatchRule")
-        rule_type = as_str(field_value(raw, "type"), "type")
-        if rule_type == "kind":
-            return cls.kind_rule(as_str(field_value(raw, "kind"), "kind"))
-        if rule_type == "kind_prefix":
-            return cls.kind_prefix(as_str(field_value(raw, "prefix"), "prefix"))
-        if rule_type == "any":
-            return cls.any()
-        raise ValueError(f"unknown task match rule type: {rule_type}")
-
-    def to_json_value(self) -> JsonDict:
-        if self.type == "kind":
-            return {"type": "kind", "kind": required_optional(self.kind, "kind")}
-        if self.type == "kind_prefix":
-            return {"type": "kind_prefix", "prefix": required_optional(self.prefix, "prefix")}
-        if self.type == "any":
-            return {"type": "any"}
-        raise ValueError(f"unknown task match rule type: {self.type}")
-
-
-@dataclass(frozen=True)
-class TaskDemand:
-    demand_id: str
-    plugin_id: str
-    match_rule: TaskMatchRule
-    target_task_kind: str
-    target_runner_hint: str | None
-    priority: int
-    payload_projection: JsonValue
-    input_ref_policy: str
-
-    @classmethod
-    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = as_mapping(data, "TaskDemand")
-        target_runner_hint = field_value(raw, "target_runner_hint")
-        return cls(
-            demand_id=as_str(field_value(raw, "demand_id"), "demand_id"),
-            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
-            match_rule=TaskMatchRule.from_json_dict(
-                as_mapping(field_value(raw, "match_rule"), "match_rule")
-            ),
-            target_task_kind=as_str(field_value(raw, "target_task_kind"), "target_task_kind"),
-            target_runner_hint=None
-            if target_runner_hint is None
-            else as_str(target_runner_hint, "target_runner_hint"),
-            priority=as_int(field_value(raw, "priority"), "priority"),
-            payload_projection=as_json_value(field_value(raw, "payload_projection")),
-            input_ref_policy=as_str(field_value(raw, "input_ref_policy"), "input_ref_policy"),
         )
