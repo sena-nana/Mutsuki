@@ -1,0 +1,23 @@
+{
+  "name": "mutsuki-plugin-dev-test-io",
+  "version": "0.1.0",
+  "description": "Dev-only process I/O test harness tools for Mutsuki.",
+  "author": {
+    "name": "Mutsuki"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mutsuki Dev Test I/O",
+    "shortDescription": "Run dev test processes and capture I/O for Mutsuki.",
+    "longDescription": "Adds local MCP tools for running commands, driving interactive processes, and sending JSONL requests as a dev-only test utility.",
+    "developerName": "Mutsuki",
+    "category": "Productivity",
+    "capabilities": [
+      "MCP tools",
+      "Process I/O",
+      "JSONL testing"
+    ],
+    "defaultPrompt": "Use Mutsuki Dev Test I/O to run protocol smoke tests."
+  },
+  "mcpServers": "./.mcp.json"
+}

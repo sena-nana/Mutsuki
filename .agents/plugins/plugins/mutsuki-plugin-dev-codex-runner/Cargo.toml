@@ -1,0 +1,12 @@
+[package]
+name = "mutsuki-plugin-dev-codex-runner"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace]
+
+[dependencies]
+mutsuki-runtime-contracts = { path = "../../../../crates/mutsuki-runtime-contracts" }
+mutsuki-runtime-core = { path = "../../../../crates/mutsuki-runtime-core" }
+serde_json = "1.0"

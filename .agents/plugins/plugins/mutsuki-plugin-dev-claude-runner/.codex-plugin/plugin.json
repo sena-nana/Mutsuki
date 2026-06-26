@@ -1,0 +1,22 @@
+{
+  "name": "mutsuki-plugin-dev-claude-runner",
+  "version": "0.1.0",
+  "description": "Dev-only Claude runner bridge for Mutsuki protocol smoke tests.",
+  "author": {
+    "name": "Mutsuki"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mutsuki Dev Claude Runner",
+    "shortDescription": "Run Claude through a dev-only Mutsuki protocol runner.",
+    "longDescription": "Adds a Rust smoke target for Claude-backed runner behavior without making Claude part of the runtime core or standard plugin set.",
+    "developerName": "Mutsuki",
+    "category": "Productivity",
+    "capabilities": [
+      "Dev runner",
+      "Protocol smoke testing",
+      "Claude"
+    ],
+    "defaultPrompt": "Use the Mutsuki dev Claude runner for protocol smoke tests."
+  }
+}

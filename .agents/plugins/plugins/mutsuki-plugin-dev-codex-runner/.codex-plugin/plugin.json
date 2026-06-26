@@ -1,0 +1,21 @@
+{
+  "name": "mutsuki-plugin-dev-codex-runner",
+  "version": "0.1.0",
+  "description": "Dev-only Codex runner bridge for Mutsuki protocol smoke tests.",
+  "author": {
+    "name": "Mutsuki"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mutsuki Dev Codex Runner",
+    "shortDescription": "Run Codex through a dev-only Mutsuki protocol runner.",
+    "longDescription": "Adds bridge scripts for testing Codex-backed Mutsuki runner behavior without making Codex part of the runtime core or standard plugin set.",
+    "developerName": "Mutsuki",
+    "category": "Productivity",
+    "capabilities": [
+      "Dev runner",
+      "Protocol smoke testing"
+    ],
+    "defaultPrompt": "Use the Mutsuki dev Codex runner for protocol smoke tests."
+  }
+}

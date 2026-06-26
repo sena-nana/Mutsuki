@@ -39,6 +39,19 @@ RuntimeProfile + PluginManifest
   pure contract mirrors, Python runner host, stdio JSONL runner server, and
   descriptor-based resource manager.
 
+## Standard Plugin Naming
+
+The first standard plugin batch follows GitHub issue #8:
+
+- distributable plugin packages use `mutsuki-plugin-<domain>-<name>`;
+- protocol packages use `mutsuki-protocol-<domain>`;
+- standard runtime plugin ids reserve the `mutsuki.std.<domain>.<name>` prefix;
+- protocol ids use `mutsuki.<domain>.<action>` and do not include `plugin`.
+
+Preserved QQ/LLM/Agent-adjacent experiments are not part of that standard
+library batch. They live under postponed or dev-only package names and use
+`mutsuki.experimental.*` plugin ids when kept for smoke tests.
+
 ## Verification
 
 ```powershell

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "mutsuki-plugin-dev-test-io": {
+      "command": "python",
+      "args": [
+        "./scripts/mutsuki_test_io_mcp.py"
+      ]
+    }
+  }
+}
