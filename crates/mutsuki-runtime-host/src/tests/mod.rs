@@ -4,12 +4,14 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure};
+use mutsuki_runtime_core::{
+    CoreRuntime, Runner, RunnerContext, RuntimeFailure, RuntimeResult, ScheduleDecision,
+};
 use serde_json::json;
 
 use crate::{
     HostRuntimeCommand, HostRuntimeReply, JsonlRunner, NativePluginHost, NativeRunner,
-    runner_manifest,
+    ScheduleInput, SchedulerPolicy, runner_manifest,
 };
 
 fn descriptor(id: &str, kind: &str) -> RunnerDescriptor {
@@ -353,6 +355,132 @@ fn native_plugin_host_can_boot_host_runtime_control_plane() {
     };
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+}
+
+#[derive(Debug)]
+struct FixedScheduler {
+    limit: usize,
+}
+
+impl SchedulerPolicy for FixedScheduler {
+    fn decide(&self, _input: &ScheduleInput<'_>) -> RuntimeResult<ScheduleDecision> {
+        Ok(ScheduleDecision::new(
+            "test.fixed",
+            self.limit,
+            "test.fixed",
+        ))
+    }
+}
+
+#[test]
+fn custom_scheduler_can_leave_ready_task_undispatched() {
+    let mut config = crate::HostRuntimeConfig::default();
+    config.scheduler_policy = Arc::new(FixedScheduler { limit: 0 });
+    let mut runtime = host_with_echo_runner()
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "task-held",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    let reply = runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 2 })
+        .unwrap();
+
+    let HostRuntimeReply::Idle(report) = reply else {
+        panic!("expected idle reply");
+    };
+    assert_eq!(report.claimed_tasks, 0);
+    assert_eq!(runtime.task_status("task-held"), Some(TaskStatus::Ready));
+}
+
+#[test]
+fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
+    let runner_descriptor = descriptor("slow.runner", "slow.work");
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        move |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| {
+                    if task.task_id == "slow-1" {
+                        release_rx.recv().unwrap();
+                    }
+                    RunnerResult::completed(task.task_id)
+                })
+                .collect())
+        },
+    )));
+    let mut config = crate::HostRuntimeConfig::default();
+    config.scheduler_policy = Arc::new(FixedScheduler { limit: 99 });
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    for task_id in ["slow-1", "slow-2"] {
+        runtime
+            .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                task_id,
+                "slow.work",
+                json!({}),
+            ))))
+            .unwrap();
+    }
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+
+    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Running));
+    assert_eq!(runtime.task_status("slow-2"), Some(TaskStatus::Ready));
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Completed));
+}
+
+#[test]
+fn custom_scheduler_cannot_dispatch_non_kernel_control_runner() {
+    let runner_descriptor =
+        descriptor_with_class("control.runner", "control.work", ExecutionClass::Control);
+    let calls = Arc::new(Mutex::new(0usize));
+    let observed = calls.clone();
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        move |_ctx, tasks| {
+            *observed.lock().expect("calls mutex poisoned") += tasks.len();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut config = crate::HostRuntimeConfig::default();
+    config.scheduler_policy = Arc::new(FixedScheduler { limit: 99 });
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "control-1",
+            "control.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 2 })
+        .unwrap();
+
+    assert_eq!(runtime.task_status("control-1"), Some(TaskStatus::Ready));
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 0);
 }
 
 #[test]

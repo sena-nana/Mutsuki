@@ -11,8 +11,10 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{
     CoreKernelRunner, CoreRuntime, Runner, RunnerCompletion, RunnerContext, RunnerDispatch,
-    RunnerLoad, RunnerLoopReport, RuntimeFailure, RuntimeResult,
+    RunnerLoopReport, RuntimeFailure, RuntimeResult,
 };
+
+use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy, decide_schedule};
 
 pub type NativeStepHandler =
     Box<dyn FnMut(RunnerContext, Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> + Send>;
@@ -119,6 +121,7 @@ pub struct HostRuntimeConfig {
     pub pool_queue_limit: usize,
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
+    pub scheduler_policy: Arc<dyn SchedulerPolicy>,
 }
 
 impl Default for HostRuntimeConfig {
@@ -132,25 +135,7 @@ impl Default for HostRuntimeConfig {
             pool_queue_limit: 1024,
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct RunnerLimits {
-    pub max_running: usize,
-    pub max_waiting: usize,
-    pub max_inflight: usize,
-    pub queue_limit: usize,
-}
-
-impl Default for RunnerLimits {
-    fn default() -> Self {
-        Self {
-            max_running: 1,
-            max_waiting: 64,
-            max_inflight: 64,
-            queue_limit: 1024,
+            scheduler_policy: Arc::new(DefaultScheduler),
         }
     }
 }
@@ -492,7 +477,25 @@ fn schedule_ready(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let (report, dispatches) = core.claim_ready_dispatches(
-        |descriptor, load| dispatch_limit(descriptor, load, config, pools),
+        |descriptor, load, current_step, registry_generation| {
+            let limits = config
+                .runner_limits
+                .get(&descriptor.runner_id)
+                .unwrap_or(&config.default_runner_limits);
+            let pool_slots = pools
+                .get(&descriptor.execution_class)
+                .map(WorkerPool::available_slots)
+                .unwrap_or(0);
+            decide_schedule(
+                descriptor,
+                load,
+                current_step,
+                registry_generation,
+                limits,
+                pool_slots,
+                config.scheduler_policy.as_ref(),
+            )
+        },
         None,
     )?;
     for dispatch in dispatches {
@@ -509,42 +512,6 @@ fn schedule_ready(
         claimed_tasks: report.claimed_tasks,
         completed_tasks: report.completed_tasks,
     })
-}
-
-fn dispatch_limit(
-    descriptor: &RunnerDescriptor,
-    load: &RunnerLoad,
-    config: &HostRuntimeConfig,
-    pools: &HashMap<ExecutionClass, WorkerPool>,
-) -> usize {
-    if descriptor.execution_class == ExecutionClass::Control {
-        return if descriptor.runner_id == "core.kernel" {
-            1
-        } else {
-            0
-        };
-    }
-    let limits = config
-        .runner_limits
-        .get(&descriptor.runner_id)
-        .unwrap_or(&config.default_runner_limits);
-    if load.running_count >= limits.max_running
-        || load.waiting_count >= limits.max_waiting
-        || load.pending_weight >= limits.max_inflight
-        || load.queued_count >= limits.queue_limit
-    {
-        return 0;
-    }
-    let pool_slots = pools
-        .get(&descriptor.execution_class)
-        .map(WorkerPool::available_slots)
-        .unwrap_or(0);
-    limits
-        .max_running
-        .saturating_sub(load.running_count)
-        .min(limits.max_inflight.saturating_sub(load.pending_weight))
-        .min(limits.queue_limit.saturating_sub(load.queued_count))
-        .min(pool_slots)
 }
 
 fn worker_pools(

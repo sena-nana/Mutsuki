@@ -145,6 +145,19 @@ created_sequence asc
 task_id asc
 ```
 
+Scheduler v1 不是公开 wire contract，也不进入 `PluginManifest` / `RuntimeLoadPlan`。
+当前只允许 host 级 `SchedulerPolicy` 返回每个 runner 本轮 dispatch budget：
+
+- 输入来自 Core / host 只读 snapshot：runner descriptor、RunnerLoad、runner limits、
+  worker pool slots、hard capacity、current_step 和 registry_generation。
+- 输出只包含 scheduler id、reason 和 requested dispatch limit。
+- host 必须将 requested limit clamp 到 hard capacity。
+- Core 继续执行 runner acceptance、TaskPool 排序、TaskLease 创建和状态提交。
+- scheduler 不能执行 task、不能创建子 task、不能完成 task、不能修改 TaskPool、
+  不能访问真实资源本体。
+
+后续 scheduler provider / plugin 化必须先扩展 plans / contracts，并保持上述权限边界。
+
 ## 5. ResultRouter
 
 Pure runner 不直接提交状态或执行副作用：

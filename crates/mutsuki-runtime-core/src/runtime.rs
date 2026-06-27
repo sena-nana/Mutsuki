@@ -19,9 +19,11 @@ use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool};
 
 mod reload;
 mod runner_loop;
+mod scheduler;
 
 pub use reload::{InvocationPollution, RunningInvocationDisposition};
 pub use runner_loop::{RunnerCompletion, RunnerDispatch};
+pub use scheduler::ScheduleDecision;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskResultSnapshot {

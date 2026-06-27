@@ -1,5 +1,6 @@
 use mutsuki_runtime_contracts::{
-    ExecutionClass, RunnerDescriptor, RunnerPurity, RuntimeError, RuntimeEventKind, SpanStatus,
+    ExecutionClass, RunnerDescriptor, RunnerPurity, RuntimeError, RuntimeEventKind, ScalarValue,
+    SpanStatus,
 };
 
 use crate::runner::{RunnerContext, RunnerLoopReport};
@@ -7,6 +8,7 @@ use crate::task_pool::RunnerLoad;
 use crate::{RuntimeFailure, RuntimeResult};
 
 use super::CoreRuntime;
+use super::ScheduleDecision;
 use executor::{InlineRunnerExecutor, RunnerExecutor};
 pub use executor::{RunnerCompletion, RunnerDispatch};
 use trace_metadata::{runner_attrs, trace_attrs};
@@ -32,13 +34,21 @@ impl CoreRuntime {
         let mut completed = 0;
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
+            let load = self.tasks.runner_load(
+                &descriptor,
+                self.current_step,
+                self.load_plan.registry_generation,
+            );
+            let decision = ScheduleDecision::new("core.inline", 1, "inline.default")
+                .clamp_to(load.queued_count);
+            self.record_scheduler_decision(&descriptor, &decision);
             let executor_id = format!("executor:{}", descriptor.runner_id);
             let leased_tasks = self.tasks.claim_ready_for_executor(
                 &descriptor,
                 executor_id.clone(),
                 self.current_step,
                 self.load_plan.registry_generation,
-                1,
+                decision.dispatch_limit.min(load.queued_count),
             );
             if leased_tasks.is_empty() {
                 continue;
@@ -113,7 +123,7 @@ impl CoreRuntime {
 
     pub fn claim_ready_dispatches(
         &mut self,
-        mut dispatch_limit: impl FnMut(&RunnerDescriptor, &RunnerLoad) -> usize,
+        mut decide_schedule: impl FnMut(&RunnerDescriptor, &RunnerLoad, u64, u64) -> ScheduleDecision,
         lease_expires_at: Option<u64>,
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
         self.current_step += 1;
@@ -133,8 +143,14 @@ impl CoreRuntime {
                 self.current_step,
                 self.load_plan.registry_generation,
             );
-            let limit = dispatch_limit(&descriptor, &load);
-            if limit == 0 {
+            let decision = decide_schedule(
+                &descriptor,
+                &load,
+                self.current_step,
+                self.load_plan.registry_generation,
+            );
+            self.record_scheduler_decision(&descriptor, &decision);
+            if decision.dispatch_limit == 0 {
                 continue;
             }
             let executor_id = format!("executor:{}", descriptor.runner_id);
@@ -143,7 +159,7 @@ impl CoreRuntime {
                 executor_id.clone(),
                 self.current_step,
                 self.load_plan.registry_generation,
-                limit,
+                decision.dispatch_limit,
                 lease_expires_at,
             );
             if leased_tasks.is_empty() {
@@ -201,6 +217,57 @@ impl CoreRuntime {
             },
             dispatches,
         ))
+    }
+
+    fn record_scheduler_decision(
+        &mut self,
+        descriptor: &RunnerDescriptor,
+        decision: &ScheduleDecision,
+    ) {
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            "scheduler_id".into(),
+            ScalarValue::String(decision.scheduler_id.clone()),
+        );
+        attrs.insert(
+            "runner_id".into(),
+            ScalarValue::String(descriptor.runner_id.clone()),
+        );
+        attrs.insert(
+            "requested_dispatch_limit".into(),
+            ScalarValue::Int(decision.requested_dispatch_limit as i64),
+        );
+        attrs.insert(
+            "effective_dispatch_limit".into(),
+            ScalarValue::Int(decision.dispatch_limit as i64),
+        );
+        attrs.insert(
+            "reason".into(),
+            ScalarValue::String(decision.reason.clone()),
+        );
+        attrs.insert(
+            "registry_generation".into(),
+            ScalarValue::Int(self.load_plan.registry_generation as i64),
+        );
+        attrs.insert(
+            "current_step".into(),
+            ScalarValue::Int(self.current_step as i64),
+        );
+        let span = self.traces.record(
+            format!("trace-scheduler-{}", descriptor.runner_id),
+            "scheduler.decision",
+            None,
+            SpanStatus::Ok,
+            attrs.clone(),
+        );
+        attrs.insert("span_id".into(), ScalarValue::String(span.span_id));
+        self.events.record(
+            RuntimeEventKind::Trace,
+            "scheduler.decision",
+            Some(descriptor.runner_id.clone()),
+            attrs,
+            None,
+        );
     }
 
     pub fn complete_runner_dispatch(

@@ -176,7 +176,8 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
         .trace_spans()
         .iter()
         .find(|span| {
-            span.attributes.get("runner_id") == Some(&ScalarValue::String("worker".into()))
+            span.name == "runner.step"
+                && span.attributes.get("runner_id") == Some(&ScalarValue::String("worker".into()))
         })
         .unwrap();
     assert_eq!(
