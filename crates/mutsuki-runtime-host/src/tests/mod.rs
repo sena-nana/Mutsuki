@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure};
@@ -196,6 +197,94 @@ fn host_worker_failure_marks_task_failed_and_returns_runner() {
         Some(TaskStatus::Completed)
     );
     assert_eq!(*attempts.lock().expect("attempts mutex poisoned"), 2);
+}
+
+#[test]
+fn cancel_running_task_is_delivered_when_worker_returns_runner() {
+    struct CancellableRunner {
+        descriptor: RunnerDescriptor,
+        started_tx: mpsc::Sender<()>,
+        release_rx: mpsc::Receiver<()>,
+        cancelled: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Runner for CancellableRunner {
+        fn descriptor(&self) -> &RunnerDescriptor {
+            &self.descriptor
+        }
+
+        fn step(
+            &mut self,
+            _ctx: RunnerContext,
+            tasks: Vec<Task>,
+        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+            self.started_tx.send(()).unwrap();
+            self.release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        }
+
+        fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
+            self.cancelled
+                .lock()
+                .expect("cancelled mutex poisoned")
+                .push(invocation_id.to_string());
+            Ok(())
+        }
+    }
+
+    let runner_descriptor =
+        descriptor_with_class("cancellable.runner", "slow.work", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(CancellableRunner {
+        descriptor: runner_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+    }));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "slow-1",
+            "slow.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Running));
+
+    assert_eq!(
+        runtime
+            .dispatch(HostRuntimeCommand::CancelTask("slow-1".into()))
+            .unwrap(),
+        HostRuntimeReply::TaskCancelled("slow-1".into())
+    );
+    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
+    assert!(
+        cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .is_empty()
+    );
+
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
+    assert_eq!(
+        *cancelled.lock().expect("cancelled mutex poisoned"),
+        vec!["slow-1".to_string()]
+    );
 }
 
 fn runtime_profile() -> RuntimeProfile {

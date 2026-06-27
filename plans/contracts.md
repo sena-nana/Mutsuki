@@ -89,6 +89,11 @@ Future 或其他语言 awaitable 必须结构化失败，不能被伪装成 Core
 完整生命周期语义。等待中的 parent task 若携带非 Cascade await 并被取消，Core 必须
 结构化失败，而不是假装完成 Detach / Shield。
 
+默认 HostRuntime 的 running cancel 分两段：public command 只暴露 `CancelTask(TaskId)`；
+host 内部先让 Core task 进入 cancelled，再记录 pending runner cancel。若 runner 之后从
+worker 返回，host 通过现有 `Runner.cancel(invocation_id)` 管理面尽力投递；若 native step
+永久卡死，该版本只保证 CoreActor 不被卡住，不伪装已完成 runner 侧清理。
+
 Core 保留既有 string task id facade，同时提供以 `TaskHandle` descriptor 为入口的
 status / result / outcome / events / cancel / wake facade。`TaskHandle` 不代表语言级
 future、真实执行句柄或长期持有的 runtime object。

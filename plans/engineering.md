@@ -72,6 +72,9 @@ uv run pytest
   线程执行，CoreActor 不能直接执行插件 handler。
 - `RunnerDescriptor.execution_class` 只用于 host 选择执行池，不改变 core 调度语义。
 - Waiting task 释放 worker / lease，但继续占 runner 逻辑 inflight 配额。
+- HostRuntime cancel 不抢占 worker 线程；running task 取消必须先更新 Core task 状态，
+  再在 runner 归还时通过 `Runner.cancel` 管理面尽力投递，不能把卡死 native step
+  描述为已清理完成。
 - 普通 runner 禁止直接副作用。
 - StateStore 只能通过 `core.commit` task 修改。
 - EventLog 只能通过 kernel event append 或 runtime 事件记录修改。

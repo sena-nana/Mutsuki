@@ -227,6 +227,11 @@ enum CoreActorMsg {
     Shutdown,
 }
 
+struct CoreActorCommandOutcome {
+    reply: RuntimeResult<HostRuntimeReply>,
+    shutdown: bool,
+}
+
 struct WorkerPool {
     sender: mpsc::Sender<RunnerDispatch>,
     queued: Arc<AtomicUsize>,
@@ -323,16 +328,28 @@ fn core_actor_loop(
         Ok(pools) => pools,
         Err(_) => return,
     };
+    let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     while let Ok(msg) = rx.recv() {
         match msg {
             CoreActorMsg::Command(command, reply_tx) => {
-                let reply = handle_command(command, &mut core, &config, &mut pools, &rx);
-                let _ = reply_tx.send(reply);
+                let outcome = handle_command(
+                    command,
+                    &mut core,
+                    &config,
+                    &mut pools,
+                    &rx,
+                    &mut pending_cancels,
+                );
+                let _ = reply_tx.send(outcome.reply);
+                if outcome.shutdown {
+                    break;
+                }
             }
             CoreActorMsg::TaskStatus(task_id, reply_tx) => {
                 let _ = reply_tx.send(core.task_status(&task_id));
             }
-            CoreActorMsg::WorkerCompleted(completion) => {
+            CoreActorMsg::WorkerCompleted(mut completion) => {
+                apply_pending_cancels(&mut completion, &mut pending_cancels);
                 let _ = core.complete_runner_dispatch(completion);
                 let _ = schedule_ready(&mut core, &config, &mut pools);
             }
@@ -347,38 +364,69 @@ fn handle_command(
     config: &HostRuntimeConfig,
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
-) -> RuntimeResult<HostRuntimeReply> {
-    match command {
-        HostRuntimeCommand::SubmitTask(task) => {
-            let task_id = core.submit_task(*task);
-            Ok(HostRuntimeReply::TaskSubmitted(task_id))
-        }
-        HostRuntimeCommand::TickOnce => {
-            let mut report = schedule_ready(core, config, pools)?;
-            drain_worker_completions(core, config, pools, rx, &mut report, 1);
-            Ok(HostRuntimeReply::Tick(report))
-        }
-        HostRuntimeCommand::RunUntilIdle { max_ticks } => {
-            let mut aggregate = RunnerLoopReport {
-                claimed_tasks: 0,
-                completed_tasks: 0,
-            };
-            for _ in 0..max_ticks {
-                let report = schedule_ready(core, config, pools)?;
-                aggregate.claimed_tasks += report.claimed_tasks;
-                aggregate.completed_tasks += report.completed_tasks;
-                drain_worker_completions(core, config, pools, rx, &mut aggregate, 8);
-                if core.tasks().ready_count() == 0 && core.tasks().running_count() == 0 {
-                    break;
-                }
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+) -> CoreActorCommandOutcome {
+    let mut shutdown = false;
+    let reply = (|| -> RuntimeResult<HostRuntimeReply> {
+        match command {
+            HostRuntimeCommand::SubmitTask(task) => {
+                let task_id = core.submit_task(*task);
+                Ok(HostRuntimeReply::TaskSubmitted(task_id))
             }
-            Ok(HostRuntimeReply::Idle(aggregate))
+            HostRuntimeCommand::TickOnce => {
+                let mut report = schedule_ready(core, config, pools)?;
+                shutdown = drain_worker_completions(
+                    core,
+                    config,
+                    pools,
+                    rx,
+                    pending_cancels,
+                    &mut report,
+                    1,
+                );
+                Ok(HostRuntimeReply::Tick(report))
+            }
+            HostRuntimeCommand::RunUntilIdle { max_ticks } => {
+                let mut aggregate = RunnerLoopReport {
+                    claimed_tasks: 0,
+                    completed_tasks: 0,
+                };
+                for _ in 0..max_ticks {
+                    let report = schedule_ready(core, config, pools)?;
+                    aggregate.claimed_tasks += report.claimed_tasks;
+                    aggregate.completed_tasks += report.completed_tasks;
+                    shutdown = drain_worker_completions(
+                        core,
+                        config,
+                        pools,
+                        rx,
+                        pending_cancels,
+                        &mut aggregate,
+                        8,
+                    );
+                    if core.tasks().ready_count() == 0 && core.tasks().running_count() == 0 {
+                        break;
+                    }
+                    if shutdown {
+                        break;
+                    }
+                }
+                Ok(HostRuntimeReply::Idle(aggregate))
+            }
+            HostRuntimeCommand::CancelTask(task_id) => {
+                let running_runner = running_runner_for_task(core, &task_id);
+                core.cancel_task(&task_id)?;
+                if let Some(runner_id) = running_runner {
+                    pending_cancels
+                        .entry(runner_id)
+                        .or_default()
+                        .push(task_id.clone());
+                }
+                Ok(HostRuntimeReply::TaskCancelled(task_id))
+            }
         }
-        HostRuntimeCommand::CancelTask(task_id) => {
-            core.cancel_task(&task_id)?;
-            Ok(HostRuntimeReply::TaskCancelled(task_id))
-        }
-    }
+    })();
+    CoreActorCommandOutcome { reply, shutdown }
 }
 
 fn drain_worker_completions(
@@ -386,12 +434,14 @@ fn drain_worker_completions(
     config: &HostRuntimeConfig,
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
     aggregate: &mut RunnerLoopReport,
     max_messages: usize,
-) {
+) -> bool {
     for _ in 0..max_messages {
         match rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(CoreActorMsg::WorkerCompleted(completion)) => {
+            Ok(CoreActorMsg::WorkerCompleted(mut completion)) => {
+                apply_pending_cancels(&mut completion, pending_cancels);
                 if let Ok(report) = core.complete_runner_dispatch(completion) {
                     aggregate.completed_tasks += report.completed_tasks;
                 }
@@ -404,12 +454,38 @@ fn drain_worker_completions(
                 let _ = reply_tx.send(core.task_status(&task_id));
             }
             Ok(CoreActorMsg::Command(command, reply_tx)) => {
-                let reply = handle_command(command, core, config, pools, rx);
-                let _ = reply_tx.send(reply);
+                let outcome = handle_command(command, core, config, pools, rx, pending_cancels);
+                let shutdown = outcome.shutdown;
+                let _ = reply_tx.send(outcome.reply);
+                if shutdown {
+                    return true;
+                }
             }
-            Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => break,
+            Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+            Err(mpsc::RecvTimeoutError::Timeout) => return false,
         }
+    }
+    false
+}
+
+fn running_runner_for_task(core: &CoreRuntime, task_id: &str) -> Option<String> {
+    let record = core.tasks().get(task_id)?;
+    if record.status != TaskStatus::Running {
+        return None;
+    }
+    record.claimed_by.clone()
+}
+
+fn apply_pending_cancels(
+    completion: &mut RunnerCompletion,
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+) {
+    let runner_id = completion.runner.descriptor().runner_id.clone();
+    let Some(invocation_ids) = pending_cancels.remove(&runner_id) else {
+        return;
+    };
+    for invocation_id in invocation_ids {
+        let _ = completion.runner.cancel(&invocation_id);
     }
 }
 

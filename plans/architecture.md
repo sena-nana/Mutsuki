@@ -148,6 +148,12 @@ child terminal event 唤醒 parent continuation
 保留 `owner_runner`。后续 wake 只让原 runner reclaim continuation；waiting task 仍计入
 runner inflight，用于 backpressure，防止等待中的父 task 无限堆积。
 
+HostRuntime cancel 是控制面消息，不中断 CoreActor。对于正在 worker 中运行的 task，
+CoreActor 先将 task 标记为 cancelled，并记录 runner 级 pending cancel；worker 返回
+`RunnerCompletion` 时，host 在归还 runner 前通过 `Runner.cancel(invocation_id)` 尽力投递。
+第一版不承诺抢占已卡死 native step，deadline、worker health 和强制隔离恢复留在 host
+supervision 后续扩展。
+
 Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side adapter
 只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回 `RunnerStatus::Waiting`。它不
 把 `asyncio` event loop、任意 Python awaitable 或调度器语义写入 Core。
