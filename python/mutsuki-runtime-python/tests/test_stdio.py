@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mutsuki_runtime_python.contracts.codec import to_json_dict
@@ -30,7 +32,11 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
                         task_lease_id="task-lease-test",
                     )
                 ),
-                "tasks": [to_json_dict(Task.new("task-1", "raw.input"))],
+                "tasks": [
+                    to_json_dict(
+                        replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+                    )
+                ],
             },
         }
     )
@@ -54,3 +60,36 @@ async def test_stdio_unknown_runner_returns_structured_error() -> None:
 
     assert response["ok"] is False
     assert response["error"]["code"] == "runner.not_found"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_stdio_runner_step_returns_structured_lease_mismatch_error() -> None:
+    host = PythonRunnerHost()
+    host.register_runner(EchoRunner(echo_descriptor()))
+    server = StdioJsonlRunnerServer(host)
+
+    response = await server.handle_request(
+        {
+            "id": "req-1",
+            "method": "runner.step",
+            "params": {
+                "runner_id": "echo.runner",
+                "ctx": to_json_dict(
+                    RunnerContext(
+                        registry_generation=1,
+                        current_step=1,
+                        executor_id="executor:test",
+                        task_lease_id="task-lease-ctx",
+                    )
+                ),
+                "tasks": [
+                    to_json_dict(
+                        replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
+                    )
+                ],
+            },
+        }
+    )
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "task.claim_conflict"  # type: ignore[index]

@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::io::{BufRead, Write};
 
-use mutsuki_runtime_contracts::{RunnerDescriptor, RunnerResult, RuntimeError, Task};
+use mutsuki_runtime_contracts::{RunnerDescriptor, RunnerResult, RuntimeError, ScalarValue, Task};
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -83,6 +83,7 @@ impl<R: BufRead, W: Write> Runner for JsonlRunner<R, W> {
     }
 
     fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
+        validate_task_leases(&ctx, &tasks)?;
         self.request_as(
             "runner.step",
             json!({
@@ -113,6 +114,36 @@ impl<R: BufRead, W: Write> Runner for JsonlRunner<R, W> {
         )?;
         Ok(())
     }
+}
+
+fn validate_task_leases(ctx: &RunnerContext, tasks: &[Task]) -> RuntimeResult<()> {
+    for task in tasks {
+        if task.lease_id != ctx.task_lease_id {
+            let mut error = RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "jsonl_runner",
+                format!("runner.step.{}", task.task_id),
+            );
+            if let Some(ctx_lease_id) = &ctx.task_lease_id {
+                error.evidence.insert(
+                    "ctx_task_lease_id".into(),
+                    ScalarValue::String(ctx_lease_id.clone()),
+                );
+            }
+            if let Some(task_lease_id) = &task.lease_id {
+                error.evidence.insert(
+                    "task_lease_id".into(),
+                    ScalarValue::String(task_lease_id.clone()),
+                );
+            }
+            error.evidence.insert(
+                "executor_id".into(),
+                ScalarValue::String(ctx.executor_id.clone()),
+            );
+            return Err(RuntimeFailure::new(error));
+        }
+    }
+    Ok(())
 }
 
 fn io_error_failure(err: std::io::Error) -> RuntimeFailure {

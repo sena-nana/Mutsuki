@@ -44,6 +44,7 @@ fn task_pool_claims_single_task_with_executor_lease() {
     assert_eq!(lease.task_id, "task-1");
     assert_eq!(lease.runner_id, "worker");
     assert_eq!(lease.executor_id, "executor-1");
+    assert_eq!(lease.expires_at_step, Some(2));
     assert_eq!(task.lease_id.as_deref(), Some(lease.lease_id.as_str()));
     assert_eq!(pool.running_count(), 1);
     assert_eq!(
@@ -57,20 +58,76 @@ fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let mut pool = TaskPool::default();
     pool.enqueue(Task::new("task-1", "sim.work", json!({})));
-    pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 0, 1);
+    let lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 0, 1)[0]
+        .0
+        .clone();
 
-    pool.wait("task-1", "worker", Some(8)).unwrap();
+    pool.wait(&lease, 1, Some(8)).unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Waiting);
     assert_eq!(pool.get("task-1").unwrap().task.ready_at_step, Some(8));
+    assert!(pool.get("task-1").unwrap().task.lease_id.is_none());
 
     pool.wake("task-1").unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
-    pool.claim_ready_for_executor(&descriptor, "executor-1", 8, 0, 1);
+    let lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 8, 0, 1)[0]
+        .0
+        .clone();
 
-    pool.block("task-1", "worker").unwrap();
+    pool.block(&lease, 8).unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Blocked);
     pool.wake("task-1").unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
+}
+
+#[test]
+fn task_pool_reclaims_expired_running_leases_to_ready() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    let lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 3, 0, 1)[0]
+        .0
+        .clone();
+
+    assert_eq!(pool.reclaim_expired_leases(3), 0);
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Running);
+    assert_eq!(pool.reclaim_expired_leases(4), 1);
+    let record = pool.get("task-1").unwrap();
+    assert_eq!(record.status, TaskStatus::Ready);
+    assert!(record.lease.is_none());
+    assert!(record.task.lease_id.is_none());
+
+    let error = pool.complete(&lease, 4).unwrap_err();
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+}
+
+#[test]
+fn task_pool_rejects_stale_or_mismatched_lease_commits() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    let stale_lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 1, 1)[0]
+        .0
+        .clone();
+    pool.reclaim_expired_leases(2);
+    let fresh_lease = pool.claim_ready_for_executor(&descriptor, "executor-2", 2, 1, 1)[0]
+        .0
+        .clone();
+
+    let error = pool.complete(&stale_lease, 2).unwrap_err();
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+
+    let mut mismatched_executor = fresh_lease.clone();
+    mismatched_executor.executor_id = "executor-other".into();
+    let error = pool.complete(&mismatched_executor, 2).unwrap_err();
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+
+    let mut mismatched_generation = fresh_lease.clone();
+    mismatched_generation.registry_generation = 99;
+    let error = pool.complete(&mismatched_generation, 2).unwrap_err();
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+
+    pool.complete(&fresh_lease, 2).unwrap();
+    assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Completed);
 }
 
 #[test]

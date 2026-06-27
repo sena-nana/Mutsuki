@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    DomainEvent, RunnerDescriptor, RuntimeError, RuntimeEventKind, StateDelta, Task,
+    DomainEvent, RunnerDescriptor, RuntimeError, RuntimeEventKind, StateDelta, Task, TaskLease,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -11,11 +11,13 @@ use super::CoreRuntime;
 impl CoreRuntime {
     pub(super) fn process_kernel_tasks(
         &mut self,
-        runner: &RunnerDescriptor,
-        tasks: Vec<Task>,
+        _runner: &RunnerDescriptor,
+        tasks: Vec<(TaskLease, Task)>,
     ) -> RuntimeResult<usize> {
         let mut completed = 0;
-        for task in tasks {
+        for (lease, task) in tasks {
+            self.tasks
+                .ensure_active_lease(&task.task_id, &lease, self.current_step, "kernel")?;
             match task.protocol_id.as_str() {
                 "core.commit" => {
                     let delta: StateDelta =
@@ -54,7 +56,7 @@ impl CoreRuntime {
                 }
                 _ => {}
             }
-            self.tasks.complete(&task.task_id, &runner.runner_id)?;
+            self.tasks.complete(&lease, self.current_step)?;
             completed += 1;
         }
         Ok(completed)

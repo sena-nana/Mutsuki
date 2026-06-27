@@ -13,6 +13,7 @@ mod trace_metadata;
 impl CoreRuntime {
     pub fn tick_once(&mut self) -> RuntimeResult<RunnerLoopReport> {
         self.current_step += 1;
+        self.tasks.reclaim_expired_leases(self.current_step);
         let mut claimed = 0;
         let mut completed = 0;
         let descriptors = self.registry.descriptors();
@@ -29,13 +30,13 @@ impl CoreRuntime {
                 continue;
             }
             claimed += leased_tasks.len();
-            let lease_id = leased_tasks[0].0.lease_id.clone();
-            let tasks: Vec<_> = leased_tasks.into_iter().map(|(_, task)| task).collect();
             if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel"
             {
-                completed += self.process_kernel_tasks(&descriptor, tasks)?;
+                completed += self.process_kernel_tasks(&descriptor, leased_tasks)?;
                 continue;
             }
+            let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
+            let lease_id = task_leases[0].lease_id.clone();
             let mut runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)
@@ -68,7 +69,17 @@ impl CoreRuntime {
             );
             let results = runner.step(ctx, tasks)?;
             for result in results {
-                completed += self.route_result(&descriptor, result)?;
+                let lease = task_leases
+                    .iter()
+                    .find(|lease| lease.task_id == result.task_id)
+                    .ok_or_else(|| {
+                        RuntimeFailure::new(RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                            "runtime.runner_loop",
+                            format!("task.result.{}", result.task_id),
+                        ))
+                    })?;
+                completed += self.route_result(&descriptor, lease, result)?;
             }
             self.registry.put_runner(runner);
         }

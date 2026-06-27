@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mutsuki_runtime_python.contracts.runner import RunnerContext
 from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.runners.host import PythonRunnerHost
+from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
 
 
@@ -22,7 +25,7 @@ async def test_python_runner_host_steps_registered_runner() -> None:
             executor_id="executor:test",
             task_lease_id="task-lease-test",
         ),
-        (Task.new("task-1", "raw.input"),),
+        (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test"),),
     )
 
     assert results[0].task_id == "task-1"
@@ -40,3 +43,23 @@ async def test_python_runner_host_cancel_and_dispose_are_management_channel() ->
 
     assert runner.cancelled == ["inv-1"]
     assert runner.disposed is True
+
+
+@pytest.mark.asyncio
+async def test_python_runner_host_rejects_task_lease_mismatch() -> None:
+    host = PythonRunnerHost()
+    host.register_runner(EchoRunner(echo_descriptor()))
+
+    with pytest.raises(RunnerInvokeError) as exc_info:
+        await host.step_runner(
+            "echo.runner",
+            RunnerContext(
+                registry_generation=1,
+                current_step=1,
+                executor_id="executor:test",
+                task_lease_id="task-lease-ctx",
+            ),
+            (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task"),),
+        )
+
+    assert exc_info.value.error.code == "task.claim_conflict"

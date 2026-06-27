@@ -91,7 +91,19 @@ TaskPool claim 必须满足：
 - `core.*` 只能由 Committer runner claim。
 
 Task claim 成功后必须生成 `TaskLease`，Running 状态必须能追溯 runner、executor 和
-lease id。完成、失败、取消、等待或阻塞当前 task 时，Core 释放该 task lease。
+lease id。当前第一段 executor supervision 中，默认 TaskLease 有效期为一个 tick：
+`expires_at_step = acquired_at_step + 1`，当 `current_step >= expires_at_step` 时视为过期。
+完成、失败、取消、等待或阻塞当前 task 时，Core 必须用 active TaskLease fencing 后才
+能提交状态，并释放该 task lease。
+
+过期 TaskLease 不表示 Task terminal expiry。Core 在新一轮 claim 前回收过期 Running
+task：将其恢复为 Ready，清空 claimed runner / executor / lease id，让它可被重新
+claim。旧 executor 随后返回的结果必须以结构化 `task.claim_conflict` 失败，且不得
+修改 task 状态、StateStore、EventLog 或派生新 task。
+
+`RunnerStatus::Continue` 只表示当前 step 未完成，不续租、不长期占用 executor。若
+runner 未在本 tick 内提交 terminal / waiting / blocked 状态，lease 到期后由 Core
+回收为 Ready 后重试。
 
 当 runner 返回 `RunnerStatus::Waiting` 且携带 `TaskAwait`：
 

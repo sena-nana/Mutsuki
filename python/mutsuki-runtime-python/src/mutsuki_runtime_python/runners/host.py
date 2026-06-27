@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from mutsuki_runtime_python.contracts.errors import ERR_RUNNER_NOT_FOUND, RuntimeError
+from mutsuki_runtime_python.contracts.errors import (
+    ERR_RUNNER_NOT_FOUND,
+    ERR_TASK_CLAIM_CONFLICT,
+    RuntimeError,
+)
 from mutsuki_runtime_python.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.runners.protocol import Runner, RunnerInvokeError
@@ -22,6 +26,20 @@ class PythonRunnerHost:
         ctx: RunnerContext,
         tasks: tuple[Task, ...],
     ) -> tuple[RunnerResult, ...]:
+        for task in tasks:
+            if task.lease_id != ctx.task_lease_id:
+                raise RunnerInvokeError(
+                    RuntimeError(
+                        code=ERR_TASK_CLAIM_CONFLICT,
+                        source="python_runner_host",
+                        route=f"python.runner.step.{task.task_id}",
+                        evidence={
+                            "ctx_task_lease_id": ctx.task_lease_id or "",
+                            "task_lease_id": task.lease_id or "",
+                            "executor_id": ctx.executor_id,
+                        },
+                    )
+                )
         return await self._runner(runner_id).step(ctx, tasks)
 
     async def cancel_runner(self, runner_id: str, invocation_id: str) -> None:

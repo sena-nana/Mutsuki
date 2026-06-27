@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use mutsuki_runtime_contracts::{
     DomainEvent, ERR_RUNNER_PURITY_VIOLATION, EffectRequest, RunnerDescriptor, RunnerPurity,
     RunnerResult, RunnerStatus, RuntimeError, RuntimeEventKind, ScalarValue, StateDelta, Task,
+    TaskLease,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -13,8 +14,11 @@ impl CoreRuntime {
     pub(super) fn route_result(
         &mut self,
         runner: &RunnerDescriptor,
+        lease: &TaskLease,
         result: RunnerResult,
     ) -> RuntimeResult<usize> {
+        self.tasks
+            .ensure_active_lease(&result.task_id, lease, self.current_step, "route")?;
         if matches!(&result.status, RunnerStatus::Waiting)
             && let Some(task_await) = &result.task_await
         {
@@ -86,7 +90,7 @@ impl CoreRuntime {
         }
         match result.status {
             RunnerStatus::Completed => {
-                self.tasks.complete(&result.task_id, &runner.runner_id)?;
+                self.tasks.complete(lease, self.current_step)?;
                 self.record_task_terminal_event(&result.task_id, "task.completed", None);
                 self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);
@@ -94,13 +98,13 @@ impl CoreRuntime {
             RunnerStatus::Waiting => {
                 if let Some(task_await) = result.task_await {
                     self.tasks
-                        .wait_on_task(&result.task_id, &runner.runner_id, task_await)?;
+                        .wait_on_task(lease, self.current_step, task_await)?;
                 } else {
-                    self.tasks.wait(&result.task_id, &runner.runner_id, None)?;
+                    self.tasks.wait(lease, self.current_step, None)?;
                 }
             }
             RunnerStatus::Blocked => {
-                self.tasks.block(&result.task_id, &runner.runner_id)?;
+                self.tasks.block(lease, self.current_step)?;
             }
             RunnerStatus::Failed => {
                 let failure = RuntimeError::new(
@@ -108,14 +112,13 @@ impl CoreRuntime {
                     "runtime.result_router",
                     format!("runner.{}", runner.runner_id),
                 );
-                self.tasks
-                    .fail(&result.task_id, &runner.runner_id, failure.clone())?;
+                self.tasks.fail(lease, self.current_step, failure.clone())?;
                 self.record_task_terminal_event(&result.task_id, "task.failed", Some(failure));
                 self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);
             }
             RunnerStatus::Cancelled => {
-                self.tasks.cancel_task(&result.task_id, &runner.runner_id)?;
+                self.tasks.cancel_task(lease, self.current_step)?;
                 self.record_task_terminal_event(&result.task_id, "task.cancelled", None);
                 self.wake_tasks_waiting_on(&result.task_id)?;
                 return Ok(1);

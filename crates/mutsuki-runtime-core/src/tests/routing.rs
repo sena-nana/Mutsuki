@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
@@ -195,8 +198,13 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
     let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
     let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
     let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+    let parent_lease_ids = Rc::new(RefCell::new(Vec::new()));
+    let observed_parent_lease_ids = parent_lease_ids.clone();
     let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, |task| {
+        Box::new(StaticRunner::new(parent, move |task| {
+            observed_parent_lease_ids
+                .borrow_mut()
+                .push(task.lease_id.clone());
             if task.continuation_ref.is_some() {
                 return RunnerResult::completed(task.task_id.clone());
             }
@@ -232,6 +240,11 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
             .iter()
             .any(|event| event.name == "task.wake")
     );
+    let lease_ids = parent_lease_ids.borrow();
+    assert_eq!(lease_ids.len(), 2);
+    assert!(lease_ids[0].is_some());
+    assert!(lease_ids[1].is_some());
+    assert_ne!(lease_ids[0], lease_ids[1]);
 }
 
 #[test]
@@ -286,6 +299,59 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
 
     assert_eq!(error.error().code, "resource.lease_cross_await");
     assert!(runtime.tasks().get("child-1").is_none());
+}
+
+#[test]
+fn stale_runner_result_is_rejected_before_derived_tasks_are_enqueued() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(worker, |_task| {
+            let mut result = RunnerResult::completed("stale-task");
+            result
+                .tasks
+                .push(Task::new("derived-task", "sim.derived", json!({})));
+            result
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("derived-task").is_none());
+}
+
+#[test]
+fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let calls = Rc::new(RefCell::new(0));
+    let observed_calls = calls.clone();
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(worker, move |task| {
+            let mut calls = observed_calls.borrow_mut();
+            *calls += 1;
+            if *calls == 1 {
+                return runner_result_with_status(task, RunnerStatus::Continue);
+            }
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+
+    let report = runtime.tick_once().unwrap();
+    assert_eq!(report.completed_tasks, 0);
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Running));
+
+    let report = runtime.tick_once().unwrap();
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+    assert_eq!(*calls.borrow(), 2);
 }
 
 #[test]

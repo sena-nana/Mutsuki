@@ -2,10 +2,13 @@ use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerPurity,
-    RuntimeError, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease, TaskStatus, WakeCondition,
+    RuntimeError, ScalarValue, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease, TaskStatus,
+    WakeCondition,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
+
+pub const TASK_LEASE_TTL_STEPS: u64 = 1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskRecord {
@@ -146,7 +149,7 @@ impl TaskPool {
                     executor_id: executor_id.clone(),
                     registry_generation,
                     acquired_at_step: step,
-                    expires_at_step: None,
+                    expires_at_step: Some(step + TASK_LEASE_TTL_STEPS),
                 };
                 record.status = TaskStatus::Running;
                 record.claimed_by = Some(runner.runner_id.clone());
@@ -159,74 +162,73 @@ impl TaskPool {
         leased
     }
 
-    pub fn complete(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
-        let record = self.claimed_record_mut(task_id, runner_id, "complete")?;
+    pub fn complete(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
+        let record = self.leased_record_mut(lease, current_step, "complete")?;
         record.status = TaskStatus::Completed;
-        record.lease = None;
+        release_record_lease(record);
         Ok(())
     }
 
     pub fn fail(
         &mut self,
-        task_id: &str,
-        runner_id: &str,
+        lease: &TaskLease,
+        current_step: u64,
         failure: RuntimeError,
     ) -> RuntimeResult<()> {
-        let record = self.claimed_record_mut(task_id, runner_id, "fail")?;
+        let record = self.leased_record_mut(lease, current_step, "fail")?;
         record.status = TaskStatus::Failed;
-        record.lease = None;
+        release_record_lease(record);
         record.failure = Some(failure);
         Ok(())
     }
 
     pub fn wait(
         &mut self,
-        task_id: &str,
-        runner_id: &str,
+        lease: &TaskLease,
+        current_step: u64,
         ready_at_step: Option<u64>,
     ) -> RuntimeResult<()> {
-        let record = self.claimed_record_mut(task_id, runner_id, "wait")?;
+        let record = self.leased_record_mut(lease, current_step, "wait")?;
         record.status = TaskStatus::Waiting;
         record.task.ready_at_step = ready_at_step;
-        record.lease = None;
+        release_record_lease(record);
         Ok(())
     }
 
     pub fn wait_on_task(
         &mut self,
-        task_id: &str,
-        runner_id: &str,
+        lease: &TaskLease,
+        current_step: u64,
         task_await: TaskAwait,
     ) -> RuntimeResult<()> {
-        if task_await.parent_task_id != task_id {
+        if task_await.parent_task_id != lease.task_id {
             return Err(RuntimeFailure::new(RuntimeError::new(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.await.parent.{task_id}"),
+                format!("task.await.parent.{}", lease.task_id),
             )));
         }
         let ready_at_step = ready_step_for_wait(&task_await);
-        let record = self.claimed_record_mut(task_id, runner_id, "wait")?;
+        let record = self.leased_record_mut(lease, current_step, "wait")?;
         record.status = TaskStatus::Waiting;
         record.task.ready_at_step = ready_at_step;
         record.task.continuation_ref = Some(task_await.continuation.continuation.ref_id.clone());
-        record.lease = None;
-        record.claimed_by = None;
+        release_record_lease(record);
         self.waits_by_child
             .entry(task_await.child.task_id.clone())
             .or_default()
             .push(task_await.clone());
         self.waits_by_parent
-            .entry(task_id.to_string())
+            .entry(lease.task_id.clone())
             .or_default()
             .push(task_await);
         Ok(())
     }
 
-    pub fn block(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
-        let record = self.claimed_record_mut(task_id, runner_id, "block")?;
+    pub fn block(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
+        let record = self.leased_record_mut(lease, current_step, "block")?;
         record.status = TaskStatus::Blocked;
-        record.lease = None;
+        release_record_lease(record);
         Ok(())
     }
 
@@ -240,8 +242,7 @@ impl TaskPool {
             )));
         }
         record.status = TaskStatus::Ready;
-        record.claimed_by = None;
-        record.lease = None;
+        release_record_lease(record);
         self.remove_waits_for_parent(task_id);
         Ok(())
     }
@@ -267,18 +268,17 @@ impl TaskPool {
             && record.claimed_by.as_deref() == Some(runner_id)
         {
             record.status = TaskStatus::Ready;
-            record.claimed_by = None;
-            record.lease = None;
+            release_record_lease(record);
             cancelled = 1;
         }
         cancelled
     }
 
-    pub fn cancel_task(&mut self, task_id: &str, runner_id: &str) -> RuntimeResult<()> {
-        let record = self.claimed_record_mut(task_id, runner_id, "cancel")?;
+    pub fn cancel_task(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
+        let record = self.leased_record_mut(lease, current_step, "cancel")?;
         record.status = TaskStatus::Cancelled;
-        record.lease = None;
-        self.remove_waits_for_parent(task_id);
+        release_record_lease(record);
+        self.remove_waits_for_parent(&lease.task_id);
         Ok(())
     }
 
@@ -295,10 +295,39 @@ impl TaskPool {
             )));
         }
         record.status = TaskStatus::Cancelled;
-        record.claimed_by = None;
-        record.lease = None;
+        release_record_lease(record);
         self.remove_waits_for_parent(task_id);
         Ok(())
+    }
+
+    pub fn ensure_active_lease(
+        &self,
+        task_id: &str,
+        lease: &TaskLease,
+        current_step: u64,
+        action: &str,
+    ) -> RuntimeResult<()> {
+        validate_record_lease(self.record(task_id)?, lease, current_step, action)
+    }
+
+    pub fn reclaim_expired_leases(&mut self, current_step: u64) -> usize {
+        let mut reclaimed = 0;
+        for record in self.tasks.values_mut() {
+            if record.status != TaskStatus::Running {
+                continue;
+            }
+            let expired = record
+                .lease
+                .as_ref()
+                .and_then(|lease| lease.expires_at_step)
+                .is_some_and(|expires_at| current_step >= expires_at);
+            if expired {
+                record.status = TaskStatus::Ready;
+                release_record_lease(record);
+                reclaimed += 1;
+            }
+        }
+        reclaimed
     }
 
     pub fn awaits_for_parent(&self, task_id: &str) -> Vec<TaskAwait> {
@@ -400,22 +429,82 @@ impl TaskPool {
         })
     }
 
-    fn claimed_record_mut(
+    fn record(&self, task_id: &str) -> RuntimeResult<&TaskRecord> {
+        self.tasks.get(task_id).ok_or_else(|| {
+            RuntimeFailure::new(RuntimeError::new(
+                ERR_TASK_NOT_FOUND,
+                "runtime.task_pool",
+                format!("task.{task_id}"),
+            ))
+        })
+    }
+
+    fn leased_record_mut(
         &mut self,
-        task_id: &str,
-        runner_id: &str,
+        lease: &TaskLease,
+        current_step: u64,
         action: &str,
     ) -> RuntimeResult<&mut TaskRecord> {
-        let record = self.record_mut(task_id)?;
-        if record.claimed_by.as_deref() != Some(runner_id) {
-            return Err(RuntimeFailure::new(RuntimeError::new(
-                ERR_TASK_CLAIM_CONFLICT,
-                "runtime.task_pool",
-                format!("task.{action}.{task_id}"),
-            )));
-        }
+        let record = self.record_mut(&lease.task_id)?;
+        validate_record_lease(record, lease, current_step, action)?;
         Ok(record)
     }
+}
+
+fn release_record_lease(record: &mut TaskRecord) {
+    record.lease = None;
+    record.task.lease_id = None;
+    record.claimed_by = None;
+}
+
+fn validate_record_lease(
+    record: &TaskRecord,
+    lease: &TaskLease,
+    current_step: u64,
+    action: &str,
+) -> RuntimeResult<()> {
+    let active = record.lease.as_ref();
+    let expired = lease
+        .expires_at_step
+        .is_some_and(|expires_at| current_step >= expires_at);
+    let matches_active = record.status == TaskStatus::Running
+        && record.claimed_by.as_deref() == Some(lease.runner_id.as_str())
+        && active.is_some_and(|active| active == lease);
+    if matches_active && !expired {
+        return Ok(());
+    }
+    let mut error = RuntimeError::new(
+        ERR_TASK_CLAIM_CONFLICT,
+        "runtime.task_pool",
+        format!("task.{action}.{}", lease.task_id),
+    );
+    error.evidence.insert(
+        "lease_id".into(),
+        ScalarValue::String(lease.lease_id.clone()),
+    );
+    error.evidence.insert(
+        "executor_id".into(),
+        ScalarValue::String(lease.executor_id.clone()),
+    );
+    error
+        .evidence
+        .insert("current_step".into(), ScalarValue::Int(current_step as i64));
+    if let Some(active) = active {
+        error.evidence.insert(
+            "active_lease_id".into(),
+            ScalarValue::String(active.lease_id.clone()),
+        );
+        error.evidence.insert(
+            "active_executor_id".into(),
+            ScalarValue::String(active.executor_id.clone()),
+        );
+    }
+    if expired {
+        error
+            .evidence
+            .insert("reason".into(), ScalarValue::String("lease_expired".into()));
+    }
+    Err(RuntimeFailure::new(error))
 }
 
 fn ready_step_for_wait(task_await: &TaskAwait) -> Option<u64> {
