@@ -95,11 +95,7 @@ fn hard_dispatch_capacity(
             0
         };
     }
-    if load.running_count >= limits.max_running
-        || load.waiting_count >= limits.max_waiting
-        || load.pending_weight >= limits.max_inflight
-        || load.queued_count >= limits.queue_limit
-    {
+    if load.waiting_count >= limits.max_waiting {
         return 0;
     }
     limits

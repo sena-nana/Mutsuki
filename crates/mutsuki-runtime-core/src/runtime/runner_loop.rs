@@ -2,6 +2,7 @@ use mutsuki_runtime_contracts::{
     ExecutionClass, RunnerDescriptor, RunnerPurity, RuntimeError, RuntimeEventKind, ScalarValue,
     SpanStatus,
 };
+use std::collections::BTreeMap;
 
 use crate::runner::{RunnerContext, RunnerLoopReport};
 use crate::task_pool::RunnerLoad;
@@ -48,7 +49,7 @@ impl CoreRuntime {
                 executor_id.clone(),
                 self.current_step,
                 self.load_plan.registry_generation,
-                decision.dispatch_limit.min(load.queued_count),
+                decision.dispatch_limit,
             );
             if leased_tasks.is_empty() {
                 continue;
@@ -224,35 +225,36 @@ impl CoreRuntime {
         descriptor: &RunnerDescriptor,
         decision: &ScheduleDecision,
     ) {
-        let mut attrs = std::collections::BTreeMap::new();
-        attrs.insert(
-            "scheduler_id".into(),
-            ScalarValue::String(decision.scheduler_id.clone()),
-        );
-        attrs.insert(
-            "runner_id".into(),
-            ScalarValue::String(descriptor.runner_id.clone()),
-        );
-        attrs.insert(
-            "requested_dispatch_limit".into(),
-            ScalarValue::Int(decision.requested_dispatch_limit as i64),
-        );
-        attrs.insert(
-            "effective_dispatch_limit".into(),
-            ScalarValue::Int(decision.dispatch_limit as i64),
-        );
-        attrs.insert(
-            "reason".into(),
-            ScalarValue::String(decision.reason.clone()),
-        );
-        attrs.insert(
-            "registry_generation".into(),
-            ScalarValue::Int(self.load_plan.registry_generation as i64),
-        );
-        attrs.insert(
-            "current_step".into(),
-            ScalarValue::Int(self.current_step as i64),
-        );
+        let mut attrs = BTreeMap::from([
+            (
+                "scheduler_id".into(),
+                ScalarValue::String(decision.scheduler_id.clone()),
+            ),
+            (
+                "runner_id".into(),
+                ScalarValue::String(descriptor.runner_id.clone()),
+            ),
+            (
+                "requested_dispatch_limit".into(),
+                ScalarValue::Int(decision.requested_dispatch_limit as i64),
+            ),
+            (
+                "effective_dispatch_limit".into(),
+                ScalarValue::Int(decision.dispatch_limit as i64),
+            ),
+            (
+                "reason".into(),
+                ScalarValue::String(decision.reason.clone()),
+            ),
+            (
+                "registry_generation".into(),
+                ScalarValue::Int(self.load_plan.registry_generation as i64),
+            ),
+            (
+                "current_step".into(),
+                ScalarValue::Int(self.current_step as i64),
+            ),
+        ]);
         let span = self.traces.record(
             format!("trace-scheduler-{}", descriptor.runner_id),
             "scheduler.decision",
