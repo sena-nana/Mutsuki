@@ -62,15 +62,27 @@ Runner.dispose()
 当前 `tasks` 仍保留 Vec wire shape 以兼容 host/JSONL runner client，但 Core 每次只
 lease 一个 Task 给一个 Executor 调用 Runner。
 
-SDK 层可以把 task 原语包装成语言 awaitable：
+SDK 层可以把 task 原语包装成语言 awaitable。当前仓库内 issue #5 的落点是 Rust
+SDK 与 `python/mutsuki-runtime-python` runner kit；JS/TS SDK 只作为同一
+`TaskHandle` / `TaskOutcome` wire shape 的后续外部 SDK 目标，不在当前 workspace
+新增占位包。
 
 ```text
-Rust SDK: ctx.call(protocol, input).await -> TaskOutcome
-JS/Python SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
+Rust SDK: ctx.call::<Protocol>(input).await -> TaskOutcome
+Rust SDK raw: ctx.call_raw(protocol_id, payload).await -> TaskOutcome
+Python runner kit: await ctx.call_raw(protocol_id, payload) -> TaskOutcome
+JS/TS SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
 ```
 
 Core 不暴露 Rust `Future`、Promise、Coroutine、join/select、TaskGroup、WaitSet 或通用
 executor。
+Python runner kit 的 async adapter 只接受 Mutsuki task awaitable；普通 `asyncio`
+Future 或其他语言 awaitable 必须结构化失败，不能被伪装成 Core 调度语义。
+
+`CancelPolicy::Cascade` 是当前实现语义；`Detach` / `Shield` 可以由 SDK 写入
+`TaskHandle` / `TaskAwait` descriptor 以保持 wire shape 前向兼容，但 Core 暂不实现
+完整生命周期语义。等待中的 parent task 若携带非 Cascade await 并被取消，Core 必须
+结构化失败，而不是假装完成 Detach / Shield。
 
 Core 保留既有 string task id facade，同时提供以 `TaskHandle` descriptor 为入口的
 status / result / outcome / events / cancel / wake facade。`TaskHandle` 不代表语言级

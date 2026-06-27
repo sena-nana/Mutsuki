@@ -10,8 +10,13 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerResult, RunnerStatus, Task, TaskAwait, TaskHandle, TaskOutcome,
     TaskStepContinuation,
 };
-use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use serde::Serialize;
 use serde_json::Value;
+
+pub trait SdkProtocol {
+    const PROTOCOL_ID: &'static str;
+}
 
 pub trait RuntimeClient {
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle>;
@@ -78,21 +83,118 @@ impl AsyncRunnerContext {
         &self.parent_task_id
     }
 
-    pub fn call(&self, protocol_id: impl Into<String>, payload: Value) -> CallFuture {
-        self.call_with_runner_hint(protocol_id, payload, None)
+    pub fn call<P>(&self, input: impl Serialize) -> CallFuture
+    where
+        P: SdkProtocol,
+    {
+        self.call_with_cancel_policy::<P>(input, CancelPolicy::Cascade)
     }
 
-    pub fn call_targeted(
+    pub fn call_with_cancel_policy<P>(
+        &self,
+        input: impl Serialize,
+        cancel_policy: CancelPolicy,
+    ) -> CallFuture
+    where
+        P: SdkProtocol,
+    {
+        match serde_json::to_value(input) {
+            Ok(payload) => self.call_raw_with_cancel_policy(P::PROTOCOL_ID, payload, cancel_policy),
+            Err(error) => CallFuture::failed(
+                self.client.clone(),
+                self.parent_task_id.clone(),
+                self.pending.clone(),
+                serialize_error(error),
+            ),
+        }
+    }
+
+    pub fn call_raw(&self, protocol_id: impl Into<String>, payload: Value) -> CallFuture {
+        self.call_raw_with_cancel_policy(protocol_id, payload, CancelPolicy::Cascade)
+    }
+
+    pub fn call_raw_with_cancel_policy(
+        &self,
+        protocol_id: impl Into<String>,
+        payload: Value,
+        cancel_policy: CancelPolicy,
+    ) -> CallFuture {
+        self.call_with_runner_hint(protocol_id, payload, None, cancel_policy)
+    }
+
+    pub fn call_targeted<P>(
+        &self,
+        binding_id: impl Into<String>,
+        runner_hint: impl Into<String>,
+        input: impl Serialize,
+    ) -> CallFuture
+    where
+        P: SdkProtocol,
+    {
+        self.call_targeted_with_cancel_policy::<P>(
+            binding_id,
+            runner_hint,
+            input,
+            CancelPolicy::Cascade,
+        )
+    }
+
+    pub fn call_targeted_with_cancel_policy<P>(
+        &self,
+        binding_id: impl Into<String>,
+        runner_hint: impl Into<String>,
+        input: impl Serialize,
+        cancel_policy: CancelPolicy,
+    ) -> CallFuture
+    where
+        P: SdkProtocol,
+    {
+        match serde_json::to_value(input) {
+            Ok(payload) => self.call_targeted_raw_with_cancel_policy(
+                binding_id,
+                P::PROTOCOL_ID,
+                runner_hint,
+                payload,
+                cancel_policy,
+            ),
+            Err(error) => CallFuture::failed(
+                self.client.clone(),
+                self.parent_task_id.clone(),
+                self.pending.clone(),
+                serialize_error(error),
+            ),
+        }
+    }
+
+    pub fn call_targeted_raw(
         &self,
         binding_id: impl Into<String>,
         protocol_id: impl Into<String>,
         runner_hint: impl Into<String>,
         payload: Value,
     ) -> CallFuture {
+        self.call_targeted_raw_with_cancel_policy(
+            binding_id,
+            protocol_id,
+            runner_hint,
+            payload,
+            CancelPolicy::Cascade,
+        )
+    }
+
+    pub fn call_targeted_raw_with_cancel_policy(
+        &self,
+        binding_id: impl Into<String>,
+        protocol_id: impl Into<String>,
+        runner_hint: impl Into<String>,
+        payload: Value,
+        cancel_policy: CancelPolicy,
+    ) -> CallFuture {
         self.call_with_runner_hint(
             protocol_id,
             payload,
             Some((binding_id.into(), runner_hint.into())),
+            cancel_policy,
         )
     }
 
@@ -101,6 +203,7 @@ impl AsyncRunnerContext {
         protocol_id: impl Into<String>,
         payload: Value,
         target: Option<(String, String)>,
+        cancel_policy: CancelPolicy,
     ) -> CallFuture {
         let call_index = self.next_call.get() + 1;
         self.next_call.set(call_index);
@@ -121,7 +224,7 @@ impl AsyncRunnerContext {
             task_id,
             protocol_id,
             target_binding_id,
-            cancel_policy: CancelPolicy::Cascade,
+            cancel_policy: cancel_policy.clone(),
             trace_id: self.trace_id.clone(),
             correlation_id: self.correlation_id.clone(),
         };
@@ -146,7 +249,25 @@ pub struct CallFuture {
 enum CallState {
     Init { task: Task, handle: TaskHandle },
     Submitted { handle: TaskHandle },
+    Failed(Option<RuntimeFailure>),
     Done,
+}
+
+impl CallFuture {
+    fn failed(
+        client: RuntimeClientRef,
+        parent_task_id: String,
+        pending: Rc<RefCell<Option<PendingAwait>>>,
+        error: RuntimeFailure,
+    ) -> Self {
+        Self {
+            client,
+            parent_task_id,
+            pending,
+            state: CallState::Failed(Some(error)),
+            self_call_blocked: false,
+        }
+    }
 }
 
 impl Future for CallFuture {
@@ -166,8 +287,12 @@ impl Future for CallFuture {
         let state = std::mem::replace(&mut self.state, CallState::Done);
         match state {
             CallState::Init { task, handle } => {
-                let pending =
-                    PendingAwait::new(self.parent_task_id.clone(), handle.clone(), Some(task));
+                let pending = PendingAwait::new(
+                    self.parent_task_id.clone(),
+                    handle.clone(),
+                    Some(task),
+                    handle.cancel_policy.clone(),
+                );
                 *self.pending.borrow_mut() = Some(pending);
                 self.state = CallState::Submitted { handle };
                 Poll::Pending
@@ -182,6 +307,7 @@ impl Future for CallFuture {
                         self.parent_task_id.clone(),
                         handle.clone(),
                         None,
+                        handle.cancel_policy.clone(),
                     ));
                     self.client.register_waker(&handle.task_id, cx.waker());
                     self.state = CallState::Submitted { handle };
@@ -192,9 +318,21 @@ impl Future for CallFuture {
                     Poll::Ready(Err(error))
                 }
             },
+            CallState::Failed(mut error) => {
+                self.state = CallState::Done;
+                Poll::Ready(Err(error.take().expect("failed future contains error")))
+            }
             CallState::Done => panic!("CallFuture polled after completion"),
         }
     }
+}
+
+fn serialize_error(error: serde_json::Error) -> RuntimeFailure {
+    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+        "sdk.serialize_failed",
+        "runtime.sdk",
+        error.to_string(),
+    ))
 }
 
 struct PendingAwait {
@@ -203,7 +341,12 @@ struct PendingAwait {
 }
 
 impl PendingAwait {
-    fn new(parent_task_id: String, child: TaskHandle, task: Option<Task>) -> Self {
+    fn new(
+        parent_task_id: String,
+        child: TaskHandle,
+        task: Option<Task>,
+        cancel_policy: CancelPolicy,
+    ) -> Self {
         Self {
             task,
             task_await: TaskAwait {
@@ -214,7 +357,7 @@ impl PendingAwait {
                     wake: None,
                     reason: Some("sdk.await".into()),
                 },
-                cancel_policy: CancelPolicy::Cascade,
+                cancel_policy,
             },
         }
     }
@@ -372,9 +515,20 @@ mod tests {
     use mutsuki_runtime_contracts::{RunnerPurity, RuntimeError};
     use serde_json::json;
 
+    struct ChildWork;
+
+    impl SdkProtocol for ChildWork {
+        const PROTOCOL_ID: &'static str = "child.work";
+    }
+
+    struct ParentWork;
+
+    impl SdkProtocol for ParentWork {
+        const PROTOCOL_ID: &'static str = "parent.work";
+    }
+
     struct ManualClient {
         outcomes: RefCell<HashMap<String, TaskOutcome>>,
-        submitted: RefCell<Vec<Task>>,
     }
 
     impl RuntimeClient for ManualClient {
@@ -387,7 +541,6 @@ mod tests {
                 trace_id: task.trace_id.clone(),
                 correlation_id: task.correlation_id.clone(),
             };
-            self.submitted.borrow_mut().push(task);
             Ok(handle)
         }
 
@@ -400,7 +553,6 @@ mod tests {
     fn task_handle_future_polls_until_outcome() {
         let client = Rc::new(ManualClient {
             outcomes: RefCell::new(HashMap::new()),
-            submitted: RefCell::new(Vec::new()),
         });
         let handle = TaskHandle {
             task_id: "task-1".into(),
@@ -430,7 +582,6 @@ mod tests {
     fn async_runner_adapter_suspends_and_resumes_call() {
         let client = Rc::new(ManualClient {
             outcomes: RefCell::new(HashMap::new()),
-            submitted: RefCell::new(Vec::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -448,9 +599,7 @@ mod tests {
             client.clone(),
             Box::new(|ctx, task| {
                 Box::pin(async move {
-                    let outcome = ctx
-                        .call("child.work", json!({"from": task.task_id}))
-                        .await?;
+                    let outcome = ctx.call::<ChildWork>(json!({"from": task.task_id})).await?;
                     match outcome {
                         TaskOutcome::Completed { .. } => Ok(RunnerResult::completed(task.task_id)),
                         TaskOutcome::Failed { error, .. } => {
@@ -506,10 +655,109 @@ mod tests {
     }
 
     #[test]
+    fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
+        let client = Rc::new(ManualClient {
+            outcomes: RefCell::new(HashMap::new()),
+        });
+        let descriptor = RunnerDescriptor {
+            runner_id: "async.runner".into(),
+            plugin_id: "plugin-a".into(),
+            plugin_generation: 1,
+            accepted_protocol_ids: vec!["parent.work".into()],
+            purity: RunnerPurity::Pure,
+            input_schema: json!({}),
+            output_schema: json!({}),
+            metadata: BTreeMap::new(),
+            contract_surfaces: vec!["runner:async.runner".into()],
+        };
+        let mut adapter = AsyncRunnerAdapter::new(
+            descriptor,
+            client,
+            Box::new(|ctx, task| {
+                Box::pin(async move {
+                    ctx.call::<ChildWork>(json!({"from": task.task_id})).await?;
+                    Ok(RunnerResult::completed(task.task_id))
+                })
+            }),
+        );
+        let mut task = Task::new("parent-1", "parent.work", json!({}));
+        task.trace_id = Some("trace-1".into());
+        task.correlation_id = Some("corr-1".into());
+
+        let first = adapter
+            .step(
+                RunnerContext {
+                    registry_generation: 1,
+                    current_step: 1,
+                    executor_id: "executor:test".into(),
+                    task_lease_id: Some("lease:test".into()),
+                },
+                vec![task],
+            )
+            .unwrap();
+
+        assert_eq!(first[0].status, RunnerStatus::Waiting);
+        assert_eq!(first[0].tasks[0].protocol_id, "child.work");
+        assert_eq!(first[0].tasks[0].trace_id.as_deref(), Some("trace-1"));
+        assert_eq!(first[0].tasks[0].correlation_id.as_deref(), Some("corr-1"));
+        assert_eq!(
+            first[0].task_await.as_ref().unwrap().cancel_policy,
+            CancelPolicy::Cascade
+        );
+    }
+
+    #[test]
+    fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
+        let client = Rc::new(ManualClient {
+            outcomes: RefCell::new(HashMap::new()),
+        });
+        let descriptor = RunnerDescriptor {
+            runner_id: "async.runner".into(),
+            plugin_id: "plugin-a".into(),
+            plugin_generation: 1,
+            accepted_protocol_ids: vec!["parent.work".into()],
+            purity: RunnerPurity::Pure,
+            input_schema: json!({}),
+            output_schema: json!({}),
+            metadata: BTreeMap::new(),
+            contract_surfaces: vec!["runner:async.runner".into()],
+        };
+        let mut adapter = AsyncRunnerAdapter::new(
+            descriptor,
+            client,
+            Box::new(|ctx, task| {
+                Box::pin(async move {
+                    ctx.call_with_cancel_policy::<ChildWork>(
+                        json!({"from": task.task_id}),
+                        CancelPolicy::Detach,
+                    )
+                    .await?;
+                    Ok(RunnerResult::completed(task.task_id))
+                })
+            }),
+        );
+
+        let first = adapter
+            .step(
+                RunnerContext {
+                    registry_generation: 1,
+                    current_step: 1,
+                    executor_id: "executor:test".into(),
+                    task_lease_id: Some("lease:test".into()),
+                },
+                vec![Task::new("parent-1", "parent.work", json!({}))],
+            )
+            .unwrap();
+
+        let task_await = first[0].task_await.as_ref().unwrap();
+        assert_eq!(task_await.cancel_policy, CancelPolicy::Detach);
+        assert_eq!(task_await.child.cancel_policy, CancelPolicy::Detach);
+    }
+
+    #[test]
     fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
         let client = Rc::new(ManualClient {
             outcomes: RefCell::new(HashMap::new()),
-            submitted: RefCell::new(Vec::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -528,9 +776,8 @@ mod tests {
             Box::new(|ctx, task| {
                 Box::pin(async move {
                     let task_id = task.task_id.clone();
-                    ctx.call_targeted(
+                    ctx.call_targeted::<ParentWork>(
                         "binding:self",
-                        "parent.work",
                         "async.runner",
                         json!({"from": task_id}),
                     )
@@ -560,7 +807,6 @@ mod tests {
     fn async_runner_adapter_emits_targeted_child_task_descriptor() {
         let client = Rc::new(ManualClient {
             outcomes: RefCell::new(HashMap::new()),
-            submitted: RefCell::new(Vec::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -578,9 +824,8 @@ mod tests {
             client,
             Box::new(|ctx, task| {
                 Box::pin(async move {
-                    ctx.call_targeted(
+                    ctx.call_targeted::<ChildWork>(
                         "binding:child",
-                        "child.work",
                         "child.runner",
                         json!({"from": task.task_id}),
                     )

@@ -41,7 +41,7 @@ Mutsuki/
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；不得把 async runtime 语义反向写入 Core。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
-  server、Python ResourceManager 测试实现和 typed public API。
+  server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API。
 
 ## 4. 验证
 
@@ -78,7 +78,9 @@ uv run pytest
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。
-- JS / Python SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。
+- JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python 当前
+  仅限 `python/mutsuki-runtime-python` runner kit 内的 runner-side awaitable adapter，
+  不作为独立业务 SDK，也不承诺调度任意 `asyncio` future。
 - registry boot 后 freeze；能力变化必须走新 registry generation。
 - 错误必须结构化，不能吞异常返回默认值。
 - ID、时间、随机源必须可注入或由 runtime/host 控制。

@@ -279,6 +279,32 @@ fn cancelling_waiting_parent_cascades_to_child() {
 }
 
 #[test]
+fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(parent, |task| {
+            let child_task = Task::new("child-1", "child.work", json!({}));
+            await_child_result_with_policy(task, child_task, CancelPolicy::Detach)
+        })),
+        Box::new(StaticRunner::new(child, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime.tick_once().unwrap();
+
+    let error = runtime.cancel_task("parent-1").unwrap_err();
+
+    assert_eq!(error.error().code, "task.cancel_policy_unsupported");
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
+    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Ready));
+}
+
+#[test]
 fn task_cannot_suspend_while_holding_mutable_resource_lease() {
     let worker = runner_descriptor("worker", "parent.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
@@ -488,11 +514,19 @@ fn run_child_terminal_wake_case(
 }
 
 fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
+    await_child_result_with_policy(parent, child, CancelPolicy::Cascade)
+}
+
+fn await_child_result_with_policy(
+    parent: &Task,
+    child: Task,
+    cancel_policy: CancelPolicy,
+) -> RunnerResult {
     let child_handle = TaskHandle {
         task_id: child.task_id.clone(),
         protocol_id: child.protocol_id.clone(),
         target_binding_id: None,
-        cancel_policy: CancelPolicy::Cascade,
+        cancel_policy: cancel_policy.clone(),
         trace_id: parent.trace_id.clone(),
         correlation_id: parent.correlation_id.clone(),
     };
@@ -502,7 +536,7 @@ fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
         parent_task_id: parent.task_id.clone(),
         child: child_handle,
         continuation: test_continuation("continuation:parent"),
-        cancel_policy: CancelPolicy::Cascade,
+        cancel_policy,
     });
     result
 }

@@ -133,6 +133,10 @@ child terminal event 唤醒 parent continuation
 这只是 SDK 语法糖；Core 不暴露 `async fn`、`Future` ABI、language executor、
 `join_all`、`select`、`TaskGroup` 或 `WaitSet`。
 
+Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side adapter
+只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回 `RunnerStatus::Waiting`。它不
+把 `asyncio` event loop、任意 Python awaitable 或调度器语义写入 Core。
+
 ## 6. ResultRouter
 
 RunnerResult 不直接修改事实源：
