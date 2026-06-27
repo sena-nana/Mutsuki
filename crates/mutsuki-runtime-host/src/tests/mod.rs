@@ -5,7 +5,10 @@ use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde_json::json;
 
-use crate::{JsonlRunner, NativePluginHost, NativeRunner, runner_manifest};
+use crate::{
+    HostRuntimeCommand, HostRuntimeReply, JsonlRunner, NativePluginHost, NativeRunner,
+    runner_manifest,
+};
 
 fn descriptor(id: &str, kind: &str) -> RunnerDescriptor {
     RunnerDescriptor {
@@ -21,8 +24,17 @@ fn descriptor(id: &str, kind: &str) -> RunnerDescriptor {
     }
 }
 
-#[test]
-fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
+fn runtime_profile() -> RuntimeProfile {
+    RuntimeProfile {
+        profile_id: "default".into(),
+        enabled_plugins: vec!["plugin-a".into()],
+        bindings: BTreeMap::new(),
+        allow_dynamic_registration: false,
+        allow_hot_reload: true,
+    }
+}
+
+fn host_with_echo_runner() -> NativePluginHost {
     let runner_descriptor = descriptor("echo.runner", "raw.input");
     let mut host = NativePluginHost::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
@@ -35,14 +47,14 @@ fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
                 .collect())
         },
     )));
-    let runtime_profile = RuntimeProfile {
-        profile_id: "default".into(),
-        enabled_plugins: vec!["plugin-a".into()],
-        bindings: BTreeMap::new(),
-        allow_dynamic_registration: false,
-        allow_hot_reload: true,
-    };
-    let mut runtime: CoreRuntime = host.into_runtime(runtime_profile).unwrap();
+    host
+}
+
+#[test]
+fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
+    let mut runtime: CoreRuntime = host_with_echo_runner()
+        .into_runtime(runtime_profile())
+        .unwrap();
 
     runtime.enqueue_task(Task::new("task-1", "raw.input", json!({"ok": true})));
     let report = runtime.run_until_idle(4).unwrap();
@@ -52,6 +64,32 @@ fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
         runtime.tasks().get("task-1").unwrap().status,
         TaskStatus::Completed
     );
+}
+
+#[test]
+fn native_plugin_host_can_boot_host_runtime_control_plane() {
+    let mut runtime = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    let submitted = runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Task::new(
+            "task-1",
+            "raw.input",
+            json!({"ok": true}),
+        )))
+        .unwrap();
+    assert_eq!(submitted, HostRuntimeReply::TaskSubmitted("task-1".into()));
+
+    let reply = runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    let HostRuntimeReply::Idle(report) = reply else {
+        panic!("expected idle reply");
+    };
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
 }
 
 #[test]

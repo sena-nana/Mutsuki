@@ -19,11 +19,13 @@ Core 只保证单个 Task 的状态、入池、租约、执行提交和资源引
 RuntimeProfile + PluginManifest
   -> external/native resolver
   -> RuntimeLoadPlan / RuntimeLock
-  -> CoreRuntime boot
+  -> HostRuntime control plane / CoreRuntime boot
   -> protocol task submit
   -> TaskStore / TaskPool
   -> TaskLease
-  -> Executor invokes Runner.step
+  -> RunnerDispatch
+  -> RunnerExecutor invokes Runner.step
+  -> RunnerCompletion
   -> ResultRouter / StateStore / ResourceManager
   -> Rust SDK RuntimeClient / TaskHandleFuture wrapper
 ```
@@ -32,7 +34,8 @@ RuntimeProfile + PluginManifest
 
 - `contracts` 只定义 serde 纯协议对象。
 - `core` 依赖 `contracts`，只实现 runtime mechanics。
-- `host` 依赖 `core + contracts`，提供 native runner host 和 JSONL runner client。
+- `host` 依赖 `core + contracts`，提供 `HostRuntime` 控制面门面、native runner host
+  和 JSONL runner client。
 - `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
 - Python runner kit 镜像 contracts，提供 Python runner host 和 stdio runner server；
   Rust crates 不依赖 Python。
@@ -109,6 +112,11 @@ Task 权威状态、workflow 状态、连接池、长期 stream、lock 或 trans
 插件运行实例。Executor 可销毁；销毁不应导致 Task 状态、Continuation、连接池或资源
 状态丢失。
 
+当前 core 已把 runner 调用预拆成 `RunnerDispatch -> RunnerExecutor ->
+RunnerCompletion`。默认 `InlineRunnerExecutor` 仍同步调用 runner，用于测试、replay
+和最小 host；默认生产形态的 CoreActor / worker pool 隔离应在 host runtime 中替换该
+执行边界，而不是把线程模型写入 core crate。
+
 当前 Rust core 的 `Runner.step` 仍使用 `Vec<Task>` wire shape 以保持 host/JSONL
 兼容，但调度器每次只租出一个 task 给一个 executor。
 
@@ -162,6 +170,10 @@ RunnerResult 不直接修改事实源：
 - Runner 可以持有短期 ResourceLease，但不能拥有 ResourceCell。
 - 短期可变 lease 默认不能跨 SDK await；需要长期持有必须在更高层声明
   LongLease / Transaction / PinnedResource 等显式机制。
+
+当前 `ResourceManager` 保留 descriptor、lease、occupancy 和 generation 的事实源，
+本地 file/blob 读写已下沉到 `LocalResourceBackend`。这只是为 ResourceHub /
+provider RPC 预留边界；当前 backend 仍是测试级本地实现。
 
 ## 8. Plugin Loading
 

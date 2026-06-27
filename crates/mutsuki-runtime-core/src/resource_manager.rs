@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_runtime_contracts::{
@@ -10,10 +9,13 @@ use serde_json::Value;
 
 use crate::{RuntimeFailure, SequentialIdSource};
 
+mod backend;
 mod leases;
 mod occupancy;
 mod resources;
 mod values;
+
+use backend::LocalResourceBackend;
 
 static NEXT_MANAGER_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 
@@ -64,7 +66,7 @@ pub struct ResourceManager {
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
-    root: PathBuf,
+    backend: LocalResourceBackend,
 }
 
 impl Default for ResourceManager {
@@ -76,6 +78,9 @@ impl Default for ResourceManager {
 impl ResourceManager {
     pub fn new() -> Self {
         let namespace = NEXT_MANAGER_NAMESPACE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir()
+            .join("mutsuki-resource-manager")
+            .join(format!("manager-{namespace}"));
         Self {
             values: HashMap::new(),
             resources: HashMap::new(),
@@ -83,9 +88,7 @@ impl ResourceManager {
             occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),
             inline_value_max_bytes: 4096,
-            root: std::env::temp_dir()
-                .join("mutsuki-resource-manager")
-                .join(format!("manager-{namespace}")),
+            backend: LocalResourceBackend::new(root),
         }
     }
 }

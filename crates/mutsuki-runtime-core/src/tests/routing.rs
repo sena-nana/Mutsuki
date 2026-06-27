@@ -355,6 +355,69 @@ fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
 }
 
 #[test]
+fn failed_runner_step_keeps_runner_registered_for_retry() {
+    struct FailsFirstRunner {
+        descriptor: RunnerDescriptor,
+        calls: Rc<RefCell<usize>>,
+    }
+
+    impl Runner for FailsFirstRunner {
+        fn descriptor(&self) -> &RunnerDescriptor {
+            &self.descriptor
+        }
+
+        fn step(
+            &mut self,
+            _ctx: RunnerContext,
+            tasks: Vec<Task>,
+        ) -> RuntimeResult<Vec<RunnerResult>> {
+            let mut calls = self.calls.borrow_mut();
+            *calls += 1;
+            if *calls == 1 {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    "runner.step_failed",
+                    "test.runner",
+                    "first call fails",
+                )));
+            }
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        }
+    }
+
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let calls = Rc::new(RefCell::new(0));
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(FailsFirstRunner {
+            descriptor: worker,
+            calls: calls.clone(),
+        }),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+
+    let error = runtime.tick_once().unwrap_err();
+    assert_eq!(error.error().code, "runner.step_failed");
+    assert!(
+        runtime
+            .registry_snapshot()
+            .runners
+            .iter()
+            .any(|runner| runner.runner_id == "worker")
+    );
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+    assert_eq!(*calls.borrow(), 2);
+}
+
+#[test]
 fn task_handle_facade_exposes_status_result_cancel_and_events() {
     let plan = load_plan(Vec::new(), Vec::new());
     let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];

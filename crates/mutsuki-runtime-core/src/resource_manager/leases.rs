@@ -1,14 +1,12 @@
-use std::fs;
-
 use mutsuki_runtime_contracts::{
     ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED,
-    ERR_RESOURCE_NOT_FOUND, ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceCellRef,
-    ResourceLease, ResourceRef, RuntimeError,
+    ERR_RESOURCE_NOT_FOUND, ExclusiveWriteLease, LeaseToken, ResourceCellRef, ResourceLease,
+    ResourceRef, RuntimeError,
 };
 
 use crate::{IdSource, RuntimeFailure, RuntimeResult};
 
-use super::{ResourceManager, io_failure, simple_hash};
+use super::{ResourceManager, simple_hash};
 
 impl ResourceManager {
     pub fn create_resource_cell(
@@ -195,11 +193,8 @@ impl ResourceManager {
         entry.descriptor.version += 1;
         entry.descriptor.size_hint = Some(bytes.len() as u64);
         entry.descriptor.content_hash = Some(simple_hash(&bytes));
-        entry.bytes = bytes.clone();
-        if let ResourceAccess::MmapFile { path, len, .. } = &mut entry.descriptor.access {
-            fs::write(path, &bytes).map_err(io_failure)?;
-            *len = bytes.len() as u64;
-        }
+        self.backend.write(&mut entry.descriptor, &bytes)?;
+        entry.bytes = bytes;
         entry.writer = None;
         Ok(entry.descriptor.clone())
     }

@@ -3,9 +3,11 @@ use std::collections::BTreeMap;
 use mutsuki_runtime_contracts::{
     ArtifactType, ContractSurface, ContractSurfaceKind, LifecyclePolicy, PermissionGrant,
     PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor, RunnerResult,
-    RuntimeLoadPlan, RuntimeProfile, Task,
+    RuntimeLoadPlan, RuntimeProfile, Task, TaskStatus,
 };
-use mutsuki_runtime_core::{CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_core::{
+    CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RunnerLoopReport, RuntimeResult,
+};
 
 pub type NativeStepHandler =
     Box<dyn FnMut(RunnerContext, Vec<Task>) -> RuntimeResult<Vec<RunnerResult>>>;
@@ -70,7 +72,15 @@ impl NativePluginHost {
         self.runners.push(runner);
     }
 
-    pub fn into_runtime(mut self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
+    pub fn into_runtime(self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
+        self.boot_core_runtime(profile)
+    }
+
+    pub fn into_host_runtime(self, profile: RuntimeProfile) -> RuntimeResult<HostRuntime> {
+        Ok(HostRuntime::new(self.boot_core_runtime(profile)?))
+    }
+
+    fn boot_core_runtime(mut self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
         let mut plan = resolve_load_plan(&self.manifests, &profile);
         let core_runner = CoreKernelRunner::new(plan.registry_generation);
         plan.plugins
@@ -85,6 +95,51 @@ impl NativePluginHost {
         self.runners.push(Box::new(core_runner));
         CoreRuntime::boot(plan, self.runners)
     }
+}
+
+pub struct HostRuntime {
+    core: CoreRuntime,
+}
+
+impl HostRuntime {
+    fn new(core: CoreRuntime) -> Self {
+        Self { core }
+    }
+
+    pub fn dispatch(&mut self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
+        match command {
+            HostRuntimeCommand::SubmitTask(task) => {
+                Ok(HostRuntimeReply::TaskSubmitted(self.core.submit_task(task)))
+            }
+            HostRuntimeCommand::TickOnce => Ok(HostRuntimeReply::Tick(self.core.tick_once()?)),
+            HostRuntimeCommand::RunUntilIdle { max_ticks } => {
+                Ok(HostRuntimeReply::Idle(self.core.run_until_idle(max_ticks)?))
+            }
+            HostRuntimeCommand::CancelTask(task_id) => {
+                self.core.cancel_task(&task_id)?;
+                Ok(HostRuntimeReply::TaskCancelled(task_id))
+            }
+        }
+    }
+
+    pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
+        self.core.task_status(task_id)
+    }
+}
+
+pub enum HostRuntimeCommand {
+    SubmitTask(Task),
+    TickOnce,
+    RunUntilIdle { max_ticks: usize },
+    CancelTask(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostRuntimeReply {
+    TaskSubmitted(String),
+    Tick(RunnerLoopReport),
+    Idle(RunnerLoopReport),
+    TaskCancelled(String),
 }
 
 pub fn resolve_load_plan(

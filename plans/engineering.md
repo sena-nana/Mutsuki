@@ -33,8 +33,11 @@ Mutsuki/
   真实 handle 或领域对象。
 - `mutsuki-runtime-core`：实现 TaskPool、TaskLease、RunnerRegistry、Executor dispatch、
   ResultRouter、StateStore、ResourceManager、EventLog、TraceLog、hot-reload surface checks。
+  Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
+  执行器，不绑定线程模型。
 - `mutsuki-runtime-host`：实现 native PluginHost/resolver、native runner wrapper 和
-  stdio JSONL runner client。
+  stdio JSONL runner client，并提供 `HostRuntime` 控制面门面，为后续 CoreActor /
+  worker pool 默认运行时预留消息边界。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；不得把 async runtime 语义反向写入 Core。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
@@ -70,6 +73,8 @@ uv run pytest
 - Effectful runner 只处理 `effect.*` task。
 - ResourceRef/ValueRef/ResourceCellRef/ResourceLease/StateRef 是跨边界 descriptor，不是语言对象引用。
 - 长期资源状态归 ResourceManager / ResourceCell；runner 只能持有 step 期间的 ResourceLease。
+- 具体资源数据读写归 backend / provider；ResourceManager 保留 descriptor、lease、
+  occupancy 和 generation 事实源。
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。

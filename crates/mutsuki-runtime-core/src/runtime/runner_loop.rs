@@ -4,14 +4,24 @@ use crate::runner::{RunnerContext, RunnerLoopReport};
 use crate::{RuntimeFailure, RuntimeResult};
 
 use super::CoreRuntime;
+use executor::{InlineRunnerExecutor, RunnerDispatch, RunnerExecutor};
 use trace_metadata::{runner_attrs, trace_attrs};
 
+mod executor;
 mod kernel;
 mod result_router;
 mod trace_metadata;
 
 impl CoreRuntime {
     pub fn tick_once(&mut self) -> RuntimeResult<RunnerLoopReport> {
+        let mut executor = InlineRunnerExecutor;
+        self.tick_once_with_executor(&mut executor)
+    }
+
+    fn tick_once_with_executor(
+        &mut self,
+        executor: &mut impl RunnerExecutor,
+    ) -> RuntimeResult<RunnerLoopReport> {
         self.current_step += 1;
         self.tasks.reclaim_expired_leases(self.current_step);
         let mut claimed = 0;
@@ -37,7 +47,7 @@ impl CoreRuntime {
             }
             let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
             let lease_id = task_leases[0].lease_id.clone();
-            let mut runner = self
+            let runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)
                 .ok_or_else(|| {
@@ -67,7 +77,16 @@ impl CoreRuntime {
                 trace_attrs(&span),
                 None,
             );
-            let results = runner.step(ctx, tasks)?;
+            let completion = executor.execute(RunnerDispatch {
+                runner,
+                ctx,
+                task_leases,
+                tasks,
+            });
+            let results = completion.results;
+            self.registry.put_runner(completion.runner);
+            let task_leases = completion.task_leases;
+            let results = results?;
             for result in results {
                 let lease = task_leases
                     .iter()
@@ -81,7 +100,6 @@ impl CoreRuntime {
                     })?;
                 completed += self.route_result(&descriptor, lease, result)?;
             }
-            self.registry.put_runner(runner);
         }
         Ok(RunnerLoopReport {
             claimed_tasks: claimed,

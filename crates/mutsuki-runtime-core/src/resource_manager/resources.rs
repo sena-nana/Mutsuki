@@ -1,5 +1,3 @@
-use std::fs;
-
 use mutsuki_runtime_contracts::{
     ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_NOT_FOUND, ResourceAccess, ResourceLifetime,
     ResourceRef, ResourceSealState, RuntimeError,
@@ -7,7 +5,7 @@ use mutsuki_runtime_contracts::{
 
 use crate::{IdSource, RuntimeFailure, RuntimeResult};
 
-use super::{ResourceEntry, ResourceManager, io_failure, resource_not_found, simple_hash};
+use super::{ResourceEntry, ResourceManager, resource_not_found, simple_hash};
 
 impl ResourceManager {
     pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
@@ -26,10 +24,8 @@ impl ResourceManager {
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
-        fs::create_dir_all(&self.root).map_err(io_failure)?;
         let ref_id = self.id_source.next_id("resource");
-        let path = self.root.join(format!("{ref_id}.bin"));
-        fs::write(&path, &bytes).map_err(io_failure)?;
+        let access = self.backend.mmap_access(&ref_id, &bytes)?;
         let descriptor = ResourceRef {
             ref_id: ref_id.clone(),
             provider_id: "resource.local".into(),
@@ -37,12 +33,7 @@ impl ResourceManager {
             schema: schema.into(),
             version: 1,
             generation: 1,
-            access: ResourceAccess::MmapFile {
-                path: path.to_string_lossy().to_string(),
-                offset: 0,
-                len: bytes.len() as u64,
-                readonly: true,
-            },
+            access,
             size_hint: Some(bytes.len() as u64),
             content_hash: Some(simple_hash(&bytes)),
             lifetime: ResourceLifetime::Persistent,
@@ -137,10 +128,7 @@ impl ResourceManager {
                 format!("resource.{}", resource_ref.ref_id),
             )));
         }
-        match &entry.descriptor.access {
-            ResourceAccess::MmapFile { path, .. } => fs::read(path).map_err(io_failure),
-            _ => Ok(entry.bytes.clone()),
-        }
+        self.backend.read(&entry.descriptor, &entry.bytes)
     }
 
     pub fn read_resource_by_id(&self, ref_id: &str) -> RuntimeResult<Vec<u8>> {
