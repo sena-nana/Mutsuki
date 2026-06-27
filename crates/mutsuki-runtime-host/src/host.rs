@@ -108,9 +108,9 @@ impl HostRuntime {
 
     pub fn dispatch(&mut self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
         match command {
-            HostRuntimeCommand::SubmitTask(task) => {
-                Ok(HostRuntimeReply::TaskSubmitted(self.core.submit_task(task)))
-            }
+            HostRuntimeCommand::SubmitTask(task) => Ok(HostRuntimeReply::TaskSubmitted(
+                self.core.submit_task(*task),
+            )),
             HostRuntimeCommand::TickOnce => Ok(HostRuntimeReply::Tick(self.core.tick_once()?)),
             HostRuntimeCommand::RunUntilIdle { max_ticks } => {
                 Ok(HostRuntimeReply::Idle(self.core.run_until_idle(max_ticks)?))
@@ -128,7 +128,7 @@ impl HostRuntime {
 }
 
 pub enum HostRuntimeCommand {
-    SubmitTask(Task),
+    SubmitTask(Box<Task>),
     TickOnce,
     RunUntilIdle { max_ticks: usize },
     CancelTask(String),

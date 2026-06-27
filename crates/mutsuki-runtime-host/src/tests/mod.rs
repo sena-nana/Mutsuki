@@ -73,11 +73,11 @@ fn native_plugin_host_can_boot_host_runtime_control_plane() {
         .unwrap();
 
     let submitted = runtime
-        .dispatch(HostRuntimeCommand::SubmitTask(Task::new(
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "task-1",
             "raw.input",
             json!({"ok": true}),
-        )))
+        ))))
         .unwrap();
     assert_eq!(submitted, HostRuntimeReply::TaskSubmitted("task-1".into()));
 

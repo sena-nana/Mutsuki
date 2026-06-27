@@ -53,7 +53,7 @@ impl TaskPool {
 
     pub fn records(&self) -> Vec<&TaskRecord> {
         let mut records: Vec<&TaskRecord> = self.tasks.values().collect();
-        records.sort_by(|a, b| a.task.created_sequence.cmp(&b.task.created_sequence));
+        records.sort_by_key(|record| record.task.created_sequence);
         records
     }
 
@@ -84,7 +84,7 @@ impl TaskPool {
             .values()
             .filter(|record| record.status == TaskStatus::Running)
             .collect();
-        records.sort_by(|a, b| a.task.created_sequence.cmp(&b.task.created_sequence));
+        records.sort_by_key(|record| record.task.created_sequence);
         records
     }
 

@@ -232,7 +232,10 @@ impl AsyncRunnerContext {
             client: self.client.clone(),
             parent_task_id: self.parent_task_id.clone(),
             pending: self.pending.clone(),
-            state: CallState::Init { task, handle },
+            state: CallState::Init {
+                task: Box::new(task),
+                handle,
+            },
             self_call_blocked,
         }
     }
@@ -247,7 +250,7 @@ pub struct CallFuture {
 }
 
 enum CallState {
-    Init { task: Task, handle: TaskHandle },
+    Init { task: Box<Task>, handle: TaskHandle },
     Submitted { handle: TaskHandle },
     Failed(Option<RuntimeFailure>),
     Done,
@@ -290,7 +293,7 @@ impl Future for CallFuture {
                 let pending = PendingAwait::new(
                     self.parent_task_id.clone(),
                     handle.clone(),
-                    Some(task),
+                    Some(*task),
                     handle.cancel_policy.clone(),
                 );
                 *self.pending.borrow_mut() = Some(pending);
