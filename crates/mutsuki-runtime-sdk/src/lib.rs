@@ -555,4 +555,71 @@ mod tests {
 
         assert_eq!(error.error().code, "task.self_call_blocked");
     }
+
+    #[test]
+    fn async_runner_adapter_emits_targeted_child_task_descriptor() {
+        let client = Rc::new(ManualClient {
+            outcomes: RefCell::new(HashMap::new()),
+            submitted: RefCell::new(Vec::new()),
+        });
+        let descriptor = RunnerDescriptor {
+            runner_id: "async.runner".into(),
+            plugin_id: "plugin-a".into(),
+            plugin_generation: 1,
+            accepted_protocol_ids: vec!["parent.work".into()],
+            purity: RunnerPurity::Pure,
+            input_schema: json!({}),
+            output_schema: json!({}),
+            metadata: BTreeMap::new(),
+            contract_surfaces: vec!["runner:async.runner".into()],
+        };
+        let mut adapter = AsyncRunnerAdapter::new(
+            descriptor,
+            client,
+            Box::new(|ctx, task| {
+                Box::pin(async move {
+                    ctx.call_targeted(
+                        "binding:child",
+                        "child.work",
+                        "child.runner",
+                        json!({"from": task.task_id}),
+                    )
+                    .await?;
+                    Ok(RunnerResult::completed(task.task_id))
+                })
+            }),
+        );
+
+        let first = adapter
+            .step(
+                RunnerContext {
+                    registry_generation: 1,
+                    current_step: 1,
+                    executor_id: "executor:test".into(),
+                    task_lease_id: Some("lease:test".into()),
+                },
+                vec![Task::new("parent-1", "parent.work", json!({}))],
+            )
+            .unwrap();
+
+        assert_eq!(first[0].status, RunnerStatus::Waiting);
+        assert_eq!(
+            first[0].tasks[0].target_binding_id.as_deref(),
+            Some("binding:child")
+        );
+        assert_eq!(
+            first[0].tasks[0].runner_hint.as_deref(),
+            Some("child.runner")
+        );
+        assert_eq!(
+            first[0]
+                .task_await
+                .as_ref()
+                .unwrap()
+                .child
+                .target_binding_id
+                .as_deref(),
+            Some("binding:child")
+        );
+    }
 }

@@ -113,6 +113,27 @@ fn jsonl_runner_rejects_task_lease_mismatch_before_writing_request() {
 }
 
 #[test]
+fn jsonl_runner_cancel_and_dispose_use_management_methods() {
+    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+    let response = concat!(
+        "{\"id\":\"req-1\",\"ok\":true,\"result\":null}\n",
+        "{\"id\":\"req-2\",\"ok\":true,\"result\":null}\n"
+    );
+    let reader = Cursor::new(response.as_bytes());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
+
+    runner.cancel("inv-1").unwrap();
+    runner.dispose().unwrap();
+    let (_reader, writer) = runner.into_inner();
+    let request = String::from_utf8(writer.into_inner()).unwrap();
+
+    assert!(request.contains("\"method\":\"runner.cancel\""));
+    assert!(request.contains("\"invocation_id\":\"inv-1\""));
+    assert!(request.contains("\"method\":\"runner.dispose\""));
+}
+
+#[test]
 fn resolver_emits_declared_runtime_surfaces() {
     let runner_descriptor = descriptor("echo.runner", "raw.input");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);

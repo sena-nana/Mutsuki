@@ -191,6 +191,43 @@ fn surface_occupancy_handle_roundtrips_json() {
 }
 
 #[test]
+fn error_event_and_trace_contracts_roundtrip_json() {
+    let mut error = RuntimeError::new("runtime.test_failed", "contracts.test", "test.route");
+    error.evidence.insert("attempt".into(), ScalarValue::Int(1));
+    let decoded_error: RuntimeError =
+        serde_json::from_str(&serde_json::to_string(&error).unwrap()).unwrap();
+    assert_eq!(decoded_error, error);
+
+    let event = RuntimeEvent {
+        sequence: 7,
+        kind: RuntimeEventKind::Trace,
+        name: "trace.closed".into(),
+        subject_id: Some("trace-1".into()),
+        attributes: [("ok".into(), ScalarValue::Bool(true))].into(),
+        error: Some(error),
+    };
+    assert_eq!(
+        serde_json::from_str::<RuntimeEvent>(&serde_json::to_string(&event).unwrap()).unwrap(),
+        event
+    );
+
+    let span = TraceSpan {
+        trace_id: "trace-1".into(),
+        span_id: "span-1".into(),
+        parent_span_id: None,
+        name: "runner.step".into(),
+        start: 1.0,
+        end: Some(2.0),
+        attributes: [("runner_id".into(), ScalarValue::String("worker".into()))].into(),
+        status: SpanStatus::Ok,
+    };
+    assert_eq!(
+        serde_json::from_str::<TraceSpan>(&serde_json::to_string(&span).unwrap()).unwrap(),
+        span
+    );
+}
+
+#[test]
 fn task_handle_outcome_and_await_contracts_roundtrip_json() {
     let handle = TaskHandle {
         task_id: "child-1".into(),

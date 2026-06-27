@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -161,6 +163,21 @@ fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
     assert_eq!(register_err.error().code, ERR_REGISTRY_FROZEN);
     let unregister_err = runtime.unregister_runner("worker").unwrap_err();
     assert_eq!(unregister_err.error().code, ERR_REGISTRY_FROZEN);
+}
+
+#[test]
+fn dispose_plugins_calls_registered_runner_management_surface() {
+    let runner = runner_descriptor("worker", "cap.work", RunnerPurity::Pure);
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let plan = load_plan(vec![runner.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> =
+        vec![Box::new(ContinuingRunner::new(runner, calls.clone()))];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    let disposed = runtime.dispose_plugins().unwrap();
+
+    assert_eq!(disposed.disposed, vec!["worker".to_string()]);
+    assert_eq!(*calls.borrow(), vec!["dispose:worker".to_string()]);
 }
 
 #[test]

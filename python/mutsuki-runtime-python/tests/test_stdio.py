@@ -63,6 +63,34 @@ async def test_stdio_unknown_runner_returns_structured_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stdio_cancel_and_dispose_dispatch_to_host_management_channel() -> None:
+    host = PythonRunnerHost()
+    runner = EchoRunner(echo_descriptor())
+    host.register_runner(runner)
+    server = StdioJsonlRunnerServer(host)
+
+    cancel_response = await server.handle_request(
+        {
+            "id": "req-1",
+            "method": "runner.cancel",
+            "params": {"runner_id": "echo.runner", "invocation_id": "inv-1"},
+        }
+    )
+    dispose_response = await server.handle_request(
+        {
+            "id": "req-2",
+            "method": "runner.dispose",
+            "params": {"runner_id": "echo.runner"},
+        }
+    )
+
+    assert cancel_response == {"id": "req-1", "ok": True, "result": None}
+    assert dispose_response == {"id": "req-2", "ok": True, "result": None}
+    assert runner.cancelled == ["inv-1"]
+    assert runner.disposed is True
+
+
+@pytest.mark.asyncio
 async def test_stdio_runner_step_returns_structured_lease_mismatch_error() -> None:
     host = PythonRunnerHost()
     host.register_runner(EchoRunner(echo_descriptor()))
