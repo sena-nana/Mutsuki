@@ -227,11 +227,6 @@ enum CoreActorMsg {
     Shutdown,
 }
 
-struct CoreActorCommandOutcome {
-    reply: RuntimeResult<HostRuntimeReply>,
-    shutdown: bool,
-}
-
 struct WorkerPool {
     sender: mpsc::Sender<RunnerDispatch>,
     queued: Arc<AtomicUsize>,
@@ -332,16 +327,18 @@ fn core_actor_loop(
     while let Ok(msg) = rx.recv() {
         match msg {
             CoreActorMsg::Command(command, reply_tx) => {
-                let outcome = handle_command(
-                    command,
-                    &mut core,
-                    &config,
-                    &mut pools,
-                    &rx,
-                    &mut pending_cancels,
+                let shutdown = send_command_reply(
+                    handle_command(
+                        command,
+                        &mut core,
+                        &config,
+                        &mut pools,
+                        &rx,
+                        &mut pending_cancels,
+                    ),
+                    reply_tx,
                 );
-                let _ = reply_tx.send(outcome.reply);
-                if outcome.shutdown {
+                if shutdown {
                     break;
                 }
             }
@@ -365,68 +362,68 @@ fn handle_command(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-) -> CoreActorCommandOutcome {
-    let mut shutdown = false;
-    let reply = (|| -> RuntimeResult<HostRuntimeReply> {
-        match command {
-            HostRuntimeCommand::SubmitTask(task) => {
-                let task_id = core.submit_task(*task);
-                Ok(HostRuntimeReply::TaskSubmitted(task_id))
-            }
-            HostRuntimeCommand::TickOnce => {
-                let mut report = schedule_ready(core, config, pools)?;
+) -> RuntimeResult<(HostRuntimeReply, bool)> {
+    match command {
+        HostRuntimeCommand::SubmitTask(task) => {
+            let task_id = core.submit_task(*task);
+            Ok((HostRuntimeReply::TaskSubmitted(task_id), false))
+        }
+        HostRuntimeCommand::TickOnce => {
+            let mut report = schedule_ready(core, config, pools)?;
+            let shutdown =
+                drain_worker_completions(core, config, pools, rx, pending_cancels, &mut report, 1);
+            Ok((HostRuntimeReply::Tick(report), shutdown))
+        }
+        HostRuntimeCommand::RunUntilIdle { max_ticks } => {
+            let mut shutdown = false;
+            let mut aggregate = RunnerLoopReport {
+                claimed_tasks: 0,
+                completed_tasks: 0,
+            };
+            for _ in 0..max_ticks {
+                let report = schedule_ready(core, config, pools)?;
+                aggregate.claimed_tasks += report.claimed_tasks;
+                aggregate.completed_tasks += report.completed_tasks;
                 shutdown = drain_worker_completions(
                     core,
                     config,
                     pools,
                     rx,
                     pending_cancels,
-                    &mut report,
-                    1,
+                    &mut aggregate,
+                    8,
                 );
-                Ok(HostRuntimeReply::Tick(report))
-            }
-            HostRuntimeCommand::RunUntilIdle { max_ticks } => {
-                let mut aggregate = RunnerLoopReport {
-                    claimed_tasks: 0,
-                    completed_tasks: 0,
-                };
-                for _ in 0..max_ticks {
-                    let report = schedule_ready(core, config, pools)?;
-                    aggregate.claimed_tasks += report.claimed_tasks;
-                    aggregate.completed_tasks += report.completed_tasks;
-                    shutdown = drain_worker_completions(
-                        core,
-                        config,
-                        pools,
-                        rx,
-                        pending_cancels,
-                        &mut aggregate,
-                        8,
-                    );
-                    if core.tasks().ready_count() == 0 && core.tasks().running_count() == 0 {
-                        break;
-                    }
-                    if shutdown {
-                        break;
-                    }
+                if core.tasks().ready_count() == 0 && core.tasks().running_count() == 0 {
+                    break;
                 }
-                Ok(HostRuntimeReply::Idle(aggregate))
-            }
-            HostRuntimeCommand::CancelTask(task_id) => {
-                let running_runner = running_runner_for_task(core, &task_id);
-                core.cancel_task(&task_id)?;
-                if let Some(runner_id) = running_runner {
-                    pending_cancels
-                        .entry(runner_id)
-                        .or_default()
-                        .push(task_id.clone());
+                if shutdown {
+                    break;
                 }
-                Ok(HostRuntimeReply::TaskCancelled(task_id))
             }
+            Ok((HostRuntimeReply::Idle(aggregate), shutdown))
         }
-    })();
-    CoreActorCommandOutcome { reply, shutdown }
+        HostRuntimeCommand::CancelTask(task_id) => {
+            let running_runner = running_runner_for_task(core, &task_id);
+            core.cancel_task(&task_id)?;
+            if let Some(runner_id) = running_runner {
+                pending_cancels
+                    .entry(runner_id)
+                    .or_default()
+                    .push(task_id.clone());
+            }
+            Ok((HostRuntimeReply::TaskCancelled(task_id), false))
+        }
+    }
+}
+
+fn send_command_reply(
+    outcome: RuntimeResult<(HostRuntimeReply, bool)>,
+    reply_tx: mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
+) -> bool {
+    let shutdown = outcome.as_ref().is_ok_and(|(_, shutdown)| *shutdown);
+    let reply = outcome.map(|(reply, _)| reply);
+    let _ = reply_tx.send(reply);
+    shutdown
 }
 
 fn drain_worker_completions(
@@ -454,10 +451,10 @@ fn drain_worker_completions(
                 let _ = reply_tx.send(core.task_status(&task_id));
             }
             Ok(CoreActorMsg::Command(command, reply_tx)) => {
-                let outcome = handle_command(command, core, config, pools, rx, pending_cancels);
-                let shutdown = outcome.shutdown;
-                let _ = reply_tx.send(outcome.reply);
-                if shutdown {
+                if send_command_reply(
+                    handle_command(command, core, config, pools, rx, pending_cancels),
+                    reply_tx,
+                ) {
                     return true;
                 }
             }
