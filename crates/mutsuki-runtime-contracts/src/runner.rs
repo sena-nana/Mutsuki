@@ -6,6 +6,17 @@ use serde_json::Value;
 use crate::{ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskAwait, TaskId, ValueRef};
 use crate::{StateDelta, SurfaceId};
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionClass {
+    Control,
+    Orchestration,
+    Io,
+    Cpu,
+    Blocking,
+    Script,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerPurity {
@@ -21,6 +32,7 @@ pub struct RunnerDescriptor {
     pub plugin_generation: u64,
     pub accepted_protocol_ids: Vec<ProtocolId>,
     pub purity: RunnerPurity,
+    pub execution_class: ExecutionClass,
     pub input_schema: Value,
     pub output_schema: Value,
     pub metadata: BTreeMap<String, ScalarValue>,

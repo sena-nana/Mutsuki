@@ -22,6 +22,7 @@ from mutsuki_runtime_python.contracts.errors import ERR_RUNTIME_HOST_FAILED
 from mutsuki_runtime_python.contracts.errors import RuntimeError as MutsukiRuntimeError
 from mutsuki_runtime_python.contracts.event import DomainEvent
 from mutsuki_runtime_python.contracts.runner import (
+    ExecutionClass,
     RunnerContext,
     RunnerDescriptor,
     RunnerPurity,
@@ -83,6 +84,7 @@ class CodexEffectRunner:
             plugin_generation=1,
             accepted_protocol_ids=(PROTOCOL_ID,),
             purity=RunnerPurity.EFFECTFUL,
+            execution_class=ExecutionClass.SCRIPT,
             metadata={"event_kind": RESULT_EVENT_KIND},
             contract_surfaces=(f"runner:{RUNNER_ID}", f"task_protocol:{PROTOCOL_ID}"),
         )

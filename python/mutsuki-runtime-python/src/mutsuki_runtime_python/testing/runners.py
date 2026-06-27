@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mutsuki_runtime_python.contracts.runner import (
+    ExecutionClass,
     RunnerContext,
     RunnerDescriptor,
     RunnerPurity,
@@ -40,5 +41,6 @@ def echo_descriptor() -> RunnerDescriptor:
         plugin_generation=1,
         accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
+        execution_class=ExecutionClass.CPU,
         contract_surfaces=("runner:echo.runner",),
     )

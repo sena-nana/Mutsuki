@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     ArtifactType, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest, PluginProvides,
-    RunnerDescriptor, RunnerPurity, ScalarValue,
+    ExecutionClass, RunnerDescriptor, RunnerPurity, ScalarValue,
 };
 use serde_json::json;
 
@@ -32,6 +32,7 @@ pub fn gateway_normalizer_descriptor(plugin_generation: u64) -> RunnerDescriptor
         plugin_generation,
         accepted_protocol_ids: vec![RAW_GATEWAY_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
+        execution_class: ExecutionClass::Io,
         input_schema: json!({
             "type": "object",
             "required": ["op"],
@@ -55,6 +56,7 @@ pub fn openapi_effect_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         plugin_generation,
         accepted_protocol_ids: effect_protocol_ids(),
         purity: RunnerPurity::Effectful,
+        execution_class: ExecutionClass::Blocking,
         input_schema: json!({
             "type": "object",
             "additionalProperties": true

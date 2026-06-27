@@ -80,6 +80,48 @@ fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
 }
 
 #[test]
+fn waiting_tasks_count_toward_runner_inflight_load() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    pool.enqueue(Task::new("task-2", "sim.work", json!({})));
+    let lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 0, 1)[0]
+        .0
+        .clone();
+
+    pool.wait(&lease, 1, None).unwrap();
+    let load = pool.runner_load(&descriptor, 1, 0);
+
+    assert_eq!(pool.waiting_count(), 1);
+    assert_eq!(load.running_count, 0);
+    assert_eq!(load.waiting_count, 1);
+    assert_eq!(load.queued_count, 1);
+    assert_eq!(load.pending_weight, 2);
+}
+
+#[test]
+fn woken_continuation_can_only_be_reclaimed_by_owner_runner() {
+    let owner = runner_descriptor("owner.runner", "sim.work", RunnerPurity::Pure);
+    let alternate = runner_descriptor("alternate.runner", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.enqueue(Task::new("task-1", "sim.work", json!({})));
+    let lease = pool.claim_ready_for_executor(&owner, "executor-1", 1, 0, 1)[0]
+        .0
+        .clone();
+    pool.wait(&lease, 1, None).unwrap();
+    pool.wake("task-1").unwrap();
+
+    assert!(
+        pool.claim_ready_for_executor(&alternate, "executor-2", 2, 0, 1)
+            .is_empty()
+    );
+    let claimed = pool.claim_ready_for_executor(&owner, "executor-1", 2, 0, 1);
+
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].1.task_id, "task-1");
+}
+
+#[test]
 fn task_pool_reclaims_expired_running_leases_to_ready() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let mut pool = TaskPool::default();

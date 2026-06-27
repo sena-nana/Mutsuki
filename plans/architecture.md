@@ -114,8 +114,19 @@ Task 权威状态、workflow 状态、连接池、长期 stream、lock 或 trans
 
 当前 core 已把 runner 调用预拆成 `RunnerDispatch -> RunnerExecutor ->
 RunnerCompletion`。默认 `InlineRunnerExecutor` 仍同步调用 runner，用于测试、replay
-和最小 host；默认生产形态的 CoreActor / worker pool 隔离应在 host runtime 中替换该
-执行边界，而不是把线程模型写入 core crate。
+和最小 host；默认 `HostRuntime` 在 host crate 中启动 CoreActor 控制线程，并将
+`RunnerDispatch` 投递给按 `ExecutionClass` 划分的 worker pool。线程模型不进入 core
+crate；core 只保留 claim、lease fencing 和 completion route 的事实源。
+
+`ExecutionClass` 是 host 选择物理执行池的提示：
+
+```text
+Control / Orchestration / Io / Cpu / Blocking / Script
+```
+
+`Control` 只用于 core kernel 控制任务，不表示普通插件可在 CoreActor 中运行。
+`Blocking` 和 `Script` 默认进入独立 pool，避免 FFI、外部进程或脚本解释器污染
+CoreActor 调度延迟。
 
 当前 Rust core 的 `Runner.step` 仍使用 `Vec<Task>` wire shape 以保持 host/JSONL
 兼容，但调度器每次只租出一个 task 给一个 executor。
@@ -132,6 +143,10 @@ child terminal event 唤醒 parent continuation
 
 这只是 SDK 语法糖；Core 不暴露 `async fn`、`Future` ABI、language executor、
 `join_all`、`select`、`TaskGroup` 或 `WaitSet`。
+
+当 runner 返回 Waiting 时，当前 task 释放 OS worker 和 `TaskLease`，但 task record
+保留 `owner_runner`。后续 wake 只让原 runner reclaim continuation；waiting task 仍计入
+runner inflight，用于 backpressure，防止等待中的父 task 无限堆积。
 
 Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side adapter
 只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回 `RunnerStatus::Waiting`。它不

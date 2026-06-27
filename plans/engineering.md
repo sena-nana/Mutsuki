@@ -36,8 +36,9 @@ Mutsuki/
   Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
   执行器，不绑定线程模型。
 - `mutsuki-runtime-host`：实现 native PluginHost/resolver、native runner wrapper 和
-  stdio JSONL runner client，并提供 `HostRuntime` 控制面门面，为后续 CoreActor /
-  worker pool 默认运行时预留消息边界。
+  stdio JSONL runner client，并提供默认 CoreActor / worker pool 隔离的
+  `HostRuntime` 控制面门面。`NativePluginHost::into_runtime` 仍返回裸 `CoreRuntime`
+  用于单线程测试、replay 和最小 host。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；不得把 async runtime 语义反向写入 Core。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
@@ -67,6 +68,10 @@ uv run pytest
 - TaskPool 是 ready task backlog / 调度索引，不是 Runner inbox。
 - Task 一次只能通过一个 TaskLease 交给一个 Runner / Executor 执行。
 - Runner 是逻辑处理器，不是物理执行单元；Executor 是物理执行槽位。
+- Rust `Runner` 必须是 `Send`；默认 host runtime 会把普通 runner 移动到 worker
+  线程执行，CoreActor 不能直接执行插件 handler。
+- `RunnerDescriptor.execution_class` 只用于 host 选择执行池，不改变 core 调度语义。
+- Waiting task 释放 worker / lease，但继续占 runner 逻辑 inflight 配额。
 - 普通 runner 禁止直接副作用。
 - StateStore 只能通过 `core.commit` task 修改。
 - EventLog 只能通过 kernel event append 或 runtime 事件记录修改。

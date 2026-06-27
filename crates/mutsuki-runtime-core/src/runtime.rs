@@ -21,6 +21,7 @@ mod reload;
 mod runner_loop;
 
 pub use reload::{InvocationPollution, RunningInvocationDisposition};
+pub use runner_loop::{RunnerCompletion, RunnerDispatch};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskResultSnapshot {

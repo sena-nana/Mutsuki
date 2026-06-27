@@ -77,7 +77,7 @@ impl<R: BufRead, W: Write> JsonlRunner<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> Runner for JsonlRunner<R, W> {
+impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }

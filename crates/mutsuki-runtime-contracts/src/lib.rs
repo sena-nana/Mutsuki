@@ -31,8 +31,8 @@ pub use resource::{
     ResourceLifetime, ResourceRef, ResourceSealState, ResourceValue, ValueRef, ValueStorage,
 };
 pub use runner::{
-    DomainEvent, EffectPrecondition, EffectRequest, RunnerDescriptor, RunnerPurity, RunnerResult,
-    RunnerStatus,
+    DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerDescriptor, RunnerPurity,
+    RunnerResult, RunnerStatus,
 };
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::sync::{Arc, Mutex, mpsc};
 
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
+use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure};
 use serde_json::json;
 
 use crate::{
@@ -11,17 +12,190 @@ use crate::{
 };
 
 fn descriptor(id: &str, kind: &str) -> RunnerDescriptor {
+    descriptor_with_class(id, kind, ExecutionClass::Cpu)
+}
+
+fn descriptor_with_class(
+    id: &str,
+    kind: &str,
+    execution_class: ExecutionClass,
+) -> RunnerDescriptor {
     RunnerDescriptor {
         runner_id: id.into(),
         plugin_id: "plugin-a".into(),
         plugin_generation: 1,
         accepted_protocol_ids: vec![kind.into()],
         purity: RunnerPurity::Pure,
+        execution_class,
         input_schema: json!({}),
         output_schema: json!({}),
         metadata: BTreeMap::new(),
         contract_surfaces: vec![format!("runner:{id}")],
     }
+}
+
+#[test]
+fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
+    let blocking_descriptor =
+        descriptor_with_class("blocking.runner", "blocking.work", ExecutionClass::Blocking);
+    let echo_descriptor = descriptor("echo.runner", "raw.input");
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![blocking_descriptor.clone(), echo_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(NativeRunner::new(
+        blocking_descriptor,
+        move |_ctx, tasks| {
+            release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "blocking-1",
+            "blocking.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    assert_eq!(runtime.task_status("blocking-1"), Some(TaskStatus::Running));
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "echo-1",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(runtime.task_status("echo-1"), Some(TaskStatus::Completed));
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(
+        runtime.task_status("blocking-1"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn host_runtime_routes_execution_classes_to_named_worker_pools() {
+    let descriptor = descriptor_with_class("script.runner", "script.work", ExecutionClass::Script);
+    let observed_thread = Arc::new(Mutex::new(String::new()));
+    let observed = observed_thread.clone();
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        descriptor,
+        move |_ctx, tasks| {
+            *observed.lock().expect("observed thread mutex poisoned") = std::thread::current()
+                .name()
+                .unwrap_or_default()
+                .to_string();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "script-1",
+            "script.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(runtime.task_status("script-1"), Some(TaskStatus::Completed));
+    assert!(
+        observed_thread
+            .lock()
+            .expect("observed thread mutex poisoned")
+            .contains("script-worker")
+    );
+}
+
+#[test]
+fn host_worker_failure_marks_task_failed_and_returns_runner() {
+    let runner_descriptor = descriptor("flaky.runner", "raw.input");
+    let attempts = Arc::new(Mutex::new(0usize));
+    let observed = attempts.clone();
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        move |_ctx, tasks| {
+            let mut attempts = observed.lock().expect("attempts mutex poisoned");
+            *attempts += 1;
+            if *attempts == 1 {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    "runner.failed",
+                    "test.host",
+                    "flaky.first_attempt",
+                )));
+            }
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "task-fails",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(runtime.task_status("task-fails"), Some(TaskStatus::Failed));
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "task-recovers",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(
+        runtime.task_status("task-recovers"),
+        Some(TaskStatus::Completed)
+    );
+    assert_eq!(*attempts.lock().expect("attempts mutex poisoned"), 2);
 }
 
 fn runtime_profile() -> RuntimeProfile {

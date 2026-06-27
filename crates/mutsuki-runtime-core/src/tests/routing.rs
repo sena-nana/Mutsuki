@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -198,12 +197,13 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
     let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
     let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
     let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
-    let parent_lease_ids = Rc::new(RefCell::new(Vec::new()));
+    let parent_lease_ids = Arc::new(Mutex::new(Vec::new()));
     let observed_parent_lease_ids = parent_lease_ids.clone();
     let runners: Vec<Box<dyn Runner>> = vec![
         Box::new(StaticRunner::new(parent, move |task| {
             observed_parent_lease_ids
-                .borrow_mut()
+                .lock()
+                .expect("parent lease ids mutex poisoned")
                 .push(task.lease_id.clone());
             if task.continuation_ref.is_some() {
                 return RunnerResult::completed(task.task_id.clone());
@@ -240,7 +240,9 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
             .iter()
             .any(|event| event.name == "task.wake")
     );
-    let lease_ids = parent_lease_ids.borrow();
+    let lease_ids = parent_lease_ids
+        .lock()
+        .expect("parent lease ids mutex poisoned");
     assert_eq!(lease_ids.len(), 2);
     assert!(lease_ids[0].is_some());
     assert!(lease_ids[1].is_some());
@@ -354,11 +356,11 @@ fn stale_runner_result_is_rejected_before_derived_tasks_are_enqueued() {
 fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let calls = Rc::new(RefCell::new(0));
+    let calls = Arc::new(Mutex::new(0));
     let observed_calls = calls.clone();
     let runners: Vec<Box<dyn Runner>> = vec![
         Box::new(StaticRunner::new(worker, move |task| {
-            let mut calls = observed_calls.borrow_mut();
+            let mut calls = observed_calls.lock().expect("calls mutex poisoned");
             *calls += 1;
             if *calls == 1 {
                 return runner_result_with_status(task, RunnerStatus::Continue);
@@ -377,14 +379,14 @@ fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
     let report = runtime.tick_once().unwrap();
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
-    assert_eq!(*calls.borrow(), 2);
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 2);
 }
 
 #[test]
 fn failed_runner_step_keeps_runner_registered_for_retry() {
     struct FailsFirstRunner {
         descriptor: RunnerDescriptor,
-        calls: Rc<RefCell<usize>>,
+        calls: Arc<Mutex<usize>>,
     }
 
     impl Runner for FailsFirstRunner {
@@ -397,7 +399,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             _ctx: RunnerContext,
             tasks: Vec<Task>,
         ) -> RuntimeResult<Vec<RunnerResult>> {
-            let mut calls = self.calls.borrow_mut();
+            let mut calls = self.calls.lock().expect("calls mutex poisoned");
             *calls += 1;
             if *calls == 1 {
                 return Err(RuntimeFailure::new(RuntimeError::new(
@@ -415,7 +417,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
 
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let calls = Rc::new(RefCell::new(0));
+    let calls = Arc::new(Mutex::new(0));
     let runners: Vec<Box<dyn Runner>> = vec![
         Box::new(FailsFirstRunner {
             descriptor: worker,
@@ -440,7 +442,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
 
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
-    assert_eq!(*calls.borrow(), 2);
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 2);
 }
 
 #[test]

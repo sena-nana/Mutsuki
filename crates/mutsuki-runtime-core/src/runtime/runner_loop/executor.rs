@@ -3,14 +3,14 @@ use mutsuki_runtime_contracts::{RunnerResult, Task, TaskLease};
 use crate::RuntimeResult;
 use crate::runner::{Runner, RunnerContext};
 
-pub(super) struct RunnerDispatch {
+pub struct RunnerDispatch {
     pub runner: Box<dyn Runner>,
     pub ctx: RunnerContext,
     pub task_leases: Vec<TaskLease>,
     pub tasks: Vec<Task>,
 }
 
-pub(super) struct RunnerCompletion {
+pub struct RunnerCompletion {
     pub runner: Box<dyn Runner>,
     pub task_leases: Vec<TaskLease>,
     pub results: RuntimeResult<Vec<RunnerResult>>,

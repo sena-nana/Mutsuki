@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
-use mutsuki_runtime_contracts::{RunnerDescriptor, RunnerPurity, RunnerResult, Task};
+use mutsuki_runtime_contracts::{
+    ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult, Task,
+};
 
 use crate::RuntimeResult;
 
-pub trait Runner {
+pub trait Runner: Send {
     fn descriptor(&self) -> &RunnerDescriptor;
 
     fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>>;
@@ -45,6 +47,7 @@ impl CoreKernelRunner {
                 plugin_generation,
                 accepted_protocol_ids: vec!["core.commit".into(), "core.event.append".into()],
                 purity: RunnerPurity::Committer,
+                execution_class: ExecutionClass::Control,
                 input_schema: serde_json::json!({}),
                 output_schema: serde_json::json!({}),
                 metadata: BTreeMap::new(),

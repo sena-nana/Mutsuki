@@ -30,6 +30,15 @@ class RunnerPurity(StrEnum):
     EFFECTFUL = "effectful"
 
 
+class ExecutionClass(StrEnum):
+    CONTROL = "control"
+    ORCHESTRATION = "orchestration"
+    IO = "io"
+    CPU = "cpu"
+    BLOCKING = "blocking"
+    SCRIPT = "script"
+
+
 class RunnerStatus(StrEnum):
     COMPLETED = "completed"
     WAITING = "waiting"
@@ -46,6 +55,7 @@ class RunnerDescriptor:
     plugin_generation: int
     accepted_protocol_ids: tuple[str, ...]
     purity: RunnerPurity
+    execution_class: ExecutionClass
     input_schema: JsonDict = field(default_factory=dict)
     output_schema: JsonDict = field(default_factory=dict)
     metadata: dict[str, ScalarValue] = field(default_factory=dict)
@@ -62,6 +72,9 @@ class RunnerDescriptor:
                 field_value(raw, "accepted_protocol_ids"), "accepted_protocol_ids"
             ),
             purity=RunnerPurity(as_str(field_value(raw, "purity"), "purity")),
+            execution_class=ExecutionClass(
+                as_str(field_value(raw, "execution_class"), "execution_class")
+            ),
             input_schema=as_json_dict(field_value(raw, "input_schema"), "input_schema"),
             output_schema=as_json_dict(field_value(raw, "output_schema"), "output_schema"),
             metadata=as_scalar_dict(field_value(raw, "metadata"), "metadata"),

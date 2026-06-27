@@ -9,6 +9,7 @@ from mutsuki_runtime_python.contracts.resource import (
     ValueStorage,
 )
 from mutsuki_runtime_python.contracts.runner import (
+    ExecutionClass,
     RunnerDescriptor,
     RunnerPurity,
     RunnerResult,
@@ -57,6 +58,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         plugin_generation=1,
         accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
+        execution_class=ExecutionClass.CPU,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
         metadata={"rank": 1},

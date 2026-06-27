@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from mutsuki_runtime_python.contracts.runner import (
+    ExecutionClass,
     RunnerContext,
     RunnerDescriptor,
     RunnerPurity,
@@ -32,6 +33,7 @@ def async_descriptor() -> RunnerDescriptor:
         plugin_generation=1,
         accepted_protocol_ids=("parent.work",),
         purity=RunnerPurity.PURE,
+        execution_class=ExecutionClass.CPU,
         contract_surfaces=("runner:async.runner",),
     )
 

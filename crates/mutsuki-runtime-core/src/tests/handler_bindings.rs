@@ -1,6 +1,5 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -168,7 +167,7 @@ fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
 #[test]
 fn dispose_plugins_calls_registered_runner_management_surface() {
     let runner = runner_descriptor("worker", "cap.work", RunnerPurity::Pure);
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let plan = load_plan(vec![runner.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> =
         vec![Box::new(ContinuingRunner::new(runner, calls.clone()))];
@@ -177,7 +176,10 @@ fn dispose_plugins_calls_registered_runner_management_surface() {
     let disposed = runtime.dispose_plugins().unwrap();
 
     assert_eq!(disposed.disposed, vec!["worker".to_string()]);
-    assert_eq!(*calls.borrow(), vec!["dispose:worker".to_string()]);
+    assert_eq!(
+        *calls.lock().expect("calls mutex poisoned"),
+        vec!["dispose:worker".to_string()]
+    );
 }
 
 #[test]

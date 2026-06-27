@@ -1,8 +1,8 @@
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use mutsuki_runtime_contracts::{
@@ -18,21 +18,25 @@ pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
 }
 
-pub trait RuntimeClient {
+pub trait RuntimeClient: Send + Sync {
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle>;
     fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>>;
     fn register_waker(&self, _task_id: &str, _waker: &Waker) {}
 }
 
-pub type RuntimeClientRef = Rc<dyn RuntimeClient>;
+pub type RuntimeClientRef = Arc<dyn RuntimeClient>;
 
-impl RuntimeClient for Rc<RefCell<CoreRuntime>> {
+impl RuntimeClient for Arc<Mutex<CoreRuntime>> {
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        self.borrow_mut().submit_task_handle(task)
+        self.lock()
+            .expect("runtime mutex poisoned")
+            .submit_task_handle(task)
     }
 
     fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
-        self.borrow().task_outcome(task_id)
+        self.lock()
+            .expect("runtime mutex poisoned")
+            .task_outcome(task_id)
     }
 }
 
@@ -73,8 +77,8 @@ pub struct AsyncRunnerContext {
     current_runner_id: String,
     trace_id: Option<String>,
     correlation_id: Option<String>,
-    next_call: Rc<Cell<u64>>,
-    pending: Rc<RefCell<Option<PendingAwait>>>,
+    next_call: Arc<AtomicU64>,
+    pending: Arc<Mutex<Option<PendingAwait>>>,
     allow_self_call: bool,
 }
 
@@ -205,8 +209,7 @@ impl AsyncRunnerContext {
         target: Option<(String, String)>,
         cancel_policy: CancelPolicy,
     ) -> CallFuture {
-        let call_index = self.next_call.get() + 1;
-        self.next_call.set(call_index);
+        let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
         let protocol_id = protocol_id.into();
         let task_id = format!("{}:call:{call_index}", self.parent_task_id);
         let mut task = Task::new(task_id.clone(), protocol_id.clone(), payload);
@@ -244,7 +247,7 @@ impl AsyncRunnerContext {
 pub struct CallFuture {
     client: RuntimeClientRef,
     parent_task_id: String,
-    pending: Rc<RefCell<Option<PendingAwait>>>,
+    pending: Arc<Mutex<Option<PendingAwait>>>,
     state: CallState,
     self_call_blocked: bool,
 }
@@ -260,7 +263,7 @@ impl CallFuture {
     fn failed(
         client: RuntimeClientRef,
         parent_task_id: String,
-        pending: Rc<RefCell<Option<PendingAwait>>>,
+        pending: Arc<Mutex<Option<PendingAwait>>>,
         error: RuntimeFailure,
     ) -> Self {
         Self {
@@ -296,7 +299,7 @@ impl Future for CallFuture {
                     Some(*task),
                     handle.cancel_policy.clone(),
                 );
-                *self.pending.borrow_mut() = Some(pending);
+                *self.pending.lock().expect("pending await mutex poisoned") = Some(pending);
                 self.state = CallState::Submitted { handle };
                 Poll::Pending
             }
@@ -306,12 +309,13 @@ impl Future for CallFuture {
                     Poll::Ready(Ok(outcome))
                 }
                 Ok(None) => {
-                    *self.pending.borrow_mut() = Some(PendingAwait::new(
-                        self.parent_task_id.clone(),
-                        handle.clone(),
-                        None,
-                        handle.cancel_policy.clone(),
-                    ));
+                    *self.pending.lock().expect("pending await mutex poisoned") =
+                        Some(PendingAwait::new(
+                            self.parent_task_id.clone(),
+                            handle.clone(),
+                            None,
+                            handle.cancel_policy.clone(),
+                        ));
                     self.client.register_waker(&handle.task_id, cx.waker());
                     self.state = CallState::Submitted { handle };
                     Poll::Pending
@@ -368,9 +372,10 @@ impl PendingAwait {
 
 pub type BoxedAsyncRunner = Box<
     dyn FnMut(
-        AsyncRunnerContext,
-        Task,
-    ) -> Pin<Box<dyn Future<Output = RuntimeResult<RunnerResult>>>>,
+            AsyncRunnerContext,
+            Task,
+        ) -> Pin<Box<dyn Future<Output = RuntimeResult<RunnerResult>> + Send>>
+        + Send,
 >;
 
 pub struct AsyncRunnerAdapter {
@@ -382,8 +387,8 @@ pub struct AsyncRunnerAdapter {
 }
 
 struct AsyncInvocation {
-    future: Pin<Box<dyn Future<Output = RuntimeResult<RunnerResult>>>>,
-    pending: Rc<RefCell<Option<PendingAwait>>>,
+    future: Pin<Box<dyn Future<Output = RuntimeResult<RunnerResult>> + Send>>,
+    pending: Arc<Mutex<Option<PendingAwait>>>,
 }
 
 impl AsyncRunnerAdapter {
@@ -417,14 +422,14 @@ impl Runner for AsyncRunnerAdapter {
         for task in tasks {
             let task_id = task.task_id.clone();
             if !self.invocations.contains_key(&task_id) {
-                let pending = Rc::new(RefCell::new(None));
+                let pending = Arc::new(Mutex::new(None));
                 let async_ctx = AsyncRunnerContext {
                     client: self.client.clone(),
                     parent_task_id: task.task_id.clone(),
                     current_runner_id: self.descriptor.runner_id.clone(),
                     trace_id: task.trace_id.clone(),
                     correlation_id: task.correlation_id.clone(),
-                    next_call: Rc::new(Cell::new(0)),
+                    next_call: Arc::new(AtomicU64::new(0)),
                     pending: pending.clone(),
                     allow_self_call: self.allow_self_call,
                 };
@@ -436,7 +441,10 @@ impl Runner for AsyncRunnerAdapter {
                 .invocations
                 .get_mut(&task_id)
                 .expect("invocation inserted before poll");
-            *invocation.pending.borrow_mut() = None;
+            *invocation
+                .pending
+                .lock()
+                .expect("pending await mutex poisoned") = None;
             let waker = noop_waker();
             let mut cx = Context::from_waker(&waker);
             match invocation.future.as_mut().poll(&mut cx) {
@@ -445,7 +453,12 @@ impl Runner for AsyncRunnerAdapter {
                     results.push(result?);
                 }
                 Poll::Pending => {
-                    if let Some(pending) = invocation.pending.borrow_mut().take() {
+                    if let Some(pending) = invocation
+                        .pending
+                        .lock()
+                        .expect("pending await mutex poisoned")
+                        .take()
+                    {
                         results.push(RunnerResult {
                             task_id,
                             deltas: Vec::new(),
@@ -514,8 +527,9 @@ fn noop_waker() -> Waker {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
 
-    use mutsuki_runtime_contracts::{RunnerPurity, RuntimeError};
+    use mutsuki_runtime_contracts::{ExecutionClass, RunnerPurity, RuntimeError};
     use serde_json::json;
 
     struct ChildWork;
@@ -531,7 +545,7 @@ mod tests {
     }
 
     struct ManualClient {
-        outcomes: RefCell<HashMap<String, TaskOutcome>>,
+        outcomes: Mutex<HashMap<String, TaskOutcome>>,
     }
 
     impl RuntimeClient for ManualClient {
@@ -548,14 +562,19 @@ mod tests {
         }
 
         fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
-            Ok(self.outcomes.borrow().get(task_id).cloned())
+            Ok(self
+                .outcomes
+                .lock()
+                .expect("outcomes mutex poisoned")
+                .get(task_id)
+                .cloned())
         }
     }
 
     #[test]
     fn task_handle_future_polls_until_outcome() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let handle = TaskHandle {
             task_id: "task-1".into(),
@@ -570,21 +589,25 @@ mod tests {
         let mut cx = Context::from_waker(&waker);
 
         assert!(future.as_mut().poll(&mut cx).is_pending());
-        client.outcomes.borrow_mut().insert(
-            "task-1".into(),
-            TaskOutcome::Completed {
-                task_id: "task-1".into(),
-                output_ref: Some("value:1".into()),
-            },
-        );
+        client
+            .outcomes
+            .lock()
+            .expect("outcomes mutex poisoned")
+            .insert(
+                "task-1".into(),
+                TaskOutcome::Completed {
+                    task_id: "task-1".into(),
+                    output_ref: Some("value:1".into()),
+                },
+            );
 
         assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
     }
 
     #[test]
     fn async_runner_adapter_suspends_and_resumes_call() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -592,6 +615,7 @@ mod tests {
             plugin_generation: 1,
             accepted_protocol_ids: vec!["parent.work".into()],
             purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
             metadata: BTreeMap::new(),
@@ -634,13 +658,17 @@ mod tests {
 
         assert_eq!(first[0].status, RunnerStatus::Waiting);
         assert_eq!(first[0].tasks[0].task_id, "parent-1:call:1");
-        client.outcomes.borrow_mut().insert(
-            "parent-1:call:1".into(),
-            TaskOutcome::Completed {
-                task_id: "parent-1:call:1".into(),
-                output_ref: None,
-            },
-        );
+        client
+            .outcomes
+            .lock()
+            .expect("outcomes mutex poisoned")
+            .insert(
+                "parent-1:call:1".into(),
+                TaskOutcome::Completed {
+                    task_id: "parent-1:call:1".into(),
+                    output_ref: None,
+                },
+            );
 
         let second = adapter
             .step(
@@ -659,8 +687,8 @@ mod tests {
 
     #[test]
     fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -668,6 +696,7 @@ mod tests {
             plugin_generation: 1,
             accepted_protocol_ids: vec!["parent.work".into()],
             purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
             metadata: BTreeMap::new(),
@@ -711,8 +740,8 @@ mod tests {
 
     #[test]
     fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -720,6 +749,7 @@ mod tests {
             plugin_generation: 1,
             accepted_protocol_ids: vec!["parent.work".into()],
             purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
             metadata: BTreeMap::new(),
@@ -759,8 +789,8 @@ mod tests {
 
     #[test]
     fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -768,6 +798,7 @@ mod tests {
             plugin_generation: 1,
             accepted_protocol_ids: vec!["parent.work".into()],
             purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
             metadata: BTreeMap::new(),
@@ -808,8 +839,8 @@ mod tests {
 
     #[test]
     fn async_runner_adapter_emits_targeted_child_task_descriptor() {
-        let client = Rc::new(ManualClient {
-            outcomes: RefCell::new(HashMap::new()),
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
         });
         let descriptor = RunnerDescriptor {
             runner_id: "async.runner".into(),
@@ -817,6 +848,7 @@ mod tests {
             plugin_generation: 1,
             accepted_protocol_ids: vec!["parent.work".into()],
             purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
             metadata: BTreeMap::new(),

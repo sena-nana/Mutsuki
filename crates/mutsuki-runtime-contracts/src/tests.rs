@@ -42,6 +42,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         plugin_generation: 1,
         accepted_protocol_ids: vec!["raw.input.chat_message".into()],
         purity: RunnerPurity::Pure,
+        execution_class: ExecutionClass::Cpu,
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: serde_json::json!({"type": "object"}),
         metadata: Default::default(),

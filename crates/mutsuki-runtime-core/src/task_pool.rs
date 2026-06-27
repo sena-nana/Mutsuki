@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
-    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerPurity,
-    RuntimeError, ScalarValue, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease, TaskStatus,
-    WakeCondition,
+    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId,
+    RunnerPurity, RuntimeError, ScalarValue, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease,
+    TaskStatus, WakeCondition,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -15,8 +15,17 @@ pub struct TaskRecord {
     pub task: Task,
     pub status: TaskStatus,
     pub claimed_by: Option<String>,
+    pub owner_runner: Option<RunnerId>,
     pub lease: Option<TaskLease>,
     pub failure: Option<RuntimeError>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunnerLoad {
+    pub running_count: usize,
+    pub waiting_count: usize,
+    pub queued_count: usize,
+    pub pending_weight: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +49,7 @@ impl TaskPool {
                 task,
                 status: TaskStatus::Ready,
                 claimed_by: None,
+                owner_runner: None,
                 lease: None,
                 failure: None,
             },
@@ -78,6 +88,13 @@ impl TaskPool {
             .count()
     }
 
+    pub fn waiting_count(&self) -> usize {
+        self.tasks
+            .values()
+            .filter(|record| record.status == TaskStatus::Waiting)
+            .count()
+    }
+
     pub fn running_records(&self) -> Vec<&TaskRecord> {
         let mut records: Vec<&TaskRecord> = self
             .tasks
@@ -93,6 +110,47 @@ impl TaskPool {
             .into_iter()
             .filter(|record| record.claimed_by.as_deref() == Some(runner_id))
             .collect()
+    }
+
+    pub fn waiting_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
+        let mut records: Vec<&TaskRecord> = self
+            .tasks
+            .values()
+            .filter(|record| {
+                record.status == TaskStatus::Waiting
+                    && record.owner_runner.as_deref() == Some(runner_id)
+            })
+            .collect();
+        records.sort_by_key(|record| record.task.created_sequence);
+        records
+    }
+
+    pub fn runner_load(
+        &self,
+        runner: &RunnerDescriptor,
+        step: u64,
+        registry_generation: u64,
+    ) -> RunnerLoad {
+        let running_count = self.running_records_for_runner(&runner.runner_id).len();
+        let waiting_count = self.waiting_records_for_runner(&runner.runner_id).len();
+        let queued_count = self
+            .tasks
+            .values()
+            .filter(|record| {
+                record.status == TaskStatus::Ready
+                    && record
+                        .task
+                        .ready_at_step
+                        .is_none_or(|ready_at| ready_at <= step)
+                    && runner_accepts_record(runner, record, registry_generation)
+            })
+            .count();
+        RunnerLoad {
+            running_count,
+            waiting_count,
+            queued_count,
+            pending_weight: running_count + waiting_count + queued_count,
+        }
     }
 
     pub fn claim_ready(
@@ -116,6 +174,25 @@ impl TaskPool {
         registry_generation: u64,
         limit: usize,
     ) -> Vec<(TaskLease, Task)> {
+        self.claim_ready_for_executor_with_expiry(
+            runner,
+            executor_id,
+            step,
+            registry_generation,
+            limit,
+            Some(step + TASK_LEASE_TTL_STEPS),
+        )
+    }
+
+    pub fn claim_ready_for_executor_with_expiry(
+        &mut self,
+        runner: &RunnerDescriptor,
+        executor_id: impl Into<ExecutorId>,
+        step: u64,
+        registry_generation: u64,
+        limit: usize,
+        expires_at_step: Option<u64>,
+    ) -> Vec<(TaskLease, Task)> {
         let executor_id = executor_id.into();
         let mut candidates: Vec<Task> = self
             .tasks
@@ -126,7 +203,7 @@ impl TaskPool {
                         .task
                         .ready_at_step
                         .is_none_or(|ready_at| ready_at <= step)
-                    && runner_accepts(runner, &record.task, registry_generation)
+                    && runner_accepts_record(runner, record, registry_generation)
             })
             .map(|record| record.task.clone())
             .collect();
@@ -149,10 +226,11 @@ impl TaskPool {
                     executor_id: executor_id.clone(),
                     registry_generation,
                     acquired_at_step: step,
-                    expires_at_step: Some(step + TASK_LEASE_TTL_STEPS),
+                    expires_at_step,
                 };
                 record.status = TaskStatus::Running;
                 record.claimed_by = Some(runner.runner_id.clone());
+                record.owner_runner = Some(runner.runner_id.clone());
                 record.lease = Some(lease.clone());
                 record.task.lease_id = Some(lease.lease_id.clone());
                 task.lease_id = Some(lease.lease_id.clone());
@@ -166,6 +244,7 @@ impl TaskPool {
         let record = self.leased_record_mut(lease, current_step, "complete")?;
         record.status = TaskStatus::Completed;
         release_record_lease(record);
+        clear_record_owner(record);
         Ok(())
     }
 
@@ -178,6 +257,7 @@ impl TaskPool {
         let record = self.leased_record_mut(lease, current_step, "fail")?;
         record.status = TaskStatus::Failed;
         release_record_lease(record);
+        clear_record_owner(record);
         record.failure = Some(failure);
         Ok(())
     }
@@ -278,6 +358,7 @@ impl TaskPool {
         let record = self.leased_record_mut(lease, current_step, "cancel")?;
         record.status = TaskStatus::Cancelled;
         release_record_lease(record);
+        clear_record_owner(record);
         self.remove_waits_for_parent(&lease.task_id);
         Ok(())
     }
@@ -296,6 +377,7 @@ impl TaskPool {
         }
         record.status = TaskStatus::Cancelled;
         release_record_lease(record);
+        clear_record_owner(record);
         self.remove_waits_for_parent(task_id);
         Ok(())
     }
@@ -404,7 +486,7 @@ impl TaskPool {
                             entry.effect_inflight += 1;
                         }
                     }
-                    TaskStatus::Running => {
+                    TaskStatus::Running | TaskStatus::Waiting => {
                         entry.running_invocations += 1;
                         if record.task.protocol_id.starts_with("effect.") {
                             entry.effect_inflight += 1;
@@ -455,6 +537,10 @@ fn release_record_lease(record: &mut TaskRecord) {
     record.lease = None;
     record.task.lease_id = None;
     record.claimed_by = None;
+}
+
+fn clear_record_owner(record: &mut TaskRecord) {
+    record.owner_runner = None;
 }
 
 fn validate_record_lease(
@@ -546,6 +632,19 @@ fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
         timers: 0,
         effect_inflight: 0,
     }
+}
+
+fn runner_accepts_record(
+    runner: &RunnerDescriptor,
+    record: &TaskRecord,
+    registry_generation: u64,
+) -> bool {
+    if let Some(owner_runner) = &record.owner_runner
+        && owner_runner != &runner.runner_id
+    {
+        return false;
+    }
+    runner_accepts(runner, &record.task, registry_generation)
 }
 
 fn runner_accepts(runner: &RunnerDescriptor, task: &Task, registry_generation: u64) -> bool {

@@ -1,5 +1,4 @@
-﻿use std::cell::RefCell;
-use std::rc::Rc;
+﻿use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -87,7 +86,7 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
 fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     let worker_v1 = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan_v1 = load_plan(vec![worker_v1.clone()], Vec::new());
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let runners_v1: Vec<Box<dyn Runner>> = vec![
         Box::new(ContinuingRunner::new(worker_v1, calls.clone())),
         Box::new(CoreKernelRunner::new(1)),
@@ -115,7 +114,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
 
     assert_eq!(
-        calls.borrow().as_slice(),
+        calls.lock().expect("calls mutex poisoned").as_slice(),
         &["cancel:running-clean", "dispose:worker"]
     );
     let record = runtime.tasks().get("running-clean").unwrap();
@@ -134,7 +133,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
 fn reload_keeps_polluted_running_invocation_in_draining_generation() {
     let effect_v1 = runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
     let plan_v1 = load_plan(vec![effect_v1.clone()], Vec::new());
-    let calls = Rc::new(RefCell::new(Vec::new()));
+    let calls = Arc::new(Mutex::new(Vec::new()));
     let runners_v1: Vec<Box<dyn Runner>> = vec![
         Box::new(ContinuingRunner::new(effect_v1, calls.clone())),
         Box::new(CoreKernelRunner::new(1)),
@@ -162,7 +161,7 @@ fn reload_keeps_polluted_running_invocation_in_draining_generation() {
 
     runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
 
-    assert!(calls.borrow().is_empty());
+    assert!(calls.lock().expect("calls mutex poisoned").is_empty());
     assert_eq!(runtime.draining_generation_count(), 1);
     assert_eq!(
         runtime.tasks().get("running-effect").unwrap().status,

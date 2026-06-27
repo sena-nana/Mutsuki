@@ -13,6 +13,7 @@ from mutsuki_runtime_python.contracts.plugin import (
     RuntimeProfile,
 )
 from mutsuki_runtime_python.contracts.runner import (
+    ExecutionClass,
     RunnerDescriptor,
     RunnerPurity,
 )
@@ -30,6 +31,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         plugin_generation=1,
         accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
+        execution_class=ExecutionClass.CPU,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
         metadata={},

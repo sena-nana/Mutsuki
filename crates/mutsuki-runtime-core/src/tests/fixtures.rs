@@ -1,6 +1,5 @@
-﻿use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -23,6 +22,7 @@ pub(super) fn runner_descriptor(
         plugin_generation: 1,
         accepted_protocol_ids: vec![protocol_id.into()],
         purity,
+        execution_class: ExecutionClass::Cpu,
         input_schema: json!({}),
         output_schema: json!({}),
         metadata: BTreeMap::new(),
@@ -144,16 +144,16 @@ pub(super) fn occupancy_handle(
 
 pub(super) struct StaticRunner {
     descriptor: RunnerDescriptor,
-    result: Box<dyn Fn(&Task) -> RunnerResult>,
+    result: Box<dyn Fn(&Task) -> RunnerResult + Send>,
 }
 
 pub(super) struct ContinuingRunner {
     descriptor: RunnerDescriptor,
-    calls: Rc<RefCell<Vec<String>>>,
+    calls: Arc<Mutex<Vec<String>>>,
 }
 
 impl ContinuingRunner {
-    pub(super) fn new(descriptor: RunnerDescriptor, calls: Rc<RefCell<Vec<String>>>) -> Self {
+    pub(super) fn new(descriptor: RunnerDescriptor, calls: Arc<Mutex<Vec<String>>>) -> Self {
         Self { descriptor, calls }
     }
 }
@@ -182,14 +182,16 @@ impl Runner for ContinuingRunner {
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .expect("calls mutex poisoned")
             .push(format!("cancel:{invocation_id}"));
         Ok(())
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         self.calls
-            .borrow_mut()
+            .lock()
+            .expect("calls mutex poisoned")
             .push(format!("dispose:{}", self.descriptor.runner_id));
         Ok(())
     }
@@ -198,7 +200,7 @@ impl Runner for ContinuingRunner {
 impl StaticRunner {
     pub(super) fn new(
         descriptor: RunnerDescriptor,
-        result: impl Fn(&Task) -> RunnerResult + 'static,
+        result: impl Fn(&Task) -> RunnerResult + Send + 'static,
     ) -> Self {
         Self {
             descriptor,
