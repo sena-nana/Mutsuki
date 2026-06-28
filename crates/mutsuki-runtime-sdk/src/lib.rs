@@ -16,7 +16,10 @@ use serde_json::Value;
 
 mod resource;
 
-pub use resource::{ResourceClient, TypedResourceHandle};
+pub use resource::{
+    AstSnapshot, DbPool, ModelOutputStream, ProjectFacts, ResourceClient, ResourceKind, TextBuffer,
+    TypedResourceHandle,
+};
 
 pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;

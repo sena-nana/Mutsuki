@@ -5,6 +5,14 @@ import importlib
 import pytest
 
 from mutsuki_runtime_python.contracts.resource import ResourceSemantic, ValueRef
+from mutsuki_runtime_python.resources import (
+    AstSnapshot,
+    DbPool,
+    ModelOutputStream,
+    ProjectFacts,
+    ResourceClient,
+    TextBuffer,
+)
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 PythonResourceManager = importlib.import_module(
@@ -89,6 +97,41 @@ def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
     assert saga.compensations == (command,)
 
 
+def test_resource_client_builds_issue_9_example_resource_plans() -> None:
+    manager = PythonResourceManager()
+    client = ResourceClient()
+    text = client.handle(
+        manager.create_cow_state_resource("text_buffer", "text.v1", b"hello"),
+        TextBuffer,
+    )
+    ast = client.handle(
+        manager.create_snapshot_resource("ast_snapshot", "ast.v1", text.resource, b"ast"),
+        AstSnapshot,
+    )
+    facts = client.handle(
+        manager.create_fact_resource("project_facts", "facts.v1", {"root": "."}),
+        ProjectFacts,
+    )
+    stream = client.handle(
+        manager.create_stream_resource("model_output_stream", "token.v1", "stream://model"),
+        ModelOutputStream,
+    )
+    db = client.handle(manager.create_capability_resource("db_pool", "db.pool.v1"), DbPool)
+
+    assert text.descriptor_matches_kind()
+    assert ast.descriptor_matches_kind()
+    assert facts.descriptor_matches_kind()
+    assert stream.descriptor_matches_kind()
+    assert db.descriptor_matches_kind()
+
+    write = client.write_plan(text, "fail", {"replace": "all"})
+    assert manager.commit_write_plan(write, b"world").new_version == 2
+    assert client.read_plan(ast, "collect").resource.semantic == ResourceSemantic.VERSIONED_SNAPSHOT
+    assert client.read_plan(facts, "query").resource.semantic == ResourceSemantic.READ_ONLY_FACT
+    assert client.stream_plan(stream).operation == "open_stream"
+    assert client.command_plan(db, "query", {"sql": "select 1"}).operation == "query"
+
+
 def test_resource_manager_executes_export_command_batch_and_saga_plans() -> None:
     manager = PythonResourceManager()
     text = manager.create_blob_resource("text.v1", b"hello")
@@ -145,3 +188,16 @@ def test_resource_manager_rejects_invalid_executable_plans_loudly() -> None:
     assert saga_failure.value.error.cause is not None
     assert saga_failure.value.error.cause.code == "resource.command_unsupported"
     assert saga_failure.value.error.evidence["compensation_attempts"] == 1
+
+
+def test_stale_write_plan_fails_loudly() -> None:
+    manager = PythonResourceManager()
+    text = manager.create_cow_state_resource("text_buffer", "text.v1", b"hello")
+    stale = manager.build_write_plan(text, "fail", {"replace": "old"})
+    fresh = manager.build_write_plan(text, "fail", {"replace": "new"})
+
+    manager.commit_write_plan(fresh, b"new")
+
+    with pytest.raises(RunnerInvokeError) as stale_failure:
+        manager.commit_write_plan(stale, b"old")
+    assert stale_failure.value.error.code == "resource.generation_mismatch"

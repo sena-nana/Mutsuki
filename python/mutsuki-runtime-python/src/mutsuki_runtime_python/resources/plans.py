@@ -240,6 +240,7 @@ def commit_write_plan(host: ResourcePlanHost, plan: WritePlan, data: bytes) -> P
         raise _resource_error(
             ERR_RESOURCE_GENERATION_MISMATCH, f"resource.plan.{plan.resource.ref_id}"
         )
+    host.read_resource(plan.resource)
     lease = host.acquire_write_lease(plan.resource.ref_id, "resource-plan")
     updated = host.write_with_lease(lease, data, current_step=0)
     return PlanReceipt(
