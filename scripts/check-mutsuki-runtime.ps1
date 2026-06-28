@@ -72,16 +72,6 @@ Invoke-MutsukiCheck `
     -Arguments @("run", "python", "-m", "pytest")
 
 Invoke-MutsukiCheck `
-    -Name "codex bridge smoke" `
-    -WorkingDirectory $RepoRoot `
-    -Command "uv" `
-    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-plugin-dev-codex-runner/scripts/smoke_bridge.py")
-Invoke-MutsukiCheck `
-    -Name "claude bridge smoke" `
-    -WorkingDirectory $RepoRoot `
-    -Command "uv" `
-    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-plugin-dev-claude-runner/scripts/smoke_bridge.py")
-Invoke-MutsukiCheck `
     -Name "test io smoke" `
     -WorkingDirectory $RepoRoot `
     -Command "uv" `

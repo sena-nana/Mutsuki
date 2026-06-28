@@ -8,10 +8,6 @@ from typing import Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SERVER = PLUGIN_ROOT / "scripts" / "mutsuki_test_io_mcp.py"
-REPO_ROOT = PLUGIN_ROOT.parents[3]
-CODEX_RUNNER_ID = "mutsuki.dev.codex.runner"
-CODEX_PROTOCOL_ID = "mutsuki.dev.codex.run"
-CODEX_RESULT_EVENT = "mutsuki.dev.codex.result"
 
 
 async def main() -> int:
@@ -147,54 +143,6 @@ async def main() -> int:
         assert second_page["stdout_truncated"] is True
         assert third_page["stdout"] == "ij"
         await tool_call(process, 13, "stop_process", {"session_id": paged_session})
-
-        backend = await tool_call(
-            process,
-            14,
-            "start_process",
-            {
-                "command": [
-                    sys.executable,
-                    "-u",
-                    str(
-                        REPO_ROOT
-                        / ".agents"
-                        / "plugins"
-                        / "plugins"
-                        / "mutsuki-plugin-dev-codex-runner"
-                        / "scripts"
-                        / "mutsuki_codex_runner.py"
-                    ),
-                    "--stub-output",
-                    '{"status":"wait_input"}',
-                ],
-                "cwd": "python/mutsuki-runtime-python",
-            },
-        )
-        backend_session = backend["session_id"]
-        source_response = await tool_call(
-            process,
-            15,
-            "jsonl_request",
-            {
-                "session_id": backend_session,
-                "request": {
-                    "id": "req-1",
-                    "method": "runner.step",
-                    "params": {
-                        "runner_id": CODEX_RUNNER_ID,
-                        "ctx": runner_context(),
-                        "tasks": [task("task-1", CODEX_PROTOCOL_ID, {"prompt": "hello"})],
-                    },
-                },
-                "timeout_ms": 15000,
-            },
-        )
-        assert source_response["response"]["ok"] is True
-        event = source_response["response"]["result"][0]["events"][0]
-        assert event["kind"] == CODEX_RESULT_EVENT
-        assert event["payload"]["status"] == "wait_input"
-        await tool_call(process, 16, "stop_process", {"session_id": backend_session})
     finally:
         process.terminate()
         try:
@@ -203,38 +151,6 @@ async def main() -> int:
             process.kill()
             await process.wait()
     return 0
-
-
-def runner_context() -> dict[str, Any]:
-    return {
-        "registry_generation": 1,
-        "current_step": 1,
-        "executor_id": "executor:smoke",
-        "task_lease_id": "lease:smoke",
-    }
-
-
-def task(task_id: str, protocol_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "task_id": task_id,
-        "protocol_id": protocol_id,
-        "priority": 0,
-        "ready_at_step": None,
-        "payload": payload,
-        "input_refs": [],
-        "output_ref": None,
-        "continuation_ref": None,
-        "target_binding_id": None,
-        "lease_id": None,
-        "trace_id": None,
-        "expected_versions": [],
-        "correlation_id": None,
-        "idempotency_key": None,
-        "runner_hint": None,
-        "registry_generation": 0,
-        "required_surfaces": [],
-        "created_sequence": 0,
-    }
 
 
 async def request(

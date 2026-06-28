@@ -1,18 +1,18 @@
 ---
 name: mutsuki-plugin-dev-test-io
-description: Use when driving dev-only Mutsuki process I/O or JSONL protocol smoke tests from Codex through the bundled MCP tools.
+description: Use when driving dev-only Mutsuki process I/O or JSONL protocol smoke tests through the bundled MCP tools.
 ---
 
 # Mutsuki Dev Test I/O
 
-Use this skill when Codex needs to run local commands, drive a long-running
-stdio process, or send JSONL requests while testing Mutsuki behavior.
+Use this skill to run local commands, drive a long-running stdio process, or
+send JSONL requests while testing Mutsuki behavior.
 
 ## Boundaries
 
 - This plugin is a dev-only test harness, not a runtime effect runner or standard Mutsuki plugin.
-- Keep Codex, MCP, process handles, sockets, and test-runner objects out of
-  Rust `contracts` and `core`.
+- Keep MCP, process handles, sockets, and test-runner objects out of Rust
+  `contracts` and `core`.
 - Prefer `jsonl_request` for Mutsuki stdio JSONL runner checks.
 - Prefer `run_command` for one-shot validation commands.
 - Use `start_process`, `write_stdin`, `read_output`, and `stop_process` only
