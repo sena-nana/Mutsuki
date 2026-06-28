@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 use std::io::{BufRead, Write};
 
-use mutsuki_runtime_contracts::{RunnerDescriptor, RunnerResult, RuntimeError, ScalarValue, Task};
+use mutsuki_runtime_contracts::{
+    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, RunnerDescriptor, RunnerResult,
+    RuntimeError, SagaPlan, ScalarValue, Task,
+};
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -74,6 +77,22 @@ impl<R: BufRead, W: Write> JsonlRunner<R, W> {
     fn request_as<T: DeserializeOwned>(&self, method: &str, params: Value) -> RuntimeResult<T> {
         let result = self.request(method, params)?;
         serde_json::from_value(result).map_err(protocol_decode_failure)
+    }
+
+    pub fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        self.request_as("resource.export", json!({ "plan": plan }))
+    }
+
+    pub fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        self.request_as("resource.command", json!({ "plan": plan }))
+    }
+
+    pub fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.request_as("resource.command_batch", json!({ "batch": batch }))
+    }
+
+    pub fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.request_as("resource.saga", json!({ "saga": saga }))
     }
 }
 

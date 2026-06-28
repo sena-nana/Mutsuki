@@ -5,9 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, ContractSurface, ContractSurfaceKind, ExecutionClass, LifecyclePolicy,
-    PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor,
-    RunnerResult, RuntimeError, RuntimeLoadPlan, RuntimeProfile, Task, TaskStatus,
+    ArtifactType, CommandBatch, CommandPlan, ContractSurface, ContractSurfaceKind, ExecutionClass,
+    ExportPlan, LifecyclePolicy, PermissionGrant, PlanReceipt, PluginArtifact, PluginManifest,
+    PluginProvides, ResourceRef, RunnerDescriptor, RunnerResult, RuntimeError, RuntimeLoadPlan,
+    RuntimeProfile, SagaPlan, Task, TaskStatus,
 };
 use mutsuki_runtime_core::{
     CoreKernelRunner, CoreRuntime, Runner, RunnerCompletion, RunnerContext, RunnerDispatch,
@@ -192,14 +193,23 @@ pub enum HostRuntimeCommand {
     TickOnce,
     RunUntilIdle { max_ticks: usize },
     CancelTask(String),
+    CreateBlobResource { schema: String, bytes: Vec<u8> },
+    CreateCapabilityResource { kind_id: String, schema: String },
+    ExecuteExportPlan(Box<ExportPlan>),
+    ExecuteCommandPlan(Box<CommandPlan>),
+    ExecuteCommandBatch(Box<CommandBatch>),
+    ExecuteSagaPlan(Box<SagaPlan>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HostRuntimeReply {
     TaskSubmitted(String),
     Tick(RunnerLoopReport),
     Idle(RunnerLoopReport),
     TaskCancelled(String),
+    ResourceCreated(ResourceRef),
+    PlanReceipt(PlanReceipt),
+    PlanReceipts(Vec<PlanReceipt>),
 }
 
 enum CoreActorMsg {
@@ -398,6 +408,30 @@ fn handle_command(
             }
             Ok((HostRuntimeReply::TaskCancelled(task_id), false))
         }
+        HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
+            HostRuntimeReply::ResourceCreated(core.create_blob_resource(&schema, bytes)),
+            false,
+        )),
+        HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => Ok((
+            HostRuntimeReply::ResourceCreated(core.create_capability_resource(&kind_id, &schema)),
+            false,
+        )),
+        HostRuntimeCommand::ExecuteExportPlan(plan) => Ok((
+            HostRuntimeReply::PlanReceipt(core.execute_export_plan(&plan)?),
+            false,
+        )),
+        HostRuntimeCommand::ExecuteCommandPlan(plan) => Ok((
+            HostRuntimeReply::PlanReceipt(core.execute_command_plan(&plan)?),
+            false,
+        )),
+        HostRuntimeCommand::ExecuteCommandBatch(batch) => Ok((
+            HostRuntimeReply::PlanReceipts(core.execute_command_batch(&batch)?),
+            false,
+        )),
+        HostRuntimeCommand::ExecuteSagaPlan(saga) => Ok((
+            HostRuntimeReply::PlanReceipts(core.execute_saga_plan(&saga)?),
+            false,
+        )),
     }
 }
 

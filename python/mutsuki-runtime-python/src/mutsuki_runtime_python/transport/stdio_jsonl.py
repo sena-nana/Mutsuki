@@ -6,15 +6,25 @@ from typing import TextIO
 
 from mutsuki_runtime_python.contracts.codec import JsonValue, from_json_dict, to_json_dict
 from mutsuki_runtime_python.contracts.errors import ERR_RUNTIME_HOST_FAILED, RuntimeError
+from mutsuki_runtime_python.contracts.resource import (
+    CommandBatch,
+    CommandPlan,
+    ExportPlan,
+    SagaPlan,
+)
 from mutsuki_runtime_python.contracts.runner import RunnerContext
 from mutsuki_runtime_python.contracts.task import Task
+from mutsuki_runtime_python.resources.manager import PythonResourceManager
 from mutsuki_runtime_python.runners.host import PythonRunnerHost
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 
 class StdioJsonlRunnerServer:
-    def __init__(self, host: PythonRunnerHost) -> None:
+    def __init__(
+        self, host: PythonRunnerHost, resource_manager: PythonResourceManager | None = None
+    ) -> None:
         self._host = host
+        self._resources = resource_manager or PythonResourceManager()
 
     async def handle_request(self, request: object) -> dict[str, JsonValue]:
         try:
@@ -70,6 +80,20 @@ class StdioJsonlRunnerServer:
         if method == "runner.dispose":
             await self._host.dispose_runner(self._str_param(params, "runner_id"))
             return None
+        if method == "resource.export":
+            plan = from_json_dict(ExportPlan, self._mapping_param(params, "plan"))
+            return to_json_dict(self._resources.execute_export_plan(plan))
+        if method == "resource.command":
+            plan = from_json_dict(CommandPlan, self._mapping_param(params, "plan"))
+            return to_json_dict(self._resources.execute_command_plan(plan))
+        if method == "resource.command_batch":
+            batch = from_json_dict(CommandBatch, self._mapping_param(params, "batch"))
+            return [
+                to_json_dict(receipt) for receipt in self._resources.execute_command_batch(batch)
+            ]
+        if method == "resource.saga":
+            saga = from_json_dict(SagaPlan, self._mapping_param(params, "saga"))
+            return [to_json_dict(receipt) for receipt in self._resources.execute_saga_plan(saga)]
         raise RunnerInvokeError(
             RuntimeError(
                 code=ERR_RUNTIME_HOST_FAILED,
@@ -132,5 +156,10 @@ class StdioJsonlRunnerServer:
         return {"id": request_id, "ok": False, "error": to_json_dict(error)}
 
 
-def run_stdio_server(host: PythonRunnerHost, input_stream: TextIO, output_stream: TextIO) -> None:
-    asyncio.run(StdioJsonlRunnerServer(host).serve(input_stream, output_stream))
+def run_stdio_server(
+    host: PythonRunnerHost,
+    input_stream: TextIO,
+    output_stream: TextIO,
+    resource_manager: PythonResourceManager | None = None,
+) -> None:
+    asyncio.run(StdioJsonlRunnerServer(host, resource_manager).serve(input_stream, output_stream))

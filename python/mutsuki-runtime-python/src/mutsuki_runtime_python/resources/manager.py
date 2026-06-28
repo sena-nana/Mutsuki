@@ -280,6 +280,18 @@ class PythonResourceManager:
     ) -> CommandPlan:
         return resource_plans.command_plan(capability, operation, args, idempotency_key)
 
+    def execute_export_plan(self, plan: ExportPlan) -> PlanReceipt:
+        return resource_plans.execute_export_plan(self, plan)
+
+    def execute_command_plan(self, plan: CommandPlan) -> PlanReceipt:
+        return resource_plans.execute_command_plan(self, plan)
+
+    def execute_command_batch(self, batch: CommandBatch) -> tuple[PlanReceipt, ...]:
+        return resource_plans.execute_command_batch(self, batch)
+
+    def execute_saga_plan(self, saga: SagaPlan) -> tuple[PlanReceipt, ...]:
+        return resource_plans.execute_saga_plan(self, saga)
+
     def build_write_plan(
         self, resource_ref: ResourceRef, conflict_policy: str, operations: JsonValue
     ) -> WritePlan:

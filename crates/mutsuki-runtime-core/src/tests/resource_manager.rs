@@ -201,3 +201,163 @@ fn resource_hub_routes_typed_resources_and_executes_lazy_plans() {
     );
     assert!(resources.open_stream_plan(&read_plan).is_err());
 }
+
+#[test]
+fn resource_manager_executes_inline_utf8_export_plan() {
+    let mut resources = ResourceManager::new();
+    let resource = resources.create_blob_resource("text.v1", b"hello".to_vec());
+    let plan = resources
+        .build_export_plan(&resource.ref_id, "inline_utf8")
+        .unwrap();
+
+    let receipt = resources.execute_export_plan(&plan).unwrap();
+
+    assert_eq!(receipt.plan_id, plan.plan_id);
+    assert_eq!(receipt.status, "exported");
+    assert_eq!(receipt.output, json!("hello"));
+    assert_eq!(receipt.resource_ref.unwrap().ref_id, resource.ref_id);
+}
+
+#[test]
+fn resource_manager_rejects_invalid_export_plans_loudly() {
+    let mut resources = ResourceManager::new();
+    let resource = resources.create_blob_resource("text.v1", b"hello".to_vec());
+    let unsupported = resources
+        .build_export_plan(&resource.ref_id, "json")
+        .unwrap();
+    assert_eq!(
+        resources
+            .execute_export_plan(&unsupported)
+            .unwrap_err()
+            .error()
+            .code,
+        "resource.export_unsupported"
+    );
+
+    let binary = resources.create_blob_resource("bytes.v1", vec![0xff]);
+    let binary_export = resources
+        .build_export_plan(&binary.ref_id, "inline_utf8")
+        .unwrap();
+    assert_eq!(
+        resources
+            .execute_export_plan(&binary_export)
+            .unwrap_err()
+            .error()
+            .code,
+        "resource.export_decode_failed"
+    );
+
+    let state = resources
+        .create_cow_state_resource("text_buffer", "text.v1", b"old".to_vec())
+        .unwrap();
+    let stale_export = resources
+        .build_export_plan(&state.ref_id, "inline_utf8")
+        .unwrap();
+    let write = resources
+        .build_write_plan(&state.ref_id, "fail", json!({"replace": "all"}))
+        .unwrap();
+    resources
+        .commit_write_plan(&write, b"new".to_vec())
+        .unwrap();
+    assert_eq!(
+        resources
+            .execute_export_plan(&stale_export)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_GENERATION_MISMATCH
+    );
+}
+
+#[test]
+fn resource_manager_executes_command_batch_and_saga_plans() {
+    let mut resources = ResourceManager::new();
+    let capability = resources.create_capability_resource("db_pool", "db.pool.v1");
+    let command = resources
+        .build_command_plan(
+            &capability.ref_id,
+            "query",
+            json!({"sql": "select 1"}),
+            Some("query:1".into()),
+        )
+        .unwrap();
+
+    let receipt = resources.execute_command_plan(&command).unwrap();
+    assert_eq!(receipt.status, "commanded");
+    assert_eq!(receipt.resource_ref.unwrap(), capability);
+    assert_eq!(receipt.output["operation"], "query");
+    assert_eq!(receipt.output["idempotency_key"], "query:1");
+
+    let batch = CommandBatch {
+        batch_id: "batch:1".into(),
+        commands: vec![command.clone(), command.clone()],
+        rollback_guarantee: false,
+    };
+    assert_eq!(resources.execute_command_batch(&batch).unwrap().len(), 2);
+
+    let rollback_batch = CommandBatch {
+        rollback_guarantee: true,
+        ..batch.clone()
+    };
+    assert_eq!(
+        resources
+            .execute_command_batch(&rollback_batch)
+            .unwrap_err()
+            .error()
+            .code,
+        "resource.rollback_unsupported"
+    );
+
+    let saga = SagaPlan {
+        saga_id: "saga:ok".into(),
+        steps: vec![command.clone(), command.clone()],
+        compensations: vec![command.clone()],
+    };
+    assert_eq!(resources.execute_saga_plan(&saga).unwrap().len(), 2);
+
+    let unsupported = resources
+        .build_command_plan(&capability.ref_id, "drop", json!({}), None)
+        .unwrap();
+    assert_eq!(
+        resources
+            .execute_command_plan(&unsupported)
+            .unwrap_err()
+            .error()
+            .code,
+        "resource.command_unsupported"
+    );
+
+    let failed_saga = SagaPlan {
+        saga_id: "saga:failed".into(),
+        steps: vec![unsupported],
+        compensations: vec![command],
+    };
+    let error = resources.execute_saga_plan(&failed_saga).unwrap_err();
+    assert_eq!(error.error().code, "resource.saga_failed");
+    assert_eq!(
+        error.error().cause.as_ref().unwrap().code,
+        "resource.command_unsupported"
+    );
+    assert_eq!(
+        error.error().evidence.get("compensation_attempts"),
+        Some(&ScalarValue::Int(1))
+    );
+}
+
+#[test]
+fn resource_manager_rejects_command_plan_for_non_capability_resource() {
+    let mut resources = ResourceManager::new();
+    let resource = resources.create_blob_resource("bytes.v1", b"abc".to_vec());
+    let command = resources
+        .build_command_plan(&resource.ref_id, "query", json!({}), None)
+        .unwrap();
+
+    assert_eq!(
+        resources
+            .execute_command_plan(&command)
+            .unwrap_err()
+            .error()
+            .code,
+        "resource.semantic_mismatch"
+    );
+}

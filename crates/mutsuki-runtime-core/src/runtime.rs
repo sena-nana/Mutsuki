@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, ContractSurface, ExclusiveWriteLease, HandlerBinding, ResourceCellRef,
-    ResourceLease, ResourceRef, RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan,
-    ScalarValue, SurfaceOccupancyHandle, Task, TaskHandle, TaskOutcome, TaskStatus,
+    CancelPolicy, CommandBatch, CommandPlan, ContractSurface, ExclusiveWriteLease, ExportPlan,
+    HandlerBinding, PlanReceipt, ResourceCellRef, ResourceLease, ResourceRef, RuntimeError,
+    RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, SagaPlan, ScalarValue, SurfaceOccupancyHandle,
+    Task, TaskHandle, TaskOutcome, TaskStatus,
 };
 use serde_json::Value;
 
@@ -182,6 +183,41 @@ impl CoreRuntime {
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
         self.resources.create_mmap_resource(schema, bytes)
+    }
+
+    pub fn create_capability_resource(&mut self, kind_id: &str, schema: &str) -> ResourceRef {
+        self.resources.create_capability_resource(kind_id, schema)
+    }
+
+    pub fn build_export_plan(&self, ref_id: &str, target: &str) -> RuntimeResult<ExportPlan> {
+        self.resources.build_export_plan(ref_id, target)
+    }
+
+    pub fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        self.resources.execute_export_plan(plan)
+    }
+
+    pub fn build_command_plan(
+        &self,
+        ref_id: &str,
+        operation: &str,
+        args: Value,
+        idempotency_key: Option<String>,
+    ) -> RuntimeResult<CommandPlan> {
+        self.resources
+            .build_command_plan(ref_id, operation, args, idempotency_key)
+    }
+
+    pub fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        self.resources.execute_command_plan(plan)
+    }
+
+    pub fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.resources.execute_command_batch(batch)
+    }
+
+    pub fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.resources.execute_saga_plan(saga)
     }
 
     pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {

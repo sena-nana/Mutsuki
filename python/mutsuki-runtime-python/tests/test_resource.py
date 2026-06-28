@@ -87,3 +87,61 @@ def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
     assert transaction.operations == (write_plan,)
     assert batch.commands == (command,)
     assert saga.compensations == (command,)
+
+
+def test_resource_manager_executes_export_command_batch_and_saga_plans() -> None:
+    manager = PythonResourceManager()
+    text = manager.create_blob_resource("text.v1", b"hello")
+    capability = manager.create_capability_resource("db_pool", "db.pool.v1")
+
+    export = manager.export_plan(text, "inline_utf8")
+    export_receipt = manager.execute_export_plan(export)
+    assert export_receipt.status == "exported"
+    assert export_receipt.output == "hello"
+
+    command = manager.command_plan(capability, "query", {"sql": "select 1"}, "query:1")
+    command_receipt = manager.execute_command_plan(command)
+    assert command_receipt.status == "commanded"
+    assert command_receipt.output["operation"] == "query"  # type: ignore[index]
+    assert command_receipt.output["idempotency_key"] == "query:1"  # type: ignore[index]
+
+    batch = manager.command_batch("batch:1", (command, command), rollback_guarantee=False)
+    assert len(manager.execute_command_batch(batch)) == 2
+
+    saga = manager.saga_plan("saga:1", (command,), (command,))
+    assert len(manager.execute_saga_plan(saga)) == 1
+
+
+def test_resource_manager_rejects_invalid_executable_plans_loudly() -> None:
+    manager = PythonResourceManager()
+    text = manager.create_blob_resource("text.v1", b"hello")
+    binary = manager.create_blob_resource("bytes.v1", b"\xff")
+    capability = manager.create_capability_resource("db_pool", "db.pool.v1")
+
+    with pytest.raises(RunnerInvokeError) as unsupported_export:
+        manager.execute_export_plan(manager.export_plan(text, "json"))
+    assert unsupported_export.value.error.code == "resource.export_unsupported"
+
+    with pytest.raises(RunnerInvokeError) as decode_failure:
+        manager.execute_export_plan(manager.export_plan(binary, "inline_utf8"))
+    assert decode_failure.value.error.code == "resource.export_decode_failed"
+
+    with pytest.raises(RunnerInvokeError) as semantic_failure:
+        manager.execute_command_plan(manager.command_plan(text, "query", None))
+    assert semantic_failure.value.error.code == "resource.semantic_mismatch"
+
+    command = manager.command_plan(capability, "query", {"sql": "select 1"})
+    rollback_batch = manager.command_batch("batch:1", (command,), rollback_guarantee=True)
+    with pytest.raises(RunnerInvokeError) as rollback_failure:
+        manager.execute_command_batch(rollback_batch)
+    assert rollback_failure.value.error.code == "resource.rollback_unsupported"
+
+    unsupported_command = manager.command_plan(capability, "drop", None)
+    with pytest.raises(RunnerInvokeError) as saga_failure:
+        manager.execute_saga_plan(
+            manager.saga_plan("saga:failed", (unsupported_command,), (command,))
+        )
+    assert saga_failure.value.error.code == "resource.saga_failed"
+    assert saga_failure.value.error.cause is not None
+    assert saga_failure.value.error.cause.code == "resource.command_unsupported"
+    assert saga_failure.value.error.evidence["compensation_attempts"] == 1

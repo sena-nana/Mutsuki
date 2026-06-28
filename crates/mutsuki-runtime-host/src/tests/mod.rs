@@ -357,6 +357,92 @@ fn native_plugin_host_can_boot_host_runtime_control_plane() {
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
 }
 
+#[test]
+fn host_runtime_executes_resource_plan_commands() {
+    let mut runtime = host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    let HostRuntimeReply::ResourceCreated(resource) = runtime
+        .dispatch(HostRuntimeCommand::CreateBlobResource {
+            schema: "text.v1".into(),
+            bytes: b"hello".to_vec(),
+        })
+        .unwrap()
+    else {
+        panic!("expected resource creation reply");
+    };
+    let export = ExportPlan {
+        plan_id: "export:1".into(),
+        resource,
+        target: "inline_utf8".into(),
+        args: json!(null),
+    };
+
+    let HostRuntimeReply::PlanReceipt(export_receipt) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteExportPlan(Box::new(export)))
+        .unwrap()
+    else {
+        panic!("expected export receipt");
+    };
+    assert_eq!(export_receipt.status, "exported");
+    assert_eq!(export_receipt.output, json!("hello"));
+
+    let HostRuntimeReply::ResourceCreated(capability) = runtime
+        .dispatch(HostRuntimeCommand::CreateCapabilityResource {
+            kind_id: "db_pool".into(),
+            schema: "db.pool.v1".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected capability creation reply");
+    };
+    let command = CommandPlan {
+        plan_id: "command:1".into(),
+        capability,
+        operation: "query".into(),
+        args: json!({"sql": "select 1"}),
+        idempotency_key: Some("query:1".into()),
+    };
+
+    let HostRuntimeReply::PlanReceipt(command_receipt) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteCommandPlan(Box::new(
+            command.clone(),
+        )))
+        .unwrap()
+    else {
+        panic!("expected command receipt");
+    };
+    assert_eq!(command_receipt.status, "commanded");
+    assert_eq!(command_receipt.output["operation"], "query");
+
+    let HostRuntimeReply::PlanReceipts(batch_receipts) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteCommandBatch(Box::new(
+            CommandBatch {
+                batch_id: "batch:1".into(),
+                commands: vec![command.clone()],
+                rollback_guarantee: false,
+            },
+        )))
+        .unwrap()
+    else {
+        panic!("expected batch receipts");
+    };
+    assert_eq!(batch_receipts.len(), 1);
+
+    let HostRuntimeReply::PlanReceipts(saga_receipts) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteSagaPlan(Box::new(SagaPlan {
+            saga_id: "saga:1".into(),
+            steps: vec![command.clone()],
+            compensations: vec![command],
+        })))
+        .unwrap()
+    else {
+        panic!("expected saga receipts");
+    };
+    assert_eq!(saga_receipts.len(), 1);
+}
+
 #[derive(Debug)]
 struct FixedScheduler {
     limit: usize,
@@ -563,6 +649,87 @@ fn jsonl_runner_cancel_and_dispose_use_management_methods() {
 }
 
 #[test]
+fn jsonl_runner_uses_resource_plan_method_surface() {
+    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+    let resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
+    let capability = test_resource_ref(
+        "resource:db",
+        "db_pool",
+        ResourceSemantic::CapabilityResource,
+    );
+    let export = ExportPlan {
+        plan_id: "export:1".into(),
+        resource: resource.clone(),
+        target: "inline_utf8".into(),
+        args: json!(null),
+    };
+    let command = CommandPlan {
+        plan_id: "command:1".into(),
+        capability: capability.clone(),
+        operation: "query".into(),
+        args: json!({"sql": "select 1"}),
+        idempotency_key: Some("query:1".into()),
+    };
+    let receipt = PlanReceipt {
+        plan_id: "receipt:1".into(),
+        status: "commanded".into(),
+        resource_ref: Some(capability),
+        snapshot: None,
+        new_version: None,
+        output: json!({"ok": true}),
+    };
+    let response = format!(
+        "{}\n{}\n{}\n{}\n",
+        json!({"id": "req-1", "ok": true, "result": receipt.clone()}),
+        json!({"id": "req-2", "ok": true, "result": receipt.clone()}),
+        json!({"id": "req-3", "ok": true, "result": [receipt.clone()]}),
+        json!({"id": "req-4", "ok": true, "result": [receipt]}),
+    );
+    let reader = Cursor::new(response.into_bytes());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let runner = JsonlRunner::new(runner_descriptor, reader, writer);
+
+    assert_eq!(
+        runner.execute_export_plan(&export).unwrap().status,
+        "commanded"
+    );
+    assert_eq!(
+        runner.execute_command_plan(&command).unwrap().status,
+        "commanded"
+    );
+    assert_eq!(
+        runner
+            .execute_command_batch(&CommandBatch {
+                batch_id: "batch:1".into(),
+                commands: vec![command.clone()],
+                rollback_guarantee: false,
+            })
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        runner
+            .execute_saga_plan(&SagaPlan {
+                saga_id: "saga:1".into(),
+                steps: vec![command.clone()],
+                compensations: vec![command],
+            })
+            .unwrap()
+            .len(),
+        1
+    );
+    let (_reader, writer) = runner.into_inner();
+    let request = String::from_utf8(writer.into_inner()).unwrap();
+
+    assert!(request.contains("\"method\":\"resource.export\""));
+    assert!(request.contains("\"method\":\"resource.command\""));
+    assert!(request.contains("\"method\":\"resource.command_batch\""));
+    assert!(request.contains("\"method\":\"resource.saga\""));
+    assert!(request.contains("\"target\":\"inline_utf8\""));
+}
+
+#[test]
 fn resolver_emits_declared_runtime_surfaces() {
     let runner_descriptor = descriptor("echo.runner", "raw.input");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
@@ -649,4 +816,28 @@ fn assert_surface(plan: &RuntimeLoadPlan, surface_id: &str, kind: ContractSurfac
             .any(|surface| surface.surface_id == surface_id && surface.kind == kind),
         "missing surface {surface_id}"
     );
+}
+
+fn test_resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {
+    ResourceRef {
+        resource_id: ResourceId {
+            kind_id: kind_id.into(),
+            slot_id: ref_id.into(),
+            generation: 1,
+            version: 1,
+        },
+        ref_id: ref_id.into(),
+        semantic,
+        provider_id: "mutsuki.host.test".into(),
+        resource_kind: kind_id.into(),
+        schema: format!("{kind_id}.v1"),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::Inline,
+        size_hint: None,
+        content_hash: None,
+        lifetime: ResourceLifetime::BorrowedUntilTaskEnd,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from mutsuki_runtime_python.contracts.codec import JsonValue
+from mutsuki_runtime_python.contracts.codec import JsonValue, ScalarValue
 from mutsuki_runtime_python.contracts.errors import (
     ERR_RESOURCE_GENERATION_MISMATCH,
     RuntimeError,
@@ -107,6 +107,60 @@ def command_plan(
     )
 
 
+def execute_export_plan(host: ResourcePlanHost, plan: ExportPlan) -> PlanReceipt:
+    if plan.target != "inline_utf8":
+        raise _resource_error(
+            "resource.export_unsupported",
+            f"resource.plan.export.{plan.resource.ref_id}",
+            {"target": plan.target},
+        )
+    try:
+        output = host.read_resource(plan.resource).decode()
+    except UnicodeDecodeError as exc:
+        raise _resource_error(
+            "resource.export_decode_failed",
+            f"resource.plan.export.{plan.resource.ref_id}",
+            {"target": plan.target, "exception_repr": repr(exc)},
+        ) from exc
+    return PlanReceipt(
+        plan_id=plan.plan_id,
+        status="exported",
+        resource_ref=plan.resource,
+        snapshot=None,
+        new_version=None,
+        output=output,
+    )
+
+
+def execute_command_plan(host: ResourcePlanHost, plan: CommandPlan) -> PlanReceipt:
+    host.read_resource(plan.capability)
+    if plan.capability.semantic != ResourceSemantic.CAPABILITY_RESOURCE:
+        raise _resource_error(
+            "resource.semantic_mismatch", f"resource.plan.command.{plan.capability.ref_id}"
+        )
+    if plan.operation != "query":
+        raise _resource_error(
+            "resource.command_unsupported",
+            f"resource.plan.command.{plan.capability.ref_id}",
+            {"operation": plan.operation},
+        )
+    return PlanReceipt(
+        plan_id=plan.plan_id,
+        status="commanded",
+        resource_ref=plan.capability,
+        snapshot=None,
+        new_version=None,
+        output={
+            "capability_ref": plan.capability.ref_id,
+            "resource_kind": plan.capability.resource_kind,
+            "provider_id": plan.capability.provider_id,
+            "operation": plan.operation,
+            "idempotency_key": plan.idempotency_key,
+            "args": plan.args,
+        },
+    )
+
+
 def build_write_plan(
     resource_ref: ResourceRef, conflict_policy: str, operations: JsonValue
 ) -> WritePlan:
@@ -143,10 +197,40 @@ def command_batch(
     )
 
 
+def execute_command_batch(host: ResourcePlanHost, batch: CommandBatch) -> tuple[PlanReceipt, ...]:
+    if batch.rollback_guarantee:
+        raise _resource_error(
+            "resource.rollback_unsupported", f"resource.plan.batch.{batch.batch_id}"
+        )
+    return tuple(execute_command_plan(host, command) for command in batch.commands)
+
+
 def saga_plan(
     saga_id: str, steps: tuple[CommandPlan, ...], compensations: tuple[CommandPlan, ...]
 ) -> SagaPlan:
     return SagaPlan(saga_id=saga_id, steps=steps, compensations=compensations)
+
+
+def execute_saga_plan(host: ResourcePlanHost, saga: SagaPlan) -> tuple[PlanReceipt, ...]:
+    receipts: list[PlanReceipt] = []
+    for step_index, command in enumerate(saga.steps):
+        try:
+            receipts.append(execute_command_plan(host, command))
+        except RunnerInvokeError as exc:
+            compensation_failures = sum(
+                _command_failed(host, compensation) for compensation in reversed(saga.compensations)
+            )
+            raise _resource_error(
+                "resource.saga_failed",
+                f"resource.plan.saga.{saga.saga_id}",
+                {
+                    "failed_step_index": step_index,
+                    "compensation_attempts": len(saga.compensations),
+                    "compensation_failures": compensation_failures,
+                },
+                cause=exc.error,
+            ) from exc
+    return tuple(receipts)
 
 
 def commit_write_plan(host: ResourcePlanHost, plan: WritePlan, data: bytes) -> PlanReceipt:
@@ -168,5 +252,26 @@ def commit_write_plan(host: ResourcePlanHost, plan: WritePlan, data: bytes) -> P
     )
 
 
-def _resource_error(code: str, route: str) -> RunnerInvokeError:
-    return RunnerInvokeError(RuntimeError(code=code, source="python_resource_manager", route=route))
+def _command_failed(host: ResourcePlanHost, command: CommandPlan) -> bool:
+    try:
+        execute_command_plan(host, command)
+    except RunnerInvokeError:
+        return True
+    return False
+
+
+def _resource_error(
+    code: str,
+    route: str,
+    evidence: dict[str, ScalarValue] | None = None,
+    cause: RuntimeError | None = None,
+) -> RunnerInvokeError:
+    return RunnerInvokeError(
+        RuntimeError(
+            code=code,
+            source="python_resource_manager",
+            route=route,
+            cause=cause,
+            evidence={} if evidence is None else evidence,
+        )
+    )

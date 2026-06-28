@@ -241,8 +241,17 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
 
 - `ReadPlan` 构造不访问资源；`eval` / `collect` / `snapshot` / `open_stream` 才执行读。
 - `WritePlan` 构造不修改资源；`commit` 时检查 `base_version` / generation / lease 后写入。
+- `ExportPlan` v1 只支持 `target = "inline_utf8"`：执行时读取资源 bytes，经 UTF-8
+  解码后放入 `PlanReceipt.output`；未知 target、非 UTF-8 bytes 或 stale descriptor
+  必须结构化失败。
+- `CommandPlan` v1 只支持 `CapabilityResource` 上的 `operation = "query"`，返回
+  deterministic command receipt；不执行真实外部副作用，不承诺 provider RPC、幂等去重
+  或事务保证。
 - `TransactionPlan` 要求 strict all-or-nothing；`CommandBatch` 只表示批量发送，不保证回滚；
   `SagaPlan` 表示多个不可原子回滚步骤和可选补偿。
+- `CommandBatch.rollback_guarantee = true` 在 v1 中结构化失败；`SagaPlan` 按顺序执行
+  steps，step 失败后按反序尝试 compensations，并以 `resource.saga_failed` 返回原始
+  cause。
 - 公共插件 API 不暴露 `Arc<T>`、`&T`、`&mut T`、`downcast`、`with_native_*` 或闭包式 lazy op。
 
 ## 7. Plugin Loading

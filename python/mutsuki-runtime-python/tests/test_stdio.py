@@ -7,6 +7,7 @@ import pytest
 from mutsuki_runtime_python.contracts.codec import to_json_dict
 from mutsuki_runtime_python.contracts.runner import RunnerContext
 from mutsuki_runtime_python.contracts.task import Task
+from mutsuki_runtime_python.resources.manager import PythonResourceManager
 from mutsuki_runtime_python.runners.host import PythonRunnerHost
 from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
 from mutsuki_runtime_python.transport.stdio_jsonl import StdioJsonlRunnerServer
@@ -88,6 +89,58 @@ async def test_stdio_cancel_and_dispose_dispatch_to_host_management_channel() ->
     assert dispose_response == {"id": "req-2", "ok": True, "result": None}
     assert runner.cancelled == ["inv-1"]
     assert runner.disposed is True
+
+
+@pytest.mark.asyncio
+async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> None:
+    manager = PythonResourceManager()
+    text = manager.create_blob_resource("text.v1", b"hello")
+    capability = manager.create_capability_resource("db_pool", "db.pool.v1")
+    command = manager.command_plan(capability, "query", {"sql": "select 1"}, "query:1")
+    server = StdioJsonlRunnerServer(PythonRunnerHost(), manager)
+
+    export_response = await server.handle_request(
+        {
+            "id": "req-1",
+            "method": "resource.export",
+            "params": {"plan": to_json_dict(manager.export_plan(text, "inline_utf8"))},
+        }
+    )
+    command_response = await server.handle_request(
+        {
+            "id": "req-2",
+            "method": "resource.command",
+            "params": {"plan": to_json_dict(command)},
+        }
+    )
+    batch_response = await server.handle_request(
+        {
+            "id": "req-3",
+            "method": "resource.command_batch",
+            "params": {
+                "batch": to_json_dict(
+                    manager.command_batch("batch:1", (command,), rollback_guarantee=False)
+                )
+            },
+        }
+    )
+    saga_response = await server.handle_request(
+        {
+            "id": "req-4",
+            "method": "resource.saga",
+            "params": {
+                "saga": to_json_dict(manager.saga_plan("saga:1", (command,), (command,)))
+            },
+        }
+    )
+
+    assert export_response["ok"] is True
+    assert export_response["result"]["status"] == "exported"  # type: ignore[index]
+    assert export_response["result"]["output"] == "hello"  # type: ignore[index]
+    assert command_response["ok"] is True
+    assert command_response["result"]["status"] == "commanded"  # type: ignore[index]
+    assert len(batch_response["result"]) == 1  # type: ignore[arg-type]
+    assert len(saga_response["result"]) == 1  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
