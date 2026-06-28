@@ -53,6 +53,7 @@ fn manifest(
             timers: vec!["heartbeat".into()],
             resource_schemas: vec!["bytes.v1".into()],
             resource_providers: vec!["resource.local".into()],
+            resource_types: Vec::new(),
             state_schemas: vec!["state.actor.v1".into()],
         },
         requires: Vec::new(),

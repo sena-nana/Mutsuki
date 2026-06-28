@@ -6,13 +6,17 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, ResourceAccess, ResourceLifetime, ResourceRef, ResourceSealState,
-    RunnerDescriptor, RunnerResult, RunnerStatus, Task, TaskAwait, TaskHandle, TaskOutcome,
-    TaskStepContinuation,
+    CancelPolicy, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
+    ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus, Task, TaskAwait, TaskHandle,
+    TaskOutcome, TaskStepContinuation,
 };
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde::Serialize;
 use serde_json::Value;
+
+mod resource;
+
+pub use resource::{ResourceClient, TypedResourceHandle};
 
 pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
@@ -496,8 +500,16 @@ impl Runner for AsyncRunnerAdapter {
 }
 
 fn continuation_ref(parent_task_id: &str) -> ResourceRef {
+    let ref_id = format!("continuation:{parent_task_id}");
     ResourceRef {
-        ref_id: format!("continuation:{parent_task_id}"),
+        resource_id: ResourceId {
+            kind_id: "continuation".into(),
+            slot_id: ref_id.clone(),
+            generation: 1,
+            version: 1,
+        },
+        ref_id,
+        semantic: ResourceSemantic::FrozenValue,
         provider_id: "mutsuki.sdk".into(),
         resource_kind: "continuation".into(),
         schema: "mutsuki.continuation.v1".into(),

@@ -32,9 +32,15 @@
 | `EffectRequest` | effect_id、kind、payload、preconditions、idempotency_key |
 | `ValueRef` | 小型结构化共享值 descriptor |
 | `ResourceRef` | 大型资源 / mmap / blob / stream / provider-RPC descriptor |
+| `ResourceId` | typed store 路由 descriptor，包含 kind_id、slot_id、generation、version |
+| `ResourceSemantic` | 资源语义分类：FrozenValue、VersionedSnapshot、ReadOnlyFact、CowVersionedState、CapabilityResource、StreamResource、TransactionResource |
+| `ResourceTypeDescriptor` | 插件声明的资源类型、语义、schema、provider 和可用 operation |
 | `ResourceCellRef` | 长期资源状态单元 descriptor，例如连接池、stream、cookie jar、rate limiter |
 | `ResourceLease` | task step 临时使用 ResourceCell 的租约 |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
+| `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
+| `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 plan commit receipt |
+| `TransactionPlan` / `CommandBatch` / `SagaPlan` | 严格事务、无回滚批量命令和带补偿的 saga 计划 |
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
 | `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
@@ -195,6 +201,31 @@ Task payload 可包含：
 - `ResourceLease`。
 - `StateRef`。
 
+`ResourceRef` 必须包含兼容 `ref_id` 和结构化 `ResourceId`：
+
+```text
+ResourceId {
+  kind_id,
+  slot_id,
+  generation,
+  version
+}
+```
+
+`kind_id` 选择 typed store，`slot_id` 是 store 内部槽位，`generation` 防止槽位复用命中旧
+handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.generation/version` 与
+`ResourceRef.resource_id.generation/version` 必须一致。
+
+资源语义分类：
+
+- `FrozenValue`：完全不可变值或 blob。
+- `VersionedSnapshot`：可 stale 使用的不可变快照。
+- `ReadOnlyFact`：普通插件只读、Host 可刷新事实。
+- `CowVersionedState`：通过 patch/transaction 提交的可变版本化状态。
+- `CapabilityResource`：能力资源，只能通过 command plan 调用。
+- `StreamResource`：流式、背压、可取消资源。
+- `TransactionResource`：事务或批量变更状态。
+
 默认一致性规则：
 
 - 共享资源 readonly/sealed。
@@ -205,6 +236,14 @@ Task payload 可包含：
 - lease 过期、generation mismatch、provider 崩溃必须结构化失败。
 - 短期可变 lease 不允许默认跨 SDK await；await 前存在当前 task 持有的
   exclusive write lease 或 exclusive ResourceLease 时必须结构化失败。
+
+资源操作计划规则：
+
+- `ReadPlan` 构造不访问资源；`eval` / `collect` / `snapshot` / `open_stream` 才执行读。
+- `WritePlan` 构造不修改资源；`commit` 时检查 `base_version` / generation / lease 后写入。
+- `TransactionPlan` 要求 strict all-or-nothing；`CommandBatch` 只表示批量发送，不保证回滚；
+  `SagaPlan` 表示多个不可原子回滚步骤和可选补偿。
+- 公共插件 API 不暴露 `Arc<T>`、`&T`、`&mut T`、`downcast`、`with_native_*` 或闭包式 lazy op。
 
 ## 7. Plugin Loading
 

@@ -115,7 +115,7 @@ impl ResourceManager {
                 }
             }
         }
-        for entry in self.resources.values() {
+        for entry in self.hub.entries() {
             if let Some(writer) = &entry.writer
                 && writer.owner == task_id
             {
@@ -132,7 +132,7 @@ impl ResourceManager {
         owner: &str,
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ExclusiveWriteLease> {
-        let entry = self.resources.get_mut(ref_id).ok_or_else(|| {
+        let entry = self.hub.get_mut(ref_id).ok_or_else(|| {
             RuntimeFailure::new(RuntimeError::new(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
@@ -175,7 +175,7 @@ impl ResourceManager {
                 format!("resource.write.{}", lease.token.ref_id),
             )));
         }
-        let entry = self.resources.get_mut(&lease.token.ref_id).ok_or_else(|| {
+        let entry = self.hub.get_mut(&lease.token.ref_id).ok_or_else(|| {
             RuntimeFailure::new(RuntimeError::new(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
@@ -191,6 +191,8 @@ impl ResourceManager {
         }
         entry.descriptor.generation += 1;
         entry.descriptor.version += 1;
+        entry.descriptor.resource_id.generation = entry.descriptor.generation;
+        entry.descriptor.resource_id.version = entry.descriptor.version;
         entry.descriptor.size_hint = Some(bytes.len() as u64);
         entry.descriptor.content_hash = Some(simple_hash(&bytes));
         self.backend.write(&mut entry.descriptor, &bytes)?;

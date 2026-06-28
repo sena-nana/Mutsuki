@@ -13,14 +13,27 @@ from mutsuki_runtime_python.contracts.errors import (
     RuntimeError,
 )
 from mutsuki_runtime_python.contracts.resource import (
+    CommandBatch,
+    CommandPlan,
+    ExportPlan,
     LeaseToken,
+    PlanReceipt,
+    ReadPlan,
     ResourceAccess,
+    ResourceId,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
+    ResourceSemantic,
+    SagaPlan,
+    SnapshotDescriptor,
+    StreamPlan,
+    TransactionPlan,
     ValueRef,
     ValueStorage,
+    WritePlan,
 )
+from mutsuki_runtime_python.resources import plans as resource_plans
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 
@@ -67,6 +80,8 @@ class PythonResourceManager:
         path.write_bytes(data)
         resource = ResourceRef(
             ref_id=ref_id,
+            resource_id=_resource_id("bytes", ref_id),
+            semantic=ResourceSemantic.FROZEN_VALUE,
             provider_id="python.resource",
             resource_kind="bytes",
             schema=schema,
@@ -90,6 +105,8 @@ class PythonResourceManager:
         ref_id = self._id("resource")
         resource = ResourceRef(
             ref_id=ref_id,
+            resource_id=_resource_id("blob", ref_id),
+            semantic=ResourceSemantic.FROZEN_VALUE,
             provider_id="python.resource",
             resource_kind="blob",
             schema=schema,
@@ -119,7 +136,175 @@ class PythonResourceManager:
 
     def copy_on_write(self, base_ref: ResourceRef, data: bytes) -> ResourceRef:
         self.read_resource(base_ref)
-        return self.create_mmap_resource(base_ref.schema, data)
+        return self.create_cow_state_resource(base_ref.resource_kind, base_ref.schema, data)
+
+    def create_cow_state_resource(self, kind_id: str, schema: str, data: bytes) -> ResourceRef:
+        ref_id = self._id("resource")
+        path = self._root / f"{ref_id}.bin"
+        path.write_bytes(data)
+        resource = ResourceRef(
+            ref_id=ref_id,
+            resource_id=_resource_id(kind_id, ref_id),
+            semantic=ResourceSemantic.COW_VERSIONED_STATE,
+            provider_id="python.resource",
+            resource_kind=kind_id,
+            schema=schema,
+            version=1,
+            generation=1,
+            access=ResourceAccess.mmap_file(
+                path=str(path),
+                offset=0,
+                len=len(data),
+                readonly=True,
+            ),
+            size_hint=len(data),
+            content_hash=_simple_hash(data),
+            lifetime=ResourceLifetime.PERSISTENT,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        )
+        return self._store_resource(resource, data)
+
+    def create_fact_resource(self, kind_id: str, schema: str, value: JsonValue) -> ResourceRef:
+        data = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
+        ref_id = self._id("resource")
+        resource = ResourceRef(
+            ref_id=ref_id,
+            resource_id=_resource_id(kind_id, ref_id),
+            semantic=ResourceSemantic.READ_ONLY_FACT,
+            provider_id="python.resource",
+            resource_kind=kind_id,
+            schema=schema,
+            version=1,
+            generation=1,
+            access=ResourceAccess.provider_rpc("python.resource", "fact.read"),
+            size_hint=len(data),
+            content_hash=_simple_hash(data),
+            lifetime=ResourceLifetime.PERSISTENT,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        )
+        return self._store_resource(resource, data)
+
+    def create_stream_resource(self, kind_id: str, schema: str, endpoint: str) -> ResourceRef:
+        ref_id = self._id("resource")
+        resource = ResourceRef(
+            ref_id=ref_id,
+            resource_id=_resource_id(kind_id, ref_id),
+            semantic=ResourceSemantic.STREAM_RESOURCE,
+            provider_id="python.resource",
+            resource_kind=kind_id,
+            schema=schema,
+            version=1,
+            generation=1,
+            access=ResourceAccess.stream(endpoint),
+            size_hint=None,
+            content_hash=None,
+            lifetime=ResourceLifetime.EXTERNAL_MANAGED,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        )
+        return self._store_resource(resource, b"")
+
+    def create_snapshot_resource(
+        self, kind_id: str, schema: str, source_ref: ResourceRef, data: bytes
+    ) -> ResourceRef:
+        self.read_resource(source_ref)
+        ref_id = self._id("resource")
+        path = self._root / f"{ref_id}.bin"
+        path.write_bytes(data)
+        resource = ResourceRef(
+            ref_id=ref_id,
+            resource_id=_resource_id(kind_id, ref_id),
+            semantic=ResourceSemantic.VERSIONED_SNAPSHOT,
+            provider_id="python.resource",
+            resource_kind=kind_id,
+            schema=schema,
+            version=1,
+            generation=1,
+            access=ResourceAccess.mmap_file(
+                path=str(path),
+                offset=0,
+                len=len(data),
+                readonly=True,
+            ),
+            size_hint=len(data),
+            content_hash=_simple_hash(data),
+            lifetime=ResourceLifetime.PERSISTENT,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        )
+        return self._store_resource(resource, data)
+
+    def create_capability_resource(self, kind_id: str, schema: str) -> ResourceRef:
+        ref_id = self._id("resource")
+        resource = ResourceRef(
+            ref_id=ref_id,
+            resource_id=_resource_id(kind_id, ref_id),
+            semantic=ResourceSemantic.CAPABILITY_RESOURCE,
+            provider_id="python.resource",
+            resource_kind=kind_id,
+            schema=schema,
+            version=1,
+            generation=1,
+            access=ResourceAccess.provider_rpc("python.resource", "capability.command"),
+            size_hint=None,
+            content_hash=None,
+            lifetime=ResourceLifetime.EXTERNAL_MANAGED,
+            lease=None,
+            seal_state=ResourceSealState.SEALED,
+        )
+        return self._store_resource(resource, b"")
+
+    def build_read_plan(self, resource_ref: ResourceRef, operation: str) -> ReadPlan:
+        return resource_plans.build_read_plan(resource_ref, operation)
+
+    def collect_read_plan(self, plan: ReadPlan) -> bytes:
+        return resource_plans.collect_read_plan(self, plan)
+
+    def snapshot_read_plan(self, plan: ReadPlan, kind_id: str, schema: str) -> SnapshotDescriptor:
+        return resource_plans.snapshot_read_plan(self, plan, kind_id, schema)
+
+    def open_stream_plan(self, plan: ReadPlan) -> StreamPlan:
+        return resource_plans.open_stream_plan(plan)
+
+    def export_plan(self, resource_ref: ResourceRef, target: str) -> ExportPlan:
+        return resource_plans.export_plan(resource_ref, target)
+
+    def command_plan(
+        self,
+        capability: ResourceRef,
+        operation: str,
+        args: JsonValue,
+        idempotency_key: str | None = None,
+    ) -> CommandPlan:
+        return resource_plans.command_plan(capability, operation, args, idempotency_key)
+
+    def build_write_plan(
+        self, resource_ref: ResourceRef, conflict_policy: str, operations: JsonValue
+    ) -> WritePlan:
+        return resource_plans.build_write_plan(resource_ref, conflict_policy, operations)
+
+    def transaction_plan(
+        self, plan_id: str, operations: tuple[WritePlan, ...], strict: bool
+    ) -> TransactionPlan:
+        return resource_plans.transaction_plan(plan_id, operations, strict)
+
+    def command_batch(
+        self, batch_id: str, commands: tuple[CommandPlan, ...], rollback_guarantee: bool
+    ) -> CommandBatch:
+        return resource_plans.command_batch(batch_id, commands, rollback_guarantee)
+
+    def saga_plan(
+        self,
+        saga_id: str,
+        steps: tuple[CommandPlan, ...],
+        compensations: tuple[CommandPlan, ...],
+    ) -> SagaPlan:
+        return resource_plans.saga_plan(saga_id, steps, compensations)
+
+    def commit_write_plan(self, plan: WritePlan, data: bytes) -> PlanReceipt:
+        return resource_plans.commit_write_plan(self, plan, data)
 
     def acquire_write_lease(
         self,
@@ -160,6 +345,13 @@ class PythonResourceManager:
             Path(path).write_bytes(data)
         updated = ResourceRef(
             ref_id=resource.ref_id,
+            resource_id=ResourceId(
+                kind_id=resource.resource_id.kind_id,
+                slot_id=resource.resource_id.slot_id,
+                generation=resource.generation + 1,
+                version=resource.version + 1,
+            ),
+            semantic=resource.semantic,
             provider_id=resource.provider_id,
             resource_kind=resource.resource_kind,
             schema=resource.schema,
@@ -186,6 +378,10 @@ class PythonResourceManager:
 
 def _resource_error(code: str, route: str) -> RunnerInvokeError:
     return RunnerInvokeError(RuntimeError(code=code, source="python_resource_manager", route=route))
+
+
+def _resource_id(kind_id: str, ref_id: str) -> ResourceId:
+    return ResourceId(kind_id=kind_id, slot_id=ref_id, generation=1, version=1)
 
 
 def _simple_hash(data: bytes) -> str:

@@ -7,7 +7,7 @@ use mutsuki_runtime_contracts::{
 
 use crate::RuntimeResult;
 
-use super::{ResourceEntry, ResourceManager, capability_exhausted, resource_not_found};
+use super::{ResourceManager, capability_exhausted, hub::ResourceEntry, resource_not_found};
 
 #[derive(Default)]
 struct HandleCounts {
@@ -94,7 +94,7 @@ impl ResourceManager {
 
     fn resource_surface_counts(&self) -> HashMap<String, (u64, u64)> {
         let mut counts = HashMap::new();
-        for entry in self.resources.values() {
+        for entry in self.hub.entries() {
             count_resource_surface(
                 &mut counts,
                 &entry.descriptor.schema,
@@ -114,8 +114,8 @@ impl ResourceManager {
     fn stream_surface_counts(&self) -> HashMap<String, u64> {
         let mut counts = HashMap::new();
         for entry in self
-            .resources
-            .values()
+            .hub
+            .entries()
             .filter(|entry| matches!(entry.descriptor.access, ResourceAccess::Stream { .. }))
         {
             increment_count(&mut counts, entry.descriptor.resource_kind.clone());

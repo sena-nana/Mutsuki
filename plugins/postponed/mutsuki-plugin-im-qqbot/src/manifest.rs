@@ -99,6 +99,7 @@ pub fn qqbot_manifest() -> PluginManifest {
             handler_bindings: Vec::new(),
             resource_schemas: vec!["mutsuki.im.qqbot.media.v1".into()],
             resource_providers: vec!["mutsuki.im.qqbot.media.provider".into()],
+            resource_types: Vec::new(),
             effects: effect_protocol_ids(),
             streams: vec![STREAM_GATEWAY.into()],
             subscriptions: vec![SUBSCRIPTION_GATEWAY.into()],

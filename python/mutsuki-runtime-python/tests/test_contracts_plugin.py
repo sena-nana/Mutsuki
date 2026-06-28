@@ -12,6 +12,7 @@ from mutsuki_runtime_python.contracts.plugin import (
     RuntimeLoadPlan,
     RuntimeProfile,
 )
+from mutsuki_runtime_python.contracts.resource import ResourceSemantic, ResourceTypeDescriptor
 from mutsuki_runtime_python.contracts.runner import (
     ExecutionClass,
     RunnerDescriptor,
@@ -63,6 +64,15 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         handler_bindings=(binding,),
         resource_schemas=("bytes.v1",),
         resource_providers=("python.resource",),
+        resource_types=(
+            ResourceTypeDescriptor(
+                kind_id="bytes",
+                semantic=ResourceSemantic.FROZEN_VALUE,
+                schema="bytes.v1",
+                provider_id="python.resource",
+                operations=("read", "export"),
+            ),
+        ),
         effects=("effect.chat.send",),
         streams=("chat.events",),
         subscriptions=("chat.messages",),

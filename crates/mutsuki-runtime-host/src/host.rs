@@ -689,6 +689,22 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
         ] {
             push_named_surfaces(&mut surfaces, &manifest.plugin_id, kind, prefix, names);
         }
+        for resource_type in &manifest.provides.resource_types {
+            surfaces.push(ContractSurface {
+                surface_id: format!("resource_schema:{}", resource_type.kind_id),
+                kind: ContractSurfaceKind::ResourceSchema,
+                owner_plugin_id: manifest.plugin_id.clone(),
+                fingerprint: format!(
+                    "resource_type:{}:{:?}:{}:{}:{}",
+                    resource_type.kind_id,
+                    resource_type.semantic,
+                    resource_type.schema,
+                    resource_type.provider_id,
+                    resource_type.operations.join(",")
+                ),
+                deprecated: false,
+            });
+        }
     }
     surfaces
 }

@@ -132,3 +132,72 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
         .unwrap();
     runtime.release_resource_lease(&resource_lease).unwrap();
 }
+
+#[test]
+fn resource_hub_routes_typed_resources_and_executes_lazy_plans() {
+    let mut resources = ResourceManager::new();
+    let text = resources
+        .create_cow_state_resource("text_buffer", "text.v1", b"hello".to_vec())
+        .unwrap();
+    let ast = resources
+        .create_snapshot_resource("ast_snapshot", "ast.v1", &text, b"ast".to_vec())
+        .unwrap();
+    let facts = resources
+        .create_fact_resource("project_facts", "facts.v1", json!({"root": "."}))
+        .unwrap();
+    let stream = resources.create_stream_resource(
+        "model_output_stream",
+        "token.v1",
+        "python.resource",
+        "stream://model",
+    );
+    let capability = resources.create_capability_resource("db_pool", "db.pool.v1");
+
+    assert_eq!(resources.resource_store_name(&text.ref_id), Some("cow"));
+    assert_eq!(
+        resources.resource_store_name(&ast.ref_id),
+        Some("snapshots")
+    );
+    assert_eq!(resources.resource_store_name(&facts.ref_id), Some("facts"));
+    assert_eq!(
+        resources.resource_store_name(&stream.ref_id),
+        Some("streams")
+    );
+    assert_eq!(
+        resources.resource_store_name(&capability.ref_id),
+        Some("capabilities")
+    );
+
+    let read_plan = resources.build_read_plan(&text.ref_id, "collect").unwrap();
+    let write_plan = resources
+        .build_write_plan(&text.ref_id, "fail", json!({"replace": "all"}))
+        .unwrap();
+    assert_eq!(resources.read_resource(&text).unwrap(), b"hello");
+    assert_eq!(resources.collect_read_plan(&read_plan).unwrap(), b"hello");
+
+    let receipt = resources
+        .commit_write_plan(&write_plan, b"world".to_vec())
+        .unwrap();
+    let updated = receipt.resource_ref.unwrap();
+    assert_eq!(updated.version, 2);
+    assert_eq!(updated.resource_id.version, 2);
+    assert_eq!(resources.read_resource(&updated).unwrap(), b"world");
+
+    let updated_read_plan = resources
+        .build_read_plan(&updated.ref_id, "collect")
+        .unwrap();
+    let snapshot = resources
+        .snapshot_read_plan(&updated_read_plan, "text_snapshot", "text.snapshot.v1")
+        .unwrap();
+    assert_eq!(snapshot.source_version, 2);
+    assert_eq!(
+        snapshot.snapshot_ref.semantic,
+        ResourceSemantic::VersionedSnapshot
+    );
+    assert!(
+        resources
+            .open_stream_plan(&resources.build_read_plan(&stream.ref_id, "open").unwrap())
+            .is_ok()
+    );
+    assert!(resources.open_stream_plan(&read_plan).is_err());
+}

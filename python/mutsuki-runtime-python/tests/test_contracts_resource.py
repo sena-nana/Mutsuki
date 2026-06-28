@@ -2,18 +2,58 @@ from __future__ import annotations
 
 from mutsuki_runtime_python.contracts.codec import to_json_dict
 from mutsuki_runtime_python.contracts.resource import (
+    CommandBatch,
+    CommandPlan,
+    PatchDescriptor,
+    PlanReceipt,
+    ReadPlan,
     ResourceAccess,
     ResourceCellRef,
+    ResourceId,
     ResourceLease,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
+    ResourceSemantic,
+    ResourceTypeDescriptor,
     ResourceValue,
+    SagaPlan,
+    SnapshotDescriptor,
+    TransactionPlan,
     ValueRef,
     ValueStorage,
+    WritePlan,
 )
 from mutsuki_runtime_python.contracts.state import StateRef
 from mutsuki_runtime_python.testing.assertions import assert_json_roundtrip
+
+
+def _resource_ref(
+    ref_id: str = "resource:1",
+    kind_id: str = "bytes",
+    semantic: ResourceSemantic = ResourceSemantic.FROZEN_VALUE,
+) -> ResourceRef:
+    return ResourceRef(
+        ref_id=ref_id,
+        resource_id=ResourceId(
+            kind_id=kind_id,
+            slot_id=ref_id,
+            generation=1,
+            version=1,
+        ),
+        semantic=semantic,
+        provider_id="python.resource",
+        resource_kind=kind_id,
+        schema="bytes.v1",
+        version=1,
+        generation=1,
+        access=ResourceAccess.blob("blob-store", ref_id),
+        size_hint=4,
+        content_hash="hash:resource",
+        lifetime=ResourceLifetime.PERSISTENT,
+        lease=None,
+        seal_state=ResourceSealState.SEALED,
+    )
 
 
 def test_resource_access_variants_match_rust_tagged_shape() -> None:
@@ -88,25 +128,23 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
         lifetime=ResourceLifetime.PERSISTENT,
         storage=ValueStorage.LOCAL_VALUE_STORE,
     )
-    resource_ref = ResourceRef(
-        ref_id="resource:1",
-        provider_id="python.resource",
-        resource_kind="blob",
-        schema="bytes.v1",
-        version=1,
-        generation=1,
-        access=ResourceAccess.blob("blob-store", "resource:1"),
-        size_hint=4,
-        content_hash="hash:resource",
-        lifetime=ResourceLifetime.PERSISTENT,
-        lease=None,
-        seal_state=ResourceSealState.SEALED,
-    )
+    resource_ref = _resource_ref()
 
     assert_json_roundtrip(StateRef, StateRef(ref_id="state:1", schema="state.v1", version=3))
     assert_json_roundtrip(ResourceValue, ResourceValue.inline("value.v1", {"a": 1}, 1))
     assert_json_roundtrip(ResourceValue, ResourceValue.value_ref_value(value_ref))
     assert_json_roundtrip(ResourceValue, ResourceValue.resource_ref_value(resource_ref))
+    assert_json_roundtrip(ResourceId, resource_ref.resource_id)
+    assert_json_roundtrip(
+        ResourceTypeDescriptor,
+        ResourceTypeDescriptor(
+            kind_id="bytes",
+            semantic=ResourceSemantic.FROZEN_VALUE,
+            schema="bytes.v1",
+            provider_id="python.resource",
+            operations=("read", "export"),
+        ),
+    )
 
 
 def test_resource_cell_and_resource_lease_roundtrip() -> None:
@@ -134,19 +172,71 @@ def test_resource_cell_and_resource_lease_roundtrip() -> None:
 
 
 def test_stream_resource_ref_roundtrips_endpoint() -> None:
-    stream_ref = ResourceRef(
+    stream_ref = _resource_ref(
         ref_id="resource:stream:1",
-        provider_id="python.resource",
-        resource_kind="chat.events",
-        schema="event.v1",
-        version=1,
-        generation=1,
-        access=ResourceAccess.stream("stream://chat/events"),
-        size_hint=None,
-        content_hash=None,
-        lifetime=ResourceLifetime.EXTERNAL_MANAGED,
-        lease=None,
-        seal_state=ResourceSealState.SEALED,
+        kind_id="chat.events",
+        semantic=ResourceSemantic.STREAM_RESOURCE,
     )
 
     assert_json_roundtrip(ResourceRef, stream_ref)
+
+
+def test_resource_plan_contracts_roundtrip() -> None:
+    resource = _resource_ref(semantic=ResourceSemantic.COW_VERSIONED_STATE)
+    read_plan = ReadPlan(
+        plan_id="read-plan:1",
+        resource=resource,
+        operation="collect",
+        args={"range": "all"},
+    )
+    patch = PatchDescriptor(
+        patch_id="patch:1",
+        target_ref=resource,
+        base_version=1,
+        conflict_policy="fail",
+        operations={"replace": "all"},
+    )
+    write_plan = WritePlan(
+        plan_id="write-plan:1",
+        resource=resource,
+        base_version=1,
+        conflict_policy="fail",
+        patch=patch,
+        returning=read_plan,
+    )
+    command = CommandPlan(
+        plan_id="command:1",
+        capability=_resource_ref(kind_id="db_pool", semantic=ResourceSemantic.CAPABILITY_RESOURCE),
+        operation="query",
+        args={"sql": "select 1"},
+        idempotency_key=None,
+    )
+    snapshot = SnapshotDescriptor(
+        snapshot_ref=_resource_ref(
+            "snapshot:1", "ast_snapshot", ResourceSemantic.VERSIONED_SNAPSHOT
+        ),
+        source_ref=resource,
+        source_version=1,
+        snapshot_version=1,
+        is_stale=False,
+        is_latest=True,
+    )
+
+    assert_json_roundtrip(ReadPlan, read_plan)
+    assert_json_roundtrip(PatchDescriptor, patch)
+    assert_json_roundtrip(WritePlan, write_plan)
+    assert_json_roundtrip(TransactionPlan, TransactionPlan("tx:1", (write_plan,), True))
+    assert_json_roundtrip(CommandPlan, command)
+    assert_json_roundtrip(CommandBatch, CommandBatch("batch:1", (command,), False))
+    assert_json_roundtrip(SagaPlan, SagaPlan("saga:1", (command,), (command,)))
+    assert_json_roundtrip(
+        PlanReceipt,
+        PlanReceipt(
+            plan_id="write-plan:1",
+            status="committed",
+            resource_ref=resource,
+            snapshot=snapshot,
+            new_version=2,
+            output=None,
+        ),
+    )

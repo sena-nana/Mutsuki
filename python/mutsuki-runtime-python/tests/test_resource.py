@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from mutsuki_runtime_python.contracts.resource import ValueRef
+from mutsuki_runtime_python.contracts.resource import ResourceSemantic, ValueRef
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 PythonResourceManager = importlib.import_module(
@@ -32,6 +32,7 @@ def test_resource_manager_supports_mmap_cow_and_exclusive_write_lease() -> None:
     assert manager.read_resource(blob) == b"blob-data"
     cow = manager.copy_on_write(resource, b"xyz")
     assert cow.ref_id != resource.ref_id
+    assert cow.semantic == ResourceSemantic.COW_VERSIONED_STATE
     lease = manager.acquire_write_lease(resource.ref_id, "runner-a", expires_at_step=5)
     updated = manager.write_with_lease(lease, b"def", current_step=2)
 
@@ -46,3 +47,43 @@ def test_expired_write_lease_fails_loudly() -> None:
 
     with pytest.raises(RunnerInvokeError):
         manager.write_with_lease(lease, b"late", current_step=2)
+
+
+def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
+    manager = PythonResourceManager()
+    text = manager.create_cow_state_resource("text_buffer", "text.v1", b"hello")
+    ast = manager.create_snapshot_resource("ast_snapshot", "ast.v1", text, b"ast")
+    facts = manager.create_fact_resource("project_facts", "facts.v1", {"root": "."})
+    stream = manager.create_stream_resource("model_output_stream", "token.v1", "stream://model")
+    capability = manager.create_capability_resource("db_pool", "db.pool.v1")
+
+    assert text.semantic == ResourceSemantic.COW_VERSIONED_STATE
+    assert ast.semantic == ResourceSemantic.VERSIONED_SNAPSHOT
+    assert facts.semantic == ResourceSemantic.READ_ONLY_FACT
+    assert stream.semantic == ResourceSemantic.STREAM_RESOURCE
+    assert capability.semantic == ResourceSemantic.CAPABILITY_RESOURCE
+
+    read_plan = manager.build_read_plan(text, "collect")
+    write_plan = manager.build_write_plan(text, "fail", {"replace": "all"})
+
+    assert manager.read_resource(text) == b"hello"
+    assert manager.collect_read_plan(read_plan) == b"hello"
+    receipt = manager.commit_write_plan(write_plan, b"world")
+
+    assert receipt.new_version == 2
+    assert receipt.resource_ref is not None
+    assert manager.read_resource(receipt.resource_ref) == b"world"
+    assert manager.open_stream_plan(manager.build_read_plan(stream, "open")).resource == stream
+
+    export = manager.export_plan(text, "json")
+    command = manager.command_plan(capability, "query", {"sql": "select 1"}, "query:1")
+    transaction = manager.transaction_plan("tx:1", (write_plan,), strict=True)
+    batch = manager.command_batch("batch:1", (command,), rollback_guarantee=False)
+    saga = manager.saga_plan("saga:1", (command,), (command,))
+
+    assert export.target == "json"
+    assert command.capability == capability
+    assert command.idempotency_key == "query:1"
+    assert transaction.operations == (write_plan,)
+    assert batch.commands == (command,)
+    assert saga.compensations == (command,)

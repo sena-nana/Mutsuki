@@ -20,6 +20,7 @@ from mutsuki_runtime_python.contracts.codec import (
     field_value,
     tuple_from_json,
 )
+from mutsuki_runtime_python.contracts.resource import ResourceTypeDescriptor
 from mutsuki_runtime_python.contracts.runner import RunnerDescriptor
 from mutsuki_runtime_python.contracts.surface import ContractSurface
 
@@ -146,6 +147,7 @@ class PluginProvides:
     handler_bindings: tuple[HandlerBinding, ...]
     resource_schemas: tuple[str, ...]
     resource_providers: tuple[str, ...]
+    resource_types: tuple[ResourceTypeDescriptor, ...]
     effects: tuple[str, ...]
     streams: tuple[str, ...]
     subscriptions: tuple[str, ...]
@@ -163,6 +165,7 @@ class PluginProvides:
             resource_providers=as_str_tuple(
                 field_value(raw, "resource_providers"), "resource_providers"
             ),
+            resource_types=tuple_from_json(raw, "resource_types", ResourceTypeDescriptor),
             effects=as_str_tuple(field_value(raw, "effects"), "effects"),
             streams=as_str_tuple(field_value(raw, "streams"), "streams"),
             subscriptions=as_str_tuple(field_value(raw, "subscriptions"), "subscriptions"),

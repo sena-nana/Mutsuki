@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BindingId, ProtocolId, RunnerDescriptor, ScalarValue, SurfaceId};
+use crate::{
+    BindingId, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue, SurfaceId,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +45,7 @@ pub struct PluginProvides {
     pub handler_bindings: Vec<HandlerBinding>,
     pub resource_schemas: Vec<String>,
     pub resource_providers: Vec<String>,
+    pub resource_types: Vec<ResourceTypeDescriptor>,
     pub effects: Vec<String>,
     pub streams: Vec<String>,
     pub subscriptions: Vec<String>,

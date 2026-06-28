@@ -8,9 +8,11 @@ from mutsuki_runtime_python.contracts.codec import JsonValue
 from mutsuki_runtime_python.contracts.errors import RuntimeError
 from mutsuki_runtime_python.contracts.resource import (
     ResourceAccess,
+    ResourceId,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
+    ResourceSemantic,
 )
 from mutsuki_runtime_python.contracts.runner import (
     RunnerContext,
@@ -252,8 +254,16 @@ def _waiting_result(task_id: str, pending: PendingCall) -> RunnerResult:
 
 
 def _continuation_ref(parent_task_id: str) -> ResourceRef:
+    ref_id = f"continuation:{parent_task_id}"
     return ResourceRef(
-        ref_id=f"continuation:{parent_task_id}",
+        ref_id=ref_id,
+        resource_id=ResourceId(
+            kind_id="continuation",
+            slot_id=ref_id,
+            generation=1,
+            version=1,
+        ),
+        semantic=ResourceSemantic.FROZEN_VALUE,
         provider_id="mutsuki.sdk",
         resource_kind="continuation",
         schema="mutsuki.continuation.v1",

@@ -6,6 +6,35 @@ fn assert_missing_fields_fail<T: DeserializeOwned>(value: serde_json::Value) {
     assert!(serde_json::from_value::<T>(value).is_err());
 }
 
+fn resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {
+    ResourceRef {
+        ref_id: ref_id.into(),
+        resource_id: ResourceId {
+            kind_id: kind_id.into(),
+            slot_id: ref_id.into(),
+            generation: 1,
+            version: 1,
+        },
+        semantic,
+        provider_id: "resource.local".into(),
+        resource_kind: kind_id.into(),
+        schema: "bytes.v1".into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::MmapFile {
+            path: "resource.bin".into(),
+            offset: 0,
+            len: 4,
+            readonly: true,
+        },
+        size_hint: Some(4),
+        content_hash: Some("hash:4".into()),
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
+}
+
 #[test]
 fn task_runner_resource_contracts_roundtrip_json() {
     let task = Task {
@@ -54,25 +83,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         descriptor
     );
 
-    let resource = ResourceRef {
-        ref_id: "resource:1".into(),
-        provider_id: "resource.local".into(),
-        resource_kind: "blob".into(),
-        schema: "bytes.v1".into(),
-        version: 1,
-        generation: 1,
-        access: ResourceAccess::MmapFile {
-            path: "resource.bin".into(),
-            offset: 0,
-            len: 4,
-            readonly: true,
-        },
-        size_hint: Some(4),
-        content_hash: Some("hash:4".into()),
-        lifetime: ResourceLifetime::Persistent,
-        lease: None,
-        seal_state: ResourceSealState::Sealed,
-    };
+    let resource = resource_ref("resource:1", "blob", ResourceSemantic::FrozenValue);
     assert_eq!(
         serde_json::from_str::<ResourceRef>(&serde_json::to_string(&resource).unwrap()).unwrap(),
         resource
@@ -105,6 +116,13 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
         }],
         resource_schemas: vec!["bytes.v1".into()],
         resource_providers: vec!["resource.local".into()],
+        resource_types: vec![ResourceTypeDescriptor {
+            kind_id: "blob".into(),
+            semantic: ResourceSemantic::FrozenValue,
+            schema: "bytes.v1".into(),
+            provider_id: "resource.local".into(),
+            operations: vec!["read".into(), "export".into()],
+        }],
         effects: vec!["effect.chat.send".into()],
         streams: vec!["chat.events".into()],
         subscriptions: vec!["chat.messages".into()],
@@ -192,6 +210,124 @@ fn surface_occupancy_handle_roundtrips_json() {
 }
 
 #[test]
+fn resource_plan_contracts_roundtrip_json() {
+    let resource = resource_ref(
+        "resource:cow:1",
+        "text_buffer",
+        ResourceSemantic::CowVersionedState,
+    );
+    let read_plan = ReadPlan {
+        plan_id: "read-plan:1".into(),
+        resource: resource.clone(),
+        operation: "collect".into(),
+        args: serde_json::json!({"range": "all"}),
+    };
+    let patch = PatchDescriptor {
+        patch_id: "patch:1".into(),
+        target_ref: resource.clone(),
+        base_version: 1,
+        conflict_policy: "fail".into(),
+        operations: serde_json::json!({"replace": "all"}),
+    };
+    let write_plan = WritePlan {
+        plan_id: "write-plan:1".into(),
+        resource: resource.clone(),
+        base_version: 1,
+        conflict_policy: "fail".into(),
+        patch: patch.clone(),
+        returning: Some(read_plan.clone()),
+    };
+    let command = CommandPlan {
+        plan_id: "command:1".into(),
+        capability: resource_ref(
+            "resource:capability:1",
+            "db_pool",
+            ResourceSemantic::CapabilityResource,
+        ),
+        operation: "query".into(),
+        args: serde_json::json!({"sql": "select 1"}),
+        idempotency_key: None,
+    };
+    let snapshot = SnapshotDescriptor {
+        snapshot_ref: resource_ref(
+            "resource:snapshot:1",
+            "ast_snapshot",
+            ResourceSemantic::VersionedSnapshot,
+        ),
+        source_ref: resource.clone(),
+        source_version: 1,
+        snapshot_version: 1,
+        is_stale: false,
+        is_latest: true,
+    };
+    let receipt = PlanReceipt {
+        plan_id: "write-plan:1".into(),
+        status: "committed".into(),
+        resource_ref: Some(resource),
+        snapshot: Some(snapshot),
+        new_version: Some(2),
+        output: serde_json::Value::Null,
+    };
+
+    assert_eq!(
+        serde_json::from_str::<ReadPlan>(&serde_json::to_string(&read_plan).unwrap()).unwrap(),
+        read_plan
+    );
+    assert_eq!(
+        serde_json::from_str::<PatchDescriptor>(&serde_json::to_string(&patch).unwrap()).unwrap(),
+        patch
+    );
+    assert_eq!(
+        serde_json::from_str::<WritePlan>(&serde_json::to_string(&write_plan).unwrap()).unwrap(),
+        write_plan
+    );
+    assert_eq!(
+        serde_json::from_str::<TransactionPlan>(
+            &serde_json::to_string(&TransactionPlan {
+                plan_id: "tx:1".into(),
+                operations: vec![write_plan],
+                strict: true,
+            })
+            .unwrap()
+        )
+        .unwrap()
+        .strict,
+        true
+    );
+    assert_eq!(
+        serde_json::from_str::<CommandBatch>(
+            &serde_json::to_string(&CommandBatch {
+                batch_id: "batch:1".into(),
+                commands: vec![command.clone()],
+                rollback_guarantee: false,
+            })
+            .unwrap()
+        )
+        .unwrap()
+        .commands,
+        vec![command.clone()]
+    );
+    assert_eq!(
+        serde_json::from_str::<SagaPlan>(
+            &serde_json::to_string(&SagaPlan {
+                saga_id: "saga:1".into(),
+                steps: vec![command.clone()],
+                compensations: vec![command],
+            })
+            .unwrap()
+        )
+        .unwrap()
+        .steps
+        .len(),
+        1
+    );
+    assert_eq!(
+        serde_json::from_str::<PlanReceipt>(&serde_json::to_string(&receipt).unwrap()).unwrap(),
+        receipt
+    );
+}
+
+#[test]
 fn error_event_and_trace_contracts_roundtrip_json() {
     let mut error = RuntimeError::new("runtime.test_failed", "contracts.test", "test.route");
     error.evidence.insert("attempt".into(), ScalarValue::Int(1));
@@ -258,6 +394,13 @@ fn task_handle_outcome_and_await_contracts_roundtrip_json() {
         continuation: TaskStepContinuation {
             continuation: ResourceRef {
                 ref_id: "continuation:parent-1".into(),
+                resource_id: ResourceId {
+                    kind_id: "continuation".into(),
+                    slot_id: "continuation:parent-1".into(),
+                    generation: 1,
+                    version: 1,
+                },
+                semantic: ResourceSemantic::FrozenValue,
                 provider_id: "mutsuki.sdk".into(),
                 resource_kind: "continuation".into(),
                 schema: "mutsuki.continuation.v1".into(),

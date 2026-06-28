@@ -217,6 +217,41 @@ RunnerResult 不直接修改事实源：
 本地 file/blob 读写已下沉到 `LocalResourceBackend`。这只是为 ResourceHub /
 provider RPC 预留边界；当前 backend 仍是测试级本地实现。
 
+### 7.1 ResourceHub 与 Typed Store
+
+资源平面按 `ResourceHub -> Typed Store -> backend/provider` 分层：
+
+- `ResourceHub` 负责 `ResourceId.kind_id` 路由、descriptor/generation/lease 校验、
+  surface occupancy、trace route 和 provider operation 分发。
+- Typed Store 按资源语义保存与优化本类资源，当前最小实现包含 `FrozenStore`、
+  `SnapshotStore`、`FactStore`、`CowStore`、`CapabilityStore`、`StreamStore` 和
+  `TransactionStore`。
+- backend/provider 负责真实数据访问；builtin、ABI、WASM、process 的差异只存在于
+  host/resource backend，不进入插件公共 API。
+
+公共插件 API 只能使用 `ResourceClient`、`TypedResourceHandle` 和可序列化的
+`ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan`。不得暴露
+`Arc<T>`、`&T`、`&mut T`、`downcast` 或 `with_native_*`。
+
+资源语义分类：
+
+- `FrozenValue`：创建后不可变，可 content-addressed、dedupe、LRU。
+- `VersionedSnapshot`：不可变版本化快照，可 stale 使用，用于回放、分析和 patch base。
+- `ReadOnlyFact`：Host/特权组件可刷新，普通插件只读，带 generation/provenance。
+- `CowVersionedState`：可变状态通过 snapshot + patch/transaction 提交，版本冲突 fail-loud。
+- `CapabilityResource`：能力句柄，只能通过 command plan 操作，不可 snapshot/export native。
+- `StreamResource`：分块、背压、取消和 pipe/collect 语义。
+- `TransactionResource`：begin/stage/commit/rollback；外部副作用只能声明有限保证。
+
+`ResourceId` 结构为 `kind_id / slot_id / generation / version`。`ref_id` 作为兼容路由键
+保留，但 `ResourceRef.resource_id.generation/version` 必须与 `ResourceRef` 顶层字段一致。
+
+懒计划规则：
+
+- 构造 `ReadPlan` 不访问资源；`eval` / `collect` / `snapshot` / `open_stream` 才执行读。
+- 构造 `WritePlan` 不修改资源；`commit` 才执行写并检查 `base_version`。
+- 写后读必须显式使用 `returning` 或基于 commit receipt 的新版本重新创建读计划。
+
 ## 8. Plugin Loading
 
 插件声明能力，RuntimeProfile 决定组合，resolver 生成确定性 load plan，Core 只校验和

@@ -27,8 +27,11 @@ pub use plugin::{
     SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
-    ExclusiveWriteLease, LeaseToken, ResourceAccess, ResourceCellRef, ResourceLease,
-    ResourceLifetime, ResourceRef, ResourceSealState, ResourceValue, ValueRef, ValueStorage,
+    CommandBatch, CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor,
+    PlanReceipt, ReadPlan, ResourceAccess, ResourceCellRef, ResourceId, ResourceLease,
+    ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic, ResourceTypeDescriptor,
+    ResourceValue, SagaPlan, SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef,
+    ValueStorage, WritePlan,
 };
 pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerDescriptor, RunnerPurity,

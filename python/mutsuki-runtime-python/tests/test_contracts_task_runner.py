@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from mutsuki_runtime_python.contracts.resource import (
     ResourceAccess,
+    ResourceId,
     ResourceLifetime,
     ResourceRef,
     ResourceSealState,
+    ResourceSemantic,
     ValueRef,
     ValueStorage,
 )
@@ -93,6 +95,8 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
     )
     resource_ref = ResourceRef(
         ref_id="resource:1",
+        resource_id=ResourceId(kind_id="bytes", slot_id="resource:1", generation=1, version=1),
+        semantic=ResourceSemantic.FROZEN_VALUE,
         provider_id="python.resource",
         resource_kind="bytes",
         schema="bytes.v1",
@@ -134,6 +138,13 @@ def test_task_handle_outcome_and_await_roundtrip() -> None:
     continuation = TaskStepContinuation(
         continuation=ResourceRef(
             ref_id="continuation:parent-1",
+            resource_id=ResourceId(
+                kind_id="continuation",
+                slot_id="continuation:parent-1",
+                generation=1,
+                version=1,
+            ),
+            semantic=ResourceSemantic.FROZEN_VALUE,
             provider_id="mutsuki.sdk",
             resource_kind="continuation",
             schema="mutsuki.continuation.v1",

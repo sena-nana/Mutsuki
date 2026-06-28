@@ -2,20 +2,23 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_runtime_contracts::{
-    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, LeaseToken, ResourceCellRef, ResourceLease,
-    ResourceRef, ResourceValue, RuntimeError, SurfaceOccupancyHandle, ValueRef,
+    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, ResourceCellRef, ResourceLease, ResourceRef,
+    ResourceValue, RuntimeError, SurfaceOccupancyHandle, ValueRef,
 };
 use serde_json::Value;
 
 use crate::{RuntimeFailure, SequentialIdSource};
 
 mod backend;
+mod hub;
 mod leases;
 mod occupancy;
+mod plans;
 mod resources;
 mod values;
 
 use backend::LocalResourceBackend;
+use hub::ResourceHub;
 
 static NEXT_MANAGER_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 
@@ -24,13 +27,6 @@ pub enum PackedValue {
     Inline(ResourceValue),
     Value(ValueRef),
     Resource(ResourceRef),
-}
-
-#[derive(Clone, Debug)]
-struct ResourceEntry {
-    descriptor: ResourceRef,
-    bytes: Vec<u8>,
-    writer: Option<LeaseToken>,
 }
 
 #[derive(Clone, Debug)]
@@ -48,20 +44,10 @@ impl ResourceCellEntry {
     }
 }
 
-impl ResourceEntry {
-    fn new(descriptor: ResourceRef, bytes: Vec<u8>) -> Self {
-        Self {
-            descriptor,
-            bytes,
-            writer: None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct ResourceManager {
     values: HashMap<String, (ValueRef, Value)>,
-    resources: HashMap<String, ResourceEntry>,
+    hub: ResourceHub,
     resource_cells: HashMap<String, ResourceCellEntry>,
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
@@ -83,7 +69,7 @@ impl ResourceManager {
             .join(format!("manager-{namespace}"));
         Self {
             values: HashMap::new(),
-            resources: HashMap::new(),
+            hub: ResourceHub::default(),
             resource_cells: HashMap::new(),
             occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),

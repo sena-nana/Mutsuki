@@ -98,6 +98,13 @@ fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
             });
             result.resources.push(ResourceRef {
                 ref_id: "resource:1".into(),
+                resource_id: ResourceId {
+                    kind_id: "bytes".into(),
+                    slot_id: "resource:1".into(),
+                    generation: 1,
+                    version: 1,
+                },
+                semantic: ResourceSemantic::FrozenValue,
                 provider_id: "resource.local".into(),
                 resource_kind: "bytes".into(),
                 schema: "bytes.v1".into(),
@@ -569,6 +576,13 @@ fn test_continuation(ref_id: &str) -> TaskStepContinuation {
     TaskStepContinuation {
         continuation: ResourceRef {
             ref_id: ref_id.into(),
+            resource_id: ResourceId {
+                kind_id: "continuation".into(),
+                slot_id: ref_id.into(),
+                generation: 1,
+                version: 1,
+            },
+            semantic: ResourceSemantic::FrozenValue,
             provider_id: "test".into(),
             resource_kind: "continuation".into(),
             schema: "continuation.v1".into(),

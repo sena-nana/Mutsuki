@@ -17,6 +17,7 @@ from mutsuki_runtime_python.contracts.codec import (
     optional_int,
     optional_str,
     required_optional,
+    sequence,
     to_json_dict,
     to_json_value,
 )
@@ -33,6 +34,57 @@ class ValueStorage(StrEnum):
 class ResourceSealState(StrEnum):
     WRITABLE = "writable"
     SEALED = "sealed"
+
+
+class ResourceSemantic(StrEnum):
+    FROZEN_VALUE = "frozen_value"
+    VERSIONED_SNAPSHOT = "versioned_snapshot"
+    READ_ONLY_FACT = "read_only_fact"
+    COW_VERSIONED_STATE = "cow_versioned_state"
+    CAPABILITY_RESOURCE = "capability_resource"
+    STREAM_RESOURCE = "stream_resource"
+    TRANSACTION_RESOURCE = "transaction_resource"
+
+
+@dataclass(frozen=True)
+class ResourceId:
+    kind_id: str
+    slot_id: str
+    generation: int
+    version: int
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ResourceId")
+        return cls(
+            kind_id=as_str(field_value(raw, "kind_id"), "kind_id"),
+            slot_id=as_str(field_value(raw, "slot_id"), "slot_id"),
+            generation=as_int(field_value(raw, "generation"), "generation"),
+            version=as_int(field_value(raw, "version"), "version"),
+        )
+
+
+@dataclass(frozen=True)
+class ResourceTypeDescriptor:
+    kind_id: str
+    semantic: ResourceSemantic
+    schema: str
+    provider_id: str
+    operations: tuple[str, ...]
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ResourceTypeDescriptor")
+        return cls(
+            kind_id=as_str(field_value(raw, "kind_id"), "kind_id"),
+            semantic=ResourceSemantic(as_str(field_value(raw, "semantic"), "semantic")),
+            schema=as_str(field_value(raw, "schema"), "schema"),
+            provider_id=as_str(field_value(raw, "provider_id"), "provider_id"),
+            operations=tuple(
+                as_str(item, "operations")
+                for item in sequence(field_value(raw, "operations"), "operations")
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -271,6 +323,8 @@ class ResourceLease:
 @dataclass(frozen=True)
 class ResourceRef:
     ref_id: str
+    resource_id: ResourceId
+    semantic: ResourceSemantic
     provider_id: str
     resource_kind: str
     schema: str
@@ -288,6 +342,10 @@ class ResourceRef:
         raw = as_mapping(data, "ResourceRef")
         return cls(
             ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
+            resource_id=ResourceId.from_json_dict(
+                as_mapping(field_value(raw, "resource_id"), "resource_id")
+            ),
+            semantic=ResourceSemantic(as_str(field_value(raw, "semantic"), "semantic")),
             provider_id=as_str(field_value(raw, "provider_id"), "provider_id"),
             resource_kind=as_str(field_value(raw, "resource_kind"), "resource_kind"),
             schema=as_str(field_value(raw, "schema"), "schema"),
@@ -330,6 +388,49 @@ class ValueRef:
             lifetime=ResourceLifetime.from_json_value(field_value(raw, "lifetime")),
             storage=ValueStorage(as_str(field_value(raw, "storage"), "storage")),
         )
+
+
+from mutsuki_runtime_python.contracts.resource_plans import (  # noqa: E402
+    CommandBatch,
+    CommandPlan,
+    ExportPlan,
+    PatchDescriptor,
+    PlanReceipt,
+    ReadPlan,
+    SagaPlan,
+    SnapshotDescriptor,
+    StreamPlan,
+    TransactionPlan,
+    WritePlan,
+)
+
+__all__ = (
+    "CommandBatch",
+    "CommandPlan",
+    "ExclusiveWriteLease",
+    "ExportPlan",
+    "LeaseToken",
+    "PatchDescriptor",
+    "PlanReceipt",
+    "ReadPlan",
+    "ResourceAccess",
+    "ResourceCellRef",
+    "ResourceId",
+    "ResourceLease",
+    "ResourceLifetime",
+    "ResourceRef",
+    "ResourceSealState",
+    "ResourceSemantic",
+    "ResourceTypeDescriptor",
+    "ResourceValue",
+    "SagaPlan",
+    "SnapshotDescriptor",
+    "StreamPlan",
+    "TransactionPlan",
+    "ValueRef",
+    "ValueStorage",
+    "WritePlan",
+)
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,35 @@ use serde_json::Value;
 use crate::{ExecutorId, RefId, ResourceCellId, ResourceLeaseId, TaskId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceId {
+    pub kind_id: String,
+    pub slot_id: String,
+    pub generation: u64,
+    pub version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceSemantic {
+    FrozenValue,
+    VersionedSnapshot,
+    ReadOnlyFact,
+    CowVersionedState,
+    CapabilityResource,
+    StreamResource,
+    TransactionResource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceTypeDescriptor {
+    pub kind_id: String,
+    pub semantic: ResourceSemantic,
+    pub schema: String,
+    pub provider_id: String,
+    pub operations: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceSealState {
     Writable,
@@ -51,6 +80,8 @@ pub enum ResourceAccess {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResourceRef {
     pub ref_id: RefId,
+    pub resource_id: ResourceId,
+    pub semantic: ResourceSemantic,
     pub provider_id: String,
     pub resource_kind: String,
     pub schema: String,
@@ -122,6 +153,99 @@ pub struct ValueRef {
     pub content_hash: Option<String>,
     pub lifetime: ResourceLifetime,
     pub storage: ValueStorage,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotDescriptor {
+    pub snapshot_ref: ResourceRef,
+    pub source_ref: ResourceRef,
+    pub source_version: u64,
+    pub snapshot_version: u64,
+    pub is_stale: bool,
+    pub is_latest: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PatchDescriptor {
+    pub patch_id: String,
+    pub target_ref: ResourceRef,
+    pub base_version: u64,
+    pub conflict_policy: String,
+    pub operations: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ReadPlan {
+    pub plan_id: String,
+    pub resource: ResourceRef,
+    pub operation: String,
+    pub args: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WritePlan {
+    pub plan_id: String,
+    pub resource: ResourceRef,
+    pub base_version: u64,
+    pub conflict_policy: String,
+    pub patch: PatchDescriptor,
+    pub returning: Option<ReadPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StreamPlan {
+    pub plan_id: String,
+    pub resource: ResourceRef,
+    pub operation: String,
+    pub args: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportPlan {
+    pub plan_id: String,
+    pub resource: ResourceRef,
+    pub target: String,
+    pub args: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CommandPlan {
+    pub plan_id: String,
+    pub capability: ResourceRef,
+    pub operation: String,
+    pub args: Value,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TransactionPlan {
+    pub plan_id: String,
+    pub operations: Vec<WritePlan>,
+    pub strict: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CommandBatch {
+    pub batch_id: String,
+    pub commands: Vec<CommandPlan>,
+    pub rollback_guarantee: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SagaPlan {
+    pub saga_id: String,
+    pub steps: Vec<CommandPlan>,
+    pub compensations: Vec<CommandPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlanReceipt {
+    pub plan_id: String,
+    pub status: String,
+    pub resource_ref: Option<ResourceRef>,
+    pub snapshot: Option<SnapshotDescriptor>,
+    pub new_version: Option<u64>,
+    pub output: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
