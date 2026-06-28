@@ -732,10 +732,10 @@ mod tests {
         assert_eq!(first[0].tasks[0].protocol_id, "child.work");
         assert_eq!(first[0].tasks[0].trace_id.as_deref(), Some("trace-1"));
         assert_eq!(first[0].tasks[0].correlation_id.as_deref(), Some("corr-1"));
-        assert_eq!(
-            first[0].task_await.as_ref().unwrap().cancel_policy,
-            CancelPolicy::Cascade
-        );
+        let task_await = first[0].task_await.as_ref().unwrap();
+        assert_eq!(task_await.cancel_policy, CancelPolicy::Cascade);
+        assert_eq!(task_await.child.trace_id.as_deref(), Some("trace-1"));
+        assert_eq!(task_await.child.correlation_id.as_deref(), Some("corr-1"));
     }
 
     #[test]

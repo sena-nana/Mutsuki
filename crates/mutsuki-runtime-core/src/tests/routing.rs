@@ -283,28 +283,35 @@ fn cancelling_waiting_parent_cascades_to_child() {
 
 #[test]
 fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
-    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
-    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
-    let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, |task| {
-            let child_task = Task::new("child-1", "child.work", json!({}));
-            await_child_result_with_policy(task, child_task, CancelPolicy::Detach)
-        })),
-        Box::new(StaticRunner::new(child, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
-    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
-    runtime.tick_once().unwrap();
+    fn runtime_waiting_on_child_with(policy: CancelPolicy) -> CoreRuntime {
+        let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+        let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+        let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
+        let runners: Vec<Box<dyn Runner>> = vec![
+            Box::new(StaticRunner::new(parent, move |task| {
+                let child_task = Task::new("child-1", "child.work", json!({}));
+                await_child_result_with_policy(task, child_task, policy.clone())
+            })),
+            Box::new(StaticRunner::new(child, |task| {
+                RunnerResult::completed(task.task_id.clone())
+            })),
+            Box::new(CoreKernelRunner::new(1)),
+        ];
+        let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+        runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+        runtime.tick_once().unwrap();
+        runtime
+    }
 
-    let error = runtime.cancel_task("parent-1").unwrap_err();
+    for policy in [CancelPolicy::Detach, CancelPolicy::Shield] {
+        let mut runtime = runtime_waiting_on_child_with(policy);
 
-    assert_eq!(error.error().code, "task.cancel_policy_unsupported");
-    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
-    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Ready));
+        let error = runtime.cancel_task("parent-1").unwrap_err();
+
+        assert_eq!(error.error().code, "task.cancel_policy_unsupported");
+        assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
+        assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Ready));
+    }
 }
 
 #[test]

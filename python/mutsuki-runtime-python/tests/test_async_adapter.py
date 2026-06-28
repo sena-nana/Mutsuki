@@ -72,6 +72,8 @@ async def test_async_runner_adapter_suspends_and_resumes_call() -> None:
     assert first[0].tasks[0].correlation_id == "corr-1"
     assert first[0].task_await is not None
     assert first[0].task_await.cancel_policy == CancelPolicy.CASCADE
+    assert first[0].task_await.child.trace_id == "trace-1"
+    assert first[0].task_await.child.correlation_id == "corr-1"
 
     client.outcomes["parent-1:call:1"] = TaskOutcome.completed("parent-1:call:1")
     second = await adapter.step(runner_context(), (task,))
