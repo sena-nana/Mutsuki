@@ -294,9 +294,32 @@ fn runtime_profile() -> RuntimeProfile {
         profile_id: "default".into(),
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
+        plugin_deployments: BTreeMap::new(),
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     }
+}
+
+fn runtime_profile_with_deployment(
+    plugin_id: &str,
+    deployment: PluginDeploymentKind,
+) -> RuntimeProfile {
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec![plugin_id.into()];
+    profile
+        .plugin_deployments
+        .insert(plugin_id.into(), deployment);
+    profile
+}
+
+fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
+    let mut runner_descriptor = descriptor("abi.runner", "abi.work");
+    runner_descriptor.plugin_id = "plugin-abi".into();
+    let mut manifest = runner_manifest("plugin-abi", vec![runner_descriptor.clone()]);
+    manifest.artifact.artifact_type = ArtifactType::Abi;
+    manifest.artifact.path = "plugin-abi.so".into();
+    manifest.artifact.sha256 = "sha256:abi".into();
+    (manifest, runner_descriptor)
 }
 
 fn host_with_echo_runner() -> NativePluginHost {
@@ -355,6 +378,89 @@ fn native_plugin_host_can_boot_host_runtime_control_plane() {
     };
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+}
+
+#[test]
+fn resolver_records_builtin_and_abi_plugin_deployments() {
+    let builtin_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut abi_descriptor = descriptor("abi.runner", "abi.work");
+    abi_descriptor.plugin_id = "plugin-b".into();
+    let builtin_manifest = runner_manifest("plugin-a", vec![builtin_descriptor]);
+    let mut abi_manifest = runner_manifest("plugin-b", vec![abi_descriptor]);
+    abi_manifest.artifact.artifact_type = ArtifactType::Abi;
+    abi_manifest.artifact.path = "plugin-b.abi".into();
+    abi_manifest.artifact.sha256 = "sha256:abi".into();
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec!["plugin-a".into(), "plugin-b".into()];
+    profile
+        .plugin_deployments
+        .insert("plugin-a".into(), PluginDeploymentKind::Builtin);
+    profile
+        .plugin_deployments
+        .insert("plugin-b".into(), PluginDeploymentKind::Abi);
+
+    let plan = crate::resolve_load_plan(&[builtin_manifest, abi_manifest], &profile).unwrap();
+
+    assert_eq!(
+        plan.plugin_deployments.get("plugin-a"),
+        Some(&PluginDeploymentKind::Builtin)
+    );
+    assert_eq!(
+        plan.plugin_deployments.get("plugin-b"),
+        Some(&PluginDeploymentKind::Abi)
+    );
+}
+
+#[test]
+fn abi_plugin_boots_through_registered_abi_runner_bridge() {
+    let (manifest, runner_descriptor) = abi_plugin_fixture();
+    let reader = Cursor::new(Vec::<u8>::new());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut host = NativePluginHost::new();
+    host.register_manifest(manifest);
+    host.register_abi_runner(Box::new(JsonlRunner::new(
+        runner_descriptor,
+        reader,
+        writer,
+    )));
+
+    let runtime = host.into_runtime(runtime_profile_with_deployment(
+        "plugin-abi",
+        PluginDeploymentKind::Abi,
+    ));
+
+    assert!(runtime.is_ok());
+}
+
+#[test]
+fn enabled_plugin_runner_requires_matching_deployment_bridge() {
+    let (manifest, runner_descriptor) = abi_plugin_fixture();
+    let profile = runtime_profile_with_deployment("plugin-abi", PluginDeploymentKind::Abi);
+    let mut missing_bridge_host = NativePluginHost::new();
+    missing_bridge_host.register_manifest(manifest.clone());
+
+    let missing_bridge = missing_bridge_host
+        .into_runtime(profile.clone())
+        .err()
+        .unwrap();
+
+    assert_eq!(missing_bridge.error().code, ERR_RUNNER_NOT_FOUND);
+
+    let mut mismatched_host = NativePluginHost::new();
+    mismatched_host.register_manifest(manifest);
+    mismatched_host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+
+    let mismatched = mismatched_host.into_runtime(profile).err().unwrap();
+
+    assert_eq!(mismatched.error().code, ERR_REGISTRY_UNAUTHORIZED);
 }
 
 #[test]
@@ -764,11 +870,12 @@ fn resolver_emits_declared_runtime_surfaces() {
         profile_id: "default".into(),
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
+        plugin_deployments: BTreeMap::new(),
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     };
 
-    let plan = crate::resolve_load_plan(&[manifest], &profile);
+    let plan = crate::resolve_load_plan(&[manifest], &profile).unwrap();
 
     assert_surface(
         &plan,

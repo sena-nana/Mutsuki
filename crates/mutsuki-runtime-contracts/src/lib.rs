@@ -22,9 +22,9 @@ pub use error::{
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use plugin::{
     ArtifactType, ContractSurface, ContractSurfaceKind, HandlerBinding, LifecyclePolicy,
-    PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, ProtocolDescriptor,
-    RuntimeLoadPlan, RuntimeLock, RuntimeProfile, SurfaceCompatibility, SurfaceOccupancy,
-    SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
+    PermissionGrant, PluginArtifact, PluginDeploymentKind, PluginManifest, PluginProvides,
+    ProtocolDescriptor, RuntimeLoadPlan, RuntimeLock, RuntimeProfile, SurfaceCompatibility,
+    SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
     CommandBatch, CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor,

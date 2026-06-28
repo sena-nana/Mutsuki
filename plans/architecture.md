@@ -257,6 +257,12 @@ provider RPC 预留边界；当前 backend 仍是测试级本地实现。
 插件声明能力，RuntimeProfile 决定组合，resolver 生成确定性 load plan，Core 只校验和
 物化。
 
+RuntimeProfile 同时声明每个 enabled plugin 的部署形态。Builtin、ABI、WASM、
+process 和 Python 都是 Host 执行面后端：同一插件能力 surface 必须通过统一
+TaskClient / ResourceClient / runner 协议暴露，插件业务代码不根据部署形态分叉。Host
+可以为 builtin 注册本地 runner，也可以为 ABI/WASM/process/Python 注册 bridge runner，
+但这些差异不能进入 Core 调度语义或公共插件 API。
+
 Core 不负责插件扫描、下载、安装、依赖解算、版本选择、Python/npm/cargo 依赖管理或
 运行组合策略。
 

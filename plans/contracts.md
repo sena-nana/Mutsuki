@@ -42,6 +42,7 @@
 | `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 plan commit receipt |
 | `TransactionPlan` / `CommandBatch` / `SagaPlan` | 严格事务、无回滚批量命令和带补偿的 saga 计划 |
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
+| `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
 | `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
 | `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
@@ -262,6 +263,16 @@ Core 只消费 `RuntimeLoadPlan`：
 - 构建 registry。
 - freeze registry。
 - 记录 registry generation。
+
+`PluginManifest` 描述插件能力与 artifact；`RuntimeProfile.plugin_deployments` 描述本次
+运行选择 builtin / ABI / WASM / process / Python 中哪一种部署形态。resolver 必须把每个
+enabled plugin 的部署形态写入 `RuntimeLoadPlan.plugin_deployments`，并校验部署形态与
+artifact 类型兼容。部署形态属于 host 执行面约束，不得进入插件业务代码分支。
+
+Builtin 插件必须仍通过 host 注册 runner/provider 能力，不能因为静态编译进 Host 就进入
+Core 内建逻辑。ABI / WASM / process / Python 插件必须通过对应 host bridge 注册相同的
+runner/task/resource 协议面；插件业务代码只能依赖统一插件 API 和 ResourceRef / plan /
+Task descriptor，不得获得 builtin-only native 引用。
 
 插件运行中不得动态注册未授权 capability。如需变更，必须生成新的 load plan 和
 registry generation。

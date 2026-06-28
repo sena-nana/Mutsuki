@@ -6,6 +6,7 @@ from mutsuki_runtime_python.contracts.plugin import (
     LifecyclePolicy,
     PermissionGrant,
     PluginArtifact,
+    PluginDeploymentKind,
     PluginManifest,
     PluginProvides,
     ProtocolDescriptor,
@@ -109,6 +110,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         plugins=(manifest,),
         load_order=("plugin-a",),
         runner_bindings={"raw.input": "runner-a"},
+        plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
         contract_surfaces=(
             ContractSurface(
                 surface_id="runner:runner-a",
@@ -152,6 +154,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             profile_id="default",
             enabled_plugins=("plugin-a",),
             bindings={"raw.input": "plugin-a"},
+            plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
             allow_dynamic_registration=False,
             allow_hot_reload=True,
         ),

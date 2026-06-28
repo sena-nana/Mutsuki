@@ -17,6 +17,39 @@ pub enum ArtifactType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginDeploymentKind {
+    Builtin,
+    Abi,
+    Wasm,
+    Process,
+    Python,
+}
+
+impl PluginDeploymentKind {
+    pub fn default_for_artifact(artifact_type: &ArtifactType) -> Self {
+        match artifact_type {
+            ArtifactType::Native => Self::Builtin,
+            ArtifactType::Abi => Self::Abi,
+            ArtifactType::Wasm => Self::Wasm,
+            ArtifactType::Process => Self::Process,
+            ArtifactType::Python => Self::Python,
+        }
+    }
+
+    pub fn is_compatible_with_artifact(&self, artifact_type: &ArtifactType) -> bool {
+        matches!(
+            (self, artifact_type),
+            (Self::Builtin, ArtifactType::Native)
+                | (Self::Abi, ArtifactType::Abi)
+                | (Self::Wasm, ArtifactType::Wasm)
+                | (Self::Process, ArtifactType::Process)
+                | (Self::Python, ArtifactType::Python)
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginArtifact {
     pub artifact_type: ArtifactType,
     pub path: String,
@@ -95,6 +128,7 @@ pub struct RuntimeProfile {
     pub profile_id: String,
     pub enabled_plugins: Vec<String>,
     pub bindings: BTreeMap<String, String>,
+    pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
     pub allow_dynamic_registration: bool,
     pub allow_hot_reload: bool,
 }
@@ -193,6 +227,7 @@ pub struct RuntimeLoadPlan {
     pub plugins: Vec<PluginManifest>,
     pub load_order: Vec<String>,
     pub runner_bindings: BTreeMap<String, String>,
+    pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
     pub contract_surfaces: Vec<ContractSurface>,
 }
 

@@ -161,6 +161,7 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
         }],
         load_order: vec!["plugin-a".into()],
         runner_bindings: Default::default(),
+        plugin_deployments: [("plugin-a".into(), PluginDeploymentKind::Builtin)].into(),
         contract_surfaces: vec![
             ContractSurface {
                 surface_id: "runner:plugin-a/a".into(),

@@ -33,6 +33,24 @@ class ArtifactType(StrEnum):
     NATIVE = "native"
 
 
+class PluginDeploymentKind(StrEnum):
+    BUILTIN = "builtin"
+    ABI = "abi"
+    WASM = "wasm"
+    PROCESS = "process"
+    PYTHON = "python"
+
+
+def as_plugin_deployments(
+    value: object, field: str
+) -> dict[str, PluginDeploymentKind]:
+    raw = as_mapping(value, field)
+    return {
+        str(plugin_id): PluginDeploymentKind(as_str(deployment, field))
+        for plugin_id, deployment in raw.items()
+    }
+
+
 @dataclass(frozen=True)
 class PluginArtifact:
     artifact_type: ArtifactType
@@ -215,6 +233,7 @@ class RuntimeProfile:
     profile_id: str
     enabled_plugins: tuple[str, ...]
     bindings: dict[str, str]
+    plugin_deployments: dict[str, PluginDeploymentKind]
     allow_dynamic_registration: bool
     allow_hot_reload: bool
 
@@ -225,6 +244,9 @@ class RuntimeProfile:
             profile_id=as_str(field_value(raw, "profile_id"), "profile_id"),
             enabled_plugins=as_str_tuple(field_value(raw, "enabled_plugins"), "enabled_plugins"),
             bindings=as_str_dict(raw, "bindings"),
+            plugin_deployments=as_plugin_deployments(
+                field_value(raw, "plugin_deployments"), "plugin_deployments"
+            ),
             allow_dynamic_registration=as_bool(
                 field_value(raw, "allow_dynamic_registration"), "allow_dynamic_registration"
             ),
@@ -242,6 +264,7 @@ class RuntimeLoadPlan:
     plugins: tuple[PluginManifest, ...]
     load_order: tuple[str, ...]
     runner_bindings: dict[str, str]
+    plugin_deployments: dict[str, PluginDeploymentKind]
     contract_surfaces: tuple[ContractSurface, ...]
 
     @classmethod
@@ -258,6 +281,9 @@ class RuntimeLoadPlan:
             plugins=tuple_from_json(raw, "plugins", PluginManifest),
             load_order=as_str_tuple(field_value(raw, "load_order"), "load_order"),
             runner_bindings=as_str_dict(raw, "runner_bindings"),
+            plugin_deployments=as_plugin_deployments(
+                field_value(raw, "plugin_deployments"), "plugin_deployments"
+            ),
             contract_surfaces=tuple_from_json(raw, "contract_surfaces", ContractSurface),
         )
 
