@@ -1,3 +1,7 @@
+[build]
+# Avoid inheriting a stale machine-specific absolute path.
+rustc-wrapper = "sccache"
+
 [alias]
 c = "check --workspace --all-targets"
 t = "test --workspace --all-targets"
