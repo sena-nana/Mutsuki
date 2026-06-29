@@ -4,7 +4,7 @@ use mutsuki_runtime_contracts::{
 };
 use std::collections::BTreeMap;
 
-use crate::task_pool::RunnerLoad;
+use crate::task_pool::{RunnerLoad, TASK_LEASE_TTL_STEPS};
 use crate::{RunnerContext, RunnerLoopReport};
 use crate::{RuntimeFailure, RuntimeResult};
 
@@ -31,13 +31,10 @@ impl CoreRuntime {
     ) -> RuntimeResult<RunnerLoopReport> {
         self.current_step += 1;
         self.reclaim_expired_task_leases();
-        let mut claimed = 0;
-        let mut completed = 0;
+        let mut loop_report = empty_runner_loop_report();
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
-            if descriptor.execution_class == ExecutionClass::Control
-                && descriptor.runner_id != "core.kernel"
-            {
+            if !runner_can_dispatch(&descriptor) {
                 continue;
             }
             let load = self.tasks.runner_load(
@@ -47,86 +44,19 @@ impl CoreRuntime {
             );
             let decision = ScheduleDecision::new("core.inline", 1, "inline.default")
                 .clamp_to(load.queued_count);
-            self.record_scheduler_decision(&descriptor, &decision);
-            let executor_id = format!("executor:{}", descriptor.runner_id);
-            let leased_tasks = self.tasks.claim_ready_for_executor(
-                &descriptor,
-                executor_id.clone(),
-                self.current_step,
-                self.load_plan.registry_generation,
-                decision.dispatch_limit,
-            );
-            if leased_tasks.is_empty() {
-                continue;
-            }
-            claimed += leased_tasks.len();
-            if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel"
-            {
-                completed += self.process_kernel_tasks(&descriptor, leased_tasks)?;
-                continue;
-            }
-            let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
-            let lease_id = task_leases[0].lease_id.clone();
-            let invocation_id = lease_id.clone();
-            let runner = self
-                .registry
-                .take_runner(&descriptor.runner_id)
-                .ok_or_else(|| {
-                    RuntimeFailure::new(RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
-                        "runtime.runner_loop",
-                        format!("runner.{}", descriptor.runner_id),
-                    ))
-                })?;
-            let ctx = RunnerContext::new(
-                self.load_plan.registry_generation,
-                self.current_step,
-                executor_id,
-                Some(lease_id.clone()),
-                invocation_id,
-            );
-            let span = self.traces.record(
-                format!("trace-runner-{}", descriptor.runner_id),
-                "runner.step",
-                None,
-                SpanStatus::Ok,
-                runner_attrs(&descriptor, &self.load_plan),
-            );
-            self.events.record(
-                RuntimeEventKind::Trace,
-                "trace.span",
-                Some(descriptor.runner_id.clone()),
-                trace_attrs(&span),
-                None,
-            );
-            let completion = executor.execute(RunnerDispatch {
-                runner,
-                ctx,
-                task_leases,
-                tasks,
-            });
-            let results = completion.results;
-            self.registry.put_runner(completion.runner);
-            let task_leases = completion.task_leases;
-            let results = results?;
-            for result in results {
-                let lease = task_leases
-                    .iter()
-                    .find(|lease| lease.task_id == result.task_id)
-                    .ok_or_else(|| {
-                        RuntimeFailure::new(RuntimeError::new(
-                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                            "runtime.runner_loop",
-                            format!("task.result.{}", result.task_id),
-                        ))
-                    })?;
-                completed += self.route_result(&descriptor, lease, result)?;
+            let (report, dispatch) = self.claim_runner_work(
+                descriptor,
+                decision,
+                Some(self.current_step + TASK_LEASE_TTL_STEPS),
+            )?;
+            loop_report.claimed_tasks += report.claimed_tasks;
+            loop_report.completed_tasks += report.completed_tasks;
+            if let Some(dispatch) = dispatch {
+                loop_report.completed_tasks +=
+                    self.complete_inline_dispatch(executor.execute(dispatch))?;
             }
         }
-        Ok(RunnerLoopReport {
-            claimed_tasks: claimed,
-            completed_tasks: completed,
-        })
+        Ok(loop_report)
     }
 
     pub fn claim_ready_dispatches(
@@ -136,14 +66,11 @@ impl CoreRuntime {
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
         self.current_step += 1;
         self.reclaim_expired_task_leases();
-        let mut claimed = 0;
-        let mut completed = 0;
+        let mut loop_report = empty_runner_loop_report();
         let mut dispatches = Vec::new();
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
-            if descriptor.execution_class == ExecutionClass::Control
-                && descriptor.runner_id != "core.kernel"
-            {
+            if !runner_can_dispatch(&descriptor) {
                 continue;
             }
             let load = self.tasks.runner_load(
@@ -157,76 +84,131 @@ impl CoreRuntime {
                 self.current_step,
                 self.load_plan.registry_generation,
             );
-            self.record_scheduler_decision(&descriptor, &decision);
-            if decision.dispatch_limit == 0 {
-                continue;
+            let (report, dispatch) =
+                self.claim_runner_work(descriptor, decision, lease_expires_at)?;
+            loop_report.claimed_tasks += report.claimed_tasks;
+            loop_report.completed_tasks += report.completed_tasks;
+            if let Some(dispatch) = dispatch {
+                dispatches.push(dispatch);
             }
-            let executor_id = format!("executor:{}", descriptor.runner_id);
-            let leased_tasks = self.tasks.claim_ready_for_executor_with_expiry(
-                &descriptor,
-                executor_id.clone(),
-                self.current_step,
-                self.load_plan.registry_generation,
-                decision.dispatch_limit,
-                lease_expires_at,
-            );
-            if leased_tasks.is_empty() {
-                continue;
-            }
-            claimed += leased_tasks.len();
-            if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel"
-            {
-                completed += self.process_kernel_tasks(&descriptor, leased_tasks)?;
-                continue;
-            }
-            let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
-            let lease_id = task_leases[0].lease_id.clone();
-            let invocation_id = lease_id.clone();
-            let runner = self
-                .registry
-                .take_runner(&descriptor.runner_id)
-                .ok_or_else(|| {
-                    RuntimeFailure::new(RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
-                        "runtime.runner_loop",
-                        format!("runner.{}", descriptor.runner_id),
-                    ))
-                })?;
-            let ctx = RunnerContext::new(
-                self.load_plan.registry_generation,
-                self.current_step,
-                executor_id,
-                Some(lease_id.clone()),
-                invocation_id,
-            );
-            let span = self.traces.record(
-                format!("trace-runner-{}", descriptor.runner_id),
-                "runner.step",
+        }
+        Ok((loop_report, dispatches))
+    }
+
+    fn claim_runner_work(
+        &mut self,
+        descriptor: RunnerDescriptor,
+        decision: ScheduleDecision,
+        lease_expires_at: Option<u64>,
+    ) -> RuntimeResult<(RunnerLoopReport, Option<RunnerDispatch>)> {
+        self.record_scheduler_decision(&descriptor, &decision);
+        if decision.dispatch_limit == 0 {
+            return Ok((empty_runner_loop_report(), None));
+        }
+        let executor_id = format!("executor:{}", descriptor.runner_id);
+        let leased_tasks = self.tasks.claim_ready_for_executor_with_expiry(
+            &descriptor,
+            executor_id.clone(),
+            self.current_step,
+            self.load_plan.registry_generation,
+            decision.dispatch_limit,
+            lease_expires_at,
+        );
+        if leased_tasks.is_empty() {
+            return Ok((empty_runner_loop_report(), None));
+        }
+        let claimed_tasks = leased_tasks.len();
+        if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel" {
+            let completed_tasks = self.process_kernel_tasks(&descriptor, leased_tasks)?;
+            return Ok((
+                RunnerLoopReport {
+                    claimed_tasks,
+                    completed_tasks,
+                },
                 None,
-                SpanStatus::Ok,
-                runner_attrs(&descriptor, &self.load_plan),
-            );
-            self.events.record(
-                RuntimeEventKind::Trace,
-                "trace.span",
-                Some(descriptor.runner_id.clone()),
-                trace_attrs(&span),
-                None,
-            );
-            dispatches.push(RunnerDispatch {
-                runner,
-                ctx,
-                task_leases,
-                tasks,
-            });
+            ));
         }
         Ok((
             RunnerLoopReport {
-                claimed_tasks: claimed,
-                completed_tasks: completed,
+                claimed_tasks,
+                completed_tasks: 0,
             },
-            dispatches,
+            Some(self.build_runner_dispatch(&descriptor, executor_id, leased_tasks)?),
         ))
+    }
+
+    fn build_runner_dispatch(
+        &mut self,
+        descriptor: &RunnerDescriptor,
+        executor_id: String,
+        leased_tasks: Vec<(
+            mutsuki_runtime_contracts::TaskLease,
+            mutsuki_runtime_contracts::Task,
+        )>,
+    ) -> RuntimeResult<RunnerDispatch> {
+        let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
+        let lease_id = task_leases[0].lease_id.clone();
+        let invocation_id = lease_id.clone();
+        let runner = self
+            .registry
+            .take_runner(&descriptor.runner_id)
+            .ok_or_else(|| {
+                RuntimeFailure::new(RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
+                    "runtime.runner_loop",
+                    format!("runner.{}", descriptor.runner_id),
+                ))
+            })?;
+        let ctx = RunnerContext::new(
+            self.load_plan.registry_generation,
+            self.current_step,
+            executor_id,
+            Some(lease_id),
+            invocation_id,
+        );
+        let span = self.traces.record(
+            format!("trace-runner-{}", descriptor.runner_id),
+            "runner.step",
+            None,
+            SpanStatus::Ok,
+            runner_attrs(descriptor, &self.load_plan),
+        );
+        self.events.record(
+            RuntimeEventKind::Trace,
+            "trace.span",
+            Some(descriptor.runner_id.clone()),
+            trace_attrs(&span),
+            None,
+        );
+        Ok(RunnerDispatch {
+            runner,
+            ctx,
+            task_leases,
+            tasks,
+        })
+    }
+
+    fn complete_inline_dispatch(&mut self, completion: RunnerCompletion) -> RuntimeResult<usize> {
+        let descriptor = completion.runner.descriptor().clone();
+        let results = completion.results;
+        self.registry.put_runner(completion.runner);
+        let task_leases = completion.task_leases;
+        let results = results?;
+        let mut completed = 0;
+        for result in results {
+            let lease = task_leases
+                .iter()
+                .find(|lease| lease.task_id == result.task_id)
+                .ok_or_else(|| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                        "runtime.runner_loop",
+                        format!("task.result.{}", result.task_id),
+                    ))
+                })?;
+            completed += self.route_result(&descriptor, lease, result)?;
+        }
+        Ok(completed)
     }
 
     fn record_scheduler_decision(
@@ -441,4 +423,15 @@ impl CoreRuntime {
 fn is_stale_completion_conflict(error: &RuntimeError) -> bool {
     error.code == mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT
         && error.route.starts_with("task.route.")
+}
+
+fn runner_can_dispatch(descriptor: &RunnerDescriptor) -> bool {
+    descriptor.execution_class != ExecutionClass::Control || descriptor.runner_id == "core.kernel"
+}
+
+fn empty_runner_loop_report() -> RunnerLoopReport {
+    RunnerLoopReport {
+        claimed_tasks: 0,
+        completed_tasks: 0,
+    }
 }
