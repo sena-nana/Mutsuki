@@ -30,7 +30,7 @@ impl CoreRuntime {
         executor: &mut impl RunnerExecutor,
     ) -> RuntimeResult<RunnerLoopReport> {
         self.current_step += 1;
-        self.tasks.reclaim_expired_leases(self.current_step);
+        self.reclaim_expired_task_leases();
         let mut claimed = 0;
         let mut completed = 0;
         let descriptors = self.registry.descriptors();
@@ -135,7 +135,7 @@ impl CoreRuntime {
         lease_expires_at: Option<u64>,
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
         self.current_step += 1;
-        self.tasks.reclaim_expired_leases(self.current_step);
+        self.reclaim_expired_task_leases();
         let mut claimed = 0;
         let mut completed = 0;
         let mut dispatches = Vec::new();
@@ -301,17 +301,31 @@ impl CoreRuntime {
         };
         let mut completed = 0;
         for result in results {
-            let lease = task_leases
+            let Some(lease) = task_leases
                 .iter()
                 .find(|lease| lease.task_id == result.task_id)
-                .ok_or_else(|| {
-                    RuntimeFailure::new(RuntimeError::new(
+            else {
+                let task_id = result.task_id;
+                self.record_rejected_runner_result(
+                    task_id.clone(),
+                    RuntimeError::new(
                         mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                         "runtime.runner_loop",
-                        format!("task.result.{}", result.task_id),
-                    ))
-                })?;
-            completed += self.route_result(&descriptor, lease, result)?;
+                        format!("task.result.{task_id}"),
+                    ),
+                );
+                continue;
+            };
+            match self.route_result(&descriptor, lease, result) {
+                Ok(count) => completed += count,
+                Err(failure) if is_stale_completion_conflict(failure.error()) => {
+                    self.record_rejected_runner_result(
+                        lease.task_id.clone(),
+                        failure.error().clone(),
+                    );
+                }
+                Err(failure) => return Err(failure),
+            }
         }
         Ok(RunnerLoopReport {
             claimed_tasks: 0,
@@ -343,6 +357,70 @@ impl CoreRuntime {
         Ok(completed)
     }
 
+    fn reclaim_expired_task_leases(&mut self) {
+        let reclaimed = self.tasks.reclaim_expired_task_leases(self.current_step);
+        for lease in &reclaimed {
+            let mut attrs = BTreeMap::new();
+            attrs.insert(
+                "lease_id".into(),
+                ScalarValue::String(lease.lease_id.clone()),
+            );
+            attrs.insert(
+                "runner_id".into(),
+                ScalarValue::String(lease.runner_id.clone()),
+            );
+            attrs.insert(
+                "executor_id".into(),
+                ScalarValue::String(lease.executor_id.clone()),
+            );
+            attrs.insert(
+                "registry_generation".into(),
+                ScalarValue::Int(lease.registry_generation as i64),
+            );
+            attrs.insert(
+                "acquired_at_step".into(),
+                ScalarValue::Int(lease.acquired_at_step as i64),
+            );
+            if let Some(expires_at_step) = lease.expires_at_step {
+                attrs.insert(
+                    "expires_at_step".into(),
+                    ScalarValue::Int(expires_at_step as i64),
+                );
+            }
+            attrs.insert(
+                "current_step".into(),
+                ScalarValue::Int(self.current_step as i64),
+            );
+            self.events.record(
+                RuntimeEventKind::Task,
+                "task.lease.expired",
+                Some(lease.task_id.clone()),
+                attrs,
+                None,
+            );
+        }
+    }
+
+    fn record_rejected_runner_result(&mut self, task_id: String, error: RuntimeError) {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("error_code".into(), ScalarValue::String(error.code.clone()));
+        attrs.insert(
+            "error_route".into(),
+            ScalarValue::String(error.route.clone()),
+        );
+        attrs.insert(
+            "current_step".into(),
+            ScalarValue::Int(self.current_step as i64),
+        );
+        self.events.record(
+            RuntimeEventKind::Task,
+            "task.result.rejected",
+            Some(task_id),
+            attrs,
+            Some(error),
+        );
+    }
+
     pub fn run_until_idle(&mut self, max_ticks: usize) -> RuntimeResult<RunnerLoopReport> {
         let mut aggregate = RunnerLoopReport {
             claimed_tasks: 0,
@@ -358,4 +436,9 @@ impl CoreRuntime {
         }
         Ok(aggregate)
     }
+}
+
+fn is_stale_completion_conflict(error: &RuntimeError) -> bool {
+    error.code == mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT
+        && error.route.starts_with("task.route.")
 }

@@ -1,5 +1,6 @@
 mod fixtures;
 mod handler_bindings;
+mod lease_fencing;
 mod reload_generation;
 mod reload_surface;
 mod resource_manager;

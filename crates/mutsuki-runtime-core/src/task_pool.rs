@@ -401,8 +401,8 @@ impl TaskPool {
         validate_record_lease(self.record(task_id)?, lease, current_step, action)
     }
 
-    pub fn reclaim_expired_leases(&mut self, current_step: u64) -> usize {
-        let mut reclaimed = 0;
+    pub fn reclaim_expired_task_leases(&mut self, current_step: u64) -> Vec<TaskLease> {
+        let mut reclaimed = Vec::new();
         for record in self.tasks.values_mut() {
             if record.status != TaskStatus::Running {
                 continue;
@@ -413,12 +413,18 @@ impl TaskPool {
                 .and_then(|lease| lease.expires_at_step)
                 .is_some_and(|expires_at| current_step >= expires_at);
             if expired {
+                if let Some(lease) = record.lease.clone() {
+                    reclaimed.push(lease);
+                }
                 record.status = TaskStatus::Ready;
                 release_record_lease(record);
-                reclaimed += 1;
             }
         }
         reclaimed
+    }
+
+    pub fn reclaim_expired_leases(&mut self, current_step: u64) -> usize {
+        self.reclaim_expired_task_leases(current_step).len()
     }
 
     pub fn awaits_for_parent(&self, task_id: &str) -> Vec<TaskAwait> {
