@@ -61,7 +61,7 @@
 
 ## 3. Task 与 Runner 接口
 
-`Task.protocol_id` 是当前调度事实源。早期 task-kind 兼容字段不再属于当前 wire shape。
+`Task.protocol_id` 是当前调度事实源。wire shape 不包含额外 task kind 兼容字段。
 
 ```text
 Runner.step(ctx, tasks) -> Vec<RunnerResult>

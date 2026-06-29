@@ -1,9 +1,6 @@
 # Mutsuki Concepts
 
-本文件曾记录早期 agent/message/operation 概念模型。该模型已经被 GitHub issue
-#1-#3 规定的 TaskPool + Plugin Runner 架构取代。
-
-当前概念事实源：
+本文件只作为当前 runtime 概念入口。详细设计以以下文件为事实源：
 
 - [roadmap.md](roadmap.md)
 - [architecture.md](architecture.md)
@@ -11,8 +8,8 @@
 
 当前核心概念：
 
-- 一切待处理内容都是 `Task`。
-- 一切执行、编排和外部操作适配单元都是 `Runner`。
+- 一切待处理控制消息都是 `Task`。
+- 一切执行、编排和外部操作适配单元都通过 `Runner` 推进。
 - TaskPool 是统一待处理事实源。
 - Pure runner 不直接提交状态或执行副作用。
 - StateStore 只通过 `core.commit` task 修改。

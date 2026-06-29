@@ -1,8 +1,8 @@
-# Python Runner Kit MVP
+# Python Runner Kit
 
-早期 Python backend MVP 已被 Python runner kit 取代。
+Python 端只保留 runner kit，不拥有 runtime kernel，也不提供第二套 TaskPool。
 
-当前 MVP：
+当前范围：
 
 - Python mirror contracts。
 - `PythonRunnerHost`。
@@ -10,7 +10,7 @@
   `runner.dispose`。
 - `PythonResourceManager`，支持 inline value、ValueRef、file-backed ResourceRef、
   copy-on-write 和 ExclusiveWriteLease。
-- public API 不导出早期 backend 兼容层。
+- public API 面向 runner、resource descriptor 和 JSONL runner server。
 
 验证从 `python/mutsuki-runtime-python` 运行：
 

@@ -6,7 +6,7 @@ runtime kernel、纯协议契约和 native runner host helper；Python 端只保
 
 ## 一句话定位
 
-为 Yume / mind-sim、工程 runner 与传统 Bot 能力提供领域中立运行核心。Rust core
+为工程 runner、plugin runner 与 sidecar 能力提供领域中立运行核心。Rust core
 只负责 TaskPool、RunnerRegistry、RunnerLoop、ResultRouter、StateStore、
 ResourceManager、EventLog、TraceLog 和 load-plan 校验；具体业务能力由 host、
 plugin、runner 或 sidecar 组合实现。
@@ -25,9 +25,9 @@ plugin、runner 或 sidecar 组合实现。
 
 ## Hard Rules
 
-1. **Task 是一等运行事实**：所有待处理控制消息进入 `TaskPool`；不恢复早期实例私有队列或多队列调度形态作为核心事实源。
+1. **Task 是一等运行事实**：所有待处理控制消息进入 `TaskPool`；不得引入实例私有队列或多队列调度形态作为核心事实源。
 2. **Runner 是唯一执行单元**：插件通过 `RunnerDescriptor` 声明可处理的 task kind、schema、purity 和 generation；core 只注册、claim、调用和路由结果。
-3. **核心不内置业务概念**：LLM、记忆、情感、睡眠、IM、MCP、ChatCompletion、Yume、Lilia、工程工具等不得进入 Rust core。
+3. **核心不内置业务概念**：产品、业务协议、应用状态、工具调用和外部服务概念不得进入 Rust core。
 4. **副作用必须 task 化**：Pure runner 只能返回 `Task`、`DomainEvent`、`StateDelta`、`EffectRequest`；外部副作用必须变成 `effect.*` task，由 Effectful runner 执行。
 5. **状态只能通过 Committer 提交**：StateStore/EventLog 只由 `core.commit`、`core.event.append` 等 kernel task 和 Committer runner 修改。
 6. **ResourceRef/ValueRef 是 descriptor**：跨 runtime 边界只能传 ref descriptor、schema、generation、lifetime、lease 和访问方式；不得传 Python object、Rust pointer、Arc、Vec 本体、socket、SDK client、数据库连接或真实 handle。
@@ -52,7 +52,7 @@ plugin、runner 或 sidecar 组合实现。
 - Root Rust crates 不依赖 Python。
 - `python/mutsuki-runtime-python/` 是当前 Python runner kit，必须镜像新 contracts wire shape。
 - Python sidecar 只能通过 runner step、management cancel/dispose 和 resource broker 纯协议与 Rust runtime 通信。
-- 旧 generation key、runner host 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的新 handler。
+- generation key、runner host 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的 handler。
 
 ## Git 提交
 

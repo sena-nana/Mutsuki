@@ -23,5 +23,4 @@ runner.cancel
 runner.dispose
 ```
 
-旧 `on_awake`、`on_input`、`next_step`、`invoke`、`operation_status` 和 `resource.*`
-backend 方法面不再是当前主链协议。
+Python runner kit 的 public API 必须围绕上述方法面和 Rust contracts mirror 展开。

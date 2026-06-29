@@ -1,6 +1,6 @@
-# Execution Boundary
+# Runtime Execution Boundary
 
-旧 Agent execution boundary 已废弃。当前执行边界是 TaskPool + Runner：
+当前执行边界是 TaskPool + Runner：
 
 - CoreRuntime 负责 TaskPool、RunnerRegistry、RunnerLoop、ResultRouter、StateStore、
   ResourceManager、EventLog 和 TraceLog。

@@ -48,10 +48,6 @@ The first standard plugin batch follows GitHub issue #8:
 - standard runtime plugin ids reserve the `mutsuki.std.<domain>.<name>` prefix;
 - protocol ids use `mutsuki.<domain>.<action>` and do not include `plugin`.
 
-Preserved QQ/LLM/Agent-adjacent experiments are not part of that standard
-library batch. They live under postponed or dev-only package names and use
-`mutsuki.experimental.*` plugin ids when kept for smoke tests.
-
 ## Verification
 
 ```powershell

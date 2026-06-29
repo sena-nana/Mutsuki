@@ -10,8 +10,8 @@ Core = TaskStore / TaskPool + TaskLease + RunnerRegistry + Executor dispatch
 ```
 
 Core 只保证单个 Task 的状态、入池、租约、执行提交和资源引用一致性。复杂流程、
-顺序执行、广播、pre/filter/post、matcher 分派、IM/HTTP/日志 pipeline 均由协议包
-或编排插件在 Core 之上实现。
+顺序执行、广播、pre/filter/post、matcher 分派和业务 pipeline 均由协议包或编排插件
+在 Core 之上实现。
 
 ## 1. 分层
 
@@ -346,5 +346,5 @@ Contract surface 兼容性：
 
 ## 10. Domain Neutrality
 
-模拟个体不是 runtime 实例，而是上层 Store 中的数据聚合。Rust core 中不得出现
-Yume、LLM、IM、MCP、ChatCompletion、OneBot 等领域或产品专用执行分支。
+业务对象不是 runtime 实例，而是上层 Store 中的数据聚合。Rust core 中不得出现领域或
+产品专用执行分支。

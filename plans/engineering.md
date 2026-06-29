@@ -10,7 +10,7 @@
 - thiserror 用于 runtime failure wrapper。
 - Python 3.13+ + uv 用于 `python/mutsuki-runtime-python/`。
 
-Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、LLM provider 或领域语义。
+Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、外部服务 provider 或领域语义。
 
 ## 2. 目录结构
 
@@ -105,4 +105,3 @@ uv run pytest
 
 - 公共协议、core runtime、ResourceManager、PluginHost、热重载或目录边界变化，提交前必须检查 diff 范围。
 - 不覆盖用户或其他 Agent 的已有改动。
-- 历史 version report 保留历史事实，不要求随当前架构改写。
