@@ -22,6 +22,7 @@ Mutsuki/
     mutsuki-runtime-core/       # CoreRuntime / TaskPool / TaskLease / Executor dispatch / ResourceManager
     mutsuki-runtime-host/       # native runner host / JSONL runner client
     mutsuki-runtime-sdk/        # Rust SDK async/await wrapper over TaskHandle
+    mutsuki-runtime-sdk-macros/ # Rust SDK proc-macro authoring DSL
   plans/
   python/
     mutsuki-runtime-python/     # Python runner kit and protocol mirror
@@ -47,6 +48,9 @@ Mutsuki/
   `CapabilityBroker`、`TaskSubmitter`、`ResourceBackend`、`EventBridge`、
   `ConfigProvider` 和 `ShutdownController`。这些 trait 必须落回现有 contracts /
   host-side adapter，不得把 async runtime 语义或动态注册语义反向写入 Core。
+- `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
+  `ResourceKind` / descriptor 和 async runner adapter glue；宏展开不得引入本地直调、
+  workflow runtime、隐式调度或绕过 `TaskPool` 的执行路径。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
   server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API。
 

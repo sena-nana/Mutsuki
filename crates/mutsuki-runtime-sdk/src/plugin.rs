@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest, PluginProvides,
-    RunnerDescriptor, ScalarValue,
+    ArtifactType, HandlerBinding, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest,
+    PluginProvides, ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 
-use crate::HostService;
+use crate::{HostService, ProtocolSpec, ResourceKindSpec};
 
 pub struct PluginHostService {
     pub service_id: String,
@@ -142,6 +142,37 @@ impl PluginBuilder {
 
     pub fn runner_descriptor(mut self, descriptor: RunnerDescriptor) -> Self {
         self.provides.runners.push(descriptor);
+        self
+    }
+
+    pub fn protocol<P>(mut self) -> Self
+    where
+        P: ProtocolSpec,
+    {
+        self.provides.protocols.push(P::descriptor());
+        self
+    }
+
+    pub fn protocol_descriptor(mut self, descriptor: ProtocolDescriptor) -> Self {
+        self.provides.protocols.push(descriptor);
+        self
+    }
+
+    pub fn handler_binding(mut self, binding: HandlerBinding) -> Self {
+        self.provides.handler_bindings.push(binding);
+        self
+    }
+
+    pub fn resource_type<R>(mut self) -> Self
+    where
+        R: ResourceKindSpec,
+    {
+        self.provides.resource_types.push(R::descriptor());
+        self
+    }
+
+    pub fn resource_type_descriptor(mut self, descriptor: ResourceTypeDescriptor) -> Self {
+        self.provides.resource_types.push(descriptor);
         self
     }
 

@@ -24,6 +24,33 @@ impl SdkProtocol for ParentWork {
     const PROTOCOL_ID: &'static str = "parent.work";
 }
 
+#[derive(mutsuki_runtime_sdk::SdkProtocol)]
+#[mutsuki(protocol_id = "macro.echo", version = "1.0.0")]
+struct MacroEchoInput;
+
+#[derive(mutsuki_runtime_sdk::ResourceKind)]
+#[mutsuki(
+    kind_id = "macro.text_buffer",
+    semantic = "cow_versioned_state",
+    schema = "macro.text_buffer.v1",
+    provider_id = "macro.provider",
+    operations("collect", "patch")
+)]
+struct MacroTextBuffer;
+
+#[mutsuki_runtime_sdk::mutsuki_runner(
+    runner_id = "macro.echo.runner",
+    plugin_id = "macro.plugin",
+    accepts(MacroEchoInput),
+    purity = "pure",
+    execution_class = "cpu"
+)]
+async fn macro_echo(ctx: AsyncRunnerContext, task: Task) -> RuntimeResult<RunnerResult> {
+    ctx.call::<MacroEchoInput>(json!({"from": task.task_id}))
+        .await?;
+    Ok(RunnerResult::completed(task.task_id))
+}
+
 fn async_descriptor() -> RunnerDescriptor {
     RunnerDescriptor {
         runner_id: "async.runner".into(),
@@ -415,6 +442,16 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
     let descriptor = async_descriptor();
     let plugin = PluginBuilder::new("plugin-a")
         .version("1.2.3")
+        .protocol::<MacroEchoInput>()
+        .resource_type::<MacroTextBuffer>()
+        .handler_binding(
+            HandlerBindingBuilder::from_protocols::<MacroEchoInput, MacroEchoInput>(
+                "binding:macro.echo",
+                "plugin-a",
+            )
+            .target_runner_hint("macro.echo.runner")
+            .build(),
+        )
         .runner(Box::new(TestRunner {
             descriptor: descriptor.clone(),
         }))
@@ -424,6 +461,20 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
     assert_eq!(plugin.manifest.plugin_id, "plugin-a");
     assert_eq!(plugin.manifest.version, "1.2.3");
     assert_eq!(plugin.manifest.provides.runners, vec![descriptor]);
+    assert_eq!(
+        plugin.manifest.provides.protocols[0].protocol_id,
+        "macro.echo"
+    );
+    assert_eq!(
+        plugin.manifest.provides.resource_types[0].kind_id,
+        "macro.text_buffer"
+    );
+    assert_eq!(
+        plugin.manifest.provides.handler_bindings[0]
+            .target_runner_hint
+            .as_deref(),
+        Some("macro.echo.runner")
+    );
     assert_eq!(plugin.runners.len(), 1);
     assert_eq!(plugin.host_services[0].service_id, "service.echo");
 
@@ -431,6 +482,88 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
         BuiltinPluginLoader::new().with_plugin(Box::new(PluginBuilder::new("plugin-b")));
     let loaded = loader.load_plugins().unwrap();
     assert_eq!(loaded[0].manifest.plugin_id, "plugin-b");
+}
+
+#[test]
+fn descriptor_builders_create_sdk_authoring_surfaces() {
+    let protocol = ProtocolDescriptorBuilder::new("builder.protocol")
+        .version("2.0.0")
+        .input_schema(json!({"type": "object"}))
+        .build();
+    let runner = RunnerDescriptorBuilder::new("builder.runner", "builder.plugin")
+        .accepts::<MacroEchoInput>()
+        .purity(RunnerPurity::Pure)
+        .execution_class(ExecutionClass::Cpu)
+        .build();
+    let binding = HandlerBindingBuilder::from_protocols::<MacroEchoInput, MacroEchoInput>(
+        "binding:builder",
+        "builder.plugin",
+    )
+    .target_runner_hint("builder.runner")
+    .pool_id("cpu")
+    .priority(7)
+    .build();
+    let resource =
+        ResourceTypeDescriptorBuilder::new("builder.resource", ResourceSemantic::CowVersionedState)
+            .schema("builder.resource.v1")
+            .provider_id("builder.provider")
+            .operations(["collect", "patch"])
+            .build();
+
+    assert_eq!(protocol.version, "2.0.0");
+    assert_eq!(runner.accepted_protocol_ids, vec!["macro.echo".to_string()]);
+    assert_eq!(runner.contract_surfaces, vec!["runner:builder.runner"]);
+    assert_eq!(binding.pool_id, "cpu");
+    assert_eq!(binding.priority, 7);
+    assert_eq!(resource.provider_id, "builder.provider");
+    assert_eq!(
+        resource.compatibility.required_operations,
+        vec!["collect".to_string(), "patch".to_string()]
+    );
+}
+
+#[test]
+fn derive_macros_generate_protocol_resource_and_runner_descriptors() {
+    let protocol = MacroEchoInput::descriptor();
+    let resource = MacroTextBuffer::descriptor();
+    let runner = macro_echo_descriptor();
+
+    assert_eq!(protocol.protocol_id, "macro.echo");
+    assert_eq!(protocol.version, "1.0.0");
+    assert_eq!(resource.kind_id, "macro.text_buffer");
+    assert_eq!(resource.semantic, ResourceSemantic::CowVersionedState);
+    assert_eq!(resource.operations, vec!["collect", "patch"]);
+    assert_eq!(runner.runner_id, "macro.echo.runner");
+    assert_eq!(runner.plugin_id, "macro.plugin");
+    assert_eq!(runner.accepted_protocol_ids, vec!["macro.echo".to_string()]);
+}
+
+#[test]
+fn macro_generated_runner_adapter_suspends_with_child_task_and_await() {
+    let client = Arc::new(ManualClient {
+        outcomes: Mutex::new(HashMap::new()),
+    });
+    let mut adapter = macro_echo_adapter(client);
+
+    let first = adapter
+        .step(
+            RunnerContext::new(
+                1,
+                1,
+                "executor:test",
+                Some("lease:test".into()),
+                "invocation:test",
+            ),
+            vec![Task::new("macro-parent", "macro.echo", json!({}))],
+        )
+        .unwrap();
+
+    assert_eq!(first[0].status, RunnerStatus::Waiting);
+    assert_eq!(first[0].tasks[0].task_id, "macro-parent:call:1");
+    assert_eq!(first[0].tasks[0].protocol_id, "macro.echo");
+    let task_await = first[0].task_await.as_ref().unwrap();
+    assert_eq!(task_await.parent_task_id, "macro-parent");
+    assert_eq!(task_await.child.task_id, "macro-parent:call:1");
 }
 
 #[test]

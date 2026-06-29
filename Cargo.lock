@@ -48,8 +48,18 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk-macros",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "mutsuki-runtime-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

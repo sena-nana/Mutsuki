@@ -5,29 +5,42 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+extern crate self as mutsuki_runtime_sdk;
+
 use mutsuki_runtime_contracts::{
     CancelPolicy, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
     ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus, Task, TaskAwait, TaskHandle,
     TaskOutcome, TaskStepContinuation,
 };
-use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
 use serde_json::Value;
 
 mod backend;
+mod descriptor;
 mod host;
 mod plugin;
 mod resource;
 
 pub use backend::ResourceBackend;
+pub use descriptor::{
+    HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,
+    ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,
+};
 pub use host::{
     CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostService,
     HostServiceRegistry, ManualShutdownController, NoopEventBridge, RecordingEventBridge,
     ShutdownController, StaticCapabilityBroker, StaticConfigProvider, TaskSubmitter,
     TaskSubmitterRuntimeClient,
 };
+pub use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
+pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader};
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
+
+pub mod contracts {
+    pub use mutsuki_runtime_contracts::*;
+}
 
 pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;

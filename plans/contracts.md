@@ -99,6 +99,10 @@ Python runner kit: await ctx.call_raw(protocol_id, payload) -> TaskOutcome
 JS/TS SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
 ```
 
+Rust SDK 的 derive / attribute 宏只生成同一 `ProtocolDescriptor`、`ResourceTypeDescriptor`、
+`RunnerDescriptor`、`PluginManifest` 和 `AsyncRunnerAdapter` glue；它们不是新的 wire
+protocol object，也不能引入 workflow、broadcast、本地直调或绕过 TaskPool 的执行语义。
+
 Core 不暴露 Rust `Future`、Promise、Coroutine、join/select、TaskGroup、WaitSet 或通用
 executor。
 Python runner kit 的 async adapter 只接受 Mutsuki task awaitable；普通 `asyncio`
