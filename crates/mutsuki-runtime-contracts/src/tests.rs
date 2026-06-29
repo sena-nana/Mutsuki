@@ -35,6 +35,16 @@ fn resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> Reso
     }
 }
 
+fn resource_provider_compatibility() -> ResourceProviderCompatibility {
+    ResourceProviderCompatibility {
+        schema_version: "1.0.0".into(),
+        required_operations: vec!["read".into(), "export".into()],
+        preserves_resource_type_id: true,
+        accepts_older_generations: true,
+        lease_drain_required: true,
+    }
+}
+
 #[test]
 fn task_runner_resource_contracts_roundtrip_json() {
     let task = Task {
@@ -122,12 +132,52 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
             schema: "bytes.v1".into(),
             provider_id: "resource.local".into(),
             operations: vec!["read".into(), "export".into()],
+            reload_policy: ResourceProviderReloadPolicy::CompatibleWithoutLeases,
+            compatibility: resource_provider_compatibility(),
         }],
         effects: vec!["effect.chat.send".into()],
         streams: vec!["chat.events".into()],
         subscriptions: vec!["chat.messages".into()],
         timers: vec!["heartbeat".into()],
         state_schemas: vec!["state.actor.v1".into()],
+        host_backends: vec![HostBackendDescriptor {
+            backend_id: "host.backend.builtin".into(),
+            kind: HostExtensionKind::PluginBackend,
+            supported_deployments: vec![PluginDeploymentKind::Builtin],
+            reload_policy: "drain_and_swap".into(),
+            drain_required: true,
+        }],
+        plugin_backends: vec![PluginBackendDescriptor {
+            backend_id: "plugin.backend.builtin".into(),
+            deployment_kind: PluginDeploymentKind::Builtin,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: Some("codec.json".into()),
+            bridge_id: None,
+        }],
+        codecs: vec![CodecDescriptor {
+            codec_id: "codec.json".into(),
+            media_type: "application/json".into(),
+            version: "1.0.0".into(),
+            connection_scoped: true,
+        }],
+        bridges: vec![BridgeDescriptor {
+            bridge_id: "bridge.abi.jsonl".into(),
+            deployment_kind: PluginDeploymentKind::Abi,
+            codec_ids: vec!["codec.json".into()],
+            drain_policy: "connection_drain".into(),
+        }],
+        scheduler_policies: vec![SchedulerPolicyDescriptor {
+            policy_id: "scheduler.fair".into(),
+            version: "1.0.0".into(),
+            decision_scope: "dispatch_budget".into(),
+        }],
+        workflows: vec![WorkflowDescriptor {
+            workflow_id: "workflow.linear".into(),
+            state_resource_kind: "workflow.instance".into(),
+            runner_protocol_id: "workflow.linear.run".into(),
+            reload_policy: "state_resource_handoff".into(),
+        }],
     };
     let plan = RuntimeLoadPlan {
         lock_version: 1,
@@ -207,6 +257,81 @@ fn surface_occupancy_handle_roundtrips_json() {
         serde_json::from_str::<SurfaceOccupancyHandle>(&serde_json::to_string(&handle).unwrap())
             .unwrap(),
         handle
+    );
+}
+
+#[test]
+fn system_extension_descriptors_roundtrip_json() {
+    let host_backend = HostBackendDescriptor {
+        backend_id: "host.backend.process".into(),
+        kind: HostExtensionKind::Bridge,
+        supported_deployments: vec![PluginDeploymentKind::Process],
+        reload_policy: "drain_and_swap".into(),
+        drain_required: true,
+    };
+    let plugin_backend = PluginBackendDescriptor {
+        backend_id: "plugin.backend.process".into(),
+        deployment_kind: PluginDeploymentKind::Process,
+        task_client_protocol: "mutsuki.task.v1".into(),
+        resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+        codec_id: Some("codec.json".into()),
+        bridge_id: Some("bridge.process.jsonl".into()),
+    };
+    let codec = CodecDescriptor {
+        codec_id: "codec.json".into(),
+        media_type: "application/json".into(),
+        version: "1.0.0".into(),
+        connection_scoped: true,
+    };
+    let bridge = BridgeDescriptor {
+        bridge_id: "bridge.process.jsonl".into(),
+        deployment_kind: PluginDeploymentKind::Process,
+        codec_ids: vec!["codec.json".into()],
+        drain_policy: "connection_drain".into(),
+    };
+    let policy = SchedulerPolicyDescriptor {
+        policy_id: "scheduler.priority".into(),
+        version: "1.0.0".into(),
+        decision_scope: "dispatch_budget".into(),
+    };
+    let workflow = WorkflowDescriptor {
+        workflow_id: "workflow.retry".into(),
+        state_resource_kind: "workflow.instance.retry".into(),
+        runner_protocol_id: "workflow.retry.run".into(),
+        reload_policy: "drain_or_handoff".into(),
+    };
+
+    assert_eq!(
+        serde_json::from_str::<HostBackendDescriptor>(
+            &serde_json::to_string(&host_backend).unwrap()
+        )
+        .unwrap(),
+        host_backend
+    );
+    assert_eq!(
+        serde_json::from_str::<PluginBackendDescriptor>(
+            &serde_json::to_string(&plugin_backend).unwrap()
+        )
+        .unwrap(),
+        plugin_backend
+    );
+    assert_eq!(
+        serde_json::from_str::<CodecDescriptor>(&serde_json::to_string(&codec).unwrap()).unwrap(),
+        codec
+    );
+    assert_eq!(
+        serde_json::from_str::<BridgeDescriptor>(&serde_json::to_string(&bridge).unwrap()).unwrap(),
+        bridge
+    );
+    assert_eq!(
+        serde_json::from_str::<SchedulerPolicyDescriptor>(&serde_json::to_string(&policy).unwrap())
+            .unwrap(),
+        policy
+    );
+    assert_eq!(
+        serde_json::from_str::<WorkflowDescriptor>(&serde_json::to_string(&workflow).unwrap())
+            .unwrap(),
+        workflow
     );
 }
 
@@ -452,6 +577,13 @@ fn missing_new_contract_fields_fail_deserialization() {
         "resource_schemas": [],
         "resource_providers": [],
         "effects": []
+    }));
+    assert_missing_fields_fail::<ResourceTypeDescriptor>(serde_json::json!({
+        "kind_id": "blob",
+        "semantic": "frozen_value",
+        "schema": "bytes.v1",
+        "provider_id": "resource.local",
+        "operations": []
     }));
     assert_missing_fields_fail::<SurfaceOccupancyHandle>(serde_json::json!({
         "handle_id": "timer:1"

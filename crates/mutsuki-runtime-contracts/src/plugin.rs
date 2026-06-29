@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::extension::{
+    BridgeDescriptor, CodecDescriptor, HostBackendDescriptor, PluginBackendDescriptor,
+    SchedulerPolicyDescriptor, WorkflowDescriptor,
+};
 use crate::{
     BindingId, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue, SurfaceId,
 };
@@ -84,6 +88,12 @@ pub struct PluginProvides {
     pub subscriptions: Vec<String>,
     pub timers: Vec<String>,
     pub state_schemas: Vec<String>,
+    pub host_backends: Vec<HostBackendDescriptor>,
+    pub plugin_backends: Vec<PluginBackendDescriptor>,
+    pub codecs: Vec<CodecDescriptor>,
+    pub bridges: Vec<BridgeDescriptor>,
+    pub scheduler_policies: Vec<SchedulerPolicyDescriptor>,
+    pub workflows: Vec<WorkflowDescriptor>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,6 +151,12 @@ pub enum ContractSurfaceKind {
     Schema,
     ResourceSchema,
     ResourceProvider,
+    HostBackend,
+    PluginBackend,
+    Codec,
+    Bridge,
+    SchedulerPolicy,
+    Workflow,
     Effect,
     Stream,
     Subscription,

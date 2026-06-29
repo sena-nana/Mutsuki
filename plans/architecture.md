@@ -273,6 +273,44 @@ Core 负责：
 - 构建并 freeze RunnerRegistry、HandlerBindingRegistry 和 contract surface。
 - 记录 registry generation、plugin generation 和 contract fingerprint。
 
+### 8.1 运行时可替换边界
+
+Core kernel 不是插件，Host shell 也不是整体插件。Core 固定 Task 状态机、TaskLease、
+RunnerRegistry、Resource Registry、Resource 生命周期、权限入口、cancel/trace 基础事件、
+ID/generation 规则和 hot reload 事务边界。Host 固定为 runtime 容器、插件加载器和
+生命周期协调器。
+
+可替换对象必须是稳定接口后的 host service / backend 或普通业务能力：
+
+- 业务插件：runner、provider、protocol、workflow、resource provider。
+- Host backend：builtin / ABI / WASM / process / Python bridge、codec、trace sink、
+  resource backend、permission policy、scheduler policy。
+
+SDK 不是运行时插件。SDK 可以拆 crate 或语言包，但它只定义插件作者 API 和语法糖；
+运行时语义必须落回 Task、TaskHandle、ResourceRef、plan 和 RunnerResult。Shim 分两层：
+host-side bridge 可以作为 Host backend 替换；guest-side shim 随插件 artifact 版本走，
+不由 Host 单独热替换。
+
+Host backend / plugin backend 通过 `HostBackendDescriptor`、`PluginBackendDescriptor`
+和统一 `TaskClient` / `ResourcePlanClient` 边界表达。Builtin 快速路径和 ABI/JSONL 路径
+只能是不同 backend 实现，不能把 `Arc<T>`、`&mut T`、SDK client 或 native handle 暴露给
+插件业务代码。
+
+Resource Registry、ResourceId 分配、lease 基础规则和 owner 路由事实属于 Core /
+ResourceManager；`ResourceProvider`、typed store backend、export/query/patch/stream
+handler 可以替换。provider 热替换必须按 `ResourceProviderReloadPolicy` 与
+`ResourceProviderCompatibility` 判定：无 live resource 可直接替换；有 resource 但无 active
+lease 时必须保持 kind/schema/operation/generation 兼容；存在 active lease、stream 或 mutable
+transaction 时只能 drain、cancel、freeze、migrate 或阻断。
+
+Scheduler 只插件化 policy，不插件化 scheduler engine。`SchedulerPolicy` 只能读取 snapshot
+并返回 dispatch budget，Core 仍执行 TaskPool 排序、claim、TaskLease fencing 和状态提交。
+
+Workflow 应作为普通 runner/plugin 实现；实例状态必须资源化，例如
+`WorkflowInstanceResource` 保存 current step、child task、waiting set、retry count、cancel
+state 与 trace id。Codec/bridge 在连接握手时确定，一个连接生命周期内固定；新 codec 只用于
+新连接，旧连接 drain 后释放旧 codec。
+
 ## 9. Hot Reload
 
 热重载使用新 plugin generation，不原地替换对象。

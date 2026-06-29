@@ -24,12 +24,32 @@ pub enum ResourceSemantic {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceProviderReloadPolicy {
+    NoLiveResources,
+    CompatibleWithoutLeases,
+    DrainActiveLeases,
+    RestartRequired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceProviderCompatibility {
+    pub schema_version: String,
+    pub required_operations: Vec<String>,
+    pub preserves_resource_type_id: bool,
+    pub accepts_older_generations: bool,
+    pub lease_drain_required: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceTypeDescriptor {
     pub kind_id: String,
     pub semantic: ResourceSemantic,
     pub schema: String,
     pub provider_id: String,
     pub operations: Vec<String>,
+    pub reload_policy: ResourceProviderReloadPolicy,
+    pub compatibility: ResourceProviderCompatibility,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -20,6 +20,15 @@ from mutsuki_runtime_python.contracts.codec import (
     field_value,
     tuple_from_json,
 )
+from mutsuki_runtime_python.contracts.extension import (
+    BridgeDescriptor,
+    CodecDescriptor,
+    HostBackendDescriptor,
+    PluginBackendDescriptor,
+    PluginDeploymentKind,
+    SchedulerPolicyDescriptor,
+    WorkflowDescriptor,
+)
 from mutsuki_runtime_python.contracts.resource import ResourceTypeDescriptor
 from mutsuki_runtime_python.contracts.runner import RunnerDescriptor
 from mutsuki_runtime_python.contracts.surface import ContractSurface
@@ -31,14 +40,6 @@ class ArtifactType(StrEnum):
     WASM = "wasm"
     PYTHON = "python"
     NATIVE = "native"
-
-
-class PluginDeploymentKind(StrEnum):
-    BUILTIN = "builtin"
-    ABI = "abi"
-    WASM = "wasm"
-    PROCESS = "process"
-    PYTHON = "python"
 
 
 def as_plugin_deployments(
@@ -171,6 +172,12 @@ class PluginProvides:
     subscriptions: tuple[str, ...]
     timers: tuple[str, ...]
     state_schemas: tuple[str, ...]
+    host_backends: tuple[HostBackendDescriptor, ...]
+    plugin_backends: tuple[PluginBackendDescriptor, ...]
+    codecs: tuple[CodecDescriptor, ...]
+    bridges: tuple[BridgeDescriptor, ...]
+    scheduler_policies: tuple[SchedulerPolicyDescriptor, ...]
+    workflows: tuple[WorkflowDescriptor, ...]
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -189,6 +196,14 @@ class PluginProvides:
             subscriptions=as_str_tuple(field_value(raw, "subscriptions"), "subscriptions"),
             timers=as_str_tuple(field_value(raw, "timers"), "timers"),
             state_schemas=as_str_tuple(field_value(raw, "state_schemas"), "state_schemas"),
+            host_backends=tuple_from_json(raw, "host_backends", HostBackendDescriptor),
+            plugin_backends=tuple_from_json(raw, "plugin_backends", PluginBackendDescriptor),
+            codecs=tuple_from_json(raw, "codecs", CodecDescriptor),
+            bridges=tuple_from_json(raw, "bridges", BridgeDescriptor),
+            scheduler_policies=tuple_from_json(
+                raw, "scheduler_policies", SchedulerPolicyDescriptor
+            ),
+            workflows=tuple_from_json(raw, "workflows", WorkflowDescriptor),
         )
 
 

@@ -12,6 +12,8 @@ from mutsuki_runtime_python.contracts.resource import (
     ResourceId,
     ResourceLease,
     ResourceLifetime,
+    ResourceProviderCompatibility,
+    ResourceProviderReloadPolicy,
     ResourceRef,
     ResourceSealState,
     ResourceSemantic,
@@ -53,6 +55,16 @@ def _resource_ref(
         lifetime=ResourceLifetime.PERSISTENT,
         lease=None,
         seal_state=ResourceSealState.SEALED,
+    )
+
+
+def _provider_compatibility() -> ResourceProviderCompatibility:
+    return ResourceProviderCompatibility(
+        schema_version="1.0.0",
+        required_operations=("read", "export"),
+        preserves_resource_type_id=True,
+        accepts_older_generations=True,
+        lease_drain_required=True,
     )
 
 
@@ -143,8 +155,11 @@ def test_resource_value_and_state_ref_roundtrip() -> None:
             schema="bytes.v1",
             provider_id="python.resource",
             operations=("read", "export"),
+            reload_policy=ResourceProviderReloadPolicy.COMPATIBLE_WITHOUT_LEASES,
+            compatibility=_provider_compatibility(),
         ),
     )
+    assert_json_roundtrip(ResourceProviderCompatibility, _provider_compatibility())
 
 
 def test_resource_cell_and_resource_lease_roundtrip() -> None:

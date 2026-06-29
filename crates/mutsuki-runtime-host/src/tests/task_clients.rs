@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
-use crate::{AbiTaskClient, LocalTaskClient, TaskClient};
+use crate::{
+    AbiTaskClient, HostBackend, LocalResourceClient, LocalTaskClient, PluginBackend, TaskClient,
+};
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
 
@@ -75,4 +77,46 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
     assert!(request.contains("\"method\":\"task.cancel\""));
     assert!(request.contains("\"method\":\"task.outcome\""));
     assert!(request.contains("\"trace_id\":\"trace-abi\""));
+}
+
+#[test]
+fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() {
+    let runtime = Arc::new(Mutex::new(
+        host_with_echo_runner()
+            .into_runtime(runtime_profile())
+            .unwrap(),
+    ));
+    let backend_descriptor = HostBackendDescriptor {
+        backend_id: "host.backend.builtin".into(),
+        kind: HostExtensionKind::PluginBackend,
+        supported_deployments: vec![PluginDeploymentKind::Builtin],
+        reload_policy: "drain_and_swap".into(),
+        drain_required: true,
+    };
+    let host_backend = HostBackend::new(backend_descriptor);
+    assert!(host_backend.supports_deployment(&PluginDeploymentKind::Builtin));
+    assert!(!host_backend.supports_deployment(&PluginDeploymentKind::Abi));
+
+    let plugin_backend = PluginBackend::new(
+        PluginBackendDescriptor {
+            backend_id: "plugin.backend.builtin".into(),
+            deployment_kind: PluginDeploymentKind::Builtin,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: None,
+            bridge_id: None,
+        },
+        LocalTaskClient::new(runtime.clone()),
+        LocalResourceClient::new(runtime),
+    );
+    let submitted = plugin_backend
+        .task_client()
+        .submit_task(Task::new("backend-task", "raw.input", json!({})))
+        .unwrap();
+
+    assert_eq!(
+        plugin_backend.deployment_kind(),
+        &PluginDeploymentKind::Builtin
+    );
+    assert_eq!(submitted.task_id, "backend-task");
 }

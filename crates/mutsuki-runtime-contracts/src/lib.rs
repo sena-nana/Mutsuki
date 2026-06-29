@@ -1,6 +1,7 @@
 mod common;
 mod error;
 mod event;
+mod extension;
 mod plugin;
 mod resource;
 mod runner;
@@ -20,6 +21,10 @@ pub use error::{
     ERR_TASK_NOT_FOUND, RuntimeError,
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
+pub use extension::{
+    BridgeDescriptor, CodecDescriptor, HostBackendDescriptor, HostExtensionKind,
+    PluginBackendDescriptor, SchedulerPolicyDescriptor, WorkflowDescriptor,
+};
 pub use plugin::{
     ArtifactType, ContractSurface, ContractSurfaceKind, HandlerBinding, LifecyclePolicy,
     PermissionGrant, PluginArtifact, PluginDeploymentKind, PluginManifest, PluginProvides,
@@ -29,9 +34,9 @@ pub use plugin::{
 pub use resource::{
     CommandBatch, CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor,
     PlanReceipt, ReadPlan, ResourceAccess, ResourceCellRef, ResourceId, ResourceLease,
-    ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic, ResourceTypeDescriptor,
-    ResourceValue, SagaPlan, SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef,
-    ValueStorage, WritePlan,
+    ResourceLifetime, ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceRef,
+    ResourceSealState, ResourceSemantic, ResourceTypeDescriptor, ResourceValue, SagaPlan,
+    SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef, ValueStorage, WritePlan,
 };
 pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerDescriptor, RunnerPurity,

@@ -38,7 +38,9 @@ Mutsuki/
 - `mutsuki-runtime-host`：实现 native PluginHost/resolver、native runner wrapper 和
   stdio JSONL runner client，并提供默认 CoreActor / worker pool 隔离的
   `HostRuntime` 控制面门面。`NativePluginHost::into_runtime` 仍返回裸 `CoreRuntime`
-  用于单线程测试、replay 和最小 host。
+  用于单线程测试、replay 和最小 host。Host backend / plugin backend 只能聚合统一
+  `TaskClient` / `ResourcePlanClient` 和 host-side bridge/codec/service descriptor；不得把
+  Host shell 整体做成插件。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；不得把 async runtime 语义反向写入 Core。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
@@ -83,6 +85,11 @@ uv run pytest
 - 长期资源状态归 ResourceManager / ResourceCell；runner 只能持有 step 期间的 ResourceLease。
 - 具体资源数据读写归 backend / provider；ResourceManager 保留 descriptor、lease、
   occupancy 和 generation 事实源。
+- Resource Provider 的运行中替换必须基于 `ResourceProviderReloadPolicy`、
+  `ResourceProviderCompatibility` 和 live occupancy 判定；不能绕过 ResourceManager 的
+  registry、lease、generation 规则。
+- SDK 和 guest-side shim 是编译期/API 层，不是运行时插件；host-side shim / bridge 才能作为
+  Host backend 替换。
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。

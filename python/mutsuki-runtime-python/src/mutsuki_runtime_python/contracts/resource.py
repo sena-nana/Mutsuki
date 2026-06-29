@@ -46,6 +46,13 @@ class ResourceSemantic(StrEnum):
     TRANSACTION_RESOURCE = "transaction_resource"
 
 
+class ResourceProviderReloadPolicy(StrEnum):
+    NO_LIVE_RESOURCES = "no_live_resources"
+    COMPATIBLE_WITHOUT_LEASES = "compatible_without_leases"
+    DRAIN_ACTIVE_LEASES = "drain_active_leases"
+    RESTART_REQUIRED = "restart_required"
+
+
 @dataclass(frozen=True)
 class ResourceId:
     kind_id: str
@@ -65,12 +72,43 @@ class ResourceId:
 
 
 @dataclass(frozen=True)
+class ResourceProviderCompatibility:
+    schema_version: str
+    required_operations: tuple[str, ...]
+    preserves_resource_type_id: bool
+    accepts_older_generations: bool
+    lease_drain_required: bool
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "ResourceProviderCompatibility")
+        return cls(
+            schema_version=as_str(field_value(raw, "schema_version"), "schema_version"),
+            required_operations=tuple(
+                as_str(item, "required_operations")
+                for item in sequence(field_value(raw, "required_operations"), "required_operations")
+            ),
+            preserves_resource_type_id=as_bool(
+                field_value(raw, "preserves_resource_type_id"), "preserves_resource_type_id"
+            ),
+            accepts_older_generations=as_bool(
+                field_value(raw, "accepts_older_generations"), "accepts_older_generations"
+            ),
+            lease_drain_required=as_bool(
+                field_value(raw, "lease_drain_required"), "lease_drain_required"
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class ResourceTypeDescriptor:
     kind_id: str
     semantic: ResourceSemantic
     schema: str
     provider_id: str
     operations: tuple[str, ...]
+    reload_policy: ResourceProviderReloadPolicy
+    compatibility: ResourceProviderCompatibility
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -83,6 +121,12 @@ class ResourceTypeDescriptor:
             operations=tuple(
                 as_str(item, "operations")
                 for item in sequence(field_value(raw, "operations"), "operations")
+            ),
+            reload_policy=ResourceProviderReloadPolicy(
+                as_str(field_value(raw, "reload_policy"), "reload_policy")
+            ),
+            compatibility=ResourceProviderCompatibility.from_json_dict(
+                as_mapping(field_value(raw, "compatibility"), "compatibility")
             ),
         )
 
@@ -418,6 +462,8 @@ __all__ = (
     "ResourceId",
     "ResourceLease",
     "ResourceLifetime",
+    "ResourceProviderCompatibility",
+    "ResourceProviderReloadPolicy",
     "ResourceRef",
     "ResourceSealState",
     "ResourceSemantic",

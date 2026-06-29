@@ -55,6 +55,12 @@ fn manifest(
             resource_providers: vec!["resource.local".into()],
             resource_types: Vec::new(),
             state_schemas: vec!["state.actor.v1".into()],
+            host_backends: Vec::new(),
+            plugin_backends: Vec::new(),
+            codecs: Vec::new(),
+            bridges: Vec::new(),
+            scheduler_policies: Vec::new(),
+            workflows: Vec::new(),
         },
         requires: Vec::new(),
         permissions: PermissionGrant {

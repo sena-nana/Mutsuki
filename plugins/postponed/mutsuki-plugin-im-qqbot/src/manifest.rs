@@ -105,6 +105,12 @@ pub fn qqbot_manifest() -> PluginManifest {
             subscriptions: vec![SUBSCRIPTION_GATEWAY.into()],
             timers: vec![TIMER_GATEWAY_HEARTBEAT.into()],
             state_schemas: Vec::new(),
+            host_backends: Vec::new(),
+            plugin_backends: Vec::new(),
+            codecs: Vec::new(),
+            bridges: Vec::new(),
+            scheduler_policies: Vec::new(),
+            workflows: Vec::new(),
         },
         requires: Vec::new(),
         permissions: PermissionGrant {

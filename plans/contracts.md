@@ -34,7 +34,8 @@
 | `ResourceRef` | 大型资源 / mmap / blob / stream / provider-RPC descriptor |
 | `ResourceId` | typed store 路由 descriptor，包含 kind_id、slot_id、generation、version |
 | `ResourceSemantic` | 资源语义分类：FrozenValue、VersionedSnapshot、ReadOnlyFact、CowVersionedState、CapabilityResource、StreamResource、TransactionResource |
-| `ResourceTypeDescriptor` | 插件声明的资源类型、语义、schema、provider 和可用 operation |
+| `ResourceProviderReloadPolicy` / `ResourceProviderCompatibility` | Resource Provider 热替换策略和兼容性声明 |
+| `ResourceTypeDescriptor` | 插件声明的资源类型、语义、schema、provider、operation 和 provider 热替换兼容规则 |
 | `ResourceCellRef` | 长期资源状态单元 descriptor，例如连接池、stream、cookie jar、rate limiter |
 | `ResourceLease` | task step 临时使用 ResourceCell 的租约 |
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
@@ -44,6 +45,11 @@
 | `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
 | `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
+| `HostBackendDescriptor` | Host 内部 backend/service 扩展点 descriptor，例如 bridge、codec、trace sink、resource backend、scheduler policy |
+| `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
+| `CodecDescriptor` / `BridgeDescriptor` | 连接级 codec 与 host-side shim/bridge descriptor |
+| `SchedulerPolicyDescriptor` | host 级 scheduler policy descriptor；只描述 dispatch budget 决策策略 |
+| `WorkflowDescriptor` | workflow 插件与外置实例状态资源的绑定 descriptor |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
 | `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
 | `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
@@ -255,6 +261,21 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
   cause。
 - 公共插件 API 不暴露 `Arc<T>`、`&T`、`&mut T`、`downcast`、`with_native_*` 或闭包式 lazy op。
 
+Resource Provider 热替换规则：
+
+- `ResourceTypeDescriptor.kind_id`、`semantic`、`schema`、`provider_id` 和 `operations` 是
+  provider surface fingerprint 的一部分。
+- `ResourceProviderCompatibility.required_operations` 是旧 live resource 在新 provider
+  上继续可用的最小 operation 集；减少这些 operation 必须视为 breaking。
+- `preserves_resource_type_id = true` 表示新 provider 继续识别旧 `ResourceId.kind_id`；
+  否则存在 live resource 时不能热替换。
+- `accepts_older_generations = true` 表示新 provider 能识别旧 generation 的 descriptor；
+  否则必须 zero occupancy、迁移或重启。
+- `lease_drain_required = true` 表示存在 active lease / stream / mutable transaction 时必须
+  drain、cancel、freeze、migrate 或阻断，不能原地切换。
+- `ResourceProviderReloadPolicy` 只描述 provider 边界；Resource Registry、ResourceId 分配、
+  lease 基础规则和权限入口仍属于 Core / ResourceManager。
+
 ## 7. Plugin Loading
 
 Core 只消费 `RuntimeLoadPlan`：
@@ -287,6 +308,21 @@ Host 执行面必须把部署形态限制在后端实现中：
   `with_native_*` 之类 builtin-only 能力。
 - `ReadPlan` 的 collect / snapshot / stream open、`WritePlan` 的 commit，以及
   export / command / batch / saga plan 都必须在后端边界执行；构造 plan 本身不得读写资源。
+
+系统扩展插件边界：
+
+- `HostBackendDescriptor` 只能声明 Host 内部 service/backend，例如 plugin backend、bridge、
+  codec、trace sink、resource backend、permission policy 或 scheduler policy；Host shell
+  本身不是插件。
+- `PluginBackendDescriptor` 把 builtin / ABI / WASM / process / Python 部署形态映射到统一
+  `TaskClient` / `ResourcePlanClient` 协议；插件业务代码不能根据部署形态获得 native-only 引用。
+- `CodecDescriptor.connection_scoped = true` 表示 codec 在连接握手时确定，连接生命周期内不能切换。
+- `BridgeDescriptor.drain_policy` 必须表达旧连接 drain / cancel / restart 需求；活跃 ABI call /
+  IPC call 中途不得切换 bridge 或 codec。
+- `SchedulerPolicyDescriptor.decision_scope` 当前只能是 host dispatch budget 类策略，不能选择
+  具体 task、执行 task、修改 TaskPool 或读取真实资源本体。
+- `WorkflowDescriptor.state_resource_kind` 必须指向外置 workflow instance resource；workflow
+  实例状态不能藏在插件内存里作为热替换事实源。
 
 ## 8. Hot Reload
 

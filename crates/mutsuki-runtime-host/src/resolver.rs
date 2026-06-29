@@ -118,55 +118,56 @@ fn surfaces_for(manifests: &[PluginManifest]) -> Vec<ContractSurface> {
         push_handler_binding_surfaces(&mut surfaces, manifest);
         push_named_capability_surfaces(&mut surfaces, manifest);
         push_resource_type_surfaces(&mut surfaces, manifest);
+        push_system_extension_surfaces(&mut surfaces, manifest);
     }
     surfaces
 }
 
 fn push_runner_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
     for runner in &manifest.provides.runners {
-        surfaces.push(ContractSurface {
-            surface_id: format!("runner:{}", runner.runner_id),
-            kind: ContractSurfaceKind::Runner,
-            owner_plugin_id: manifest.plugin_id.clone(),
-            fingerprint: format!("runner:{}:{}", runner.runner_id, runner.plugin_generation),
-            deprecated: false,
-        });
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::Runner,
+            format!("runner:{}", runner.runner_id),
+            format!("runner:{}:{}", runner.runner_id, runner.plugin_generation),
+        );
         for protocol_id in &runner.accepted_protocol_ids {
-            surfaces.push(ContractSurface {
-                surface_id: format!("task_protocol:{protocol_id}"),
-                kind: ContractSurfaceKind::TaskProtocol,
-                owner_plugin_id: manifest.plugin_id.clone(),
-                fingerprint: format!("task_protocol:{protocol_id}"),
-                deprecated: false,
-            });
+            push_surface(
+                surfaces,
+                &manifest.plugin_id,
+                ContractSurfaceKind::TaskProtocol,
+                format!("task_protocol:{protocol_id}"),
+                format!("task_protocol:{protocol_id}"),
+            );
         }
     }
 }
 
 fn push_protocol_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
     for protocol in &manifest.provides.protocols {
-        surfaces.push(ContractSurface {
-            surface_id: format!("protocol:{}", protocol.protocol_id),
-            kind: ContractSurfaceKind::Protocol,
-            owner_plugin_id: manifest.plugin_id.clone(),
-            fingerprint: format!("protocol:{}:{}", protocol.protocol_id, protocol.version),
-            deprecated: false,
-        });
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::Protocol,
+            format!("protocol:{}", protocol.protocol_id),
+            format!("protocol:{}:{}", protocol.protocol_id, protocol.version),
+        );
     }
 }
 
 fn push_handler_binding_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
     for binding in &manifest.provides.handler_bindings {
-        surfaces.push(ContractSurface {
-            surface_id: format!("handler_binding:{}", binding.binding_id),
-            kind: ContractSurfaceKind::HandlerBinding,
-            owner_plugin_id: manifest.plugin_id.clone(),
-            fingerprint: format!(
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::HandlerBinding,
+            format!("handler_binding:{}", binding.binding_id),
+            format!(
                 "handler_binding:{}:{}:{}",
                 binding.binding_id, binding.protocol_id, binding.target_protocol_id
             ),
-            deprecated: false,
-        });
+        );
     }
 }
 
@@ -214,20 +215,106 @@ fn push_named_capability_surfaces(surfaces: &mut Vec<ContractSurface>, manifest:
 
 fn push_resource_type_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
     for resource_type in &manifest.provides.resource_types {
-        surfaces.push(ContractSurface {
-            surface_id: format!("resource_schema:{}", resource_type.kind_id),
-            kind: ContractSurfaceKind::ResourceSchema,
-            owner_plugin_id: manifest.plugin_id.clone(),
-            fingerprint: format!(
-                "resource_type:{}:{:?}:{}:{}:{}",
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::ResourceSchema,
+            format!("resource_schema:{}", resource_type.kind_id),
+            format!(
+                "resource_type:{}:{:?}:{}:{}:{}:{}:{}",
                 resource_type.kind_id,
                 resource_type.semantic,
                 resource_type.schema,
                 resource_type.provider_id,
-                resource_type.operations.join(",")
+                resource_type.operations.join(","),
+                resource_type.compatibility.schema_version,
+                resource_type.compatibility.required_operations.join(",")
             ),
-            deprecated: false,
-        });
+        );
+    }
+}
+
+fn push_system_extension_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
+    for backend in &manifest.provides.host_backends {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::HostBackend,
+            format!("host_backend:{}", backend.backend_id),
+            format!(
+                "host_backend:{}:{:?}:{}:{}",
+                backend.backend_id, backend.kind, backend.reload_policy, backend.drain_required
+            ),
+        );
+    }
+    for backend in &manifest.provides.plugin_backends {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::PluginBackend,
+            format!("plugin_backend:{}", backend.backend_id),
+            format!(
+                "plugin_backend:{}:{:?}:{}:{}",
+                backend.backend_id,
+                backend.deployment_kind,
+                backend.task_client_protocol,
+                backend.resource_client_protocol
+            ),
+        );
+    }
+    for codec in &manifest.provides.codecs {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::Codec,
+            format!("codec:{}", codec.codec_id),
+            format!(
+                "codec:{}:{}:{}:{}",
+                codec.codec_id, codec.media_type, codec.version, codec.connection_scoped
+            ),
+        );
+    }
+    for bridge in &manifest.provides.bridges {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::Bridge,
+            format!("bridge:{}", bridge.bridge_id),
+            format!(
+                "bridge:{}:{:?}:{}:{}",
+                bridge.bridge_id,
+                bridge.deployment_kind,
+                bridge.codec_ids.join(","),
+                bridge.drain_policy
+            ),
+        );
+    }
+    for policy in &manifest.provides.scheduler_policies {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::SchedulerPolicy,
+            format!("scheduler_policy:{}", policy.policy_id),
+            format!(
+                "scheduler_policy:{}:{}:{}",
+                policy.policy_id, policy.version, policy.decision_scope
+            ),
+        );
+    }
+    for workflow in &manifest.provides.workflows {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::Workflow,
+            format!("workflow:{}", workflow.workflow_id),
+            format!(
+                "workflow:{}:{}:{}:{}",
+                workflow.workflow_id,
+                workflow.state_resource_kind,
+                workflow.runner_protocol_id,
+                workflow.reload_policy
+            ),
+        );
     }
 }
 
@@ -239,14 +326,30 @@ fn push_named_surfaces(
     names: &[String],
 ) {
     for name in names {
-        surfaces.push(ContractSurface {
-            surface_id: format!("{prefix}:{name}"),
-            kind: kind.clone(),
-            owner_plugin_id: plugin_id.into(),
-            fingerprint: format!("{prefix}:{name}"),
-            deprecated: false,
-        });
+        push_surface(
+            surfaces,
+            plugin_id,
+            kind.clone(),
+            format!("{prefix}:{name}"),
+            format!("{prefix}:{name}"),
+        );
     }
+}
+
+fn push_surface(
+    surfaces: &mut Vec<ContractSurface>,
+    owner_plugin_id: &str,
+    kind: ContractSurfaceKind,
+    surface_id: String,
+    fingerprint: String,
+) {
+    surfaces.push(ContractSurface {
+        surface_id,
+        kind,
+        owner_plugin_id: owner_plugin_id.into(),
+        fingerprint,
+        deprecated: false,
+    });
 }
 
 pub(crate) fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {

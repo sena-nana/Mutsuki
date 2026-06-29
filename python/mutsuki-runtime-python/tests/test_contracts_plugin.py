@@ -1,19 +1,33 @@
 from __future__ import annotations
 
+from mutsuki_runtime_python.contracts.extension import (
+    BridgeDescriptor,
+    CodecDescriptor,
+    HostBackendDescriptor,
+    HostExtensionKind,
+    PluginBackendDescriptor,
+    PluginDeploymentKind,
+    SchedulerPolicyDescriptor,
+    WorkflowDescriptor,
+)
 from mutsuki_runtime_python.contracts.plugin import (
     ArtifactType,
     HandlerBinding,
     LifecyclePolicy,
     PermissionGrant,
     PluginArtifact,
-    PluginDeploymentKind,
     PluginManifest,
     PluginProvides,
     ProtocolDescriptor,
     RuntimeLoadPlan,
     RuntimeProfile,
 )
-from mutsuki_runtime_python.contracts.resource import ResourceSemantic, ResourceTypeDescriptor
+from mutsuki_runtime_python.contracts.resource import (
+    ResourceProviderCompatibility,
+    ResourceProviderReloadPolicy,
+    ResourceSemantic,
+    ResourceTypeDescriptor,
+)
 from mutsuki_runtime_python.contracts.runner import (
     ExecutionClass,
     RunnerDescriptor,
@@ -72,6 +86,14 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 schema="bytes.v1",
                 provider_id="python.resource",
                 operations=("read", "export"),
+                reload_policy=ResourceProviderReloadPolicy.COMPATIBLE_WITHOUT_LEASES,
+                compatibility=ResourceProviderCompatibility(
+                    schema_version="1.0.0",
+                    required_operations=("read", "export"),
+                    preserves_resource_type_id=True,
+                    accepts_older_generations=True,
+                    lease_drain_required=True,
+                ),
             ),
         ),
         effects=("effect.chat.send",),
@@ -79,6 +101,56 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         subscriptions=("chat.messages",),
         timers=("heartbeat",),
         state_schemas=("state.actor.v1",),
+        host_backends=(
+            HostBackendDescriptor(
+                backend_id="host.backend.python",
+                kind=HostExtensionKind.PLUGIN_BACKEND,
+                supported_deployments=(PluginDeploymentKind.PYTHON,),
+                reload_policy="drain_and_swap",
+                drain_required=True,
+            ),
+        ),
+        plugin_backends=(
+            PluginBackendDescriptor(
+                backend_id="plugin.backend.python",
+                deployment_kind=PluginDeploymentKind.PYTHON,
+                task_client_protocol="mutsuki.task.v1",
+                resource_client_protocol="mutsuki.resource-plan.v1",
+                codec_id="codec.json",
+                bridge_id="bridge.python.jsonl",
+            ),
+        ),
+        codecs=(
+            CodecDescriptor(
+                codec_id="codec.json",
+                media_type="application/json",
+                version="1.0.0",
+                connection_scoped=True,
+            ),
+        ),
+        bridges=(
+            BridgeDescriptor(
+                bridge_id="bridge.python.jsonl",
+                deployment_kind=PluginDeploymentKind.PYTHON,
+                codec_ids=("codec.json",),
+                drain_policy="connection_drain",
+            ),
+        ),
+        scheduler_policies=(
+            SchedulerPolicyDescriptor(
+                policy_id="scheduler.fair",
+                version="1.0.0",
+                decision_scope="dispatch_budget",
+            ),
+        ),
+        workflows=(
+            WorkflowDescriptor(
+                workflow_id="workflow.linear",
+                state_resource_kind="workflow.instance",
+                runner_protocol_id="workflow.linear.run",
+                reload_policy="state_resource_handoff",
+            ),
+        ),
     )
     manifest = PluginManifest(
         plugin_id="plugin-a",
@@ -140,11 +212,24 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 fingerprint="handler_binding:message-handler",
                 deprecated=False,
             ),
+            ContractSurface(
+                surface_id="plugin_backend:plugin.backend.python",
+                kind=ContractSurfaceKind.PLUGIN_BACKEND,
+                owner_plugin_id="plugin-a",
+                fingerprint="plugin_backend:plugin.backend.python",
+                deprecated=False,
+            ),
         ),
     )
 
     assert_json_roundtrip(ProtocolDescriptor, protocol)
     assert_json_roundtrip(HandlerBinding, binding)
+    assert_json_roundtrip(HostBackendDescriptor, provides.host_backends[0])
+    assert_json_roundtrip(PluginBackendDescriptor, provides.plugin_backends[0])
+    assert_json_roundtrip(CodecDescriptor, provides.codecs[0])
+    assert_json_roundtrip(BridgeDescriptor, provides.bridges[0])
+    assert_json_roundtrip(SchedulerPolicyDescriptor, provides.scheduler_policies[0])
+    assert_json_roundtrip(WorkflowDescriptor, provides.workflows[0])
     assert_json_roundtrip(PluginProvides, provides)
     assert_json_roundtrip(PluginManifest, manifest)
     assert_json_roundtrip(RuntimeLoadPlan, plan)
