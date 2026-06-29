@@ -12,12 +12,13 @@ mod trace;
 pub use error::{RuntimeFailure, RuntimeResult};
 pub use id::{IdSource, SequentialIdSource};
 pub use logs::{EventLog, TraceLog};
+pub use mutsuki_runtime_contracts::RunnerContext;
 pub use registry::{
     ContractChange, DisposeBag, HandlerBindingRegistry, PluginGenerationPhase,
     PluginGenerationState, RegistrySnapshot, ReloadDecision, RunnerRegistry,
 };
 pub use resource_manager::{PackedValue, ResourceManager};
-pub use runner::{CoreKernelRunner, Runner, RunnerContext, RunnerLoopReport};
+pub use runner::{CoreKernelRunner, Runner, RunnerLoopReport};
 pub use runtime::{
     CoreRuntime, InvocationPollution, RunnerCompletion, RunnerDispatch,
     RunningInvocationDisposition, ScheduleDecision, TaskResultSnapshot,

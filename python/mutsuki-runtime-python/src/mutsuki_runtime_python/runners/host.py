@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from mutsuki_runtime_python.contracts.errors import (
     ERR_RUNNER_NOT_FOUND,
     ERR_TASK_CLAIM_CONFLICT,
@@ -13,6 +15,7 @@ from mutsuki_runtime_python.runners.protocol import Runner, RunnerInvokeError
 class PythonRunnerHost:
     def __init__(self) -> None:
         self._runners: dict[str, Runner] = {}
+        self._cancelled_invocations: set[str] = set()
 
     def register_runner(self, runner: Runner) -> None:
         self._runners[runner.descriptor.runner_id] = runner
@@ -40,9 +43,14 @@ class PythonRunnerHost:
                         },
                     )
                 )
+        cancel_requested = ctx.cancel_requested or ctx.invocation_id in self._cancelled_invocations
+        self._cancelled_invocations.discard(ctx.invocation_id)
+        if cancel_requested != ctx.cancel_requested:
+            ctx = replace(ctx, cancel_requested=True)
         return await self._runner(runner_id).step(ctx, tasks)
 
     async def cancel_runner(self, runner_id: str, invocation_id: str) -> None:
+        self._cancelled_invocations.add(invocation_id)
         await self._runner(runner_id).cancel(invocation_id)
 
     async def dispose_runner(self, runner_id: str) -> None:

@@ -21,12 +21,13 @@ fn jsonl_runner_uses_runner_step_method_surface() {
 
     let results = runner
         .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-test".into()),
-            },
+            RunnerContext::new(
+                1,
+                1,
+                "executor:test",
+                Some("task-lease-test".into()),
+                "invocation:test",
+            ),
             vec![task],
         )
         .unwrap();
@@ -51,12 +52,13 @@ fn jsonl_runner_rejects_task_lease_mismatch_before_writing_request() {
 
     let error = runner
         .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-ctx".into()),
-            },
+            RunnerContext::new(
+                1,
+                1,
+                "executor:test",
+                Some("task-lease-ctx".into()),
+                "invocation:test",
+            ),
             vec![task],
         )
         .unwrap_err();

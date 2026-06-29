@@ -39,8 +39,8 @@ pub use resource::{
     SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef, ValueStorage, WritePlan,
 };
 pub use runner::{
-    DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerDescriptor, RunnerPurity,
-    RunnerResult, RunnerStatus,
+    DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerContext,
+    RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus,
 };
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,

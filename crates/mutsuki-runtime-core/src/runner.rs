@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult, Task,
+    ExecutionClass, RunnerContext, RunnerDescriptor, RunnerPurity, RunnerResult, Task,
 };
 
 use crate::RuntimeResult;
@@ -18,14 +18,6 @@ pub trait Runner: Send {
     fn dispose(&mut self) -> RuntimeResult<()> {
         Ok(())
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct RunnerContext {
-    pub registry_generation: u64,
-    pub current_step: u64,
-    pub executor_id: String,
-    pub task_lease_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskAwait, TaskId, ValueRef};
+use crate::{
+    ExecutorId, ProtocolId, RefId, ResourceRef, ScalarValue, Task, TaskAwait, TaskId, TaskLeaseId,
+    ValueRef,
+};
 use crate::{StateDelta, SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -37,6 +40,40 @@ pub struct RunnerDescriptor {
     pub output_schema: Value,
     pub metadata: BTreeMap<String, ScalarValue>,
     pub contract_surfaces: Vec<SurfaceId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerContext {
+    pub registry_generation: u64,
+    pub current_step: u64,
+    pub executor_id: ExecutorId,
+    pub task_lease_id: Option<TaskLeaseId>,
+    pub invocation_id: String,
+    pub cancel_token: String,
+    pub deadline_tick: Option<u64>,
+    pub cancel_requested: bool,
+}
+
+impl RunnerContext {
+    pub fn new(
+        registry_generation: u64,
+        current_step: u64,
+        executor_id: impl Into<ExecutorId>,
+        task_lease_id: Option<TaskLeaseId>,
+        invocation_id: impl Into<String>,
+    ) -> Self {
+        let invocation_id = invocation_id.into();
+        Self {
+            registry_generation,
+            current_step,
+            executor_id: executor_id.into(),
+            task_lease_id,
+            cancel_token: invocation_id.clone(),
+            invocation_id,
+            deadline_tick: None,
+            cancel_requested: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

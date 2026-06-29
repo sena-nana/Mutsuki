@@ -44,7 +44,35 @@ def runner_context() -> RunnerContext:
         current_step=1,
         executor_id="executor:test",
         task_lease_id="lease:test",
+        invocation_id="parent-1",
+        cancel_token="parent-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_async_runner_context_exposes_deadline_and_cancel_fields() -> None:
+    client = ManualClient()
+    observed: dict[str, object] = {}
+
+    async def run(ctx: AsyncRunnerContext, task: Task) -> RunnerResult:
+        observed["invocation_id"] = ctx.invocation_id
+        observed["cancel_token"] = ctx.cancel_token
+        observed["deadline_tick"] = ctx.deadline_tick
+        observed["cancel_requested"] = ctx.cancel_requested
+        return RunnerResult.completed(task.task_id)
+
+    adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
+    ctx = replace(runner_context(), deadline_tick=3, cancel_requested=True)
+
+    result = await adapter.step(ctx, (Task.new("parent-1", "parent.work"),))
+
+    assert result[0].status == RunnerStatus.COMPLETED
+    assert observed == {
+        "invocation_id": "parent-1",
+        "cancel_token": "parent-1",
+        "deadline_tick": 3,
+        "cancel_requested": True,
+    }
 
 
 @pytest.mark.asyncio

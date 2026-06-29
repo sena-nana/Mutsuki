@@ -133,12 +133,7 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
             "runner.step",
             json!({
                 "runner_id": self.descriptor.runner_id,
-                "ctx": {
-                    "registry_generation": ctx.registry_generation,
-                    "current_step": ctx.current_step,
-                    "executor_id": ctx.executor_id,
-                    "task_lease_id": ctx.task_lease_id
-                },
+                "ctx": ctx,
                 "tasks": tasks
             }),
         )

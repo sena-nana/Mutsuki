@@ -1,7 +1,8 @@
 use mutsuki_runtime_contracts::{RunnerResult, Task, TaskLease};
 
 use crate::RuntimeResult;
-use crate::runner::{Runner, RunnerContext};
+use crate::runner::Runner;
+use mutsuki_runtime_contracts::RunnerContext;
 
 pub struct RunnerDispatch {
     pub runner: Box<dyn Runner>,

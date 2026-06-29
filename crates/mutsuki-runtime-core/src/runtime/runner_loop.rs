@@ -4,8 +4,8 @@ use mutsuki_runtime_contracts::{
 };
 use std::collections::BTreeMap;
 
-use crate::runner::{RunnerContext, RunnerLoopReport};
 use crate::task_pool::RunnerLoad;
+use crate::{RunnerContext, RunnerLoopReport};
 use crate::{RuntimeFailure, RuntimeResult};
 
 use super::CoreRuntime;
@@ -62,6 +62,7 @@ impl CoreRuntime {
             }
             let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
             let lease_id = task_leases[0].lease_id.clone();
+            let invocation_id = task_leases[0].task_id.clone();
             let runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)
@@ -72,12 +73,13 @@ impl CoreRuntime {
                         format!("runner.{}", descriptor.runner_id),
                     ))
                 })?;
-            let ctx = RunnerContext {
-                registry_generation: self.load_plan.registry_generation,
-                current_step: self.current_step,
+            let ctx = RunnerContext::new(
+                self.load_plan.registry_generation,
+                self.current_step,
                 executor_id,
-                task_lease_id: Some(lease_id),
-            };
+                Some(lease_id.clone()),
+                invocation_id,
+            );
             let span = self.traces.record(
                 format!("trace-runner-{}", descriptor.runner_id),
                 "runner.step",
@@ -174,6 +176,7 @@ impl CoreRuntime {
             }
             let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
             let lease_id = task_leases[0].lease_id.clone();
+            let invocation_id = task_leases[0].task_id.clone();
             let runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)
@@ -184,12 +187,13 @@ impl CoreRuntime {
                         format!("runner.{}", descriptor.runner_id),
                     ))
                 })?;
-            let ctx = RunnerContext {
-                registry_generation: self.load_plan.registry_generation,
-                current_step: self.current_step,
+            let ctx = RunnerContext::new(
+                self.load_plan.registry_generation,
+                self.current_step,
                 executor_id,
-                task_lease_id: Some(lease_id),
-            };
+                Some(lease_id.clone()),
+                invocation_id,
+            );
             let span = self.traces.record(
                 format!("trace-runner-{}", descriptor.runner_id),
                 "runner.step",

@@ -7,6 +7,7 @@ pub struct RunnerLimits {
     pub max_waiting: usize,
     pub max_inflight: usize,
     pub queue_limit: usize,
+    pub deadline_ticks: Option<u64>,
 }
 
 impl Default for RunnerLimits {
@@ -16,6 +17,7 @@ impl Default for RunnerLimits {
             max_waiting: 64,
             max_inflight: 64,
             queue_limit: 1024,
+            deadline_ticks: None,
         }
     }
 }

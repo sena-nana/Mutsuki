@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from mutsuki_runtime_python.contracts.codec import to_json_dict
-from mutsuki_runtime_python.contracts.runner import RunnerContext
+from mutsuki_runtime_python.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.resources.manager import PythonResourceManager
 from mutsuki_runtime_python.runners.host import PythonRunnerHost
@@ -13,10 +13,23 @@ from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
 from mutsuki_runtime_python.transport.stdio_jsonl import StdioJsonlRunnerServer
 
 
+class CaptureContextRunner(EchoRunner):
+    def __init__(self, descriptor: RunnerDescriptor) -> None:
+        super().__init__(descriptor)
+        self.contexts: list[RunnerContext] = []
+
+    async def step(
+        self, ctx: RunnerContext, tasks: tuple[Task, ...]
+    ) -> tuple[RunnerResult, ...]:
+        self.contexts.append(ctx)
+        return await super().step(ctx, tasks)
+
+
 @pytest.mark.asyncio
 async def test_stdio_runner_step_dispatches_to_host() -> None:
     host = PythonRunnerHost()
-    host.register_runner(EchoRunner(echo_descriptor()))
+    runner = CaptureContextRunner(echo_descriptor())
+    host.register_runner(runner)
     server = StdioJsonlRunnerServer(host)
 
     response = await server.handle_request(
@@ -31,6 +44,9 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
                         current_step=1,
                         executor_id="executor:test",
                         task_lease_id="task-lease-test",
+                        invocation_id="task-1",
+                        cancel_token="task-1",
+                        deadline_tick=3,
                     )
                 ),
                 "tasks": [
@@ -45,6 +61,9 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
     assert response["ok"] is True
     assert response["result"][0]["task_id"] == "task-1"  # type: ignore[index]
     assert response["result"][0]["task_await"] is None  # type: ignore[index]
+    assert runner.contexts[0].invocation_id == "task-1"
+    assert runner.contexts[0].cancel_token == "task-1"
+    assert runner.contexts[0].deadline_tick == 3
 
 
 @pytest.mark.asyncio

@@ -423,6 +423,10 @@ impl CoreRuntime {
         self.tasks.get(task_id).map(|record| record.status.clone())
     }
 
+    pub fn current_step(&self) -> u64 {
+        self.current_step
+    }
+
     pub fn task_handle_status(&self, handle: &TaskHandle) -> Option<TaskStatus> {
         self.task_status(&handle.task_id)
     }

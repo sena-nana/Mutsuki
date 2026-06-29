@@ -42,17 +42,41 @@ class AsyncRunnerContext:
         parent_task: Task,
         current_runner_id: str,
         *,
+        invocation_id: str = "",
+        cancel_token: str = "",
+        deadline_tick: int | None = None,
+        cancel_requested: bool = False,
         allow_self_call: bool = True,
     ) -> None:
         self._client = client
         self._parent_task = parent_task
         self._current_runner_id = current_runner_id
+        self._invocation_id = invocation_id
+        self._cancel_token = cancel_token
+        self._deadline_tick = deadline_tick
+        self._cancel_requested = cancel_requested
         self._allow_self_call = allow_self_call
         self._next_call = 0
 
     @property
     def task_id(self) -> str:
         return self._parent_task.task_id
+
+    @property
+    def invocation_id(self) -> str:
+        return self._invocation_id
+
+    @property
+    def cancel_token(self) -> str:
+        return self._cancel_token
+
+    @property
+    def deadline_tick(self) -> int | None:
+        return self._deadline_tick
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel_requested
 
     def call_raw(self, protocol_id: str, payload: JsonValue = None) -> TaskCallAwaitable:
         return self.call_with_cancel_policy(protocol_id, payload, CancelPolicy.CASCADE)
@@ -188,6 +212,10 @@ class AsyncRunnerAdapter:
                     self._client,
                     task,
                     self._descriptor.runner_id,
+                    invocation_id=_ctx.invocation_id,
+                    cancel_token=_ctx.cancel_token,
+                    deadline_tick=_ctx.deadline_tick,
+                    cancel_requested=_ctx.cancel_requested,
                     allow_self_call=self._allow_self_call,
                 )
                 invocation = _Invocation(self._factory(runner_ctx, task).__await__())

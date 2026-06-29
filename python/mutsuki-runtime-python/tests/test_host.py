@@ -4,11 +4,23 @@ from dataclasses import replace
 
 import pytest
 
-from mutsuki_runtime_python.contracts.runner import RunnerContext
+from mutsuki_runtime_python.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.runners.host import PythonRunnerHost
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
+
+
+class CaptureContextRunner(EchoRunner):
+    def __init__(self, descriptor: RunnerDescriptor) -> None:
+        super().__init__(descriptor)
+        self.contexts: list[RunnerContext] = []
+
+    async def step(
+        self, ctx: RunnerContext, tasks: tuple[Task, ...]
+    ) -> tuple[RunnerResult, ...]:
+        self.contexts.append(ctx)
+        return await super().step(ctx, tasks)
 
 
 @pytest.mark.asyncio
@@ -43,6 +55,32 @@ async def test_python_runner_host_cancel_and_dispose_are_management_channel() ->
 
     assert runner.cancelled == ["inv-1"]
     assert runner.disposed is True
+
+
+@pytest.mark.asyncio
+async def test_python_runner_host_propagates_prior_cancel_into_next_step_context() -> None:
+    host = PythonRunnerHost()
+    runner = CaptureContextRunner(echo_descriptor())
+    host.register_runner(runner)
+
+    await host.cancel_runner("echo.runner", "task-1")
+    results = await host.step_runner(
+        "echo.runner",
+        RunnerContext(
+            registry_generation=1,
+            current_step=2,
+            executor_id="executor:test",
+            task_lease_id="task-lease-test",
+            invocation_id="task-1",
+            cancel_token="task-1",
+            deadline_tick=3,
+        ),
+        (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test"),),
+    )
+
+    assert results[0].task_id == "task-1"
+    assert runner.contexts[0].cancel_requested is True
+    assert runner.contexts[0].deadline_tick == 3
 
 
 @pytest.mark.asyncio

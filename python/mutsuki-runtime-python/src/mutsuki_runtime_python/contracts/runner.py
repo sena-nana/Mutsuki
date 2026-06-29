@@ -8,6 +8,7 @@ from typing import Self
 from mutsuki_runtime_python.contracts.codec import (
     JsonDict,
     ScalarValue,
+    as_bool,
     as_int,
     as_json_dict,
     as_mapping,
@@ -15,6 +16,7 @@ from mutsuki_runtime_python.contracts.codec import (
     as_str,
     as_str_tuple,
     field_value,
+    optional_int,
     tuple_from_json,
 )
 from mutsuki_runtime_python.contracts.effect import EffectRequest
@@ -90,6 +92,10 @@ class RunnerContext:
     current_step: int
     executor_id: str
     task_lease_id: str | None
+    invocation_id: str = ""
+    cancel_token: str = ""
+    deadline_tick: int | None = None
+    cancel_requested: bool = False
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -104,6 +110,12 @@ class RunnerContext:
             task_lease_id=None
             if task_lease_id is None
             else as_str(task_lease_id, "task_lease_id"),
+            invocation_id=as_str(field_value(raw, "invocation_id"), "invocation_id"),
+            cancel_token=as_str(field_value(raw, "cancel_token"), "cancel_token"),
+            deadline_tick=optional_int(field_value(raw, "deadline_tick"), "deadline_tick"),
+            cancel_requested=as_bool(
+                field_value(raw, "cancel_requested"), "cancel_requested"
+            ),
         )
 
 

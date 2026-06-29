@@ -661,12 +661,13 @@ mod tests {
 
         let first = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 1,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:test",
+                ),
                 vec![Task::new("parent-1", "parent.work", json!({}))],
             )
             .unwrap();
@@ -687,12 +688,13 @@ mod tests {
 
         let second = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 2,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test-2".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    2,
+                    "executor:test",
+                    Some("lease:test-2".into()),
+                    "invocation:test-2",
+                ),
                 vec![Task::new("parent-1", "parent.work", json!({}))],
             )
             .unwrap();
@@ -733,12 +735,13 @@ mod tests {
 
         let first = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 1,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:test",
+                ),
                 vec![task],
             )
             .unwrap();
@@ -787,12 +790,13 @@ mod tests {
 
         let first = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 1,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:test",
+                ),
                 vec![Task::new("parent-1", "parent.work", json!({}))],
             )
             .unwrap();
@@ -839,12 +843,13 @@ mod tests {
 
         let error = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 1,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:test",
+                ),
                 vec![Task::new("parent-1", "parent.work", json!({}))],
             )
             .unwrap_err();
@@ -887,12 +892,13 @@ mod tests {
 
         let first = adapter
             .step(
-                RunnerContext {
-                    registry_generation: 1,
-                    current_step: 1,
-                    executor_id: "executor:test".into(),
-                    task_lease_id: Some("lease:test".into()),
-                },
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:test",
+                ),
                 vec![Task::new("parent-1", "parent.work", json!({}))],
             )
             .unwrap();

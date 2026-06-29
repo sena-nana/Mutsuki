@@ -6,7 +6,8 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure};
 use serde_json::json;
 
 use crate::{
-    HostRuntimeCommand, HostRuntimeReply, NativePluginHost, NativeRunner, runner_manifest,
+    HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativePluginHost, NativeRunner,
+    RunnerLimits, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
@@ -260,5 +261,104 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
         vec!["slow-1".to_string()]
+    );
+}
+
+#[test]
+fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
+    struct DeadlineRunner {
+        descriptor: RunnerDescriptor,
+        started_tx: mpsc::Sender<()>,
+        release_rx: mpsc::Receiver<()>,
+        cancelled: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Runner for DeadlineRunner {
+        fn descriptor(&self) -> &RunnerDescriptor {
+            &self.descriptor
+        }
+
+        fn step(
+            &mut self,
+            ctx: RunnerContext,
+            tasks: Vec<Task>,
+        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+            assert_eq!(ctx.deadline_tick, Some(2));
+            assert_eq!(ctx.invocation_id, "deadline-1");
+            self.started_tx.send(()).unwrap();
+            self.release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        }
+
+        fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
+            self.cancelled
+                .lock()
+                .expect("cancelled mutex poisoned")
+                .push(invocation_id.to_string());
+            Ok(())
+        }
+    }
+
+    let runner_descriptor =
+        descriptor_with_class("deadline.runner", "deadline.work", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(DeadlineRunner {
+        descriptor: runner_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+    }));
+    let mut config = HostRuntimeConfig::default();
+    config.default_runner_limits = RunnerLimits {
+        deadline_ticks: Some(1),
+        ..RunnerLimits::default()
+    };
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "deadline-1",
+            "deadline.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(runtime.task_status("deadline-1"), Some(TaskStatus::Running));
+
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    assert_eq!(
+        runtime.task_status("deadline-1"),
+        Some(TaskStatus::Cancelled)
+    );
+    assert!(
+        cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .is_empty()
+    );
+
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(
+        runtime.task_status("deadline-1"),
+        Some(TaskStatus::Cancelled)
+    );
+    assert_eq!(
+        *cancelled.lock().expect("cancelled mutex poisoned"),
+        vec!["deadline-1".to_string()]
     );
 }
