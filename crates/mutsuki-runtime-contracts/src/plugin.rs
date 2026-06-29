@@ -165,6 +165,7 @@ pub struct RuntimeCapabilityGraph {
     pub provided_capabilities: Vec<String>,
     pub required_capabilities: Vec<String>,
     pub active_capabilities: Vec<String>,
+    pub active_capability_providers: Vec<CapabilityProviderSelection>,
     pub active_resource_providers: Vec<String>,
     pub active_host_backends: Vec<String>,
     pub active_plugin_backends: Vec<String>,
@@ -172,6 +173,26 @@ pub struct RuntimeCapabilityGraph {
     pub active_bridges: Vec<String>,
     pub active_scheduler_policies: Vec<String>,
     pub active_workflows: Vec<String>,
+    pub permission_audit: Vec<PermissionAuditEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityProviderSelection {
+    pub capability: String,
+    pub provider_plugin_id: String,
+    pub provider_version: Option<String>,
+    pub surface_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionAuditEntry {
+    pub plugin_id: String,
+    pub permission_kind: String,
+    pub permission: String,
+    pub granted: bool,
+    pub provider_capability: Option<String>,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

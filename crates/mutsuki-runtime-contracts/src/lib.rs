@@ -26,11 +26,11 @@ pub use extension::{
     PluginBackendDescriptor, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 pub use plugin::{
-    ArtifactType, ContractSurface, ContractSurfaceKind, HandlerBinding, LifecyclePolicy,
-    PermissionGrant, PluginArtifact, PluginDeploymentKind, PluginManifest, PluginProvides,
-    ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
-    RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle,
-    SurfaceOccupancyHandleKind,
+    ArtifactType, CapabilityProviderSelection, ContractSurface, ContractSurfaceKind,
+    HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant, PluginArtifact,
+    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolDescriptor,
+    RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode,
+    SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
     CommandBatch, CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor,

@@ -440,6 +440,169 @@ fn resolver_rejects_missing_required_capability() {
     );
 }
 
+#[test]
+fn resolver_records_capability_provider_selection_and_permission_audit() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.requires = vec![
+        "protocol:contract.v1@>=1.0.0".into(),
+        "resource_strategy:resource.local".into(),
+    ];
+    manifest.provides.protocols = vec![ProtocolDescriptor {
+        protocol_id: "contract.v1".into(),
+        version: "1.2.0".into(),
+        input_schema: json!({"type": "object"}),
+        output_schema: json!({"type": "object"}),
+        error_schema: json!({"type": "object"}),
+        codec: "json".into(),
+        compatibility: "semver".into(),
+    }];
+    manifest.provides.resource_providers = vec!["resource.local".into()];
+    manifest.provides.resource_types = vec![frozen_bytes_resource_type(
+        "resource.local",
+        &["read", "export"],
+    )];
+    manifest.provides.effects = vec!["effect.chat.send".into()];
+    manifest.permissions = PermissionGrant {
+        effects: vec!["effect.chat.send".into()],
+        resources: vec!["resource:bytes:read".into()],
+    };
+
+    let plan = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap();
+
+    assert!(
+        plan.capability_graph
+            .active_capability_providers
+            .iter()
+            .any(|selection| selection.capability == "protocol:contract.v1"
+                && selection.provider_plugin_id == "plugin-a"
+                && selection.provider_version.as_deref() == Some("1.2.0")
+                && selection.reason == "required_version")
+    );
+    assert!(
+        plan.capability_graph
+            .permission_audit
+            .iter()
+            .any(|entry| entry.plugin_id == "plugin-a"
+                && entry.permission_kind == "effect"
+                && entry.permission == "effect.chat.send"
+                && entry.granted
+                && entry.provider_capability.as_deref() == Some("effect:effect.chat.send"))
+    );
+    assert!(
+        plan.capability_graph
+            .permission_audit
+            .iter()
+            .any(|entry| entry.plugin_id == "plugin-a"
+                && entry.permission_kind == "resource"
+                && entry.permission == "resource:bytes:read"
+                && entry.granted
+                && entry.provider_capability.as_deref() == Some("resource_type:bytes"))
+    );
+}
+
+#[test]
+fn resolver_rejects_unsatisfied_capability_version_constraint() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.requires = vec!["protocol:contract.v1@>=2.0.0".into()];
+    manifest.provides.protocols = vec![ProtocolDescriptor {
+        protocol_id: "contract.v1".into(),
+        version: "1.2.0".into(),
+        input_schema: json!({"type": "object"}),
+        output_schema: json!({"type": "object"}),
+        error_schema: json!({"type": "object"}),
+        codec: "json".into(),
+        compatibility: "semver".into(),
+    }];
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile())
+        .expect_err("unsatisfied capability version should fail")
+        .error()
+        .clone();
+
+    assert_eq!(error.code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.evidence.get("capability"),
+        Some(&ScalarValue::String("protocol:contract.v1".into()))
+    );
+    assert_eq!(
+        error.evidence.get("version_constraint"),
+        Some(&ScalarValue::String(">=2.0.0".into()))
+    );
+}
+
+#[test]
+fn resolver_rejects_unbacked_permission_grant() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.permissions = PermissionGrant {
+        effects: vec!["effect.chat.send".into()],
+        resources: Vec::new(),
+    };
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile())
+        .expect_err("permission without active provider should fail")
+        .error()
+        .clone();
+
+    assert_eq!(error.code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.evidence.get("permission_kind"),
+        Some(&ScalarValue::String("effect".into()))
+    );
+    assert_eq!(
+        error.evidence.get("permission"),
+        Some(&ScalarValue::String("effect.chat.send".into()))
+    );
+}
+
+#[test]
+fn resolver_rejects_plugin_backend_with_missing_codec_provider() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.provides.plugin_backends = vec![PluginBackendDescriptor {
+        backend_id: "plugin.backend.builtin".into(),
+        deployment_kind: PluginDeploymentKind::Builtin,
+        task_client_protocol: "mutsuki.task.v1".into(),
+        resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+        codec_id: Some("codec.missing".into()),
+        bridge_id: None,
+    }];
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile())
+        .expect_err("active backend codec must have a provider descriptor")
+        .error()
+        .clone();
+
+    assert_eq!(error.code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.evidence.get("capability"),
+        Some(&ScalarValue::String("codec:codec.missing".into()))
+    );
+}
+
+#[test]
+fn resolver_rejects_profile_binding_to_missing_runner() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    let mut profile = runtime_profile();
+    profile
+        .bindings
+        .insert("builtin.work".into(), "missing.runner".into());
+
+    let error = crate::resolve_load_plan(&[manifest], &profile)
+        .expect_err("profile binding should point at an enabled runner")
+        .error()
+        .clone();
+
+    assert_eq!(error.code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.evidence.get("runner_id"),
+        Some(&ScalarValue::String("missing.runner".into()))
+    );
+}
+
 fn assert_surface(plan: &RuntimeLoadPlan, surface_id: &str, kind: ContractSurfaceKind) {
     assert!(
         plan.contract_surfaces

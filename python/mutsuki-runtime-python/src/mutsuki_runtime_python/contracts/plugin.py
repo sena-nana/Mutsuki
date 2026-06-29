@@ -279,11 +279,62 @@ class RuntimeProfile:
 
 
 @dataclass(frozen=True)
+class CapabilityProviderSelection:
+    capability: str
+    provider_plugin_id: str
+    provider_version: str | None
+    surface_id: str
+    reason: str
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "CapabilityProviderSelection")
+        provider_version = field_value(raw, "provider_version")
+        return cls(
+            capability=as_str(field_value(raw, "capability"), "capability"),
+            provider_plugin_id=as_str(
+                field_value(raw, "provider_plugin_id"), "provider_plugin_id"
+            ),
+            provider_version=None
+            if provider_version is None
+            else as_str(provider_version, "provider_version"),
+            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            reason=as_str(field_value(raw, "reason"), "reason"),
+        )
+
+
+@dataclass(frozen=True)
+class PermissionAuditEntry:
+    plugin_id: str
+    permission_kind: str
+    permission: str
+    granted: bool
+    provider_capability: str | None
+    reason: str
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "PermissionAuditEntry")
+        provider_capability = field_value(raw, "provider_capability")
+        return cls(
+            plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
+            permission_kind=as_str(field_value(raw, "permission_kind"), "permission_kind"),
+            permission=as_str(field_value(raw, "permission"), "permission"),
+            granted=as_bool(field_value(raw, "granted"), "granted"),
+            provider_capability=None
+            if provider_capability is None
+            else as_str(provider_capability, "provider_capability"),
+            reason=as_str(field_value(raw, "reason"), "reason"),
+        )
+
+
+@dataclass(frozen=True)
 class RuntimeCapabilityGraph:
     profile_mode: RuntimeProfileMode
     provided_capabilities: tuple[str, ...]
     required_capabilities: tuple[str, ...]
     active_capabilities: tuple[str, ...]
+    active_capability_providers: tuple[CapabilityProviderSelection, ...]
     active_resource_providers: tuple[str, ...]
     active_host_backends: tuple[str, ...]
     active_plugin_backends: tuple[str, ...]
@@ -291,6 +342,7 @@ class RuntimeCapabilityGraph:
     active_bridges: tuple[str, ...]
     active_scheduler_policies: tuple[str, ...]
     active_workflows: tuple[str, ...]
+    permission_audit: tuple[PermissionAuditEntry, ...]
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -307,6 +359,9 @@ class RuntimeCapabilityGraph:
             ),
             active_capabilities=as_str_tuple(
                 field_value(raw, "active_capabilities"), "active_capabilities"
+            ),
+            active_capability_providers=tuple_from_json(
+                raw, "active_capability_providers", CapabilityProviderSelection
             ),
             active_resource_providers=as_str_tuple(
                 field_value(raw, "active_resource_providers"),
@@ -327,6 +382,7 @@ class RuntimeCapabilityGraph:
             active_workflows=as_str_tuple(
                 field_value(raw, "active_workflows"), "active_workflows"
             ),
+            permission_audit=tuple_from_json(raw, "permission_audit", PermissionAuditEntry),
         )
 
 
