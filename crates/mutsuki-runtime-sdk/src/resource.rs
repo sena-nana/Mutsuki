@@ -12,46 +12,6 @@ pub trait ResourceKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct TextBuffer;
-
-impl ResourceKind for TextBuffer {
-    const KIND_ID: &'static str = "text_buffer";
-    const SEMANTIC: ResourceSemantic = ResourceSemantic::CowVersionedState;
-}
-
-#[derive(Clone, Debug)]
-pub struct AstSnapshot;
-
-impl ResourceKind for AstSnapshot {
-    const KIND_ID: &'static str = "ast_snapshot";
-    const SEMANTIC: ResourceSemantic = ResourceSemantic::VersionedSnapshot;
-}
-
-#[derive(Clone, Debug)]
-pub struct ProjectFacts;
-
-impl ResourceKind for ProjectFacts {
-    const KIND_ID: &'static str = "project_facts";
-    const SEMANTIC: ResourceSemantic = ResourceSemantic::ReadOnlyFact;
-}
-
-#[derive(Clone, Debug)]
-pub struct ModelOutputStream;
-
-impl ResourceKind for ModelOutputStream {
-    const KIND_ID: &'static str = "model_output_stream";
-    const SEMANTIC: ResourceSemantic = ResourceSemantic::StreamResource;
-}
-
-#[derive(Clone, Debug)]
-pub struct DbPool;
-
-impl ResourceKind for DbPool {
-    const KIND_ID: &'static str = "db_pool";
-    const SEMANTIC: ResourceSemantic = ResourceSemantic::CapabilityResource;
-}
-
-#[derive(Clone, Debug)]
 pub struct TypedResourceHandle<T> {
     resource: ResourceRef,
     _marker: PhantomData<T>,
@@ -221,11 +181,18 @@ mod tests {
 
     use super::*;
 
+    struct TestState;
+
+    impl ResourceKind for TestState {
+        const KIND_ID: &'static str = "text_buffer";
+        const SEMANTIC: ResourceSemantic = ResourceSemantic::CowVersionedState;
+    }
+
     #[test]
     fn resource_client_builds_all_resource_plan_shapes() {
         let client = ResourceClient;
         let state = resource_ref("state", "text_buffer", ResourceSemantic::CowVersionedState);
-        let state_handle = client.handle::<()>(state.clone());
+        let state_handle = client.handle::<TestState>(state.clone());
 
         let read = client.read_plan(&state_handle, "collect");
         let write = client.write_plan(&state_handle, "fail", json!({"replace": "all"}));
@@ -252,64 +219,13 @@ mod tests {
         let batch = client.command_batch("batch:1", vec![command.clone()], false);
         let saga = client.saga_plan("saga:1", vec![command.clone()], vec![command]);
 
+        assert!(state_handle.descriptor_matches_kind());
         assert!(tx.strict);
         assert_eq!(tx.operations, vec![write]);
         assert!(!batch.rollback_guarantee);
         assert_eq!(batch.commands.len(), 1);
         assert_eq!(saga.steps.len(), 1);
         assert_eq!(saga.compensations.len(), 1);
-    }
-
-    #[test]
-    fn standard_resource_kind_markers_cover_issue_9_examples() {
-        let client = ResourceClient;
-        let text = resource_ref("text", TextBuffer::KIND_ID, TextBuffer::SEMANTIC);
-        let ast = resource_ref("ast", AstSnapshot::KIND_ID, AstSnapshot::SEMANTIC);
-        let facts = resource_ref("facts", ProjectFacts::KIND_ID, ProjectFacts::SEMANTIC);
-        let stream = resource_ref(
-            "stream",
-            ModelOutputStream::KIND_ID,
-            ModelOutputStream::SEMANTIC,
-        );
-        let db = resource_ref("db", DbPool::KIND_ID, DbPool::SEMANTIC);
-
-        let text = client.handle::<TextBuffer>(text);
-        let ast = client.handle::<AstSnapshot>(ast);
-        let facts = client.handle::<ProjectFacts>(facts);
-        let stream = client.handle::<ModelOutputStream>(stream);
-        let db = client.handle::<DbPool>(db);
-
-        assert!(text.descriptor_matches_kind());
-        assert!(ast.descriptor_matches_kind());
-        assert!(facts.descriptor_matches_kind());
-        assert!(stream.descriptor_matches_kind());
-        assert!(db.descriptor_matches_kind());
-
-        assert_eq!(
-            client
-                .write_plan(&text, "fail", json!([]))
-                .resource
-                .semantic,
-            TextBuffer::SEMANTIC
-        );
-        assert_eq!(client.read_plan(&ast, "collect").operation, "collect");
-        assert_eq!(
-            client
-                .read_plan(&facts, "query")
-                .resource
-                .resource_id
-                .kind_id,
-            ProjectFacts::KIND_ID
-        );
-        assert_eq!(client.stream_plan(&stream).operation, "open_stream");
-        assert_eq!(
-            client
-                .command_plan(&db, "query", json!({"sql": "select 1"}), None)
-                .capability
-                .resource_id
-                .kind_id,
-            DbPool::KIND_ID
-        );
     }
 
     fn resource_ref(slot_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {

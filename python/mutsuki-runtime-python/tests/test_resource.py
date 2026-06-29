@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 import importlib
+from typing import ClassVar
 
 import pytest
 
 from mutsuki_runtime_python.contracts.resource import ResourceSemantic, ValueRef
-from mutsuki_runtime_python.resources import (
-    AstSnapshot,
-    DbPool,
-    ModelOutputStream,
-    ProjectFacts,
-    ResourceClient,
-    TextBuffer,
-)
+from mutsuki_runtime_python.resources import ResourceClient, ResourceKind
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 PythonResourceManager = importlib.import_module(
     "mutsuki_runtime_python." + "resources.manager"
 ).PythonResourceManager
+
+
+def resource_kind(kind_id: str, semantic: ResourceSemantic) -> type[ResourceKind]:
+    class Marker:
+        KIND_ID: ClassVar[str] = kind_id
+        SEMANTIC: ClassVar[ResourceSemantic] = semantic
+
+    return Marker
 
 
 def test_resource_manager_packs_small_and_large_values() -> None:
@@ -102,21 +104,24 @@ def test_resource_client_builds_issue_9_example_resource_plans() -> None:
     client = ResourceClient()
     text = client.handle(
         manager.create_cow_state_resource("text_buffer", "text.v1", b"hello"),
-        TextBuffer,
+        resource_kind("text_buffer", ResourceSemantic.COW_VERSIONED_STATE),
     )
     ast = client.handle(
         manager.create_snapshot_resource("ast_snapshot", "ast.v1", text.resource, b"ast"),
-        AstSnapshot,
+        resource_kind("ast_snapshot", ResourceSemantic.VERSIONED_SNAPSHOT),
     )
     facts = client.handle(
         manager.create_fact_resource("project_facts", "facts.v1", {"root": "."}),
-        ProjectFacts,
+        resource_kind("project_facts", ResourceSemantic.READ_ONLY_FACT),
     )
     stream = client.handle(
         manager.create_stream_resource("model_output_stream", "token.v1", "stream://model"),
-        ModelOutputStream,
+        resource_kind("model_output_stream", ResourceSemantic.STREAM_RESOURCE),
     )
-    db = client.handle(manager.create_capability_resource("db_pool", "db.pool.v1"), DbPool)
+    db = client.handle(
+        manager.create_capability_resource("db_pool", "db.pool.v1"),
+        resource_kind("db_pool", ResourceSemantic.CAPABILITY_RESOURCE),
+    )
 
     assert text.descriptor_matches_kind()
     assert ast.descriptor_matches_kind()

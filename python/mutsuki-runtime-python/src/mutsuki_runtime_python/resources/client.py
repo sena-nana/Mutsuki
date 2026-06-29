@@ -25,31 +25,6 @@ class ResourceKind(Protocol):
     SEMANTIC: ClassVar[ResourceSemantic]
 
 
-class TextBuffer:
-    KIND_ID: ClassVar[str] = "text_buffer"
-    SEMANTIC: ClassVar[ResourceSemantic] = ResourceSemantic.COW_VERSIONED_STATE
-
-
-class AstSnapshot:
-    KIND_ID: ClassVar[str] = "ast_snapshot"
-    SEMANTIC: ClassVar[ResourceSemantic] = ResourceSemantic.VERSIONED_SNAPSHOT
-
-
-class ProjectFacts:
-    KIND_ID: ClassVar[str] = "project_facts"
-    SEMANTIC: ClassVar[ResourceSemantic] = ResourceSemantic.READ_ONLY_FACT
-
-
-class ModelOutputStream:
-    KIND_ID: ClassVar[str] = "model_output_stream"
-    SEMANTIC: ClassVar[ResourceSemantic] = ResourceSemantic.STREAM_RESOURCE
-
-
-class DbPool:
-    KIND_ID: ClassVar[str] = "db_pool"
-    SEMANTIC: ClassVar[ResourceSemantic] = ResourceSemantic.CAPABILITY_RESOURCE
-
-
 TResourceKind = TypeVar("TResourceKind", bound=ResourceKind)
 
 
@@ -131,12 +106,7 @@ class ResourceClient:
 
 
 __all__ = (
-    "AstSnapshot",
-    "DbPool",
-    "ModelOutputStream",
-    "ProjectFacts",
     "ResourceClient",
     "ResourceKind",
-    "TextBuffer",
     "TypedResourceHandle",
 )
