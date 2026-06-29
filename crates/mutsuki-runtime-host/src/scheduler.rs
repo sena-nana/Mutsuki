@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor};
 use mutsuki_runtime_core::{RunnerLoad, RuntimeResult, ScheduleDecision};
 
@@ -8,6 +10,7 @@ pub struct RunnerLimits {
     pub max_inflight: usize,
     pub queue_limit: usize,
     pub deadline_ticks: Option<u64>,
+    pub wall_clock_deadline: Option<Duration>,
 }
 
 impl Default for RunnerLimits {
@@ -18,6 +21,7 @@ impl Default for RunnerLimits {
             max_inflight: 64,
             queue_limit: 1024,
             deadline_ticks: None,
+            wall_clock_deadline: None,
         }
     }
 }

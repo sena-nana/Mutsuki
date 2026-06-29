@@ -121,9 +121,12 @@ issue #5 的 SDK async/await 预期是语法层收敛，不是 Core 能力扩张
 默认 HostRuntime 的 running cancel 分两段：public command 只暴露 `CancelTask(TaskId)`；
 host 内部先让 Core task 进入 cancelled，再记录 pending runner cancel。HostRuntime 可由
 `RunnerLimits.deadline_ticks` 为本次 runner invocation 生成 `deadline_tick`，并在后续
-actor tick 中把超期 running task 标记为 cancelled。若 runner 之后从 worker 返回，host
-通过现有 `Runner.cancel(invocation_id)` 管理面尽力投递；若 native step 或单连接同步
-JSONL step 永久卡死，该版本只保证 CoreActor 不被卡住，不伪装已完成 runner 侧清理。
+actor tick 中把超期 running task 标记为 cancelled。Host 可在不改变 wire shape 的前提下
+叠加 wall-clock deadline、取消宽限和 worker health timeout；这些字段只存在于 host
+config / runner limits。超时的 native worker 会被隔离并进入 drain，pool 可补充
+replacement worker。若隔离后的 runner 迟到返回，host 只投递 `Runner.cancel` /
+`Runner.dispose`，不提交旧结果，也不把旧 runner 放回 Core。单连接同步 JSONL step 的
+独立 management channel 和进程级强制终止属于 host/sidecar 执行面，不进入 contracts。
 
 Core 保留既有 string task id facade，同时提供以 `TaskHandle` descriptor 为入口的
 status / result / outcome / events / cancel / wake facade。`TaskHandle` 不代表语言级

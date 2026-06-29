@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::TaskStatus;
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
@@ -19,6 +20,8 @@ pub struct HostRuntimeConfig {
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
+    pub cancel_grace_period: Option<Duration>,
+    pub worker_health_timeout: Option<Duration>,
 }
 
 impl Default for HostRuntimeConfig {
@@ -33,6 +36,8 @@ impl Default for HostRuntimeConfig {
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
+            cancel_grace_period: Some(Duration::from_secs(30)),
+            worker_health_timeout: None,
         }
     }
 }

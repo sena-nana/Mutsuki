@@ -6,11 +6,51 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure};
 use serde_json::json;
 
 use crate::{
-    HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativePluginHost, NativeRunner,
-    RunnerLimits, runner_manifest,
+    HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativePluginHost,
+    NativeRunner, RunnerLimits, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
+
+struct BlockingObservedRunner {
+    descriptor: RunnerDescriptor,
+    started_tx: mpsc::Sender<()>,
+    release_rx: mpsc::Receiver<()>,
+    cancelled: Arc<Mutex<Vec<String>>>,
+    disposed: Arc<Mutex<bool>>,
+}
+
+impl Runner for BlockingObservedRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn step(
+        &mut self,
+        _ctx: RunnerContext,
+        tasks: Vec<Task>,
+    ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+        self.started_tx.send(()).unwrap();
+        let _ = self.release_rx.recv();
+        Ok(tasks
+            .into_iter()
+            .map(|task| RunnerResult::completed(task.task_id))
+            .collect())
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
+        self.cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .push(invocation_id.to_string());
+        Ok(())
+    }
+
+    fn dispose(&mut self) -> mutsuki_runtime_core::RuntimeResult<()> {
+        *self.disposed.lock().expect("disposed mutex poisoned") = true;
+        Ok(())
+    }
+}
 
 #[test]
 fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
@@ -364,6 +404,278 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
 }
 
 #[test]
+fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
+    let stuck_descriptor =
+        descriptor_with_class("stuck.wall.runner", "wall.stuck", ExecutionClass::Blocking);
+    let echo_descriptor =
+        descriptor_with_class("echo.wall.runner", "wall.echo", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let disposed = Arc::new(Mutex::new(false));
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![stuck_descriptor.clone(), echo_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: stuck_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+        disposed: disposed.clone(),
+    }));
+    host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut config = HostRuntimeConfig {
+        blocking_threads: 1,
+        default_runner_limits: RunnerLimits {
+            wall_clock_deadline: Some(Duration::from_millis(150)),
+            ..RunnerLimits::default()
+        },
+        ..HostRuntimeConfig::default()
+    };
+    config.cancel_grace_period = Some(Duration::from_secs(30));
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "wall-stuck-1",
+            "wall.stuck",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(
+        runtime.task_status("wall-stuck-1"),
+        Some(TaskStatus::Running | TaskStatus::Cancelled)
+    ));
+
+    std::thread::sleep(Duration::from_millis(200));
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    assert_eq!(
+        runtime.task_status("wall-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "wall-echo-1",
+            "wall.echo",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    wait_for_status(&mut runtime, "wall-echo-1", TaskStatus::Completed);
+    assert_eq!(
+        runtime.task_status("wall-echo-1"),
+        Some(TaskStatus::Completed)
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_dispose(&mut runtime, &disposed);
+    assert_eq!(
+        runtime.task_status("wall-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
+    assert_eq!(
+        *cancelled.lock().expect("cancelled mutex poisoned"),
+        vec!["task-lease-1-wall-stuck-1".to_string()]
+    );
+    assert!(*disposed.lock().expect("disposed mutex poisoned"));
+}
+
+#[test]
+fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
+    let stuck_descriptor = descriptor_with_class(
+        "stuck.cancel.runner",
+        "cancel.stuck",
+        ExecutionClass::Blocking,
+    );
+    let echo_descriptor = descriptor_with_class(
+        "echo.cancel.runner",
+        "cancel.echo",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let disposed = Arc::new(Mutex::new(false));
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![stuck_descriptor.clone(), echo_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: stuck_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+        disposed: disposed.clone(),
+    }));
+    host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let config = HostRuntimeConfig {
+        blocking_threads: 1,
+        cancel_grace_period: Some(Duration::from_millis(30)),
+        ..HostRuntimeConfig::default()
+    };
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "cancel-stuck-1",
+            "cancel.stuck",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::CancelTask("cancel-stuck-1".into()))
+        .unwrap();
+    assert_eq!(
+        runtime.task_status("cancel-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
+
+    std::thread::sleep(Duration::from_millis(60));
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "cancel-echo-1",
+            "cancel.echo",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    wait_for_status(&mut runtime, "cancel-echo-1", TaskStatus::Completed);
+    assert_eq!(
+        runtime.task_status("cancel-echo-1"),
+        Some(TaskStatus::Completed)
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_dispose(&mut runtime, &disposed);
+    assert_eq!(
+        *cancelled.lock().expect("cancelled mutex poisoned"),
+        vec!["task-lease-1-cancel-stuck-1".to_string()]
+    );
+    assert!(*disposed.lock().expect("disposed mutex poisoned"));
+}
+
+#[test]
+fn worker_health_timeout_cancels_stalled_invocation() {
+    let stuck_descriptor = descriptor_with_class(
+        "stuck.health.runner",
+        "health.stuck",
+        ExecutionClass::Blocking,
+    );
+    let echo_descriptor = descriptor_with_class(
+        "echo.health.runner",
+        "health.echo",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let disposed = Arc::new(Mutex::new(false));
+    let mut host = NativePluginHost::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![stuck_descriptor.clone(), echo_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: stuck_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+        disposed: disposed.clone(),
+    }));
+    host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let config = HostRuntimeConfig {
+        blocking_threads: 1,
+        worker_health_timeout: Some(Duration::from_millis(30)),
+        ..HostRuntimeConfig::default()
+    };
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "health-stuck-1",
+            "health.stuck",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    std::thread::sleep(Duration::from_millis(60));
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    assert_eq!(
+        runtime.task_status("health-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "health-echo-1",
+            "health.echo",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    wait_for_status(&mut runtime, "health-echo-1", TaskStatus::Completed);
+    assert_eq!(
+        runtime.task_status("health-echo-1"),
+        Some(TaskStatus::Completed)
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_dispose(&mut runtime, &disposed);
+    assert_eq!(
+        *cancelled.lock().expect("cancelled mutex poisoned"),
+        vec!["task-lease-1-health-stuck-1".to_string()]
+    );
+    assert!(*disposed.lock().expect("disposed mutex poisoned"));
+}
+
+#[test]
 fn host_runtime_registers_only_active_capability_graph_extensions() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
@@ -505,4 +817,26 @@ fn assert_pruned_capability<T>(result: mutsuki_runtime_core::RuntimeResult<&T>, 
         error.error().evidence.get("detail"),
         Some(&ScalarValue::String("inactive_load_plan".into()))
     );
+}
+
+fn wait_for_dispose(runtime: &mut HostRuntime, disposed: &Arc<Mutex<bool>>) {
+    for _ in 0..10 {
+        if *disposed.lock().expect("disposed mutex poisoned") {
+            return;
+        }
+        runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_status(runtime: &mut HostRuntime, task_id: &str, expected: TaskStatus) {
+    for _ in 0..10 {
+        if runtime.task_status(task_id) == Some(expected.clone()) {
+            return;
+        }
+        runtime
+            .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
