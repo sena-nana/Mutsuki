@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    HandlerBinding, RuntimeError, RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
+    ExecutionClass, HandlerBinding, RunnerPurity, RuntimeError, RuntimeLoadPlan,
+    SurfaceCompatibility, SurfaceOccupancy,
 };
 
 use crate::{Runner, RuntimeFailure, RuntimeResult};
@@ -198,11 +199,11 @@ impl RunnerRegistry {
         self.capabilities.get(runner_id)
     }
 
-    pub fn take_runner(&mut self, runner_id: &str) -> Option<Box<dyn Runner>> {
+    pub(crate) fn take_runner(&mut self, runner_id: &str) -> Option<Box<dyn Runner>> {
         self.runners.remove(runner_id)
     }
 
-    pub fn put_runner(&mut self, runner: Box<dyn Runner>) {
+    pub(crate) fn put_runner(&mut self, runner: Box<dyn Runner>) {
         let runner_id = runner.descriptor().runner_id.clone();
         self.runners.insert(runner_id, runner);
     }
@@ -273,12 +274,18 @@ pub fn validate_runtime_descriptors(
     load_plan: &RuntimeLoadPlan,
     runners: &[mutsuki_runtime_contracts::RunnerDescriptor],
 ) -> RuntimeResult<()> {
-    let authorized: BTreeSet<String> = load_plan
+    let planned: Vec<_> = load_plan
         .plugins
         .iter()
         .flat_map(|plugin| plugin.provides.runners.iter())
+        .collect();
+    let authorized: BTreeSet<String> = planned
+        .iter()
         .map(|runner| runner.runner_id.clone())
         .collect();
+    for runner in planned {
+        validate_runner_privilege(runner)?;
+    }
     for runner in runners {
         if !authorized.contains(&runner.runner_id) {
             return Err(RuntimeFailure::new(RuntimeError::new(
@@ -287,8 +294,29 @@ pub fn validate_runtime_descriptors(
                 format!("runner.{}", runner.runner_id),
             )));
         }
+        validate_runner_privilege(runner)?;
     }
     validate_handler_bindings(load_plan)?;
+    Ok(())
+}
+
+fn validate_runner_privilege(
+    runner: &mutsuki_runtime_contracts::RunnerDescriptor,
+) -> RuntimeResult<()> {
+    if runner.purity == RunnerPurity::Committer && runner.runner_id != "core.kernel" {
+        return Err(RuntimeFailure::new(RuntimeError::new(
+            ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.load_plan",
+            format!("runner.{}.committer", runner.runner_id),
+        )));
+    }
+    if runner.execution_class == ExecutionClass::Control && runner.runner_id != "core.kernel" {
+        return Err(RuntimeFailure::new(RuntimeError::new(
+            ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.load_plan",
+            format!("runner.{}.control", runner.runner_id),
+        )));
+    }
     Ok(())
 }
 

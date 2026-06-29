@@ -35,6 +35,11 @@ impl CoreRuntime {
         let mut completed = 0;
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
+            if descriptor.execution_class == ExecutionClass::Control
+                && descriptor.runner_id != "core.kernel"
+            {
+                continue;
+            }
             let load = self.tasks.runner_load(
                 &descriptor,
                 self.current_step,
@@ -62,7 +67,7 @@ impl CoreRuntime {
             }
             let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
             let lease_id = task_leases[0].lease_id.clone();
-            let invocation_id = task_leases[0].task_id.clone();
+            let invocation_id = lease_id.clone();
             let runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)
@@ -176,7 +181,7 @@ impl CoreRuntime {
             }
             let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
             let lease_id = task_leases[0].lease_id.clone();
-            let invocation_id = task_leases[0].task_id.clone();
+            let invocation_id = lease_id.clone();
             let runner = self
                 .registry
                 .take_runner(&descriptor.runner_id)

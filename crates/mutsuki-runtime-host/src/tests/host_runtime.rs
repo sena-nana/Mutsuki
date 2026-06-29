@@ -260,7 +260,7 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["slow-1".to_string()]
+        vec!["task-lease-1-slow-1".to_string()]
     );
 }
 
@@ -284,7 +284,7 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
             tasks: Vec<Task>,
         ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
             assert_eq!(ctx.deadline_tick, Some(2));
-            assert_eq!(ctx.invocation_id, "deadline-1");
+            assert_eq!(ctx.invocation_id, "task-lease-1-deadline-1");
             self.started_tx.send(()).unwrap();
             self.release_rx.recv().unwrap();
             Ok(tasks
@@ -359,6 +359,6 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
     );
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["deadline-1".to_string()]
+        vec!["task-lease-1-deadline-1".to_string()]
     );
 }

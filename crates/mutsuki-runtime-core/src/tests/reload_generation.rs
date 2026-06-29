@@ -99,6 +99,10 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
         runtime.running_invocations()[0].pollution,
         InvocationPollution::Clean
     );
+    assert_eq!(
+        runtime.running_invocations()[0].invocation_id,
+        "task-lease-1-running-clean"
+    );
 
     let mut worker_v2 = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     worker_v2.plugin_generation = 2;
@@ -115,7 +119,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
 
     assert_eq!(
         calls.lock().expect("calls mutex poisoned").as_slice(),
-        &["cancel:running-clean", "dispose:worker"]
+        &["cancel:task-lease-1-running-clean", "dispose:worker"]
     );
     let record = runtime.tasks().get("running-clean").unwrap();
     assert_eq!(record.status, TaskStatus::Ready);

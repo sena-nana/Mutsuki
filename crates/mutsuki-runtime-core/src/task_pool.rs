@@ -343,13 +343,22 @@ impl TaskPool {
 
     pub fn cancel_running_invocation(&mut self, runner_id: &str, invocation_id: &str) -> usize {
         let mut cancelled = 0;
-        if let Some(record) = self.tasks.get_mut(invocation_id)
-            && record.status == TaskStatus::Running
-            && record.claimed_by.as_deref() == Some(runner_id)
-        {
-            record.status = TaskStatus::Ready;
-            release_record_lease(record);
-            cancelled = 1;
+        for record in self.tasks.values_mut() {
+            if record.status != TaskStatus::Running
+                || record.claimed_by.as_deref() != Some(runner_id)
+            {
+                continue;
+            }
+            if record
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.lease_id == invocation_id)
+            {
+                record.status = TaskStatus::Ready;
+                release_record_lease(record);
+                cancelled = 1;
+                break;
+            }
         }
         cancelled
     }

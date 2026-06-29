@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, mpsc};
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{RuntimeResult, ScheduleDecision};
@@ -97,17 +97,14 @@ fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
 }
 
 #[test]
-fn custom_scheduler_cannot_dispatch_non_kernel_control_runner() {
+fn host_runtime_rejects_non_kernel_control_runner_before_scheduling() {
     let runner_descriptor =
         descriptor_with_class("control.runner", "control.work", ExecutionClass::Control);
-    let calls = Arc::new(Mutex::new(0usize));
-    let observed = calls.clone();
     let mut host = NativePluginHost::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        move |_ctx, tasks| {
-            *observed.lock().expect("calls mutex poisoned") += tasks.len();
+        |_ctx, tasks| {
             Ok(tasks
                 .into_iter()
                 .map(|task| RunnerResult::completed(task.task_id))
@@ -116,21 +113,10 @@ fn custom_scheduler_cannot_dispatch_non_kernel_control_runner() {
     )));
     let mut config = crate::HostRuntimeConfig::default();
     config.scheduler_policy = Arc::new(FixedScheduler { limit: 99 });
-    let mut runtime = host
-        .into_host_runtime_with_config(runtime_profile(), config)
-        .unwrap();
+    let err = match host.into_host_runtime_with_config(runtime_profile(), config) {
+        Ok(_) => panic!("host runtime boot should reject non-kernel control runner"),
+        Err(error) => error,
+    };
 
-    runtime
-        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
-            "control-1",
-            "control.work",
-            json!({}),
-        ))))
-        .unwrap();
-    runtime
-        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 2 })
-        .unwrap();
-
-    assert_eq!(runtime.task_status("control-1"), Some(TaskStatus::Ready));
-    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 0);
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
 }

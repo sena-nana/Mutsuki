@@ -97,7 +97,7 @@ fn core_facade_can_submit_one_targeted_task_from_handler_binding() {
 }
 
 #[test]
-fn handler_binding_register_facade_requires_load_plan_authorization() {
+fn handler_binding_register_facade_is_closed_after_boot() {
     let runner = runner_descriptor("message.runner", "cap.message.handle", RunnerPurity::Pure);
     let binding = handler_binding(
         "message-handler",
@@ -113,14 +113,40 @@ fn handler_binding_register_facade_requires_load_plan_authorization() {
     ];
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
-    runtime.register_handler_binding(binding).unwrap();
-    let err = runtime
-        .register_handler_binding(handler_binding(
-            "not-authorized",
-            "im.x",
-            "cap.message.handle",
-        ))
-        .unwrap_err();
+    let err = runtime.register_handler_binding(binding).unwrap_err();
+
+    assert_eq!(err.error().code, ERR_REGISTRY_FROZEN);
+}
+
+#[test]
+fn runtime_boot_rejects_non_kernel_committer_runner() {
+    let committer = runner_descriptor("plugin.committer", "core.commit", RunnerPurity::Committer);
+    let plan = load_plan(vec![committer.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(committer, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn runtime_boot_rejects_non_kernel_control_runner() {
+    let mut control = runner_descriptor("plugin.control", "control.work", RunnerPurity::Pure);
+    control.execution_class = ExecutionClass::Control;
+    let plan = load_plan(vec![control.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(control, |task| {
+            RunnerResult::completed(task.task_id.clone())
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+
+    let err = boot_error(plan, runners);
 
     assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
 }

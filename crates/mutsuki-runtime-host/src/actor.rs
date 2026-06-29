@@ -24,6 +24,7 @@ pub(crate) enum CoreActorMsg {
 #[derive(Clone, Debug)]
 struct RunningTask {
     runner_id: String,
+    invocation_id: String,
     deadline_tick: Option<u64>,
 }
 
@@ -137,7 +138,7 @@ fn handle_command(
                 pending_cancels
                     .entry(task.runner_id)
                     .or_default()
-                    .push(task_id.clone());
+                    .push(task.invocation_id);
             }
             Ok((HostRuntimeReply::TaskCancelled(task_id), false))
         }
@@ -293,7 +294,7 @@ fn cancel_expired_tasks(
             pending_cancels
                 .entry(task.runner_id)
                 .or_default()
-                .push(task_id);
+                .push(task.invocation_id);
         }
     }
 }
@@ -345,6 +346,7 @@ fn schedule_ready(
         dispatch.ctx.deadline_tick = limits
             .deadline_ticks
             .map(|ticks| dispatch.ctx.current_step.saturating_add(ticks));
+        let invocation_id = dispatch.ctx.invocation_id.clone();
         let deadline_tick = dispatch.ctx.deadline_tick;
         let task_ids: Vec<_> = dispatch
             .tasks
@@ -363,6 +365,7 @@ fn schedule_ready(
                 task_id,
                 RunningTask {
                     runner_id: runner_id.clone(),
+                    invocation_id: invocation_id.clone(),
                     deadline_tick,
                 },
             );

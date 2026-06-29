@@ -34,6 +34,7 @@ pub enum InvocationPollution {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunningInvocationDisposition {
     pub task_id: String,
+    pub invocation_id: String,
     pub runner_id: String,
     pub plugin_id: String,
     pub plugin_generation: u64,
@@ -109,9 +110,11 @@ impl CoreRuntime {
             match disposition.pollution {
                 InvocationPollution::Clean | InvocationPollution::LocalDirty => {
                     self.registry
-                        .cancel_runner(&disposition.runner_id, &disposition.task_id)?;
-                    self.tasks
-                        .cancel_running_invocation(&disposition.runner_id, &disposition.task_id);
+                        .cancel_runner(&disposition.runner_id, &disposition.invocation_id)?;
+                    self.tasks.cancel_running_invocation(
+                        &disposition.runner_id,
+                        &disposition.invocation_id,
+                    );
                     self.events.record(
                         RuntimeEventKind::Runner,
                         "runner.cancel",

@@ -106,21 +106,11 @@ impl CoreRuntime {
     }
 
     pub fn register_handler_binding(&mut self, binding: HandlerBinding) -> RuntimeResult<()> {
-        let authorized = self
-            .load_plan
-            .plugins
-            .iter()
-            .flat_map(|plugin| plugin.provides.handler_bindings.iter())
-            .any(|declared| declared == &binding);
-        if !authorized {
-            return Err(RuntimeFailure::new(RuntimeError::new(
-                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
-                "runtime.handler_binding",
-                format!("handler_binding.{}", binding.binding_id),
-            )));
-        }
-        self.handler_bindings.register_authorized(binding);
-        Ok(())
+        Err(RuntimeFailure::new(RuntimeError::new(
+            mutsuki_runtime_contracts::ERR_REGISTRY_FROZEN,
+            "runtime.handler_binding",
+            format!("handler_binding.{}", binding.binding_id),
+        )))
     }
 
     pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {

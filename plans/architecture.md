@@ -305,6 +305,12 @@ Host backend / plugin backend 通过 `HostBackendDescriptor`、`PluginBackendDes
 只能是不同 backend 实现，不能把 `Arc<T>`、`&mut T`、SDK client 或 native handle 暴露给
 插件业务代码。
 
+当前实现只完成 Host backend 裁剪的 Level 1：resolver 从 enabled plugins、deployment
+和 requires 生成 active graph，并只把 active backend / bridge / codec / scheduler policy /
+workflow 放入 contract surface；PluginHost 只校验 runner deployment 并启动 CoreRuntime。
+完整 backend instantiation registry / supervision 仍是后续工作，未来 Host 启动必须按
+`RuntimeCapabilityGraph.active_*` 注册或拒绝具体 backend，而不能在裁剪后继续声明其可用。
+
 Resource Registry、ResourceId 分配、lease 基础规则和 owner 路由事实属于 Core /
 ResourceManager；`ResourceProvider`、typed store backend、export/query/patch/stream
 handler 可以替换。provider 热替换必须按 `ResourceProviderReloadPolicy` 与

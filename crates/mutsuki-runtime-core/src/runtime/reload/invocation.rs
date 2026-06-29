@@ -38,10 +38,16 @@ impl CoreRuntime {
             .into_iter()
             .filter_map(|record| {
                 let runner_id = record.claimed_by.as_ref()?;
+                let invocation_id = record
+                    .lease
+                    .as_ref()
+                    .map(|lease| lease.lease_id.clone())
+                    .unwrap_or_else(|| record.task.task_id.clone());
                 let descriptor = self.registry.descriptor(runner_id);
                 Some(match descriptor {
                     Some(descriptor) => RunningInvocationDisposition {
                         task_id: record.task.task_id.clone(),
+                        invocation_id: invocation_id.clone(),
                         runner_id: runner_id.clone(),
                         plugin_id: descriptor.plugin_id.clone(),
                         plugin_generation: descriptor.plugin_generation,
@@ -49,6 +55,7 @@ impl CoreRuntime {
                     },
                     None => RunningInvocationDisposition {
                         task_id: record.task.task_id.clone(),
+                        invocation_id,
                         runner_id: runner_id.clone(),
                         plugin_id: "unknown".into(),
                         plugin_generation: record.task.registry_generation,
@@ -105,7 +112,7 @@ pub(super) fn cancel_attrs(
     );
     attrs.insert(
         "invocation_id".into(),
-        ScalarValue::String(disposition.task_id.clone()),
+        ScalarValue::String(disposition.invocation_id.clone()),
     );
     attrs.insert(
         "plugin_id".into(),
