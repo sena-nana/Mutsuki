@@ -7,7 +7,7 @@ pub struct MediaChunk {
     pub md5: String,
 }
 
-pub trait QqMediaProvider {
+pub trait QqMediaProvider: Send {
     fn read_chunks(
         &mut self,
         resource_ref: &str,

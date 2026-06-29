@@ -1,6 +1,5 @@
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::{RunnerPurity, Task};
 use mutsuki_runtime_core::{Runner, RunnerContext};
@@ -184,17 +183,7 @@ fn gateway_runner_emits_normalized_domain_events() {
     );
     task.registry_generation = 1;
 
-    let result = runner
-        .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-test".into()),
-            },
-            vec![task],
-        )
-        .unwrap();
+    let result = runner.step(test_context(1), vec![task]).unwrap();
 
     assert_eq!(result[0].events[0].kind, "mutsuki.im.qqbot.message.c2c");
 }
@@ -222,17 +211,7 @@ fn group_message_rejects_c2c_only_fields() {
         }),
     );
 
-    let error = runner
-        .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-test".into()),
-            },
-            vec![task],
-        )
-        .unwrap_err();
+    let error = runner.step(test_context(1), vec![task]).unwrap_err();
 
     assert!(
         error
@@ -245,7 +224,7 @@ fn group_message_rejects_c2c_only_fields() {
 
 #[test]
 fn openapi_runner_refreshes_token_once_after_401() {
-    let requests = Rc::new(RefCell::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let mut runner = openapi_runner_with_shared(
         requests.clone(),
         vec![
@@ -266,20 +245,10 @@ fn openapi_runner_refreshes_token_once_after_401() {
         }),
     );
 
-    let result = runner
-        .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-test".into()),
-            },
-            vec![task],
-        )
-        .unwrap();
+    let result = runner.step(test_context(1), vec![task]).unwrap();
 
     assert_eq!(result[0].events[0].payload["response"]["id"], "MESSAGE_ID");
-    let requests = requests.borrow();
+    let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[1].headers["Authorization"], "QQBot TOKEN_A");
     assert_eq!(requests[3].headers["Authorization"], "QQBot TOKEN_B");
@@ -306,17 +275,7 @@ fn media_upload_fails_when_file_info_is_empty() {
         }),
     );
 
-    let error = runner
-        .step(
-            RunnerContext {
-                registry_generation: 1,
-                current_step: 1,
-                executor_id: "executor:test".into(),
-                task_lease_id: Some("task-lease-test".into()),
-            },
-            vec![task],
-        )
-        .unwrap_err();
+    let error = runner.step(test_context(1), vec![task]).unwrap_err();
 
     assert!(
         error
@@ -331,11 +290,11 @@ fn openapi_runner_with(
     responses: Vec<Result<QqHttpResponse, QqOpenApiError>>,
     id_source: Box<dyn QqIdSource>,
 ) -> QqOpenApiRunner {
-    openapi_runner_with_shared(Rc::new(RefCell::new(Vec::new())), responses, id_source)
+    openapi_runner_with_shared(Arc::new(Mutex::new(Vec::new())), responses, id_source)
 }
 
 fn openapi_runner_with_shared(
-    requests: Rc<RefCell<Vec<QqHttpRequest>>>,
+    requests: Arc<Mutex<Vec<QqHttpRequest>>>,
     responses: Vec<Result<QqHttpResponse, QqOpenApiError>>,
     id_source: Box<dyn QqIdSource>,
 ) -> QqOpenApiRunner {
@@ -343,7 +302,7 @@ fn openapi_runner_with_shared(
     let clients = QqBotClients::new(
         Box::new(FakeHttpClient {
             requests,
-            responses: RefCell::new(VecDeque::from(responses)),
+            responses: Mutex::new(VecDeque::from(responses)),
         }),
         Box::new(FakeMediaProvider),
     );
@@ -363,15 +322,16 @@ fn response(status: u16, body: Value) -> Result<QqHttpResponse, QqOpenApiError> 
 }
 
 struct FakeHttpClient {
-    requests: Rc<RefCell<Vec<QqHttpRequest>>>,
-    responses: RefCell<VecDeque<Result<QqHttpResponse, QqOpenApiError>>>,
+    requests: Arc<Mutex<Vec<QqHttpRequest>>>,
+    responses: Mutex<VecDeque<Result<QqHttpResponse, QqOpenApiError>>>,
 }
 
 impl QqHttpClient for FakeHttpClient {
     fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError> {
-        self.requests.borrow_mut().push(request);
+        self.requests.lock().unwrap().push(request);
         self.responses
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .pop_front()
             .expect("missing fake HTTP response")
     }
@@ -409,4 +369,14 @@ impl QqIdSource for NoopIdSource {
         self.next += 1;
         next
     }
+}
+
+fn test_context(current_step: u64) -> RunnerContext {
+    RunnerContext::new(
+        1,
+        current_step,
+        "executor:test",
+        Some("task-lease-test".into()),
+        "invocation:test",
+    )
 }

@@ -34,11 +34,11 @@ pub struct QqHttpResponse {
     pub body: Value,
 }
 
-pub trait QqHttpClient {
+pub trait QqHttpClient: Send {
     fn send(&mut self, request: QqHttpRequest) -> Result<QqHttpResponse, QqOpenApiError>;
 }
 
-pub trait QqIdSource {
+pub trait QqIdSource: Send {
     fn next_msg_seq(&mut self) -> u64;
 }
 

@@ -30,7 +30,7 @@ pub enum GatewayAction {
     AckHeartbeat,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct QqGatewayPump {
     next_task_sequence: u64,
     last_sequence: Option<u64>,
@@ -39,21 +39,9 @@ pub struct QqGatewayPump {
     actions: VecDeque<GatewayAction>,
 }
 
-impl Default for QqGatewayPump {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl QqGatewayPump {
     pub fn new() -> Self {
-        Self {
-            next_task_sequence: 0,
-            last_sequence: None,
-            session_id: None,
-            seen_dedup_keys: BTreeSet::new(),
-            actions: VecDeque::new(),
-        }
+        Self::default()
     }
 
     pub fn last_sequence(&self) -> Option<u64> {

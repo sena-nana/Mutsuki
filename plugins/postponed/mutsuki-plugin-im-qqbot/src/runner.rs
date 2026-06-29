@@ -11,7 +11,8 @@ use crate::config::QqBotConfig;
 use crate::gateway::{GatewayFrame, normalize_gateway_frame};
 use crate::manifest::{
     EFFECT_INTERACTION_ACK, EFFECT_MEDIA_UPLOAD, EFFECT_MESSAGE_RECALL, EFFECT_MESSAGE_SEND,
-    EFFECT_USER_SHARE_LINK, PLUGIN_ID, gateway_normalizer_descriptor, openapi_effect_descriptor,
+    EFFECT_USER_SHARE_LINK, OPENAPI_RESULT_EVENT, PLUGIN_ID, gateway_normalizer_descriptor,
+    openapi_effect_descriptor,
 };
 use crate::openapi::{QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService};
 use crate::payload::{
@@ -37,7 +38,6 @@ pub struct QqGatewayNormalizeRunner {
 
 const GATEWAY_PARSE_ROUTE: &str = "mutsuki.im.qqbot.gateway.parse";
 const GATEWAY_NORMALIZE_ROUTE: &str = "mutsuki.im.qqbot.gateway.normalize";
-const OPENAPI_RESULT_EVENT: &str = "mutsuki.im.qqbot.openapi.result";
 
 impl QqGatewayNormalizeRunner {
     pub fn new(plugin_generation: u64) -> Self {

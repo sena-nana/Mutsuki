@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest, PluginProvides,
-    ExecutionClass, RunnerDescriptor, RunnerPurity, ScalarValue,
+    ArtifactType, ExecutionClass, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest,
+    PluginProvides, RunnerDescriptor, RunnerPurity, ScalarValue,
 };
 use serde_json::json;
 
@@ -20,10 +20,22 @@ pub const EFFECT_MEDIA_UPLOAD: &str = "mutsuki.im.qqbot.media.upload";
 pub const EFFECT_MESSAGE_RECALL: &str = "mutsuki.im.qqbot.message.recall";
 pub const EFFECT_INTERACTION_ACK: &str = "mutsuki.im.qqbot.interaction.ack";
 pub const EFFECT_USER_SHARE_LINK: &str = "mutsuki.im.qqbot.user.share_link";
+pub const OPENAPI_RESULT_EVENT: &str = "mutsuki.im.qqbot.openapi.result";
 
 pub const STREAM_GATEWAY: &str = "mutsuki.im.qqbot.gateway";
 pub const SUBSCRIPTION_GATEWAY: &str = "mutsuki.im.qqbot.gateway.events";
 pub const TIMER_GATEWAY_HEARTBEAT: &str = "mutsuki.im.qqbot.gateway.heartbeat";
+pub const RESOURCE_SCHEMA_MEDIA: &str = "mutsuki.im.qqbot.media.v1";
+pub const RESOURCE_PROVIDER_MEDIA: &str = "mutsuki.im.qqbot.media.provider";
+pub const RESOURCE_PERMISSION_MEDIA_READ: &str = "mutsuki.im.qqbot.media.read";
+
+const EFFECT_PROTOCOL_IDS: &[&str] = &[
+    EFFECT_MESSAGE_SEND,
+    EFFECT_MEDIA_UPLOAD,
+    EFFECT_MESSAGE_RECALL,
+    EFFECT_INTERACTION_ACK,
+    EFFECT_USER_SHARE_LINK,
+];
 
 pub fn gateway_normalizer_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     RunnerDescriptor {
@@ -62,7 +74,7 @@ pub fn openapi_effect_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             "additionalProperties": true
         }),
         output_schema: json!({
-            "events": ["mutsuki.im.qqbot.openapi.result"]
+            "events": [OPENAPI_RESULT_EVENT]
         }),
         metadata: metadata("QQBot OpenAPI effect runner"),
         contract_surfaces: vec![format!("runner:{EFFECT_RUNNER_ID}")],
@@ -70,13 +82,7 @@ pub fn openapi_effect_descriptor(plugin_generation: u64) -> RunnerDescriptor {
 }
 
 pub fn effect_protocol_ids() -> Vec<String> {
-    vec![
-        EFFECT_MESSAGE_SEND.into(),
-        EFFECT_MEDIA_UPLOAD.into(),
-        EFFECT_MESSAGE_RECALL.into(),
-        EFFECT_INTERACTION_ACK.into(),
-        EFFECT_USER_SHARE_LINK.into(),
-    ]
+    strings(EFFECT_PROTOCOL_IDS)
 }
 
 pub fn qqbot_manifest() -> PluginManifest {
@@ -97,13 +103,13 @@ pub fn qqbot_manifest() -> PluginManifest {
             runners,
             protocols: Vec::new(),
             handler_bindings: Vec::new(),
-            resource_schemas: vec!["mutsuki.im.qqbot.media.v1".into()],
-            resource_providers: vec!["mutsuki.im.qqbot.media.provider".into()],
+            resource_schemas: strings(&[RESOURCE_SCHEMA_MEDIA]),
+            resource_providers: strings(&[RESOURCE_PROVIDER_MEDIA]),
             resource_types: Vec::new(),
             effects: effect_protocol_ids(),
-            streams: vec![STREAM_GATEWAY.into()],
-            subscriptions: vec![SUBSCRIPTION_GATEWAY.into()],
-            timers: vec![TIMER_GATEWAY_HEARTBEAT.into()],
+            streams: strings(&[STREAM_GATEWAY]),
+            subscriptions: strings(&[SUBSCRIPTION_GATEWAY]),
+            timers: strings(&[TIMER_GATEWAY_HEARTBEAT]),
             state_schemas: Vec::new(),
             host_backends: Vec::new(),
             plugin_backends: Vec::new(),
@@ -115,7 +121,7 @@ pub fn qqbot_manifest() -> PluginManifest {
         requires: Vec::new(),
         permissions: PermissionGrant {
             effects: effect_protocol_ids(),
-            resources: vec!["mutsuki.im.qqbot.media.read".into()],
+            resources: strings(&[RESOURCE_PERMISSION_MEDIA_READ]),
         },
         lifecycle: LifecyclePolicy {
             reload_policy: "drain_and_swap".into(),
@@ -126,6 +132,10 @@ pub fn qqbot_manifest() -> PluginManifest {
         },
         metadata: metadata("QQBot Gateway and OpenAPI adapter"),
     }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).into()).collect()
 }
 
 fn metadata(description: &str) -> BTreeMap<String, ScalarValue> {
