@@ -277,6 +277,17 @@ Task descriptor，不得获得 builtin-only native 引用。
 插件运行中不得动态注册未授权 capability。如需变更，必须生成新的 load plan 和
 registry generation。
 
+Host 执行面必须把部署形态限制在后端实现中：
+
+- builtin / static 插件通过 `LocalTaskClient`、`LocalResourceClient` 直连本地
+  `CoreRuntime` / `ResourceManager` 快速路径。
+- ABI 插件通过 `AbiTaskClient`、`AbiResourceClient` 将同一 `Task` / resource plan
+  wire shape 编码到 bridge。
+- 两条路径不得向插件业务代码暴露 `Arc<T>`、`&T`、`&mut T`、`downcast` 或
+  `with_native_*` 之类 builtin-only 能力。
+- `ReadPlan` 的 collect / snapshot / stream open、`WritePlan` 的 commit，以及
+  export / command / batch / saga plan 都必须在后端边界执行；构造 plan 本身不得读写资源。
+
 ## 8. Hot Reload
 
 Contract surface 兼容性：

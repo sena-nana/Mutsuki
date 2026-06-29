@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     CancelPolicy, CommandBatch, CommandPlan, ContractSurface, ExclusiveWriteLease, ExportPlan,
-    HandlerBinding, PlanReceipt, ResourceCellRef, ResourceLease, ResourceRef, RuntimeError,
-    RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, SagaPlan, ScalarValue, SurfaceOccupancyHandle,
-    Task, TaskHandle, TaskOutcome, TaskStatus,
+    HandlerBinding, PlanReceipt, ReadPlan, ResourceCellRef, ResourceLease, ResourceRef,
+    RuntimeError, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, SagaPlan, ScalarValue,
+    SnapshotDescriptor, StreamPlan, SurfaceOccupancyHandle, Task, TaskHandle, TaskOutcome,
+    TaskStatus, WritePlan,
 };
 use serde_json::Value;
 
@@ -185,12 +186,43 @@ impl CoreRuntime {
         self.resources.create_mmap_resource(schema, bytes)
     }
 
+    pub fn create_cow_state_resource(
+        &mut self,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        self.resources
+            .create_cow_state_resource(kind_id, schema, bytes)
+    }
+
     pub fn create_capability_resource(&mut self, kind_id: &str, schema: &str) -> ResourceRef {
         self.resources.create_capability_resource(kind_id, schema)
     }
 
+    pub fn build_read_plan(&self, ref_id: &str, operation: &str) -> RuntimeResult<ReadPlan> {
+        self.resources.build_read_plan(ref_id, operation)
+    }
+
     pub fn build_export_plan(&self, ref_id: &str, target: &str) -> RuntimeResult<ExportPlan> {
         self.resources.build_export_plan(ref_id, target)
+    }
+
+    pub fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+        self.resources.collect_read_plan(plan)
+    }
+
+    pub fn snapshot_read_plan(
+        &mut self,
+        plan: &ReadPlan,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<SnapshotDescriptor> {
+        self.resources.snapshot_read_plan(plan, kind_id, schema)
+    }
+
+    pub fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+        self.resources.open_stream_plan(plan)
     }
 
     pub fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
@@ -206,6 +238,24 @@ impl CoreRuntime {
     ) -> RuntimeResult<CommandPlan> {
         self.resources
             .build_command_plan(ref_id, operation, args, idempotency_key)
+    }
+
+    pub fn build_write_plan(
+        &self,
+        ref_id: &str,
+        conflict_policy: &str,
+        operations: Value,
+    ) -> RuntimeResult<WritePlan> {
+        self.resources
+            .build_write_plan(ref_id, conflict_policy, operations)
+    }
+
+    pub fn commit_write_plan(
+        &mut self,
+        plan: &WritePlan,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<PlanReceipt> {
+        self.resources.commit_write_plan(plan, bytes)
     }
 
     pub fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {

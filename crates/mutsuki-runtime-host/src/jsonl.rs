@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 
 pub struct JsonlRunner<R, W> {
     descriptor: RunnerDescriptor,
+    bridge: JsonlBridge<R, W>,
+}
+
+pub(crate) struct JsonlBridge<R, W> {
     inner: RefCell<JsonlTransport<R, W>>,
 }
 
@@ -20,10 +24,9 @@ struct JsonlTransport<R, W> {
     next_request: u64,
 }
 
-impl<R, W> JsonlRunner<R, W> {
-    pub fn new(descriptor: RunnerDescriptor, reader: R, writer: W) -> Self {
+impl<R, W> JsonlBridge<R, W> {
+    pub(crate) fn new(reader: R, writer: W) -> Self {
         Self {
-            descriptor,
             inner: RefCell::new(JsonlTransport {
                 reader,
                 writer,
@@ -32,14 +35,27 @@ impl<R, W> JsonlRunner<R, W> {
         }
     }
 
-    pub fn into_inner(self) -> (R, W) {
+    pub(crate) fn into_inner(self) -> (R, W) {
         let inner = self.inner.into_inner();
         (inner.reader, inner.writer)
     }
 }
 
-impl<R: BufRead, W: Write> JsonlRunner<R, W> {
-    fn request(&self, method: &str, params: Value) -> RuntimeResult<Value> {
+impl<R, W> JsonlRunner<R, W> {
+    pub fn new(descriptor: RunnerDescriptor, reader: R, writer: W) -> Self {
+        Self {
+            descriptor,
+            bridge: JsonlBridge::new(reader, writer),
+        }
+    }
+
+    pub fn into_inner(self) -> (R, W) {
+        self.bridge.into_inner()
+    }
+}
+
+impl<R: BufRead, W: Write> JsonlBridge<R, W> {
+    pub(crate) fn request(&self, method: &str, params: Value) -> RuntimeResult<Value> {
         let mut inner = self.inner.borrow_mut();
         inner.next_request += 1;
         let id = format!("req-{}", inner.next_request);
@@ -74,25 +90,35 @@ impl<R: BufRead, W: Write> JsonlRunner<R, W> {
         }
     }
 
-    fn request_as<T: DeserializeOwned>(&self, method: &str, params: Value) -> RuntimeResult<T> {
+    pub(crate) fn request_as<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> RuntimeResult<T> {
         let result = self.request(method, params)?;
         serde_json::from_value(result).map_err(protocol_decode_failure)
     }
+}
 
+impl<R: BufRead, W: Write> JsonlRunner<R, W> {
     pub fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.request_as("resource.export", json!({ "plan": plan }))
+        self.bridge
+            .request_as("resource.export", json!({ "plan": plan }))
     }
 
     pub fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.request_as("resource.command", json!({ "plan": plan }))
+        self.bridge
+            .request_as("resource.command", json!({ "plan": plan }))
     }
 
     pub fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.request_as("resource.command_batch", json!({ "batch": batch }))
+        self.bridge
+            .request_as("resource.command_batch", json!({ "batch": batch }))
     }
 
     pub fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.request_as("resource.saga", json!({ "saga": saga }))
+        self.bridge
+            .request_as("resource.saga", json!({ "saga": saga }))
     }
 }
 
@@ -103,7 +129,7 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
 
     fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         validate_task_leases(&ctx, &tasks)?;
-        self.request_as(
+        self.bridge.request_as(
             "runner.step",
             json!({
                 "runner_id": self.descriptor.runner_id,
@@ -119,7 +145,7 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
-        self.request(
+        self.bridge.request(
             "runner.cancel",
             json!({"runner_id": self.descriptor.runner_id, "invocation_id": invocation_id}),
         )?;
@@ -127,7 +153,7 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
-        self.request(
+        self.bridge.request(
             "runner.dispose",
             json!({"runner_id": self.descriptor.runner_id}),
         )?;

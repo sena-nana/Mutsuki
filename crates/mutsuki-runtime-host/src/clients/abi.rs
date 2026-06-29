@@ -1,0 +1,113 @@
+use std::io::{BufRead, Write};
+
+use mutsuki_runtime_contracts::{
+    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan, SnapshotDescriptor,
+    StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
+};
+use mutsuki_runtime_core::RuntimeResult;
+use serde_json::json;
+
+use crate::jsonl::JsonlBridge;
+
+use super::{ResourcePlanClient, TaskClient};
+
+pub struct AbiTaskClient<R, W> {
+    bridge: JsonlBridge<R, W>,
+}
+
+impl<R, W> AbiTaskClient<R, W> {
+    pub fn new(reader: R, writer: W) -> Self {
+        Self {
+            bridge: JsonlBridge::new(reader, writer),
+        }
+    }
+
+    pub fn into_inner(self) -> (R, W) {
+        self.bridge.into_inner()
+    }
+}
+
+impl<R: BufRead, W: Write> TaskClient for AbiTaskClient<R, W> {
+    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+        self.bridge
+            .request_as("task.submit", json!({ "task": task }))
+    }
+
+    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
+        self.bridge
+            .request("task.cancel", json!({ "task_id": task_id }))?;
+        Ok(())
+    }
+
+    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+        self.bridge
+            .request_as("task.outcome", json!({ "task_id": task_id }))
+    }
+}
+
+pub struct AbiResourceClient<R, W> {
+    bridge: JsonlBridge<R, W>,
+}
+
+impl<R, W> AbiResourceClient<R, W> {
+    pub fn new(reader: R, writer: W) -> Self {
+        Self {
+            bridge: JsonlBridge::new(reader, writer),
+        }
+    }
+
+    pub fn into_inner(self) -> (R, W) {
+        self.bridge.into_inner()
+    }
+}
+
+impl<R: BufRead, W: Write> ResourcePlanClient for AbiResourceClient<R, W> {
+    fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+        self.bridge
+            .request_as("resource.read.collect", json!({ "plan": plan }))
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        plan: &ReadPlan,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<SnapshotDescriptor> {
+        self.bridge.request_as(
+            "resource.read.snapshot",
+            json!({ "plan": plan, "kind_id": kind_id, "schema": schema }),
+        )
+    }
+
+    fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+        self.bridge
+            .request_as("resource.stream.open", json!({ "plan": plan }))
+    }
+
+    fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        self.bridge
+            .request_as("resource.export", json!({ "plan": plan }))
+    }
+
+    fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        self.bridge.request_as(
+            "resource.write.commit",
+            json!({ "plan": plan, "bytes": bytes }),
+        )
+    }
+
+    fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        self.bridge
+            .request_as("resource.command", json!({ "plan": plan }))
+    }
+
+    fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.bridge
+            .request_as("resource.command_batch", json!({ "batch": batch }))
+    }
+
+    fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.bridge
+            .request_as("resource.saga", json!({ "saga": saga }))
+    }
+}

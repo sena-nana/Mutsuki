@@ -1,0 +1,78 @@
+use std::io::Cursor;
+use std::sync::{Arc, Mutex};
+
+use mutsuki_runtime_contracts::*;
+use serde_json::json;
+
+use crate::{AbiTaskClient, LocalTaskClient, TaskClient};
+
+use super::helpers::{host_with_echo_runner, runtime_profile};
+
+#[test]
+fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
+    let runtime = Arc::new(Mutex::new(
+        host_with_echo_runner()
+            .into_runtime(runtime_profile())
+            .unwrap(),
+    ));
+    let local = LocalTaskClient::new(runtime);
+    let mut local_task = Task::new("local-client-task", "raw.input", json!({"source": "local"}));
+    local_task.trace_id = Some("trace-local".into());
+    local_task.correlation_id = Some("corr-local".into());
+
+    let local_handle = local.submit_task(local_task).unwrap();
+
+    assert_eq!(local_handle.task_id, "local-client-task");
+    assert_eq!(local_handle.protocol_id, "raw.input");
+    assert_eq!(local_handle.trace_id.as_deref(), Some("trace-local"));
+    assert_eq!(local_handle.correlation_id.as_deref(), Some("corr-local"));
+
+    local.cancel_task("local-client-task").unwrap();
+    assert!(matches!(
+        local.task_outcome("local-client-task").unwrap(),
+        Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "local-client-task"
+    ));
+
+    let mut abi_task = Task::new("abi-client-task", "raw.input", json!({"source": "abi"}));
+    abi_task.trace_id = Some("trace-abi".into());
+    abi_task.correlation_id = Some("corr-abi".into());
+    let abi_handle = TaskHandle {
+        task_id: abi_task.task_id.clone(),
+        protocol_id: abi_task.protocol_id.clone(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: abi_task.trace_id.clone(),
+        correlation_id: abi_task.correlation_id.clone(),
+    };
+    let abi_outcome = TaskOutcome::Cancelled {
+        task_id: abi_task.task_id.clone(),
+        reason: Some("test.cancel".into()),
+    };
+    let response = format!(
+        "{}\n{}\n{}\n",
+        json!({"id": "req-1", "ok": true, "result": abi_handle}),
+        json!({"id": "req-2", "ok": true, "result": null}),
+        json!({"id": "req-3", "ok": true, "result": abi_outcome}),
+    );
+    let abi = AbiTaskClient::new(
+        Cursor::new(response.into_bytes()),
+        Cursor::new(Vec::<u8>::new()),
+    );
+
+    let submitted = abi.submit_task(abi_task).unwrap();
+    abi.cancel_task("abi-client-task").unwrap();
+    let outcome = abi.task_outcome("abi-client-task").unwrap();
+    let (_reader, writer) = abi.into_inner();
+    let request = String::from_utf8(writer.into_inner()).unwrap();
+
+    assert_eq!(submitted.task_id, "abi-client-task");
+    assert_eq!(submitted.trace_id.as_deref(), Some("trace-abi"));
+    assert!(matches!(
+        outcome,
+        Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "abi-client-task"
+    ));
+    assert!(request.contains("\"method\":\"task.submit\""));
+    assert!(request.contains("\"method\":\"task.cancel\""));
+    assert!(request.contains("\"method\":\"task.outcome\""));
+    assert!(request.contains("\"trace_id\":\"trace-abi\""));
+}
