@@ -116,7 +116,13 @@ impl NativePluginHost {
         config: HostRuntimeConfig,
     ) -> RuntimeResult<HostRuntime> {
         let booted = self.boot_host_runtime(profile)?;
-        HostRuntime::start(booted.core, config, booted.capabilities)
+        HostRuntime::start(
+            booted.core,
+            config,
+            booted.capabilities,
+            booted.profile_id,
+            booted.registry_generation,
+        )
     }
 
     fn boot_core_runtime(self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
@@ -125,6 +131,8 @@ impl NativePluginHost {
 
     fn boot_host_runtime(self, profile: RuntimeProfile) -> RuntimeResult<BootedRuntime> {
         let mut plan = resolve_load_plan(&self.manifests, &profile)?;
+        let profile_id = plan.profile_id.clone();
+        let registry_generation = plan.registry_generation;
         let capabilities = HostCapabilityRegistry::from_load_plan(&plan)?;
         validate_registered_runners(&plan, &self.runners)?;
         let mut runners: Vec<Box<dyn Runner>> = self
@@ -134,13 +142,20 @@ impl NativePluginHost {
             .collect();
         append_core_kernel(&mut plan, &mut runners);
         let core = CoreRuntime::boot(plan, runners)?;
-        Ok(BootedRuntime { core, capabilities })
+        Ok(BootedRuntime {
+            core,
+            capabilities,
+            profile_id,
+            registry_generation,
+        })
     }
 }
 
 struct BootedRuntime {
     core: CoreRuntime,
     capabilities: HostCapabilityRegistry,
+    profile_id: String,
+    registry_generation: u64,
 }
 
 fn append_core_kernel(plan: &mut RuntimeLoadPlan, runners: &mut Vec<Box<dyn Runner>>) {

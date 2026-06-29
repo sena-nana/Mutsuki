@@ -42,7 +42,11 @@ Mutsuki/
   `TaskClient` / `ResourcePlanClient` 和 host-side bridge/codec/service descriptor；不得把
   Host shell 整体做成插件。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
-  `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；不得把 async runtime 语义反向写入 Core。
+  `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；同时定义 host/plugin 扩展基础 trait：
+  `PluginBuilder` / `PluginLoader`、`HostContext`、`HostServiceRegistry`、
+  `CapabilityBroker`、`TaskSubmitter`、`ResourceBackend`、`EventBridge`、
+  `ConfigProvider` 和 `ShutdownController`。这些 trait 必须落回现有 contracts /
+  host-side adapter，不得把 async runtime 语义或动态注册语义反向写入 Core。
 - `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
   server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API。
 
@@ -91,6 +95,9 @@ uv run pytest
   registry、lease、generation 规则。
 - SDK 和 guest-side shim 是编译期/API 层，不是运行时插件；host-side shim / bridge 才能作为
   Host backend 替换。
+- SDK 的 host/plugin 抽象只能用于 boot 前插件组装、host service 查询和统一 task/resource
+  执行面；`HostServiceRegistry` freeze 后不得注册，`ConfigProvider` 不隐式读取环境变量或
+  伪造默认值，`EventBridge` v1 只发布 outbound event。
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。

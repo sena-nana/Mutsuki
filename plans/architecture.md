@@ -161,6 +161,19 @@ child terminal event 唤醒 parent continuation
 这只是 SDK 语法糖；Core 不暴露 `async fn`、`Future` ABI、language executor、
 `join_all`、`select`、`TaskGroup` 或 `WaitSet`。
 
+SDK 同时提供 Host / Plugin 扩展基础抽象，但这些抽象只服务于 host-side composition
+和插件作者 API：
+
+- `PluginBuilder` / `PluginLoader` 构造 boot 前 `PluginManifest`、runner 和 host service
+  声明；它们不绕过 resolver、load plan 或 registry freeze。
+- `HostContext` 聚合 active `CapabilityBroker`、host-only `HostServiceRegistry`、
+  `ConfigProvider`、`EventBridge`、`TaskSubmitter`、`ResourceBackend` 和
+  `ShutdownController`。
+- `TaskSubmitter` 和 `ResourceBackend` 只执行现有 `Task`、`TaskHandle`、`TaskOutcome`
+  与 resource plan 协议；builtin/ABI 等部署差异仍停留在 host backend。
+
+这些 SDK trait 不新增 contracts wire shape，也不把 Host shell 或 SDK 本身变成运行时插件。
+
 当 runner 返回 Waiting 时，当前 task 释放 OS worker 和 `TaskLease`，但 task record
 保留 `owner_runner`。后续 wake 只让原 runner reclaim continuation；waiting task 仍计入
 runner inflight，用于 backpressure，防止等待中的父 task 无限堆积。

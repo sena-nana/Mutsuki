@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::io::{BufRead, Write};
+use std::sync::Mutex;
 
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, RunnerDescriptor, RunnerResult,
@@ -15,7 +15,7 @@ pub struct JsonlRunner<R, W> {
 }
 
 pub(crate) struct JsonlBridge<R, W> {
-    inner: RefCell<JsonlTransport<R, W>>,
+    inner: Mutex<JsonlTransport<R, W>>,
 }
 
 struct JsonlTransport<R, W> {
@@ -27,7 +27,7 @@ struct JsonlTransport<R, W> {
 impl<R, W> JsonlBridge<R, W> {
     pub(crate) fn new(reader: R, writer: W) -> Self {
         Self {
-            inner: RefCell::new(JsonlTransport {
+            inner: Mutex::new(JsonlTransport {
                 reader,
                 writer,
                 next_request: 0,
@@ -36,7 +36,10 @@ impl<R, W> JsonlBridge<R, W> {
     }
 
     pub(crate) fn into_inner(self) -> (R, W) {
-        let inner = self.inner.into_inner();
+        let inner = self
+            .inner
+            .into_inner()
+            .expect("jsonl bridge mutex poisoned");
         (inner.reader, inner.writer)
     }
 }
@@ -56,7 +59,7 @@ impl<R, W> JsonlRunner<R, W> {
 
 impl<R: BufRead, W: Write> JsonlBridge<R, W> {
     pub(crate) fn request(&self, method: &str, params: Value) -> RuntimeResult<Value> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.inner.lock().expect("jsonl bridge mutex poisoned");
         inner.next_request += 1;
         let id = format!("req-{}", inner.next_request);
         let request = json!({"id": id, "method": method, "params": params});

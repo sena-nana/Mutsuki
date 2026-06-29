@@ -5,6 +5,7 @@ use mutsuki_runtime_contracts::{
     PluginManifest, RuntimeLoadPlan, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::CapabilityBroker;
 
 use crate::error::{capability_provider_missing, capability_pruned};
 
@@ -165,6 +166,60 @@ impl HostCapabilityRegistry {
         } else {
             capability_provider_missing(&capability)
         }
+    }
+}
+
+impl CapabilityBroker for HostCapabilityRegistry {
+    fn require_capability(&self, capability: &str) -> RuntimeResult<()> {
+        if active_capability(self, capability) {
+            Ok(())
+        } else if self.provided.contains(capability) {
+            Err(capability_pruned(capability))
+        } else {
+            Err(capability_provider_missing(capability))
+        }
+    }
+
+    fn require_host_backend(&self, backend_id: &str) -> RuntimeResult<HostBackendDescriptor> {
+        HostCapabilityRegistry::require_host_backend(self, backend_id).cloned()
+    }
+
+    fn require_plugin_backend(&self, backend_id: &str) -> RuntimeResult<PluginBackendDescriptor> {
+        HostCapabilityRegistry::require_plugin_backend(self, backend_id).cloned()
+    }
+
+    fn require_codec(&self, codec_id: &str) -> RuntimeResult<CodecDescriptor> {
+        HostCapabilityRegistry::require_codec(self, codec_id).cloned()
+    }
+
+    fn require_bridge(&self, bridge_id: &str) -> RuntimeResult<BridgeDescriptor> {
+        HostCapabilityRegistry::require_bridge(self, bridge_id).cloned()
+    }
+
+    fn require_scheduler_policy(
+        &self,
+        policy_id: &str,
+    ) -> RuntimeResult<SchedulerPolicyDescriptor> {
+        HostCapabilityRegistry::require_scheduler_policy(self, policy_id).cloned()
+    }
+
+    fn require_workflow(&self, workflow_id: &str) -> RuntimeResult<WorkflowDescriptor> {
+        HostCapabilityRegistry::require_workflow(self, workflow_id).cloned()
+    }
+}
+
+fn active_capability(registry: &HostCapabilityRegistry, capability: &str) -> bool {
+    let Some((prefix, id)) = capability.split_once(':') else {
+        return false;
+    };
+    match prefix {
+        "host_backend" => registry.host_backends.contains_key(id),
+        "plugin_backend" => registry.plugin_backends.contains_key(id),
+        "codec" => registry.codecs.contains_key(id),
+        "bridge" => registry.bridges.contains_key(id),
+        "scheduler_policy" => registry.scheduler_policies.contains_key(id),
+        "workflow" => registry.workflows.contains_key(id),
+        _ => false,
     }
 }
 

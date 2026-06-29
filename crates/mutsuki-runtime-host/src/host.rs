@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use mutsuki_runtime_contracts::TaskStatus;
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
+use mutsuki_runtime_sdk::HostContext as SdkHostContext;
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
+use crate::runtime_context::build_host_context;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
 
 #[derive(Clone, Debug)]
@@ -46,6 +48,7 @@ pub struct HostRuntime {
     tx: mpsc::Sender<CoreActorMsg>,
     actor: Option<thread::JoinHandle<()>>,
     capabilities: Arc<HostCapabilityRegistry>,
+    context: SdkHostContext,
 }
 
 impl HostRuntime {
@@ -53,6 +56,8 @@ impl HostRuntime {
         core: CoreRuntime,
         config: HostRuntimeConfig,
         capabilities: HostCapabilityRegistry,
+        profile_id: String,
+        registry_generation: u64,
     ) -> RuntimeResult<Self> {
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
@@ -60,15 +65,27 @@ impl HostRuntime {
             .name("mutsuki-core-actor".into())
             .spawn(move || core_actor_loop(core, config, rx, actor_tx))
             .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
+        let capabilities = Arc::new(capabilities);
+        let context = build_host_context(
+            tx.clone(),
+            capabilities.clone(),
+            profile_id,
+            registry_generation,
+        );
         Ok(Self {
             tx,
             actor: Some(actor),
-            capabilities: Arc::new(capabilities),
+            capabilities,
+            context,
         })
     }
 
     pub fn capabilities(&self) -> &HostCapabilityRegistry {
         &self.capabilities
+    }
+
+    pub fn host_context(&self) -> &SdkHostContext {
+        &self.context
     }
 
     pub fn dispatch(&mut self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
@@ -96,5 +113,11 @@ impl Drop for HostRuntime {
         if let Some(actor) = self.actor.take() {
             let _ = actor.join();
         }
+    }
+}
+
+impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
+    fn host_context(&self) -> &SdkHostContext {
+        &self.context
     }
 }

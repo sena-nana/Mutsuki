@@ -44,6 +44,10 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
 
     assert_eq!(local.collect_read_plan(&read_plan).unwrap(), b"hello");
     assert_eq!(
+        mutsuki_runtime_sdk::ResourceBackend::collect_read_plan(&local, &read_plan).unwrap(),
+        b"hello"
+    );
+    assert_eq!(
         local.execute_export_plan(&export_plan).unwrap().output,
         json!("hello")
     );
@@ -132,6 +136,30 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
     assert!(request.contains("\"method\":\"resource.read.collect\""));
     assert!(request.contains("\"method\":\"resource.write.commit\""));
     assert!(request.contains("\"bytes\":[110,101,119]"));
+}
+
+#[test]
+fn resource_clients_implement_sdk_resource_backend_boundary() {
+    let resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
+    let read_plan = ReadPlan {
+        plan_id: "read:1".into(),
+        resource,
+        operation: "collect".into(),
+        args: json!(null),
+    };
+    let response = format!(
+        "{}\n",
+        json!({"id": "req-1", "ok": true, "result": [104, 101, 108, 108, 111]}),
+    );
+    let abi = AbiResourceClient::new(
+        Cursor::new(response.into_bytes()),
+        Cursor::new(Vec::<u8>::new()),
+    );
+
+    assert_eq!(
+        mutsuki_runtime_sdk::ResourceBackend::collect_read_plan(&abi, &read_plan).unwrap(),
+        b"hello"
+    );
 }
 
 #[test]

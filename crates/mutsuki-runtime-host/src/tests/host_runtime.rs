@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure};
+use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
 
 use crate::{
@@ -764,6 +765,13 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     );
     assert!(
         runtime
+            .host_context()
+            .capability_broker()
+            .require_host_backend("host.backend.builtin")
+            .is_ok()
+    );
+    assert!(
+        runtime
             .capabilities()
             .require_plugin_backend("plugin.backend.builtin")
             .is_ok()
@@ -801,6 +809,34 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
             .require_host_backend("host.backend.abi"),
         "host_backend:host.backend.abi",
     );
+}
+
+#[test]
+fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    assert_eq!(runtime.host_context().profile_id(), "default");
+    assert_eq!(runtime.host_context().registry_generation(), 1);
+    assert!(runtime.host_context().services().is_frozen());
+
+    let handle = SdkHostRuntime::submit_task(
+        &runtime,
+        Task::new("sdk-host-task", "raw.input", json!({"source": "sdk"})),
+    )
+    .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    assert_eq!(handle.task_id, "sdk-host-task");
+    assert!(matches!(
+        SdkHostRuntime::task_outcome(&runtime, "sdk-host-task").unwrap(),
+        Some(TaskOutcome::Completed { task_id, .. }) if task_id == "sdk-host-task"
+    ));
+    SdkHostRuntime::request_shutdown(&runtime, "test.shutdown").unwrap();
+    assert!(runtime.host_context().shutdown().is_shutdown_requested());
 }
 
 fn assert_pruned_capability<T>(result: mutsuki_runtime_core::RuntimeResult<&T>, capability: &str) {

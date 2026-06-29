@@ -5,11 +5,10 @@ use mutsuki_runtime_contracts::{
     StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::{ResourceBackend, TaskSubmitter};
 use serde_json::json;
 
 use crate::jsonl::JsonlBridge;
-
-use super::{ResourcePlanClient, TaskClient};
 
 pub struct AbiTaskClient<R, W> {
     bridge: JsonlBridge<R, W>,
@@ -27,7 +26,11 @@ impl<R, W> AbiTaskClient<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> TaskClient for AbiTaskClient<R, W> {
+impl<R, W> TaskSubmitter for AbiTaskClient<R, W>
+where
+    R: BufRead + Send,
+    W: Write + Send,
+{
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
         self.bridge
             .request_as("task.submit", json!({ "task": task }))
@@ -61,7 +64,11 @@ impl<R, W> AbiResourceClient<R, W> {
     }
 }
 
-impl<R: BufRead, W: Write> ResourcePlanClient for AbiResourceClient<R, W> {
+impl<R, W> ResourceBackend for AbiResourceClient<R, W>
+where
+    R: BufRead + Send,
+    W: Write + Send,
+{
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         self.bridge
             .request_as("resource.read.collect", json!({ "plan": plan }))

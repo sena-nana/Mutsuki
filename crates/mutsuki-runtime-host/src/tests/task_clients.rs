@@ -80,6 +80,61 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
 }
 
 #[test]
+fn task_clients_implement_sdk_task_submitter_boundary() {
+    let runtime = Arc::new(Mutex::new(
+        host_with_echo_runner()
+            .into_runtime(runtime_profile())
+            .unwrap(),
+    ));
+    let local = LocalTaskClient::new(runtime);
+    let local_handle = mutsuki_runtime_sdk::TaskSubmitter::submit_task(
+        &local,
+        Task::new("sdk-local-task", "raw.input", json!({})),
+    )
+    .unwrap();
+    mutsuki_runtime_sdk::TaskSubmitter::cancel_task(&local, "sdk-local-task").unwrap();
+
+    assert_eq!(local_handle.task_id, "sdk-local-task");
+    assert!(matches!(
+        mutsuki_runtime_sdk::TaskSubmitter::task_outcome(&local, "sdk-local-task").unwrap(),
+        Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "sdk-local-task"
+    ));
+
+    let abi_task = Task::new("sdk-abi-task", "raw.input", json!({}));
+    let abi_handle = TaskHandle {
+        task_id: abi_task.task_id.clone(),
+        protocol_id: abi_task.protocol_id.clone(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: None,
+        correlation_id: None,
+    };
+    let response = format!(
+        "{}\n{}\n{}\n",
+        json!({"id": "req-1", "ok": true, "result": abi_handle}),
+        json!({"id": "req-2", "ok": true, "result": null}),
+        json!({"id": "req-3", "ok": true, "result": null}),
+    );
+    let abi = AbiTaskClient::new(
+        Cursor::new(response.into_bytes()),
+        Cursor::new(Vec::<u8>::new()),
+    );
+
+    assert_eq!(
+        mutsuki_runtime_sdk::TaskSubmitter::submit_task(&abi, abi_task)
+            .unwrap()
+            .task_id,
+        "sdk-abi-task"
+    );
+    mutsuki_runtime_sdk::TaskSubmitter::cancel_task(&abi, "sdk-abi-task").unwrap();
+    assert!(
+        mutsuki_runtime_sdk::TaskSubmitter::task_outcome(&abi, "sdk-abi-task")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() {
     let runtime = Arc::new(Mutex::new(
         host_with_echo_runner()

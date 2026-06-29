@@ -168,6 +168,10 @@ fn handle_command(
             }
             Ok((HostRuntimeReply::TaskCancelled(task_id), false))
         }
+        HostRuntimeCommand::TaskOutcome(task_id) => Ok((
+            HostRuntimeReply::TaskOutcome(core.task_outcome(&task_id)?),
+            false,
+        )),
         HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
             HostRuntimeReply::ResourceCreated(core.create_blob_resource(&schema, bytes)?),
             false,

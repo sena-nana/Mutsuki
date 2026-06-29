@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SagaPlan,
-    SnapshotDescriptor, StreamPlan, Task, WritePlan,
+    SnapshotDescriptor, StreamPlan, Task, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::RunnerLoopReport;
 
@@ -11,6 +11,7 @@ pub enum HostRuntimeCommand {
         max_ticks: usize,
     },
     CancelTask(String),
+    TaskOutcome(String),
     CreateBlobResource {
         schema: String,
         bytes: Vec<u8>,
@@ -47,6 +48,7 @@ pub enum HostRuntimeReply {
     Tick(RunnerLoopReport),
     Idle(RunnerLoopReport),
     TaskCancelled(String),
+    TaskOutcome(Option<TaskOutcome>),
     ResourceCreated(ResourceRef),
     ResourceBytes(Vec<u8>),
     Snapshot(SnapshotDescriptor),

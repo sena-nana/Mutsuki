@@ -7,5 +7,6 @@ license.workspace = true
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
+mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 serde.workspace = true
 serde_json.workspace = true
