@@ -362,3 +362,147 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
         vec!["task-lease-1-deadline-1".to_string()]
     );
 }
+
+#[test]
+fn host_runtime_registers_only_active_capability_graph_extensions() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
+    manifest.requires = vec![
+        "scheduler_policy:scheduler.fair".into(),
+        "workflow:workflow.linear".into(),
+    ];
+    manifest.provides.host_backends = vec![
+        HostBackendDescriptor {
+            backend_id: "host.backend.builtin".into(),
+            kind: HostExtensionKind::PluginBackend,
+            supported_deployments: vec![PluginDeploymentKind::Builtin],
+            reload_policy: "static".into(),
+            drain_required: false,
+        },
+        HostBackendDescriptor {
+            backend_id: "host.backend.abi".into(),
+            kind: HostExtensionKind::Bridge,
+            supported_deployments: vec![PluginDeploymentKind::Abi],
+            reload_policy: "drain_and_swap".into(),
+            drain_required: true,
+        },
+    ];
+    manifest.provides.plugin_backends = vec![
+        PluginBackendDescriptor {
+            backend_id: "plugin.backend.builtin".into(),
+            deployment_kind: PluginDeploymentKind::Builtin,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: None,
+            bridge_id: None,
+        },
+        PluginBackendDescriptor {
+            backend_id: "plugin.backend.abi".into(),
+            deployment_kind: PluginDeploymentKind::Abi,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: Some("codec.json".into()),
+            bridge_id: Some("bridge.abi.jsonl".into()),
+        },
+    ];
+    manifest.provides.codecs = vec![CodecDescriptor {
+        codec_id: "codec.json".into(),
+        media_type: "application/json".into(),
+        version: "1.0.0".into(),
+        connection_scoped: true,
+    }];
+    manifest.provides.bridges = vec![BridgeDescriptor {
+        bridge_id: "bridge.abi.jsonl".into(),
+        deployment_kind: PluginDeploymentKind::Abi,
+        codec_ids: vec!["codec.json".into()],
+        drain_policy: "connection_drain".into(),
+    }];
+    manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
+        policy_id: "scheduler.fair".into(),
+        version: "1.0.0".into(),
+        decision_scope: "dispatch_budget".into(),
+    }];
+    manifest.provides.workflows = vec![WorkflowDescriptor {
+        workflow_id: "workflow.linear".into(),
+        state_resource_kind: "workflow.instance".into(),
+        runner_protocol_id: "workflow.linear.run".into(),
+        reload_policy: "state_resource_handoff".into(),
+    }];
+    let mut host = NativePluginHost::new();
+    host.register_manifest(manifest);
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut profile = runtime_profile();
+    profile.mode = RuntimeProfileMode::LockedBuiltin;
+    profile.allow_hot_reload = false;
+    let runtime = host.into_host_runtime(profile).unwrap();
+
+    assert!(
+        runtime
+            .capabilities()
+            .require_host_backend("host.backend.builtin")
+            .is_ok()
+    );
+    assert!(
+        runtime
+            .capabilities()
+            .require_plugin_backend("plugin.backend.builtin")
+            .is_ok()
+    );
+    assert!(
+        runtime
+            .capabilities()
+            .require_scheduler_policy("scheduler.fair")
+            .is_ok()
+    );
+    assert!(
+        runtime
+            .capabilities()
+            .require_workflow("workflow.linear")
+            .is_ok()
+    );
+
+    assert_pruned_capability(
+        runtime
+            .capabilities()
+            .require_plugin_backend("plugin.backend.abi"),
+        "plugin_backend:plugin.backend.abi",
+    );
+    assert_pruned_capability(
+        runtime.capabilities().require_bridge("bridge.abi.jsonl"),
+        "bridge:bridge.abi.jsonl",
+    );
+    assert_pruned_capability(
+        runtime.capabilities().require_codec("codec.json"),
+        "codec:codec.json",
+    );
+    assert_pruned_capability(
+        runtime
+            .capabilities()
+            .require_host_backend("host.backend.abi"),
+        "host_backend:host.backend.abi",
+    );
+}
+
+fn assert_pruned_capability<T>(result: mutsuki_runtime_core::RuntimeResult<&T>, capability: &str) {
+    let error = match result {
+        Ok(_) => panic!("pruned capability should be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String(capability.into()))
+    );
+    assert_eq!(
+        error.error().evidence.get("detail"),
+        Some(&ScalarValue::String("inactive_load_plan".into()))
+    );
+}

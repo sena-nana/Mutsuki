@@ -6,6 +6,7 @@ use mutsuki_runtime_contracts::TaskStatus;
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
+use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
@@ -39,10 +40,15 @@ impl Default for HostRuntimeConfig {
 pub struct HostRuntime {
     tx: mpsc::Sender<CoreActorMsg>,
     actor: Option<thread::JoinHandle<()>>,
+    capabilities: Arc<HostCapabilityRegistry>,
 }
 
 impl HostRuntime {
-    pub(crate) fn start(core: CoreRuntime, config: HostRuntimeConfig) -> RuntimeResult<Self> {
+    pub(crate) fn start(
+        core: CoreRuntime,
+        config: HostRuntimeConfig,
+        capabilities: HostCapabilityRegistry,
+    ) -> RuntimeResult<Self> {
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let actor = thread::Builder::new()
@@ -52,7 +58,12 @@ impl HostRuntime {
         Ok(Self {
             tx,
             actor: Some(actor),
+            capabilities: Arc::new(capabilities),
         })
+    }
+
+    pub fn capabilities(&self) -> &HostCapabilityRegistry {
+        &self.capabilities
     }
 
     pub fn dispatch(&mut self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {

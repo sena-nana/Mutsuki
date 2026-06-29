@@ -1,5 +1,6 @@
 mod actor;
 mod backend;
+mod capabilities;
 mod clients;
 mod commands;
 mod error;
@@ -12,6 +13,7 @@ mod scheduler;
 mod worker;
 
 pub use backend::{HostBackend, PluginBackend};
+pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,
     TaskClient,
