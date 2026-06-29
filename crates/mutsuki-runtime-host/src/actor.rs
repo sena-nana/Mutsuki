@@ -143,7 +143,7 @@ fn handle_command(
             Ok((HostRuntimeReply::TaskCancelled(task_id), false))
         }
         HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
-            HostRuntimeReply::ResourceCreated(core.create_blob_resource(&schema, bytes)),
+            HostRuntimeReply::ResourceCreated(core.create_blob_resource(&schema, bytes)?),
             false,
         )),
         HostRuntimeCommand::CreateCowStateResource {
@@ -157,7 +157,7 @@ fn handle_command(
             false,
         )),
         HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => Ok((
-            HostRuntimeReply::ResourceCreated(core.create_capability_resource(&kind_id, &schema)),
+            HostRuntimeReply::ResourceCreated(core.create_capability_resource(&kind_id, &schema)?),
             false,
         )),
         HostRuntimeCommand::CollectReadPlan(plan) => Ok((

@@ -332,7 +332,9 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
         Box::new(CoreKernelRunner::new(1)),
     ];
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    let resource = runtime.create_blob_resource("bytes.v1", vec![1, 2, 3]);
+    let resource = runtime
+        .create_blob_resource("bytes.v1", vec![1, 2, 3])
+        .unwrap();
     let _lease = runtime
         .lock_resource(&resource.ref_id, "parent-1", None)
         .unwrap();

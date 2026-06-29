@@ -105,7 +105,9 @@ fn resource_manager_owns_resource_cells_and_step_leases() {
 fn core_resource_facade_wraps_descriptor_and_lease_operations() {
     let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
     let mut runtime = super::fixtures::boot_with_kernel(plan);
-    let resource = runtime.create_blob_resource("bytes.v1", b"abc".to_vec());
+    let resource = runtime
+        .create_blob_resource("bytes.v1", b"abc".to_vec())
+        .unwrap();
 
     assert_eq!(runtime.open_resource(&resource.ref_id).unwrap(), resource);
     assert_eq!(runtime.map_resource(&resource.ref_id).unwrap(), resource);
@@ -120,13 +122,15 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
     let updated = runtime.write_resource(&lease, b"def".to_vec()).unwrap();
     assert_eq!(runtime.read_resource(&updated.ref_id).unwrap(), b"def");
 
-    let cell = runtime.create_resource_cell(
-        "cell:http",
-        "http.connection_pool",
-        "plugin-http",
-        "http.connection_pool.v1",
-        "drain",
-    );
+    let cell = runtime
+        .create_resource_cell(
+            "cell:http",
+            "http.connection_pool",
+            "plugin-http",
+            "http.connection_pool.v1",
+            "drain",
+        )
+        .unwrap();
     let resource_lease = runtime
         .acquire_resource_lease(&cell.cell_id, "task-http", "executor-http", "shared", None)
         .unwrap();

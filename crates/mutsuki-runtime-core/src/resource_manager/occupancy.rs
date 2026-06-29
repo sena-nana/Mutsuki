@@ -108,6 +108,21 @@ impl ResourceManager {
                 entry,
             );
         }
+        for cell in self.resource_cells.values() {
+            let active_leases = cell.active_leases.len() as u64;
+            if active_leases > 0 {
+                increment_active_lease_count(
+                    &mut counts,
+                    cell.descriptor.schema.clone(),
+                    active_leases,
+                );
+                increment_active_lease_count(
+                    &mut counts,
+                    format!("resource_schema:{}", cell.descriptor.schema),
+                    active_leases,
+                );
+            }
+        }
         counts
     }
 
@@ -166,6 +181,14 @@ fn increment_resource_count(
     if entry.writer.is_some() {
         item.1 += 1;
     }
+}
+
+fn increment_active_lease_count(
+    counts: &mut HashMap<String, (u64, u64)>,
+    surface_id: String,
+    active_leases: u64,
+) {
+    counts.entry(surface_id).or_insert((0, 0)).1 += active_leases;
 }
 
 fn increment_count(counts: &mut HashMap<String, u64>, key: String) {

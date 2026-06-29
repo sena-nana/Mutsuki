@@ -17,11 +17,15 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
     ));
     let (read_plan, write_plan, export_plan, command_plan) = {
         let mut core = runtime.lock().expect("runtime mutex poisoned");
-        let blob = core.create_blob_resource("text.v1", b"hello".to_vec());
+        let blob = core
+            .create_blob_resource("text.v1", b"hello".to_vec())
+            .unwrap();
         let state = core
             .create_cow_state_resource("text_buffer", "text.state.v1", b"old".to_vec())
             .unwrap();
-        let capability = core.create_capability_resource("db_pool", "db.pool.v1");
+        let capability = core
+            .create_capability_resource("db_pool", "db.pool.v1")
+            .unwrap();
         (
             core.build_read_plan(&blob.ref_id, "collect").unwrap(),
             core.build_write_plan(&state.ref_id, "fail", json!({"replace": "all"}))

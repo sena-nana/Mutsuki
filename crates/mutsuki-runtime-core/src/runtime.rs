@@ -154,6 +154,11 @@ impl CoreRuntime {
     ) -> RuntimeResult<ResourceRef> {
         let surface_id = format!("stream:{stream_id}");
         self.ensure_surface_not_deprecated(&surface_id, "runtime.resource_manager")?;
+        self.ensure_resource_surfaces_not_deprecated(
+            schema,
+            Some(provider_id),
+            "runtime.resource_manager",
+        )?;
         Ok(self
             .resources
             .create_stream_resource(stream_id, schema, provider_id, endpoint))
@@ -164,8 +169,17 @@ impl CoreRuntime {
         Ok(())
     }
 
-    pub fn create_blob_resource(&mut self, schema: &str, bytes: Vec<u8>) -> ResourceRef {
-        self.resources.create_blob_resource(schema, bytes)
+    pub fn create_blob_resource(
+        &mut self,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        self.ensure_resource_surfaces_not_deprecated(
+            schema,
+            Some("resource.local"),
+            "runtime.resource_manager",
+        )?;
+        Ok(self.resources.create_blob_resource(schema, bytes))
     }
 
     pub fn create_mmap_resource(
@@ -173,6 +187,11 @@ impl CoreRuntime {
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
+        self.ensure_resource_surfaces_not_deprecated(
+            schema,
+            Some("resource.local"),
+            "runtime.resource_manager",
+        )?;
         self.resources.create_mmap_resource(schema, bytes)
     }
 
@@ -182,12 +201,26 @@ impl CoreRuntime {
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
+        self.ensure_resource_surfaces_not_deprecated(
+            schema,
+            Some("resource.local"),
+            "runtime.resource_manager",
+        )?;
         self.resources
             .create_cow_state_resource(kind_id, schema, bytes)
     }
 
-    pub fn create_capability_resource(&mut self, kind_id: &str, schema: &str) -> ResourceRef {
-        self.resources.create_capability_resource(kind_id, schema)
+    pub fn create_capability_resource(
+        &mut self,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<ResourceRef> {
+        self.ensure_resource_surfaces_not_deprecated(
+            schema,
+            Some("resource.local"),
+            "runtime.resource_manager",
+        )?;
+        Ok(self.resources.create_capability_resource(kind_id, schema))
     }
 
     pub fn build_read_plan(&self, ref_id: &str, operation: &str) -> RuntimeResult<ReadPlan> {
@@ -298,14 +331,15 @@ impl CoreRuntime {
         owner_plugin_id: &str,
         schema: &str,
         reload_policy: &str,
-    ) -> ResourceCellRef {
-        self.resources.create_resource_cell(
+    ) -> RuntimeResult<ResourceCellRef> {
+        self.ensure_resource_surfaces_not_deprecated(schema, None, "runtime.resource_manager")?;
+        Ok(self.resources.create_resource_cell(
             cell_id,
             resource_kind,
             owner_plugin_id,
             schema,
             reload_policy,
-        )
+        ))
     }
 
     pub fn acquire_resource_lease(
@@ -607,6 +641,24 @@ impl CoreRuntime {
                 source,
                 format!("surface.deprecated.{surface_id}"),
             )));
+        }
+        Ok(())
+    }
+
+    fn ensure_resource_surfaces_not_deprecated(
+        &self,
+        schema: &str,
+        provider_id: Option<&str>,
+        source: &str,
+    ) -> RuntimeResult<()> {
+        self.ensure_surface_not_deprecated(schema, source)?;
+        self.ensure_surface_not_deprecated(&format!("resource_schema:{schema}"), source)?;
+        if let Some(provider_id) = provider_id {
+            self.ensure_surface_not_deprecated(provider_id, source)?;
+            self.ensure_surface_not_deprecated(
+                &format!("resource_provider:{provider_id}"),
+                source,
+            )?;
         }
         Ok(())
     }

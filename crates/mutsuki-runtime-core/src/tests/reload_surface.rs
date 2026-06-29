@@ -1,4 +1,4 @@
-﻿use mutsuki_runtime_contracts::*;
+use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
 use crate::*;
@@ -237,6 +237,162 @@ fn deprecated_stream_subscription_and_timer_surfaces_reject_new_occupancy() {
 }
 
 #[test]
+fn deprecated_resource_surfaces_reject_new_resource_creation() {
+    let schema_plan = plan_with_surfaces(&[
+        (
+            "resource_schema:bytes.v1",
+            ContractSurfaceKind::ResourceSchema,
+        ),
+        (
+            "resource_provider:resource.local",
+            ContractSurfaceKind::ResourceProvider,
+        ),
+    ]);
+    let mut runtime = boot_with_kernel(schema_plan.clone());
+
+    runtime
+        .reload(deprecated_plan(schema_plan, "resource_schema:bytes.v1"))
+        .unwrap();
+
+    let schema_err = runtime
+        .create_blob_resource("bytes.v1", b"abc".to_vec())
+        .unwrap_err();
+    assert_eq!(schema_err.error().code, ERR_RELOAD_BLOCKED);
+
+    let provider_plan = plan_with_surfaces(&[
+        (
+            "resource_schema:text.v1",
+            ContractSurfaceKind::ResourceSchema,
+        ),
+        (
+            "resource_provider:resource.local",
+            ContractSurfaceKind::ResourceProvider,
+        ),
+    ]);
+    let mut runtime = boot_with_kernel(provider_plan.clone());
+
+    runtime
+        .reload(deprecated_plan(
+            provider_plan,
+            "resource_provider:resource.local",
+        ))
+        .unwrap();
+
+    let provider_err = runtime
+        .create_mmap_resource("text.v1", b"abc".to_vec())
+        .unwrap_err();
+    assert_eq!(provider_err.error().code, ERR_RELOAD_BLOCKED);
+}
+
+#[test]
+fn removed_resource_surfaces_use_live_resource_and_write_lease_occupancy() {
+    let plan = plan_with_surfaces(&[
+        (
+            "resource_schema:bytes.v1",
+            ContractSurfaceKind::ResourceSchema,
+        ),
+        (
+            "resource_provider:resource.local",
+            ContractSurfaceKind::ResourceProvider,
+        ),
+    ]);
+    let mut runtime = boot_with_kernel(plan.clone());
+    let resource = runtime
+        .create_mmap_resource("bytes.v1", b"abc".to_vec())
+        .unwrap();
+    let _lease = runtime
+        .lock_resource(&resource.ref_id, "writer-task", None)
+        .unwrap();
+
+    let removed = remove_surfaces(
+        plan,
+        &[
+            "resource_schema:bytes.v1",
+            "resource_provider:resource.local",
+        ],
+    );
+
+    let err = runtime.reload(removed).unwrap_err();
+    assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
+    assert!(runtime.surface_occupancy().iter().any(|item| {
+        item.surface_id == "resource_schema:bytes.v1"
+            && item.resource_refs == 1
+            && item.active_leases == 1
+    }));
+    assert!(runtime.surface_occupancy().iter().any(|item| {
+        item.surface_id == "resource_provider:resource.local"
+            && item.resource_refs == 1
+            && item.active_leases == 1
+    }));
+}
+
+#[test]
+fn removed_resource_schema_surface_uses_resource_cell_lease_occupancy() {
+    let plan = plan_with_surfaces(&[(
+        "resource_schema:http.connection_pool.v1",
+        ContractSurfaceKind::ResourceSchema,
+    )]);
+    let mut runtime = boot_with_kernel(plan.clone());
+    let cell = runtime
+        .create_resource_cell(
+            "cell:http",
+            "http.connection_pool",
+            "plugin-http",
+            "http.connection_pool.v1",
+            "drain",
+        )
+        .unwrap();
+    let lease = runtime
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-http",
+            "executor-http",
+            "exclusive",
+            None,
+        )
+        .unwrap();
+
+    let removed = remove_surfaces(plan, &["resource_schema:http.connection_pool.v1"]);
+
+    let err = runtime.reload(removed.clone()).unwrap_err();
+    assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
+    assert!(runtime.surface_occupancy().iter().any(|item| {
+        item.surface_id == "resource_schema:http.connection_pool.v1" && item.active_leases == 1
+    }));
+
+    runtime.release_resource_lease(&lease).unwrap();
+    runtime.reload(removed).unwrap();
+}
+
+#[test]
+fn waiting_task_blocks_removed_task_protocol_surface() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let mut plan = load_plan(vec![parent.clone()], Vec::new());
+    plan.contract_surfaces.push(surface(
+        "task_protocol:parent.work",
+        ContractSurfaceKind::TaskProtocol,
+    ));
+    let runners: Vec<Box<dyn Runner>> = vec![
+        Box::new(StaticRunner::new(parent, |task| {
+            await_child_result(task, Task::new("child-1", "child.work", json!({})))
+        })),
+        Box::new(CoreKernelRunner::new(1)),
+    ];
+    let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
+    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime.tick_once().unwrap();
+
+    let removed = remove_surfaces(plan, &["task_protocol:parent.work"]);
+
+    let err = runtime.reload(removed).unwrap_err();
+    assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
+    assert!(runtime.surface_occupancy().iter().any(|item| {
+        item.surface_id == "task_protocol:parent.work" && item.running_invocations == 1
+    }));
+    assert!(runtime.running_invocations().is_empty());
+}
+
+#[test]
 fn removed_surface_requires_zero_occupancy() {
     let old = vec![ContractSurface {
         surface_id: "runner:old".into(),
@@ -260,4 +416,76 @@ fn removed_surface_requires_zero_occupancy() {
 
     let err = crate::registry::compare_surfaces(&old, &[], &occupancy).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
+}
+
+fn plan_with_surfaces(surfaces: &[(&str, ContractSurfaceKind)]) -> RuntimeLoadPlan {
+    let mut plan = load_plan(Vec::new(), Vec::new());
+    plan.contract_surfaces
+        .extend(surfaces.iter().map(|(id, kind)| surface(id, kind.clone())));
+    plan
+}
+
+fn deprecated_plan(mut plan: RuntimeLoadPlan, surface_id: &str) -> RuntimeLoadPlan {
+    plan.registry_generation = 2;
+    plan.contract_surfaces
+        .iter_mut()
+        .find(|surface| surface.surface_id == surface_id)
+        .unwrap()
+        .deprecated = true;
+    plan
+}
+
+fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
+    let child_handle = TaskHandle {
+        task_id: child.task_id.clone(),
+        protocol_id: child.protocol_id.clone(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: parent.trace_id.clone(),
+        correlation_id: parent.correlation_id.clone(),
+    };
+    RunnerResult {
+        task_id: parent.task_id.clone(),
+        deltas: Vec::new(),
+        events: Vec::new(),
+        tasks: vec![child],
+        effects: Vec::new(),
+        values: Vec::new(),
+        resources: Vec::new(),
+        task_await: Some(TaskAwait {
+            parent_task_id: parent.task_id.clone(),
+            child: child_handle,
+            continuation: test_continuation("continuation:parent"),
+            cancel_policy: CancelPolicy::Cascade,
+        }),
+        status: RunnerStatus::Waiting,
+    }
+}
+
+fn test_continuation(ref_id: &str) -> TaskStepContinuation {
+    TaskStepContinuation {
+        continuation: ResourceRef {
+            ref_id: ref_id.into(),
+            resource_id: ResourceId {
+                kind_id: "continuation".into(),
+                slot_id: ref_id.into(),
+                generation: 1,
+                version: 1,
+            },
+            semantic: ResourceSemantic::FrozenValue,
+            provider_id: "test".into(),
+            resource_kind: "continuation".into(),
+            schema: "continuation.v1".into(),
+            version: 1,
+            generation: 1,
+            access: ResourceAccess::Inline,
+            size_hint: None,
+            content_hash: None,
+            lifetime: ResourceLifetime::BorrowedUntilTaskEnd,
+            lease: None,
+            seal_state: ResourceSealState::Sealed,
+        },
+        wake: None,
+        reason: Some("await child".into()),
+    }
 }
