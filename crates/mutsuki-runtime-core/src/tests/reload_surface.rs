@@ -7,7 +7,7 @@ use super::fixtures::*;
 #[test]
 fn deprecated_surface_blocks_new_task_occupancy() {
     let plan = load_plan(Vec::new(), Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
 
     let mut deprecated = plan;
@@ -27,7 +27,7 @@ fn deprecated_surface_blocks_new_task_occupancy() {
 #[test]
 fn removed_task_protocol_surface_uses_live_task_pool_occupancy() {
     let plan = load_plan(Vec::new(), Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
     runtime.enqueue_task(Task::new("ready-work", "sim.work", json!({})));
 
@@ -372,12 +372,9 @@ fn waiting_task_blocks_removed_task_protocol_surface() {
         "task_protocol:parent.work",
         ContractSurfaceKind::TaskProtocol,
     ));
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, |task| {
-            await_child_result(task, Task::new("child-1", "child.work", json!({})))
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(parent, |task| {
+        await_child_result(task, Task::new("child-1", "child.work", json!({})))
+    }));
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
     runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
     runtime.tick_once().unwrap();

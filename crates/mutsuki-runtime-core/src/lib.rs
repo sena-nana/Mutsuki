@@ -1,3 +1,4 @@
+#[macro_use]
 mod error;
 mod id;
 mod logs;

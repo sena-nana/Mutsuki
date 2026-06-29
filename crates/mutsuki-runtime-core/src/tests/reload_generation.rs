@@ -1,4 +1,4 @@
-﻿use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
@@ -9,7 +9,7 @@ use super::fixtures::*;
 #[test]
 fn reload_allows_additive_and_blocks_breaking_surfaces() {
     let plan = load_plan(Vec::new(), Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
 
     let mut additive = plan.clone();
@@ -39,12 +39,7 @@ fn reload_allows_additive_and_blocks_breaking_surfaces() {
 fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
     let worker_v1 = runner_descriptor("worker", "raw.input", RunnerPurity::Pure);
     let plan_v1 = load_plan(vec![worker_v1.clone()], Vec::new());
-    let runners_v1: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker_v1, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners_v1: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker_v1));
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
     runtime.enqueue_task(Task::new("task-before-reload", "raw.input", json!({})));
 
@@ -52,8 +47,9 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
     worker_v2.plugin_generation = 2;
     let mut plan_v2 = load_plan(vec![worker_v2.clone()], Vec::new());
     plan_v2.registry_generation = 2;
-    let runners_v2: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker_v2, |task| {
+    let runners_v2: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        2;
+        boxed_runner!(worker_v2, |task| {
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.events.push(DomainEvent {
                 event_id: "handled-by-v2".into(),
@@ -61,9 +57,8 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
                 payload: json!({}),
             });
             result
-        })),
-        Box::new(CoreKernelRunner::new(2)),
-    ];
+        })
+    );
 
     runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
     runtime.run_until_idle(4).unwrap();
@@ -89,7 +84,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let runners_v1: Vec<Box<dyn Runner>> = vec![
         Box::new(ContinuingRunner::new(worker_v1, calls.clone())),
-        Box::new(CoreKernelRunner::new(1)),
+        kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
     runtime.enqueue_task(Task::new("running-clean", "sim.work", json!({})));
@@ -108,12 +103,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     worker_v2.plugin_generation = 2;
     let mut plan_v2 = load_plan(vec![worker_v2.clone()], Vec::new());
     plan_v2.registry_generation = 2;
-    let runners_v2: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker_v2, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(2)),
-    ];
+    let runners_v2: Vec<Box<dyn Runner>> = runners_with_kernel!(2; completed_runner!(worker_v2));
 
     runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
 
@@ -140,7 +130,7 @@ fn reload_keeps_polluted_running_invocation_in_draining_generation() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let runners_v1: Vec<Box<dyn Runner>> = vec![
         Box::new(ContinuingRunner::new(effect_v1, calls.clone())),
-        Box::new(CoreKernelRunner::new(1)),
+        kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
     runtime.enqueue_task(Task::new("running-effect", "effect.chat.send", json!({})));
@@ -156,12 +146,7 @@ fn reload_keeps_polluted_running_invocation_in_draining_generation() {
     effect_v2.plugin_generation = 2;
     let mut plan_v2 = load_plan(vec![effect_v2.clone()], Vec::new());
     plan_v2.registry_generation = 2;
-    let runners_v2: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(effect_v2, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(2)),
-    ];
+    let runners_v2: Vec<Box<dyn Runner>> = runners_with_kernel!(2; completed_runner!(effect_v2));
 
     runtime.reload_with_runners(plan_v2, runners_v2).unwrap();
 

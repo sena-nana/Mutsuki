@@ -9,12 +9,7 @@ use super::fixtures::*;
 fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     let worker = runner_descriptor("worker", "runtime.lease.input", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.submit_task(Task::new("task-1", "runtime.lease.input", json!({})));
 

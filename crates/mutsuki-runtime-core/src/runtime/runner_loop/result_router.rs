@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     DomainEvent, ERR_RUNNER_PURITY_VIOLATION, EffectRequest, ResourceRef, RunnerDescriptor,
-    RunnerPurity, RunnerResult, RunnerStatus, RuntimeError, RuntimeEventKind, ScalarValue,
-    StateDelta, Task, TaskAwait, TaskLease, ValueRef,
+    RunnerPurity, RunnerResult, RunnerStatus, RuntimeEventKind, ScalarValue, StateDelta, Task,
+    TaskAwait, TaskLease, ValueRef,
 };
 
-use crate::{RuntimeFailure, RuntimeResult};
+use crate::RuntimeResult;
 
 use super::CoreRuntime;
 
@@ -66,11 +66,11 @@ impl CoreRuntime {
         {
             self.ensure_task_can_suspend(task_id)?;
             if task_await.parent_task_id != task_id {
-                return Err(RuntimeFailure::new(RuntimeError::new(
+                return Err(runtime_failure!(
                     mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                     "runtime.result_router",
-                    format!("task.await.parent.{task_id}"),
-                )));
+                    format!("task.await.parent.{task_id}")
+                ));
             }
         }
         Ok(())
@@ -93,11 +93,11 @@ impl CoreRuntime {
         } else if runner.purity == RunnerPurity::Effectful
             && !runner.runner_id.starts_with("effect.")
         {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 ERR_RUNNER_PURITY_VIOLATION,
                 "runtime.result_router",
-                format!("runner.{}", runner.runner_id),
-            )));
+                format!("runner.{}", runner.runner_id)
+            ));
         }
         for event in outputs.events {
             self.enqueue_task(event_task(task_id, event, generation));
@@ -157,10 +157,10 @@ impl CoreRuntime {
                 self.tasks.block(lease, self.current_step)?;
             }
             RunnerStatus::Failed => {
-                let failure = RuntimeError::new(
+                let failure = runtime_error!(
                     "runner.failed",
                     "runtime.result_router",
-                    format!("runner.{}", runner.runner_id),
+                    format!("runner.{}", runner.runner_id)
                 );
                 self.tasks.fail(lease, self.current_step, failure.clone())?;
                 self.record_task_terminal_event(&task_id, "task.failed", Some(failure));

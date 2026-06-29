@@ -10,23 +10,20 @@ use super::fixtures::*;
 fn pure_runner_explicitly_enqueues_derived_tasks() {
     let orchestrator = runner_descriptor("orchestrator", "raw.input.chat", RunnerPurity::Pure);
     let plan = load_plan(vec![orchestrator.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(orchestrator, |task| {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            let mut derived = Task::new(
-                format!("{}:memory", task.task_id),
-                "sim.memory.retrieve",
-                json!({"mode": "fast"}),
-            );
-            derived.priority = 5;
-            derived.input_refs = task.input_refs.clone();
-            derived.runner_hint = Some("memory.runner".into());
-            derived.correlation_id = task.correlation_id.clone();
-            result.tasks.push(derived);
-            result
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(orchestrator, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        let mut derived = Task::new(
+            format!("{}:memory", task.task_id),
+            "sim.memory.retrieve",
+            json!({"mode": "fast"}),
+        );
+        derived.priority = 5;
+        derived.input_refs = task.input_refs.clone();
+        derived.runner_hint = Some("memory.runner".into());
+        derived.correlation_id = task.correlation_id.clone();
+        result.tasks.push(derived);
+        result
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime.publish_raw_input("raw-1", "raw.input.chat", json!({"text": "hello"}));
@@ -46,29 +43,26 @@ fn pure_runner_explicitly_enqueues_derived_tasks() {
 fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
     let worker = runner_descriptor("worker", "sim.behavior.evaluate", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.deltas.push(StateDelta {
-                target_ref: "state:actor".into(),
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.deltas.push(StateDelta {
+            target_ref: "state:actor".into(),
+            expected_version: 0,
+            patch: json!({"intent": "reply"}),
+            conflict_policy: ConflictPolicy::Fail,
+        });
+        result.effects.push(EffectRequest {
+            effect_id: "send-1".into(),
+            kind: "effect.chat.send".into(),
+            payload: json!({"text": "ok"}),
+            preconditions: vec![EffectPrecondition {
+                ref_id: "state:actor".into(),
                 expected_version: 0,
-                patch: json!({"intent": "reply"}),
-                conflict_policy: ConflictPolicy::Fail,
-            });
-            result.effects.push(EffectRequest {
-                effect_id: "send-1".into(),
-                kind: "effect.chat.send".into(),
-                payload: json!({"text": "ok"}),
-                preconditions: vec![EffectPrecondition {
-                    ref_id: "state:actor".into(),
-                    expected_version: 0,
-                }],
-                idempotency_key: Some("send-1".into()),
-            });
-            result
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+            }],
+            idempotency_key: Some("send-1".into()),
+        });
+        result
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("task-1", "sim.behavior.evaluate", json!({})));
 
@@ -82,50 +76,47 @@ fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
 fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
     let worker = runner_descriptor("worker", "sim.resource.produce", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.values.push(ValueRef {
-                ref_id: "value:1".into(),
-                provider_id: "resource.local".into(),
-                schema: "value.small.v1".into(),
-                version: 1,
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.values.push(ValueRef {
+            ref_id: "value:1".into(),
+            provider_id: "resource.local".into(),
+            schema: "value.small.v1".into(),
+            version: 1,
+            generation: 1,
+            size_hint: Some(12),
+            content_hash: Some("hash:value".into()),
+            lifetime: ResourceLifetime::Persistent,
+            storage: ValueStorage::LocalValueStore,
+        });
+        result.resources.push(ResourceRef {
+            ref_id: "resource:1".into(),
+            resource_id: ResourceId {
+                kind_id: "bytes".into(),
+                slot_id: "resource:1".into(),
                 generation: 1,
-                size_hint: Some(12),
-                content_hash: Some("hash:value".into()),
-                lifetime: ResourceLifetime::Persistent,
-                storage: ValueStorage::LocalValueStore,
-            });
-            result.resources.push(ResourceRef {
-                ref_id: "resource:1".into(),
-                resource_id: ResourceId {
-                    kind_id: "bytes".into(),
-                    slot_id: "resource:1".into(),
-                    generation: 1,
-                    version: 1,
-                },
-                semantic: ResourceSemantic::FrozenValue,
-                provider_id: "resource.local".into(),
-                resource_kind: "bytes".into(),
-                schema: "bytes.v1".into(),
                 version: 1,
-                generation: 1,
-                access: ResourceAccess::MmapFile {
-                    path: "resource.bin".into(),
-                    offset: 0,
-                    len: 3,
-                    readonly: true,
-                },
-                size_hint: Some(3),
-                content_hash: Some("hash:resource".into()),
-                lifetime: ResourceLifetime::Persistent,
-                lease: None,
-                seal_state: ResourceSealState::Sealed,
-            });
-            result
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+            },
+            semantic: ResourceSemantic::FrozenValue,
+            provider_id: "resource.local".into(),
+            resource_kind: "bytes".into(),
+            schema: "bytes.v1".into(),
+            version: 1,
+            generation: 1,
+            access: ResourceAccess::MmapFile {
+                path: "resource.bin".into(),
+                offset: 0,
+                len: 3,
+                readonly: true,
+            },
+            size_hint: Some(3),
+            content_hash: Some("hash:resource".into()),
+            lifetime: ResourceLifetime::Persistent,
+            lease: None,
+            seal_state: ResourceSealState::Sealed,
+        });
+        result
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("task-refs", "sim.resource.produce", json!({})));
 
@@ -142,7 +133,7 @@ fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
 #[test]
 fn committer_task_is_the_only_state_store_mutation_path() {
     let plan = load_plan(Vec::new(), Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     let delta = StateDelta {
         target_ref: "state:actor".into(),
@@ -168,12 +159,7 @@ fn committer_task_is_the_only_state_store_mutation_path() {
 fn runner_trace_records_plugin_generation_and_contract_facts() {
     let worker = runner_descriptor("worker", "sim.trace", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("trace-task", "sim.trace", json!({})));
 
@@ -207,8 +193,8 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
     let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
     let parent_lease_ids = Arc::new(Mutex::new(Vec::new()));
     let observed_parent_lease_ids = parent_lease_ids.clone();
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, move |task| {
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        boxed_runner!(parent, move |task| {
             observed_parent_lease_ids
                 .lock()
                 .expect("parent lease ids mutex poisoned")
@@ -220,12 +206,9 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
                 task,
                 Task::new("child-1", "child.work", json!({"from": task.task_id})),
             )
-        })),
-        Box::new(StaticRunner::new(child, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+        }),
+        completed_runner!(child)
+    );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
@@ -268,16 +251,13 @@ fn cancelling_waiting_parent_cascades_to_child() {
     let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
     let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
     let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, |task| {
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        boxed_runner!(parent, |task| {
             let child_task = Task::new("child-1", "child.work", json!({}));
             await_child_result(task, child_task)
-        })),
-        Box::new(StaticRunner::new(child, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+        }),
+        completed_runner!(child)
+    );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
     runtime.tick_once().unwrap();
@@ -294,16 +274,13 @@ fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
         let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
         let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
         let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
-        let runners: Vec<Box<dyn Runner>> = vec![
-            Box::new(StaticRunner::new(parent, move |task| {
+        let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+            boxed_runner!(parent, move |task| {
                 let child_task = Task::new("child-1", "child.work", json!({}));
                 await_child_result_with_policy(task, child_task, policy.clone())
-            })),
-            Box::new(StaticRunner::new(child, |task| {
-                RunnerResult::completed(task.task_id.clone())
-            })),
-            Box::new(CoreKernelRunner::new(1)),
-        ];
+            }),
+            completed_runner!(child)
+        );
         let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
         runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
         runtime.tick_once().unwrap();
@@ -325,12 +302,9 @@ fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
 fn task_cannot_suspend_while_holding_mutable_resource_lease() {
     let worker = runner_descriptor("worker", "parent.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            await_child_result(task, Task::new("child-1", "child.work", json!({})))
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        await_child_result(task, Task::new("child-1", "child.work", json!({})))
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     let resource = runtime
         .create_blob_resource("bytes.v1", vec![1, 2, 3])
@@ -350,16 +324,13 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
 fn stale_runner_result_is_rejected_before_derived_tasks_are_enqueued() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |_task| {
-            let mut result = RunnerResult::completed("stale-task");
-            result
-                .tasks
-                .push(Task::new("derived-task", "sim.derived", json!({})));
-            result
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |_task| {
+        let mut result = RunnerResult::completed("stale-task");
+        result
+            .tasks
+            .push(Task::new("derived-task", "sim.derived", json!({})));
+        result
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
 
@@ -375,17 +346,14 @@ fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let calls = Arc::new(Mutex::new(0));
     let observed_calls = calls.clone();
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, move |task| {
-            let mut calls = observed_calls.lock().expect("calls mutex poisoned");
-            *calls += 1;
-            if *calls == 1 {
-                return runner_result_with_status(task, RunnerStatus::Continue);
-            }
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, move |task| {
+        let mut calls = observed_calls.lock().expect("calls mutex poisoned");
+        *calls += 1;
+        if *calls == 1 {
+            return runner_result_with_status(task, RunnerStatus::Continue);
+        }
+        RunnerResult::completed(task.task_id.clone())
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
 
@@ -419,11 +387,11 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             let mut calls = self.calls.lock().expect("calls mutex poisoned");
             *calls += 1;
             if *calls == 1 {
-                return Err(RuntimeFailure::new(RuntimeError::new(
+                return Err(runtime_failure!(
                     "runner.step_failed",
                     "test.runner",
-                    "first call fails",
-                )));
+                    "first call fails"
+                ));
             }
             Ok(tasks
                 .into_iter()
@@ -440,7 +408,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             descriptor: worker,
             calls: calls.clone(),
         }),
-        Box::new(CoreKernelRunner::new(1)),
+        kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
@@ -465,7 +433,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
 #[test]
 fn task_handle_facade_exposes_status_result_cancel_and_events() {
     let plan = load_plan(Vec::new(), Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![Box::new(CoreKernelRunner::new(1))];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     let handle = runtime
@@ -503,19 +471,18 @@ fn run_child_terminal_wake_case(
     let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
     let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
     let plan = load_plan(vec![parent.clone(), child.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(parent, |task| {
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        boxed_runner!(parent, |task| {
             if task.continuation_ref.is_some() {
                 return RunnerResult::completed(task.task_id.clone());
             }
             let child_task = Task::new("child-1", "child.work", json!({}));
             await_child_result(task, child_task)
-        })),
-        Box::new(StaticRunner::new(child, move |task| {
+        }),
+        boxed_runner!(child, move |task| {
             runner_result_with_status(task, child_runner_status.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+        })
+    );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));

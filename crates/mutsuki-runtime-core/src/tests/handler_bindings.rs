@@ -43,12 +43,7 @@ fn handler_bindings_are_queryable_but_do_not_fan_out_tasks() {
     binding.target_runner_hint = Some("message.runner".into());
     binding.priority = 10;
     let plan = load_plan(vec![runner.clone()], vec![binding.clone()]);
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     assert_eq!(
@@ -74,14 +69,11 @@ fn core_facade_can_submit_one_targeted_task_from_handler_binding() {
     );
     binding.target_runner_hint = Some("message.runner".into());
     let plan = load_plan(vec![runner.clone()], vec![binding]);
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner, |task| {
-            assert_eq!(task.target_binding_id.as_deref(), Some("message-handler"));
-            assert_eq!(task.protocol_id, "cap.message.handle");
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(runner, |task| {
+        assert_eq!(task.target_binding_id.as_deref(), Some("message-handler"));
+        assert_eq!(task.protocol_id, "cap.message.handle");
+        RunnerResult::completed(task.task_id.clone())
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime
@@ -105,12 +97,7 @@ fn handler_binding_register_facade_is_closed_after_boot() {
         "cap.message.handle",
     );
     let plan = load_plan(vec![runner.clone()], vec![binding.clone()]);
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     let err = runtime.register_handler_binding(binding).unwrap_err();
@@ -122,12 +109,7 @@ fn handler_binding_register_facade_is_closed_after_boot() {
 fn runtime_boot_rejects_non_kernel_committer_runner() {
     let committer = runner_descriptor("plugin.committer", "core.commit", RunnerPurity::Committer);
     let plan = load_plan(vec![committer.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(committer, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(committer));
 
     let err = boot_error(plan, runners);
 
@@ -139,12 +121,7 @@ fn runtime_boot_rejects_non_kernel_control_runner() {
     let mut control = runner_descriptor("plugin.control", "control.work", RunnerPurity::Pure);
     control.execution_class = ExecutionClass::Control;
     let plan = load_plan(vec![control.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(control, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(control));
 
     let err = boot_error(plan, runners);
 
@@ -155,12 +132,7 @@ fn runtime_boot_rejects_non_kernel_control_runner() {
 fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
     let runner = runner_descriptor("worker", "cap.work", RunnerPurity::Pure);
     let plan = load_plan(vec![runner.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner.clone(), |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner.clone()));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     let heartbeat = runtime
@@ -181,9 +153,7 @@ fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
     );
 
     let register_err = runtime
-        .register_runner(Box::new(StaticRunner::new(runner.clone(), |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })))
+        .register_runner(completed_runner!(runner.clone()))
         .unwrap_err();
     assert_eq!(register_err.error().code, ERR_REGISTRY_FROZEN);
     let unregister_err = runtime.unregister_runner("worker").unwrap_err();
@@ -219,12 +189,7 @@ fn handler_binding_load_plan_validation_rejects_missing_protocol() {
             "cap.message.missing",
         )],
     );
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
 
     let err = boot_error(plan, runners);
 
@@ -241,12 +206,7 @@ fn handler_binding_load_plan_validation_rejects_bad_runner_hint() {
     );
     binding.target_runner_hint = Some("missing.runner".into());
     let plan = load_plan(vec![runner.clone()], vec![binding]);
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(runner, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
 
     let err = boot_error(plan, runners);
 
@@ -264,15 +224,8 @@ fn handler_binding_load_plan_validation_rejects_hint_that_cannot_handle_protocol
     );
     binding.target_runner_hint = Some("hinted.runner".into());
     let plan = load_plan(vec![hinted.clone(), target.clone()], vec![binding]);
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(hinted, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(StaticRunner::new(target, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(completed_runner!(hinted), completed_runner!(target));
 
     let err = boot_error(plan, runners);
 

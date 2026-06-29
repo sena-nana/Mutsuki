@@ -6,6 +6,49 @@ use serde_json::json;
 
 use crate::*;
 
+macro_rules! boxed_runner {
+    ($descriptor:expr, |$task:ident| $body:block) => {
+        Box::new(super::fixtures::StaticRunner::new($descriptor, |$task| {
+            $body
+        })) as Box<dyn $crate::Runner>
+    };
+    ($descriptor:expr, move |$task:ident| $body:block) => {
+        Box::new(super::fixtures::StaticRunner::new(
+            $descriptor,
+            move |$task| $body,
+        )) as Box<dyn $crate::Runner>
+    };
+}
+
+macro_rules! completed_runner {
+    ($descriptor:expr) => {
+        boxed_runner!($descriptor, |task| {
+            mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone())
+        })
+    };
+}
+
+macro_rules! kernel_runner {
+    ($generation:expr) => {
+        Box::new($crate::CoreKernelRunner::new($generation)) as Box<dyn $crate::Runner>
+    };
+}
+
+macro_rules! runners_with_kernel {
+    () => {
+        runners_with_kernel!(1;)
+    };
+    ($($runner:expr),* $(,)?) => {
+        runners_with_kernel!(1; $($runner),*)
+    };
+    ($generation:expr;) => {
+        vec![kernel_runner!($generation)]
+    };
+    ($generation:expr; $($runner:expr),* $(,)?) => {
+        vec![$($runner),*, kernel_runner!($generation)]
+    };
+}
+
 pub(super) fn runner_descriptor(
     id: &str,
     protocol_id: &str,
@@ -127,7 +170,7 @@ pub(super) fn surface(id: &str, kind: ContractSurfaceKind) -> ContractSurface {
 }
 
 pub(super) fn boot_with_kernel(plan: RuntimeLoadPlan) -> CoreRuntime {
-    CoreRuntime::boot(plan, vec![Box::new(CoreKernelRunner::new(1))]).unwrap()
+    CoreRuntime::boot(plan, runners_with_kernel!()).unwrap()
 }
 
 pub(super) fn remove_surfaces(mut plan: RuntimeLoadPlan, surface_ids: &[&str]) -> RuntimeLoadPlan {

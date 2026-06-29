@@ -9,12 +9,7 @@ use super::fixtures::*;
 fn claim_ready_dispatches_records_scheduler_decision_event_and_trace() {
     let worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
-            RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime.submit_task(Task::new("schedule-1", "runtime.schedule.input", json!({})));
 

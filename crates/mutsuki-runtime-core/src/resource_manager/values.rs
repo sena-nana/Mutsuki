@@ -1,21 +1,21 @@
 use mutsuki_runtime_contracts::{
     ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_NOT_FOUND, ResourceLifetime, ResourceValue,
-    RuntimeError, ValueRef, ValueStorage,
+    ValueRef, ValueStorage,
 };
 use serde_json::Value;
 
-use crate::{IdSource, RuntimeFailure, RuntimeResult};
+use crate::{IdSource, RuntimeResult};
 
 use super::{PackedValue, ResourceManager, simple_hash};
 
 impl ResourceManager {
     pub fn pack_value(&mut self, schema: &str, value: Value) -> RuntimeResult<PackedValue> {
         let bytes = serde_json::to_vec(&value).map_err(|err| {
-            RuntimeFailure::new(RuntimeError::new(
+            runtime_failure!(
                 "resource.encode_failed",
                 "runtime.resource_manager",
-                err.to_string(),
-            ))
+                err.to_string()
+            )
         })?;
         if bytes.len() <= self.inline_value_max_bytes {
             return Ok(PackedValue::Inline(ResourceValue::Inline {
@@ -42,18 +42,18 @@ impl ResourceManager {
 
     pub fn get_value(&self, value_ref: &ValueRef) -> RuntimeResult<Value> {
         let (stored, value) = self.values.get(&value_ref.ref_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
+            runtime_failure!(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("value.{}", value_ref.ref_id),
-            ))
+                format!("value.{}", value_ref.ref_id)
+            )
         })?;
         if stored.generation != value_ref.generation {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("value.{}", value_ref.ref_id),
-            )));
+                format!("value.{}", value_ref.ref_id)
+            ));
         }
         Ok(value.clone())
     }

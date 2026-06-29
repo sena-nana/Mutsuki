@@ -1,3 +1,4 @@
+#[macro_use]
 mod fixtures;
 mod handler_bindings;
 mod lease_fencing;

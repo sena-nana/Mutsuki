@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_runtime_contracts::{
     ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, ResourceCellRef, ResourceLease, ResourceRef,
-    ResourceValue, RuntimeError, SurfaceOccupancyHandle, ValueRef,
+    ResourceValue, SurfaceOccupancyHandle, ValueRef,
 };
 use serde_json::Value;
 
@@ -80,27 +80,19 @@ impl ResourceManager {
 }
 
 fn resource_not_found(route: String) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new(
-        ERR_RESOURCE_NOT_FOUND,
-        "runtime.resource_manager",
-        route,
-    ))
+    runtime_failure!(ERR_RESOURCE_NOT_FOUND, "runtime.resource_manager", route)
 }
 
 fn capability_exhausted(route: String) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new(
-        ERR_CAPABILITY_EXHAUSTED,
-        "runtime.resource_manager",
-        route,
-    ))
+    runtime_failure!(ERR_CAPABILITY_EXHAUSTED, "runtime.resource_manager", route)
 }
 
 fn io_failure(err: std::io::Error) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new(
+    runtime_failure!(
         "resource.io_failed",
         "runtime.resource_manager",
-        err.to_string(),
-    ))
+        err.to_string()
+    )
 }
 
 fn simple_hash(bytes: &[u8]) -> String {

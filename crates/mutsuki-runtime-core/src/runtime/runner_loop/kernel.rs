@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    DomainEvent, RunnerDescriptor, RuntimeError, RuntimeEventKind, StateDelta, Task, TaskLease,
+    DomainEvent, RunnerDescriptor, RuntimeEventKind, StateDelta, Task, TaskLease,
 };
 
-use crate::{RuntimeFailure, RuntimeResult};
+use crate::RuntimeResult;
 
 use super::CoreRuntime;
 
@@ -22,11 +22,11 @@ impl CoreRuntime {
                 "core.commit" => {
                     let delta: StateDelta =
                         serde_json::from_value(task.payload.clone()).map_err(|err| {
-                            RuntimeFailure::new(RuntimeError::new(
+                            runtime_failure!(
                                 "state.delta_decode_failed",
                                 "runtime.committer",
-                                err.to_string(),
-                            ))
+                                err.to_string()
+                            )
                         })?;
                     self.states.apply(&delta)?;
                     self.events.record(
@@ -40,11 +40,11 @@ impl CoreRuntime {
                 "core.event.append" => {
                     let event: DomainEvent =
                         serde_json::from_value(task.payload.clone()).map_err(|err| {
-                            RuntimeFailure::new(RuntimeError::new(
+                            runtime_failure!(
                                 "event.decode_failed",
                                 "runtime.event_log",
-                                err.to_string(),
-                            ))
+                                err.to_string()
+                            )
                         })?;
                     self.events.record(
                         RuntimeEventKind::Task,

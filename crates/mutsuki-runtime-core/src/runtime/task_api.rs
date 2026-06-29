@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, RuntimeError, RuntimeEvent, RuntimeEventKind, Task, TaskHandle, TaskOutcome,
-    TaskStatus,
+    CancelPolicy, RuntimeEvent, RuntimeEventKind, Task, TaskHandle, TaskOutcome, TaskStatus,
 };
 use serde_json::Value;
 
 use crate::task_pool::surface_ids_for_task;
-use crate::{RuntimeFailure, RuntimeResult, TaskPool};
+use crate::{RuntimeResult, TaskPool};
 
 use super::{CoreRuntime, TaskResultSnapshot};
 
@@ -23,10 +22,10 @@ impl CoreRuntime {
         if let Some(surface_id) = deprecated_surface {
             let _ = self.tasks.reject_ready(
                 &task_id,
-                RuntimeError::new(
+                runtime_error!(
                     mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                     "runtime.result_router",
-                    format!("surface.deprecated.{surface_id}"),
+                    format!("surface.deprecated.{surface_id}")
                 ),
             );
         }
@@ -65,11 +64,11 @@ impl CoreRuntime {
             .iter()
             .find(|binding| binding.binding_id == binding_id)
             .ok_or_else(|| {
-                RuntimeFailure::new(RuntimeError::new(
+                runtime_failure!(
                     mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
                     "runtime.handler_binding",
-                    format!("handler_binding.{binding_id}"),
-                ))
+                    format!("handler_binding.{binding_id}")
+                )
             })?;
         let mut task = Task::new(task_id, &binding.target_protocol_id, payload);
         task.target_binding_id = Some(binding.binding_id.clone());
@@ -89,11 +88,11 @@ impl CoreRuntime {
 
     pub fn task_handle(&self, task_id: &str) -> RuntimeResult<TaskHandle> {
         let record = self.tasks.get(task_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
+            runtime_failure!(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
                 "runtime.task",
-                format!("task.handle.{task_id}"),
-            ))
+                format!("task.handle.{task_id}")
+            )
         })?;
         Ok(TaskHandle {
             task_id: record.task.task_id.clone(),
@@ -129,11 +128,11 @@ impl CoreRuntime {
 
     pub fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
         let record = self.tasks.get(task_id).ok_or_else(|| {
-            RuntimeFailure::new(RuntimeError::new(
+            runtime_failure!(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
                 "runtime.task",
-                format!("task.outcome.{task_id}"),
-            ))
+                format!("task.outcome.{task_id}")
+            )
         })?;
         Ok(match record.status {
             TaskStatus::Completed => Some(TaskOutcome::Completed {
@@ -143,10 +142,10 @@ impl CoreRuntime {
             TaskStatus::Failed => Some(TaskOutcome::Failed {
                 task_id: record.task.task_id.clone(),
                 error: record.failure.clone().unwrap_or_else(|| {
-                    RuntimeError::new(
+                    runtime_error!(
                         "runner.failed",
                         "runtime.task",
-                        format!("task.outcome.{task_id}"),
+                        format!("task.outcome.{task_id}")
                     )
                 }),
             }),
@@ -196,11 +195,11 @@ impl CoreRuntime {
             .iter()
             .any(|task_await| task_await.cancel_policy != CancelPolicy::Cascade)
         {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 "task.cancel_policy_unsupported",
                 "runtime.task",
-                format!("task.cancel.{task_id}"),
-            )));
+                format!("task.cancel.{task_id}")
+            ));
         }
         self.tasks.cancel_by_core(task_id)?;
         self.record_task_terminal_event(task_id, "task.cancelled", None);

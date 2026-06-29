@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use mutsuki_runtime_contracts::{ERR_STATE_CONFLICT, RuntimeError, StateDelta};
+use mutsuki_runtime_contracts::{ERR_STATE_CONFLICT, StateDelta};
 use serde_json::Value;
 
-use crate::{RuntimeFailure, RuntimeResult};
+use crate::RuntimeResult;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StateStore {
@@ -18,11 +18,11 @@ impl StateStore {
             .map(|(version, _)| *version)
             .unwrap_or(0);
         if current_version != delta.expected_version {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 ERR_STATE_CONFLICT,
                 "runtime.state_store",
-                format!("state.commit.{}", delta.target_ref),
-            )));
+                format!("state.commit.{}", delta.target_ref)
+            ));
         }
         self.values.insert(
             delta.target_ref.clone(),

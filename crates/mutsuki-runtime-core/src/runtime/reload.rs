@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use mutsuki_runtime_contracts::{RuntimeError, RuntimeEventKind, RuntimeLoadPlan};
+use mutsuki_runtime_contracts::{RuntimeEventKind, RuntimeLoadPlan};
 
+use crate::RuntimeResult;
 use crate::registry::{
     PluginGenerationPhase, PluginGenerationState, ReloadDecision, RunnerRegistry, compare_surfaces,
     validate_runtime_descriptors,
 };
 use crate::runner::Runner;
-use crate::{RuntimeFailure, RuntimeResult};
 
 use super::{CoreRuntime, DrainingGeneration};
 use invocation::cancel_attrs;
@@ -50,11 +50,11 @@ impl CoreRuntime {
         let occupancy = self.surface_occupancy();
         let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                 "runtime.reload",
-                "reload.breaking",
-            )));
+                "reload.breaking"
+            ));
         }
         self.events.record(
             RuntimeEventKind::Reload,
@@ -80,11 +80,11 @@ impl CoreRuntime {
         let occupancy = self.surface_occupancy();
         let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                 "runtime.reload",
-                "reload.breaking",
-            )));
+                "reload.breaking"
+            ));
         }
 
         let mut new_registry = RunnerRegistry::default();

@@ -104,11 +104,11 @@ impl CoreRuntime {
     }
 
     pub fn register_handler_binding(&mut self, binding: HandlerBinding) -> RuntimeResult<()> {
-        Err(RuntimeFailure::new(RuntimeError::new(
+        Err(runtime_failure!(
             mutsuki_runtime_contracts::ERR_REGISTRY_FROZEN,
             "runtime.handler_binding",
-            format!("handler_binding.{}", binding.binding_id),
-        )))
+            format!("handler_binding.{}", binding.binding_id)
+        ))
     }
 
     pub fn plugin_generation_states(&self) -> &[PluginGenerationState] {
@@ -167,11 +167,11 @@ impl CoreRuntime {
 
     fn ensure_surface_not_deprecated(&self, surface_id: &str, source: &str) -> RuntimeResult<()> {
         if self.is_surface_deprecated(surface_id) {
-            return Err(RuntimeFailure::new(RuntimeError::new(
+            return Err(runtime_failure!(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                 source,
-                format!("surface.deprecated.{surface_id}"),
-            )));
+                format!("surface.deprecated.{surface_id}")
+            ));
         }
         Ok(())
     }
@@ -197,10 +197,10 @@ impl CoreRuntime {
     pub(crate) fn ensure_task_can_suspend(&self, task_id: &str) -> RuntimeResult<()> {
         let active_mutable = self.resources.active_mutable_lease_routes_for_task(task_id);
         if !active_mutable.is_empty() {
-            let mut error = RuntimeError::new(
+            let mut error = runtime_error!(
                 "resource.lease_cross_await",
                 "runtime.resource_manager",
-                format!("task.await.{task_id}"),
+                format!("task.await.{task_id}")
             );
             error.evidence.insert(
                 "active_mutable_leases".into(),

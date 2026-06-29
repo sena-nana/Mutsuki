@@ -4,9 +4,9 @@ use mutsuki_runtime_contracts::{
 };
 use std::collections::BTreeMap;
 
+use crate::RuntimeResult;
 use crate::task_pool::{RunnerLoad, TASK_LEASE_TTL_STEPS};
 use crate::{RunnerContext, RunnerLoopReport};
-use crate::{RuntimeFailure, RuntimeResult};
 
 use super::CoreRuntime;
 use super::ScheduleDecision;
@@ -153,11 +153,11 @@ impl CoreRuntime {
             .registry
             .take_runner(&descriptor.runner_id)
             .ok_or_else(|| {
-                RuntimeFailure::new(RuntimeError::new(
+                runtime_failure!(
                     mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                     "runtime.runner_loop",
-                    format!("runner.{}", descriptor.runner_id),
-                ))
+                    format!("runner.{}", descriptor.runner_id)
+                )
             })?;
         let ctx = RunnerContext::new(
             self.load_plan.registry_generation,
@@ -200,11 +200,11 @@ impl CoreRuntime {
                 .iter()
                 .find(|lease| lease.task_id == result.task_id)
                 .ok_or_else(|| {
-                    RuntimeFailure::new(RuntimeError::new(
+                    runtime_failure!(
                         mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                         "runtime.runner_loop",
-                        format!("task.result.{}", result.task_id),
-                    ))
+                        format!("task.result.{}", result.task_id)
+                    )
                 })?;
             completed += self.route_result(&descriptor, lease, result)?;
         }
@@ -290,10 +290,10 @@ impl CoreRuntime {
                 let task_id = result.task_id;
                 self.record_rejected_runner_result(
                     task_id.clone(),
-                    RuntimeError::new(
+                    runtime_error!(
                         mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                         "runtime.runner_loop",
-                        format!("task.result.{task_id}"),
+                        format!("task.result.{task_id}")
                     ),
                 );
                 continue;

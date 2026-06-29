@@ -11,8 +11,8 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
     let effect_runner =
         runner_descriptor("effect.smoke", "effect.chat.send", RunnerPurity::Effectful);
     let plan = load_plan(vec![worker.clone(), effect_runner.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = vec![
-        Box::new(StaticRunner::new(worker, |task| {
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        boxed_runner!(worker, |task| {
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.deltas.push(StateDelta {
                 target_ref: "state:smoke".into(),
@@ -33,13 +33,12 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
                 idempotency_key: Some("effect-1".into()),
             });
             result
-        })),
-        Box::new(StaticRunner::new(effect_runner, |task| {
+        }),
+        boxed_runner!(effect_runner, |task| {
             assert_eq!(task.protocol_id, "effect.chat.send");
             RunnerResult::completed(task.task_id.clone())
-        })),
-        Box::new(CoreKernelRunner::new(1)),
-    ];
+        })
+    );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime.submit_task(Task::new(
