@@ -96,6 +96,7 @@ pub(super) fn load_plan(
         load_order: vec!["plugin-a".into()],
         runner_bindings: BTreeMap::new(),
         plugin_deployments: [("plugin-a".into(), PluginDeploymentKind::Builtin)].into(),
+        capability_graph: RuntimeCapabilityGraph::default(),
         contract_surfaces: vec![
             ContractSurface {
                 surface_id: "runner:orchestrator".into(),

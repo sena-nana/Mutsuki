@@ -60,6 +60,18 @@ pub(crate) fn deployment_mismatch(
     RuntimeFailure::new(error)
 }
 
+pub(crate) fn required_capability_missing(capability: &str) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        format!("host.plugin.required_capability_missing.{capability}"),
+    );
+    error
+        .evidence
+        .insert("capability".into(), ScalarValue::String(capability.into()));
+    RuntimeFailure::new(error)
+}
+
 pub(crate) fn runner_missing_for_deployment(
     plugin_id: &str,
     runner_id: &str,

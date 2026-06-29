@@ -32,6 +32,7 @@ pub(super) fn descriptor_with_class(
 pub(super) fn runtime_profile() -> RuntimeProfile {
     RuntimeProfile {
         profile_id: "default".into(),
+        mode: RuntimeProfileMode::FullDev,
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),

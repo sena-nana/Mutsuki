@@ -54,6 +54,21 @@ impl PluginDeploymentKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProfileMode {
+    FullDev,
+    ExtensibleRuntime,
+    BuiltinOnly,
+    LockedBuiltin,
+}
+
+impl Default for RuntimeProfileMode {
+    fn default() -> Self {
+        Self::FullDev
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginArtifact {
     pub artifact_type: ArtifactType,
     pub path: String,
@@ -136,11 +151,27 @@ pub struct PluginManifest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeProfile {
     pub profile_id: String,
+    pub mode: RuntimeProfileMode,
     pub enabled_plugins: Vec<String>,
     pub bindings: BTreeMap<String, String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
     pub allow_dynamic_registration: bool,
     pub allow_hot_reload: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeCapabilityGraph {
+    pub profile_mode: RuntimeProfileMode,
+    pub provided_capabilities: Vec<String>,
+    pub required_capabilities: Vec<String>,
+    pub active_capabilities: Vec<String>,
+    pub active_resource_providers: Vec<String>,
+    pub active_host_backends: Vec<String>,
+    pub active_plugin_backends: Vec<String>,
+    pub active_codecs: Vec<String>,
+    pub active_bridges: Vec<String>,
+    pub active_scheduler_policies: Vec<String>,
+    pub active_workflows: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +275,7 @@ pub struct RuntimeLoadPlan {
     pub load_order: Vec<String>,
     pub runner_bindings: BTreeMap<String, String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub capability_graph: RuntimeCapabilityGraph,
     pub contract_surfaces: Vec<ContractSurface>,
 }
 

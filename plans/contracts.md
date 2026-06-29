@@ -42,8 +42,9 @@
 | `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
 | `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 plan commit receipt |
 | `TransactionPlan` / `CommandBatch` / `SagaPlan` | 严格事务、无回滚批量命令和带补偿的 saga 计划 |
-| `RuntimeProfile` | 本次运行启用哪些插件、绑定哪些能力、是否允许热重载 |
+| `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、绑定哪些能力、是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
+| `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 视图，用于 host 声明与裁剪一致性 |
 | `PluginManifest` | 插件声明 runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `HostBackendDescriptor` | Host 内部 backend/service 扩展点 descriptor，例如 bridge、codec、trace sink、resource backend、scheduler policy |
 | `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
@@ -295,6 +296,19 @@ Core 只消费 `RuntimeLoadPlan`：
 运行选择 builtin / ABI / WASM / process / Python 中哪一种部署形态。resolver 必须把每个
 enabled plugin 的部署形态写入 `RuntimeLoadPlan.plugin_deployments`，并校验部署形态与
 artifact 类型兼容。部署形态属于 host 执行面约束，不得进入插件业务代码分支。
+
+`RuntimeProfile.mode` 描述发行形态：
+
+- `full_dev`：开发模式，resolver 保留 manifest 声明的系统扩展 surface，便于调试和覆盖测试。
+- `extensible_runtime`：允许外部插件，resolver 保守保留外部 backend / bridge / codec 等 host 扩展。
+- `builtin_only`：只允许 builtin 插件集合，resolver 可按当前 enabled plugins 与 deployment 裁剪未使用注册路径。
+- `locked_builtin`：插件集合固定，resolver 必须生成静态 active capability graph，host 只声明当前 graph 中的 backend / bridge / codec / workflow / scheduler policy。
+
+第一阶段裁剪是 Level 1：不注册、不声明未激活的实现 surface；不改变 Core 抽象和 wire
+shape。`RuntimeLoadPlan.capability_graph` 必须记录 provided / required / active
+capabilities，以及 active resource providers、host backends、plugin backends、codecs、
+bridges、scheduler policies 和 workflows。Host capability 应从这个 active graph 或实际
+registry 生成，不能在裁剪后继续宣称已裁剪的 bridge、codec 或 resource strategy 可用。
 
 Builtin 插件必须仍通过 host 注册 runner/provider 能力，不能因为静态编译进 Host 就进入
 Core 内建逻辑。ABI / WASM / process / Python 插件必须通过对应 host bridge 注册相同的

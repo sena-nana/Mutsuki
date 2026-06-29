@@ -19,8 +19,10 @@ from mutsuki_runtime_python.contracts.plugin import (
     PluginManifest,
     PluginProvides,
     ProtocolDescriptor,
+    RuntimeCapabilityGraph,
     RuntimeLoadPlan,
     RuntimeProfile,
+    RuntimeProfileMode,
 )
 from mutsuki_runtime_python.contracts.resource import (
     ResourceProviderCompatibility,
@@ -183,6 +185,28 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         load_order=("plugin-a",),
         runner_bindings={"raw.input": "runner-a"},
         plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
+        capability_graph=RuntimeCapabilityGraph(
+            profile_mode=RuntimeProfileMode.FULL_DEV,
+            provided_capabilities=(
+                "runner:runner-a",
+                "task_protocol:raw.input",
+                "plugin_backend:plugin.backend.python",
+            ),
+            required_capabilities=(),
+            active_capabilities=(
+                "runner:runner-a",
+                "task_protocol:raw.input",
+                "resource_provider:resource.local",
+                "plugin_backend:plugin.backend.python",
+            ),
+            active_resource_providers=("resource.local",),
+            active_host_backends=("host.backend.python",),
+            active_plugin_backends=("plugin.backend.python",),
+            active_codecs=("codec.json",),
+            active_bridges=("bridge.python.jsonl",),
+            active_scheduler_policies=("scheduler.fair",),
+            active_workflows=("workflow.linear",),
+        ),
         contract_surfaces=(
             ContractSurface(
                 surface_id="runner:runner-a",
@@ -232,11 +256,13 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
     assert_json_roundtrip(WorkflowDescriptor, provides.workflows[0])
     assert_json_roundtrip(PluginProvides, provides)
     assert_json_roundtrip(PluginManifest, manifest)
+    assert_json_roundtrip(RuntimeCapabilityGraph, plan.capability_graph)
     assert_json_roundtrip(RuntimeLoadPlan, plan)
     assert_json_roundtrip(
         RuntimeProfile,
         RuntimeProfile(
             profile_id="default",
+            mode=RuntimeProfileMode.FULL_DEV,
             enabled_plugins=("plugin-a",),
             bindings={"raw.input": "plugin-a"},
             plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},

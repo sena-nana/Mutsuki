@@ -42,6 +42,13 @@ class ArtifactType(StrEnum):
     NATIVE = "native"
 
 
+class RuntimeProfileMode(StrEnum):
+    FULL_DEV = "full_dev"
+    EXTENSIBLE_RUNTIME = "extensible_runtime"
+    BUILTIN_ONLY = "builtin_only"
+    LOCKED_BUILTIN = "locked_builtin"
+
+
 def as_plugin_deployments(
     value: object, field: str
 ) -> dict[str, PluginDeploymentKind]:
@@ -246,6 +253,7 @@ class PluginManifest:
 @dataclass(frozen=True)
 class RuntimeProfile:
     profile_id: str
+    mode: RuntimeProfileMode
     enabled_plugins: tuple[str, ...]
     bindings: dict[str, str]
     plugin_deployments: dict[str, PluginDeploymentKind]
@@ -257,6 +265,7 @@ class RuntimeProfile:
         raw = as_mapping(data, "RuntimeProfile")
         return cls(
             profile_id=as_str(field_value(raw, "profile_id"), "profile_id"),
+            mode=RuntimeProfileMode(as_str(field_value(raw, "mode"), "mode")),
             enabled_plugins=as_str_tuple(field_value(raw, "enabled_plugins"), "enabled_plugins"),
             bindings=as_str_dict(raw, "bindings"),
             plugin_deployments=as_plugin_deployments(
@@ -266,6 +275,58 @@ class RuntimeProfile:
                 field_value(raw, "allow_dynamic_registration"), "allow_dynamic_registration"
             ),
             allow_hot_reload=as_bool(field_value(raw, "allow_hot_reload"), "allow_hot_reload"),
+        )
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilityGraph:
+    profile_mode: RuntimeProfileMode
+    provided_capabilities: tuple[str, ...]
+    required_capabilities: tuple[str, ...]
+    active_capabilities: tuple[str, ...]
+    active_resource_providers: tuple[str, ...]
+    active_host_backends: tuple[str, ...]
+    active_plugin_backends: tuple[str, ...]
+    active_codecs: tuple[str, ...]
+    active_bridges: tuple[str, ...]
+    active_scheduler_policies: tuple[str, ...]
+    active_workflows: tuple[str, ...]
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "RuntimeCapabilityGraph")
+        return cls(
+            profile_mode=RuntimeProfileMode(
+                as_str(field_value(raw, "profile_mode"), "profile_mode")
+            ),
+            provided_capabilities=as_str_tuple(
+                field_value(raw, "provided_capabilities"), "provided_capabilities"
+            ),
+            required_capabilities=as_str_tuple(
+                field_value(raw, "required_capabilities"), "required_capabilities"
+            ),
+            active_capabilities=as_str_tuple(
+                field_value(raw, "active_capabilities"), "active_capabilities"
+            ),
+            active_resource_providers=as_str_tuple(
+                field_value(raw, "active_resource_providers"),
+                "active_resource_providers",
+            ),
+            active_host_backends=as_str_tuple(
+                field_value(raw, "active_host_backends"), "active_host_backends"
+            ),
+            active_plugin_backends=as_str_tuple(
+                field_value(raw, "active_plugin_backends"), "active_plugin_backends"
+            ),
+            active_codecs=as_str_tuple(field_value(raw, "active_codecs"), "active_codecs"),
+            active_bridges=as_str_tuple(field_value(raw, "active_bridges"), "active_bridges"),
+            active_scheduler_policies=as_str_tuple(
+                field_value(raw, "active_scheduler_policies"),
+                "active_scheduler_policies",
+            ),
+            active_workflows=as_str_tuple(
+                field_value(raw, "active_workflows"), "active_workflows"
+            ),
         )
 
 
@@ -280,6 +341,7 @@ class RuntimeLoadPlan:
     load_order: tuple[str, ...]
     runner_bindings: dict[str, str]
     plugin_deployments: dict[str, PluginDeploymentKind]
+    capability_graph: RuntimeCapabilityGraph
     contract_surfaces: tuple[ContractSurface, ...]
 
     @classmethod
@@ -298,6 +360,9 @@ class RuntimeLoadPlan:
             runner_bindings=as_str_dict(raw, "runner_bindings"),
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"
+            ),
+            capability_graph=RuntimeCapabilityGraph.from_json_dict(
+                as_mapping(field_value(raw, "capability_graph"), "capability_graph")
             ),
             contract_surfaces=tuple_from_json(raw, "contract_surfaces", ContractSurface),
         )
