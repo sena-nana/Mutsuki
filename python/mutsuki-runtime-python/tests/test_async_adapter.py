@@ -110,6 +110,35 @@ async def test_async_runner_adapter_suspends_and_resumes_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_runner_adapter_cancel_removes_invocation_by_invocation_id() -> None:
+    client = ManualClient()
+
+    async def run(ctx: AsyncRunnerContext, task: Task) -> RunnerResult:
+        await ctx.call_raw("child.work", {"from": task.task_id})
+        return RunnerResult.completed(task.task_id)
+
+    adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
+    task = Task.new("parent-1", "parent.work")
+
+    first = await adapter.step(
+        replace(runner_context(), invocation_id="invocation:one"),
+        (task,),
+    )
+
+    assert first[0].status == RunnerStatus.WAITING
+    client.outcomes["parent-1:call:1"] = TaskOutcome.completed("parent-1:call:1")
+
+    await adapter.cancel("invocation:one")
+    second = await adapter.step(
+        replace(runner_context(), invocation_id="invocation:two"),
+        (task,),
+    )
+
+    assert second[0].status == RunnerStatus.WAITING
+    assert second[0].tasks[0].task_id == "parent-1:call:1"
+
+
+@pytest.mark.asyncio
 async def test_async_runner_adapter_emits_targeted_child_task_descriptor() -> None:
     client = ManualClient()
 

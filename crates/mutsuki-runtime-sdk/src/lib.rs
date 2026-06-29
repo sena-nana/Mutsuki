@@ -390,6 +390,7 @@ pub struct AsyncRunnerAdapter {
     client: RuntimeClientRef,
     factory: BoxedAsyncRunner,
     invocations: HashMap<String, AsyncInvocation>,
+    invocation_tasks: HashMap<String, String>,
     allow_self_call: bool,
 }
 
@@ -409,6 +410,7 @@ impl AsyncRunnerAdapter {
             client,
             factory,
             invocations: HashMap::new(),
+            invocation_tasks: HashMap::new(),
             allow_self_call: true,
         }
     }
@@ -416,6 +418,21 @@ impl AsyncRunnerAdapter {
     pub fn with_self_call_policy(mut self, allow_self_call: bool) -> Self {
         self.allow_self_call = allow_self_call;
         self
+    }
+
+    fn track_invocation(&mut self, task_id: &str, invocation_id: &str) {
+        if invocation_id.is_empty() {
+            return;
+        }
+        self.invocation_tasks
+            .insert(invocation_id.to_owned(), task_id.to_owned());
+    }
+
+    fn remove_invocation_by_task(&mut self, task_id: &str) -> Option<AsyncInvocation> {
+        let invocation = self.invocations.remove(task_id)?;
+        self.invocation_tasks
+            .retain(|_, known_task_id| known_task_id != task_id);
+        Some(invocation)
     }
 }
 
@@ -426,6 +443,7 @@ impl Runner for AsyncRunnerAdapter {
 
     fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         let mut results = Vec::new();
+        let invocation_id = _ctx.invocation_id.clone();
         for task in tasks {
             let task_id = task.task_id.clone();
             if !self.invocations.contains_key(&task_id) {
@@ -444,6 +462,7 @@ impl Runner for AsyncRunnerAdapter {
                 self.invocations
                     .insert(task_id.clone(), AsyncInvocation { future, pending });
             }
+            self.track_invocation(&task_id, &invocation_id);
             let invocation = self
                 .invocations
                 .get_mut(&task_id)
@@ -456,7 +475,7 @@ impl Runner for AsyncRunnerAdapter {
             let mut cx = Context::from_waker(&waker);
             match invocation.future.as_mut().poll(&mut cx) {
                 Poll::Ready(result) => {
-                    self.invocations.remove(&task_id);
+                    self.remove_invocation_by_task(&task_id);
                     results.push(result?);
                 }
                 Poll::Pending => {
@@ -497,7 +516,9 @@ impl Runner for AsyncRunnerAdapter {
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
-        self.invocations.remove(invocation_id);
+        if let Some(task_id) = self.invocation_tasks.get(invocation_id).cloned() {
+            self.remove_invocation_by_task(&task_id);
+        }
         Ok(())
     }
 }
@@ -557,6 +578,21 @@ mod tests {
 
     impl SdkProtocol for ParentWork {
         const PROTOCOL_ID: &'static str = "parent.work";
+    }
+
+    fn async_descriptor() -> RunnerDescriptor {
+        RunnerDescriptor {
+            runner_id: "async.runner".into(),
+            plugin_id: "plugin-a".into(),
+            plugin_generation: 1,
+            accepted_protocol_ids: vec!["parent.work".into()],
+            purity: RunnerPurity::Pure,
+            execution_class: ExecutionClass::Cpu,
+            input_schema: json!({}),
+            output_schema: json!({}),
+            metadata: BTreeMap::new(),
+            contract_surfaces: vec!["runner:async.runner".into()],
+        }
     }
 
     struct ManualClient {
@@ -624,18 +660,7 @@ mod tests {
         let client = Arc::new(ManualClient {
             outcomes: Mutex::new(HashMap::new()),
         });
-        let descriptor = RunnerDescriptor {
-            runner_id: "async.runner".into(),
-            plugin_id: "plugin-a".into(),
-            plugin_generation: 1,
-            accepted_protocol_ids: vec!["parent.work".into()],
-            purity: RunnerPurity::Pure,
-            execution_class: ExecutionClass::Cpu,
-            input_schema: json!({}),
-            output_schema: json!({}),
-            metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:async.runner".into()],
-        };
+        let descriptor = async_descriptor();
         let mut adapter = AsyncRunnerAdapter::new(
             descriptor,
             client.clone(),
@@ -703,22 +728,72 @@ mod tests {
     }
 
     #[test]
+    fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
+        let client = Arc::new(ManualClient {
+            outcomes: Mutex::new(HashMap::new()),
+        });
+        let descriptor = async_descriptor();
+        let mut adapter = AsyncRunnerAdapter::new(
+            descriptor,
+            client.clone(),
+            Box::new(|ctx, task| {
+                Box::pin(async move {
+                    ctx.call::<ChildWork>(json!({"from": task.task_id})).await?;
+                    Ok(RunnerResult::completed(task.task_id))
+                })
+            }),
+        );
+
+        let first = adapter
+            .step(
+                RunnerContext::new(
+                    1,
+                    1,
+                    "executor:test",
+                    Some("lease:test".into()),
+                    "invocation:one",
+                ),
+                vec![Task::new("parent-1", "parent.work", json!({}))],
+            )
+            .unwrap();
+
+        assert_eq!(first[0].status, RunnerStatus::Waiting);
+        client
+            .outcomes
+            .lock()
+            .expect("outcomes mutex poisoned")
+            .insert(
+                "parent-1:call:1".into(),
+                TaskOutcome::Completed {
+                    task_id: "parent-1:call:1".into(),
+                    output_ref: None,
+                },
+            );
+
+        adapter.cancel("invocation:one").unwrap();
+        let second = adapter
+            .step(
+                RunnerContext::new(
+                    1,
+                    2,
+                    "executor:test",
+                    Some("lease:test-2".into()),
+                    "invocation:two",
+                ),
+                vec![Task::new("parent-1", "parent.work", json!({}))],
+            )
+            .unwrap();
+
+        assert_eq!(second[0].status, RunnerStatus::Waiting);
+        assert_eq!(second[0].tasks[0].task_id, "parent-1:call:1");
+    }
+
+    #[test]
     fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
         let client = Arc::new(ManualClient {
             outcomes: Mutex::new(HashMap::new()),
         });
-        let descriptor = RunnerDescriptor {
-            runner_id: "async.runner".into(),
-            plugin_id: "plugin-a".into(),
-            plugin_generation: 1,
-            accepted_protocol_ids: vec!["parent.work".into()],
-            purity: RunnerPurity::Pure,
-            execution_class: ExecutionClass::Cpu,
-            input_schema: json!({}),
-            output_schema: json!({}),
-            metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:async.runner".into()],
-        };
+        let descriptor = async_descriptor();
         let mut adapter = AsyncRunnerAdapter::new(
             descriptor,
             client,
@@ -761,18 +836,7 @@ mod tests {
         let client = Arc::new(ManualClient {
             outcomes: Mutex::new(HashMap::new()),
         });
-        let descriptor = RunnerDescriptor {
-            runner_id: "async.runner".into(),
-            plugin_id: "plugin-a".into(),
-            plugin_generation: 1,
-            accepted_protocol_ids: vec!["parent.work".into()],
-            purity: RunnerPurity::Pure,
-            execution_class: ExecutionClass::Cpu,
-            input_schema: json!({}),
-            output_schema: json!({}),
-            metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:async.runner".into()],
-        };
+        let descriptor = async_descriptor();
         let mut adapter = AsyncRunnerAdapter::new(
             descriptor,
             client,
@@ -811,18 +875,7 @@ mod tests {
         let client = Arc::new(ManualClient {
             outcomes: Mutex::new(HashMap::new()),
         });
-        let descriptor = RunnerDescriptor {
-            runner_id: "async.runner".into(),
-            plugin_id: "plugin-a".into(),
-            plugin_generation: 1,
-            accepted_protocol_ids: vec!["parent.work".into()],
-            purity: RunnerPurity::Pure,
-            execution_class: ExecutionClass::Cpu,
-            input_schema: json!({}),
-            output_schema: json!({}),
-            metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:async.runner".into()],
-        };
+        let descriptor = async_descriptor();
         let mut adapter = AsyncRunnerAdapter::new(
             descriptor,
             client,
@@ -862,18 +915,7 @@ mod tests {
         let client = Arc::new(ManualClient {
             outcomes: Mutex::new(HashMap::new()),
         });
-        let descriptor = RunnerDescriptor {
-            runner_id: "async.runner".into(),
-            plugin_id: "plugin-a".into(),
-            plugin_generation: 1,
-            accepted_protocol_ids: vec!["parent.work".into()],
-            purity: RunnerPurity::Pure,
-            execution_class: ExecutionClass::Cpu,
-            input_schema: json!({}),
-            output_schema: json!({}),
-            metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:async.runner".into()],
-        };
+        let descriptor = async_descriptor();
         let mut adapter = AsyncRunnerAdapter::new(
             descriptor,
             client,

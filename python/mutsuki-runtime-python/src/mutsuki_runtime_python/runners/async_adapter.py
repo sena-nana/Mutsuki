@@ -196,6 +196,7 @@ class AsyncRunnerAdapter:
         self._factory = factory
         self._allow_self_call = allow_self_call
         self._invocations: dict[str, _Invocation] = {}
+        self._invocation_tasks: dict[str, str] = {}
 
     @property
     def descriptor(self) -> RunnerDescriptor:
@@ -220,6 +221,7 @@ class AsyncRunnerAdapter:
                 )
                 invocation = _Invocation(self._factory(runner_ctx, task).__await__())
                 self._invocations[task.task_id] = invocation
+            self._track_invocation(task.task_id, _ctx.invocation_id)
 
             outcome: TaskOutcome | None = None
             if invocation.pending is not None:
@@ -231,7 +233,7 @@ class AsyncRunnerAdapter:
             try:
                 yielded = invocation.iterator.send(outcome)
             except StopIteration as stop:
-                self._invocations.pop(task.task_id, None)
+                self._remove_invocation(task.task_id)
                 result = stop.value
                 if not isinstance(result, RunnerResult):
                     raise RunnerInvokeError(
@@ -259,10 +261,27 @@ class AsyncRunnerAdapter:
         return tuple(results)
 
     async def cancel(self, invocation_id: str) -> None:
-        self._invocations.pop(invocation_id, None)
+        task_id = self._invocation_tasks.get(invocation_id)
+        if task_id is not None:
+            self._remove_invocation(task_id)
 
     async def dispose(self) -> None:
         self._invocations.clear()
+        self._invocation_tasks.clear()
+
+    def _track_invocation(self, task_id: str, invocation_id: str) -> None:
+        if not invocation_id:
+            return
+        self._invocation_tasks[invocation_id] = task_id
+
+    def _remove_invocation(self, task_id: str) -> None:
+        if self._invocations.pop(task_id, None) is None:
+            return
+        self._invocation_tasks = {
+            invocation_id: known_task_id
+            for invocation_id, known_task_id in self._invocation_tasks.items()
+            if known_task_id != task_id
+        }
 
 
 class _Invocation:
