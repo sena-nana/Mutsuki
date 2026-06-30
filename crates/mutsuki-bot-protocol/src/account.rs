@@ -53,3 +53,9 @@ pub struct BotConversation {
     pub conversation_id: String,
     pub kind: String,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QqBotAccountGetRequest {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QqBotGatewayStatusRequest {}

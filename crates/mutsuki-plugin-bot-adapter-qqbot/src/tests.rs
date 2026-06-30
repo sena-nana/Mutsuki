@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotMessage,
-    BotMessageRecallRequest, BotTarget, MessageSegment, QQBOT_RAW_CALL_PROTOCOL_ID,
+    BotMessageRecallRequest, BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
 };
 use mutsuki_runtime_contracts::Task;
 use mutsuki_runtime_core::{Runner, RunnerContext};
@@ -12,7 +13,9 @@ use serde_json::{Value, json};
 use crate::api::{HttpMethod, MediaChunk, QqMediaError, QqMediaProvider, QqOpenApiError};
 use crate::config::QqBotConfig;
 use crate::gateway::{GatewayAction, QqGatewayPump};
-use crate::tasks::{QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner};
+use crate::tasks::{
+    QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner, openapi_descriptor,
+};
 use crate::{QqBotClients, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource};
 
 #[test]
@@ -139,6 +142,81 @@ fn openapi_runner_maps_standard_recall_to_qqbot_delete() {
             .ends_with("/v2/groups/GROUP_OPENID/messages/MESSAGE_ID")
     );
     assert_eq!(requests[1].body.as_ref(), Some(&Value::Null));
+}
+
+#[test]
+fn openapi_runner_gets_qqbot_account_from_openapi() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "BOT_OPENID", "username": "mutsuki"})),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+    let task = Task::new("account", QQBOT_ACCOUNT_GET_PROTOCOL_ID, json!({}));
+
+    let result = runner.step(test_context(1), vec![task]).unwrap();
+
+    let response = &result[0].events[0].payload["response"];
+    assert_eq!(response["account"]["account_id"], "main");
+    assert_eq!(response["account"]["platform"], "qqbot");
+    assert_eq!(response["app_id"], "APP_ID");
+    assert_eq!(response["openapi_user"]["id"], "BOT_OPENID");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].method, HttpMethod::Get);
+    assert!(requests[1].url.ends_with("/users/@me"));
+    assert_eq!(requests[1].body, None);
+    assert_eq!(requests[1].headers["Authorization"], "QQBot TOKEN_A");
+}
+
+#[test]
+fn openapi_runner_gets_gateway_status_from_openapi() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"url": "wss://gateway.example.invalid"})),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+    let task = Task::new(
+        "gateway-status",
+        QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
+        json!({}),
+    );
+
+    let result = runner.step(test_context(1), vec![task]).unwrap();
+
+    let response = &result[0].events[0].payload["response"];
+    assert_eq!(response["account_id"], "main");
+    assert_eq!(response["platform"], "qqbot");
+    assert_eq!(response["gateway"]["url"], "wss://gateway.example.invalid");
+    assert_eq!(response["shard"], json!([0, 1]));
+    assert_eq!(response["intents"], 1_325_405_185);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].method, HttpMethod::Get);
+    assert!(requests[1].url.ends_with("/gateway"));
+    assert_eq!(requests[1].body, None);
+    assert_eq!(requests[1].headers["Authorization"], "QQBot TOKEN_A");
+}
+
+#[test]
+fn openapi_descriptor_accepts_manifest_provided_qqbot_protocols() {
+    let descriptor = openapi_descriptor(1);
+
+    assert!(
+        descriptor
+            .accepted_protocol_ids
+            .contains(&QQBOT_ACCOUNT_GET_PROTOCOL_ID.into())
+    );
+    assert!(
+        descriptor
+            .accepted_protocol_ids
+            .contains(&QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into())
+    );
 }
 
 #[test]

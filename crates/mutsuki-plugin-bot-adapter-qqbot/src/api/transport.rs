@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::api::{
-    HttpMethod, QqAuthManager, QqHttpClient, QqOpenApiError, authorization_header, request_json,
+    HttpMethod, QqAuthManager, QqHttpClient, QqOpenApiError, authorization_header, request_empty,
+    request_json,
 };
 use crate::config::QqBotConfig;
 
@@ -34,7 +35,10 @@ impl QqOpenApiTransport {
             let token = self
                 .auth
                 .bearer_token(&self.config, self.http.as_mut(), current_step)?;
-            let mut request = request_json(method.clone(), url.clone(), body.clone());
+            let mut request = match &method {
+                HttpMethod::Get => request_empty(method.clone(), url.clone()),
+                _ => request_json(method.clone(), url.clone(), body.clone()),
+            };
             request
                 .headers
                 .insert("Authorization".into(), authorization_header(&token));
@@ -69,6 +73,10 @@ impl QqOpenApiTransport {
 
     pub fn http(&mut self) -> &mut dyn QqHttpClient {
         self.http.as_mut()
+    }
+
+    pub fn config(&self) -> &QqBotConfig {
+        &self.config
     }
 }
 

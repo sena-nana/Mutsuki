@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
-    QQBOT_RAW_CALL_PROTOCOL_ID,
+    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
+    QqBotAccountGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
     ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
@@ -139,6 +140,18 @@ impl Runner for QqOpenApiRunner {
                         ctx.current_step,
                     )
                 }
+                QQBOT_ACCOUNT_GET_PROTOCOL_ID => {
+                    let _: QqBotAccountGetRequest = parse_payload(task.payload.clone())
+                        .map_err(|error| failure("mutsuki.bot.qqbot.account.get.payload", error))?;
+                    self.service.get_account(ctx.current_step)
+                }
+                QQBOT_GATEWAY_STATUS_PROTOCOL_ID => {
+                    let _: QqBotGatewayStatusRequest = parse_payload(task.payload.clone())
+                        .map_err(|error| {
+                            failure("mutsuki.bot.qqbot.gateway.status.payload", error)
+                        })?;
+                    self.service.gateway_status(ctx.current_step)
+                }
                 QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
                     parse_payload::<RawCallPayload>(task.payload.clone())
                         .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,
@@ -191,6 +204,8 @@ pub fn openapi_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
             BOT_MEDIA_UPLOAD_PROTOCOL_ID.into(),
             BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
+            QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
+            QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
             QQBOT_RAW_CALL_PROTOCOL_ID.into(),
         ],
         purity: RunnerPurity::Effectful,

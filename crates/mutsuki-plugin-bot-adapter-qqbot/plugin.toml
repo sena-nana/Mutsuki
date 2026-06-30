@@ -21,6 +21,14 @@ target = "mutsuki.bot.media/upload@1"
 handler = "upload_media"
 
 [[provides]]
+target = "mutsuki.bot.qqbot.account/get@1"
+handler = "get_account"
+
+[[provides]]
+target = "mutsuki.bot.qqbot.gateway/status@1"
+handler = "gateway_status"
+
+[[provides]]
 target = "mutsuki.bot.qqbot.raw/call@1"
 handler = "raw_call"
 

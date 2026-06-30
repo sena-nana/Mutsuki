@@ -7,6 +7,7 @@ use crate::config::QqBotConfig;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HttpMethod {
+    Get,
     Post,
     Put,
     Delete,
@@ -115,6 +116,16 @@ pub fn request_json(method: HttpMethod, url: impl Into<String>, body: Value) -> 
         url: url.into(),
         headers: BTreeMap::from([("Content-Type".into(), "application/json".into())]),
         body: Some(body),
+        binary_body: None,
+    }
+}
+
+pub fn request_empty(method: HttpMethod, url: impl Into<String>) -> QqHttpRequest {
+    QqHttpRequest {
+        method,
+        url: url.into(),
+        headers: BTreeMap::new(),
+        body: None,
         binary_body: None,
     }
 }

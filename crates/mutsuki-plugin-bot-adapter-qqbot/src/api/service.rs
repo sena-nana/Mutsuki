@@ -42,6 +42,41 @@ impl QqOpenApiService {
         )
     }
 
+    pub fn get_account(&mut self, current_step: u64) -> Result<Value, QqOpenApiError> {
+        let config = self.transport.config().clone();
+        let openapi_user = self.transport.execute_json(
+            HttpMethod::Get,
+            "/users/@me".into(),
+            Value::Null,
+            current_step,
+        )?;
+        Ok(json!({
+            "account": {
+                "account_id": config.account_id,
+                "platform": "qqbot"
+            },
+            "app_id": config.app_id,
+            "openapi_user": openapi_user
+        }))
+    }
+
+    pub fn gateway_status(&mut self, current_step: u64) -> Result<Value, QqOpenApiError> {
+        let config = self.transport.config().clone();
+        let gateway = self.transport.execute_json(
+            HttpMethod::Get,
+            "/gateway".into(),
+            Value::Null,
+            current_step,
+        )?;
+        Ok(json!({
+            "account_id": config.account_id,
+            "platform": "qqbot",
+            "gateway": gateway,
+            "intents": config.gateway_intents,
+            "shard": config.shard
+        }))
+    }
+
     pub fn upload_media(
         &mut self,
         payload: MediaUploadPayload,
