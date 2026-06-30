@@ -18,10 +18,10 @@ impl StateStore {
             .map(|(version, _)| *version)
             .unwrap_or(0);
         if current_version != delta.expected_version {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_STATE_CONFLICT,
                 "runtime.state_store",
-                format!("state.commit.{}", delta.target_ref)
+                format!("state.commit.{}", delta.target_ref),
             ));
         }
         self.values.insert(

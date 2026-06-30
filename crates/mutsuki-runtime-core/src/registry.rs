@@ -82,10 +82,10 @@ impl HandlerBindingRegistry {
 impl RunnerRegistry {
     pub fn register(&mut self, runner: Box<dyn Runner>) -> RuntimeResult<()> {
         if self.frozen {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_REGISTRY_FROZEN,
                 "runtime.runner_registry",
-                "runner.register"
+                "runner.register",
             ));
         }
         let runner_id = runner.descriptor().runner_id.clone();
@@ -95,10 +95,10 @@ impl RunnerRegistry {
 
     pub fn unregister(&mut self, runner_id: &str) -> RuntimeResult<Option<Box<dyn Runner>>> {
         if self.frozen {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_REGISTRY_FROZEN,
                 "runtime.runner_registry",
-                format!("runner.unregister.{runner_id}")
+                format!("runner.unregister.{runner_id}"),
             ));
         }
         self.heartbeats.remove(runner_id);
@@ -142,10 +142,10 @@ impl RunnerRegistry {
         current_step: u64,
     ) -> RuntimeResult<RunnerHeartbeat> {
         if !self.runners.contains_key(runner_id) {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                 "runtime.runner_registry",
-                format!("runner.heartbeat.{runner_id}")
+                format!("runner.heartbeat.{runner_id}"),
             ));
         }
         let heartbeat = RunnerHeartbeat {
@@ -168,10 +168,10 @@ impl RunnerRegistry {
         capacity: usize,
     ) -> RuntimeResult<RunnerCapabilityDeclaration> {
         let descriptor = self.runners.get(runner_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                 "runtime.runner_registry",
-                format!("runner.capability.{runner_id}")
+                format!("runner.capability.{runner_id}"),
             )
         })?;
         let authorized = &descriptor.descriptor().accepted_protocol_ids;
@@ -179,10 +179,10 @@ impl RunnerRegistry {
             .iter()
             .any(|protocol_id| !authorized.contains(protocol_id))
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_REGISTRY_UNAUTHORIZED,
                 "runtime.runner_registry",
-                format!("runner.capability.{runner_id}")
+                format!("runner.capability.{runner_id}"),
             ));
         }
         let declaration = RunnerCapabilityDeclaration {
@@ -210,10 +210,10 @@ impl RunnerRegistry {
 
     pub fn cancel_runner(&mut self, runner_id: &str, invocation_id: &str) -> RuntimeResult<()> {
         let runner = self.runners.get_mut(runner_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                 "runtime.runner_registry",
-                format!("runner.cancel.{runner_id}")
+                format!("runner.cancel.{runner_id}"),
             )
         })?;
         runner.cancel(invocation_id)
@@ -288,10 +288,10 @@ pub fn validate_runtime_descriptors(
     }
     for runner in runners {
         if !authorized.contains(&runner.runner_id) {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_REGISTRY_UNAUTHORIZED,
                 "runtime.load_plan",
-                format!("runner.{}", runner.runner_id)
+                format!("runner.{}", runner.runner_id),
             ));
         }
         validate_runner_privilege(runner)?;
@@ -304,17 +304,17 @@ fn validate_runner_privilege(
     runner: &mutsuki_runtime_contracts::RunnerDescriptor,
 ) -> RuntimeResult<()> {
     if runner.purity == RunnerPurity::Committer && runner.runner_id != "core.kernel" {
-        return Err(runtime_failure!(
+        return Err(crate::runtime_failure(
             ERR_REGISTRY_UNAUTHORIZED,
             "runtime.load_plan",
-            format!("runner.{}.committer", runner.runner_id)
+            format!("runner.{}.committer", runner.runner_id),
         ));
     }
     if runner.execution_class == ExecutionClass::Control && runner.runner_id != "core.kernel" {
-        return Err(runtime_failure!(
+        return Err(crate::runtime_failure(
             ERR_REGISTRY_UNAUTHORIZED,
             "runtime.load_plan",
-            format!("runner.{}.control", runner.runner_id)
+            format!("runner.{}.control", runner.runner_id),
         ));
     }
     Ok(())
@@ -336,13 +336,13 @@ fn validate_handler_bindings(load_plan: &RuntimeLoadPlan) -> RuntimeResult<()> {
             .iter()
             .any(|runner| runner_accepts_protocol(runner, &binding.target_protocol_id))
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_REGISTRY_UNAUTHORIZED,
                 "runtime.load_plan",
                 format!(
                     "handler_binding.{}.target_protocol_id.{}",
                     binding.binding_id, binding.target_protocol_id
-                )
+                ),
             ));
         }
         if let Some(runner_hint) = &binding.target_runner_hint {
@@ -350,23 +350,23 @@ fn validate_handler_bindings(load_plan: &RuntimeLoadPlan) -> RuntimeResult<()> {
                 .iter()
                 .find(|runner| runner.runner_id == *runner_hint)
             else {
-                return Err(runtime_failure!(
+                return Err(crate::runtime_failure(
                     ERR_REGISTRY_UNAUTHORIZED,
                     "runtime.load_plan",
                     format!(
                         "handler_binding.{}.target_runner_hint.{}",
                         binding.binding_id, runner_hint
-                    )
+                    ),
                 ));
             };
             if !runner_accepts_protocol(runner, &binding.target_protocol_id) {
-                return Err(runtime_failure!(
+                return Err(crate::runtime_failure(
                     ERR_REGISTRY_UNAUTHORIZED,
                     "runtime.load_plan",
                     format!(
                         "handler_binding.{}.target_runner_hint.{}.target_protocol_id.{}",
                         binding.binding_id, runner_hint, binding.target_protocol_id
-                    )
+                    ),
                 ));
             }
         }
@@ -424,10 +424,10 @@ pub fn compare_surfaces(
                     .get(surface_id)
                     .is_none_or(|occupancy| occupancy.is_zero());
                 if !zero {
-                    return Err(runtime_failure!(
+                    return Err(crate::runtime_failure(
                         ERR_RELOAD_BLOCKED,
                         "runtime.reload",
-                        format!("surface.remove.{surface_id}")
+                        format!("surface.remove.{surface_id}"),
                     ));
                 }
                 changes.push(ContractChange {

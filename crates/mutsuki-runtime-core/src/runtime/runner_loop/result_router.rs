@@ -66,10 +66,10 @@ impl CoreRuntime {
         {
             self.ensure_task_can_suspend(task_id)?;
             if task_await.parent_task_id != task_id {
-                return Err(runtime_failure!(
+                return Err(crate::runtime_failure(
                     mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                     "runtime.result_router",
-                    format!("task.await.parent.{task_id}")
+                    format!("task.await.parent.{task_id}"),
                 ));
             }
         }
@@ -93,10 +93,10 @@ impl CoreRuntime {
         } else if runner.purity == RunnerPurity::Effectful
             && !runner.runner_id.starts_with("effect.")
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RUNNER_PURITY_VIOLATION,
                 "runtime.result_router",
-                format!("runner.{}", runner.runner_id)
+                format!("runner.{}", runner.runner_id),
             ));
         }
         for event in outputs.events {
@@ -157,10 +157,10 @@ impl CoreRuntime {
                 self.tasks.block(lease, self.current_step)?;
             }
             RunnerStatus::Failed => {
-                let failure = runtime_error!(
+                let failure = crate::runtime_error(
                     "runner.failed",
                     "runtime.result_router",
-                    format!("runner.{}", runner.runner_id)
+                    format!("runner.{}", runner.runner_id),
                 );
                 self.tasks.fail(lease, self.current_step, failure.clone())?;
                 self.record_task_terminal_event(&task_id, "task.failed", Some(failure));

@@ -22,10 +22,10 @@ impl CoreRuntime {
                 "core.commit" => {
                     let delta: StateDelta =
                         serde_json::from_value(task.payload.clone()).map_err(|err| {
-                            runtime_failure!(
+                            crate::runtime_failure(
                                 "state.delta_decode_failed",
                                 "runtime.committer",
-                                err.to_string()
+                                err.to_string(),
                             )
                         })?;
                     self.states.apply(&delta)?;
@@ -40,10 +40,10 @@ impl CoreRuntime {
                 "core.event.append" => {
                     let event: DomainEvent =
                         serde_json::from_value(task.payload.clone()).map_err(|err| {
-                            runtime_failure!(
+                            crate::runtime_failure(
                                 "event.decode_failed",
                                 "runtime.event_log",
-                                err.to_string()
+                                err.to_string(),
                             )
                         })?;
                     self.events.record(

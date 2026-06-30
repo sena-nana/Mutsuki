@@ -42,24 +42,24 @@ impl ResourceManager {
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ResourceLease> {
         let cell = self.resource_cells.get_mut(cell_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource_cell.lease.{cell_id}")
+                format!("resource_cell.lease.{cell_id}"),
             )
         })?;
         if mode == "exclusive" && !cell.active_leases.is_empty() {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_CAPABILITY_EXHAUSTED,
                 "runtime.resource_manager",
-                format!("resource_cell.lease.{cell_id}")
+                format!("resource_cell.lease.{cell_id}"),
             ));
         }
         if mode != "shared" && mode != "exclusive" {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 "resource.lease_mode_invalid",
                 "runtime.resource_manager",
-                format!("resource_cell.lease.{cell_id}.{mode}")
+                format!("resource_cell.lease.{cell_id}.{mode}"),
             ));
         }
         if mode == "shared"
@@ -68,10 +68,10 @@ impl ResourceManager {
                 .values()
                 .any(|lease| lease.mode == "exclusive")
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_CAPABILITY_EXHAUSTED,
                 "runtime.resource_manager",
-                format!("resource_cell.lease.{cell_id}")
+                format!("resource_cell.lease.{cell_id}"),
             ));
         }
         let lease = ResourceLease {
@@ -90,17 +90,17 @@ impl ResourceManager {
 
     pub fn release_resource_lease(&mut self, lease: &ResourceLease) -> RuntimeResult<()> {
         let cell = self.resource_cells.get_mut(&lease.cell_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource_cell.release.{}", lease.cell_id)
+                format!("resource_cell.release.{}", lease.cell_id),
             )
         })?;
         if cell.active_leases.remove(&lease.lease_id).is_none() {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource_cell.release.{}", lease.lease_id)
+                format!("resource_cell.release.{}", lease.lease_id),
             ));
         }
         Ok(())
@@ -133,17 +133,17 @@ impl ResourceManager {
         expires_at_step: Option<u64>,
     ) -> RuntimeResult<ExclusiveWriteLease> {
         let entry = self.hub.get_mut(ref_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource.lease.{ref_id}")
+                format!("resource.lease.{ref_id}"),
             )
         })?;
         if entry.writer.is_some() {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_CAPABILITY_EXHAUSTED,
                 "runtime.resource_manager",
-                format!("resource.lease.{ref_id}")
+                format!("resource.lease.{ref_id}"),
             ));
         }
         let token = LeaseToken {
@@ -169,24 +169,24 @@ impl ResourceManager {
             .expires_at_step
             .is_some_and(|expires| current_step > expires)
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_LEASE_EXPIRED,
                 "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id)
+                format!("resource.write.{}", lease.token.ref_id),
             ));
         }
         let entry = self.hub.get_mut(&lease.token.ref_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id)
+                format!("resource.write.{}", lease.token.ref_id),
             )
         })?;
         if entry.writer.as_ref() != Some(&lease.token) {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id)
+                format!("resource.write.{}", lease.token.ref_id),
             ));
         }
         entry.descriptor.generation += 1;

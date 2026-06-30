@@ -80,18 +80,18 @@ impl ResourceManager {
 }
 
 fn resource_not_found(route: String) -> RuntimeFailure {
-    runtime_failure!(ERR_RESOURCE_NOT_FOUND, "runtime.resource_manager", route)
+    crate::runtime_failure(ERR_RESOURCE_NOT_FOUND, "runtime.resource_manager", route)
 }
 
 fn capability_exhausted(route: String) -> RuntimeFailure {
-    runtime_failure!(ERR_CAPABILITY_EXHAUSTED, "runtime.resource_manager", route)
+    crate::runtime_failure(ERR_CAPABILITY_EXHAUSTED, "runtime.resource_manager", route)
 }
 
 fn io_failure(err: std::io::Error) -> RuntimeFailure {
-    runtime_failure!(
+    crate::runtime_failure(
         "resource.io_failed",
         "runtime.resource_manager",
-        err.to_string()
+        err.to_string(),
     )
 }
 

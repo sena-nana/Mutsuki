@@ -118,10 +118,10 @@ impl ResourceManager {
         value: Value,
     ) -> RuntimeResult<ResourceRef> {
         let bytes = serde_json::to_vec(&value).map_err(|err| {
-            runtime_failure!(
+            crate::runtime_failure(
                 "resource.encode_failed",
                 "runtime.resource_manager",
-                err.to_string()
+                err.to_string(),
             )
         })?;
         let ref_id = self.id_source.next_id("resource");
@@ -206,26 +206,26 @@ impl ResourceManager {
 
     pub fn read_resource(&self, resource_ref: &ResourceRef) -> RuntimeResult<Vec<u8>> {
         let entry = self.hub.get(&resource_ref.ref_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource.{}", resource_ref.ref_id)
+                format!("resource.{}", resource_ref.ref_id),
             )
         })?;
         if entry.descriptor.generation != resource_ref.generation {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("resource.{}", resource_ref.ref_id)
+                format!("resource.{}", resource_ref.ref_id),
             ));
         }
         if entry.descriptor.resource_id.generation != resource_ref.resource_id.generation
             || entry.descriptor.resource_id.version != resource_ref.resource_id.version
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("resource.{}", resource_ref.ref_id)
+                format!("resource.{}", resource_ref.ref_id),
             ));
         }
         self.backend.read(&entry.descriptor, &entry.bytes)

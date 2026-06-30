@@ -387,10 +387,10 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             let mut calls = self.calls.lock().expect("calls mutex poisoned");
             *calls += 1;
             if *calls == 1 {
-                return Err(runtime_failure!(
+                return Err(crate::runtime_failure(
                     "runner.step_failed",
                     "test.runner",
-                    "first call fails"
+                    "first call fails",
                 ));
             }
             Ok(tasks

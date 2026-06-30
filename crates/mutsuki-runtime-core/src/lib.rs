@@ -1,4 +1,3 @@
-#[macro_use]
 mod error;
 mod id;
 mod logs;
@@ -11,6 +10,7 @@ mod task_pool;
 mod trace;
 
 pub use error::{RuntimeFailure, RuntimeResult};
+pub(crate) use error::{runtime_error, runtime_failure};
 pub use id::{IdSource, SequentialIdSource};
 pub use logs::{EventLog, TraceLog};
 pub use mutsuki_runtime_contracts::RunnerContext;

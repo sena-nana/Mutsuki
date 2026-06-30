@@ -45,10 +45,10 @@ impl ResourceManager {
 
     pub fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
         if plan.resource.semantic != ResourceSemantic::StreamResource {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 "resource.semantic_mismatch",
                 "runtime.resource_manager",
-                format!("resource.stream_plan.{}", plan.resource.ref_id)
+                format!("resource.stream_plan.{}", plan.resource.ref_id),
             ));
         }
         Ok(StreamPlan {
@@ -231,26 +231,26 @@ impl ResourceManager {
         bytes: Vec<u8>,
     ) -> RuntimeResult<PlanReceipt> {
         let entry = self.hub.get_mut(&plan.resource.ref_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource.plan.commit.{}", plan.resource.ref_id)
+                format!("resource.plan.commit.{}", plan.resource.ref_id),
             )
         })?;
         if entry.descriptor.semantic != ResourceSemantic::CowVersionedState {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 "resource.semantic_mismatch",
                 "runtime.resource_manager",
-                format!("resource.plan.commit.{}", plan.resource.ref_id)
+                format!("resource.plan.commit.{}", plan.resource.ref_id),
             ));
         }
         if entry.descriptor.version != plan.base_version
             || entry.descriptor.generation != plan.resource.generation
         {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("resource.plan.commit.{}", plan.resource.ref_id)
+                format!("resource.plan.commit.{}", plan.resource.ref_id),
             ));
         }
         entry.descriptor.generation += 1;

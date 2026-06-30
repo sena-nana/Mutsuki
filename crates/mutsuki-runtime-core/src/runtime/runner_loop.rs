@@ -153,10 +153,10 @@ impl CoreRuntime {
             .registry
             .take_runner(&descriptor.runner_id)
             .ok_or_else(|| {
-                runtime_failure!(
+                crate::runtime_failure(
                     mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                     "runtime.runner_loop",
-                    format!("runner.{}", descriptor.runner_id)
+                    format!("runner.{}", descriptor.runner_id),
                 )
             })?;
         let ctx = RunnerContext::new(
@@ -200,10 +200,10 @@ impl CoreRuntime {
                 .iter()
                 .find(|lease| lease.task_id == result.task_id)
                 .ok_or_else(|| {
-                    runtime_failure!(
+                    crate::runtime_failure(
                         mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                         "runtime.runner_loop",
-                        format!("task.result.{}", result.task_id)
+                        format!("task.result.{}", result.task_id),
                     )
                 })?;
             completed += self.route_result(&descriptor, lease, result)?;
@@ -290,10 +290,10 @@ impl CoreRuntime {
                 let task_id = result.task_id;
                 self.record_rejected_runner_result(
                     task_id.clone(),
-                    runtime_error!(
+                    crate::runtime_error(
                         mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
                         "runtime.runner_loop",
-                        format!("task.result.{task_id}")
+                        format!("task.result.{task_id}"),
                     ),
                 );
                 continue;

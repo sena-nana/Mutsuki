@@ -282,10 +282,10 @@ impl TaskPool {
         task_await: TaskAwait,
     ) -> RuntimeResult<()> {
         if task_await.parent_task_id != lease.task_id {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.await.parent.{}", lease.task_id)
+                format!("task.await.parent.{}", lease.task_id),
             ));
         }
         let ready_at_step = ready_step_for_wait(&task_await);
@@ -315,10 +315,10 @@ impl TaskPool {
     pub fn wake(&mut self, task_id: &str) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
         if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.wake.{task_id}")
+                format!("task.wake.{task_id}"),
             ));
         }
         record.status = TaskStatus::Ready;
@@ -330,10 +330,10 @@ impl TaskPool {
     pub fn reject_ready(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
         if record.status != TaskStatus::Ready {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.reject.{task_id}")
+                format!("task.reject.{task_id}"),
             ));
         }
         record.status = TaskStatus::Failed;
@@ -378,10 +378,10 @@ impl TaskPool {
             record.status,
             TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
         ) {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.cancel.{task_id}")
+                format!("task.cancel.{task_id}"),
             ));
         }
         record.status = TaskStatus::Cancelled;
@@ -518,20 +518,20 @@ impl TaskPool {
 
     fn record_mut(&mut self, task_id: &str) -> RuntimeResult<&mut TaskRecord> {
         self.tasks.get_mut(task_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_TASK_NOT_FOUND,
                 "runtime.task_pool",
-                format!("task.{task_id}")
+                format!("task.{task_id}"),
             )
         })
     }
 
     fn record(&self, task_id: &str) -> RuntimeResult<&TaskRecord> {
         self.tasks.get(task_id).ok_or_else(|| {
-            runtime_failure!(
+            crate::runtime_failure(
                 ERR_TASK_NOT_FOUND,
                 "runtime.task_pool",
-                format!("task.{task_id}")
+                format!("task.{task_id}"),
             )
         })
     }
@@ -574,10 +574,10 @@ fn validate_record_lease(
     if matches_active && !expired {
         return Ok(());
     }
-    let mut error = runtime_error!(
+    let mut error = crate::runtime_error(
         ERR_TASK_CLAIM_CONFLICT,
         "runtime.task_pool",
-        format!("task.{action}.{}", lease.task_id)
+        format!("task.{action}.{}", lease.task_id),
     );
     error.evidence.insert(
         "lease_id".into(),

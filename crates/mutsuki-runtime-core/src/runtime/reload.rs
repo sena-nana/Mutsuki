@@ -50,10 +50,10 @@ impl CoreRuntime {
         let occupancy = self.surface_occupancy();
         let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                 "runtime.reload",
-                "reload.breaking"
+                "reload.breaking",
             ));
         }
         self.events.record(
@@ -80,10 +80,10 @@ impl CoreRuntime {
         let occupancy = self.surface_occupancy();
         let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {
-            return Err(runtime_failure!(
+            return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RELOAD_BLOCKED,
                 "runtime.reload",
-                "reload.breaking"
+                "reload.breaking",
             ));
         }
 
