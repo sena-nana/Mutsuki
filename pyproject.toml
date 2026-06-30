@@ -1,0 +1,61 @@
+[project]
+name = "mutsuki-python-runner-kit"
+version = "0.1.0"
+description = "Python SDK and runner glue for the Mutsuki Runner Link protocol."
+requires-python = ">=3.13"
+license = { file = "LICENSE" }
+readme = "README.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mutsuki_runner_kit"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "F",
+    "W",
+    "E",
+    "I",
+    "UP",
+    "ASYNC",
+    "C4",
+    "T10",
+    "T20",
+    "PYI",
+    "PT",
+    "Q",
+    "TID",
+    "RUF",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PT011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mutsuki_runner_kit"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+pythonPlatform = "All"
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+disableBytesTypePromotions = true
