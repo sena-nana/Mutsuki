@@ -1,0 +1,12 @@
+[plugin]
+id = "mutsuki.bot.command"
+name = "Mutsuki Bot Command"
+version = "0.1.0"
+runtime = "native"
+
+[[provides]]
+target = "mutsuki.bot.command/parse@1"
+handler = "parse_command"
+
+[[consumes]]
+target = "mutsuki.bot.command/handle@1"

@@ -12,6 +12,16 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 - `mutsuki-plugin-bot-command`: generic message command parser plugin.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 
+## Plugin Discovery
+
+The substantive native plugin crates carry `plugin.toml` manifests:
+
+- `mutsuki-plugin-bot-event-router`: provides `mutsuki.bot.event/ingest@1`.
+- `mutsuki-plugin-bot-command`: provides `mutsuki.bot.command/parse@1`.
+- `mutsuki-plugin-bot-adapter-qqbot`: provides standard Bot message/media tasks and QQBot-specific account, gateway status, and raw call tasks.
+
+`mutsuki-bot-protocol` and `mutsuki-bot-sdk` are library crates and are not host-loadable plugins.
+
 ## Runtime Relationship
 
 ```text

@@ -1,0 +1,12 @@
+[plugin]
+id = "mutsuki.bot.router.event"
+name = "Mutsuki Bot Event Router"
+version = "0.1.0"
+runtime = "native"
+
+[[provides]]
+target = "mutsuki.bot.event/ingest@1"
+handler = "route_event"
+
+[[consumes]]
+target = "mutsuki.bot.event/handle@1"
