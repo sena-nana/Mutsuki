@@ -1,0 +1,12 @@
+[package]
+name = "service-host-example"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-host.workspace = true
+qqbot-echo = { path = "../qqbot-echo" }
+serde_json.workspace = true
+

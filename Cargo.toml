@@ -5,6 +5,8 @@ members = [
     "crates/mutsuki-plugin-bot-event-router",
     "crates/mutsuki-plugin-bot-command",
     "crates/mutsuki-plugin-bot-adapter-qqbot",
+    "examples/qqbot-echo",
+    "examples/service-host-example",
 ]
 resolver = "2"
 
@@ -16,8 +18,12 @@ version = "0.1.0"
 [workspace.dependencies]
 mutsuki-runtime-contracts = { path = "../NanoBot/crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "../NanoBot/crates/mutsuki-runtime-core" }
+mutsuki-runtime-host = { path = "../NanoBot/crates/mutsuki-runtime-host" }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
+mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
+mutsuki-plugin-bot-command = { path = "crates/mutsuki-plugin-bot-command" }
+mutsuki-plugin-bot-event-router = { path = "crates/mutsuki-plugin-bot-event-router" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

@@ -1,0 +1,15 @@
+[package]
+name = "qqbot-echo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-bot-protocol.workspace = true
+mutsuki-plugin-bot-adapter-qqbot.workspace = true
+mutsuki-plugin-bot-command.workspace = true
+mutsuki-plugin-bot-event-router.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-host.workspace = true
+serde_json.workspace = true

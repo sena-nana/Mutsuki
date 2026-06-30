@@ -208,7 +208,7 @@ pub fn openapi_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
             QQBOT_RAW_CALL_PROTOCOL_ID.into(),
         ],
-        purity: RunnerPurity::Effectful,
+        purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Blocking,
         input_schema: json!({
             "type": "object",
