@@ -49,33 +49,16 @@ function Invoke-MutsukiCheck {
 }
 
 Invoke-MutsukiCheck `
+    -Name "cargo fmt --check" `
+    -WorkingDirectory $RepoRoot `
+    -Command "cargo" `
+    -Arguments @("fmt", "--check")
+
+Invoke-MutsukiCheck `
     -Name "cargo test" `
     -WorkingDirectory $RepoRoot `
     -Command "cargo" `
     -Arguments @("test")
-
-$PythonRuntime = Join-Path $RepoRoot "python/mutsuki-runtime-python"
-Invoke-MutsukiCheck `
-    -Name "python ruff" `
-    -WorkingDirectory $PythonRuntime `
-    -Command "uv" `
-    -Arguments @("run", "python", "-m", "ruff", "check", "src", "tests")
-Invoke-MutsukiCheck `
-    -Name "python pyright" `
-    -WorkingDirectory $PythonRuntime `
-    -Command "uv" `
-    -Arguments @("run", "python", "-m", "pyright", "src", "tests")
-Invoke-MutsukiCheck `
-    -Name "python pytest" `
-    -WorkingDirectory $PythonRuntime `
-    -Command "uv" `
-    -Arguments @("run", "python", "-m", "pytest")
-
-Invoke-MutsukiCheck `
-    -Name "test io smoke" `
-    -WorkingDirectory $RepoRoot `
-    -Command "uv" `
-    -Arguments @("run", "--project", "python/mutsuki-runtime-python", "python", ".agents/plugins/plugins/mutsuki-plugin-dev-test-io/scripts/smoke_mcp.py")
 
 Write-Host ""
 Write-Host "==> Summary"

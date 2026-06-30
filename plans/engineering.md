@@ -1,14 +1,14 @@
 # Mutsuki 工程实现规则
 
-根目录当前是 Rust-first 极薄 single-task runtime framework。Python 端只保留当前
-`python/mutsuki-runtime-python/` runner kit。
+根目录当前是 Rust-first 极薄 single-task runtime framework。Python runner kit 已拆分
+到独立仓库；本仓库只保留 Rust core、contracts、host 和 Rust SDK。
 
 ## 1. 技术栈
 
 - Rust 2024 + Cargo workspace。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13+ + uv 用于 `python/mutsuki-runtime-python/`。
+- Python 3.13+ + uv 用于独立的 `MutsukiPythonRunnerKit` 仓库。
 
 Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、外部服务 provider 或领域语义。
 
@@ -24,8 +24,6 @@ Mutsuki/
     mutsuki-runtime-sdk/        # Rust SDK async/await wrapper over TaskHandle
     mutsuki-runtime-sdk-macros/ # Rust SDK proc-macro authoring DSL
   plans/
-  python/
-    mutsuki-runtime-python/     # Python runner kit and protocol mirror
 ```
 
 ## 3. Crate 边界
@@ -51,8 +49,9 @@ Mutsuki/
 - `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
   `ResourceKind` / descriptor 和 async runner adapter glue；宏展开不得引入本地直调、
   workflow runtime、隐式调度或绕过 `TaskPool` 的执行路径。
-- `python/mutsuki-runtime-python`：镜像协议，提供 Python runner backend、stdio runner
-  server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API。
+- 外部 `MutsukiPythonRunnerKit`：镜像协议，提供 Python runner backend、stdio runner
+  server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API；
+  本仓库不包含该 Python 包源码。
 
 ## 4. 验证
 
@@ -63,13 +62,7 @@ cargo fmt --check
 cargo test
 ```
 
-改动 Python backend kit 时，从 `python/mutsuki-runtime-python` 运行：
-
-```powershell
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
-```
+改动外部 Python backend kit 时，在 `MutsukiPythonRunnerKit` 仓库运行其 `uv` 验证命令。
 
 不得用部分检查宣称成功。
 
@@ -105,9 +98,9 @@ uv run pytest
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。
-- JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python 当前
-  仅限 `python/mutsuki-runtime-python` runner kit 内的 runner-side awaitable adapter，
-  不作为独立业务 SDK，也不承诺调度任意 `asyncio` future。
+- JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python
+  runner-side awaitable adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
+  也不承诺调度任意 `asyncio` future。
 - registry boot 后 freeze；能力变化必须走新 registry generation。
 - 错误必须结构化，不能吞异常返回默认值。
 - ID、时间、随机源必须可注入或由 runtime/host 控制。

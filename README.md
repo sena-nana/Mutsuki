@@ -6,12 +6,8 @@
 
 The root workspace is the Rust framework surface. It provides serializable
 runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
-host helpers.
-
-The current Python runner kit lives in
-[`python/mutsuki-runtime-python`](python/mutsuki-runtime-python). It mirrors the
-Rust contracts and provides `PythonRunnerBackend`, `StdioJsonlBridge`, and a
-descriptor-based `PythonResourceManager`.
+host helpers. Language kits, including the Python runner kit, live in separate
+repositories and mirror the contracts exposed here.
 
 The runtime shape is:
 
@@ -35,10 +31,6 @@ RuntimeProfile + PluginManifest
   and trace log.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
   runtime bootstrapper, deterministic load-plan resolver, and stdio JSONL runner client.
-- `python/mutsuki-runtime-python` - optional Python runner kit:
-  pure contract mirrors, Python runner backend, stdio JSONL runner server, and
-  descriptor-based resource manager.
-
 ## Standard Plugin Naming
 
 The first standard plugin batch follows GitHub issue #8:
@@ -55,13 +47,8 @@ cargo fmt --check
 cargo test
 ```
 
-Python runner kit checks live under `python/mutsuki-runtime-python`:
-
-```powershell
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
-```
+Python runner kit checks are run in the split `MutsukiPythonRunnerKit`
+repository.
 
 ## Reading Order
 

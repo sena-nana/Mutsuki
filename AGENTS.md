@@ -1,8 +1,8 @@
 # Mutsuki 项目宪法
 
 Mutsuki 当前是一个 **Rust-first CoreRuntime framework**。根目录只承载领域中立
-runtime kernel、纯协议契约和 native runner host helper；Python 端只保留当前
-`python/mutsuki-runtime-python/` runner kit。
+runtime kernel、纯协议契约和 native runner host helper；Python runner kit 已拆分到
+独立仓库，只能镜像本仓库暴露的通用 runner 协议。
 
 ## 一句话定位
 
@@ -41,7 +41,7 @@ plugin、runner 或 sidecar 组合实现。
 ## 工作规程
 
 - 先读相关 crate、契约和测试，再改代码；不要凭文件名猜边界。
-- 跨 contracts / core / host / Python runner kit 边界的改动，先确认契约位置和测试入口。
+- 跨 contracts / core / host / 外部语言 runner kit 边界的改动，先确认契约位置和测试入口。
 - 不做打补丁式修复；定位根因，在正确层级修正。
 - 优先沿用现有命名、错误码和测试风格。
 - 不覆盖用户或其他 Agent 的已有改动；工作前后用 `git status --short` 或定向 diff 确认范围。
@@ -50,7 +50,7 @@ plugin、runner 或 sidecar 组合实现。
 ## Rust / Python 边界
 
 - Root Rust crates 不依赖 Python。
-- `python/mutsuki-runtime-python/` 是当前 Python runner kit，必须镜像新 contracts wire shape。
+- Python runner kit 位于独立仓库，必须镜像本仓库的 contracts wire shape。
 - Python sidecar 只能通过 runner step、management cancel/dispose 和 resource broker 纯协议与 Rust runtime 通信。
 - generation key、runner host 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的 handler。
 
@@ -66,10 +66,7 @@ plugin、runner 或 sidecar 组合实现。
 - Rust runtime / contracts / host 改动必须运行：
   - `cargo fmt --check`
   - `cargo test`
-- 改动 Python runner kit 时，从 `python/mutsuki-runtime-python` 目录运行：
-  - `uv run ruff check src tests`
-  - `uv run pyright src tests`
-  - `uv run pytest`
+- 改动外部 Python runner kit 时，在该独立仓库运行它的 `uv` 验证命令。
 - 涉及公共契约、RunnerRegistry、ResultRouter、ResourceManager、trace、StateStore、
   load plan 或 hot reload 的改动必须补充定向测试或说明现有测试覆盖点。
 
@@ -78,6 +75,6 @@ plugin、runner 或 sidecar 组合实现。
 - Rust 2024 + Cargo workspace 是根级主框架。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13 + uv 用于 `python/mutsuki-runtime-python/`。
+- Python runner kit 使用 Python 3.13 + uv，但不再位于本仓库。
 
 详见 [plans/engineering.md](plans/engineering.md)。

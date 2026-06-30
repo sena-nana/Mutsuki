@@ -37,8 +37,8 @@ RuntimeProfile + PluginManifest
 - `host` 依赖 `core + contracts`，提供 `HostRuntime` 控制面门面、runtime bootstrapper
   和 JSONL runner client。
 - `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
-- Python runner kit 镜像 contracts，提供 Python runner backend 和 stdio runner server；
-  Rust crates 不依赖 Python。
+- 外部 Python runner kit 镜像 contracts，提供 Python runner backend 和 stdio runner
+  server；Rust crates 不依赖 Python。
 
 ## 2. Protocol
 
@@ -188,9 +188,10 @@ native worker 超时后会被隔离，pool 补充 replacement worker，迟到 co
 drain：host 只投递 cancel / dispose，不再复用旧 runner 或提交旧结果。单连接同步 JSONL
 step 的独立 management channel 和进程级强制终止仍属于 sidecar supervision 后续扩展。
 
-Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side adapter
-只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回 `RunnerStatus::Waiting`。它不
-把 `asyncio` event loop、任意 Python awaitable 或调度器语义写入 Core。
+外部 Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side
+adapter 只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回
+`RunnerStatus::Waiting`。它不把 `asyncio` event loop、任意 Python awaitable 或调度器
+语义写入 Core。
 
 ## 6. ResultRouter
 
