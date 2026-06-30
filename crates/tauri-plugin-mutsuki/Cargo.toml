@@ -1,0 +1,14 @@
+[package]
+name = "tauri-plugin-mutsuki"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-runtime-contracts.workspace = true
+mutsuki-tauri-bridge.workspace = true
+mutsuki-tauri-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+time.workspace = true

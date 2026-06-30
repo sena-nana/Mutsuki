@@ -1,0 +1,9 @@
+[host]
+mode = "embedded"
+
+[frontend]
+event_buffer = 1024
+
+[security]
+require_approval_for_side_effect = true
+allow_dev_commands = false

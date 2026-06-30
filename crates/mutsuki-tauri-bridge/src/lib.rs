@@ -1,0 +1,279 @@
+use mutsuki_runtime_contracts::{
+    ResourceRef, RuntimeError, RuntimeEvent, Task, TaskOutcome, TaskStatus, TraceSpan,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
+use thiserror::Error;
+use tokio::sync::broadcast;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Error)]
+pub enum BridgeError {
+    #[error("{code}: {message}")]
+    Frontend { code: String, message: String },
+    #[error("event channel has no active receiver")]
+    NoEventReceiver,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrontendError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+impl FrontendError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
+    }
+
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+}
+
+impl From<RuntimeError> for FrontendError {
+    fn from(error: RuntimeError) -> Self {
+        Self {
+            code: error.code,
+            message: error.route,
+            details: serde_json::to_value(error.evidence).ok(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontendContext {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webview_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_action_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrontendTaskRequest {
+    pub protocol_id: String,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub input_refs: Vec<String>,
+    #[serde(default)]
+    pub priority: i64,
+    #[serde(default)]
+    pub context: FrontendContext,
+}
+
+impl FrontendTaskRequest {
+    pub fn into_task(self) -> Task {
+        let task_id = self
+            .task_id
+            .unwrap_or_else(|| format!("tauri-task:{}", Uuid::new_v4()));
+        let mut task = Task::new(task_id, self.protocol_id, self.payload);
+        task.trace_id = self.trace_id;
+        task.correlation_id = self.correlation_id;
+        task.idempotency_key = self.idempotency_key;
+        task.input_refs = self.input_refs;
+        task.priority = self.priority;
+        task
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrontendTaskResult {
+    pub task_id: String,
+    pub status: Option<TaskStatus>,
+    pub outcome: Option<TaskOutcome>,
+    pub events: Vec<RuntimeEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskCancelRequest {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResourceBytes {
+    pub resource: ResourceRef,
+    pub bytes: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceText {
+    pub ref_id: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewHandle {
+    pub ref_id: String,
+    pub token: String,
+    pub url: String,
+    pub expires_at_unix_secs: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Allow,
+    Deny,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    pub approval_id: String,
+    pub token: String,
+    pub requester: String,
+    pub operation: String,
+    pub risk: String,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub context: FrontendContext,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalResponse {
+    pub approval_id: String,
+    pub token: String,
+    pub decision: ApprovalDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginSummary {
+    pub plugin_id: String,
+    pub version: String,
+    pub enabled: bool,
+    pub deployment: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HostStatus {
+    pub app_name: String,
+    pub profile_id: String,
+    pub mode: String,
+    pub healthy: bool,
+    pub plugins: Vec<PluginSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MutsukiFrontendEvent {
+    Task {
+        task_id: String,
+        event: RuntimeEvent,
+    },
+    Runtime {
+        event: RuntimeEvent,
+    },
+    Trace {
+        span: TraceSpan,
+    },
+    Log {
+        level: String,
+        target: String,
+        message: String,
+    },
+    Resource {
+        ref_id: String,
+        operation: String,
+    },
+    Approval {
+        request: ApprovalRequest,
+    },
+    Plugin {
+        plugin: PluginSummary,
+        operation: String,
+    },
+    Runner {
+        runner_id: String,
+        status: String,
+    },
+}
+
+impl MutsukiFrontendEvent {
+    pub fn channel(&self) -> &'static str {
+        match self {
+            Self::Task { .. } => "mutsuki://task/event",
+            Self::Runtime { .. } => "mutsuki://runtime/event",
+            Self::Trace { .. } => "mutsuki://trace/event",
+            Self::Log { .. } => "mutsuki://log/event",
+            Self::Resource { .. } => "mutsuki://resource/event",
+            Self::Approval { .. } => "mutsuki://approval/event",
+            Self::Plugin { .. } => "mutsuki://plugin/event",
+            Self::Runner { .. } => "mutsuki://runner/event",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrontendEventEnvelope {
+    pub sequence: u64,
+    pub channel: String,
+    pub payload: MutsukiFrontendEvent,
+}
+
+#[derive(Debug)]
+pub struct EventHub {
+    sequence: AtomicU64,
+    tx: broadcast::Sender<FrontendEventEnvelope>,
+}
+
+impl EventHub {
+    pub fn new(buffer: usize) -> Self {
+        let (tx, _) = broadcast::channel(buffer.max(1));
+        Self {
+            sequence: AtomicU64::new(0),
+            tx,
+        }
+    }
+
+    pub fn emit(
+        &self,
+        payload: MutsukiFrontendEvent,
+    ) -> Result<FrontendEventEnvelope, BridgeError> {
+        let envelope = FrontendEventEnvelope {
+            sequence: self.sequence.fetch_add(1, Ordering::SeqCst) + 1,
+            channel: payload.channel().to_string(),
+            payload,
+        };
+        self.tx
+            .send(envelope.clone())
+            .map_err(|_| BridgeError::NoEventReceiver)?;
+        Ok(envelope)
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<FrontendEventEnvelope> {
+        self.tx.subscribe()
+    }
+}
+
+impl Default for EventHub {
+    fn default() -> Self {
+        Self::new(1024)
+    }
+}

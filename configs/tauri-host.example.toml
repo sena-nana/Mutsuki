@@ -1,0 +1,18 @@
+[host]
+app_id = "com.example.mutsuki"
+app_name = "MutsukiDesktop"
+profile = "default"
+mode = "embedded"
+
+[core]
+max_ticks_per_call = 64
+
+[frontend]
+event_buffer = 1024
+
+[resources]
+preview_ttl_secs = 300
+
+[security]
+require_approval_for_side_effect = true
+allow_dev_commands = false
