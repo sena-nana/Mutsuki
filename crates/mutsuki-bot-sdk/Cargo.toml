@@ -1,0 +1,12 @@
+[package]
+name = "mutsuki-bot-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-runtime-contracts.workspace = true
+mutsuki-bot-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

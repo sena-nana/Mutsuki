@@ -1,0 +1,43 @@
+[plugin]
+id = "mutsuki.bot.adapter.qqbot"
+name = "Mutsuki QQBot Adapter"
+version = "0.1.0"
+runtime = "native"
+
+[bot]
+platform = "qqbot"
+adapter = true
+
+[[provides]]
+target = "mutsuki.bot.message/send@1"
+handler = "send_message"
+
+[[provides]]
+target = "mutsuki.bot.message/recall@1"
+handler = "recall_message"
+
+[[provides]]
+target = "mutsuki.bot.media/upload@1"
+handler = "upload_media"
+
+[[provides]]
+target = "mutsuki.bot.qqbot.raw/call@1"
+handler = "raw_call"
+
+[[consumes]]
+target = "mutsuki.bot.event/ingest@1"
+
+[[consumes]]
+target = "mutsuki.resource.memory/create@1"
+
+[[consumes]]
+target = "mutsuki.observe.log/write@1"
+
+[[permissions]]
+name = "network.qqbot"
+
+[[permissions]]
+name = "secret.qqbot.read"
+
+[[permissions]]
+name = "resource.media.read"

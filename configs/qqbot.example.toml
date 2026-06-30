@@ -1,0 +1,22 @@
+[qqbot]
+account_id = "main"
+mode = "gateway"
+
+[qqbot.auth]
+app_id = "${secret:qqbot.app_id}"
+token = "${secret:qqbot.token}"
+secret = "${secret:qqbot.secret}"
+
+[qqbot.gateway]
+auto_reconnect = true
+heartbeat = true
+max_reconnect_delay_ms = 30000
+
+[qqbot.limits]
+send_queue_size = 1024
+max_inline_payload_bytes = 65536
+
+[qqbot.event]
+store_raw_payload = true
+deduplicate = true
+deduplicate_ttl_secs = 300
