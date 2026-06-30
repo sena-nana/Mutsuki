@@ -140,8 +140,8 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
         subscriptions: vec!["chat.messages".into()],
         timers: vec!["heartbeat".into()],
         state_schemas: vec!["state.actor.v1".into()],
-        host_backends: vec![HostBackendDescriptor {
-            backend_id: "host.backend.builtin".into(),
+        host_extensions: vec![HostExtensionDescriptor {
+            extension_id: "host.extension.builtin".into(),
             kind: HostExtensionKind::PluginBackend,
             supported_deployments: vec![PluginDeploymentKind::Builtin],
             reload_policy: "drain_and_swap".into(),
@@ -263,8 +263,8 @@ fn surface_occupancy_handle_roundtrips_json() {
 
 #[test]
 fn system_extension_descriptors_roundtrip_json() {
-    let host_backend = HostBackendDescriptor {
-        backend_id: "host.backend.process".into(),
+    let host_extension = HostExtensionDescriptor {
+        extension_id: "host.extension.process".into(),
         kind: HostExtensionKind::Bridge,
         supported_deployments: vec![PluginDeploymentKind::Process],
         reload_policy: "drain_and_swap".into(),
@@ -303,11 +303,11 @@ fn system_extension_descriptors_roundtrip_json() {
     };
 
     assert_eq!(
-        serde_json::from_str::<HostBackendDescriptor>(
-            &serde_json::to_string(&host_backend).unwrap()
+        serde_json::from_str::<HostExtensionDescriptor>(
+            &serde_json::to_string(&host_extension).unwrap()
         )
         .unwrap(),
-        host_backend
+        host_extension
     );
     assert_eq!(
         serde_json::from_str::<PluginBackendDescriptor>(

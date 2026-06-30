@@ -4,7 +4,7 @@
 
 - Rust `CoreRuntime` 是 TaskPool、registry、state、trace、event 和 resource fact source。
 - Python 不拥有 runtime kernel，不实现第二套 TaskPool。
-- Python 通过 `PythonRunnerHost` 和 `StdioJsonlRunnerServer` 提供 runner 行为。
+- Python 通过 `PythonRunnerBackend` 和 `StdioJsonlBridge` 提供 runner 行为。
 - 跨边界传递 `Task`、`RunnerContext`、`RunnerResult`、`ValueRef`、`ResourceRef` 等纯协议。
 - 不跨边界传 Python object、Rust pointer、callable、socket、SDK client、数据库连接或真实 handle。
 

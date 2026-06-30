@@ -148,17 +148,20 @@ fn push_system_extension_surfaces(
     manifest: &PluginManifest,
     capability_graph: &RuntimeCapabilityGraph,
 ) {
-    for backend in &manifest.provides.host_backends {
+    for extension in &manifest.provides.host_extensions {
         push_active_surface(
             surfaces,
-            &capability_graph.active_host_backends,
-            &backend.backend_id,
+            &capability_graph.active_host_extensions,
+            &extension.extension_id,
             &manifest.plugin_id,
-            ContractSurfaceKind::HostBackend,
-            format!("host_backend:{}", backend.backend_id),
+            ContractSurfaceKind::HostExtension,
+            format!("host_extension:{}", extension.extension_id),
             format!(
-                "host_backend:{}:{:?}:{}:{}",
-                backend.backend_id, backend.kind, backend.reload_policy, backend.drain_required
+                "host_extension:{}:{:?}:{}:{}",
+                extension.extension_id,
+                extension.kind,
+                extension.reload_policy,
+                extension.drain_required
             ),
         );
     }

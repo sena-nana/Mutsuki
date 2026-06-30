@@ -4,7 +4,7 @@
 
 - CoreRuntime 负责 TaskPool、RunnerRegistry、RunnerLoop、ResultRouter、StateStore、
   ResourceManager、EventLog 和 TraceLog。
-- PluginHost / Python runner kit 负责提供 runner 实现、resource provider 和 effect
+- RuntimeBootstrapper / Python runner kit 负责提供 runner 实现、resource provider 和 effect
   handler。
 - Core 不拥有业务对象、不保存 callable、不解释业务 payload。
 - Runner 只通过 `RunnerResult` 返回 task、event、delta 和 effect request。

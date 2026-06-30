@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
-    BridgeDescriptor, CodecDescriptor, HostBackendDescriptor, PluginBackendDescriptor,
+    BridgeDescriptor, CodecDescriptor, HostExtensionDescriptor, PluginBackendDescriptor,
     PluginManifest, RuntimeLoadPlan, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_core::RuntimeResult;
@@ -11,7 +11,7 @@ use crate::error::{capability_provider_missing, capability_pruned};
 
 #[derive(Clone, Debug, Default)]
 pub struct HostCapabilityRegistry {
-    host_backends: BTreeMap<String, HostBackendDescriptor>,
+    host_extensions: BTreeMap<String, HostExtensionDescriptor>,
     plugin_backends: BTreeMap<String, PluginBackendDescriptor>,
     codecs: BTreeMap<String, CodecDescriptor>,
     bridges: BTreeMap<String, BridgeDescriptor>,
@@ -24,11 +24,11 @@ impl HostCapabilityRegistry {
     pub fn from_load_plan(plan: &RuntimeLoadPlan) -> RuntimeResult<Self> {
         let graph = &plan.capability_graph;
         let registry = Self {
-            host_backends: active_descriptors(
+            host_extensions: active_descriptors(
                 plan,
-                &graph.active_host_backends,
-                |manifest| &manifest.provides.host_backends,
-                |descriptor| descriptor.backend_id.as_str(),
+                &graph.active_host_extensions,
+                |manifest| &manifest.provides.host_extensions,
+                |descriptor| descriptor.extension_id.as_str(),
             ),
             plugin_backends: active_descriptors(
                 plan,
@@ -63,7 +63,7 @@ impl HostCapabilityRegistry {
             provided: graph.provided_capabilities.iter().cloned().collect(),
         };
 
-        registry.ensure_active_ids_registered("host_backend", &graph.active_host_backends)?;
+        registry.ensure_active_ids_registered("host_extension", &graph.active_host_extensions)?;
         registry.ensure_active_ids_registered("plugin_backend", &graph.active_plugin_backends)?;
         registry.ensure_active_ids_registered("codec", &graph.active_codecs)?;
         registry.ensure_active_ids_registered("bridge", &graph.active_bridges)?;
@@ -74,8 +74,11 @@ impl HostCapabilityRegistry {
         Ok(registry)
     }
 
-    pub fn require_host_backend(&self, backend_id: &str) -> RuntimeResult<&HostBackendDescriptor> {
-        self.require("host_backend", backend_id, &self.host_backends)
+    pub fn require_host_extension(
+        &self,
+        extension_id: &str,
+    ) -> RuntimeResult<&HostExtensionDescriptor> {
+        self.require("host_extension", extension_id, &self.host_extensions)
     }
 
     pub fn require_plugin_backend(
@@ -145,7 +148,7 @@ impl HostCapabilityRegistry {
 
     fn require_registered(&self, prefix: &str, id: &str) -> RuntimeResult<()> {
         match prefix {
-            "host_backend" => self.require_host_backend(id).map(|_| ()),
+            "host_extension" => self.require_host_extension(id).map(|_| ()),
             "plugin_backend" => self.require_plugin_backend(id).map(|_| ()),
             "codec" => self.require_codec(id).map(|_| ()),
             "bridge" => self.require_bridge(id).map(|_| ()),
@@ -180,8 +183,8 @@ impl CapabilityBroker for HostCapabilityRegistry {
         }
     }
 
-    fn require_host_backend(&self, backend_id: &str) -> RuntimeResult<HostBackendDescriptor> {
-        HostCapabilityRegistry::require_host_backend(self, backend_id).cloned()
+    fn require_host_extension(&self, extension_id: &str) -> RuntimeResult<HostExtensionDescriptor> {
+        HostCapabilityRegistry::require_host_extension(self, extension_id).cloned()
     }
 
     fn require_plugin_backend(&self, backend_id: &str) -> RuntimeResult<PluginBackendDescriptor> {
@@ -213,7 +216,7 @@ fn active_capability(registry: &HostCapabilityRegistry, capability: &str) -> boo
         return false;
     };
     match prefix {
-        "host_backend" => registry.host_backends.contains_key(id),
+        "host_extension" => registry.host_extensions.contains_key(id),
         "plugin_backend" => registry.plugin_backends.contains_key(id),
         "codec" => registry.codecs.contains_key(id),
         "bridge" => registry.bridges.contains_key(id),

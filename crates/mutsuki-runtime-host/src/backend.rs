@@ -1,20 +1,20 @@
 use mutsuki_runtime_contracts::{
-    HostBackendDescriptor, PluginBackendDescriptor, PluginDeploymentKind,
+    HostExtensionDescriptor, PluginBackendDescriptor, PluginDeploymentKind,
 };
 
 use crate::clients::{ResourcePlanClient, TaskClient};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostBackend {
-    descriptor: HostBackendDescriptor,
+pub struct HostExtension {
+    descriptor: HostExtensionDescriptor,
 }
 
-impl HostBackend {
-    pub fn new(descriptor: HostBackendDescriptor) -> Self {
+impl HostExtension {
+    pub fn new(descriptor: HostExtensionDescriptor) -> Self {
         Self { descriptor }
     }
 
-    pub fn descriptor(&self) -> &HostBackendDescriptor {
+    pub fn descriptor(&self) -> &HostExtensionDescriptor {
         &self.descriptor
     }
 

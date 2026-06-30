@@ -23,7 +23,7 @@ from mutsuki_runtime_python.contracts.codec import (
 from mutsuki_runtime_python.contracts.extension import (
     BridgeDescriptor,
     CodecDescriptor,
-    HostBackendDescriptor,
+    HostExtensionDescriptor,
     PluginBackendDescriptor,
     PluginDeploymentKind,
     SchedulerPolicyDescriptor,
@@ -179,7 +179,7 @@ class PluginProvides:
     subscriptions: tuple[str, ...]
     timers: tuple[str, ...]
     state_schemas: tuple[str, ...]
-    host_backends: tuple[HostBackendDescriptor, ...]
+    host_extensions: tuple[HostExtensionDescriptor, ...]
     plugin_backends: tuple[PluginBackendDescriptor, ...]
     codecs: tuple[CodecDescriptor, ...]
     bridges: tuple[BridgeDescriptor, ...]
@@ -203,7 +203,7 @@ class PluginProvides:
             subscriptions=as_str_tuple(field_value(raw, "subscriptions"), "subscriptions"),
             timers=as_str_tuple(field_value(raw, "timers"), "timers"),
             state_schemas=as_str_tuple(field_value(raw, "state_schemas"), "state_schemas"),
-            host_backends=tuple_from_json(raw, "host_backends", HostBackendDescriptor),
+            host_extensions=tuple_from_json(raw, "host_extensions", HostExtensionDescriptor),
             plugin_backends=tuple_from_json(raw, "plugin_backends", PluginBackendDescriptor),
             codecs=tuple_from_json(raw, "codecs", CodecDescriptor),
             bridges=tuple_from_json(raw, "bridges", BridgeDescriptor),
@@ -336,7 +336,7 @@ class RuntimeCapabilityGraph:
     active_capabilities: tuple[str, ...]
     active_capability_providers: tuple[CapabilityProviderSelection, ...]
     active_resource_providers: tuple[str, ...]
-    active_host_backends: tuple[str, ...]
+    active_host_extensions: tuple[str, ...]
     active_plugin_backends: tuple[str, ...]
     active_codecs: tuple[str, ...]
     active_bridges: tuple[str, ...]
@@ -367,8 +367,8 @@ class RuntimeCapabilityGraph:
                 field_value(raw, "active_resource_providers"),
                 "active_resource_providers",
             ),
-            active_host_backends=as_str_tuple(
-                field_value(raw, "active_host_backends"), "active_host_backends"
+            active_host_extensions=as_str_tuple(
+                field_value(raw, "active_host_extensions"), "active_host_extensions"
             ),
             active_plugin_backends=as_str_tuple(
                 field_value(raw, "active_plugin_backends"), "active_plugin_backends"

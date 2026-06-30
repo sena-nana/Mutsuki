@@ -4,7 +4,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::RuntimeResult;
 
-pub trait ResourceBackend: Send + Sync {
+pub trait ResourcePlanGateway: Send + Sync {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>>;
     fn snapshot_read_plan(
         &self,

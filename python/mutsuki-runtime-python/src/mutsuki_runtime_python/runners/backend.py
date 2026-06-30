@@ -12,7 +12,7 @@ from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.runners.protocol import Runner, RunnerInvokeError
 
 
-class PythonRunnerHost:
+class PythonRunnerBackend:
     def __init__(self) -> None:
         self._runners: dict[str, Runner] = {}
         self._cancelled_invocations: set[str] = set()
@@ -34,7 +34,7 @@ class PythonRunnerHost:
                 raise RunnerInvokeError(
                     RuntimeError(
                         code=ERR_TASK_CLAIM_CONFLICT,
-                        source="python_runner_host",
+                        source="python_runner_backend",
                         route=f"python.runner.step.{task.task_id}",
                         evidence={
                             "ctx_task_lease_id": ctx.task_lease_id or "",
@@ -62,7 +62,7 @@ class PythonRunnerHost:
             raise RunnerInvokeError(
                 RuntimeError(
                     code=ERR_RUNNER_NOT_FOUND,
-                    source="python_runner_host",
+                    source="python_runner_backend",
                     route=f"python.runner.{runner_id}",
                     evidence={"runner_id": runner_id},
                 )

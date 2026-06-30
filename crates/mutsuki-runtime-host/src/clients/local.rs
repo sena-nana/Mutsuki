@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::{
     StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
-use mutsuki_runtime_sdk::{ResourceBackend, TaskSubmitter};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
 
 #[derive(Clone)]
 pub struct LocalTaskClient {
@@ -52,7 +52,7 @@ impl LocalResourceClient {
     }
 }
 
-impl ResourceBackend for LocalResourceClient {
+impl ResourcePlanGateway for LocalResourceClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         self.runtime
             .lock()

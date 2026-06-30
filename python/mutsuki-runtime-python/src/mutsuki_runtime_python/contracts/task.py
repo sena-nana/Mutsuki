@@ -64,10 +64,10 @@ class Task:
     created_sequence: int
 
     @classmethod
-    def new(cls, task_id: str, kind: str, payload: JsonValue = None) -> Self:
+    def new(cls, task_id: str, protocol_id: str, payload: JsonValue = None) -> Self:
         return cls(
             task_id=task_id,
-            protocol_id=kind,
+            protocol_id=protocol_id,
             priority=0,
             ready_at_step=None,
             payload=payload,

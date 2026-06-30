@@ -26,7 +26,7 @@ from mutsuki_runtime_python.contracts.resource import (
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 
 
-class ResourcePlanHost(Protocol):
+class ResourcePlanGateway(Protocol):
     def read_resource(self, resource_ref: ResourceRef) -> bytes: ...
 
     def create_snapshot_resource(
@@ -51,15 +51,15 @@ def build_read_plan(resource_ref: ResourceRef, operation: str) -> ReadPlan:
     )
 
 
-def collect_read_plan(host: ResourcePlanHost, plan: ReadPlan) -> bytes:
-    return host.read_resource(plan.resource)
+def collect_read_plan(gateway: ResourcePlanGateway, plan: ReadPlan) -> bytes:
+    return gateway.read_resource(plan.resource)
 
 
 def snapshot_read_plan(
-    host: ResourcePlanHost, plan: ReadPlan, kind_id: str, schema: str
+    gateway: ResourcePlanGateway, plan: ReadPlan, kind_id: str, schema: str
 ) -> SnapshotDescriptor:
-    data = collect_read_plan(host, plan)
-    snapshot = host.create_snapshot_resource(kind_id, schema, plan.resource, data)
+    data = collect_read_plan(gateway, plan)
+    snapshot = gateway.create_snapshot_resource(kind_id, schema, plan.resource, data)
     return SnapshotDescriptor(
         snapshot_ref=snapshot,
         source_ref=plan.resource,
@@ -107,7 +107,7 @@ def command_plan(
     )
 
 
-def execute_export_plan(host: ResourcePlanHost, plan: ExportPlan) -> PlanReceipt:
+def execute_export_plan(gateway: ResourcePlanGateway, plan: ExportPlan) -> PlanReceipt:
     if plan.target != "inline_utf8":
         raise _resource_error(
             "resource.export_unsupported",
@@ -115,7 +115,7 @@ def execute_export_plan(host: ResourcePlanHost, plan: ExportPlan) -> PlanReceipt
             {"target": plan.target},
         )
     try:
-        output = host.read_resource(plan.resource).decode()
+        output = gateway.read_resource(plan.resource).decode()
     except UnicodeDecodeError as exc:
         raise _resource_error(
             "resource.export_decode_failed",
@@ -132,8 +132,8 @@ def execute_export_plan(host: ResourcePlanHost, plan: ExportPlan) -> PlanReceipt
     )
 
 
-def execute_command_plan(host: ResourcePlanHost, plan: CommandPlan) -> PlanReceipt:
-    host.read_resource(plan.capability)
+def execute_command_plan(gateway: ResourcePlanGateway, plan: CommandPlan) -> PlanReceipt:
+    gateway.read_resource(plan.capability)
     if plan.capability.semantic != ResourceSemantic.CAPABILITY_RESOURCE:
         raise _resource_error(
             "resource.semantic_mismatch", f"resource.plan.command.{plan.capability.ref_id}"
@@ -197,12 +197,14 @@ def command_batch(
     )
 
 
-def execute_command_batch(host: ResourcePlanHost, batch: CommandBatch) -> tuple[PlanReceipt, ...]:
+def execute_command_batch(
+    gateway: ResourcePlanGateway, batch: CommandBatch
+) -> tuple[PlanReceipt, ...]:
     if batch.rollback_guarantee:
         raise _resource_error(
             "resource.rollback_unsupported", f"resource.plan.batch.{batch.batch_id}"
         )
-    return tuple(execute_command_plan(host, command) for command in batch.commands)
+    return tuple(execute_command_plan(gateway, command) for command in batch.commands)
 
 
 def saga_plan(
@@ -211,14 +213,15 @@ def saga_plan(
     return SagaPlan(saga_id=saga_id, steps=steps, compensations=compensations)
 
 
-def execute_saga_plan(host: ResourcePlanHost, saga: SagaPlan) -> tuple[PlanReceipt, ...]:
+def execute_saga_plan(gateway: ResourcePlanGateway, saga: SagaPlan) -> tuple[PlanReceipt, ...]:
     receipts: list[PlanReceipt] = []
     for step_index, command in enumerate(saga.steps):
         try:
-            receipts.append(execute_command_plan(host, command))
+            receipts.append(execute_command_plan(gateway, command))
         except RunnerInvokeError as exc:
             compensation_failures = sum(
-                _command_failed(host, compensation) for compensation in reversed(saga.compensations)
+                _command_failed(gateway, compensation)
+                for compensation in reversed(saga.compensations)
             )
             raise _resource_error(
                 "resource.saga_failed",
@@ -233,16 +236,16 @@ def execute_saga_plan(host: ResourcePlanHost, saga: SagaPlan) -> tuple[PlanRecei
     return tuple(receipts)
 
 
-def commit_write_plan(host: ResourcePlanHost, plan: WritePlan, data: bytes) -> PlanReceipt:
+def commit_write_plan(gateway: ResourcePlanGateway, plan: WritePlan, data: bytes) -> PlanReceipt:
     if plan.resource.semantic != ResourceSemantic.COW_VERSIONED_STATE:
         raise _resource_error("resource.semantic_mismatch", f"resource.plan.{plan.resource.ref_id}")
     if plan.resource.version != plan.base_version:
         raise _resource_error(
             ERR_RESOURCE_GENERATION_MISMATCH, f"resource.plan.{plan.resource.ref_id}"
         )
-    host.read_resource(plan.resource)
-    lease = host.acquire_write_lease(plan.resource.ref_id, "resource-plan")
-    updated = host.write_with_lease(lease, data, current_step=0)
+    gateway.read_resource(plan.resource)
+    lease = gateway.acquire_write_lease(plan.resource.ref_id, "resource-plan")
+    updated = gateway.write_with_lease(lease, data, current_step=0)
     return PlanReceipt(
         plan_id=plan.plan_id,
         status="committed",
@@ -253,9 +256,9 @@ def commit_write_plan(host: ResourcePlanHost, plan: WritePlan, data: bytes) -> P
     )
 
 
-def _command_failed(host: ResourcePlanHost, command: CommandPlan) -> bool:
+def _command_failed(gateway: ResourcePlanGateway, command: CommandPlan) -> bool:
     try:
-        execute_command_plan(host, command)
+        execute_command_plan(gateway, command)
     except RunnerInvokeError:
         return True
     return False

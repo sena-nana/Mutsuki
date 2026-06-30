@@ -7,8 +7,8 @@ use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
 
 use crate::{
-    HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativePluginHost,
-    NativeRunner, RunnerLimits, runner_manifest,
+    HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativeRunner,
+    RunnerLimits, RuntimeBootstrapper, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
@@ -59,7 +59,7 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
         descriptor_with_class("blocking.runner", "blocking.work", ExecutionClass::Blocking);
     let echo_descriptor = descriptor("echo.runner", "raw.input");
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest(
         "plugin-a",
         vec![blocking_descriptor.clone(), echo_descriptor.clone()],
@@ -122,7 +122,7 @@ fn host_runtime_routes_execution_classes_to_named_worker_pools() {
     let descriptor = descriptor_with_class("script.runner", "script.work", ExecutionClass::Script);
     let observed_thread = Arc::new(Mutex::new(String::new()));
     let observed = observed_thread.clone();
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         descriptor,
@@ -164,7 +164,7 @@ fn host_worker_failure_marks_task_failed_and_returns_runner() {
     let runner_descriptor = descriptor("flaky.runner", "raw.input");
     let attempts = Arc::new(Mutex::new(0usize));
     let observed = attempts.clone();
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
@@ -258,7 +258,7 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let cancelled = Arc::new(Mutex::new(Vec::new()));
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(CancellableRunner {
         descriptor: runner_descriptor,
@@ -348,7 +348,7 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let cancelled = Arc::new(Mutex::new(Vec::new()));
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(DeadlineRunner {
         descriptor: runner_descriptor,
@@ -414,7 +414,7 @@ fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
     let (release_tx, release_rx) = mpsc::channel();
     let cancelled = Arc::new(Mutex::new(Vec::new()));
     let disposed = Arc::new(Mutex::new(false));
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest(
         "plugin-a",
         vec![stuck_descriptor.clone(), echo_descriptor.clone()],
@@ -514,7 +514,7 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
     let (release_tx, release_rx) = mpsc::channel();
     let cancelled = Arc::new(Mutex::new(Vec::new()));
     let disposed = Arc::new(Mutex::new(false));
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest(
         "plugin-a",
         vec![stuck_descriptor.clone(), echo_descriptor.clone()],
@@ -604,7 +604,7 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     let (release_tx, release_rx) = mpsc::channel();
     let cancelled = Arc::new(Mutex::new(Vec::new()));
     let disposed = Arc::new(Mutex::new(false));
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest(
         "plugin-a",
         vec![stuck_descriptor.clone(), echo_descriptor.clone()],
@@ -684,16 +684,16 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
         "scheduler_policy:scheduler.fair".into(),
         "workflow:workflow.linear".into(),
     ];
-    manifest.provides.host_backends = vec![
-        HostBackendDescriptor {
-            backend_id: "host.backend.builtin".into(),
+    manifest.provides.host_extensions = vec![
+        HostExtensionDescriptor {
+            extension_id: "host.extension.builtin".into(),
             kind: HostExtensionKind::PluginBackend,
             supported_deployments: vec![PluginDeploymentKind::Builtin],
             reload_policy: "static".into(),
             drain_required: false,
         },
-        HostBackendDescriptor {
-            backend_id: "host.backend.abi".into(),
+        HostExtensionDescriptor {
+            extension_id: "host.extension.abi".into(),
             kind: HostExtensionKind::Bridge,
             supported_deployments: vec![PluginDeploymentKind::Abi],
             reload_policy: "drain_and_swap".into(),
@@ -741,7 +741,7 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
         runner_protocol_id: "workflow.linear.run".into(),
         reload_policy: "state_resource_handoff".into(),
     }];
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
@@ -760,14 +760,14 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     assert!(
         runtime
             .capabilities()
-            .require_host_backend("host.backend.builtin")
+            .require_host_extension("host.extension.builtin")
             .is_ok()
     );
     assert!(
         runtime
             .host_context()
             .capability_broker()
-            .require_host_backend("host.backend.builtin")
+            .require_host_extension("host.extension.builtin")
             .is_ok()
     );
     assert!(
@@ -806,8 +806,8 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     assert_pruned_capability(
         runtime
             .capabilities()
-            .require_host_backend("host.backend.abi"),
-        "host_backend:host.backend.abi",
+            .require_host_extension("host.extension.abi"),
+        "host_extension:host.extension.abi",
     );
 }
 

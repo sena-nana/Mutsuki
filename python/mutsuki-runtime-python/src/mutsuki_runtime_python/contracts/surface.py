@@ -21,7 +21,7 @@ class ContractSurfaceKind(StrEnum):
     SCHEMA = "schema"
     RESOURCE_SCHEMA = "resource_schema"
     RESOURCE_PROVIDER = "resource_provider"
-    HOST_BACKEND = "host_backend"
+    HOST_EXTENSION = "host_extension"
     PLUGIN_BACKEND = "plugin_backend"
     CODEC = "codec"
     BRIDGE = "bridge"

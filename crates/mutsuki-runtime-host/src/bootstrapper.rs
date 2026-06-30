@@ -60,7 +60,7 @@ impl Runner for NativeRunner {
 }
 
 #[derive(Default)]
-pub struct NativePluginHost {
+pub struct RuntimeBootstrapper {
     manifests: Vec<PluginManifest>,
     runners: Vec<RegisteredRunner>,
 }
@@ -70,7 +70,7 @@ struct RegisteredRunner {
     runner: Box<dyn Runner>,
 }
 
-impl NativePluginHost {
+impl RuntimeBootstrapper {
     pub fn new() -> Self {
         Self::default()
     }

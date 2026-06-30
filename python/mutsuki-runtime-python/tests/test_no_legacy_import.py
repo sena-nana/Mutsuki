@@ -9,7 +9,7 @@ import mutsuki_runtime_python.contracts as contracts
 
 
 def test_top_level_facades_do_not_export_runtime_symbols() -> None:
-    assert not hasattr(runtime_python, "PythonRunnerHost")
+    assert not hasattr(runtime_python, "PythonRunnerBackend")
     assert not hasattr(runtime_python, "RunnerDescriptor")
     assert not hasattr(runtime_python, "RunnerInvokeError")
     assert not hasattr(contracts, "Task")

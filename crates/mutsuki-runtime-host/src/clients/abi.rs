@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::{
     StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
-use mutsuki_runtime_sdk::{ResourceBackend, TaskSubmitter};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
 use serde_json::json;
 
 use crate::jsonl::JsonlBridge;
@@ -64,7 +64,7 @@ impl<R, W> AbiResourceClient<R, W> {
     }
 }
 
-impl<R, W> ResourceBackend for AbiResourceClient<R, W>
+impl<R, W> ResourcePlanGateway for AbiResourceClient<R, W>
 where
     R: BufRead + Send,
     W: Write + Send,

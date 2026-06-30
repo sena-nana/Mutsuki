@@ -20,7 +20,7 @@ Mutsuki/
   crates/
     mutsuki-runtime-contracts/  # Task / TaskLease / Runner / Resource / Plugin load-plan protocol
     mutsuki-runtime-core/       # CoreRuntime / TaskPool / TaskLease / Executor dispatch / ResourceManager
-    mutsuki-runtime-host/       # native runner host / JSONL runner client
+    mutsuki-runtime-host/       # runtime bootstrapper / JSONL runner client
     mutsuki-runtime-sdk/        # Rust SDK async/await wrapper over TaskHandle
     mutsuki-runtime-sdk-macros/ # Rust SDK proc-macro authoring DSL
   plans/
@@ -36,22 +36,22 @@ Mutsuki/
   ResultRouter、StateStore、ResourceManager、EventLog、TraceLog、hot-reload surface checks。
   Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
   执行器，不绑定线程模型。
-- `mutsuki-runtime-host`：实现 native PluginHost/resolver、native runner wrapper 和
+- `mutsuki-runtime-host`：实现 native RuntimeBootstrapper/resolver、native runner wrapper 和
   stdio JSONL runner client，并提供默认 CoreActor / worker pool 隔离的
-  `HostRuntime` 控制面门面。`NativePluginHost::into_runtime` 仍返回裸 `CoreRuntime`
+  `HostRuntime` 控制面门面。`RuntimeBootstrapper::into_runtime` 仍返回裸 `CoreRuntime`
   用于单线程测试、replay 和最小 host。Host backend / plugin backend 只能聚合统一
   `TaskClient` / `ResourcePlanClient` 和 host-side bridge/codec/service descriptor；不得把
   Host shell 整体做成插件。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
   `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；同时定义 host/plugin 扩展基础 trait：
   `PluginBuilder` / `PluginLoader`、`HostContext`、`HostServiceRegistry`、
-  `CapabilityBroker`、`TaskSubmitter`、`ResourceBackend`、`EventBridge`、
+  `CapabilityBroker`、`TaskSubmitter`、`ResourcePlanGateway`、`EventBridge`、
   `ConfigProvider` 和 `ShutdownController`。这些 trait 必须落回现有 contracts /
   host-side adapter，不得把 async runtime 语义或动态注册语义反向写入 Core。
 - `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
   `ResourceKind` / descriptor 和 async runner adapter glue；宏展开不得引入本地直调、
   workflow runtime、隐式调度或绕过 `TaskPool` 的执行路径。
-- `python/mutsuki-runtime-python`：镜像协议，提供 Python runner host、stdio runner
+- `python/mutsuki-runtime-python`：镜像协议，提供 Python runner backend、stdio runner
   server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API。
 
 ## 4. 验证
@@ -114,5 +114,5 @@ uv run pytest
 
 ## 6. Git 与范围
 
-- 公共协议、core runtime、ResourceManager、PluginHost、热重载或目录边界变化，提交前必须检查 diff 范围。
+- 公共协议、core runtime、ResourceManager、RuntimeBootstrapper、热重载或目录边界变化，提交前必须检查 diff 范围。
 - 不覆盖用户或其他 Agent 的已有改动。

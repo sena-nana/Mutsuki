@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, ContractSurface, ContractSurfaceKind,
-    DomainEvent, HostBackendDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
+    DomainEvent, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
     PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, RuntimeCapabilityGraph,
     RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor,
     WorkflowDescriptor,
@@ -592,15 +592,15 @@ fn static_capability_broker_serves_only_active_load_plan_surfaces() {
 
     assert!(
         broker
-            .require_capability("host_backend:host.backend.builtin")
+            .require_capability("host_extension:host.extension.builtin")
             .is_ok()
     );
     assert_eq!(
         broker
-            .require_host_backend("host.backend.builtin")
+            .require_host_extension("host.extension.builtin")
             .unwrap()
-            .backend_id,
-        "host.backend.builtin"
+            .extension_id,
+        "host.extension.builtin"
     );
     assert_eq!(
         broker
@@ -757,8 +757,8 @@ impl TaskSubmitter for ManualSubmitter {
 }
 
 fn capability_plan() -> RuntimeLoadPlan {
-    let host_backend = HostBackendDescriptor {
-        backend_id: "host.backend.builtin".into(),
+    let host_extension = HostExtensionDescriptor {
+        extension_id: "host.extension.builtin".into(),
         kind: HostExtensionKind::PluginBackend,
         supported_deployments: vec![PluginDeploymentKind::Builtin],
         reload_policy: "static".into(),
@@ -811,7 +811,7 @@ fn capability_plan() -> RuntimeLoadPlan {
                 sha256: "sha256:native".into(),
             },
             provides: mutsuki_runtime_contracts::PluginProvides {
-                host_backends: vec![host_backend],
+                host_extensions: vec![host_extension],
                 plugin_backends: vec![plugin_backend],
                 codecs: vec![codec],
                 bridges: vec![bridge],
@@ -839,7 +839,7 @@ fn capability_plan() -> RuntimeLoadPlan {
         capability_graph: RuntimeCapabilityGraph {
             profile_mode: RuntimeProfileMode::LockedBuiltin,
             provided_capabilities: vec![
-                "host_backend:host.backend.builtin".into(),
+                "host_extension:host.extension.builtin".into(),
                 "plugin_backend:plugin.backend.builtin".into(),
                 "plugin_backend:plugin.backend.pruned".into(),
                 "codec:codec.json".into(),
@@ -849,7 +849,7 @@ fn capability_plan() -> RuntimeLoadPlan {
             ],
             required_capabilities: Vec::new(),
             active_capabilities: vec![
-                "host_backend:host.backend.builtin".into(),
+                "host_extension:host.extension.builtin".into(),
                 "plugin_backend:plugin.backend.builtin".into(),
                 "codec:codec.json".into(),
                 "bridge:bridge.abi.jsonl".into(),
@@ -858,7 +858,7 @@ fn capability_plan() -> RuntimeLoadPlan {
             ],
             active_capability_providers: Vec::new(),
             active_resource_providers: Vec::new(),
-            active_host_backends: vec!["host.backend.builtin".into()],
+            active_host_extensions: vec!["host.extension.builtin".into()],
             active_plugin_backends: vec!["plugin.backend.builtin".into()],
             active_codecs: vec!["codec.json".into()],
             active_bridges: vec!["bridge.abi.jsonl".into()],
@@ -867,10 +867,10 @@ fn capability_plan() -> RuntimeLoadPlan {
             permission_audit: Vec::new(),
         },
         contract_surfaces: vec![ContractSurface {
-            surface_id: "host_backend:host.backend.builtin".into(),
-            kind: ContractSurfaceKind::HostBackend,
+            surface_id: "host_extension:host.extension.builtin".into(),
+            kind: ContractSurfaceKind::HostExtension,
             owner_plugin_id: "plugin-a".into(),
-            fingerprint: "sha256:host.backend.builtin".into(),
+            fingerprint: "sha256:host.extension.builtin".into(),
             deprecated: false,
         }],
     }

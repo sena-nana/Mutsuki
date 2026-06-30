@@ -10,7 +10,7 @@ host helpers.
 
 The current Python runner kit lives in
 [`python/mutsuki-runtime-python`](python/mutsuki-runtime-python). It mirrors the
-Rust contracts and provides `PythonRunnerHost`, `StdioJsonlRunnerServer`, and a
+Rust contracts and provides `PythonRunnerBackend`, `StdioJsonlBridge`, and a
 descriptor-based `PythonResourceManager`.
 
 The runtime shape is:
@@ -34,9 +34,9 @@ RuntimeProfile + PluginManifest
   ResultRouter, StateStore, ResourceManager, reload surface checks, event log,
   and trace log.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
-  native runner host, deterministic load-plan resolver, and stdio JSONL runner client.
+  runtime bootstrapper, deterministic load-plan resolver, and stdio JSONL runner client.
 - `python/mutsuki-runtime-python` - optional Python runner kit:
-  pure contract mirrors, Python runner host, stdio JSONL runner server, and
+  pure contract mirrors, Python runner backend, stdio JSONL runner server, and
   descriptor-based resource manager.
 
 ## Standard Plugin Naming

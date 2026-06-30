@@ -3,7 +3,7 @@ from __future__ import annotations
 from mutsuki_runtime_python.contracts.extension import (
     BridgeDescriptor,
     CodecDescriptor,
-    HostBackendDescriptor,
+    HostExtensionDescriptor,
     HostExtensionKind,
     PluginBackendDescriptor,
     PluginDeploymentKind,
@@ -105,9 +105,9 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         subscriptions=("chat.messages",),
         timers=("heartbeat",),
         state_schemas=("state.actor.v1",),
-        host_backends=(
-            HostBackendDescriptor(
-                backend_id="host.backend.python",
+        host_extensions=(
+            HostExtensionDescriptor(
+                extension_id="host.extension.python",
                 kind=HostExtensionKind.PLUGIN_BACKEND,
                 supported_deployments=(PluginDeploymentKind.PYTHON,),
                 reload_policy="drain_and_swap",
@@ -219,7 +219,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 ),
             ),
             active_resource_providers=("resource.local",),
-            active_host_backends=("host.backend.python",),
+            active_host_extensions=("host.extension.python",),
             active_plugin_backends=("plugin.backend.python",),
             active_codecs=("codec.json",),
             active_bridges=("bridge.python.jsonl",),
@@ -281,10 +281,10 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 deprecated=False,
             ),
             ContractSurface(
-                surface_id="host_backend:host.backend.python",
-                kind=ContractSurfaceKind.HOST_BACKEND,
+                surface_id="host_extension:host.extension.python",
+                kind=ContractSurfaceKind.HOST_EXTENSION,
                 owner_plugin_id="plugin-a",
-                fingerprint="host_backend:host.backend.python",
+                fingerprint="host_extension:host.extension.python",
                 deprecated=False,
             ),
             ContractSurface(
@@ -320,7 +320,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
 
     assert_json_roundtrip(ProtocolDescriptor, protocol)
     assert_json_roundtrip(HandlerBinding, binding)
-    assert_json_roundtrip(HostBackendDescriptor, provides.host_backends[0])
+    assert_json_roundtrip(HostExtensionDescriptor, provides.host_extensions[0])
     assert_json_roundtrip(PluginBackendDescriptor, provides.plugin_backends[0])
     assert_json_roundtrip(
         PluginBackendDescriptor,
@@ -368,7 +368,7 @@ def test_plugin_load_plan_rejects_missing_required_fields() -> None:
         "active_capabilities": [],
         "active_capability_providers": [],
         "active_resource_providers": [],
-        "active_host_backends": [],
+        "active_host_extensions": [],
         "active_plugin_backends": [],
         "active_codecs": [],
         "active_bridges": [],

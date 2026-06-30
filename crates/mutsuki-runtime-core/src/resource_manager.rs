@@ -17,7 +17,7 @@ mod plans;
 mod resources;
 mod values;
 
-use backend::LocalResourceBackend;
+use backend::LocalResourceStore;
 use hub::ResourceHub;
 
 static NEXT_MANAGER_NAMESPACE: AtomicU64 = AtomicU64::new(1);
@@ -52,7 +52,7 @@ pub struct ResourceManager {
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
-    backend: LocalResourceBackend,
+    backend: LocalResourceStore,
 }
 
 impl Default for ResourceManager {
@@ -74,7 +74,7 @@ impl ResourceManager {
             occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),
             inline_value_max_bytes: 4096,
-            backend: LocalResourceBackend::new(root),
+            backend: LocalResourceStore::new(root),
         }
     }
 }

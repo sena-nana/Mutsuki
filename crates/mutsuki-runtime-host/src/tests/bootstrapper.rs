@@ -4,14 +4,14 @@ use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::CoreRuntime;
 use serde_json::json;
 
-use crate::{JsonlRunner, NativePluginHost, NativeRunner};
+use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper};
 
 use super::helpers::{
     abi_plugin_fixture, host_with_echo_runner, runtime_profile, runtime_profile_with_deployment,
 };
 
 #[test]
-fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
+fn runtime_bootstrapper_boots_runtime_and_runs_runner_loop() {
     let mut runtime: CoreRuntime = host_with_echo_runner()
         .into_runtime(runtime_profile())
         .unwrap();
@@ -27,7 +27,7 @@ fn native_plugin_host_boots_runtime_and_runs_runner_loop() {
 }
 
 #[test]
-fn native_plugin_host_can_boot_host_runtime_control_plane() {
+fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
     let mut runtime = host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
@@ -60,7 +60,7 @@ fn abi_plugin_boots_through_registered_abi_runner_bridge() {
     let (manifest, runner_descriptor) = abi_plugin_fixture();
     let reader = Cursor::new(Vec::<u8>::new());
     let writer = Cursor::new(Vec::<u8>::new());
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
     host.register_abi_runner(Box::new(JsonlRunner::new(
         runner_descriptor,
@@ -80,7 +80,7 @@ fn abi_plugin_boots_through_registered_abi_runner_bridge() {
 fn enabled_plugin_runner_requires_matching_deployment_bridge() {
     let (manifest, runner_descriptor) = abi_plugin_fixture();
     let profile = runtime_profile_with_deployment("plugin-abi", PluginDeploymentKind::Abi);
-    let mut missing_bridge_host = NativePluginHost::new();
+    let mut missing_bridge_host = RuntimeBootstrapper::new();
     missing_bridge_host.register_manifest(manifest.clone());
 
     let missing_bridge = missing_bridge_host
@@ -90,7 +90,7 @@ fn enabled_plugin_runner_requires_matching_deployment_bridge() {
 
     assert_eq!(missing_bridge.error().code, ERR_RUNNER_NOT_FOUND);
 
-    let mut mismatched_host = NativePluginHost::new();
+    let mut mismatched_host = RuntimeBootstrapper::new();
     mismatched_host.register_manifest(manifest);
     mismatched_host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,

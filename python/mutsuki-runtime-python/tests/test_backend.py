@@ -6,7 +6,7 @@ import pytest
 
 from mutsuki_runtime_python.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runtime_python.contracts.task import Task
-from mutsuki_runtime_python.runners.host import PythonRunnerHost
+from mutsuki_runtime_python.runners.backend import PythonRunnerBackend
 from mutsuki_runtime_python.runners.protocol import RunnerInvokeError
 from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
 
@@ -24,12 +24,12 @@ class CaptureContextRunner(EchoRunner):
 
 
 @pytest.mark.asyncio
-async def test_python_runner_host_steps_registered_runner() -> None:
-    host = PythonRunnerHost()
+async def test_python_runner_backend_steps_registered_runner() -> None:
+    backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
-    host.register_runner(runner)
+    backend.register_runner(runner)
 
-    results = await host.step_runner(
+    results = await backend.step_runner(
         "echo.runner",
         RunnerContext(
             registry_generation=1,
@@ -41,30 +41,30 @@ async def test_python_runner_host_steps_registered_runner() -> None:
     )
 
     assert results[0].task_id == "task-1"
-    assert host.descriptors()[0].runner_id == "echo.runner"
+    assert backend.descriptors()[0].runner_id == "echo.runner"
 
 
 @pytest.mark.asyncio
-async def test_python_runner_host_cancel_and_dispose_are_management_channel() -> None:
-    host = PythonRunnerHost()
+async def test_python_runner_backend_cancel_and_dispose_are_management_channel() -> None:
+    backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
-    host.register_runner(runner)
+    backend.register_runner(runner)
 
-    await host.cancel_runner("echo.runner", "inv-1")
-    await host.dispose_runner("echo.runner")
+    await backend.cancel_runner("echo.runner", "inv-1")
+    await backend.dispose_runner("echo.runner")
 
     assert runner.cancelled == ["inv-1"]
     assert runner.disposed is True
 
 
 @pytest.mark.asyncio
-async def test_python_runner_host_propagates_prior_cancel_into_next_step_context() -> None:
-    host = PythonRunnerHost()
+async def test_python_runner_backend_propagates_prior_cancel_into_next_step_context() -> None:
+    backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
-    host.register_runner(runner)
+    backend.register_runner(runner)
 
-    await host.cancel_runner("echo.runner", "task-1")
-    results = await host.step_runner(
+    await backend.cancel_runner("echo.runner", "task-1")
+    results = await backend.step_runner(
         "echo.runner",
         RunnerContext(
             registry_generation=1,
@@ -84,12 +84,12 @@ async def test_python_runner_host_propagates_prior_cancel_into_next_step_context
 
 
 @pytest.mark.asyncio
-async def test_python_runner_host_rejects_task_lease_mismatch() -> None:
-    host = PythonRunnerHost()
-    host.register_runner(EchoRunner(echo_descriptor()))
+async def test_python_runner_backend_rejects_task_lease_mismatch() -> None:
+    backend = PythonRunnerBackend()
+    backend.register_runner(EchoRunner(echo_descriptor()))
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await host.step_runner(
+        await backend.step_runner(
             "echo.runner",
             RunnerContext(
                 registry_generation=1,

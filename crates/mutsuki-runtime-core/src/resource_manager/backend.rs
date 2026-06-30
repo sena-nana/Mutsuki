@@ -8,11 +8,11 @@ use crate::RuntimeResult;
 use super::io_failure;
 
 #[derive(Clone, Debug)]
-pub(super) struct LocalResourceBackend {
+pub(super) struct LocalResourceStore {
     root: PathBuf,
 }
 
-impl LocalResourceBackend {
+impl LocalResourceStore {
     pub(super) fn new(root: PathBuf) -> Self {
         Self { root }
     }

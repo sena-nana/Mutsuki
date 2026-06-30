@@ -89,8 +89,8 @@ fn resolver_emits_declared_runtime_surfaces() {
     manifest.provides.subscriptions = vec!["chat.messages".into()];
     manifest.provides.timers = vec!["heartbeat".into()];
     manifest.provides.state_schemas = vec!["state.actor.v1".into()];
-    manifest.provides.host_backends = vec![HostBackendDescriptor {
-        backend_id: "host.backend.builtin".into(),
+    manifest.provides.host_extensions = vec![HostExtensionDescriptor {
+        extension_id: "host.extension.builtin".into(),
         kind: HostExtensionKind::PluginBackend,
         supported_deployments: vec![PluginDeploymentKind::Builtin],
         reload_policy: "drain_and_swap".into(),
@@ -178,8 +178,8 @@ fn resolver_emits_declared_runtime_surfaces() {
     );
     assert_surface(
         &plan,
-        "host_backend:host.backend.builtin",
-        ContractSurfaceKind::HostBackend,
+        "host_extension:host.extension.builtin",
+        ContractSurfaceKind::HostExtension,
     );
     assert_surface(
         &plan,
@@ -215,16 +215,16 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
         "resource.local",
         &["read", "export"],
     )];
-    manifest.provides.host_backends = vec![
-        HostBackendDescriptor {
-            backend_id: "host.backend.builtin".into(),
+    manifest.provides.host_extensions = vec![
+        HostExtensionDescriptor {
+            extension_id: "host.extension.builtin".into(),
             kind: HostExtensionKind::PluginBackend,
             supported_deployments: vec![PluginDeploymentKind::Builtin],
             reload_policy: "static".into(),
             drain_required: false,
         },
-        HostBackendDescriptor {
-            backend_id: "host.backend.abi".into(),
+        HostExtensionDescriptor {
+            extension_id: "host.extension.abi".into(),
             kind: HostExtensionKind::Bridge,
             supported_deployments: vec![PluginDeploymentKind::Abi],
             reload_policy: "drain_and_swap".into(),
@@ -284,8 +284,8 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
         RuntimeProfileMode::LockedBuiltin
     );
     assert_eq!(
-        plan.capability_graph.active_host_backends,
-        vec!["host.backend.builtin".to_string()]
+        plan.capability_graph.active_host_extensions,
+        vec!["host.extension.builtin".to_string()]
     );
     assert_eq!(
         plan.capability_graph.active_plugin_backends,
@@ -304,8 +304,8 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
     assert!(plan.capability_graph.active_scheduler_policies.is_empty());
     assert_surface(
         &plan,
-        "host_backend:host.backend.builtin",
-        ContractSurfaceKind::HostBackend,
+        "host_extension:host.extension.builtin",
+        ContractSurfaceKind::HostExtension,
     );
     assert_surface(
         &plan,

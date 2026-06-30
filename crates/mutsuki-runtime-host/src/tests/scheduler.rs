@@ -4,7 +4,9 @@ use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{RuntimeResult, ScheduleDecision};
 use serde_json::json;
 
-use crate::{HostRuntimeCommand, HostRuntimeReply, NativePluginHost, NativeRunner, ScheduleInput};
+use crate::{
+    HostRuntimeCommand, HostRuntimeReply, NativeRunner, RuntimeBootstrapper, ScheduleInput,
+};
 use crate::{SchedulerPolicy, runner_manifest};
 
 use super::helpers::{descriptor, descriptor_with_class, host_with_echo_runner, runtime_profile};
@@ -54,7 +56,7 @@ fn custom_scheduler_can_leave_ready_task_undispatched() {
 fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
     let runner_descriptor = descriptor("slow.runner", "slow.work");
     let (release_tx, release_rx) = mpsc::channel::<()>();
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
@@ -100,7 +102,7 @@ fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
 fn host_runtime_rejects_non_kernel_control_runner_before_scheduling() {
     let runner_descriptor =
         descriptor_with_class("control.runner", "control.work", ExecutionClass::Control);
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,

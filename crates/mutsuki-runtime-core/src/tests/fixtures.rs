@@ -98,7 +98,7 @@ fn manifest(
             resource_providers: vec!["resource.local".into()],
             resource_types: Vec::new(),
             state_schemas: vec!["state.actor.v1".into()],
-            host_backends: Vec::new(),
+            host_extensions: Vec::new(),
             plugin_backends: Vec::new(),
             codecs: Vec::new(),
             bridges: Vec::new(),

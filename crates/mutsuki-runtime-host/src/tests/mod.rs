@@ -1,7 +1,7 @@
+mod bootstrapper;
 mod helpers;
 mod host_runtime;
 mod jsonl;
-mod plugin_host;
 mod resolver;
 mod resource_clients;
 mod resource_commands;

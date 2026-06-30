@@ -8,9 +8,9 @@ from mutsuki_runtime_python.contracts.codec import to_json_dict
 from mutsuki_runtime_python.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runtime_python.contracts.task import Task
 from mutsuki_runtime_python.resources.manager import PythonResourceManager
-from mutsuki_runtime_python.runners.host import PythonRunnerHost
+from mutsuki_runtime_python.runners.backend import PythonRunnerBackend
 from mutsuki_runtime_python.testing.runners import EchoRunner, echo_descriptor
-from mutsuki_runtime_python.transport.stdio_jsonl import StdioJsonlRunnerServer
+from mutsuki_runtime_python.transport.stdio_jsonl import StdioJsonlBridge
 
 
 class CaptureContextRunner(EchoRunner):
@@ -27,12 +27,12 @@ class CaptureContextRunner(EchoRunner):
 
 @pytest.mark.asyncio
 async def test_stdio_runner_step_dispatches_to_host() -> None:
-    host = PythonRunnerHost()
+    backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
-    host.register_runner(runner)
-    server = StdioJsonlRunnerServer(host)
+    backend.register_runner(runner)
+    bridge = StdioJsonlBridge(backend, PythonResourceManager())
 
-    response = await server.handle_request(
+    response = await bridge.handle_request(
         {
             "id": "req-1",
             "method": "runner.step",
@@ -68,9 +68,9 @@ async def test_stdio_runner_step_dispatches_to_host() -> None:
 
 @pytest.mark.asyncio
 async def test_stdio_unknown_runner_returns_structured_error() -> None:
-    server = StdioJsonlRunnerServer(PythonRunnerHost())
+    bridge = StdioJsonlBridge(PythonRunnerBackend(), PythonResourceManager())
 
-    response = await server.handle_request(
+    response = await bridge.handle_request(
         {
             "id": "req-1",
             "method": "runner.cancel",
@@ -84,19 +84,19 @@ async def test_stdio_unknown_runner_returns_structured_error() -> None:
 
 @pytest.mark.asyncio
 async def test_stdio_cancel_and_dispose_dispatch_to_host_management_channel() -> None:
-    host = PythonRunnerHost()
+    backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
-    host.register_runner(runner)
-    server = StdioJsonlRunnerServer(host)
+    backend.register_runner(runner)
+    bridge = StdioJsonlBridge(backend, PythonResourceManager())
 
-    cancel_response = await server.handle_request(
+    cancel_response = await bridge.handle_request(
         {
             "id": "req-1",
             "method": "runner.cancel",
             "params": {"runner_id": "echo.runner", "invocation_id": "inv-1"},
         }
     )
-    dispose_response = await server.handle_request(
+    dispose_response = await bridge.handle_request(
         {
             "id": "req-2",
             "method": "runner.dispose",
@@ -116,23 +116,23 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
     text = manager.create_blob_resource("text.v1", b"hello")
     capability = manager.create_capability_resource("db_pool", "db.pool.v1")
     command = manager.command_plan(capability, "query", {"sql": "select 1"}, "query:1")
-    server = StdioJsonlRunnerServer(PythonRunnerHost(), manager)
+    bridge = StdioJsonlBridge(PythonRunnerBackend(), manager)
 
-    export_response = await server.handle_request(
+    export_response = await bridge.handle_request(
         {
             "id": "req-1",
             "method": "resource.export",
             "params": {"plan": to_json_dict(manager.export_plan(text, "inline_utf8"))},
         }
     )
-    command_response = await server.handle_request(
+    command_response = await bridge.handle_request(
         {
             "id": "req-2",
             "method": "resource.command",
             "params": {"plan": to_json_dict(command)},
         }
     )
-    batch_response = await server.handle_request(
+    batch_response = await bridge.handle_request(
         {
             "id": "req-3",
             "method": "resource.command_batch",
@@ -143,7 +143,7 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
             },
         }
     )
-    saga_response = await server.handle_request(
+    saga_response = await bridge.handle_request(
         {
             "id": "req-4",
             "method": "resource.saga",
@@ -164,11 +164,11 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
 
 @pytest.mark.asyncio
 async def test_stdio_runner_step_returns_structured_lease_mismatch_error() -> None:
-    host = PythonRunnerHost()
-    host.register_runner(EchoRunner(echo_descriptor()))
-    server = StdioJsonlRunnerServer(host)
+    backend = PythonRunnerBackend()
+    backend.register_runner(EchoRunner(echo_descriptor()))
+    bridge = StdioJsonlBridge(backend, PythonResourceManager())
 
-    response = await server.handle_request(
+    response = await bridge.handle_request(
         {
             "id": "req-1",
             "method": "runner.step",

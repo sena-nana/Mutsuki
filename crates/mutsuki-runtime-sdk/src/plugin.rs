@@ -9,7 +9,7 @@ use mutsuki_runtime_core::{Runner, RuntimeResult};
 
 use crate::{HostService, ProtocolSpec, ResourceKindSpec};
 
-pub struct PluginHostService {
+pub struct RuntimeBootstrapperService {
     pub service_id: String,
     pub capability: Option<String>,
     pub service: Arc<dyn std::any::Any + Send + Sync>,
@@ -18,7 +18,7 @@ pub struct PluginHostService {
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub runners: Vec<Box<dyn Runner>>,
-    pub host_services: Vec<PluginHostService>,
+    pub host_services: Vec<RuntimeBootstrapperService>,
 }
 
 pub trait Plugin: Send {
@@ -66,7 +66,7 @@ pub struct PluginBuilder {
     lifecycle: LifecyclePolicy,
     metadata: BTreeMap<String, ScalarValue>,
     runners: Vec<Box<dyn Runner>>,
-    host_services: Vec<PluginHostService>,
+    host_services: Vec<RuntimeBootstrapperService>,
 }
 
 impl PluginBuilder {
@@ -190,7 +190,7 @@ impl PluginBuilder {
     where
         T: HostService,
     {
-        self.host_services.push(PluginHostService {
+        self.host_services.push(RuntimeBootstrapperService {
             service_id: service_id.into(),
             capability,
             service,

@@ -4,14 +4,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::{
-    BridgeDescriptor, CodecDescriptor, DomainEvent, HostBackendDescriptor, PluginBackendDescriptor,
-    PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan, ScalarValue,
-    SchedulerPolicyDescriptor, Task, TaskHandle, TaskOutcome, WorkflowDescriptor,
+    BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor,
+    PluginBackendDescriptor, PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan,
+    ScalarValue, SchedulerPolicyDescriptor, Task, TaskHandle, TaskOutcome, WorkflowDescriptor,
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use serde_json::Value;
 
-use crate::{ResourceBackend, RuntimeClient, RuntimeClientRef};
+use crate::{ResourcePlanGateway, RuntimeClient, RuntimeClientRef};
 
 pub trait TaskSubmitter: Send + Sync {
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle>;
@@ -258,7 +258,7 @@ impl HostServiceRegistry {
 
 pub trait CapabilityBroker: Send + Sync {
     fn require_capability(&self, capability: &str) -> RuntimeResult<()>;
-    fn require_host_backend(&self, backend_id: &str) -> RuntimeResult<HostBackendDescriptor>;
+    fn require_host_extension(&self, extension_id: &str) -> RuntimeResult<HostExtensionDescriptor>;
     fn require_plugin_backend(&self, backend_id: &str) -> RuntimeResult<PluginBackendDescriptor>;
     fn require_codec(&self, codec_id: &str) -> RuntimeResult<CodecDescriptor>;
     fn require_bridge(&self, bridge_id: &str) -> RuntimeResult<BridgeDescriptor>;
@@ -271,7 +271,7 @@ pub trait CapabilityBroker: Send + Sync {
 pub struct StaticCapabilityBroker {
     active_capabilities: Arc<BTreeSet<String>>,
     provided_capabilities: Arc<BTreeSet<String>>,
-    host_backends: Arc<BTreeMap<String, HostBackendDescriptor>>,
+    host_extensions: Arc<BTreeMap<String, HostExtensionDescriptor>>,
     plugin_backends: Arc<BTreeMap<String, PluginBackendDescriptor>>,
     codecs: Arc<BTreeMap<String, CodecDescriptor>>,
     bridges: Arc<BTreeMap<String, BridgeDescriptor>>,
@@ -285,11 +285,11 @@ impl StaticCapabilityBroker {
         Self {
             active_capabilities: Arc::new(active.active_capabilities.iter().cloned().collect()),
             provided_capabilities: Arc::new(active.provided_capabilities.iter().cloned().collect()),
-            host_backends: Arc::new(active_descriptors(
+            host_extensions: Arc::new(active_descriptors(
                 &plan.plugins,
-                &active.active_host_backends,
-                |manifest| &manifest.provides.host_backends,
-                |descriptor| descriptor.backend_id.as_str(),
+                &active.active_host_extensions,
+                |manifest| &manifest.provides.host_extensions,
+                |descriptor| descriptor.extension_id.as_str(),
             )),
             plugin_backends: Arc::new(active_descriptors(
                 &plan.plugins,
@@ -376,8 +376,8 @@ impl CapabilityBroker for StaticCapabilityBroker {
         }
     }
 
-    fn require_host_backend(&self, backend_id: &str) -> RuntimeResult<HostBackendDescriptor> {
-        self.require_descriptor("host_backend", backend_id, &self.host_backends)
+    fn require_host_extension(&self, extension_id: &str) -> RuntimeResult<HostExtensionDescriptor> {
+        self.require_descriptor("host_extension", extension_id, &self.host_extensions)
     }
 
     fn require_plugin_backend(&self, backend_id: &str) -> RuntimeResult<PluginBackendDescriptor> {
@@ -414,7 +414,7 @@ pub struct HostContext {
     config: Arc<dyn ConfigProvider>,
     events: Arc<dyn EventBridge>,
     task_submitter: Arc<dyn TaskSubmitter>,
-    resource_backend: Arc<dyn ResourceBackend>,
+    resource_gateway: Arc<dyn ResourcePlanGateway>,
     shutdown: Arc<dyn ShutdownController>,
 }
 
@@ -429,7 +429,7 @@ impl HostContext {
         config: Arc<dyn ConfigProvider>,
         events: Arc<dyn EventBridge>,
         task_submitter: Arc<dyn TaskSubmitter>,
-        resource_backend: Arc<dyn ResourceBackend>,
+        resource_gateway: Arc<dyn ResourcePlanGateway>,
         shutdown: Arc<dyn ShutdownController>,
     ) -> Self {
         Self {
@@ -441,7 +441,7 @@ impl HostContext {
             config,
             events,
             task_submitter,
-            resource_backend,
+            resource_gateway,
             shutdown,
         }
     }
@@ -482,8 +482,8 @@ impl HostContext {
         self.task_submitter.clone()
     }
 
-    pub fn resource_backend(&self) -> &dyn ResourceBackend {
-        self.resource_backend.as_ref()
+    pub fn resource_gateway(&self) -> &dyn ResourcePlanGateway {
+        self.resource_gateway.as_ref()
     }
 
     pub fn shutdown(&self) -> &dyn ShutdownController {

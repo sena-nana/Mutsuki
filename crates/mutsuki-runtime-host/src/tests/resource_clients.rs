@@ -44,7 +44,7 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
 
     assert_eq!(local.collect_read_plan(&read_plan).unwrap(), b"hello");
     assert_eq!(
-        mutsuki_runtime_sdk::ResourceBackend::collect_read_plan(&local, &read_plan).unwrap(),
+        mutsuki_runtime_sdk::ResourcePlanGateway::collect_read_plan(&local, &read_plan).unwrap(),
         b"hello"
     );
     assert_eq!(
@@ -139,7 +139,7 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
 }
 
 #[test]
-fn resource_clients_implement_sdk_resource_backend_boundary() {
+fn resource_clients_implement_sdk_resource_gateway_boundary() {
     let resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
     let read_plan = ReadPlan {
         plan_id: "read:1".into(),
@@ -157,7 +157,7 @@ fn resource_clients_implement_sdk_resource_backend_boundary() {
     );
 
     assert_eq!(
-        mutsuki_runtime_sdk::ResourceBackend::collect_read_plan(&abi, &read_plan).unwrap(),
+        mutsuki_runtime_sdk::ResourcePlanGateway::collect_read_plan(&abi, &read_plan).unwrap(),
         b"hello"
     );
 }

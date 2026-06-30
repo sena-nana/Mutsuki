@@ -39,7 +39,7 @@ pub(super) fn capability_graph_for(
     let mut active = BTreeSet::new();
     let mut providers: BTreeMap<String, Vec<CapabilityProvider>> = BTreeMap::new();
     let mut active_resource_providers = BTreeSet::new();
-    let mut active_host_backends = BTreeSet::new();
+    let mut active_host_extensions = BTreeSet::new();
     let mut active_plugin_backends = BTreeSet::new();
     let mut active_codecs = BTreeSet::new();
     let mut active_bridges = BTreeSet::new();
@@ -58,15 +58,15 @@ pub(super) fn capability_graph_for(
         .collect();
 
     for manifest in manifests {
-        for backend in &manifest.provides.host_backends {
+        for extension in &manifest.provides.host_extensions {
             activate_extension_if_needed(
                 &mut active,
-                &mut active_host_backends,
+                &mut active_host_extensions,
                 prune_extensions,
                 &required_capabilities,
-                "host_backend",
-                &backend.backend_id,
-                deployment_is_used(deployments, &backend.supported_deployments),
+                "host_extension",
+                &extension.extension_id,
+                deployment_is_used(deployments, &extension.supported_deployments),
             );
         }
         for provider_id in &manifest.provides.resource_providers {
@@ -158,7 +158,7 @@ pub(super) fn capability_graph_for(
 
     for (prefix, active_ids) in [
         ("resource_provider", &active_resource_providers),
-        ("host_backend", &active_host_backends),
+        ("host_extension", &active_host_extensions),
         ("plugin_backend", &active_plugin_backends),
         ("bridge", &active_bridges),
         ("codec", &active_codecs),
@@ -185,7 +185,7 @@ pub(super) fn capability_graph_for(
         active_capabilities: active.into_iter().collect(),
         active_capability_providers,
         active_resource_providers: active_resource_providers.into_iter().collect(),
-        active_host_backends: active_host_backends.into_iter().collect(),
+        active_host_extensions: active_host_extensions.into_iter().collect(),
         active_plugin_backends: active_plugin_backends.into_iter().collect(),
         active_codecs: active_codecs.into_iter().collect(),
         active_bridges: active_bridges.into_iter().collect(),
@@ -293,13 +293,13 @@ fn collect_system_extension_capabilities(
     provided: &mut BTreeSet<String>,
     providers: &mut BTreeMap<String, Vec<CapabilityProvider>>,
 ) {
-    for backend in &manifest.provides.host_backends {
+    for extension in &manifest.provides.host_extensions {
         collect_provided_capability(
             manifest,
             provided,
             providers,
-            "host_backend",
-            &backend.backend_id,
+            "host_extension",
+            &extension.extension_id,
             None,
         );
     }

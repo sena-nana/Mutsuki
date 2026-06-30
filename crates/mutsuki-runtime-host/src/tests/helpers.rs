@@ -4,7 +4,7 @@ use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::RunnerContext;
 use serde_json::json;
 
-use crate::{NativePluginHost, NativeRunner, runner_manifest, runner_manifest_with_artifact};
+use crate::{NativeRunner, RuntimeBootstrapper, runner_manifest, runner_manifest_with_artifact};
 
 pub(super) fn descriptor(id: &str, protocol_id: &str) -> RunnerDescriptor {
     descriptor_with_class(id, protocol_id, ExecutionClass::Cpu)
@@ -68,9 +68,9 @@ pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
     (manifest, runner_descriptor)
 }
 
-pub(super) fn host_with_echo_runner() -> NativePluginHost {
+pub(super) fn host_with_echo_runner() -> RuntimeBootstrapper {
     let runner_descriptor = descriptor("echo.runner", "raw.input");
-    let mut host = NativePluginHost::new();
+    let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,

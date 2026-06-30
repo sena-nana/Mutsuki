@@ -22,7 +22,7 @@ mod host;
 mod plugin;
 mod resource;
 
-pub use backend::ResourceBackend;
+pub use backend::ResourcePlanGateway;
 pub use descriptor::{
     HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,
     ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,

@@ -5,8 +5,8 @@ TaskPool runtime.
 
 It mirrors the Rust protocol objects and provides:
 
-- `PythonRunnerHost`
-- `StdioJsonlRunnerServer`
+- `PythonRunnerBackend`
+- `StdioJsonlBridge`
 - `PythonResourceManager`
 - test helpers for Python-owned runners
 

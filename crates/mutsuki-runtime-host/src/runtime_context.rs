@@ -8,7 +8,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     ConfigProvider, HostContext as SdkHostContext, HostServiceRegistry, NoopEventBridge,
-    ResourceBackend, ShutdownController, StaticConfigProvider, TaskSubmitter,
+    ResourcePlanGateway, ShutdownController, StaticConfigProvider, TaskSubmitter,
 };
 
 use crate::actor::CoreActorMsg;
@@ -24,7 +24,7 @@ pub(crate) fn build_host_context(
 ) -> SdkHostContext {
     let command_client = Arc::new(ActorCommandClient { tx: tx.clone() });
     let task_submitter: Arc<dyn TaskSubmitter> = command_client.clone();
-    let resource_backend: Arc<dyn ResourceBackend> = command_client;
+    let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client;
     let services = Arc::new(HostServiceRegistry::new());
     services.freeze();
     let shutdown = Arc::new(ActorShutdownController {
@@ -41,7 +41,7 @@ pub(crate) fn build_host_context(
         config_provider,
         Arc::new(NoopEventBridge),
         task_submitter,
-        resource_backend,
+        resource_gateway,
         shutdown,
     )
 }
@@ -93,7 +93,7 @@ impl TaskSubmitter for ActorCommandClient {
     }
 }
 
-impl ResourceBackend for ActorCommandClient {
+impl ResourcePlanGateway for ActorCommandClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         match self.dispatch(HostRuntimeCommand::CollectReadPlan(Box::new(plan.clone())))? {
             HostRuntimeReply::ResourceBytes(bytes) => Ok(bytes),

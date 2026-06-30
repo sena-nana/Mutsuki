@@ -22,7 +22,7 @@ class HostExtensionKind(StrEnum):
     TRACE_SINK = "trace_sink"
     SCHEDULER_POLICY = "scheduler_policy"
     PERMISSION_POLICY = "permission_policy"
-    RESOURCE_BACKEND = "resource_backend"
+    RESOURCE_PLAN_GATEWAY = "resource_plan_gateway"
 
 
 class PluginDeploymentKind(StrEnum):
@@ -34,8 +34,8 @@ class PluginDeploymentKind(StrEnum):
 
 
 @dataclass(frozen=True)
-class HostBackendDescriptor:
-    backend_id: str
+class HostExtensionDescriptor:
+    extension_id: str
     kind: HostExtensionKind
     supported_deployments: tuple[PluginDeploymentKind, ...]
     reload_policy: str
@@ -43,9 +43,9 @@ class HostBackendDescriptor:
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
-        raw = as_mapping(data, "HostBackendDescriptor")
+        raw = as_mapping(data, "HostExtensionDescriptor")
         return cls(
-            backend_id=as_str(field_value(raw, "backend_id"), "backend_id"),
+            extension_id=as_str(field_value(raw, "extension_id"), "extension_id"),
             kind=HostExtensionKind(as_str(field_value(raw, "kind"), "kind")),
             supported_deployments=tuple(
                 PluginDeploymentKind(as_str(item, "supported_deployments"))

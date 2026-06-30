@@ -11,12 +11,12 @@ pub enum HostExtensionKind {
     TraceSink,
     SchedulerPolicy,
     PermissionPolicy,
-    ResourceBackend,
+    ResourcePlanGateway,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HostBackendDescriptor {
-    pub backend_id: String,
+pub struct HostExtensionDescriptor {
+    pub extension_id: String,
     pub kind: HostExtensionKind,
     pub supported_deployments: Vec<PluginDeploymentKind>,
     pub reload_policy: String,

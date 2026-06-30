@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
 use crate::{
-    AbiTaskClient, HostBackend, LocalResourceClient, LocalTaskClient, PluginBackend, TaskClient,
+    AbiTaskClient, HostExtension, LocalResourceClient, LocalTaskClient, PluginBackend, TaskClient,
 };
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
@@ -141,16 +141,16 @@ fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() 
             .into_runtime(runtime_profile())
             .unwrap(),
     ));
-    let backend_descriptor = HostBackendDescriptor {
-        backend_id: "host.backend.builtin".into(),
+    let backend_descriptor = HostExtensionDescriptor {
+        extension_id: "host.extension.builtin".into(),
         kind: HostExtensionKind::PluginBackend,
         supported_deployments: vec![PluginDeploymentKind::Builtin],
         reload_policy: "drain_and_swap".into(),
         drain_required: true,
     };
-    let host_backend = HostBackend::new(backend_descriptor);
-    assert!(host_backend.supports_deployment(&PluginDeploymentKind::Builtin));
-    assert!(!host_backend.supports_deployment(&PluginDeploymentKind::Abi));
+    let host_extension = HostExtension::new(backend_descriptor);
+    assert!(host_extension.supports_deployment(&PluginDeploymentKind::Builtin));
+    assert!(!host_extension.supports_deployment(&PluginDeploymentKind::Abi));
 
     let plugin_backend = PluginBackend::new(
         PluginBackendDescriptor {

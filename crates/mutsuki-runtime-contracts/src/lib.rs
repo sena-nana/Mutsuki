@@ -22,7 +22,7 @@ pub use error::{
 };
 pub use event::{RuntimeEvent, RuntimeEventKind};
 pub use extension::{
-    BridgeDescriptor, CodecDescriptor, HostBackendDescriptor, HostExtensionKind,
+    BridgeDescriptor, CodecDescriptor, HostExtensionDescriptor, HostExtensionKind,
     PluginBackendDescriptor, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 pub use plugin::{
