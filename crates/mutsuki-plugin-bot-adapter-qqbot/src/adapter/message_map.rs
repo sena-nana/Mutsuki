@@ -1,6 +1,7 @@
 use mutsuki_bot_protocol::BotMessage;
 use thiserror::Error;
 
+use super::segment_map::SegmentMapError;
 use crate::adapter::{qq_message_body_from_segments, qq_scene_and_openid};
 use crate::api::SendMessagePayload;
 
@@ -8,6 +9,8 @@ use crate::api::SendMessagePayload;
 pub enum MessageMapError {
     #[error("target is not supported by QQBot adapter")]
     UnsupportedTarget,
+    #[error(transparent)]
+    Segment(#[from] SegmentMapError),
 }
 
 pub fn bot_message_to_qq_send(message: BotMessage) -> Result<SendMessagePayload, MessageMapError> {
@@ -16,6 +19,6 @@ pub fn bot_message_to_qq_send(message: BotMessage) -> Result<SendMessagePayload,
     Ok(SendMessagePayload {
         scene,
         target_openid,
-        body: qq_message_body_from_segments(&message.segments),
+        body: qq_message_body_from_segments(&message.segments)?,
     })
 }

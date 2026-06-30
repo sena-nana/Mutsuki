@@ -13,6 +13,12 @@ pub struct BotMessage {
     pub ext: BotExtMap,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BotMessageRecallRequest {
+    pub target: BotTarget,
+    pub message_id: String,
+}
+
 impl BotMessage {
     pub fn text(target: BotTarget, text: impl Into<String>) -> Self {
         Self {

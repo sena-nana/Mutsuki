@@ -1,9 +1,8 @@
 mod dispatch;
 mod filter;
 mod router;
-mod subscription;
 
 pub use dispatch::*;
 pub use filter::*;
+pub use mutsuki_bot_protocol::BotEventSubscription;
 pub use router::*;
-pub use subscription::*;

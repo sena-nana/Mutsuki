@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotMessage, BotTarget, MessageSegment,
+    BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotMessage,
+    BotMessageRecallRequest, BotTarget, MessageSegment, QQBOT_RAW_CALL_PROTOCOL_ID,
 };
 use mutsuki_runtime_contracts::Task;
 use mutsuki_runtime_core::{Runner, RunnerContext};
@@ -62,7 +63,9 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
     let event: mutsuki_bot_protocol::BotEvent =
         serde_json::from_value(result[0].tasks[0].payload.clone()).unwrap();
     assert_eq!(event.kind, BotEventKind::MessageCreated);
-    assert_eq!(event.message.unwrap().plain_text(), "ping");
+    let message = event.message.unwrap();
+    assert_eq!(message.plain_text(), "ping");
+    assert_eq!(message.time_ms, None);
 }
 
 #[test]
@@ -103,6 +106,92 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
     assert_eq!(requests[1].headers["Authorization"], "QQBot TOKEN_A");
     assert_eq!(requests[1].body.as_ref().unwrap()["msg_seq"], 700);
     assert_eq!(requests[1].body.as_ref().unwrap()["content"], "hello");
+}
+
+#[test]
+fn openapi_runner_maps_standard_recall_to_qqbot_delete() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![token_response("TOKEN_A"), ok_response(json!({"ok": true}))],
+        Box::new(NoopIdSource::new(1)),
+    );
+    let task = Task::new(
+        "recall",
+        BOT_MESSAGE_RECALL_PROTOCOL_ID,
+        serde_json::to_value(BotMessageRecallRequest {
+            target: BotTarget::Group {
+                group_id: "GROUP_OPENID".into(),
+            },
+            message_id: "MESSAGE_ID".into(),
+        })
+        .unwrap(),
+    );
+
+    let result = runner.step(test_context(1), vec![task]).unwrap();
+
+    assert_eq!(result[0].events[0].payload["response"]["ok"], true);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].method, HttpMethod::Delete);
+    assert!(
+        requests[1]
+            .url
+            .ends_with("/v2/groups/GROUP_OPENID/messages/MESSAGE_ID")
+    );
+    assert_eq!(requests[1].body.as_ref(), Some(&Value::Null));
+}
+
+#[test]
+fn openapi_runner_rejects_raw_call_absolute_url_without_request() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner =
+        openapi_runner_with_shared(requests.clone(), Vec::new(), Box::new(NoopIdSource::new(1)));
+    let task = Task::new(
+        "raw-call",
+        QQBOT_RAW_CALL_PROTOCOL_ID,
+        json!({
+            "method": "POST",
+            "path": "https://example.invalid/steal",
+            "body": {}
+        }),
+    );
+
+    let result = runner.step(test_context(1), vec![task]);
+
+    assert!(result.is_err());
+    assert!(requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn openapi_runner_rejects_qqbot_raw_body_in_standard_send() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner =
+        openapi_runner_with_shared(requests.clone(), Vec::new(), Box::new(NoopIdSource::new(1)));
+    let task = Task::new(
+        "send",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage {
+            message_id: None,
+            target: BotTarget::User {
+                user_id: "USER_OPENID".into(),
+            },
+            sender: None,
+            segments: vec![MessageSegment::PlatformSpecific {
+                platform: "qqbot".into(),
+                kind: "message_body".into(),
+                payload: json!({"msg_type": 0, "content": "raw"}),
+            }],
+            reply_to: None,
+            time_ms: None,
+            ext: Default::default(),
+        })
+        .unwrap(),
+    );
+
+    let result = runner.step(test_context(1), vec![task]);
+
+    assert!(result.is_err());
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 fn openapi_runner_with_shared(

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotEvent,
+    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
 };
 use mutsuki_runtime_contracts::{
     ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
@@ -10,7 +10,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde_json::json;
 
-use crate::{BotCommandEvent, CommandParseError, CommandParser, message_text};
+use crate::{CommandParseError, CommandParser, message_text};
 
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";

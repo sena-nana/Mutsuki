@@ -1,7 +1,5 @@
-use mutsuki_bot_protocol::BotEvent;
+use mutsuki_bot_protocol::{BotEvent, BotEventSubscription};
 use mutsuki_runtime_contracts::Task;
-
-use crate::BotEventSubscription;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotDispatchTask {

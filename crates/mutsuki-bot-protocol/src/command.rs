@@ -1,5 +1,6 @@
-use mutsuki_bot_protocol::BotEvent;
 use serde::{Deserialize, Serialize};
+
+use crate::BotEvent;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotCommandEvent {

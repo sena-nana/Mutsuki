@@ -1,17 +1,23 @@
 mod account;
+mod command;
 mod error;
 mod event;
+mod media;
 mod message;
 mod permission;
 mod segment;
+mod subscription;
 mod target;
 
 pub use account::*;
+pub use command::*;
 pub use error::*;
 pub use event::*;
+pub use media::*;
 pub use message::*;
 pub use permission::*;
 pub use segment::*;
+pub use subscription::*;
 pub use target::*;
 
 pub const BOT_EVENT_INGEST_PROTOCOL_ID: &str = "mutsuki.bot.event/ingest@1";

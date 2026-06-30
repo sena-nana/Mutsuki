@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use mutsuki_bot_protocol::{BOT_EVENT_HANDLE_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID, BotEvent};
+use mutsuki_bot_protocol::{
+    BOT_EVENT_HANDLE_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID, BotEvent, BotEventSubscription,
+};
 use mutsuki_runtime_contracts::{
     ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
     RuntimeError, ScalarValue, Task,
@@ -8,7 +10,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde_json::json;
 
-use crate::{BotEventSubscription, build_dispatch_task, matches_subscription};
+use crate::{build_dispatch_task, matches_subscription};
 
 pub const BOT_EVENT_ROUTER_PLUGIN_ID: &str = "mutsuki.bot.router.event";
 pub const BOT_EVENT_ROUTER_RUNNER_ID: &str = "mutsuki.bot.router.event.ingest";

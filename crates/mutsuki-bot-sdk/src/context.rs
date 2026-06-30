@@ -1,5 +1,6 @@
 use mutsuki_bot_protocol::{
-    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotMessage, BotTarget,
+    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BotMediaUploadRequest, BotMessage, BotMessageRecallRequest, BotTarget,
 };
 use mutsuki_runtime_contracts::Task;
 use serde::Serialize;
@@ -47,11 +48,15 @@ where
         self.send_message(MessageBuilder::new(target).text(text).build())
     }
 
-    pub fn upload_media<T>(&mut self, payload: T) -> Result<String, BotSdkError>
-    where
-        T: Serialize,
-    {
+    pub fn upload_media(&mut self, payload: BotMediaUploadRequest) -> Result<String, BotSdkError> {
         self.submit(BOT_MEDIA_UPLOAD_PROTOCOL_ID, payload)
+    }
+
+    pub fn recall_message(
+        &mut self,
+        payload: BotMessageRecallRequest,
+    ) -> Result<String, BotSdkError> {
+        self.submit(BOT_MESSAGE_RECALL_PROTOCOL_ID, payload)
     }
 
     fn submit<T>(&mut self, protocol_id: &str, payload: T) -> Result<String, BotSdkError>

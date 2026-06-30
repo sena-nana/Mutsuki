@@ -18,7 +18,7 @@ pub fn qq_gateway_frame_to_bot_event(
     let data = &frame.d;
     let target = qq_target_from_payload(event_type, data);
     let actor = qq_actor(data);
-    let message = qq_message(event_type, data, target.clone(), actor.clone(), frame.s);
+    let message = qq_message(event_type, data, target.clone(), actor.clone());
     let mut ext = BotExtMap::new();
     ext.insert("qqbot.event_type".into(), Value::String(event_type.into()));
     ext.insert("qqbot.dedup_key".into(), Value::String(dedup_key(&frame)));
@@ -87,7 +87,6 @@ fn qq_message(
     data: &Value,
     target: mutsuki_bot_protocol::BotTarget,
     actor: Option<BotUser>,
-    sequence: Option<u64>,
 ) -> Option<BotMessage> {
     if !matches!(
         event_type,
@@ -110,7 +109,10 @@ fn qq_message(
             .and_then(|reference| reference.get("message_id"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        time_ms: sequence.map(|value| value as i64),
+        time_ms: data
+            .get("timestamp")
+            .or_else(|| data.get("time_ms"))
+            .and_then(Value::as_i64),
         ext: BotExtMap::new(),
     })
 }

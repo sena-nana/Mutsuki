@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotMessage, QQBOT_RAW_CALL_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
+    QQBOT_RAW_CALL_PROTOCOL_ID,
 };
 use mutsuki_runtime_contracts::{
     ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
@@ -12,12 +13,11 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult}
 use serde_json::{Value, json};
 
 use crate::adapter::{
-    bot_message_to_qq_send as map_bot_message_to_qq_send, qq_gateway_frame_to_bot_event,
-    redact_json,
+    bot_media_upload_to_qq_upload, bot_message_to_qq_send as map_bot_message_to_qq_send,
+    bot_recall_to_qq_recall, qq_gateway_frame_to_bot_event, redact_json,
 };
 use crate::api::{
-    MediaUploadPayload, QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService, RawCallPayload,
-    RecallMessagePayload, parse_payload,
+    QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService, RawCallPayload, parse_payload,
 };
 use crate::config::QqBotConfig;
 use crate::gateway::GatewayFrame;
@@ -119,18 +119,26 @@ impl Runner for QqOpenApiRunner {
                         ctx.current_step,
                     )
                 }
-                BOT_MEDIA_UPLOAD_PROTOCOL_ID => self.service.upload_media(
-                    parse_payload::<MediaUploadPayload>(task.payload.clone()).map_err(|error| {
-                        failure("mutsuki.bot.media.upload.payload.qqbot", error)
-                    })?,
-                    ctx.current_step,
-                ),
-                BOT_MESSAGE_RECALL_PROTOCOL_ID => self.service.recall_message(
-                    parse_payload::<RecallMessagePayload>(task.payload.clone()).map_err(
-                        |error| failure("mutsuki.bot.message.recall.payload.qqbot", error),
-                    )?,
-                    ctx.current_step,
-                ),
+                BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
+                    let request: BotMediaUploadRequest = parse_payload(task.payload.clone())
+                        .map_err(|error| failure("mutsuki.bot.media.upload.payload", error))?;
+                    self.service.upload_media(
+                        bot_media_upload_to_qq_upload(request).map_err(|error| {
+                            failure("mutsuki.bot.media.upload.map.qqbot", error)
+                        })?,
+                        ctx.current_step,
+                    )
+                }
+                BOT_MESSAGE_RECALL_PROTOCOL_ID => {
+                    let request: BotMessageRecallRequest = parse_payload(task.payload.clone())
+                        .map_err(|error| failure("mutsuki.bot.message.recall.payload", error))?;
+                    self.service.recall_message(
+                        bot_recall_to_qq_recall(request).map_err(|error| {
+                            failure("mutsuki.bot.message.recall.map.qqbot", error)
+                        })?,
+                        ctx.current_step,
+                    )
+                }
                 QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
                     parse_payload::<RawCallPayload>(task.payload.clone())
                         .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,

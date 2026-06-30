@@ -1,6 +1,4 @@
-use mutsuki_bot_protocol::BotEvent;
-
-use crate::BotEventSubscription;
+use mutsuki_bot_protocol::{BotEvent, BotEventSubscription};
 
 pub fn matches_subscription(event: &BotEvent, subscription: &BotEventSubscription) -> bool {
     if let Some(platform) = &subscription.platform
