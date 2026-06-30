@@ -17,7 +17,7 @@ fn deprecated_surface_blocks_new_task_occupancy() {
 
     let mut task = Task::new("deprecated-1", "sim.work", json!({}));
     task.required_surfaces = vec!["runner:orchestrator".into()];
-    runtime.enqueue_task(task);
+    runtime.enqueue_task(task).unwrap();
 
     let record = runtime.tasks().get("deprecated-1").unwrap();
     assert_eq!(record.status, TaskStatus::Failed);
@@ -29,7 +29,9 @@ fn removed_task_protocol_surface_uses_live_task_pool_occupancy() {
     let plan = load_plan(Vec::new(), Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!();
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
-    runtime.enqueue_task(Task::new("ready-work", "sim.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("ready-work", "sim.work", json!({})))
+        .unwrap();
 
     let mut with_surface = plan.clone();
     with_surface.contract_surfaces.push(ContractSurface {
@@ -62,7 +64,9 @@ fn removed_effect_surface_uses_live_effect_inflight_occupancy() {
         ContractSurfaceKind::Effect,
     ));
     let mut runtime = boot_with_kernel(plan.clone());
-    runtime.enqueue_task(Task::new("ready-effect", "effect.chat.send", json!({})));
+    runtime
+        .enqueue_task(Task::new("ready-effect", "effect.chat.send", json!({})))
+        .unwrap();
 
     let removed = remove_surfaces(plan, &["effect:effect.chat.send"]);
 
@@ -95,11 +99,13 @@ fn deprecated_effect_surface_rejects_new_effect_tasks() {
         .deprecated = true;
     runtime.reload(deprecated).unwrap();
 
-    runtime.enqueue_task(Task::new(
-        "deprecated-effect",
-        "effect.chat.send",
-        json!({}),
-    ));
+    runtime
+        .enqueue_task(Task::new(
+            "deprecated-effect",
+            "effect.chat.send",
+            json!({}),
+        ))
+        .unwrap();
 
     let record = runtime.tasks().get("deprecated-effect").unwrap();
     assert_eq!(record.status, TaskStatus::Failed);
@@ -376,7 +382,9 @@ fn waiting_task_blocks_removed_task_protocol_surface() {
         await_child_result(task, Task::new("child-1", "child.work", json!({})))
     }));
     let mut runtime = CoreRuntime::boot(plan.clone(), runners).unwrap();
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
 
     let removed = remove_surfaces(plan, &["task_protocol:parent.work"]);

@@ -250,4 +250,52 @@ impl CoreRuntime {
         }
         Ok(woken)
     }
+
+    pub(crate) fn wake_due_tasks(&mut self) -> usize {
+        let due_tasks = self.tasks.wake_due_tasks(self.current_step);
+        for (task_id, ready_at_step) in &due_tasks {
+            self.events.record(
+                RuntimeEventKind::Task,
+                "task.wake",
+                Some(task_id.clone()),
+                BTreeMap::from([
+                    ("reason".into(), ScalarValue::String("ready_at_step".into())),
+                    (
+                        "ready_at_step".into(),
+                        ScalarValue::Int(*ready_at_step as i64),
+                    ),
+                ]),
+                None,
+            );
+        }
+        due_tasks.len()
+    }
+
+    pub(crate) fn reject_stale_ready_tasks(&mut self) -> RuntimeResult<usize> {
+        let stale_tasks: Vec<_> = self
+            .tasks
+            .records()
+            .into_iter()
+            .filter(|record| {
+                record.status == TaskStatus::Ready && !record.task.expected_versions.is_empty()
+            })
+            .filter_map(|record| {
+                self.states
+                    .validate_expectations(
+                        &record.task.expected_versions,
+                        format!("task.precondition.{}", record.task.task_id),
+                    )
+                    .err()
+                    .map(|failure| (record.task.task_id.clone(), failure.error().clone()))
+            })
+            .collect();
+        let mut rejected = 0;
+        for (task_id, failure) in stale_tasks {
+            self.tasks.reject_ready(&task_id, failure.clone())?;
+            self.record_task_terminal_event(&task_id, "task.failed", Some(failure));
+            self.wake_tasks_waiting_on(&task_id)?;
+            rejected += 1;
+        }
+        Ok(rejected)
+    }
 }

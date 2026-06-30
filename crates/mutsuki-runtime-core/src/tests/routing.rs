@@ -6,6 +6,34 @@ use serde_json::json;
 use crate::*;
 
 use super::fixtures::*;
+
+struct ResultListRunner {
+    descriptor: RunnerDescriptor,
+    results: Box<dyn Fn(&[Task]) -> Vec<RunnerResult> + Send>,
+}
+
+impl ResultListRunner {
+    fn new(
+        descriptor: RunnerDescriptor,
+        results: impl Fn(&[Task]) -> Vec<RunnerResult> + Send + 'static,
+    ) -> Self {
+        Self {
+            descriptor,
+            results: Box::new(results),
+        }
+    }
+}
+
+impl Runner for ResultListRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
+        Ok((self.results)(&tasks))
+    }
+}
+
 #[test]
 fn pure_runner_explicitly_enqueues_derived_tasks() {
     let orchestrator = runner_descriptor("orchestrator", "raw.input.chat", RunnerPurity::Pure);
@@ -26,7 +54,9 @@ fn pure_runner_explicitly_enqueues_derived_tasks() {
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
-    runtime.publish_raw_input("raw-1", "raw.input.chat", json!({"text": "hello"}));
+    runtime
+        .publish_raw_input("raw-1", "raw.input.chat", json!({"text": "hello"}))
+        .unwrap();
     let report = runtime.tick_once().unwrap();
 
     assert_eq!(report.completed_tasks, 1);
@@ -64,12 +94,113 @@ fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
         result
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("task-1", "sim.behavior.evaluate", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.behavior.evaluate", json!({})))
+        .unwrap();
 
     runtime.tick_once().unwrap();
 
     assert!(runtime.tasks().get("task-1:commit").is_some());
     assert!(runtime.tasks().get("task-1:effect:send-1").is_some());
+}
+
+#[test]
+fn effect_preconditions_are_checked_before_effect_runner_step() {
+    let worker = runner_descriptor("worker", "sim.effect.produce", RunnerPurity::Pure);
+    let effect_runner =
+        runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    let plan = load_plan(vec![worker.clone(), effect_runner.clone()], Vec::new());
+    let effect_calls = Arc::new(Mutex::new(0));
+    let observed_effect_calls = effect_calls.clone();
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(
+        boxed_runner!(worker, |task| {
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.effects.push(EffectRequest {
+                effect_id: "send-1".into(),
+                kind: "effect.chat.send".into(),
+                payload: json!({}),
+                preconditions: vec![EffectPrecondition {
+                    ref_id: "state:actor".into(),
+                    expected_version: 0,
+                }],
+                idempotency_key: None,
+            });
+            result
+        }),
+        boxed_runner!(effect_runner, move |task| {
+            *observed_effect_calls
+                .lock()
+                .expect("effect calls mutex poisoned") += 1;
+            RunnerResult::completed(task.task_id.clone())
+        })
+    );
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .submit_task(Task::new(
+            "commit-1",
+            "core.commit",
+            serde_json::to_value(StateDelta {
+                target_ref: "state:actor".into(),
+                expected_version: 0,
+                patch: json!({"version": 1}),
+                conflict_policy: ConflictPolicy::Fail,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+    runtime.tick_once().unwrap();
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.effect.produce", json!({})))
+        .unwrap();
+    runtime.tick_once().unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(
+        runtime.task_status("task-1:effect:send-1"),
+        Some(TaskStatus::Failed)
+    );
+    assert_eq!(
+        *effect_calls.lock().expect("effect calls mutex poisoned"),
+        0
+    );
+}
+
+#[test]
+fn effectful_runner_cannot_return_core_derivations() {
+    let effect_runner =
+        runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
+    let plan = load_plan(vec![effect_runner.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(boxed_runner!(effect_runner, |task| {
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.deltas.push(StateDelta {
+                target_ref: "state:actor".into(),
+                expected_version: 0,
+                patch: json!({"leaked": true}),
+                conflict_policy: ConflictPolicy::Fail,
+            });
+            result.effects.push(EffectRequest {
+                effect_id: "nested".into(),
+                kind: "effect.chat.send".into(),
+                payload: json!({"nested": true}),
+                preconditions: Vec::new(),
+                idempotency_key: None,
+            });
+            result
+        }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("effect-1", "effect.chat.send", json!({})))
+        .unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_RUNNER_PURITY_VIOLATION);
+    assert!(runtime.tasks().get("effect-1:commit").is_none());
+    assert!(runtime.tasks().get("effect-1:effect:nested").is_none());
+    assert!(runtime.state_value("state:actor").is_none());
 }
 
 #[test]
@@ -118,7 +249,9 @@ fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
         result
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("task-refs", "sim.resource.produce", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-refs", "sim.resource.produce", json!({})))
+        .unwrap();
 
     runtime.tick_once().unwrap();
 
@@ -141,11 +274,13 @@ fn committer_task_is_the_only_state_store_mutation_path() {
         patch: json!({"ok": true}),
         conflict_policy: ConflictPolicy::Fail,
     };
-    runtime.enqueue_task(Task::new(
-        "commit-1",
-        "core.commit",
-        serde_json::to_value(delta).unwrap(),
-    ));
+    runtime
+        .enqueue_task(Task::new(
+            "commit-1",
+            "core.commit",
+            serde_json::to_value(delta).unwrap(),
+        ))
+        .unwrap();
 
     runtime.tick_once().unwrap();
 
@@ -156,12 +291,101 @@ fn committer_task_is_the_only_state_store_mutation_path() {
 }
 
 #[test]
+fn stale_task_version_expectation_fails_before_runner_step() {
+    let worker = runner_descriptor("worker", "sim.versioned", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let calls = Arc::new(Mutex::new(0));
+    let observed_calls = calls.clone();
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, move |task| {
+        *observed_calls.lock().expect("calls mutex poisoned") += 1;
+        RunnerResult::completed(task.task_id.clone())
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .submit_task(Task::new(
+            "commit-1",
+            "core.commit",
+            serde_json::to_value(StateDelta {
+                target_ref: "state:actor".into(),
+                expected_version: 0,
+                patch: json!({"version": 1}),
+                conflict_policy: ConflictPolicy::Fail,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+    runtime.tick_once().unwrap();
+    let mut stale = Task::new("stale-1", "sim.versioned", json!({}));
+    stale.expected_versions.push(VersionExpectation {
+        ref_id: "state:actor".into(),
+        expected_version: 0,
+    });
+    runtime.submit_task(stale).unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("stale-1"), Some(TaskStatus::Failed));
+    let outcome = runtime.task_outcome("stale-1").unwrap().unwrap();
+    assert!(matches!(
+        outcome,
+        TaskOutcome::Failed { error, .. } if error.code == ERR_STATE_CONFLICT
+    ));
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 0);
+}
+
+#[test]
+fn stale_child_task_version_expectation_wakes_waiting_parent() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(parent, |task| {
+        if task.continuation_ref.is_some() {
+            return RunnerResult::completed(task.task_id.clone());
+        }
+        let mut child = Task::new("child-1", "child.work", json!({}));
+        child.expected_versions.push(VersionExpectation {
+            ref_id: "state:actor".into(),
+            expected_version: 0,
+        });
+        await_child_result(task, child)
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .submit_task(Task::new(
+            "commit-1",
+            "core.commit",
+            serde_json::to_value(StateDelta {
+                target_ref: "state:actor".into(),
+                expected_version: 0,
+                patch: json!({"version": 1}),
+                conflict_policy: ConflictPolicy::Fail,
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+    runtime.tick_once().unwrap();
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
+    runtime.tick_once().unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 2);
+    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Failed));
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Completed));
+}
+
+#[test]
 fn runner_trace_records_plugin_generation_and_contract_facts() {
     let worker = runner_descriptor("worker", "sim.trace", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("trace-task", "sim.trace", json!({})));
+    let mut task = Task::new("trace-task", "sim.trace", json!({}));
+    task.trace_id = Some("trace:task-1".into());
+    task.correlation_id = Some("correlation:task-1".into());
+    runtime.enqueue_task(task).unwrap();
 
     runtime.tick_once().unwrap();
 
@@ -180,6 +404,23 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
     assert_eq!(
         span.attributes.get("plugin_generation"),
         Some(&ScalarValue::Int(1))
+    );
+    assert_eq!(span.trace_id, "trace:task-1");
+    assert_eq!(
+        span.attributes.get("task_id"),
+        Some(&ScalarValue::String("trace-task".into()))
+    );
+    assert_eq!(
+        span.attributes.get("task_lease_id"),
+        Some(&ScalarValue::String("task-lease-1-trace-task".into()))
+    );
+    assert_eq!(
+        span.attributes.get("correlation_id"),
+        Some(&ScalarValue::String("correlation:task-1".into()))
+    );
+    assert_eq!(
+        span.attributes.get("executor_id"),
+        Some(&ScalarValue::String("executor:worker".into()))
     );
     assert!(span.attributes.contains_key("artifact_hash"));
     assert!(span.attributes.contains_key("descriptor_hash"));
@@ -211,7 +452,9 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
     );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
 
     let parent_record = runtime.tasks().get("parent-1").unwrap();
@@ -241,9 +484,61 @@ fn waiting_task_is_woken_when_child_reaches_terminal_state() {
 }
 
 #[test]
+fn waiting_task_with_timer_wake_resumes_at_ready_step() {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone()], Vec::new());
+    let parent_calls = Arc::new(Mutex::new(0));
+    let observed_parent_calls = parent_calls.clone();
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(parent, move |task| {
+        let mut calls = observed_parent_calls
+            .lock()
+            .expect("parent calls mutex poisoned");
+        *calls += 1;
+        if task.continuation_ref.is_some() {
+            return RunnerResult::completed(task.task_id.clone());
+        }
+        await_child_result_with_wake(
+            task,
+            Task::new("child-1", "child.work", json!({})),
+            WakeCondition::Timer { ready_at_step: 3 },
+        )
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
+    runtime.tick_once().unwrap();
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
+
+    runtime.tick_once().unwrap();
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Completed));
+    assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Ready));
+    assert_eq!(
+        *parent_calls.lock().expect("parent calls mutex poisoned"),
+        2
+    );
+    assert!(runtime.task_events("parent-1").iter().any(|event| {
+        event.name == "task.wake"
+            && event.attributes.get("reason") == Some(&ScalarValue::String("ready_at_step".into()))
+    }));
+}
+
+#[test]
 fn waiting_task_is_woken_when_child_fails_or_is_cancelled() {
     run_child_terminal_wake_case(RunnerStatus::Failed, TaskStatus::Failed);
     run_child_terminal_wake_case(RunnerStatus::Cancelled, TaskStatus::Cancelled);
+}
+
+#[test]
+fn waiting_task_is_woken_when_child_expires_or_dead_letters() {
+    run_child_core_terminal_wake_case(TaskStatus::Expired);
+    run_child_core_terminal_wake_case(TaskStatus::DeadLetter);
 }
 
 #[test]
@@ -259,7 +554,9 @@ fn cancelling_waiting_parent_cascades_to_child() {
         completed_runner!(child)
     );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
 
     runtime.cancel_task("parent-1").unwrap();
@@ -282,7 +579,9 @@ fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
             completed_runner!(child)
         );
         let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-        runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+        runtime
+            .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+            .unwrap();
         runtime.tick_once().unwrap();
         runtime
     }
@@ -312,7 +611,9 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
     let _lease = runtime
         .lock_resource(&resource.ref_id, "parent-1", None)
         .unwrap();
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
 
     let error = runtime.tick_once().unwrap_err();
 
@@ -321,7 +622,7 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
 }
 
 #[test]
-fn stale_runner_result_is_rejected_before_derived_tasks_are_enqueued() {
+fn unknown_runner_result_fails_leased_task_before_derived_tasks_are_enqueued() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |_task| {
@@ -332,12 +633,248 @@ fn stale_runner_result_is_rejected_before_derived_tasks_are_enqueued() {
         result
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("derived-task").is_none());
+}
+
+#[test]
+fn duplicate_derived_task_id_is_rejected_without_overwriting_existing_task() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result
+            .tasks
+            .push(Task::new("child-1", "child.work", json!({"new": true})));
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new(
+            "child-1",
+            "child.work",
+            json!({"existing": true}),
+        ))
+        .unwrap();
+    runtime
+        .enqueue_task(Task::new("parent-1", "sim.work", json!({})))
+        .unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_DUPLICATE);
+    assert_eq!(
+        runtime.tasks().get("child-1").unwrap().task.payload,
+        json!({"existing": true})
+    );
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Running));
+}
+
+#[test]
+fn duplicate_output_task_id_rejects_result_before_partial_routing() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.values.push(ValueRef {
+            ref_id: "value:partial".into(),
+            provider_id: "resource.local".into(),
+            schema: "value.small.v1".into(),
+            version: 1,
+            generation: 1,
+            size_hint: Some(12),
+            content_hash: Some("hash:partial".into()),
+            lifetime: ResourceLifetime::Persistent,
+            storage: ValueStorage::LocalValueStore,
+        });
+        result
+            .tasks
+            .push(Task::new("child-new", "child.work", json!({"new": true})));
+        result.tasks.push(Task::new(
+            "child-existing",
+            "child.work",
+            json!({"replacement": true}),
+        ));
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new(
+            "child-existing",
+            "child.work",
+            json!({"existing": true}),
+        ))
+        .unwrap();
+    runtime
+        .enqueue_task(Task::new("parent-1", "sim.work", json!({})))
+        .unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_DUPLICATE);
+    assert!(runtime.tasks().get("child-new").is_none());
+    assert_eq!(
+        runtime.tasks().get("child-existing").unwrap().task.payload,
+        json!({"existing": true})
+    );
+    assert!(
+        !runtime
+            .events()
+            .iter()
+            .any(|event| event.kind == RuntimeEventKind::Resource && event.name == "value.lineage")
+    );
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Running));
+}
+
+#[test]
+fn runner_dispatch_missing_result_fails_leased_task_without_retry() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let calls = Arc::new(Mutex::new(0));
+    let observed_calls = calls.clone();
+    let runners: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(Box::new(ResultListRunner::new(worker, move |_tasks| {
+            *observed_calls.lock().expect("calls mutex poisoned") += 1;
+            Vec::new()
+        },)) as Box<dyn Runner>);
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+
+    let report = runtime.tick_once().unwrap();
+    assert_eq!(report.completed_tasks, 0);
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 1);
+}
+
+#[test]
+fn duplicate_runner_results_fail_before_partial_routing() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(Box::new(ResultListRunner::new(worker, |tasks| {
+            let task = tasks.first().expect("runner should receive a task");
+            let mut first = RunnerResult::completed(task.task_id.clone());
+            first
+                .tasks
+                .push(Task::new("child-duplicate-result", "child.work", json!({})));
+            first.values.push(ValueRef {
+                ref_id: "value:duplicate-result".into(),
+                provider_id: "resource.local".into(),
+                schema: "value.small.v1".into(),
+                version: 1,
+                generation: 1,
+                size_hint: None,
+                content_hash: None,
+                lifetime: ResourceLifetime::Persistent,
+                storage: ValueStorage::LocalValueStore,
+            });
+            let second = RunnerResult::completed(task.task_id.clone());
+            vec![first, second]
+        },)) as Box<dyn Runner>);
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("child-duplicate-result").is_none());
+    assert!(
+        !runtime
+            .events()
+            .iter()
+            .any(|event| event.kind == RuntimeEventKind::Resource && event.name == "value.lineage")
+    );
+}
+
+#[test]
+fn task_await_requires_waiting_status_before_child_task_is_enqueued() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let child = Task::new("child-1", "child.work", json!({}));
+        let mut result = await_child_result(task, child);
+        result.status = RunnerStatus::Completed;
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
 
     let error = runtime.tick_once().unwrap_err();
 
     assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
-    assert!(runtime.tasks().get("derived-task").is_none());
+    assert!(runtime.tasks().get("child-1").is_none());
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Running));
+}
+
+#[test]
+fn task_await_requires_child_task_record_before_parent_waits() {
+    let worker = runner_descriptor("worker", "parent.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = runner_result_with_status(task, RunnerStatus::Waiting);
+        result.task_await = Some(TaskAwait {
+            parent_task_id: task.task_id.clone(),
+            child: TaskHandle {
+                task_id: "child-missing".into(),
+                protocol_id: "child.work".into(),
+                target_binding_id: None,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: task.trace_id.clone(),
+                correlation_id: task.correlation_id.clone(),
+            },
+            continuation: test_continuation("continuation:parent"),
+            cancel_policy: CancelPolicy::Cascade,
+        });
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_NOT_FOUND);
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Running));
+}
+
+#[test]
+fn task_await_requires_child_task_to_inherit_parent_context() {
+    let worker = runner_descriptor("worker", "parent.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let child = Task::new("child-1", "child.work", json!({}));
+        await_child_result(task, child)
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    let mut parent = Task::new("parent-1", "parent.work", json!({}));
+    parent.trace_id = Some("trace-1".into());
+    parent.correlation_id = Some("corr-1".into());
+    runtime.enqueue_task(parent).unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("child-1").is_none());
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Running));
 }
 
 #[test]
@@ -355,7 +892,9 @@ fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
         RunnerResult::completed(task.task_id.clone())
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
 
     let report = runtime.tick_once().unwrap();
     assert_eq!(report.completed_tasks, 0);
@@ -365,6 +904,46 @@ fn continue_result_keeps_task_running_until_lease_expiry_reclaims_it() {
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
     assert_eq!(*calls.lock().expect("calls mutex poisoned"), 2);
+}
+
+#[test]
+fn continue_result_rejects_outputs_before_partial_routing() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = runner_result_with_status(task, RunnerStatus::Continue);
+        result
+            .tasks
+            .push(Task::new("child-continue", "child.work", json!({})));
+        result.values.push(ValueRef {
+            ref_id: "value:continue".into(),
+            provider_id: "resource.local".into(),
+            schema: "value.small.v1".into(),
+            version: 1,
+            generation: 1,
+            size_hint: None,
+            content_hash: None,
+            lifetime: ResourceLifetime::Persistent,
+            storage: ValueStorage::LocalValueStore,
+        });
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
+
+    let error = runtime.tick_once().unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("child-continue").is_none());
+    assert!(
+        !runtime
+            .events()
+            .iter()
+            .any(|event| event.kind == RuntimeEventKind::Resource && event.name == "value.lineage")
+    );
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Running));
 }
 
 #[test]
@@ -411,7 +990,9 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
         kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.enqueue_task(Task::new("task-1", "sim.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-1", "sim.work", json!({})))
+        .unwrap();
 
     let error = runtime.tick_once().unwrap_err();
     assert_eq!(error.error().code, "runner.step_failed");
@@ -464,6 +1045,27 @@ fn task_handle_facade_exposes_status_result_cancel_and_events() {
     );
 }
 
+#[test]
+fn core_kernel_fails_unknown_core_task() {
+    let kernel = runner_descriptor("core.kernel", "core.unknown", RunnerPurity::Committer);
+    let plan = load_plan(vec![kernel.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = vec![completed_runner!(kernel)];
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .enqueue_task(Task::new("core-unknown", "core.unknown", json!({})))
+        .unwrap();
+
+    let report = runtime.tick_once().unwrap();
+
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(
+        runtime.task_status("core-unknown"),
+        Some(TaskStatus::Failed)
+    );
+    let outcome = runtime.task_outcome("core-unknown").unwrap().unwrap();
+    assert!(matches!(outcome, TaskOutcome::Failed { .. }));
+}
+
 fn run_child_terminal_wake_case(
     child_runner_status: RunnerStatus,
     expected_child_status: TaskStatus,
@@ -485,7 +1087,9 @@ fn run_child_terminal_wake_case(
     );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
-    runtime.enqueue_task(Task::new("parent-1", "parent.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
     runtime.tick_once().unwrap();
 
@@ -499,8 +1103,49 @@ fn run_child_terminal_wake_case(
     );
 }
 
+fn run_child_core_terminal_wake_case(child_status: TaskStatus) {
+    let parent = runner_descriptor("parent.runner", "parent.work", RunnerPurity::Pure);
+    let child = runner_descriptor("child.runner", "child.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![parent.clone(), child], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(parent, |task| {
+        if task.continuation_ref.is_some() {
+            return RunnerResult::completed(task.task_id.clone());
+        }
+        let child_task = Task::new("child-1", "child.work", json!({}));
+        await_child_result(task, child_task)
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+
+    runtime
+        .enqueue_task(Task::new("parent-1", "parent.work", json!({})))
+        .unwrap();
+    runtime.tick_once().unwrap();
+    match child_status {
+        TaskStatus::Expired => runtime.expire_task("child-1", "deadline").unwrap(),
+        TaskStatus::DeadLetter => runtime.dead_letter_task("child-1", "retries").unwrap(),
+        _ => unreachable!("test only covers core terminal states"),
+    }
+    runtime.tick_once().unwrap();
+
+    assert_eq!(runtime.task_status("child-1"), Some(child_status.clone()));
+    assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Completed));
+    match runtime.task_outcome("child-1").unwrap().unwrap() {
+        TaskOutcome::Expired { .. } => assert_eq!(child_status, TaskStatus::Expired),
+        TaskOutcome::DeadLetter { .. } => assert_eq!(child_status, TaskStatus::DeadLetter),
+        other => panic!("unexpected child outcome: {other:?}"),
+    }
+}
+
 fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
     await_child_result_with_policy(parent, child, CancelPolicy::Cascade)
+}
+
+fn await_child_result_with_wake(parent: &Task, child: Task, wake: WakeCondition) -> RunnerResult {
+    let mut result = await_child_result_with_policy(parent, child, CancelPolicy::Cascade);
+    if let Some(task_await) = &mut result.task_await {
+        task_await.continuation.wake = Some(wake);
+    }
+    result
 }
 
 fn await_child_result_with_policy(
@@ -539,6 +1184,14 @@ fn runner_result_with_status(task: &Task, status: RunnerStatus) -> RunnerResult 
         task_await: None,
         status,
     }
+}
+
+fn assert_failed_with_code(runtime: &CoreRuntime, task_id: &str, code: &str) {
+    assert_eq!(runtime.task_status(task_id), Some(TaskStatus::Failed));
+    let Some(TaskOutcome::Failed { error, .. }) = runtime.task_outcome(task_id).unwrap() else {
+        panic!("{task_id} should have failed");
+    };
+    assert_eq!(error.code, code);
 }
 
 fn test_continuation(ref_id: &str) -> TaskStepContinuation {

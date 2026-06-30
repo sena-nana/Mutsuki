@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
-    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId,
-    RunnerPurity, RuntimeError, ScalarValue, SurfaceOccupancy, Task, TaskAwait, TaskId, TaskLease,
-    TaskStatus, WakeCondition,
+    ERR_TASK_CLAIM_CONFLICT, ERR_TASK_DUPLICATE, ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor,
+    RunnerId, RunnerPurity, RuntimeError, ScalarValue, SurfaceOccupancy, Task, TaskAwait, TaskId,
+    TaskLease, TaskStatus, WakeCondition,
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
@@ -37,12 +37,19 @@ pub struct TaskPool {
 }
 
 impl TaskPool {
-    pub fn enqueue(&mut self, mut task: Task) -> TaskId {
+    pub fn enqueue(&mut self, mut task: Task) -> RuntimeResult<TaskId> {
+        let task_id = task.task_id.clone();
+        if self.tasks.contains_key(&task_id) {
+            return Err(crate::runtime_failure(
+                ERR_TASK_DUPLICATE,
+                "runtime.task_pool",
+                format!("task.enqueue.{task_id}"),
+            ));
+        }
         self.next_sequence += 1;
         if task.created_sequence == 0 {
             task.created_sequence = self.next_sequence;
         }
-        let task_id = task.task_id.clone();
         self.tasks.insert(
             task_id.clone(),
             TaskRecord {
@@ -54,7 +61,7 @@ impl TaskPool {
                 failure: None,
             },
         );
-        task_id
+        Ok(task_id)
     }
 
     pub fn get(&self, task_id: &str) -> Option<&TaskRecord> {
@@ -242,9 +249,7 @@ impl TaskPool {
 
     pub fn complete(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
         let record = self.leased_record_mut(lease, current_step, "complete")?;
-        record.status = TaskStatus::Completed;
-        release_record_lease(record);
-        clear_record_owner(record);
+        mark_terminal_record(record, TaskStatus::Completed, None);
         Ok(())
     }
 
@@ -255,10 +260,7 @@ impl TaskPool {
         failure: RuntimeError,
     ) -> RuntimeResult<()> {
         let record = self.leased_record_mut(lease, current_step, "fail")?;
-        record.status = TaskStatus::Failed;
-        release_record_lease(record);
-        clear_record_owner(record);
-        record.failure = Some(failure);
+        mark_terminal_record(record, TaskStatus::Failed, Some(failure));
         Ok(())
     }
 
@@ -287,6 +289,12 @@ impl TaskPool {
                 "runtime.task_pool",
                 format!("task.await.parent.{}", lease.task_id),
             ));
+        }
+        {
+            let parent_record = self.record(&lease.task_id)?;
+            validate_record_lease(parent_record, lease, current_step, "wait")?;
+            let child_record = self.record(&task_await.child.task_id)?;
+            validate_task_await_child(parent_record, child_record, &task_await)?;
         }
         let ready_at_step = ready_step_for_wait(&task_await);
         let record = self.leased_record_mut(lease, current_step, "wait")?;
@@ -327,6 +335,31 @@ impl TaskPool {
         Ok(())
     }
 
+    pub fn wake_due_tasks(&mut self, current_step: u64) -> Vec<(TaskId, u64)> {
+        let due_tasks: Vec<_> = self
+            .tasks
+            .values()
+            .filter_map(|record| {
+                let ready_at_step = record.task.ready_at_step?;
+                if matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked)
+                    && ready_at_step <= current_step
+                {
+                    Some((record.task.task_id.clone(), ready_at_step))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (task_id, _) in &due_tasks {
+            if let Some(record) = self.tasks.get_mut(task_id) {
+                record.status = TaskStatus::Ready;
+                release_record_lease(record);
+            }
+            self.remove_waits_for_parent(task_id);
+        }
+        due_tasks
+    }
+
     pub fn reject_ready(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
         if record.status != TaskStatus::Ready {
@@ -365,28 +398,48 @@ impl TaskPool {
 
     pub fn cancel_task(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
         let record = self.leased_record_mut(lease, current_step, "cancel")?;
-        record.status = TaskStatus::Cancelled;
-        release_record_lease(record);
-        clear_record_owner(record);
+        mark_terminal_record(record, TaskStatus::Cancelled, None);
         self.remove_waits_for_parent(&lease.task_id);
         Ok(())
     }
 
     pub fn cancel_by_core(&mut self, task_id: &str) -> RuntimeResult<()> {
+        self.terminal_by_core(task_id, TaskStatus::Cancelled, None, "cancel")
+    }
+
+    pub fn expire_by_core(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
+        self.terminal_by_core(task_id, TaskStatus::Expired, Some(failure), "expire")
+    }
+
+    pub fn dead_letter_by_core(
+        &mut self,
+        task_id: &str,
+        failure: RuntimeError,
+    ) -> RuntimeResult<()> {
+        self.terminal_by_core(
+            task_id,
+            TaskStatus::DeadLetter,
+            Some(failure),
+            "dead_letter",
+        )
+    }
+
+    fn terminal_by_core(
+        &mut self,
+        task_id: &str,
+        status: TaskStatus,
+        failure: Option<RuntimeError>,
+        action: &str,
+    ) -> RuntimeResult<()> {
         let record = self.record_mut(task_id)?;
-        if matches!(
-            record.status,
-            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-        ) {
+        if is_terminal_status(&record.status) {
             return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
                 "runtime.task_pool",
-                format!("task.cancel.{task_id}"),
+                format!("task.{action}.{task_id}"),
             ));
         }
-        record.status = TaskStatus::Cancelled;
-        release_record_lease(record);
-        clear_record_owner(record);
+        mark_terminal_record(record, status, failure);
         self.remove_waits_for_parent(task_id);
         Ok(())
     }
@@ -556,6 +609,57 @@ fn release_record_lease(record: &mut TaskRecord) {
 
 fn clear_record_owner(record: &mut TaskRecord) {
     record.owner_runner = None;
+}
+
+fn mark_terminal_record(
+    record: &mut TaskRecord,
+    status: TaskStatus,
+    failure: Option<RuntimeError>,
+) {
+    record.status = status;
+    release_record_lease(record);
+    clear_record_owner(record);
+    record.failure = failure;
+}
+
+fn is_terminal_status(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Completed
+            | TaskStatus::Failed
+            | TaskStatus::Cancelled
+            | TaskStatus::Expired
+            | TaskStatus::DeadLetter
+    )
+}
+
+fn validate_task_await_child(
+    parent_record: &TaskRecord,
+    child_record: &TaskRecord,
+    task_await: &TaskAwait,
+) -> RuntimeResult<()> {
+    if is_terminal_status(&child_record.status) {
+        return Err(crate::runtime_failure(
+            ERR_TASK_CLAIM_CONFLICT,
+            "runtime.task_pool",
+            format!("task.await.child_terminal.{}", task_await.child.task_id),
+        ));
+    }
+    let child = &task_await.child;
+    let child_matches_handle = child.protocol_id == child_record.task.protocol_id
+        && child.target_binding_id == child_record.task.target_binding_id
+        && child.trace_id == child_record.task.trace_id
+        && child.correlation_id == child_record.task.correlation_id;
+    let child_inherits_parent_context = child_record.task.trace_id == parent_record.task.trace_id
+        && child_record.task.correlation_id == parent_record.task.correlation_id;
+    if child_matches_handle && child_inherits_parent_context {
+        return Ok(());
+    }
+    Err(crate::runtime_failure(
+        ERR_TASK_CLAIM_CONFLICT,
+        "runtime.task_pool",
+        format!("task.await.child_descriptor.{}", task_await.parent_task_id),
+    ))
 }
 
 fn validate_record_lease(

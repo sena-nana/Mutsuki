@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
+use mutsuki_runtime_contracts::ScalarValue;
 use mutsuki_runtime_contracts::{
-    CancelPolicy, RuntimeEvent, RuntimeEventKind, Task, TaskHandle, TaskOutcome, TaskStatus,
+    CancelPolicy, ERR_TASK_DEAD_LETTER, ERR_TASK_EXPIRED, RuntimeEvent, RuntimeEventKind, Task,
+    TaskHandle, TaskOutcome, TaskStatus,
 };
 use serde_json::Value;
 
@@ -11,14 +13,14 @@ use crate::{RuntimeResult, TaskPool};
 use super::{CoreRuntime, TaskResultSnapshot};
 
 impl CoreRuntime {
-    pub fn enqueue_task(&mut self, mut task: Task) -> String {
+    pub fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
         }
         let deprecated_surface = surface_ids_for_task(&task)
             .into_iter()
             .find(|surface_id| self.is_surface_deprecated(surface_id));
-        let task_id = self.tasks.enqueue(task);
+        let task_id = self.tasks.enqueue(task)?;
         if let Some(surface_id) = deprecated_surface {
             let _ = self.tasks.reject_ready(
                 &task_id,
@@ -36,19 +38,24 @@ impl CoreRuntime {
             BTreeMap::new(),
             None,
         );
-        task_id
+        Ok(task_id)
     }
 
-    pub fn publish_raw_input(&mut self, task_id: &str, kind: &str, payload: Value) -> String {
+    pub fn publish_raw_input(
+        &mut self,
+        task_id: &str,
+        kind: &str,
+        payload: Value,
+    ) -> RuntimeResult<String> {
         self.enqueue_task(Task::new(task_id, kind, payload))
     }
 
-    pub fn submit_task(&mut self, task: Task) -> String {
+    pub fn submit_task(&mut self, task: Task) -> RuntimeResult<String> {
         self.enqueue_task(task)
     }
 
     pub fn submit_task_handle(&mut self, task: Task) -> RuntimeResult<TaskHandle> {
-        let task_id = self.enqueue_task(task);
+        let task_id = self.enqueue_task(task)?;
         self.task_handle(&task_id)
     }
 
@@ -73,7 +80,7 @@ impl CoreRuntime {
         let mut task = Task::new(task_id, &binding.target_protocol_id, payload);
         task.target_binding_id = Some(binding.binding_id.clone());
         task.runner_hint = binding.target_runner_hint.clone();
-        Ok(self.enqueue_task(task))
+        self.enqueue_task(task)
     }
 
     pub fn submit_targeted_task_handle(
@@ -223,6 +230,40 @@ impl CoreRuntime {
 
     pub fn cancel_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {
         self.cancel_task(&handle.task_id)
+    }
+
+    pub fn expire_task(&mut self, task_id: &str, reason: impl Into<String>) -> RuntimeResult<()> {
+        let mut failure = crate::runtime_error(
+            ERR_TASK_EXPIRED,
+            "runtime.task",
+            format!("task.expire.{task_id}"),
+        );
+        failure
+            .evidence
+            .insert("reason".into(), ScalarValue::String(reason.into()));
+        self.tasks.expire_by_core(task_id, failure.clone())?;
+        self.record_task_terminal_event(task_id, "task.expired", Some(failure));
+        self.wake_tasks_waiting_on(task_id)?;
+        Ok(())
+    }
+
+    pub fn dead_letter_task(
+        &mut self,
+        task_id: &str,
+        reason: impl Into<String>,
+    ) -> RuntimeResult<()> {
+        let mut failure = crate::runtime_error(
+            ERR_TASK_DEAD_LETTER,
+            "runtime.task",
+            format!("task.dead_letter.{task_id}"),
+        );
+        failure
+            .evidence
+            .insert("reason".into(), ScalarValue::String(reason.into()));
+        self.tasks.dead_letter_by_core(task_id, failure.clone())?;
+        self.record_task_terminal_event(task_id, "task.dead_lettered", Some(failure));
+        self.wake_tasks_waiting_on(task_id)?;
+        Ok(())
     }
 
     pub fn wake_task(&mut self, task_id: &str) -> RuntimeResult<()> {

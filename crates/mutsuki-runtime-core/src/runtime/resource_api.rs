@@ -209,7 +209,13 @@ impl CoreRuntime {
     }
 
     pub fn release_resource_lease(&mut self, lease: &ResourceLease) -> RuntimeResult<()> {
-        self.resources.release_resource_lease(lease)
+        self.resources
+            .release_resource_lease_at(lease, self.current_step)
+    }
+
+    pub fn reclaim_expired_resource_leases(&mut self) -> Vec<ResourceLease> {
+        self.resources
+            .reclaim_expired_resource_leases(self.current_step)
     }
 
     pub fn register_surface_occupancy(

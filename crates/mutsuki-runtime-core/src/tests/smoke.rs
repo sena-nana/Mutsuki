@@ -41,11 +41,13 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
     );
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
-    runtime.submit_task(Task::new(
-        "smoke-1",
-        "runtime.smoke.input",
-        json!({"input": true}),
-    ));
+    runtime
+        .submit_task(Task::new(
+            "smoke-1",
+            "runtime.smoke.input",
+            json!({"input": true}),
+        ))
+        .unwrap();
     runtime.run_until_idle(8).unwrap();
 
     assert_eq!(runtime.task_status("smoke-1"), Some(TaskStatus::Completed));

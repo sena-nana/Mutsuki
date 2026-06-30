@@ -11,7 +11,9 @@ fn claim_ready_dispatches_records_scheduler_decision_event_and_trace() {
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.submit_task(Task::new("schedule-1", "runtime.schedule.input", json!({})));
+    runtime
+        .submit_task(Task::new("schedule-1", "runtime.schedule.input", json!({})))
+        .unwrap();
 
     let (_report, _dispatches) = runtime
         .claim_ready_dispatches(

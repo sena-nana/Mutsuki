@@ -6,7 +6,7 @@ use mutsuki_runtime_contracts::{
 
 use crate::{IdSource, RuntimeResult};
 
-use super::{ResourceManager, simple_hash};
+use super::{ResourceCellEntry, ResourceManager, simple_hash};
 
 impl ResourceManager {
     pub fn create_resource_cell(
@@ -89,6 +89,22 @@ impl ResourceManager {
     }
 
     pub fn release_resource_lease(&mut self, lease: &ResourceLease) -> RuntimeResult<()> {
+        self.release_resource_lease_checked(lease, None)
+    }
+
+    pub fn release_resource_lease_at(
+        &mut self,
+        lease: &ResourceLease,
+        current_step: u64,
+    ) -> RuntimeResult<()> {
+        self.release_resource_lease_checked(lease, Some(current_step))
+    }
+
+    fn release_resource_lease_checked(
+        &mut self,
+        lease: &ResourceLease,
+        current_step: Option<u64>,
+    ) -> RuntimeResult<()> {
         let cell = self.resource_cells.get_mut(&lease.cell_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
@@ -96,6 +112,7 @@ impl ResourceManager {
                 format!("resource_cell.release.{}", lease.cell_id),
             )
         })?;
+        validate_resource_lease(cell, lease, current_step, "release")?;
         if cell.active_leases.remove(&lease.lease_id).is_none() {
             return Err(crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
@@ -104,6 +121,21 @@ impl ResourceManager {
             ));
         }
         Ok(())
+    }
+
+    pub fn reclaim_expired_resource_leases(&mut self, current_step: u64) -> Vec<ResourceLease> {
+        let mut reclaimed = Vec::new();
+        for cell in self.resource_cells.values_mut() {
+            cell.active_leases.retain(|_, lease| {
+                let expired = resource_lease_expired(lease, current_step);
+                if expired {
+                    reclaimed.push(lease.clone());
+                }
+                !expired
+            });
+        }
+        reclaimed.sort_by(|a, b| a.lease_id.cmp(&b.lease_id));
+        reclaimed
     }
 
     pub fn active_mutable_lease_routes_for_task(&self, task_id: &str) -> Vec<String> {
@@ -200,4 +232,40 @@ impl ResourceManager {
         entry.writer = None;
         Ok(entry.descriptor.clone())
     }
+}
+
+fn validate_resource_lease(
+    cell: &ResourceCellEntry,
+    lease: &ResourceLease,
+    current_step: Option<u64>,
+    action: &str,
+) -> RuntimeResult<()> {
+    let active = cell.active_leases.get(&lease.lease_id).ok_or_else(|| {
+        crate::runtime_failure(
+            ERR_RESOURCE_NOT_FOUND,
+            "runtime.resource_manager",
+            format!("resource_cell.{action}.{}", lease.lease_id),
+        )
+    })?;
+    if active != lease || lease.generation != cell.descriptor.generation {
+        return Err(crate::runtime_failure(
+            ERR_RESOURCE_GENERATION_MISMATCH,
+            "runtime.resource_manager",
+            format!("resource_cell.{action}.{}", lease.lease_id),
+        ));
+    }
+    if current_step.is_some_and(|step| resource_lease_expired(lease, step)) {
+        return Err(crate::runtime_failure(
+            ERR_RESOURCE_LEASE_EXPIRED,
+            "runtime.resource_manager",
+            format!("resource_cell.{action}.{}", lease.lease_id),
+        ));
+    }
+    Ok(())
+}
+
+fn resource_lease_expired(lease: &ResourceLease, current_step: u64) -> bool {
+    lease
+        .expires_at_step
+        .is_some_and(|expires_at| current_step >= expires_at)
 }

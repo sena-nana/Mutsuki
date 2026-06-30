@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    DomainEvent, RunnerDescriptor, RuntimeEventKind, StateDelta, Task, TaskLease,
+    DomainEvent, ERR_TASK_UNSUPPORTED, RunnerDescriptor, RuntimeEventKind, StateDelta, Task,
+    TaskLease,
 };
 
 use crate::RuntimeResult;
@@ -54,7 +55,19 @@ impl CoreRuntime {
                         None,
                     );
                 }
-                _ => {}
+                _ => {
+                    let failure = crate::runtime_error(
+                        ERR_TASK_UNSUPPORTED,
+                        "runtime.committer",
+                        format!("core.task.{}", task.protocol_id),
+                    );
+                    self.tasks
+                        .fail(&lease, self.current_step, failure.clone())?;
+                    self.record_task_terminal_event(&task.task_id, "task.failed", Some(failure));
+                    self.wake_tasks_waiting_on(&task.task_id)?;
+                    completed += 1;
+                    continue;
+                }
             }
             self.tasks.complete(&lease, self.current_step)?;
             completed += 1;

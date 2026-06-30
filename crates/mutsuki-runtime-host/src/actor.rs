@@ -108,7 +108,7 @@ fn handle_command(
 ) -> RuntimeResult<(HostRuntimeReply, bool)> {
     match command {
         HostRuntimeCommand::SubmitTask(task) => {
-            let task_id = core.submit_task(*task);
+            let task_id = core.submit_task(*task)?;
             Ok((HostRuntimeReply::TaskSubmitted(task_id), false))
         }
         HostRuntimeCommand::TickOnce => {

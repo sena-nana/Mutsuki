@@ -51,7 +51,9 @@ fn handler_bindings_are_queryable_but_do_not_fan_out_tasks() {
         vec![&binding]
     );
 
-    runtime.publish_raw_input("raw-1", "im.message.received.v1", json!({"text": "hello"}));
+    runtime
+        .publish_raw_input("raw-1", "im.message.received.v1", json!({"text": "hello"}))
+        .unwrap();
     let report = runtime.tick_once().unwrap();
 
     assert_eq!(report.claimed_tasks, 0);

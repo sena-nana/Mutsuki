@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
-    DomainEvent, ERR_RUNNER_PURITY_VIOLATION, EffectRequest, ResourceRef, RunnerDescriptor,
-    RunnerPurity, RunnerResult, RunnerStatus, RuntimeEventKind, ScalarValue, StateDelta, Task,
-    TaskAwait, TaskLease, ValueRef,
+    DomainEvent, ERR_RUNNER_PURITY_VIOLATION, ERR_TASK_DUPLICATE, ERR_TASK_NOT_FOUND,
+    EffectRequest, ResourceRef, RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus,
+    RuntimeEventKind, ScalarValue, StateDelta, Task, TaskAwait, TaskLease, TaskStatus, ValueRef,
+    VersionExpectation,
 };
 
 use crate::RuntimeResult;
@@ -39,7 +40,10 @@ impl CoreRuntime {
         } = result;
         self.tasks
             .ensure_active_lease(&task_id, lease, self.current_step, "route")?;
-        self.validate_waiting_result(&task_id, &status, task_await.as_ref())?;
+        self.validate_waiting_result(&task_id, &status, task_await.as_ref(), &tasks)?;
+        validate_continue_outputs(
+            &task_id, &status, &deltas, &events, &tasks, &effects, &values, &resources,
+        )?;
         self.route_result_outputs(
             runner,
             &task_id,
@@ -60,7 +64,15 @@ impl CoreRuntime {
         task_id: &str,
         status: &RunnerStatus,
         task_await: Option<&TaskAwait>,
+        output_tasks: &[Task],
     ) -> RuntimeResult<()> {
+        if task_await.is_some() && !matches!(status, RunnerStatus::Waiting) {
+            return Err(crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "runtime.result_router",
+                format!("task.await.status.{task_id}"),
+            ));
+        }
         if matches!(status, RunnerStatus::Waiting)
             && let Some(task_await) = task_await
         {
@@ -72,8 +84,50 @@ impl CoreRuntime {
                     format!("task.await.parent.{task_id}"),
                 ));
             }
+            self.validate_await_child_descriptor(task_id, task_await, output_tasks)?;
         }
         Ok(())
+    }
+
+    fn validate_await_child_descriptor(
+        &self,
+        parent_task_id: &str,
+        task_await: &TaskAwait,
+        output_tasks: &[Task],
+    ) -> RuntimeResult<()> {
+        let parent = self.tasks.get(parent_task_id).ok_or_else(|| {
+            crate::runtime_failure(
+                ERR_TASK_NOT_FOUND,
+                "runtime.result_router",
+                format!("task.await.parent.{parent_task_id}"),
+            )
+        })?;
+        if let Some(output_task) = output_tasks
+            .iter()
+            .find(|task| task.task_id == task_await.child.task_id)
+        {
+            return validate_await_child_task(
+                parent_task_id,
+                &parent.task,
+                task_await,
+                output_task,
+            );
+        }
+        let child = self.tasks.get(&task_await.child.task_id).ok_or_else(|| {
+            crate::runtime_failure(
+                ERR_TASK_NOT_FOUND,
+                "runtime.result_router",
+                format!("task.await.child.{}", task_await.child.task_id),
+            )
+        })?;
+        if is_terminal_task_status(&child.status) {
+            return Err(crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "runtime.result_router",
+                format!("task.await.child_terminal.{}", task_await.child.task_id),
+            ));
+        }
+        validate_await_child_task(parent_task_id, &parent.task, task_await, &child.task)
     }
 
     fn route_result_outputs(
@@ -83,25 +137,24 @@ impl CoreRuntime {
         outputs: ResultOutputs,
     ) -> RuntimeResult<()> {
         let generation = self.load_plan.registry_generation;
-        if runner.purity == RunnerPurity::Pure {
-            for delta in outputs.deltas {
-                self.enqueue_task(commit_task(task_id, delta, generation));
-            }
-            for effect in outputs.effects {
-                self.enqueue_task(effect_task(task_id, effect, generation));
-            }
-        } else if runner.purity == RunnerPurity::Effectful
-            && !runner.runner_id.starts_with("effect.")
+        if runner.purity != RunnerPurity::Pure
+            && (!outputs.deltas.is_empty() || !outputs.effects.is_empty())
         {
+            return Err(crate::runtime_failure(
+                ERR_RUNNER_PURITY_VIOLATION,
+                "runtime.result_router",
+                format!("runner.{}.core_derivation", runner.runner_id),
+            ));
+        }
+        if runner.purity == RunnerPurity::Effectful && !runner.runner_id.starts_with("effect.") {
             return Err(crate::runtime_failure(
                 ERR_RUNNER_PURITY_VIOLATION,
                 "runtime.result_router",
                 format!("runner.{}", runner.runner_id),
             ));
         }
-        for event in outputs.events {
-            self.enqueue_task(event_task(task_id, event, generation));
-        }
+        let pending_tasks = pending_output_tasks(task_id, generation, &runner.purity, &outputs);
+        self.ensure_output_task_ids_available(&pending_tasks)?;
         for value_ref in outputs.values {
             self.events.record(
                 RuntimeEventKind::Resource,
@@ -124,8 +177,22 @@ impl CoreRuntime {
                 None,
             );
         }
-        for task in outputs.tasks {
-            self.enqueue_task(task);
+        for task in pending_tasks {
+            self.enqueue_task(task)?;
+        }
+        Ok(())
+    }
+
+    fn ensure_output_task_ids_available(&self, pending_tasks: &[Task]) -> RuntimeResult<()> {
+        let mut seen = BTreeSet::new();
+        for task in pending_tasks {
+            if !seen.insert(task.task_id.clone()) || self.tasks.get(&task.task_id).is_some() {
+                return Err(crate::runtime_failure(
+                    ERR_TASK_DUPLICATE,
+                    "runtime.result_router",
+                    format!("task.enqueue.{}", task.task_id),
+                ));
+            }
         }
         Ok(())
     }
@@ -179,6 +246,103 @@ impl CoreRuntime {
     }
 }
 
+fn pending_output_tasks(
+    source_task_id: &str,
+    generation: u64,
+    runner_purity: &RunnerPurity,
+    outputs: &ResultOutputs,
+) -> Vec<Task> {
+    let mut tasks = Vec::new();
+    if *runner_purity == RunnerPurity::Pure {
+        tasks.extend(
+            outputs
+                .deltas
+                .iter()
+                .cloned()
+                .map(|delta| commit_task(source_task_id, delta, generation)),
+        );
+        tasks.extend(
+            outputs
+                .effects
+                .iter()
+                .cloned()
+                .map(|effect| effect_task(source_task_id, effect, generation)),
+        );
+    }
+    tasks.extend(
+        outputs
+            .events
+            .iter()
+            .cloned()
+            .map(|event| event_task(source_task_id, event, generation)),
+    );
+    tasks.extend(outputs.tasks.iter().cloned());
+    tasks
+}
+
+fn validate_continue_outputs(
+    task_id: &str,
+    status: &RunnerStatus,
+    deltas: &[StateDelta],
+    events: &[DomainEvent],
+    tasks: &[Task],
+    effects: &[EffectRequest],
+    values: &[ValueRef],
+    resources: &[ResourceRef],
+) -> RuntimeResult<()> {
+    if !matches!(status, RunnerStatus::Continue) {
+        return Ok(());
+    }
+    if deltas.is_empty()
+        && events.is_empty()
+        && tasks.is_empty()
+        && effects.is_empty()
+        && values.is_empty()
+        && resources.is_empty()
+    {
+        return Ok(());
+    }
+    Err(crate::runtime_failure(
+        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+        "runtime.result_router",
+        format!("task.continue.outputs.{task_id}"),
+    ))
+}
+
+fn validate_await_child_task(
+    parent_task_id: &str,
+    parent_task: &Task,
+    task_await: &TaskAwait,
+    child_task: &Task,
+) -> RuntimeResult<()> {
+    let child = &task_await.child;
+    let child_matches_handle = child.protocol_id == child_task.protocol_id
+        && child.target_binding_id == child_task.target_binding_id
+        && child.trace_id == child_task.trace_id
+        && child.correlation_id == child_task.correlation_id;
+    let child_inherits_parent_context = child_task.trace_id == parent_task.trace_id
+        && child_task.correlation_id == parent_task.correlation_id;
+    if child_matches_handle && child_inherits_parent_context {
+        return Ok(());
+    }
+    Err(crate::runtime_failure(
+        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+        "runtime.result_router",
+        format!("task.await.child_descriptor.{parent_task_id}"),
+    ))
+}
+
+fn is_terminal_task_status(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Completed
+            | TaskStatus::Failed
+            | TaskStatus::Cancelled
+            | TaskStatus::Expired
+            | TaskStatus::DeadLetter
+    )
+}
+
 fn commit_task(source_task_id: &str, delta: StateDelta, generation: u64) -> Task {
     let mut task = Task::new(
         format!("{source_task_id}:commit"),
@@ -200,12 +364,21 @@ fn event_task(source_task_id: &str, event: DomainEvent, generation: u64) -> Task
 }
 
 fn effect_task(source_task_id: &str, effect: EffectRequest, generation: u64) -> Task {
+    let expected_versions = effect
+        .preconditions
+        .iter()
+        .map(|precondition| VersionExpectation {
+            ref_id: precondition.ref_id.clone(),
+            expected_version: precondition.expected_version,
+        })
+        .collect();
     let mut task = Task::new(
         format!("{source_task_id}:effect:{}", effect.effect_id),
         effect.kind.clone(),
         serde_json::to_value(effect).expect("EffectRequest serializes"),
     );
     task.registry_generation = generation;
+    task.expected_versions = expected_versions;
     task
 }
 

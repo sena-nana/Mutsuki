@@ -11,7 +11,9 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
-    runtime.submit_task(Task::new("task-1", "runtime.lease.input", json!({})));
+    runtime
+        .submit_task(Task::new("task-1", "runtime.lease.input", json!({})))
+        .unwrap();
 
     let (_report, mut dispatches) = runtime
         .claim_ready_dispatches(

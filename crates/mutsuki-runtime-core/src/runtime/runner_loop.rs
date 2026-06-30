@@ -31,7 +31,9 @@ impl CoreRuntime {
     ) -> RuntimeResult<RunnerLoopReport> {
         self.current_step += 1;
         self.reclaim_expired_task_leases();
+        self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
+        loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
             if !runner_can_dispatch(&descriptor) {
@@ -66,7 +68,9 @@ impl CoreRuntime {
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
         self.current_step += 1;
         self.reclaim_expired_task_leases();
+        self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
+        loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
         let mut dispatches = Vec::new();
         let descriptors = self.registry.descriptors();
         for descriptor in descriptors {
@@ -149,6 +153,9 @@ impl CoreRuntime {
         let (task_leases, tasks): (Vec<_>, Vec<_>) = leased_tasks.into_iter().unzip();
         let lease_id = task_leases[0].lease_id.clone();
         let invocation_id = lease_id.clone();
+        let trace_id = dispatch_trace_id(&tasks);
+        let mut attrs = runner_attrs(descriptor, &self.load_plan);
+        attrs.extend(dispatch_task_attrs(&tasks, &task_leases, &executor_id));
         let runner = self
             .registry
             .take_runner(&descriptor.runner_id)
@@ -166,13 +173,9 @@ impl CoreRuntime {
             Some(lease_id),
             invocation_id,
         );
-        let span = self.traces.record(
-            format!("trace-runner-{}", descriptor.runner_id),
-            "runner.step",
-            None,
-            SpanStatus::Ok,
-            runner_attrs(descriptor, &self.load_plan),
-        );
+        let span = self
+            .traces
+            .record(trace_id, "runner.step", None, SpanStatus::Ok, attrs);
         self.events.record(
             RuntimeEventKind::Trace,
             "trace.span",
@@ -194,18 +197,17 @@ impl CoreRuntime {
         self.registry.put_runner(completion.runner);
         let task_leases = completion.task_leases;
         let results = results?;
+        let result_leases = match validate_dispatch_results(&task_leases, &results) {
+            Ok(result_leases) => result_leases,
+            Err(failure) => {
+                return self.fail_runner_dispatch(&task_leases, failure.error().clone());
+            }
+        };
         let mut completed = 0;
         for result in results {
-            let lease = task_leases
-                .iter()
-                .find(|lease| lease.task_id == result.task_id)
-                .ok_or_else(|| {
-                    crate::runtime_failure(
-                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                        "runtime.runner_loop",
-                        format!("task.result.{}", result.task_id),
-                    )
-                })?;
+            let lease = result_leases
+                .get(&result.task_id)
+                .expect("validated runner result has a matching task lease");
             completed += self.route_result(&descriptor, lease, result)?;
         }
         Ok(completed)
@@ -281,23 +283,21 @@ impl CoreRuntime {
                 });
             }
         };
+        let result_leases = match validate_dispatch_results(&task_leases, &results) {
+            Ok(result_leases) => result_leases,
+            Err(failure) => {
+                let completed = self.fail_runner_dispatch(&task_leases, failure.error().clone())?;
+                return Ok(RunnerLoopReport {
+                    claimed_tasks: 0,
+                    completed_tasks: completed,
+                });
+            }
+        };
         let mut completed = 0;
         for result in results {
-            let Some(lease) = task_leases
-                .iter()
-                .find(|lease| lease.task_id == result.task_id)
-            else {
-                let task_id = result.task_id;
-                self.record_rejected_runner_result(
-                    task_id.clone(),
-                    crate::runtime_error(
-                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                        "runtime.runner_loop",
-                        format!("task.result.{task_id}"),
-                    ),
-                );
-                continue;
-            };
+            let lease = result_leases
+                .get(&result.task_id)
+                .expect("validated runner result has a matching task lease");
             match self.route_result(&descriptor, lease, result) {
                 Ok(count) => completed += count,
                 Err(failure) if is_stale_completion_conflict(failure.error()) => {
@@ -412,7 +412,7 @@ impl CoreRuntime {
             let report = self.tick_once()?;
             aggregate.claimed_tasks += report.claimed_tasks;
             aggregate.completed_tasks += report.completed_tasks;
-            if self.tasks.ready_count() == 0 && self.tasks.running_count() == 0 {
+            if report.claimed_tasks == 0 && report.completed_tasks == 0 {
                 break;
             }
         }
@@ -425,8 +425,83 @@ fn is_stale_completion_conflict(error: &RuntimeError) -> bool {
         && error.route.starts_with("task.route.")
 }
 
+fn validate_dispatch_results<'a>(
+    task_leases: &'a [mutsuki_runtime_contracts::TaskLease],
+    results: &[mutsuki_runtime_contracts::RunnerResult],
+) -> RuntimeResult<BTreeMap<String, &'a mutsuki_runtime_contracts::TaskLease>> {
+    let mut pending_leases = task_leases
+        .iter()
+        .map(|lease| (lease.task_id.as_str(), lease))
+        .collect::<BTreeMap<_, _>>();
+    let mut result_leases = BTreeMap::new();
+    for result in results {
+        if result_leases.contains_key(&result.task_id) {
+            return Err(crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "runtime.runner_loop",
+                format!("task.result.duplicate.{}", result.task_id),
+            ));
+        }
+        let Some(lease) = pending_leases.remove(result.task_id.as_str()) else {
+            return Err(crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "runtime.runner_loop",
+                format!("task.result.{}", result.task_id),
+            ));
+        };
+        result_leases.insert(result.task_id.clone(), lease);
+    }
+    if let Some(task_id) = pending_leases.keys().next() {
+        return Err(crate::runtime_failure(
+            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+            "runtime.runner_loop",
+            format!("task.result.missing.{task_id}"),
+        ));
+    }
+    Ok(result_leases)
+}
+
 fn runner_can_dispatch(descriptor: &RunnerDescriptor) -> bool {
     descriptor.execution_class != ExecutionClass::Control || descriptor.runner_id == "core.kernel"
+}
+
+fn dispatch_trace_id(tasks: &[mutsuki_runtime_contracts::Task]) -> String {
+    let Some(task) = tasks.first() else {
+        return "trace-runner-empty".into();
+    };
+    task.trace_id
+        .clone()
+        .unwrap_or_else(|| format!("trace-task-{}", task.task_id))
+}
+
+fn dispatch_task_attrs(
+    tasks: &[mutsuki_runtime_contracts::Task],
+    task_leases: &[mutsuki_runtime_contracts::TaskLease],
+    executor_id: &str,
+) -> BTreeMap<String, ScalarValue> {
+    let mut attrs = BTreeMap::from([
+        (
+            "executor_id".into(),
+            ScalarValue::String(executor_id.into()),
+        ),
+        ("task_count".into(), ScalarValue::Int(tasks.len() as i64)),
+    ]);
+    if let Some(task) = tasks.first() {
+        attrs.insert("task_id".into(), ScalarValue::String(task.task_id.clone()));
+        if let Some(correlation_id) = &task.correlation_id {
+            attrs.insert(
+                "correlation_id".into(),
+                ScalarValue::String(correlation_id.clone()),
+            );
+        }
+    }
+    if let Some(lease) = task_leases.first() {
+        attrs.insert(
+            "task_lease_id".into(),
+            ScalarValue::String(lease.lease_id.clone()),
+        );
+    }
+    attrs
 }
 
 fn empty_runner_loop_report() -> RunnerLoopReport {

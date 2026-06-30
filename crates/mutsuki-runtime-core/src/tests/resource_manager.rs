@@ -102,6 +102,77 @@ fn resource_manager_owns_resource_cells_and_step_leases() {
 }
 
 #[test]
+fn resource_manager_reclaims_expired_resource_leases() {
+    let mut resources = ResourceManager::new();
+    let cell =
+        resources.create_resource_cell("cell:db", "db.pool", "plugin-db", "db.pool.v1", "drain");
+    let lease = resources
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-db",
+            "executor-db",
+            "exclusive",
+            Some(3),
+        )
+        .unwrap();
+
+    assert_eq!(
+        resources
+            .release_resource_lease_at(&lease, 3)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_LEASE_EXPIRED
+    );
+    assert!(
+        resources
+            .acquire_resource_lease(
+                &cell.cell_id,
+                "task-other",
+                "executor-other",
+                "shared",
+                None
+            )
+            .is_err()
+    );
+
+    let reclaimed = resources.reclaim_expired_resource_leases(3);
+    assert_eq!(reclaimed, vec![lease]);
+    let shared = resources
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-other",
+            "executor-other",
+            "shared",
+            None,
+        )
+        .unwrap();
+    resources.release_resource_lease(&shared).unwrap();
+}
+
+#[test]
+fn resource_manager_rejects_stale_resource_lease_generation() {
+    let mut resources = ResourceManager::new();
+    let cell =
+        resources.create_resource_cell("cell:db", "db.pool", "plugin-db", "db.pool.v1", "drain");
+    let lease = resources
+        .acquire_resource_lease(&cell.cell_id, "task-db", "executor-db", "shared", None)
+        .unwrap();
+    let mut stale = lease.clone();
+    stale.generation += 1;
+
+    assert_eq!(
+        resources
+            .release_resource_lease(&stale)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_GENERATION_MISMATCH
+    );
+    resources.release_resource_lease(&lease).unwrap();
+}
+
+#[test]
 fn core_resource_facade_wraps_descriptor_and_lease_operations() {
     let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
     let mut runtime = super::fixtures::boot_with_kernel(plan);
@@ -135,6 +206,25 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
         .acquire_resource_lease(&cell.cell_id, "task-http", "executor-http", "shared", None)
         .unwrap();
     runtime.release_resource_lease(&resource_lease).unwrap();
+
+    let expiring = runtime
+        .acquire_resource_lease(
+            &cell.cell_id,
+            "task-http",
+            "executor-http",
+            "shared",
+            Some(0),
+        )
+        .unwrap();
+    assert_eq!(
+        runtime
+            .release_resource_lease(&expiring)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_LEASE_EXPIRED
+    );
+    assert_eq!(runtime.reclaim_expired_resource_leases(), vec![expiring]);
 }
 
 #[test]

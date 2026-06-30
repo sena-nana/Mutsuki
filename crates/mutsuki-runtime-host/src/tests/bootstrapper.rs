@@ -16,7 +16,9 @@ fn runtime_bootstrapper_boots_runtime_and_runs_runner_loop() {
         .into_runtime(runtime_profile())
         .unwrap();
 
-    runtime.enqueue_task(Task::new("task-1", "raw.input", json!({"ok": true})));
+    runtime
+        .enqueue_task(Task::new("task-1", "raw.input", json!({"ok": true})))
+        .unwrap();
     let report = runtime.run_until_idle(4).unwrap();
 
     assert_eq!(report.completed_tasks, 1);

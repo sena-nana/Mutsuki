@@ -41,7 +41,9 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
     let plan_v1 = load_plan(vec![worker_v1.clone()], Vec::new());
     let runners_v1: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker_v1));
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
-    runtime.enqueue_task(Task::new("task-before-reload", "raw.input", json!({})));
+    runtime
+        .enqueue_task(Task::new("task-before-reload", "raw.input", json!({})))
+        .unwrap();
 
     let mut worker_v2 = runner_descriptor("worker", "raw.input", RunnerPurity::Pure);
     worker_v2.plugin_generation = 2;
@@ -87,7 +89,9 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
         kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
-    runtime.enqueue_task(Task::new("running-clean", "sim.work", json!({})));
+    runtime
+        .enqueue_task(Task::new("running-clean", "sim.work", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
 
     assert_eq!(
@@ -133,7 +137,9 @@ fn reload_keeps_polluted_running_invocation_in_draining_generation() {
         kernel_runner!(1),
     ];
     let mut runtime = CoreRuntime::boot(plan_v1, runners_v1).unwrap();
-    runtime.enqueue_task(Task::new("running-effect", "effect.chat.send", json!({})));
+    runtime
+        .enqueue_task(Task::new("running-effect", "effect.chat.send", json!({})))
+        .unwrap();
     runtime.tick_once().unwrap();
 
     assert_eq!(
