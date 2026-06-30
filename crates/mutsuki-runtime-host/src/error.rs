@@ -110,6 +110,44 @@ pub(crate) fn capability_provider_missing(capability: &str) -> RuntimeFailure {
     RuntimeFailure::new(error)
 }
 
+pub(crate) fn resource_provider_missing(provider_id: &str) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        format!("host.plugin.resource_provider_missing.{provider_id}"),
+    );
+    error.evidence.insert(
+        "provider_id".into(),
+        ScalarValue::String(provider_id.into()),
+    );
+    RuntimeFailure::new(error)
+}
+
+pub(crate) fn resource_provider_duplicate(provider_id: &str) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        format!("host.plugin.resource_provider_duplicate.{provider_id}"),
+    );
+    error.evidence.insert(
+        "provider_id".into(),
+        ScalarValue::String(provider_id.into()),
+    );
+    RuntimeFailure::new(error)
+}
+
+pub(crate) fn resource_provider_unsupported(detail: impl Into<String>) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        "host.plugin.resource_provider_unsupported",
+    );
+    error
+        .evidence
+        .insert("detail".into(), ScalarValue::String(detail.into()));
+    RuntimeFailure::new(error)
+}
+
 pub(crate) fn capability_pruned(capability: &str) -> RuntimeFailure {
     let mut error = RuntimeError::new(
         mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,

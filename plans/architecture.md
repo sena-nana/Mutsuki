@@ -230,9 +230,9 @@ RunnerResult 不直接修改事实源：
 - 短期可变 lease 默认不能跨 SDK await；需要长期持有必须在更高层声明
   LongLease / Transaction / PinnedResource 等显式机制。
 
-当前 `ResourceManager` 保留 descriptor、lease、occupancy 和 generation 的事实源，
-本地 file/blob 读写已下沉到 `LocalResourceStore`。这只是为 ResourceHub /
-provider RPC 预留边界；当前 backend 仍是测试级本地实现。
+当前 `ResourceManager` 只保留 descriptor、lease、occupancy 和 generation 的事实源。
+file/blob/mmap 读写、snapshot/patch/export/query 等数据面由 host resource backend /
+resource provider 执行，不进入 Rust core。
 
 ### 7.1 ResourceHub 与 Typed Store
 

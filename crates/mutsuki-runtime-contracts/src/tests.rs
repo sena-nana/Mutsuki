@@ -16,7 +16,7 @@ fn resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> Reso
             version: 1,
         },
         semantic,
-        provider_id: "resource.local".into(),
+        provider_id: "mutsuki.std.resource.memory".into(),
         resource_kind: kind_id.into(),
         schema: "bytes.v1".into(),
         version: 1,
@@ -125,12 +125,12 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
             metadata: Default::default(),
         }],
         resource_schemas: vec!["bytes.v1".into()],
-        resource_providers: vec!["resource.local".into()],
+        resource_providers: vec!["mutsuki.std.resource.memory".into()],
         resource_types: vec![ResourceTypeDescriptor {
             kind_id: "blob".into(),
             semantic: ResourceSemantic::FrozenValue,
             schema: "bytes.v1".into(),
-            provider_id: "resource.local".into(),
+            provider_id: "mutsuki.std.resource.memory".into(),
             operations: vec!["read".into(), "export".into()],
             reload_policy: ResourceProviderReloadPolicy::CompatibleWithoutLeases,
             compatibility: resource_provider_compatibility(),
@@ -583,7 +583,7 @@ fn missing_new_contract_fields_fail_deserialization() {
         "kind_id": "blob",
         "semantic": "frozen_value",
         "schema": "bytes.v1",
-        "provider_id": "resource.local",
+        "provider_id": "mutsuki.std.resource.memory",
         "operations": []
     }));
     assert_missing_fields_fail::<SurfaceOccupancyHandle>(serde_json::json!({

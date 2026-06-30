@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::TaskStatus;
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
-use mutsuki_runtime_sdk::HostContext as SdkHostContext;
+use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway};
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
 use crate::capabilities::HostCapabilityRegistry;
@@ -14,7 +15,7 @@ use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HostRuntimeConfig {
     pub worker_threads: usize,
     pub blocking_threads: usize,
@@ -22,8 +23,26 @@ pub struct HostRuntimeConfig {
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
+    pub resource_provider: Option<Arc<dyn ResourceProviderGateway>>,
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
+}
+
+impl fmt::Debug for HostRuntimeConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HostRuntimeConfig")
+            .field("worker_threads", &self.worker_threads)
+            .field("blocking_threads", &self.blocking_threads)
+            .field("pool_queue_limit", &self.pool_queue_limit)
+            .field("default_runner_limits", &self.default_runner_limits)
+            .field("runner_limits", &self.runner_limits)
+            .field("scheduler_policy", &self.scheduler_policy)
+            .field("resource_provider", &self.resource_provider.is_some())
+            .field("cancel_grace_period", &self.cancel_grace_period)
+            .field("worker_health_timeout", &self.worker_health_timeout)
+            .finish()
+    }
 }
 
 impl Default for HostRuntimeConfig {
@@ -38,6 +57,7 @@ impl Default for HostRuntimeConfig {
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
+            resource_provider: None,
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
         }

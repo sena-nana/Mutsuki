@@ -95,7 +95,7 @@ fn manifest(
             subscriptions: vec!["chat.messages".into()],
             timers: vec!["heartbeat".into()],
             resource_schemas: vec!["bytes.v1".into()],
-            resource_providers: vec!["resource.local".into()],
+            resource_providers: vec!["mutsuki.std.resource.memory".into()],
             resource_types: Vec::new(),
             state_schemas: vec!["state.actor.v1".into()],
             host_extensions: Vec::new(),
@@ -191,6 +191,56 @@ pub(super) fn occupancy_handle(
         plugin_generation: 1,
         registry_generation: 1,
         kind,
+    }
+}
+
+pub(super) fn external_resource_ref(
+    ref_id: &str,
+    kind_id: &str,
+    schema: &str,
+    provider_id: &str,
+) -> ResourceRef {
+    external_resource_ref_with_semantic(
+        ref_id,
+        kind_id,
+        schema,
+        provider_id,
+        ResourceSemantic::FrozenValue,
+        ResourceLifetime::ExternalManaged,
+    )
+}
+
+pub(super) fn external_resource_ref_with_semantic(
+    ref_id: &str,
+    kind_id: &str,
+    schema: &str,
+    provider_id: &str,
+    semantic: ResourceSemantic,
+    lifetime: ResourceLifetime,
+) -> ResourceRef {
+    ResourceRef {
+        ref_id: ref_id.into(),
+        resource_id: ResourceId {
+            kind_id: kind_id.into(),
+            slot_id: ref_id.into(),
+            generation: 1,
+            version: 1,
+        },
+        semantic,
+        provider_id: provider_id.into(),
+        resource_kind: kind_id.into(),
+        schema: schema.into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::ProviderRpc {
+            provider_id: provider_id.into(),
+            method: "mutsuki.resource.get".into(),
+        },
+        size_hint: None,
+        content_hash: None,
+        lifetime,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
     }
 }
 

@@ -68,12 +68,12 @@ fn resolver_emits_declared_runtime_surfaces() {
         metadata: BTreeMap::new(),
     }];
     manifest.provides.resource_schemas = vec!["bytes.v1".into()];
-    manifest.provides.resource_providers = vec!["resource.local".into()];
+    manifest.provides.resource_providers = vec!["mutsuki.std.resource.memory".into()];
     manifest.provides.resource_types = vec![ResourceTypeDescriptor {
         kind_id: "bytes".into(),
         semantic: ResourceSemantic::FrozenValue,
         schema: "bytes.v1".into(),
-        provider_id: "resource.local".into(),
+        provider_id: "mutsuki.std.resource.memory".into(),
         operations: vec!["read".into(), "export".into()],
         reload_policy: ResourceProviderReloadPolicy::CompatibleWithoutLeases,
         compatibility: ResourceProviderCompatibility {
@@ -156,7 +156,7 @@ fn resolver_emits_declared_runtime_surfaces() {
     );
     assert_surface(
         &plan,
-        "resource_provider:resource.local",
+        "resource_provider:mutsuki.std.resource.memory",
         ContractSurfaceKind::ResourceProvider,
     );
     assert_surface(
@@ -209,10 +209,12 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
     manifest.requires = vec!["workflow:workflow.linear".into()];
-    manifest.provides.resource_providers =
-        vec!["resource.local".into(), "resource.shared-memory".into()];
+    manifest.provides.resource_providers = vec![
+        "mutsuki.std.resource.memory".into(),
+        "resource.shared-memory".into(),
+    ];
     manifest.provides.resource_types = vec![frozen_bytes_resource_type(
-        "resource.local",
+        "mutsuki.std.resource.memory",
         &["read", "export"],
     )];
     manifest.provides.host_extensions = vec![
@@ -293,7 +295,7 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
     );
     assert_eq!(
         plan.capability_graph.active_resource_providers,
-        vec!["resource.local".to_string()]
+        vec!["mutsuki.std.resource.memory".to_string()]
     );
     assert_eq!(
         plan.capability_graph.active_workflows,
@@ -319,7 +321,7 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
     );
     assert_surface(
         &plan,
-        "resource_provider:resource.local",
+        "resource_provider:mutsuki.std.resource.memory",
         ContractSurfaceKind::ResourceProvider,
     );
     assert_no_surface(&plan, "resource_provider:resource.shared-memory");
@@ -390,10 +392,14 @@ fn extensible_runtime_profile_keeps_external_extensions_available() {
 fn builtin_only_profile_prunes_unused_resource_providers() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
-    manifest.provides.resource_providers =
-        vec!["resource.local".into(), "resource.shared-memory".into()];
-    manifest.provides.resource_types =
-        vec![frozen_bytes_resource_type("resource.local", &["read"])];
+    manifest.provides.resource_providers = vec![
+        "mutsuki.std.resource.memory".into(),
+        "resource.shared-memory".into(),
+    ];
+    manifest.provides.resource_types = vec![frozen_bytes_resource_type(
+        "mutsuki.std.resource.memory",
+        &["read"],
+    )];
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::BuiltinOnly;
 
@@ -405,7 +411,7 @@ fn builtin_only_profile_prunes_unused_resource_providers() {
     );
     assert_eq!(
         plan.capability_graph.active_resource_providers,
-        vec!["resource.local".to_string()]
+        vec!["mutsuki.std.resource.memory".to_string()]
     );
     assert!(
         plan.capability_graph
@@ -414,7 +420,7 @@ fn builtin_only_profile_prunes_unused_resource_providers() {
     );
     assert_surface(
         &plan,
-        "resource_provider:resource.local",
+        "resource_provider:mutsuki.std.resource.memory",
         ContractSurfaceKind::ResourceProvider,
     );
     assert_no_surface(&plan, "resource_provider:resource.shared-memory");
@@ -446,7 +452,7 @@ fn resolver_records_capability_provider_selection_and_permission_audit() {
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
     manifest.requires = vec![
         "protocol:contract.v1@>=1.0.0".into(),
-        "resource_strategy:resource.local".into(),
+        "resource_strategy:mutsuki.std.resource.memory".into(),
     ];
     manifest.provides.protocols = vec![ProtocolDescriptor {
         protocol_id: "contract.v1".into(),
@@ -457,9 +463,9 @@ fn resolver_records_capability_provider_selection_and_permission_audit() {
         codec: "json".into(),
         compatibility: "semver".into(),
     }];
-    manifest.provides.resource_providers = vec!["resource.local".into()];
+    manifest.provides.resource_providers = vec!["mutsuki.std.resource.memory".into()];
     manifest.provides.resource_types = vec![frozen_bytes_resource_type(
-        "resource.local",
+        "mutsuki.std.resource.memory",
         &["read", "export"],
     )];
     manifest.provides.effects = vec!["effect.chat.send".into()];

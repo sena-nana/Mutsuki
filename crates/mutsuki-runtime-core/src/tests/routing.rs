@@ -211,7 +211,7 @@ fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.values.push(ValueRef {
             ref_id: "value:1".into(),
-            provider_id: "resource.local".into(),
+            provider_id: "mutsuki.std.resource.memory".into(),
             schema: "value.small.v1".into(),
             version: 1,
             generation: 1,
@@ -229,7 +229,7 @@ fn runner_result_value_and_resource_refs_are_recorded_as_lineage() {
                 version: 1,
             },
             semantic: ResourceSemantic::FrozenValue,
-            provider_id: "resource.local".into(),
+            provider_id: "mutsuki.std.resource.memory".into(),
             resource_kind: "bytes".into(),
             schema: "bytes.v1".into(),
             version: 1,
@@ -606,7 +606,12 @@ fn task_cannot_suspend_while_holding_mutable_resource_lease() {
     }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     let resource = runtime
-        .create_blob_resource("bytes.v1", vec![1, 2, 3])
+        .register_resource_descriptor(external_resource_ref(
+            "resource:await-block",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap();
     let _lease = runtime
         .lock_resource(&resource.ref_id, "parent-1", None)
@@ -685,7 +690,7 @@ fn duplicate_output_task_id_rejects_result_before_partial_routing() {
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.values.push(ValueRef {
             ref_id: "value:partial".into(),
-            provider_id: "resource.local".into(),
+            provider_id: "mutsuki.std.resource.memory".into(),
             schema: "value.small.v1".into(),
             version: 1,
             generation: 1,
@@ -772,7 +777,7 @@ fn duplicate_runner_results_fail_before_partial_routing() {
                 .push(Task::new("child-duplicate-result", "child.work", json!({})));
             first.values.push(ValueRef {
                 ref_id: "value:duplicate-result".into(),
-                provider_id: "resource.local".into(),
+                provider_id: "mutsuki.std.resource.memory".into(),
                 schema: "value.small.v1".into(),
                 version: 1,
                 generation: 1,
@@ -917,7 +922,7 @@ fn continue_result_rejects_outputs_before_partial_routing() {
             .push(Task::new("child-continue", "child.work", json!({})));
         result.values.push(ValueRef {
             ref_id: "value:continue".into(),
-            provider_id: "resource.local".into(),
+            provider_id: "mutsuki.std.resource.memory".into(),
             schema: "value.small.v1".into(),
             version: 1,
             generation: 1,

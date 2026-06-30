@@ -199,7 +199,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 "plugin:plugin-a",
                 "runner:runner-a",
                 "task_protocol:raw.input",
-                "resource_provider:resource.local",
+                "resource_provider:mutsuki.std.resource.memory",
                 "plugin_backend:plugin.backend.python",
             ),
             active_capability_providers=(
@@ -218,7 +218,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                     reason="active_plan",
                 ),
             ),
-            active_resource_providers=("resource.local",),
+            active_resource_providers=("mutsuki.std.resource.memory",),
             active_host_extensions=("host.extension.python",),
             active_plugin_backends=("plugin.backend.python",),
             active_codecs=("codec.json",),

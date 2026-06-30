@@ -6,7 +6,7 @@ use mutsuki_runtime_contracts::{ExecutionClass, TaskStatus};
 use mutsuki_runtime_core::{CoreRuntime, RunnerCompletion, RunnerLoopReport, RuntimeResult};
 
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
-use crate::error::host_failure;
+use crate::error::{host_failure, resource_provider_missing};
 use crate::host::HostRuntimeConfig;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerPool, WorkerStarted, worker_pools};
@@ -173,7 +173,9 @@ fn handle_command(
             false,
         )),
         HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
-            HostRuntimeReply::ResourceCreated(core.create_blob_resource(&schema, bytes)?),
+            HostRuntimeReply::ResourceCreated(
+                require_resource_provider(config)?.create_blob_resource(&schema, bytes)?,
+            ),
             false,
         )),
         HostRuntimeCommand::CreateCowStateResource {
@@ -182,16 +184,21 @@ fn handle_command(
             bytes,
         } => Ok((
             HostRuntimeReply::ResourceCreated(
-                core.create_cow_state_resource(&kind_id, &schema, bytes)?,
+                require_resource_provider(config)?
+                    .create_cow_state_resource(&kind_id, &schema, bytes)?,
             ),
             false,
         )),
         HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => Ok((
-            HostRuntimeReply::ResourceCreated(core.create_capability_resource(&kind_id, &schema)?),
+            HostRuntimeReply::ResourceCreated(
+                require_resource_provider(config)?.create_capability_resource(&kind_id, &schema)?,
+            ),
             false,
         )),
         HostRuntimeCommand::CollectReadPlan(plan) => Ok((
-            HostRuntimeReply::ResourceBytes(core.collect_read_plan(&plan)?),
+            HostRuntimeReply::ResourceBytes(
+                require_resource_provider(config)?.collect_read_plan(&plan)?,
+            ),
             false,
         )),
         HostRuntimeCommand::SnapshotReadPlan {
@@ -199,34 +206,57 @@ fn handle_command(
             kind_id,
             schema,
         } => Ok((
-            HostRuntimeReply::Snapshot(core.snapshot_read_plan(&plan, &kind_id, &schema)?),
+            HostRuntimeReply::Snapshot(
+                require_resource_provider(config)?.snapshot_read_plan(&plan, &kind_id, &schema)?,
+            ),
             false,
         )),
         HostRuntimeCommand::OpenStreamPlan(plan) => Ok((
-            HostRuntimeReply::StreamPlan(core.open_stream_plan(&plan)?),
+            HostRuntimeReply::StreamPlan(
+                require_resource_provider(config)?.open_stream_plan(&plan)?,
+            ),
             false,
         )),
         HostRuntimeCommand::ExecuteExportPlan(plan) => Ok((
-            HostRuntimeReply::PlanReceipt(core.execute_export_plan(&plan)?),
+            HostRuntimeReply::PlanReceipt(
+                require_resource_provider(config)?.execute_export_plan(&plan)?,
+            ),
             false,
         )),
         HostRuntimeCommand::CommitWritePlan { plan, bytes } => Ok((
-            HostRuntimeReply::PlanReceipt(core.commit_write_plan(&plan, bytes)?),
+            HostRuntimeReply::PlanReceipt(
+                require_resource_provider(config)?.commit_write_plan(&plan, bytes)?,
+            ),
             false,
         )),
         HostRuntimeCommand::ExecuteCommandPlan(plan) => Ok((
-            HostRuntimeReply::PlanReceipt(core.execute_command_plan(&plan)?),
+            HostRuntimeReply::PlanReceipt(
+                require_resource_provider(config)?.execute_command_plan(&plan)?,
+            ),
             false,
         )),
         HostRuntimeCommand::ExecuteCommandBatch(batch) => Ok((
-            HostRuntimeReply::PlanReceipts(core.execute_command_batch(&batch)?),
+            HostRuntimeReply::PlanReceipts(
+                require_resource_provider(config)?.execute_command_batch(&batch)?,
+            ),
             false,
         )),
         HostRuntimeCommand::ExecuteSagaPlan(saga) => Ok((
-            HostRuntimeReply::PlanReceipts(core.execute_saga_plan(&saga)?),
+            HostRuntimeReply::PlanReceipts(
+                require_resource_provider(config)?.execute_saga_plan(&saga)?,
+            ),
             false,
         )),
     }
+}
+
+fn require_resource_provider(
+    config: &HostRuntimeConfig,
+) -> RuntimeResult<&dyn mutsuki_runtime_sdk::ResourceProviderGateway> {
+    config
+        .resource_provider
+        .as_deref()
+        .ok_or_else(|| resource_provider_missing("host.resource_provider"))
 }
 
 fn send_command_reply(

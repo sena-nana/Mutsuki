@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use mutsuki_runtime_contracts::{
     ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_NOT_FOUND, ResourceCellRef, ResourceLease, ResourceRef,
@@ -9,7 +8,6 @@ use serde_json::Value;
 
 use crate::{RuntimeFailure, SequentialIdSource};
 
-mod backend;
 mod hub;
 mod leases;
 mod occupancy;
@@ -17,10 +15,7 @@ mod plans;
 mod resources;
 mod values;
 
-use backend::LocalResourceStore;
 use hub::ResourceHub;
-
-static NEXT_MANAGER_NAMESPACE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PackedValue {
@@ -52,7 +47,6 @@ pub struct ResourceManager {
     occupancy_handles: HashMap<String, SurfaceOccupancyHandle>,
     id_source: SequentialIdSource,
     inline_value_max_bytes: usize,
-    backend: LocalResourceStore,
 }
 
 impl Default for ResourceManager {
@@ -63,10 +57,6 @@ impl Default for ResourceManager {
 
 impl ResourceManager {
     pub fn new() -> Self {
-        let namespace = NEXT_MANAGER_NAMESPACE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir()
-            .join("mutsuki-resource-manager")
-            .join(format!("manager-{namespace}"));
         Self {
             values: HashMap::new(),
             hub: ResourceHub::default(),
@@ -74,7 +64,6 @@ impl ResourceManager {
             occupancy_handles: HashMap::new(),
             id_source: SequentialIdSource::new(),
             inline_value_max_bytes: 4096,
-            backend: LocalResourceStore::new(root),
         }
     }
 }
@@ -85,14 +74,6 @@ fn resource_not_found(route: String) -> RuntimeFailure {
 
 fn capability_exhausted(route: String) -> RuntimeFailure {
     crate::runtime_failure(ERR_CAPABILITY_EXHAUSTED, "runtime.resource_manager", route)
-}
-
-fn io_failure(err: std::io::Error) -> RuntimeFailure {
-    crate::runtime_failure(
-        "resource.io_failed",
-        "runtime.resource_manager",
-        err.to_string(),
-    )
 }
 
 fn simple_hash(bytes: &[u8]) -> String {

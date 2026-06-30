@@ -300,12 +300,12 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
 
 - `ReadPlan` 构造不访问资源；`eval` / `collect` / `snapshot` / `open_stream` 才执行读。
 - `WritePlan` 构造不修改资源；`commit` 时检查 `base_version` / generation / lease 后写入。
-- `ExportPlan` v1 只支持 `target = "inline_utf8"`：执行时读取资源 bytes，经 UTF-8
-  解码后放入 `PlanReceipt.output`；未知 target、非 UTF-8 bytes 或 stale descriptor
-  必须结构化失败。
-- `CommandPlan` v1 只支持 `CapabilityResource` 上的 `operation = "query"`，返回
-  deterministic command receipt；不执行真实外部副作用，不承诺 provider RPC、幂等去重
-  或事务保证。
+- `ExportPlan` v1 的标准 memory provider 支持 `target = "inline_utf8"`：执行时读取
+  provider 资源 bytes，经 UTF-8 解码后放入 `PlanReceipt.output`；未知 target、非 UTF-8
+  bytes 或 stale descriptor 必须结构化失败。
+- `CommandPlan` v1 的标准 memory provider 支持 `CapabilityResource` 上的
+  `operation = "query"`，返回 deterministic command receipt；不执行真实外部副作用，
+  不承诺 provider RPC、幂等去重或事务保证。
 - `TransactionPlan` 要求 strict all-or-nothing；`CommandBatch` 只表示批量发送，不保证回滚；
   `SagaPlan` 表示多个不可原子回滚步骤和可选补偿。
 - `CommandBatch.rollback_guarantee = true` 在 v1 中结构化失败；`SagaPlan` 按顺序执行
@@ -372,8 +372,13 @@ registry generation。
 
 Host 执行面必须把部署形态限制在后端实现中：
 
-- builtin / static 插件通过 `LocalTaskClient`、`LocalResourceClient` 直连本地
-  `CoreRuntime` / `ResourceManager` 快速路径。
+- builtin / static 插件通过 `LocalTaskClient` 和 provider-backed
+  `LocalResourceClient` 使用本地快速路径；resource 创建和 plan 数据面必须经
+  `ResourceProviderGateway`，不能回退到 core-managed descriptor/store。
+- builtin / static 插件若在 load plan 中声明 active resource provider，必须随
+  `LoadedPlugin` 注册同 id 的 `ResourceProviderGateway` 实例；Host 启动时按
+  `RuntimeLoadPlan.capability_graph.active_resource_providers` 自动注入。active
+  provider 缺少实例必须结构化失败，不能静默退回 core 兼容 store。
 - ABI 插件通过 `AbiTaskClient`、`AbiResourceClient` 将同一 `Task` / resource plan
   wire shape 编码到 bridge。
 - 两条路径不得向插件业务代码暴露 `Arc<T>`、`&T`、`&mut T`、`downcast` 或

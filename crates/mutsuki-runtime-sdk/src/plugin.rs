@@ -7,7 +7,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 
-use crate::{HostService, ProtocolSpec, ResourceKindSpec};
+use crate::{HostService, ProtocolSpec, ResourceKindSpec, ResourceProviderGateway};
 
 pub struct RuntimeBootstrapperService {
     pub service_id: String,
@@ -15,10 +15,16 @@ pub struct RuntimeBootstrapperService {
     pub service: Arc<dyn std::any::Any + Send + Sync>,
 }
 
+pub struct RuntimeBootstrapperResourceProvider {
+    pub provider_id: String,
+    pub provider: Arc<dyn ResourceProviderGateway>,
+}
+
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub runners: Vec<Box<dyn Runner>>,
     pub host_services: Vec<RuntimeBootstrapperService>,
+    pub resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
 }
 
 pub trait Plugin: Send {
@@ -67,6 +73,7 @@ pub struct PluginBuilder {
     metadata: BTreeMap<String, ScalarValue>,
     runners: Vec<Box<dyn Runner>>,
     host_services: Vec<RuntimeBootstrapperService>,
+    resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
 }
 
 impl PluginBuilder {
@@ -96,6 +103,7 @@ impl PluginBuilder {
             metadata: BTreeMap::new(),
             runners: Vec::new(),
             host_services: Vec::new(),
+            resource_providers: Vec::new(),
         }
     }
 
@@ -176,6 +184,41 @@ impl PluginBuilder {
         self
     }
 
+    pub fn resource_provider(mut self, provider_id: impl Into<String>) -> Self {
+        let provider_id = provider_id.into();
+        if !self
+            .provides
+            .resource_providers
+            .iter()
+            .any(|known| known == &provider_id)
+        {
+            self.provides.resource_providers.push(provider_id);
+        }
+        self
+    }
+
+    pub fn resource_provider_gateway(
+        mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn ResourceProviderGateway>,
+    ) -> Self {
+        let provider_id = provider_id.into();
+        if !self
+            .provides
+            .resource_providers
+            .iter()
+            .any(|known| known == &provider_id)
+        {
+            self.provides.resource_providers.push(provider_id.clone());
+        }
+        self.resource_providers
+            .push(RuntimeBootstrapperResourceProvider {
+                provider_id,
+                provider,
+            });
+        self
+    }
+
     pub fn provides(mut self, provides: PluginProvides) -> Self {
         self.provides = provides;
         self
@@ -213,6 +256,7 @@ impl PluginBuilder {
             },
             runners: self.runners,
             host_services: self.host_services,
+            resource_providers: self.resource_providers,
         }
     }
 }

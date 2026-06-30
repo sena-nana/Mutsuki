@@ -5,15 +5,13 @@ use mutsuki_runtime_contracts::{LeaseToken, ResourceRef, ResourceSemantic};
 #[derive(Clone, Debug)]
 pub(super) struct ResourceEntry {
     pub(super) descriptor: ResourceRef,
-    pub(super) bytes: Vec<u8>,
     pub(super) writer: Option<LeaseToken>,
 }
 
 impl ResourceEntry {
-    pub(super) fn new(descriptor: ResourceRef, bytes: Vec<u8>) -> Self {
+    pub(super) fn new(descriptor: ResourceRef) -> Self {
         Self {
             descriptor,
-            bytes,
             writer: None,
         }
     }

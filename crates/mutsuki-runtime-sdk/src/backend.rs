@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
-    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan, SnapshotDescriptor,
-    StreamPlan, WritePlan,
+    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SagaPlan,
+    SnapshotDescriptor, StreamPlan, WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -18,4 +18,16 @@ pub trait ResourcePlanGateway: Send + Sync {
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt>;
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>>;
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>>;
+}
+
+pub trait ResourceProviderGateway: ResourcePlanGateway {
+    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
+    fn create_cow_state_resource(
+        &self,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef>;
+    fn create_capability_resource(&self, kind_id: &str, schema: &str)
+    -> RuntimeResult<ResourceRef>;
 }

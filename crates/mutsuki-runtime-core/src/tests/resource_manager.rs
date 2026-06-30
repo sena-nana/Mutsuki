@@ -3,8 +3,10 @@ use serde_json::json;
 
 use crate::*;
 
+use super::fixtures::*;
+
 #[test]
-fn resource_manager_supports_value_ref_mmap_cow_and_exclusive_write_lease() {
+fn resource_manager_supports_value_refs_descriptors_and_write_lease_fencing() {
     let mut resources = ResourceManager::new();
     let small = resources.pack_value("small.v1", json!({"a": 1})).unwrap();
     assert!(matches!(small, PackedValue::Inline(_)));
@@ -24,22 +26,84 @@ fn resource_manager_supports_value_ref_mmap_cow_and_exclusive_write_lease() {
     );
 
     let resource = resources
-        .create_mmap_resource("bytes.v1", b"abc".to_vec())
+        .register_resource_descriptor(external_resource_ref(
+            "resource:bytes",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap();
-    assert_eq!(resources.read_resource(&resource).unwrap(), b"abc");
-    let blob = resources.create_blob_resource("blob.v1", b"blob-data".to_vec());
-    assert!(matches!(blob.access, ResourceAccess::Blob { .. }));
-    assert_eq!(resources.read_resource(&blob).unwrap(), b"blob-data");
-    let cow = resources.copy_on_write(&resource, b"xyz".to_vec()).unwrap();
-    assert_ne!(cow.ref_id, resource.ref_id);
+    assert_eq!(resources.open_resource(&resource.ref_id).unwrap(), resource);
+    assert_eq!(
+        resources
+            .register_resource_descriptor(resource.clone())
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_CAPABILITY_EXHAUSTED
+    );
+
+    let mut stale_descriptor = external_resource_ref(
+        "resource:stale",
+        "bytes",
+        "bytes.v1",
+        "mutsuki.std.resource.memory",
+    );
+    stale_descriptor.resource_id.generation += 1;
+    assert_eq!(
+        resources
+            .register_resource_descriptor(stale_descriptor)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_GENERATION_MISMATCH
+    );
+
     let lease = resources
         .acquire_write_lease(&resource.ref_id, "runner-a", Some(5))
         .unwrap();
-    let updated = resources
-        .write_with_lease(&lease, b"def".to_vec(), 2)
+    assert_eq!(lease.token.generation, resource.generation);
+    assert_eq!(
+        resources.active_mutable_lease_routes_for_task("runner-a"),
+        vec![format!("resource.write_lease.{}", lease.token.token_id)]
+    );
+    assert_eq!(
+        resources
+            .acquire_write_lease(&resource.ref_id, "runner-b", None)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_CAPABILITY_EXHAUSTED
+    );
+
+    let mut stale_lease = lease.clone();
+    stale_lease.token.generation += 1;
+    assert_eq!(
+        resources
+            .release_write_lease(&stale_lease)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_GENERATION_MISMATCH
+    );
+    resources.release_write_lease(&lease).unwrap();
+    assert!(
+        resources
+            .active_mutable_lease_routes_for_task("runner-a")
+            .is_empty()
+    );
+
+    let expiring = resources
+        .acquire_write_lease(&resource.ref_id, "runner-a", Some(3))
         .unwrap();
-    assert_eq!(updated.generation, resource.generation + 1);
-    assert_eq!(resources.read_resource(&updated).unwrap(), b"def");
+    assert_eq!(
+        resources
+            .release_write_lease_at(&expiring, 3)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_LEASE_EXPIRED
+    );
 }
 
 #[test]
@@ -177,21 +241,23 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
     let plan = super::fixtures::load_plan(Vec::new(), Vec::new());
     let mut runtime = super::fixtures::boot_with_kernel(plan);
     let resource = runtime
-        .create_blob_resource("bytes.v1", b"abc".to_vec())
+        .register_resource_descriptor(super::fixtures::external_resource_ref(
+            "resource:facade",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap();
 
     assert_eq!(runtime.open_resource(&resource.ref_id).unwrap(), resource);
     assert_eq!(runtime.map_resource(&resource.ref_id).unwrap(), resource);
-    assert_eq!(runtime.read_resource(&resource.ref_id).unwrap(), b"abc");
 
-    let mmap = runtime
-        .create_mmap_resource("bytes.v1", b"abc".to_vec())
-        .unwrap();
     let lease = runtime
-        .lock_resource(&mmap.ref_id, "runner-a", Some(3))
+        .lock_resource(&resource.ref_id, "runner-a", Some(3))
         .unwrap();
-    let updated = runtime.write_resource(&lease, b"def".to_vec()).unwrap();
-    assert_eq!(runtime.read_resource(&updated.ref_id).unwrap(), b"def");
+    assert_eq!(lease.token.ref_id, resource.ref_id);
+    assert_eq!(lease.token.generation, resource.generation);
+    runtime.release_write_lease(&lease).unwrap();
 
     let cell = runtime
         .create_resource_cell(
@@ -228,16 +294,37 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
 }
 
 #[test]
-fn resource_hub_routes_typed_resources_and_executes_lazy_plans() {
+fn resource_hub_routes_typed_resource_descriptors_and_builds_lazy_plans() {
     let mut resources = ResourceManager::new();
     let text = resources
-        .create_cow_state_resource("text_buffer", "text.v1", b"hello".to_vec())
+        .register_resource_descriptor(external_resource_ref_with_semantic(
+            "resource:text",
+            "text_buffer",
+            "text.v1",
+            "mutsuki.std.resource.memory",
+            ResourceSemantic::CowVersionedState,
+            ResourceLifetime::Persistent,
+        ))
         .unwrap();
     let ast = resources
-        .create_snapshot_resource("ast_snapshot", "ast.v1", &text, b"ast".to_vec())
+        .register_resource_descriptor(external_resource_ref_with_semantic(
+            "resource:ast",
+            "ast_snapshot",
+            "ast.v1",
+            "mutsuki.std.resource.memory",
+            ResourceSemantic::VersionedSnapshot,
+            ResourceLifetime::Persistent,
+        ))
         .unwrap();
     let facts = resources
-        .create_fact_resource("project_facts", "facts.v1", json!({"root": "."}))
+        .register_resource_descriptor(external_resource_ref_with_semantic(
+            "resource:facts",
+            "project_facts",
+            "facts.v1",
+            "mutsuki.std.resource.memory",
+            ResourceSemantic::ReadOnlyFact,
+            ResourceLifetime::Persistent,
+        ))
         .unwrap();
     let stream = resources.create_stream_resource(
         "model_output_stream",
@@ -245,7 +332,16 @@ fn resource_hub_routes_typed_resources_and_executes_lazy_plans() {
         "python.resource",
         "stream://model",
     );
-    let capability = resources.create_capability_resource("db_pool", "db.pool.v1");
+    let capability = resources
+        .register_resource_descriptor(external_resource_ref_with_semantic(
+            "resource:db_pool",
+            "db_pool",
+            "db.pool.v1",
+            "mutsuki.std.resource.memory",
+            ResourceSemantic::CapabilityResource,
+            ResourceLifetime::ExternalManaged,
+        ))
+        .unwrap();
 
     assert_eq!(resources.resource_store_name(&text.ref_id), Some("cow"));
     assert_eq!(
@@ -266,108 +362,10 @@ fn resource_hub_routes_typed_resources_and_executes_lazy_plans() {
     let write_plan = resources
         .build_write_plan(&text.ref_id, "fail", json!({"replace": "all"}))
         .unwrap();
-    assert_eq!(resources.read_resource(&text).unwrap(), b"hello");
-    assert_eq!(resources.collect_read_plan(&read_plan).unwrap(), b"hello");
-
-    let receipt = resources
-        .commit_write_plan(&write_plan, b"world".to_vec())
+    let export_plan = resources
+        .build_export_plan(&text.ref_id, "inline_utf8")
         .unwrap();
-    let updated = receipt.resource_ref.unwrap();
-    assert_eq!(updated.version, 2);
-    assert_eq!(updated.resource_id.version, 2);
-    assert_eq!(resources.read_resource(&updated).unwrap(), b"world");
-
-    let updated_read_plan = resources
-        .build_read_plan(&updated.ref_id, "collect")
-        .unwrap();
-    let snapshot = resources
-        .snapshot_read_plan(&updated_read_plan, "text_snapshot", "text.snapshot.v1")
-        .unwrap();
-    assert_eq!(snapshot.source_version, 2);
-    assert_eq!(
-        snapshot.snapshot_ref.semantic,
-        ResourceSemantic::VersionedSnapshot
-    );
-    assert!(
-        resources
-            .open_stream_plan(&resources.build_read_plan(&stream.ref_id, "open").unwrap())
-            .is_ok()
-    );
-    assert!(resources.open_stream_plan(&read_plan).is_err());
-}
-
-#[test]
-fn resource_manager_executes_inline_utf8_export_plan() {
-    let mut resources = ResourceManager::new();
-    let resource = resources.create_blob_resource("text.v1", b"hello".to_vec());
-    let plan = resources
-        .build_export_plan(&resource.ref_id, "inline_utf8")
-        .unwrap();
-
-    let receipt = resources.execute_export_plan(&plan).unwrap();
-
-    assert_eq!(receipt.plan_id, plan.plan_id);
-    assert_eq!(receipt.status, "exported");
-    assert_eq!(receipt.output, json!("hello"));
-    assert_eq!(receipt.resource_ref.unwrap().ref_id, resource.ref_id);
-}
-
-#[test]
-fn resource_manager_rejects_invalid_export_plans_loudly() {
-    let mut resources = ResourceManager::new();
-    let resource = resources.create_blob_resource("text.v1", b"hello".to_vec());
-    let unsupported = resources
-        .build_export_plan(&resource.ref_id, "json")
-        .unwrap();
-    assert_eq!(
-        resources
-            .execute_export_plan(&unsupported)
-            .unwrap_err()
-            .error()
-            .code,
-        "resource.export_unsupported"
-    );
-
-    let binary = resources.create_blob_resource("bytes.v1", vec![0xff]);
-    let binary_export = resources
-        .build_export_plan(&binary.ref_id, "inline_utf8")
-        .unwrap();
-    assert_eq!(
-        resources
-            .execute_export_plan(&binary_export)
-            .unwrap_err()
-            .error()
-            .code,
-        "resource.export_decode_failed"
-    );
-
-    let state = resources
-        .create_cow_state_resource("text_buffer", "text.v1", b"old".to_vec())
-        .unwrap();
-    let stale_export = resources
-        .build_export_plan(&state.ref_id, "inline_utf8")
-        .unwrap();
-    let write = resources
-        .build_write_plan(&state.ref_id, "fail", json!({"replace": "all"}))
-        .unwrap();
-    resources
-        .commit_write_plan(&write, b"new".to_vec())
-        .unwrap();
-    assert_eq!(
-        resources
-            .execute_export_plan(&stale_export)
-            .unwrap_err()
-            .error()
-            .code,
-        ERR_RESOURCE_GENERATION_MISMATCH
-    );
-}
-
-#[test]
-fn resource_manager_executes_command_batch_and_saga_plans() {
-    let mut resources = ResourceManager::new();
-    let capability = resources.create_capability_resource("db_pool", "db.pool.v1");
-    let command = resources
+    let command_plan = resources
         .build_command_plan(
             &capability.ref_id,
             "query",
@@ -375,83 +373,16 @@ fn resource_manager_executes_command_batch_and_saga_plans() {
             Some("query:1".into()),
         )
         .unwrap();
-
-    let receipt = resources.execute_command_plan(&command).unwrap();
-    assert_eq!(receipt.status, "commanded");
-    assert_eq!(receipt.resource_ref.unwrap(), capability);
-    assert_eq!(receipt.output["operation"], "query");
-    assert_eq!(receipt.output["idempotency_key"], "query:1");
-
-    let batch = CommandBatch {
-        batch_id: "batch:1".into(),
-        commands: vec![command.clone(), command.clone()],
-        rollback_guarantee: false,
-    };
-    assert_eq!(resources.execute_command_batch(&batch).unwrap().len(), 2);
-
-    let rollback_batch = CommandBatch {
-        rollback_guarantee: true,
-        ..batch.clone()
-    };
-    assert_eq!(
+    assert_eq!(read_plan.resource, text);
+    assert_eq!(write_plan.resource.ref_id, text.ref_id);
+    assert_eq!(write_plan.base_version, text.version);
+    assert_eq!(write_plan.patch.target_ref.ref_id, text.ref_id);
+    assert_eq!(export_plan.resource.ref_id, text.ref_id);
+    assert_eq!(command_plan.capability.ref_id, capability.ref_id);
+    assert!(
         resources
-            .execute_command_batch(&rollback_batch)
-            .unwrap_err()
-            .error()
-            .code,
-        "resource.rollback_unsupported"
+            .open_stream_plan(&resources.build_read_plan(&stream.ref_id, "open").unwrap())
+            .is_ok()
     );
-
-    let saga = SagaPlan {
-        saga_id: "saga:ok".into(),
-        steps: vec![command.clone(), command.clone()],
-        compensations: vec![command.clone()],
-    };
-    assert_eq!(resources.execute_saga_plan(&saga).unwrap().len(), 2);
-
-    let unsupported = resources
-        .build_command_plan(&capability.ref_id, "drop", json!({}), None)
-        .unwrap();
-    assert_eq!(
-        resources
-            .execute_command_plan(&unsupported)
-            .unwrap_err()
-            .error()
-            .code,
-        "resource.command_unsupported"
-    );
-
-    let failed_saga = SagaPlan {
-        saga_id: "saga:failed".into(),
-        steps: vec![unsupported],
-        compensations: vec![command],
-    };
-    let error = resources.execute_saga_plan(&failed_saga).unwrap_err();
-    assert_eq!(error.error().code, "resource.saga_failed");
-    assert_eq!(
-        error.error().cause.as_ref().unwrap().code,
-        "resource.command_unsupported"
-    );
-    assert_eq!(
-        error.error().evidence.get("compensation_attempts"),
-        Some(&ScalarValue::Int(1))
-    );
-}
-
-#[test]
-fn resource_manager_rejects_command_plan_for_non_capability_resource() {
-    let mut resources = ResourceManager::new();
-    let resource = resources.create_blob_resource("bytes.v1", b"abc".to_vec());
-    let command = resources
-        .build_command_plan(&resource.ref_id, "query", json!({}), None)
-        .unwrap();
-
-    assert_eq!(
-        resources
-            .execute_command_plan(&command)
-            .unwrap_err()
-            .error()
-            .code,
-        "resource.semantic_mismatch"
-    );
+    assert!(resources.open_stream_plan(&read_plan).is_err());
 }

@@ -18,7 +18,7 @@ pub use bootstrapper::{NativeRunner, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,
-    TaskClient,
+    ResourcePlanProvider, TaskClient,
 };
 pub use commands::{HostRuntimeCommand, HostRuntimeReply};
 pub use host::{HostRuntime, HostRuntimeConfig};

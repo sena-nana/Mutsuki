@@ -27,7 +27,7 @@ impl ResourceManager {
         let ref_id = self.id_source.next_id("value");
         let value_ref = ValueRef {
             ref_id: ref_id.clone(),
-            provider_id: "resource.local".into(),
+            provider_id: "runtime.resource_manager".into(),
             schema: schema.into(),
             version: 1,
             generation: 1,

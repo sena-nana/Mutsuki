@@ -22,7 +22,7 @@ mod host;
 mod plugin;
 mod resource;
 
-pub use backend::ResourcePlanGateway;
+pub use backend::{ResourcePlanGateway, ResourceProviderGateway};
 pub use descriptor::{
     HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,
     ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,
@@ -35,7 +35,10 @@ pub use host::{
 };
 pub use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
-pub use plugin::{BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader};
+pub use plugin::{
+    BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader,
+    RuntimeBootstrapperResourceProvider, RuntimeBootstrapperService,
+};
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
 
 pub mod contracts {

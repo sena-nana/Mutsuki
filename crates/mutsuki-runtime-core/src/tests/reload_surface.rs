@@ -122,7 +122,7 @@ fn removed_stream_surface_uses_live_stream_occupancy() {
         .open_stream(
             "chat.events",
             "bytes.v1",
-            "resource.local",
+            "mutsuki.std.resource.memory",
             "stream://chat/events",
         )
         .unwrap();
@@ -219,7 +219,7 @@ fn deprecated_stream_subscription_and_timer_surfaces_reject_new_occupancy() {
         .open_stream(
             "chat.events",
             "bytes.v1",
-            "resource.local",
+            "mutsuki.std.resource.memory",
             "stream://chat/events",
         )
         .unwrap_err();
@@ -250,7 +250,7 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
             ContractSurfaceKind::ResourceSchema,
         ),
         (
-            "resource_provider:resource.local",
+            "resource_provider:mutsuki.std.resource.memory",
             ContractSurfaceKind::ResourceProvider,
         ),
     ]);
@@ -261,7 +261,12 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
         .unwrap();
 
     let schema_err = runtime
-        .create_blob_resource("bytes.v1", b"abc".to_vec())
+        .register_resource_descriptor(external_resource_ref(
+            "resource:bytes",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap_err();
     assert_eq!(schema_err.error().code, ERR_RELOAD_BLOCKED);
 
@@ -271,7 +276,7 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
             ContractSurfaceKind::ResourceSchema,
         ),
         (
-            "resource_provider:resource.local",
+            "resource_provider:mutsuki.std.resource.memory",
             ContractSurfaceKind::ResourceProvider,
         ),
     ]);
@@ -280,12 +285,17 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
     runtime
         .reload(deprecated_plan(
             provider_plan,
-            "resource_provider:resource.local",
+            "resource_provider:mutsuki.std.resource.memory",
         ))
         .unwrap();
 
     let provider_err = runtime
-        .create_mmap_resource("text.v1", b"abc".to_vec())
+        .register_resource_descriptor(external_resource_ref(
+            "resource:text",
+            "text",
+            "text.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap_err();
     assert_eq!(provider_err.error().code, ERR_RELOAD_BLOCKED);
 }
@@ -298,13 +308,18 @@ fn removed_resource_surfaces_use_live_resource_and_write_lease_occupancy() {
             ContractSurfaceKind::ResourceSchema,
         ),
         (
-            "resource_provider:resource.local",
+            "resource_provider:mutsuki.std.resource.memory",
             ContractSurfaceKind::ResourceProvider,
         ),
     ]);
     let mut runtime = boot_with_kernel(plan.clone());
     let resource = runtime
-        .create_mmap_resource("bytes.v1", b"abc".to_vec())
+        .register_resource_descriptor(external_resource_ref(
+            "resource:bytes",
+            "bytes",
+            "bytes.v1",
+            "mutsuki.std.resource.memory",
+        ))
         .unwrap();
     let _lease = runtime
         .lock_resource(&resource.ref_id, "writer-task", None)
@@ -314,7 +329,7 @@ fn removed_resource_surfaces_use_live_resource_and_write_lease_occupancy() {
         plan,
         &[
             "resource_schema:bytes.v1",
-            "resource_provider:resource.local",
+            "resource_provider:mutsuki.std.resource.memory",
         ],
     );
 
@@ -326,7 +341,7 @@ fn removed_resource_surfaces_use_live_resource_and_write_lease_occupancy() {
             && item.active_leases == 1
     }));
     assert!(runtime.surface_occupancy().iter().any(|item| {
-        item.surface_id == "resource_provider:resource.local"
+        item.surface_id == "resource_provider:mutsuki.std.resource.memory"
             && item.resource_refs == 1
             && item.active_leases == 1
     }));

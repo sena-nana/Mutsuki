@@ -1,14 +1,17 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginManifest, RunnerDescriptor,
     RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
 };
 use mutsuki_runtime_core::{CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::{LoadedPlugin, ResourceProviderGateway};
 
 use crate::capabilities::HostCapabilityRegistry;
 use crate::error::{
-    deployment_mismatch, runner_for_disabled_plugin, runner_missing_for_deployment,
+    deployment_mismatch, resource_provider_duplicate, resource_provider_missing,
+    resource_provider_unsupported, runner_for_disabled_plugin, runner_missing_for_deployment,
 };
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
@@ -63,11 +66,17 @@ impl Runner for NativeRunner {
 pub struct RuntimeBootstrapper {
     manifests: Vec<PluginManifest>,
     runners: Vec<RegisteredRunner>,
+    resource_providers: Vec<RegisteredResourceProvider>,
 }
 
 struct RegisteredRunner {
     deployment_kind: PluginDeploymentKind,
     runner: Box<dyn Runner>,
+}
+
+struct RegisteredResourceProvider {
+    provider_id: String,
+    provider: Arc<dyn ResourceProviderGateway>,
 }
 
 impl RuntimeBootstrapper {
@@ -77,6 +86,25 @@ impl RuntimeBootstrapper {
 
     pub fn register_manifest(&mut self, manifest: PluginManifest) {
         self.manifests.push(manifest);
+    }
+
+    pub fn register_loaded_plugin(&mut self, plugin: LoadedPlugin) {
+        let LoadedPlugin {
+            manifest,
+            runners,
+            host_services: _,
+            resource_providers,
+        } = plugin;
+        self.register_manifest(manifest);
+        for runner in runners {
+            self.register_builtin_runner(runner);
+        }
+        for resource_provider in resource_providers {
+            self.resource_providers.push(RegisteredResourceProvider {
+                provider_id: resource_provider.provider_id,
+                provider: resource_provider.provider,
+            });
+        }
     }
 
     pub fn register_runner(&mut self, runner: Box<dyn Runner>) {
@@ -116,6 +144,11 @@ impl RuntimeBootstrapper {
         config: HostRuntimeConfig,
     ) -> RuntimeResult<HostRuntime> {
         let booted = self.boot_host_runtime(profile)?;
+        let config = configure_resource_provider(
+            config,
+            &booted.active_resource_providers,
+            booted.resource_providers,
+        )?;
         HostRuntime::start(
             booted.core,
             config,
@@ -133,8 +166,10 @@ impl RuntimeBootstrapper {
         let mut plan = resolve_load_plan(&self.manifests, &profile)?;
         let profile_id = plan.profile_id.clone();
         let registry_generation = plan.registry_generation;
+        let active_resource_providers = plan.capability_graph.active_resource_providers.clone();
         let capabilities = HostCapabilityRegistry::from_load_plan(&plan)?;
         validate_registered_runners(&plan, &self.runners)?;
+        validate_registered_resource_providers(&self.resource_providers)?;
         let mut runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()
@@ -147,6 +182,8 @@ impl RuntimeBootstrapper {
             capabilities,
             profile_id,
             registry_generation,
+            active_resource_providers,
+            resource_providers: self.resource_providers,
         })
     }
 }
@@ -156,6 +193,8 @@ struct BootedRuntime {
     capabilities: HostCapabilityRegistry,
     profile_id: String,
     registry_generation: u64,
+    active_resource_providers: Vec<String>,
+    resource_providers: Vec<RegisteredResourceProvider>,
 }
 
 fn append_core_kernel(plan: &mut RuntimeLoadPlan, runners: &mut Vec<Box<dyn Runner>>) {
@@ -196,6 +235,48 @@ fn validate_registered_runners(
         }
     }
     Ok(())
+}
+
+fn validate_registered_resource_providers(
+    resource_providers: &[RegisteredResourceProvider],
+) -> RuntimeResult<()> {
+    let mut provider_ids = BTreeSet::new();
+    for provider in resource_providers {
+        if !provider_ids.insert(provider.provider_id.clone()) {
+            return Err(resource_provider_duplicate(&provider.provider_id));
+        }
+    }
+    Ok(())
+}
+
+fn configure_resource_provider(
+    mut config: HostRuntimeConfig,
+    active_provider_ids: &[String],
+    resource_providers: Vec<RegisteredResourceProvider>,
+) -> RuntimeResult<HostRuntimeConfig> {
+    if config.resource_provider.is_some() {
+        return Ok(config);
+    }
+
+    match active_provider_ids {
+        [] => Ok(config),
+        [provider_id] => {
+            let mut providers = BTreeMap::new();
+            for registered in resource_providers {
+                providers.insert(registered.provider_id, registered.provider);
+            }
+            let provider = providers
+                .remove(provider_id)
+                .ok_or_else(|| resource_provider_missing(provider_id))?;
+            config.resource_provider = Some(provider);
+            Ok(config)
+        }
+        providers => Err(resource_provider_unsupported(format!(
+            "host config accepts one resource provider, load plan selected {}: {}",
+            providers.len(),
+            providers.join(",")
+        ))),
+    }
 }
 
 fn validate_runner_deployment(

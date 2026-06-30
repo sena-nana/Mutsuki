@@ -7,6 +7,8 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
 
+use super::ResourcePlanProvider;
+
 #[derive(Clone)]
 pub struct LocalTaskClient {
     runtime: Arc<Mutex<CoreRuntime>>,
@@ -43,21 +45,24 @@ impl TaskSubmitter for LocalTaskClient {
 
 #[derive(Clone)]
 pub struct LocalResourceClient {
-    runtime: Arc<Mutex<CoreRuntime>>,
+    provider: Arc<dyn ResourcePlanProvider>,
 }
 
 impl LocalResourceClient {
-    pub fn new(runtime: Arc<Mutex<CoreRuntime>>) -> Self {
-        Self { runtime }
+    pub fn with_provider(provider: impl ResourcePlanProvider + 'static) -> Self {
+        Self {
+            provider: Arc::new(provider),
+        }
+    }
+
+    pub fn from_provider(provider: Arc<dyn ResourcePlanProvider>) -> Self {
+        Self { provider }
     }
 }
 
 impl ResourcePlanGateway for LocalResourceClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .collect_read_plan(plan)
+        self.provider.collect_read_plan(plan)
     }
 
     fn snapshot_read_plan(
@@ -66,51 +71,30 @@ impl ResourcePlanGateway for LocalResourceClient {
         kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<SnapshotDescriptor> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .snapshot_read_plan(plan, kind_id, schema)
+        self.provider.snapshot_read_plan(plan, kind_id, schema)
     }
 
     fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .open_stream_plan(plan)
+        self.provider.open_stream_plan(plan)
     }
 
     fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .execute_export_plan(plan)
+        self.provider.execute_export_plan(plan)
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .commit_write_plan(plan, bytes)
+        self.provider.commit_write_plan(plan, bytes)
     }
 
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .execute_command_plan(plan)
+        self.provider.execute_command_plan(plan)
     }
 
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .execute_command_batch(batch)
+        self.provider.execute_command_batch(batch)
     }
 
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.runtime
-            .lock()
-            .expect("runtime mutex poisoned")
-            .execute_saga_plan(saga)
+        self.provider.execute_saga_plan(saga)
     }
 }

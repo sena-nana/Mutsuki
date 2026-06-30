@@ -1,10 +1,14 @@
 mod abi;
 mod local;
 
-use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, TaskSubmitter};
 
 pub use abi::{AbiResourceClient, AbiTaskClient};
 pub use local::{LocalResourceClient, LocalTaskClient};
+
+pub trait ResourcePlanProvider: ResourceProviderGateway + Send + Sync {}
+
+impl<T> ResourcePlanProvider for T where T: ResourceProviderGateway + Send + Sync {}
 
 pub trait TaskClient: TaskSubmitter {
     fn submit_task(

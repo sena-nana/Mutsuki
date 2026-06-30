@@ -1,12 +1,11 @@
 use mutsuki_runtime_contracts::{
     ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED,
     ERR_RESOURCE_NOT_FOUND, ExclusiveWriteLease, LeaseToken, ResourceCellRef, ResourceLease,
-    ResourceRef,
 };
 
 use crate::{IdSource, RuntimeResult};
 
-use super::{ResourceCellEntry, ResourceManager, simple_hash};
+use super::{ResourceCellEntry, ResourceManager};
 
 impl ResourceManager {
     pub fn create_resource_cell(
@@ -190,47 +189,50 @@ impl ResourceManager {
         Ok(ExclusiveWriteLease { token })
     }
 
-    pub fn write_with_lease(
+    pub fn release_write_lease(&mut self, lease: &ExclusiveWriteLease) -> RuntimeResult<()> {
+        self.release_write_lease_checked(lease, None)
+    }
+
+    pub fn release_write_lease_at(
         &mut self,
         lease: &ExclusiveWriteLease,
-        bytes: Vec<u8>,
         current_step: u64,
-    ) -> RuntimeResult<ResourceRef> {
-        if lease
-            .token
-            .expires_at_step
-            .is_some_and(|expires| current_step > expires)
-        {
-            return Err(crate::runtime_failure(
-                ERR_RESOURCE_LEASE_EXPIRED,
-                "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id),
-            ));
-        }
+    ) -> RuntimeResult<()> {
+        self.release_write_lease_checked(lease, Some(current_step))
+    }
+
+    fn release_write_lease_checked(
+        &mut self,
+        lease: &ExclusiveWriteLease,
+        current_step: Option<u64>,
+    ) -> RuntimeResult<()> {
         let entry = self.hub.get_mut(&lease.token.ref_id).ok_or_else(|| {
             crate::runtime_failure(
                 ERR_RESOURCE_NOT_FOUND,
                 "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id),
+                format!("resource.write_lease.release.{}", lease.token.ref_id),
             )
         })?;
+        if lease
+            .token
+            .expires_at_step
+            .is_some_and(|expires| current_step.is_some_and(|step| step >= expires))
+        {
+            return Err(crate::runtime_failure(
+                ERR_RESOURCE_LEASE_EXPIRED,
+                "runtime.resource_manager",
+                format!("resource.write_lease.release.{}", lease.token.ref_id),
+            ));
+        }
         if entry.writer.as_ref() != Some(&lease.token) {
             return Err(crate::runtime_failure(
                 ERR_RESOURCE_GENERATION_MISMATCH,
                 "runtime.resource_manager",
-                format!("resource.write.{}", lease.token.ref_id),
+                format!("resource.write_lease.release.{}", lease.token.ref_id),
             ));
         }
-        entry.descriptor.generation += 1;
-        entry.descriptor.version += 1;
-        entry.descriptor.resource_id.generation = entry.descriptor.generation;
-        entry.descriptor.resource_id.version = entry.descriptor.version;
-        entry.descriptor.size_hint = Some(bytes.len() as u64);
-        entry.descriptor.content_hash = Some(simple_hash(&bytes));
-        self.backend.write(&mut entry.descriptor, &bytes)?;
-        entry.bytes = bytes;
         entry.writer = None;
-        Ok(entry.descriptor.clone())
+        Ok(())
     }
 }
 
