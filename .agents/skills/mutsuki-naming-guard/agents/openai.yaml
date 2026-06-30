@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mutsuki Naming Guard"
+  short_description: "Enforce Mutsuki component naming boundaries"
+  default_prompt: "Use $mutsuki-naming-guard to audit Mutsuki naming and component boundaries before editing."
