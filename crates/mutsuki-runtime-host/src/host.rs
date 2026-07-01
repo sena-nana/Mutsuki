@@ -11,7 +11,7 @@ use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway
 use crate::actor::{CoreActorMsg, core_actor_loop};
 use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot};
 use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
@@ -154,6 +154,16 @@ impl HostRuntime {
             .send(CoreActorMsg::TaskStatus(task_id.to_string(), reply_tx))
             .ok()?;
         reply_rx.recv().ok().flatten()
+    }
+
+    pub fn task_snapshots(&mut self) -> RuntimeResult<Vec<HostTaskSnapshot>> {
+        match self.dispatch(HostRuntimeCommand::TaskSnapshots)? {
+            HostRuntimeReply::TaskSnapshots(snapshots) => Ok(snapshots),
+            reply => Err(host_failure(
+                "host.task_snapshots",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
     }
 }
 

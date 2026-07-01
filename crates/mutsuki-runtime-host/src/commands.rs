@@ -1,10 +1,40 @@
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SagaPlan,
-    SnapshotDescriptor, StreamPlan, Task, TaskOutcome, WritePlan,
+    SnapshotDescriptor, StreamPlan, Task, TaskOutcome, TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport};
 
 use crate::PreparedRuntimeReload;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostTaskFailureSummary {
+    pub code: String,
+    pub source: String,
+    pub route: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostTaskSnapshot {
+    pub task_id: String,
+    pub protocol_id: String,
+    pub status: TaskStatus,
+    pub priority: i64,
+    pub ready_at_step: Option<u64>,
+    pub created_sequence: u64,
+    pub registry_generation: u64,
+    pub target_binding_id: Option<String>,
+    pub runner_hint: Option<String>,
+    pub claimed_by: Option<String>,
+    pub owner_runner: Option<String>,
+    pub lease_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub input_refs: Vec<String>,
+    pub output_ref: Option<String>,
+    pub continuation_ref: Option<String>,
+    pub required_surfaces: Vec<String>,
+    pub failure: Option<HostTaskFailureSummary>,
+}
 
 pub enum HostRuntimeCommand {
     SubmitTask(Box<Task>),
@@ -13,6 +43,7 @@ pub enum HostRuntimeCommand {
         max_ticks: usize,
     },
     CancelTask(String),
+    TaskSnapshots,
     TaskOutcome(String),
     CreateBlobResource {
         schema: String,
@@ -54,6 +85,7 @@ pub enum HostRuntimeReply {
     Tick(RunnerLoopReport),
     Idle(RunnerLoopReport),
     TaskCancelled(String),
+    TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskOutcome(Option<TaskOutcome>),
     ResourceCreated(ResourceRef),
     ResourceBytes(Vec<u8>),

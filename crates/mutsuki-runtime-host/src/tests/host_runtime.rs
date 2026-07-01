@@ -118,6 +118,90 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
 }
 
 #[test]
+fn task_snapshots_return_live_task_metadata_in_actor_order() {
+    let blocking_descriptor = descriptor_with_class(
+        "snapshot.blocking.runner",
+        "snapshot.blocking",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![blocking_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(NativeRunner::new(
+        blocking_descriptor,
+        move |_ctx, tasks| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    let mut running_task = Task::new("snapshot-running", "snapshot.blocking", json!({}));
+    running_task.priority = 7;
+    running_task.trace_id = Some("trace-1".into());
+    running_task.input_refs = vec!["input:1".into()];
+    running_task.required_surfaces = vec!["surface:snapshot".into()];
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(running_task)))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let mut ready_task = Task::new("snapshot-ready", "snapshot.blocking", json!({}));
+    ready_task.correlation_id = Some("correlation-1".into());
+    ready_task.runner_hint = Some("snapshot.blocking.runner".into());
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(ready_task)))
+        .unwrap();
+
+    let snapshots = runtime.task_snapshots().unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].task_id, "snapshot-running");
+    assert_eq!(snapshots[1].task_id, "snapshot-ready");
+    assert_eq!(snapshots[0].status, TaskStatus::Running);
+    assert_eq!(snapshots[1].status, TaskStatus::Ready);
+    assert_eq!(snapshots[0].priority, 7);
+    assert_eq!(snapshots[0].trace_id.as_deref(), Some("trace-1"));
+    assert_eq!(snapshots[0].input_refs, vec!["input:1".to_string()]);
+    assert_eq!(
+        snapshots[0].required_surfaces,
+        vec!["surface:snapshot".to_string()]
+    );
+    assert_eq!(
+        snapshots[0].claimed_by.as_deref(),
+        Some("snapshot.blocking.runner")
+    );
+    assert_eq!(
+        snapshots[0].owner_runner.as_deref(),
+        Some("snapshot.blocking.runner")
+    );
+    assert!(snapshots[0].lease_id.is_some());
+    assert_eq!(
+        snapshots[1].runner_hint.as_deref(),
+        Some("snapshot.blocking.runner")
+    );
+    assert_eq!(
+        snapshots[1].correlation_id.as_deref(),
+        Some("correlation-1")
+    );
+    assert!(snapshots[1].lease_id.is_none());
+    assert!(snapshots[0].created_sequence < snapshots[1].created_sequence);
+
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+}
+
+#[test]
 fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     let mut runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())

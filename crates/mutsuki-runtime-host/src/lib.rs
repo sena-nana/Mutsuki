@@ -20,7 +20,9 @@ pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,
     ResourcePlanProvider, TaskClient,
 };
-pub use commands::{HostRuntimeCommand, HostRuntimeReply};
+pub use commands::{
+    HostRuntimeCommand, HostRuntimeReply, HostTaskFailureSummary, HostTaskSnapshot,
+};
 pub use host::{HostRuntime, HostRuntimeConfig};
 pub use jsonl::JsonlRunner;
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};

@@ -5,10 +5,13 @@ use std::time::{Duration, Instant};
 use mutsuki_runtime_contracts::{ExecutionClass, TaskStatus};
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerLoopReport, RuntimeResult,
+    TaskRecord,
 };
 
 use crate::PreparedRuntimeReload;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
+use crate::commands::{
+    HostRuntimeCommand, HostRuntimeReply, HostTaskFailureSummary, HostTaskSnapshot,
+};
 use crate::error::{host_failure, resource_provider_missing};
 use crate::host::HostRuntimeConfig;
 use crate::scheduler::decide_schedule;
@@ -171,6 +174,9 @@ fn handle_command(
             }
             Ok((HostRuntimeReply::TaskCancelled(task_id), false))
         }
+        HostRuntimeCommand::TaskSnapshots => {
+            Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
+        }
         HostRuntimeCommand::TaskOutcome(task_id) => Ok((
             HostRuntimeReply::TaskOutcome(core.task_outcome(&task_id)?),
             false,
@@ -267,6 +273,45 @@ fn handle_command(
             )?;
             Ok((HostRuntimeReply::Reloaded(decision), false))
         }
+    }
+}
+
+fn task_snapshots(core: &CoreRuntime) -> Vec<HostTaskSnapshot> {
+    core.tasks()
+        .records()
+        .into_iter()
+        .map(task_snapshot)
+        .collect()
+}
+
+fn task_snapshot(record: &TaskRecord) -> HostTaskSnapshot {
+    HostTaskSnapshot {
+        task_id: record.task.task_id.clone(),
+        protocol_id: record.task.protocol_id.clone(),
+        status: record.status.clone(),
+        priority: record.task.priority,
+        ready_at_step: record.task.ready_at_step,
+        created_sequence: record.task.created_sequence,
+        registry_generation: record.task.registry_generation,
+        target_binding_id: record.task.target_binding_id.clone(),
+        runner_hint: record.task.runner_hint.clone(),
+        claimed_by: record.claimed_by.clone(),
+        owner_runner: record.owner_runner.clone(),
+        lease_id: record.task.lease_id.clone(),
+        trace_id: record.task.trace_id.clone(),
+        correlation_id: record.task.correlation_id.clone(),
+        input_refs: record.task.input_refs.clone(),
+        output_ref: record.task.output_ref.clone(),
+        continuation_ref: record.task.continuation_ref.clone(),
+        required_surfaces: record.task.required_surfaces.clone(),
+        failure: record
+            .failure
+            .as_ref()
+            .map(|failure| HostTaskFailureSummary {
+                code: failure.code.clone(),
+                source: failure.source.clone(),
+                route: failure.route.clone(),
+            }),
     }
 }
 
