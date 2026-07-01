@@ -6,9 +6,9 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply};
 use mutsuki_tauri_bridge::{
-    ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord, FrontendTaskRequest,
-    FrontendTaskResult, FrontendTaskRun, HostStatus, MutsukiFrontendEvent, PluginSummary,
-    PreviewHandle, ResourceBytes, ResourceText, RunnerSummary, TaskCancelRequest,
+    ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
+    FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HostStatus, MutsukiFrontendEvent,
+    PluginSummary, PreviewHandle, ResourceBytes, ResourceText, RunnerSummary, TaskCancelRequest,
     TaskResultRequest, redact_log_record, redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
@@ -442,9 +442,30 @@ impl MutsukiTauriHost {
         payload: Value,
         context: FrontendContext,
     ) -> ApprovalRequest {
-        let request = self
-            .approvals
-            .request(requester, operation, risk, payload, context);
+        self.emit_approval_request(
+            self.approvals
+                .request(requester, operation, risk, payload, context),
+        )
+    }
+
+    pub fn request_approval_with_attribution(
+        &self,
+        requester: impl Into<String>,
+        operation: impl Into<String>,
+        risk: impl Into<String>,
+        payload: Value,
+        attribution: ApprovalAttribution,
+    ) -> ApprovalRequest {
+        self.emit_approval_request(self.approvals.request_with_attribution(
+            requester,
+            operation,
+            risk,
+            payload,
+            attribution,
+        ))
+    }
+
+    fn emit_approval_request(&self, request: ApprovalRequest) -> ApprovalRequest {
         let _ = self.events.emit(MutsukiFrontendEvent::Approval {
             request: request.clone(),
         });

@@ -136,8 +136,15 @@ export interface ApprovalRequest {
   requester: string;
   operation: string;
   risk: string;
+  trace_id: string;
+  correlation_id: string;
   payload: JsonValue;
   context: FrontendContext;
+}
+
+export interface ApprovalDecisionInput {
+  decision: "allow" | "deny";
+  reason?: string;
 }
 
 export interface ApprovalResponse {
@@ -145,6 +152,9 @@ export interface ApprovalResponse {
   token: string;
   decision: "allow" | "deny";
   reason?: string;
+  trace_id?: string;
+  correlation_id?: string;
+  context?: FrontendContext;
 }
 
 export interface PluginSummary {

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  ApprovalDecisionInput,
   ApprovalRequest,
   ApprovalResponse,
   FrontendEventEnvelope,
@@ -61,7 +62,10 @@ export interface ResourceApi {
 export interface ApprovalApi {
   pending(): Promise<ApprovalRequest[]>;
   respond(response: ApprovalResponse): Promise<string>;
-  onRequest(handler: (request: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse): Promise<UnlistenFn>;
+  respondTo(request: ApprovalRequest, decision: ApprovalResponse | ApprovalDecisionInput): Promise<string>;
+  onRequest(
+    handler: (request: ApprovalRequest) => Promise<ApprovalResponse | ApprovalDecisionInput> | ApprovalResponse | ApprovalDecisionInput,
+  ): Promise<UnlistenFn>;
 }
 
 export interface PluginApi {
@@ -168,11 +172,13 @@ export function createMutsukiClient(): MutsukiClient {
   const approvals: ApprovalApi = {
     pending: () => invoke<ApprovalRequest[]>("mutsuki_approval_pending"),
     respond: (response) => invoke<string>("mutsuki_approval_respond", { response }),
+    respondTo: (request, decision) => approvals.respond(approvalResponseForRequest(request, decision)),
     onRequest: async (handler) =>
       events.listen(async (event) => {
         if (event.payload.type !== "approval") return;
-        const response = await handler(event.payload.request);
-        await approvals.respond(response);
+        const request = event.payload.request;
+        const response = await handler(request);
+        await approvals.respondTo(request, response);
       }),
   };
 
@@ -239,6 +245,20 @@ async function openTaskEvents(taskId: string): Promise<TaskEventStream> {
 
 function refId(ref: string | ResourceRef): string {
   return typeof ref === "string" ? ref : ref.ref_id;
+}
+
+function approvalResponseForRequest(
+  request: ApprovalRequest,
+  decision: ApprovalResponse | ApprovalDecisionInput,
+): ApprovalResponse {
+  return {
+    ...decision,
+    approval_id: request.approval_id,
+    token: request.token,
+    trace_id: request.trace_id,
+    correlation_id: request.correlation_id,
+    context: request.context,
+  };
 }
 
 function listenCategory<T extends MutsukiFrontendEvent>(

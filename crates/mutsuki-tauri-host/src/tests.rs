@@ -7,7 +7,10 @@ use mutsuki_runtime_contracts::{
     TaskOutcome,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_tauri_bridge::{FrontendTaskRequest, MutsukiFrontendEvent, TaskCancelRequest};
+use mutsuki_tauri_bridge::{
+    ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
+    MutsukiFrontendEvent, TaskCancelRequest,
+};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -178,6 +181,126 @@ fn host_log_event_redacts_sensitive_fields() {
             .and_then(|value| value.get("visible")),
         Some(&json!(true))
     );
+}
+
+#[test]
+fn approval_request_carries_attribution_to_pending_and_event() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostApprovalAttributionTest")
+        .build()
+        .expect("host builds");
+    let mut rx = host.event_hub().subscribe();
+    let context = FrontendContext {
+        window_label: Some("main".into()),
+        webview_id: Some("webview:main".into()),
+        session_id: Some("session:test".into()),
+        user_action_id: Some("action:delete".into()),
+    };
+
+    let request = host.request_approval_with_attribution(
+        "fixture.plugin",
+        "resource.delete",
+        "high",
+        json!({ "resource_ref": "ref:test" }),
+        ApprovalAttribution {
+            trace_id: "trace:approval".into(),
+            correlation_id: "corr:approval".into(),
+            context: context.clone(),
+        },
+    );
+
+    assert_eq!(request.trace_id, "trace:approval");
+    assert_eq!(request.correlation_id, "corr:approval");
+    assert_eq!(request.context, context);
+
+    let pending = host.pending_approvals();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].trace_id, "trace:approval");
+    assert_eq!(pending[0].correlation_id, "corr:approval");
+    assert_eq!(pending[0].context, context);
+
+    let envelopes = collect_events(&mut rx);
+    let event_request = envelopes
+        .iter()
+        .find_map(|event| match &event.payload {
+            MutsukiFrontendEvent::Approval { request } => Some(request),
+            _ => None,
+        })
+        .expect("approval event emitted");
+    assert_eq!(event_request.approval_id, request.approval_id);
+    assert_eq!(event_request.trace_id, "trace:approval");
+    assert_eq!(event_request.correlation_id, "corr:approval");
+    assert_eq!(event_request.context, context);
+}
+
+#[test]
+fn approval_rejects_mismatched_token_or_attribution_without_consuming_pending() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostApprovalResolveTest")
+        .build()
+        .expect("host builds");
+    let request = host.request_approval_with_attribution(
+        "fixture.plugin",
+        "resource.write",
+        "medium",
+        json!({ "resource_ref": "ref:test" }),
+        ApprovalAttribution {
+            trace_id: "trace:approval:resolve".into(),
+            correlation_id: "corr:approval:resolve".into(),
+            context: FrontendContext {
+                session_id: Some("session:resolve".into()),
+                user_action_id: Some("action:write".into()),
+                ..FrontendContext::default()
+            },
+        },
+    );
+
+    assert!(
+        host.resolve_approval(approval_response(&request, "wrong-token"))
+            .is_err()
+    );
+    assert_eq!(host.pending_approvals().len(), 1);
+
+    let mut trace_mismatch = approval_response(&request, &request.token);
+    trace_mismatch.trace_id = Some("trace:mismatch".into());
+    assert!(host.resolve_approval(trace_mismatch).is_err());
+    assert_eq!(host.pending_approvals().len(), 1);
+
+    let mut correlation_mismatch = approval_response(&request, &request.token);
+    correlation_mismatch.correlation_id = Some("corr:mismatch".into());
+    assert!(host.resolve_approval(correlation_mismatch).is_err());
+    assert_eq!(host.pending_approvals().len(), 1);
+
+    let decision = host
+        .resolve_approval(approval_response(&request, &request.token))
+        .expect("matching approval resolves");
+    assert_eq!(decision, ApprovalDecision::Allow);
+    assert!(host.pending_approvals().is_empty());
+}
+
+#[test]
+fn legacy_approval_request_generates_fallback_trace_and_preserves_context() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostApprovalFallbackTest")
+        .build()
+        .expect("host builds");
+    let context = FrontendContext {
+        session_id: Some("session:legacy".into()),
+        user_action_id: Some("action:legacy".into()),
+        ..FrontendContext::default()
+    };
+
+    let request = host.request_approval(
+        "fixture.plugin",
+        "resource.import",
+        "low",
+        json!({ "resource_ref": "ref:legacy" }),
+        context.clone(),
+    );
+
+    assert!(request.trace_id.starts_with("approval-trace:"));
+    assert!(request.correlation_id.starts_with("approval-correlation:"));
+    assert_eq!(request.context, context);
 }
 
 #[test]
@@ -564,6 +687,21 @@ fn collect_events(
         events.push(event);
     }
     events
+}
+
+fn approval_response(
+    request: &mutsuki_tauri_bridge::ApprovalRequest,
+    token: &str,
+) -> ApprovalResponse {
+    ApprovalResponse {
+        approval_id: request.approval_id.clone(),
+        token: token.into(),
+        decision: ApprovalDecision::Allow,
+        reason: None,
+        trace_id: Some(request.trace_id.clone()),
+        correlation_id: Some(request.correlation_id.clone()),
+        context: Some(request.context.clone()),
+    }
 }
 
 fn collect_events_until(

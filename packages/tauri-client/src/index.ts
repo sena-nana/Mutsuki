@@ -1,5 +1,6 @@
 export { createMutsukiClient } from "./client";
 export type {
+  ApprovalDecisionInput,
   ApprovalRequest,
   ApprovalResponse,
   FrontendContext,

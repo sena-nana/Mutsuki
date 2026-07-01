@@ -153,6 +153,14 @@ pub enum ApprovalDecision {
     Deny,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalAttribution {
+    pub trace_id: String,
+    pub correlation_id: String,
+    #[serde(default)]
+    pub context: FrontendContext,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub approval_id: String,
@@ -160,6 +168,8 @@ pub struct ApprovalRequest {
     pub requester: String,
     pub operation: String,
     pub risk: String,
+    pub trace_id: String,
+    pub correlation_id: String,
     #[serde(default)]
     pub payload: Value,
     #[serde(default)]
@@ -173,6 +183,12 @@ pub struct ApprovalResponse {
     pub decision: ApprovalDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<FrontendContext>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
