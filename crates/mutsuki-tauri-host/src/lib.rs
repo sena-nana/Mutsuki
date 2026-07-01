@@ -1,9 +1,11 @@
 mod approval;
 mod builder;
 mod config;
+#[cfg(test)]
 mod echo;
 mod error;
 mod host;
+mod plugin_runner;
 
 pub use approval::{ApprovalBridge, PendingApproval};
 pub use builder::MutsukiTauriHostBuilder;

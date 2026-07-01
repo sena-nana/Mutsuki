@@ -10,11 +10,14 @@ import type {
   HostStatus,
   LogFrontendEvent,
   MutsukiFrontendEvent,
+  PluginFrontendEvent,
   PluginSummary,
   PreviewHandle,
   ResourceBytes,
   ResourceRef,
   ResourceText,
+  RunnerFrontendEvent,
+  RunnerSummary,
   RuntimeFrontendEvent,
   TaskFrontendEvent,
   TraceFrontendEvent,
@@ -29,6 +32,7 @@ export interface MutsukiClient {
   resources: ResourceApi;
   approvals: ApprovalApi;
   plugins: PluginApi;
+  runners: RunnerApi;
 }
 
 export interface TaskRun {
@@ -64,12 +68,18 @@ export interface PluginApi {
   list(): Promise<PluginSummary[]>;
 }
 
+export interface RunnerApi {
+  list(): Promise<RunnerSummary[]>;
+}
+
 export interface EventApi {
   listen(handler: (event: FrontendEventEnvelope<MutsukiFrontendEvent>) => void): Promise<UnlistenFn>;
   tasks(handler: (event: FrontendEventEnvelope<TaskFrontendEvent>) => void): Promise<UnlistenFn>;
   runtime(handler: (event: FrontendEventEnvelope<RuntimeFrontendEvent>) => void): Promise<UnlistenFn>;
   trace(handler: (event: FrontendEventEnvelope<TraceFrontendEvent>) => void): Promise<UnlistenFn>;
   log(handler: (event: FrontendEventEnvelope<LogFrontendEvent>) => void): Promise<UnlistenFn>;
+  plugins(handler: (event: FrontendEventEnvelope<PluginFrontendEvent>) => void): Promise<UnlistenFn>;
+  runners(handler: (event: FrontendEventEnvelope<RunnerFrontendEvent>) => void): Promise<UnlistenFn>;
 }
 
 export function createMutsukiClient(): MutsukiClient {
@@ -79,6 +89,8 @@ export function createMutsukiClient(): MutsukiClient {
     runtime: (handler) => listenCategory<RuntimeFrontendEvent>("mutsuki://runtime/event", handler),
     trace: (handler) => listenCategory<TraceFrontendEvent>("mutsuki://trace/event", handler),
     log: (handler) => listenCategory<LogFrontendEvent>("mutsuki://log/event", handler),
+    plugins: (handler) => listenCategory<PluginFrontendEvent>("mutsuki://plugin/event", handler),
+    runners: (handler) => listenCategory<RunnerFrontendEvent>("mutsuki://runner/event", handler),
   };
 
   const cancel = (taskId: string, reason?: string) =>
@@ -174,6 +186,9 @@ export function createMutsukiClient(): MutsukiClient {
     approvals,
     plugins: {
       list: () => invoke<PluginSummary[]>("mutsuki_plugins_list"),
+    },
+    runners: {
+      list: () => invoke<RunnerSummary[]>("mutsuki_runners_list"),
     },
   };
 }

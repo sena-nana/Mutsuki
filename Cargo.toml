@@ -23,6 +23,7 @@ tauri = { version = "2", default-features = false }
 thiserror = "2.0"
 time = "=0.3.41"
 tokio = { version = "1.38", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
 mutsuki-runtime-contracts = { path = "../NanoBot/crates/mutsuki-runtime-contracts" }

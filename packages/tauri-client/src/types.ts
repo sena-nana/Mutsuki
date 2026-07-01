@@ -92,6 +92,8 @@ export type TaskFrontendEvent = Extract<MutsukiFrontendEvent, { type: "task" }>;
 export type RuntimeFrontendEvent = Extract<MutsukiFrontendEvent, { type: "runtime" }>;
 export type TraceFrontendEvent = Extract<MutsukiFrontendEvent, { type: "trace" }>;
 export type LogFrontendEvent = Extract<MutsukiFrontendEvent, { type: "log" }>;
+export type PluginFrontendEvent = Extract<MutsukiFrontendEvent, { type: "plugin" }>;
+export type RunnerFrontendEvent = Extract<MutsukiFrontendEvent, { type: "runner" }>;
 
 export interface ResourceRef {
   ref_id: string;
@@ -150,6 +152,17 @@ export interface PluginSummary {
   version: string;
   enabled: boolean;
   deployment: string;
+  status: string;
+  error?: string | null;
+}
+
+export interface RunnerSummary {
+  runner_id: string;
+  plugin_id: string;
+  enabled: boolean;
+  deployment: string;
+  status: string;
+  error?: string | null;
 }
 
 export interface HostStatus {
@@ -158,4 +171,5 @@ export interface HostStatus {
   mode: string;
   healthy: boolean;
   plugins: PluginSummary[];
+  runners: RunnerSummary[];
 }

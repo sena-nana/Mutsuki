@@ -2,7 +2,7 @@ use mutsuki_runtime_contracts::ResourceRef;
 use mutsuki_tauri_bridge::{
     ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
     FrontendTaskResult, FrontendTaskRun, HostStatus, PluginSummary, PreviewHandle, ResourceBytes,
-    ResourceText, TaskCancelRequest, TaskResultRequest,
+    ResourceText, RunnerSummary, TaskCancelRequest, TaskResultRequest,
 };
 use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder};
 use std::sync::Arc;
@@ -23,6 +23,7 @@ pub fn init_with_host<R: Runtime>(
             mutsuki_cancel_task,
             mutsuki_status,
             mutsuki_plugins_list,
+            mutsuki_runners_list,
             mutsuki_resource_import_file,
             mutsuki_resource_read_bytes,
             mutsuki_resource_read_text,
@@ -92,6 +93,11 @@ fn mutsuki_status(host: State<'_, Arc<MutsukiTauriHost>>) -> HostStatus {
 #[tauri::command]
 fn mutsuki_plugins_list(host: State<'_, Arc<MutsukiTauriHost>>) -> Vec<PluginSummary> {
     host.plugins()
+}
+
+#[tauri::command]
+fn mutsuki_runners_list(host: State<'_, Arc<MutsukiTauriHost>>) -> Vec<RunnerSummary> {
+    host.runners()
 }
 
 #[tauri::command]

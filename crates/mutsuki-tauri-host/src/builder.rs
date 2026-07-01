@@ -1,13 +1,15 @@
 use crate::config::{MutsukiTauriConfig, PathsConfig};
-use crate::echo::EchoRunner;
 use crate::error::{HostError, HostResult};
 use crate::host::MutsukiTauriHost;
+use crate::plugin_runner::{
+    loaded_builtin_plugin_summary, loaded_builtin_runner_summary, scan_plugin_runners,
+};
 use mutsuki_runtime_contracts::{PluginDeploymentKind, RuntimeProfile, RuntimeProfileMode};
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, runner_manifest};
 use mutsuki_tauri_bridge::EventHub;
 use mutsuki_tauri_resource::TauriResourceStore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 pub struct MutsukiTauriHostBuilder {
@@ -45,13 +47,17 @@ impl MutsukiTauriHostBuilder {
             .map_err(|error| HostError::Config(error.to_string()))?;
         std::fs::create_dir_all(&self.config.paths.logs_dir)
             .map_err(|error| HostError::Config(error.to_string()))?;
+        std::fs::create_dir_all(&self.config.paths.plugins_dir)
+            .map_err(|error| HostError::Config(error.to_string()))?;
+        std::fs::create_dir_all(&self.config.paths.runners_dir)
+            .map_err(|error| HostError::Config(error.to_string()))?;
 
         let resource_store = Arc::new(TauriResourceStore::new(&self.config.paths.resources_dir));
+        let event_buffer = self.config.event_buffer;
+        let events = Arc::new(EventHub::new(event_buffer));
+        let mut loaded = scan_plugin_runners(&self.config, events.clone())?;
         let mut bootstrapper = RuntimeBootstrapper::new();
-        let mut runners = self.runners;
-        if runners.is_empty() {
-            runners.push(Box::new(EchoRunner::new()));
-        }
+        let runners = self.runners;
         let descriptors = runners
             .iter()
             .map(|runner| runner.descriptor().clone())
@@ -63,25 +69,54 @@ impl MutsukiTauriHostBuilder {
                 .or_default()
                 .push(descriptor.clone());
         }
+        let mut enabled_plugins = BTreeSet::new();
+        let mut plugin_deployments = BTreeMap::new();
+
+        for manifest in loaded.manifests {
+            enabled_plugins.insert(manifest.plugin_id.clone());
+            plugin_deployments.insert(manifest.plugin_id.clone(), PluginDeploymentKind::Process);
+            bootstrapper.register_manifest(manifest);
+        }
+        for runner in loaded.process_runners {
+            bootstrapper.register_external_runner(PluginDeploymentKind::Process, runner);
+        }
+
+        let mut loaded_plugin_ids = enabled_plugins.clone();
         for (plugin_id, descriptors) in plugin_runners {
-            bootstrapper.register_manifest(runner_manifest(&plugin_id, descriptors));
+            if loaded_plugin_ids.contains(&plugin_id) {
+                return Err(HostError::Config(format!(
+                    "builtin runner plugin id conflicts with discovered plugin: {plugin_id}"
+                )));
+            }
+            let manifest = runner_manifest(&plugin_id, descriptors.clone());
+            loaded
+                .plugins
+                .push(loaded_builtin_plugin_summary(&manifest));
+            for descriptor in &descriptors {
+                loaded
+                    .runners
+                    .push(loaded_builtin_runner_summary(descriptor));
+            }
+            enabled_plugins.insert(plugin_id.clone());
+            plugin_deployments.insert(plugin_id.clone(), PluginDeploymentKind::Builtin);
+            loaded_plugin_ids.insert(plugin_id.clone());
+            bootstrapper.register_manifest(manifest);
         }
         for runner in runners {
             bootstrapper.register_builtin_runner(runner);
         }
-        let enabled_plugins = descriptors
-            .iter()
-            .map(|descriptor| descriptor.plugin_id.clone())
-            .collect::<std::collections::BTreeSet<_>>();
+        loaded
+            .plugins
+            .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
+        loaded
+            .runners
+            .sort_by(|left, right| left.runner_id.cmp(&right.runner_id));
         let profile = RuntimeProfile {
             profile_id: self.config.profile_id.clone(),
             mode: RuntimeProfileMode::FullDev,
             enabled_plugins: enabled_plugins.iter().cloned().collect(),
             bindings: BTreeMap::new(),
-            plugin_deployments: enabled_plugins
-                .iter()
-                .map(|plugin_id| (plugin_id.clone(), PluginDeploymentKind::Builtin))
-                .collect(),
+            plugin_deployments,
             allow_dynamic_registration: false,
             allow_hot_reload: false,
         };
@@ -92,13 +127,13 @@ impl MutsukiTauriHostBuilder {
                 ..HostRuntimeConfig::default()
             },
         )?;
-        let event_buffer = self.config.event_buffer;
         Ok(MutsukiTauriHost::new(
             self.config,
             runtime,
             resource_store,
-            Arc::new(EventHub::new(event_buffer)),
-            descriptors,
+            events,
+            loaded.plugins,
+            loaded.runners,
         ))
     }
 }

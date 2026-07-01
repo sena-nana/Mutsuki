@@ -1,20 +1,42 @@
 use crate::MutsukiTauriHost;
-use crate::echo::ECHO_PROTOCOL_ID;
+use crate::config::{MutsukiTauriConfig, PathsConfig};
+use crate::echo::{ECHO_PROTOCOL_ID, EchoRunner};
 use mutsuki_runtime_contracts::{
-    ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeEventKind, Task,
+    ArtifactType, ExecutionClass, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest,
+    PluginProvides, RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeEventKind, Task,
     TaskOutcome,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{FrontendTaskRequest, MutsukiFrontendEvent, TaskCancelRequest};
+use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use std::time::Duration;
+use uuid::Uuid;
 
 #[test]
-fn default_host_runs_echo_task() {
+fn default_host_reports_empty_plugin_and_runner_state() {
+    let workspace = TestWorkspace::new("empty-default");
     let host = MutsukiTauriHost::builder()
-        .app_name("MutsukiTauriHostTest")
+        .config(workspace.config())
+        .build()
+        .expect("host builds without fake runner");
+
+    assert!(host.plugins().is_empty());
+    assert!(host.runners().is_empty());
+    assert!(host.status().plugins.is_empty());
+    assert!(host.status().runners.is_empty());
+}
+
+#[test]
+fn explicit_echo_runner_still_runs_task() {
+    let workspace = TestWorkspace::new("explicit-echo");
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runner(Box::new(EchoRunner::new()))
         .build()
         .expect("host builds");
 
@@ -59,6 +81,7 @@ fn default_host_runs_echo_task() {
 fn host_emits_runtime_events_and_trace_spans_for_task() {
     let host = MutsukiTauriHost::builder()
         .app_name("MutsukiTauriHostObserveTest")
+        .runner(Box::new(EchoRunner::new()))
         .build()
         .expect("host builds");
     let mut rx = host.event_hub().subscribe();
@@ -155,6 +178,258 @@ fn host_log_event_redacts_sensitive_fields() {
             .and_then(|value| value.get("visible")),
         Some(&json!(true))
     );
+}
+
+#[test]
+fn loader_records_malformed_plugin_manifest() {
+    let workspace = TestWorkspace::new("malformed-plugin");
+    let plugin_dir = workspace.config.paths.plugins_dir.join("bad");
+    std::fs::create_dir_all(&plugin_dir).expect("plugin dir created");
+    std::fs::write(plugin_dir.join("plugin.toml"), "plugin_id = [")
+        .expect("plugin manifest written");
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with failed plugin state");
+
+    let plugins = host.plugins();
+    assert_eq!(plugins.len(), 1);
+    assert!(!plugins[0].enabled);
+    assert_eq!(plugins[0].status, "failed");
+    assert!(
+        plugins[0]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("failed to parse"))
+    );
+}
+
+#[test]
+fn loader_records_missing_runner_spec() {
+    let workspace = TestWorkspace::new("missing-runner");
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("plugin"),
+        plugin_manifest(
+            "fixture.missing_runner",
+            "1.0.0",
+            ArtifactType::Process,
+            vec![runner_descriptor(
+                "fixture.missing_runner.runner",
+                "fixture.missing",
+            )],
+        ),
+    );
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with failed runner state");
+
+    let plugins = host.plugins();
+    let runners = host.runners();
+    assert_eq!(plugins[0].plugin_id, "fixture.missing_runner");
+    assert!(!plugins[0].enabled);
+    assert!(
+        plugins[0]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("missing runner.toml"))
+    );
+    assert_eq!(runners[0].runner_id, "fixture.missing_runner.runner");
+    assert!(!runners[0].enabled);
+}
+
+#[test]
+fn loader_records_unsupported_plugin_artifact() {
+    let workspace = TestWorkspace::new("unsupported-artifact");
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("plugin"),
+        plugin_manifest(
+            "fixture.unsupported",
+            "1.0.0",
+            ArtifactType::Native,
+            Vec::new(),
+        ),
+    );
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with failed plugin state");
+
+    let plugins = host.plugins();
+    assert_eq!(plugins[0].plugin_id, "fixture.unsupported");
+    assert!(!plugins[0].enabled);
+    assert!(
+        plugins[0]
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("unsupported"))
+    );
+}
+
+#[test]
+fn loader_records_duplicate_plugin_and_runner_ids() {
+    let workspace = TestWorkspace::new("duplicates");
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("one"),
+        plugin_manifest(
+            "fixture.duplicate",
+            "1.0.0",
+            ArtifactType::Process,
+            Vec::new(),
+        ),
+    );
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("two"),
+        plugin_manifest(
+            "fixture.duplicate",
+            "2.0.0",
+            ArtifactType::Process,
+            Vec::new(),
+        ),
+    );
+    write_runner_spec(
+        &workspace.config.paths.runners_dir.join("one"),
+        &runner_launch_spec(
+            "fixture.duplicate.runner",
+            "fixture.duplicate",
+            "powershell.exe",
+            Vec::new(),
+        ),
+    );
+    write_runner_spec(
+        &workspace.config.paths.runners_dir.join("two"),
+        &runner_launch_spec(
+            "fixture.duplicate.runner",
+            "fixture.duplicate",
+            "powershell.exe",
+            Vec::new(),
+        ),
+    );
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with duplicate state");
+
+    assert!(host.plugins().iter().any(|plugin| {
+        plugin.plugin_id == "fixture.duplicate"
+            && !plugin.enabled
+            && plugin
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("duplicate"))
+    }));
+    assert!(host.runners().iter().any(|runner| {
+        runner.runner_id == "fixture.duplicate.runner"
+            && !runner.enabled
+            && runner
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("duplicate"))
+    }));
+}
+
+#[test]
+fn external_process_runner_completes_task_and_forwards_stderr() {
+    let workspace = TestWorkspace::new("external-runner");
+    let script_path = workspace.root.join("jsonl-runner.ps1");
+    std::fs::write(&script_path, jsonl_runner_script()).expect("runner script written");
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("plugin"),
+        plugin_manifest(
+            "fixture.process",
+            "2.3.4",
+            ArtifactType::Process,
+            vec![runner_descriptor(
+                "fixture.process.runner",
+                "fixture.process.echo",
+            )],
+        ),
+    );
+    write_runner_spec(
+        &workspace.config.paths.runners_dir.join("runner"),
+        &runner_launch_spec(
+            "fixture.process.runner",
+            "fixture.process",
+            "powershell.exe",
+            vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                script_path.display().to_string(),
+            ],
+        ),
+    );
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with external runner");
+    let mut rx = host.event_hub().subscribe();
+
+    let result = host
+        .call(FrontendTaskRequest {
+            protocol_id: "fixture.process.echo".into(),
+            payload: json!({ "message": "hello" }),
+            task_id: Some("task:process".into()),
+            trace_id: None,
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .expect("external process task completes");
+
+    assert!(matches!(
+        result.outcome,
+        Some(TaskOutcome::Completed { task_id, .. }) if task_id == "task:process"
+    ));
+    assert!(host.plugins().iter().any(|plugin| {
+        plugin.plugin_id == "fixture.process"
+            && plugin.version == "2.3.4"
+            && plugin.enabled
+            && plugin.deployment == "process"
+    }));
+    assert!(host.runners().iter().any(|runner| {
+        runner.runner_id == "fixture.process.runner"
+            && runner.enabled
+            && runner.deployment == "process"
+    }));
+
+    let envelopes = collect_events_until(&mut rx, Duration::from_secs(1), |events| {
+        events.iter().any(|event| {
+            matches!(
+                &event.payload,
+                MutsukiFrontendEvent::Log { record }
+                    if record.target == "mutsuki_tauri_host.runner"
+                        && record.fields.get("runner_id") == Some(&json!("fixture.process.runner"))
+            )
+        })
+    });
+    let runner_log = envelopes
+        .iter()
+        .find_map(|event| match &event.payload {
+            MutsukiFrontendEvent::Log { record }
+                if record.target == "mutsuki_tauri_host.runner" =>
+            {
+                Some(record)
+            }
+            _ => None,
+        })
+        .expect("runner stderr log forwarded");
+    assert!(!runner_log.message.contains("secret-token"));
+    assert!(envelopes.iter().any(|event| {
+        matches!(
+            &event.payload,
+            MutsukiFrontendEvent::Runner { runner_id, status }
+                if runner_id == "fixture.process.runner" && status == "stderr"
+        )
+    }));
 }
 
 #[test]
@@ -289,6 +564,193 @@ fn collect_events(
         events.push(event);
     }
     events
+}
+
+fn collect_events_until(
+    rx: &mut tokio::sync::broadcast::Receiver<mutsuki_tauri_bridge::FrontendEventEnvelope>,
+    timeout: Duration,
+    done: impl Fn(&[mutsuki_tauri_bridge::FrontendEventEnvelope]) -> bool,
+) -> Vec<mutsuki_tauri_bridge::FrontendEventEnvelope> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut events = Vec::new();
+    while std::time::Instant::now() < deadline {
+        events.extend(collect_events(rx));
+        if done(&events) {
+            return events;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    events.extend(collect_events(rx));
+    events
+}
+
+struct TestWorkspace {
+    root: PathBuf,
+    config: MutsukiTauriConfig,
+}
+
+impl TestWorkspace {
+    fn new(name: &str) -> Self {
+        let root =
+            std::env::temp_dir().join(format!("mutsuki-tauri-host-{name}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("test workspace root created");
+        let paths = PathsConfig {
+            app_data_dir: root.clone(),
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            logs_dir: root.join("logs"),
+            plugins_dir: root.join("plugins"),
+            resources_dir: root.join("resources"),
+            runners_dir: root.join("runners"),
+        };
+        let mut config = MutsukiTauriConfig::for_app(format!("MutsukiTauriHostTest-{name}"));
+        config.paths = paths;
+        Self { root, config }
+    }
+
+    fn config(&self) -> MutsukiTauriConfig {
+        self.config.clone()
+    }
+}
+
+impl Drop for TestWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn write_plugin_manifest(dir: &Path, manifest: PluginManifest) {
+    std::fs::create_dir_all(dir).expect("plugin dir created");
+    let text = toml::to_string(&manifest).expect("plugin manifest serializes");
+    std::fs::write(dir.join("plugin.toml"), text).expect("plugin manifest written");
+}
+
+fn plugin_manifest(
+    plugin_id: &str,
+    version: &str,
+    artifact_type: ArtifactType,
+    runners: Vec<RunnerDescriptor>,
+) -> PluginManifest {
+    PluginManifest {
+        plugin_id: plugin_id.into(),
+        version: version.into(),
+        api_version: "mutsuki-plugin-v1".into(),
+        artifact: PluginArtifact {
+            artifact_type,
+            path: "process".into(),
+            sha256: "sha256:test".into(),
+        },
+        provides: PluginProvides {
+            runners,
+            ..PluginProvides::default()
+        },
+        requires: Vec::new(),
+        permissions: PermissionGrant {
+            effects: Vec::new(),
+            resources: Vec::new(),
+        },
+        lifecycle: LifecyclePolicy {
+            reload_policy: "drain_and_swap".into(),
+            unload_timeout_ms: 5000,
+            supports_cancel: true,
+            supports_dispose: true,
+            supports_snapshot: false,
+        },
+        metadata: BTreeMap::new(),
+    }
+}
+
+fn runner_descriptor(runner_id: &str, protocol_id: &str) -> RunnerDescriptor {
+    RunnerDescriptor {
+        runner_id: runner_id.into(),
+        plugin_id: runner_id
+            .rsplit_once('.')
+            .map(|(plugin, _)| plugin)
+            .unwrap_or(runner_id)
+            .into(),
+        plugin_generation: 1,
+        accepted_protocol_ids: vec![protocol_id.into()],
+        purity: RunnerPurity::Pure,
+        execution_class: ExecutionClass::Io,
+        input_schema: json!({ "type": "object" }),
+        output_schema: json!({ "type": "object" }),
+        metadata: BTreeMap::new(),
+        contract_surfaces: vec![format!("task_protocol:{protocol_id}")],
+    }
+}
+
+#[derive(Serialize)]
+struct RunnerSpecFixture {
+    runner_id: String,
+    plugin_id: String,
+    command: String,
+    args: Vec<String>,
+    env: BTreeMap<String, String>,
+    env_inherit: Vec<String>,
+}
+
+fn runner_launch_spec(
+    runner_id: &str,
+    plugin_id: &str,
+    command: &str,
+    args: Vec<String>,
+) -> RunnerSpecFixture {
+    RunnerSpecFixture {
+        runner_id: runner_id.into(),
+        plugin_id: plugin_id.into(),
+        command: command.into(),
+        args,
+        env: BTreeMap::new(),
+        env_inherit: vec![
+            "PATH".into(),
+            "SystemRoot".into(),
+            "WINDIR".into(),
+            "ComSpec".into(),
+            "PATHEXT".into(),
+        ],
+    }
+}
+
+fn write_runner_spec(dir: &Path, spec: &RunnerSpecFixture) {
+    std::fs::create_dir_all(dir).expect("runner dir created");
+    let text = toml::to_string(spec).expect("runner spec serializes");
+    std::fs::write(dir.join("runner.toml"), text).expect("runner spec written");
+}
+
+fn jsonl_runner_script() -> &'static str {
+    r#"
+$ErrorActionPreference = 'Stop'
+while (($line = [Console]::In.ReadLine()) -ne $null) {
+  if ($line.Trim().Length -eq 0) { continue }
+  $request = $line | ConvertFrom-Json
+  if ($request.method -eq 'runner.step') {
+    [Console]::Error.WriteLine('runner stderr token=secret-token')
+    $results = @()
+    foreach ($task in @($request.params.tasks)) {
+      $results += @{
+        task_id = $task.task_id
+        deltas = @()
+        events = @()
+        tasks = @()
+        effects = @()
+        values = @()
+        resources = @()
+        task_await = $null
+        status = 'completed'
+      }
+    }
+    @{ id = $request.id; ok = $true; result = @($results) } | ConvertTo-Json -Depth 20 -Compress
+  } elseif ($request.method -eq 'runner.cancel') {
+    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
+  } elseif ($request.method -eq 'runner.dispose') {
+    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
+    break
+  } else {
+    @{ id = $request.id; ok = $false; error = @{ code = 'test.unsupported'; source = 'test'; route = $request.method; lost_capability = $null; recovery = $null; cause = $null; evidence = @{} } } | ConvertTo-Json -Depth 20 -Compress
+  }
+}
+"#
 }
 
 #[tokio::test]

@@ -2,14 +2,14 @@ use crate::approval::ApprovalBridge;
 use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use mutsuki_runtime_contracts::{
-    RunnerDescriptor, RuntimeEvent, RuntimeEventKind, TaskOutcome, TaskStatus, TraceSpan,
+    RuntimeEvent, RuntimeEventKind, TaskOutcome, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply};
 use mutsuki_tauri_bridge::{
     ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord, FrontendTaskRequest,
     FrontendTaskResult, FrontendTaskRun, HostStatus, MutsukiFrontendEvent, PluginSummary,
-    PreviewHandle, ResourceBytes, ResourceText, TaskCancelRequest, TaskResultRequest,
-    redact_log_record, redact_runtime_event,
+    PreviewHandle, ResourceBytes, ResourceText, RunnerSummary, TaskCancelRequest,
+    TaskResultRequest, redact_log_record, redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
@@ -27,7 +27,8 @@ pub struct MutsukiTauriHost {
     events: Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: Arc<TaskSupervisor>,
     approvals: ApprovalBridge,
-    runners: Vec<RunnerDescriptor>,
+    plugins: Vec<PluginSummary>,
+    runners: Vec<RunnerSummary>,
 }
 
 #[derive(Debug, Default)]
@@ -184,7 +185,8 @@ impl MutsukiTauriHost {
         runtime: HostRuntime,
         resources: Arc<TauriResourceStore>,
         events: Arc<mutsuki_tauri_bridge::EventHub>,
-        runners: Vec<RunnerDescriptor>,
+        plugins: Vec<PluginSummary>,
+        runners: Vec<RunnerSummary>,
     ) -> Self {
         Self {
             config,
@@ -193,6 +195,7 @@ impl MutsukiTauriHost {
             events,
             tasks: Arc::new(TaskSupervisor::default()),
             approvals: ApprovalBridge::default(),
+            plugins,
             runners,
         }
     }
@@ -220,19 +223,16 @@ impl MutsukiTauriHost {
             mode: format!("{:?}", self.config.mode).to_lowercase(),
             healthy: true,
             plugins: self.plugins(),
+            runners: self.runners(),
         }
     }
 
     pub fn plugins(&self) -> Vec<PluginSummary> {
-        self.runners
-            .iter()
-            .map(|runner| PluginSummary {
-                plugin_id: runner.plugin_id.clone(),
-                version: format!("generation-{}", runner.plugin_generation),
-                enabled: true,
-                deployment: "builtin".into(),
-            })
-            .collect()
+        self.plugins.clone()
+    }
+
+    pub fn runners(&self) -> Vec<RunnerSummary> {
+        self.runners.clone()
     }
 
     pub fn emit_log(

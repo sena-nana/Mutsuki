@@ -181,6 +181,20 @@ pub struct PluginSummary {
     pub version: String,
     pub enabled: bool,
     pub deployment: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerSummary {
+    pub runner_id: String,
+    pub plugin_id: String,
+    pub enabled: bool,
+    pub deployment: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -190,6 +204,7 @@ pub struct HostStatus {
     pub mode: String,
     pub healthy: bool,
     pub plugins: Vec<PluginSummary>,
+    pub runners: Vec<RunnerSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
