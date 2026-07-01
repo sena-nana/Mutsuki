@@ -106,6 +106,16 @@ pub struct FrontendTaskResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrontendTaskRun {
+    pub task_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskResultRequest {
+    pub task_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCancelRequest {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

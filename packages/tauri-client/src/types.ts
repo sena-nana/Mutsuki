@@ -32,6 +32,14 @@ export interface FrontendTaskResult {
   events: RuntimeEvent[];
 }
 
+export interface FrontendTaskRun {
+  task_id: string;
+}
+
+export interface TaskResultRequest {
+  task_id: string;
+}
+
 export interface RuntimeEvent {
   sequence: number;
   kind: string;

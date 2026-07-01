@@ -6,6 +6,7 @@ import type {
   FrontendEventEnvelope,
   FrontendTaskRequest,
   FrontendTaskResult,
+  FrontendTaskRun,
   HostStatus,
   MutsukiFrontendEvent,
   PluginSummary,
@@ -92,11 +93,30 @@ export function createMutsukiClient(): MutsukiClient {
     options: Partial<FrontendTaskRequest<TPayload>> = {},
   ): Promise<TaskRun> => {
     const taskId = options.task_id ?? `frontend-task:${crypto.randomUUID()}`;
-    const result = call(protocolId, payload, { ...options, task_id: taskId });
+    const request: FrontendTaskRequest<TPayload> = {
+      protocol_id: protocolId,
+      payload,
+      input_refs: [],
+      priority: 0,
+      ...options,
+      task_id: taskId,
+    };
+    const stream = await openTaskEvents(taskId);
+    try {
+      await invoke<FrontendTaskRun>("mutsuki_start_task", { request });
+    } catch (error) {
+      stream.close();
+      throw error;
+    }
+    const result = invoke<FrontendTaskResult>("mutsuki_task_result", { request: { task_id: taskId } });
+    void result.then(
+      () => stream.close(),
+      () => stream.close(),
+    );
     return {
       taskId,
       result,
-      events: () => taskEvents(taskId),
+      events: () => stream.events(),
       cancel: (reason?: string) => cancel(taskId, reason),
     };
   };
@@ -146,31 +166,48 @@ export function createMutsukiClient(): MutsukiClient {
   };
 }
 
-async function* taskEvents(taskId: string): AsyncIterable<FrontendEventEnvelope<MutsukiFrontendEvent>> {
+interface TaskEventStream {
+  events(): AsyncIterable<FrontendEventEnvelope<MutsukiFrontendEvent>>;
+  close(): void;
+}
+
+async function openTaskEvents(taskId: string): Promise<TaskEventStream> {
   const queue: FrontendEventEnvelope<MutsukiFrontendEvent>[] = [];
-  let notify: (() => void) | undefined;
+  const waiters: Array<() => void> = [];
+  let closed = false;
+  const notify = () => {
+    const pending = waiters.splice(0);
+    for (const resolve of pending) resolve();
+  };
   const unlisten = await listen<FrontendEventEnvelope<MutsukiFrontendEvent>>("mutsuki://event", (event) => {
     if (event.payload.payload.type === "task" && event.payload.payload.task_id === taskId) {
       queue.push(event.payload);
-      notify?.();
-      notify = undefined;
+      notify();
     }
   });
-  try {
-    while (true) {
-      if (queue.length === 0) {
-        await new Promise<void>((resolve) => {
-          notify = resolve;
-        });
+
+  return {
+    async *events() {
+      while (queue.length > 0 || !closed) {
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            waiters.push(resolve);
+          });
+          continue;
+        }
+        while (queue.length > 0) {
+          const next = queue.shift();
+          if (next) yield next;
+        }
       }
-      while (queue.length > 0) {
-        const next = queue.shift();
-        if (next) yield next;
-      }
-    }
-  } finally {
-    unlisten();
-  }
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      unlisten();
+      notify();
+    },
+  };
 }
 
 function refId(ref: string | ResourceRef): string {

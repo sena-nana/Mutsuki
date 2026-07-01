@@ -6,6 +6,7 @@ export type {
   FrontendEventEnvelope,
   FrontendTaskRequest,
   FrontendTaskResult,
+  FrontendTaskRun,
   HostStatus,
   JsonValue,
   MutsukiFrontendEvent,
@@ -15,4 +16,5 @@ export type {
   ResourceRef,
   ResourceText,
   RuntimeEvent,
+  TaskResultRequest,
 } from "./types";

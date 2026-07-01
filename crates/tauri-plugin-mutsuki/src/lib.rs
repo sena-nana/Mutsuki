@@ -1,8 +1,8 @@
 use mutsuki_runtime_contracts::ResourceRef;
 use mutsuki_tauri_bridge::{
     ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
-    FrontendTaskResult, HostStatus, PluginSummary, PreviewHandle, ResourceBytes, ResourceText,
-    TaskCancelRequest,
+    FrontendTaskResult, FrontendTaskRun, HostStatus, PluginSummary, PreviewHandle, ResourceBytes,
+    ResourceText, TaskCancelRequest, TaskResultRequest,
 };
 use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder};
 use std::sync::Arc;
@@ -18,6 +18,8 @@ pub fn init_with_host<R: Runtime>(
     tauri::plugin::Builder::new("mutsuki")
         .invoke_handler(tauri::generate_handler![
             mutsuki_call,
+            mutsuki_start_task,
+            mutsuki_task_result,
             mutsuki_cancel_task,
             mutsuki_status,
             mutsuki_plugins_list,
@@ -56,6 +58,22 @@ fn mutsuki_call(
     request: FrontendTaskRequest,
 ) -> Result<FrontendTaskResult, FrontendError> {
     host.call(request).map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_start_task(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: FrontendTaskRequest,
+) -> Result<FrontendTaskRun, FrontendError> {
+    host.start_task(request).map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_task_result(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: TaskResultRequest,
+) -> Result<FrontendTaskResult, FrontendError> {
+    host.task_result(request).map_err(FrontendError::from)
 }
 
 #[tauri::command]
