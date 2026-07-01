@@ -49,6 +49,29 @@ export interface RuntimeEvent {
   error?: JsonValue | null;
 }
 
+export type SpanStatus = "ok" | "error";
+
+export interface TraceSpan {
+  trace_id: string;
+  span_id: string;
+  parent_span_id?: string | null;
+  name: string;
+  start: number;
+  end?: number | null;
+  attributes: Record<string, JsonValue>;
+  status: SpanStatus;
+}
+
+export interface FrontendLogRecord {
+  level: string;
+  target: string;
+  message: string;
+  timestamp_ms: number;
+  trace_id?: string | null;
+  correlation_id?: string | null;
+  fields: Record<string, JsonValue>;
+}
+
 export interface FrontendEventEnvelope<T = MutsukiFrontendEvent> {
   sequence: number;
   channel: string;
@@ -58,12 +81,17 @@ export interface FrontendEventEnvelope<T = MutsukiFrontendEvent> {
 export type MutsukiFrontendEvent =
   | { type: "task"; task_id: string; event: RuntimeEvent }
   | { type: "runtime"; event: RuntimeEvent }
-  | { type: "trace"; span: JsonValue }
-  | { type: "log"; level: string; target: string; message: string }
+  | { type: "trace"; span: TraceSpan }
+  | { type: "log"; record: FrontendLogRecord }
   | { type: "resource"; ref_id: string; operation: string }
   | { type: "approval"; request: ApprovalRequest }
   | { type: "plugin"; plugin: PluginSummary; operation: string }
   | { type: "runner"; runner_id: string; status: string };
+
+export type TaskFrontendEvent = Extract<MutsukiFrontendEvent, { type: "task" }>;
+export type RuntimeFrontendEvent = Extract<MutsukiFrontendEvent, { type: "runtime" }>;
+export type TraceFrontendEvent = Extract<MutsukiFrontendEvent, { type: "trace" }>;
+export type LogFrontendEvent = Extract<MutsukiFrontendEvent, { type: "log" }>;
 
 export interface ResourceRef {
   ref_id: string;

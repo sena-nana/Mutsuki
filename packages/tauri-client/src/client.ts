@@ -8,12 +8,16 @@ import type {
   FrontendTaskResult,
   FrontendTaskRun,
   HostStatus,
+  LogFrontendEvent,
   MutsukiFrontendEvent,
   PluginSummary,
   PreviewHandle,
   ResourceBytes,
   ResourceRef,
   ResourceText,
+  RuntimeFrontendEvent,
+  TaskFrontendEvent,
+  TraceFrontendEvent,
 } from "./types";
 
 export interface MutsukiClient {
@@ -62,11 +66,19 @@ export interface PluginApi {
 
 export interface EventApi {
   listen(handler: (event: FrontendEventEnvelope<MutsukiFrontendEvent>) => void): Promise<UnlistenFn>;
+  tasks(handler: (event: FrontendEventEnvelope<TaskFrontendEvent>) => void): Promise<UnlistenFn>;
+  runtime(handler: (event: FrontendEventEnvelope<RuntimeFrontendEvent>) => void): Promise<UnlistenFn>;
+  trace(handler: (event: FrontendEventEnvelope<TraceFrontendEvent>) => void): Promise<UnlistenFn>;
+  log(handler: (event: FrontendEventEnvelope<LogFrontendEvent>) => void): Promise<UnlistenFn>;
 }
 
 export function createMutsukiClient(): MutsukiClient {
   const events: EventApi = {
     listen: (handler) => listen<FrontendEventEnvelope<MutsukiFrontendEvent>>("mutsuki://event", (event) => handler(event.payload)),
+    tasks: (handler) => listenCategory<TaskFrontendEvent>("mutsuki://task/event", handler),
+    runtime: (handler) => listenCategory<RuntimeFrontendEvent>("mutsuki://runtime/event", handler),
+    trace: (handler) => listenCategory<TraceFrontendEvent>("mutsuki://trace/event", handler),
+    log: (handler) => listenCategory<LogFrontendEvent>("mutsuki://log/event", handler),
   };
 
   const cancel = (taskId: string, reason?: string) =>
@@ -212,4 +224,11 @@ async function openTaskEvents(taskId: string): Promise<TaskEventStream> {
 
 function refId(ref: string | ResourceRef): string {
   return typeof ref === "string" ? ref : ref.ref_id;
+}
+
+function listenCategory<T extends MutsukiFrontendEvent>(
+  channel: string,
+  handler: (event: FrontendEventEnvelope<T>) => void,
+): Promise<UnlistenFn> {
+  return listen<FrontendEventEnvelope<T>>(channel, (event) => handler(event.payload));
 }

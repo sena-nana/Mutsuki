@@ -56,6 +56,108 @@ fn default_host_runs_echo_task() {
 }
 
 #[test]
+fn host_emits_runtime_events_and_trace_spans_for_task() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostObserveTest")
+        .build()
+        .expect("host builds");
+    let mut rx = host.event_hub().subscribe();
+
+    let result = host
+        .call(FrontendTaskRequest {
+            protocol_id: ECHO_PROTOCOL_ID.into(),
+            payload: json!({ "text": "trace" }),
+            task_id: Some("task:test:observe".into()),
+            trace_id: Some("trace:test:observe".into()),
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .expect("echo task completes");
+
+    assert!(result.events.iter().any(|event| {
+        event.kind == RuntimeEventKind::Task
+            && event.name == "task.completed"
+            && event.subject_id.as_deref() == Some("task:test:observe")
+    }));
+
+    let envelopes = collect_events(&mut rx);
+    assert!(envelopes.iter().any(|event| {
+        matches!(
+            &event.payload,
+            MutsukiFrontendEvent::Task { task_id, event }
+                if task_id == "task:test:observe" && event.name == "task.completed"
+        )
+    }));
+    assert!(envelopes.iter().any(|event| {
+        matches!(
+            &event.payload,
+            MutsukiFrontendEvent::Runtime { event }
+                if event.kind == RuntimeEventKind::Trace && event.name == "trace.span"
+        )
+    }));
+    assert!(envelopes.iter().any(|event| {
+        matches!(
+            &event.payload,
+            MutsukiFrontendEvent::Trace { span }
+                if span.name == "runner.step" && span.trace_id == "trace:test:observe"
+        )
+    }));
+}
+
+#[test]
+fn host_log_event_redacts_sensitive_fields() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostLogTest")
+        .build()
+        .expect("host builds");
+    let mut rx = host.event_hub().subscribe();
+
+    host.emit_log(
+        "info",
+        "test.observe",
+        "structured log",
+        BTreeMap::from([
+            ("token".into(), json!("secret-token")),
+            (
+                "nested".into(),
+                json!({
+                    "password": "secret-password",
+                    "visible": true
+                }),
+            ),
+        ]),
+    );
+
+    let envelopes = collect_events(&mut rx);
+    let record = envelopes
+        .iter()
+        .find_map(|event| match &event.payload {
+            MutsukiFrontendEvent::Log { record } => Some(record),
+            _ => None,
+        })
+        .expect("log event emitted");
+
+    assert_eq!(record.fields.get("token"), Some(&json!("[redacted]")));
+    assert_eq!(
+        record
+            .fields
+            .get("nested")
+            .and_then(|value| value.get("password")),
+        Some(&json!("[redacted]"))
+    );
+    assert_eq!(
+        record
+            .fields
+            .get("nested")
+            .and_then(|value| value.get("visible")),
+        Some(&json!(true))
+    );
+}
+
+#[test]
 fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
     let descriptor = RunnerDescriptor {
         runner_id: "stream.blocking.runner".into(),

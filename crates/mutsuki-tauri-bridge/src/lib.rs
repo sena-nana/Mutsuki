@@ -1,8 +1,9 @@
 use mutsuki_runtime_contracts::{
-    ResourceRef, RuntimeError, RuntimeEvent, Task, TaskOutcome, TaskStatus, TraceSpan,
+    ResourceRef, RuntimeError, RuntimeEvent, ScalarValue, Task, TaskOutcome, TaskStatus, TraceSpan,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -41,6 +42,7 @@ impl FrontendError {
 
 impl From<RuntimeError> for FrontendError {
     fn from(error: RuntimeError) -> Self {
+        let error = redact_runtime_error(error);
         Self {
             code: error.code,
             message: error.route,
@@ -191,6 +193,20 @@ pub struct HostStatus {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrontendLogRecord {
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub timestamp_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(default)]
+    pub fields: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MutsukiFrontendEvent {
     Task {
@@ -204,9 +220,7 @@ pub enum MutsukiFrontendEvent {
         span: TraceSpan,
     },
     Log {
-        level: String,
-        target: String,
-        message: String,
+        record: FrontendLogRecord,
     },
     Resource {
         ref_id: String,
@@ -286,4 +300,108 @@ impl Default for EventHub {
     fn default() -> Self {
         Self::new(1024)
     }
+}
+
+pub fn redact_runtime_event(mut event: RuntimeEvent) -> RuntimeEvent {
+    event.attributes = redact_scalar_fields(event.attributes);
+    event.error = event.error.map(redact_runtime_error);
+    event
+}
+
+pub fn redact_log_record(mut record: FrontendLogRecord) -> FrontendLogRecord {
+    record.message = redact_message(record.message);
+    record.fields = redact_json_fields(record.fields);
+    record
+}
+
+fn redact_runtime_error(mut error: RuntimeError) -> RuntimeError {
+    error.evidence = redact_scalar_fields(error.evidence);
+    error.cause = error
+        .cause
+        .map(|cause| Box::new(redact_runtime_error(*cause)));
+    error
+}
+
+fn redact_scalar_fields(fields: BTreeMap<String, ScalarValue>) -> BTreeMap<String, ScalarValue> {
+    fields
+        .into_iter()
+        .map(|(key, value)| {
+            if is_sensitive_key(&key) {
+                (key, ScalarValue::String("[redacted]".into()))
+            } else {
+                (key, value)
+            }
+        })
+        .collect()
+}
+
+fn redact_json_fields(fields: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    fields
+        .into_iter()
+        .map(|(key, value)| {
+            if is_sensitive_key(&key) {
+                (key, Value::String("[redacted]".into()))
+            } else {
+                (key, redact_json_value(value))
+            }
+        })
+        .collect()
+}
+
+fn redact_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().map(redact_json_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    if is_sensitive_key(&key) {
+                        (key, Value::String("[redacted]".into()))
+                    } else {
+                        (key, redact_json_value(value))
+                    }
+                })
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn redact_message(message: String) -> String {
+    let lower = message.to_ascii_lowercase();
+    let sensitive_fragment = [
+        "authorization",
+        "bearer ",
+        "token=",
+        "token:",
+        "secret=",
+        "secret:",
+        "password=",
+        "password:",
+        "api_key=",
+        "api_key:",
+        "credential=",
+        "credential:",
+    ]
+    .iter()
+    .any(|fragment| lower.contains(fragment));
+    if sensitive_fragment {
+        "[redacted]".into()
+    } else {
+        message
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "credential",
+        "api_key",
+        "apikey",
+        "authorization",
+    ]
+    .iter()
+    .any(|fragment| key.contains(fragment))
 }
