@@ -4,7 +4,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus};
+use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus, TraceSpan};
 use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
 use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway};
 
@@ -171,6 +171,19 @@ impl HostRuntime {
             HostRuntimeReply::Events(events) => Ok(events),
             reply => Err(host_failure(
                 "host.events_after",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn trace_spans_after(
+        &mut self,
+        start_index: usize,
+    ) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
+        match self.dispatch(HostRuntimeCommand::TraceSpansAfter(start_index))? {
+            HostRuntimeReply::TraceSpans { next_index, spans } => Ok((next_index, spans)),
+            reply => Err(host_failure(
+                "host.trace_spans_after",
                 format!("unexpected reply: {reply:?}"),
             )),
         }

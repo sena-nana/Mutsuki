@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RuntimeEvent,
-    SagaPlan, SnapshotDescriptor, StreamPlan, Task, TaskOutcome, TaskStatus, WritePlan,
+    SagaPlan, SnapshotDescriptor, StreamPlan, Task, TaskOutcome, TaskStatus, TraceSpan, WritePlan,
 };
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport};
 
@@ -46,6 +46,7 @@ pub enum HostRuntimeCommand {
     TaskSnapshots,
     TaskOutcome(String),
     EventsAfter(u64),
+    TraceSpansAfter(usize),
     CreateBlobResource {
         schema: String,
         bytes: Vec<u8>,
@@ -89,6 +90,10 @@ pub enum HostRuntimeReply {
     TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskOutcome(Option<TaskOutcome>),
     Events(Vec<RuntimeEvent>),
+    TraceSpans {
+        next_index: usize,
+        spans: Vec<TraceSpan>,
+    },
     ResourceCreated(ResourceRef),
     ResourceBytes(Vec<u8>),
     Snapshot(SnapshotDescriptor),

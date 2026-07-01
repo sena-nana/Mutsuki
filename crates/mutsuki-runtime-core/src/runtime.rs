@@ -159,6 +159,13 @@ impl CoreRuntime {
         self.traces.spans()
     }
 
+    pub fn trace_spans_after(
+        &self,
+        start_index: usize,
+    ) -> Vec<&mutsuki_runtime_contracts::TraceSpan> {
+        self.traces.spans().iter().skip(start_index).collect()
+    }
+
     fn is_surface_deprecated(&self, surface_id: &str) -> bool {
         self.surfaces
             .iter()

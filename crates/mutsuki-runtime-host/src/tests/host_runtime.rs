@@ -258,6 +258,49 @@ fn events_after_returns_incremental_runtime_events() {
 }
 
 #[test]
+fn trace_spans_after_returns_incremental_runtime_trace_spans() {
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    let mut first_task = Task::new("trace-task", "raw.input", json!({}));
+    first_task.trace_id = Some("trace-custom".into());
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(first_task)))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    let (next_index, spans) = runtime.trace_spans_after(0).unwrap();
+    assert!(!spans.is_empty());
+    assert!(
+        spans
+            .iter()
+            .any(|span| { span.name == "runner.step" && span.trace_id == "trace-custom" })
+    );
+    let (_, empty) = runtime.trace_spans_after(next_index).unwrap();
+    assert!(empty.is_empty());
+
+    let mut next_task = Task::new("trace-task-next", "raw.input", json!({}));
+    next_task.trace_id = Some("trace-next".into());
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(next_task)))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    let (after_next, later_spans) = runtime.trace_spans_after(next_index).unwrap();
+    assert!(after_next > next_index);
+    assert!(
+        later_spans
+            .iter()
+            .any(|span| { span.name == "runner.step" && span.trace_id == "trace-next" })
+    );
+}
+
+#[test]
 fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     let mut runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())

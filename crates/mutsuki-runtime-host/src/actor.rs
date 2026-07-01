@@ -185,6 +185,20 @@ fn handle_command(
             HostRuntimeReply::Events(core.events_after(sequence).into_iter().cloned().collect()),
             false,
         )),
+        HostRuntimeCommand::TraceSpansAfter(start_index) => {
+            let spans = core
+                .trace_spans_after(start_index)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok((
+                HostRuntimeReply::TraceSpans {
+                    next_index: start_index + spans.len(),
+                    spans,
+                },
+                false,
+            ))
+        }
         HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
             HostRuntimeReply::ResourceCreated(
                 require_resource_provider(config)?.create_blob_resource(&schema, bytes)?,
