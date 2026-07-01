@@ -1,15 +1,16 @@
 use crate::approval::ApprovalBridge;
 use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
+use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
 use mutsuki_runtime_contracts::{
     RuntimeEvent, RuntimeEventKind, TaskOutcome, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
-    FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HostStatus, MutsukiFrontendEvent,
-    PluginSummary, PreviewHandle, ResourceBytes, ResourceText, RunnerSummary, TaskCancelRequest,
-    TaskResultRequest, redact_log_record, redact_runtime_event,
+    FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,
+    MutsukiFrontendEvent, PluginSummary, PreviewHandle, ResourceBytes, ResourceText, RunnerSummary,
+    RuntimeHealth, TaskCancelRequest, TaskResultRequest, redact_log_record, redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
@@ -27,6 +28,7 @@ pub struct MutsukiTauriHost {
     events: Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: Arc<TaskSupervisor>,
     approvals: ApprovalBridge,
+    health: Arc<HostHealthState>,
     plugins: Vec<PluginSummary>,
     runners: Vec<RunnerSummary>,
 }
@@ -111,12 +113,14 @@ impl TaskSupervisor {
         &self,
         core_events: Vec<RuntimeEvent>,
         events: &mutsuki_tauri_bridge::EventHub,
+        health: &HostHealthState,
     ) {
         let mut state = self.state.lock();
         for event in core_events {
             state.last_runtime_event_sequence =
                 state.last_runtime_event_sequence.max(event.sequence);
             let event = redact_runtime_event(event);
+            health.record_runtime_event_error(&event);
             if let Some(task_id) = task_event_id(&event) {
                 if state.active.contains(&task_id) {
                     state
@@ -185,9 +189,11 @@ impl MutsukiTauriHost {
         runtime: HostRuntime,
         resources: Arc<TauriResourceStore>,
         events: Arc<mutsuki_tauri_bridge::EventHub>,
+        health: Arc<HostHealthState>,
         plugins: Vec<PluginSummary>,
         runners: Vec<RunnerSummary>,
     ) -> Self {
+        health.record_summary_failures(&plugins, &runners);
         Self {
             config,
             runtime: Arc::new(Mutex::new(runtime)),
@@ -195,6 +201,7 @@ impl MutsukiTauriHost {
             events,
             tasks: Arc::new(TaskSupervisor::default()),
             approvals: ApprovalBridge::default(),
+            health,
             plugins,
             runners,
         }
@@ -217,22 +224,87 @@ impl MutsukiTauriHost {
     }
 
     pub fn status(&self) -> HostStatus {
+        let runtime = self.runtime_health();
+        let runners = self.runners();
+        let plugins = self.plugins_with_runner_state(&runners);
+        let host = health_component(true, "running", None);
+        let plugins_health = health_component(
+            plugins.iter().all(|plugin| plugin.status == "loaded"),
+            "ok",
+            first_plugin_error(&plugins),
+        );
+        let runners_health = health_component(
+            runners.iter().all(|runner| runner.status != "failed"),
+            "ok",
+            first_runner_error(&runners),
+        );
+        let healthy =
+            runtime.healthy && host.healthy && plugins_health.healthy && runners_health.healthy;
         HostStatus {
             app_name: self.config.app_name.clone(),
             profile_id: self.config.profile_id.clone(),
             mode: format!("{:?}", self.config.mode).to_lowercase(),
-            healthy: true,
-            plugins: self.plugins(),
-            runners: self.runners(),
+            healthy,
+            runtime,
+            host,
+            plugins_health,
+            runners_health,
+            recent_errors: self.health.recent_errors(),
+            plugins,
+            runners,
         }
     }
 
     pub fn plugins(&self) -> Vec<PluginSummary> {
-        self.plugins.clone()
+        let runners = self.runners();
+        self.plugins_with_runner_state(&runners)
     }
 
     pub fn runners(&self) -> Vec<RunnerSummary> {
-        self.runners.clone()
+        self.runners
+            .iter()
+            .cloned()
+            .map(|mut runner| {
+                if runner.status != "failed"
+                    && let Some(failure) = self.health.runner_failure(&runner.runner_id)
+                {
+                    runner.status = "failed".into();
+                    runner.error = Some(failure.message().into());
+                }
+                runner
+            })
+            .collect()
+    }
+
+    fn runtime_health(&self) -> RuntimeHealth {
+        let result = self.runtime.lock().task_snapshots();
+        match result {
+            Ok(snapshots) => runtime_health_from_snapshots(&snapshots),
+            Err(error) => {
+                let message = format!("{:?}", error.error());
+                self.health.record_runtime_probe_error(message.clone());
+                failed_runtime_health(message)
+            }
+        }
+    }
+
+    fn plugins_with_runner_state(&self, runners: &[RunnerSummary]) -> Vec<PluginSummary> {
+        self.plugins
+            .iter()
+            .cloned()
+            .map(|mut plugin| {
+                if plugin.status == "failed" {
+                    return plugin;
+                }
+                if let Some(runner) = runners.iter().find(|runner| {
+                    runner.plugin_id == plugin.plugin_id && runner.status == "failed"
+                }) {
+                    plugin.status = "degraded".into();
+                    plugin.error = Some(format!("runner {} failed", runner.runner_id));
+                }
+                plugin
+            })
+            .collect()
     }
 
     pub fn emit_log(
@@ -335,9 +407,10 @@ impl MutsukiTauriHost {
         let runtime = self.runtime.clone();
         let events = self.events.clone();
         let tasks = self.tasks.clone();
+        let health = self.health.clone();
         let spawn_result = thread::Builder::new()
             .name("mutsuki-tauri-task-pump".into())
-            .spawn(move || run_task_pump(runtime, events, tasks));
+            .spawn(move || run_task_pump(runtime, events, tasks, health));
 
         if let Err(error) = spawn_result {
             self.tasks
@@ -346,14 +419,16 @@ impl MutsukiTauriHost {
     }
 
     fn drain_observability(&self) -> HostResult<()> {
-        drain_observability(&self.runtime, &self.events, &self.tasks).map_err(|error| {
-            self.emit_runtime_error_log(
-                "mutsuki_tauri_host.observe",
-                "runtime observability drain failed",
-                error.clone(),
-            );
-            HostError::Runtime(error)
-        })
+        drain_observability(&self.runtime, &self.events, &self.tasks, &self.health).map_err(
+            |error| {
+                self.emit_runtime_error_log(
+                    "mutsuki_tauri_host.observe",
+                    "runtime observability drain failed",
+                    error.clone(),
+                );
+                HostError::Runtime(error)
+            },
+        )
     }
 
     fn emit_runtime_error_log(
@@ -362,14 +437,19 @@ impl MutsukiTauriHost {
         message: impl Into<String>,
         error: impl Into<String>,
     ) {
+        let target = target.into();
+        let message = message.into();
+        let error = error.into();
+        self.health
+            .record_host_error(&target, format!("{message}: {error}"));
         emit_log_record(
             &self.events,
             "error".into(),
-            target.into(),
-            message.into(),
+            target,
+            message,
             None,
             None,
-            BTreeMap::from([("error".into(), json!(error.into()))]),
+            BTreeMap::from([("error".into(), json!(error))]),
         );
     }
 
@@ -488,6 +568,7 @@ fn run_task_pump(
     runtime: Arc<Mutex<HostRuntime>>,
     events: Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: Arc<TaskSupervisor>,
+    health: Arc<HostHealthState>,
 ) {
     loop {
         let Some(active) = tasks.active_snapshot() else {
@@ -522,7 +603,7 @@ fn run_task_pump(
 
         match snapshot {
             Ok(outcomes) => {
-                if let Err(error) = drain_observability(&runtime, &events, &tasks) {
+                if let Err(error) = drain_observability(&runtime, &events, &tasks, &health) {
                     emit_log_record(
                         &events,
                         "error".into(),
@@ -570,10 +651,47 @@ fn frontend_event_for_runtime_event(event: RuntimeEvent) -> MutsukiFrontendEvent
     }
 }
 
+fn health_component(healthy: bool, healthy_status: &str, error: Option<String>) -> HealthComponent {
+    HealthComponent {
+        healthy,
+        status: if healthy {
+            healthy_status.into()
+        } else {
+            "failed".into()
+        },
+        error: if healthy { None } else { error },
+    }
+}
+
+fn first_plugin_error(plugins: &[PluginSummary]) -> Option<String> {
+    plugins
+        .iter()
+        .find(|plugin| plugin.status != "loaded")
+        .and_then(|plugin| {
+            plugin
+                .error
+                .clone()
+                .or_else(|| Some(format!("plugin {} is {}", plugin.plugin_id, plugin.status)))
+        })
+}
+
+fn first_runner_error(runners: &[RunnerSummary]) -> Option<String> {
+    runners
+        .iter()
+        .find(|runner| runner.status == "failed")
+        .and_then(|runner| {
+            runner
+                .error
+                .clone()
+                .or_else(|| Some(format!("runner {} failed", runner.runner_id)))
+        })
+}
+
 fn drain_observability(
     runtime: &Arc<Mutex<HostRuntime>>,
     events: &Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: &Arc<TaskSupervisor>,
+    health: &HostHealthState,
 ) -> Result<(), String> {
     let (last_event_sequence, last_trace_span_index) = tasks.observe_cursor();
     let (core_events, next_trace_index, trace_spans) = {
@@ -586,7 +704,7 @@ fn drain_observability(
             .map_err(|error| format!("{:?}", error.error()))?;
         (core_events, next_trace_index, trace_spans)
     };
-    tasks.ingest_runtime_events(core_events, events);
+    tasks.ingest_runtime_events(core_events, events, health);
     tasks.ingest_trace_spans(next_trace_index, trace_spans, events);
     Ok(())
 }

@@ -175,11 +175,41 @@ export interface RunnerSummary {
   error?: string | null;
 }
 
+export interface HealthComponent {
+  healthy: boolean;
+  status: string;
+  error?: string | null;
+}
+
+export interface RuntimeHealth {
+  healthy: boolean;
+  status: string;
+  active_tasks: number;
+  failed_tasks: number;
+  error?: string | null;
+}
+
+export interface HostRecentError {
+  source: string;
+  message: string;
+  timestamp_ms: number;
+  plugin_id?: string | null;
+  runner_id?: string | null;
+  task_id?: string | null;
+  code?: string | null;
+  route?: string | null;
+}
+
 export interface HostStatus {
   app_name: string;
   profile_id: string;
   mode: string;
   healthy: boolean;
+  runtime: RuntimeHealth;
+  host: HealthComponent;
+  plugins_health: HealthComponent;
+  runners_health: HealthComponent;
+  recent_errors: HostRecentError[];
   plugins: PluginSummary[];
   runners: RunnerSummary[];
 }

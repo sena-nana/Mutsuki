@@ -4,6 +4,7 @@ mod config;
 #[cfg(test)]
 mod echo;
 mod error;
+mod health;
 mod host;
 mod plugin_runner;
 

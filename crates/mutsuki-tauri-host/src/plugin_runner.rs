@@ -1,5 +1,6 @@
 use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
+use crate::health::HostHealthState;
 use mutsuki_runtime_contracts::{
     ArtifactType, PluginDeploymentKind, PluginManifest, RunnerDescriptor, RunnerResult,
     RuntimeError, ScalarValue, Task,
@@ -53,6 +54,7 @@ struct LocatedRunnerSpec {
 pub(crate) fn scan_plugin_runners(
     config: &MutsukiTauriConfig,
     events: Arc<EventHub>,
+    health: Arc<HostHealthState>,
 ) -> HostResult<PluginRunnerLoad> {
     let plugin_files = find_named_files(&config.paths.plugins_dir, "plugin.toml")?;
     let runner_files = find_named_files(&config.paths.runners_dir, "runner.toml")?;
@@ -173,6 +175,7 @@ pub(crate) fn scan_plugin_runners(
                 located,
                 &config.profile_id,
                 events.clone(),
+                health.clone(),
             ) {
                 Ok(runner) => {
                     plugin_runner_summaries.push(loaded_runner_summary(descriptor, "process"));
@@ -366,6 +369,7 @@ pub(crate) struct ExternalProcessRunner {
     child: Child,
     stderr_thread: Option<thread::JoinHandle<()>>,
     events: Arc<EventHub>,
+    health: Arc<HostHealthState>,
 }
 
 impl ExternalProcessRunner {
@@ -374,6 +378,7 @@ impl ExternalProcessRunner {
         located: &LocatedRunnerSpec,
         profile_id: &str,
         events: Arc<EventHub>,
+        health: Arc<HostHealthState>,
     ) -> HostResult<Self> {
         let source_dir = located.source.parent().ok_or_else(|| {
             HostError::Config(format!(
@@ -446,6 +451,7 @@ impl ExternalProcessRunner {
             child,
             stderr_thread: Some(stderr_thread),
             events,
+            health,
         })
     }
 
@@ -473,7 +479,12 @@ impl Runner for ExternalProcessRunner {
 
     fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         let result = self.inner.step(ctx, tasks);
-        if result.is_err() {
+        if let Err(error) = &result {
+            self.health.record_runner_runtime_error(
+                &self.descriptor.runner_id,
+                &self.descriptor.plugin_id,
+                error.error(),
+            );
             emit_runner_status(&self.events, &self.descriptor.runner_id, "failed");
         }
         result

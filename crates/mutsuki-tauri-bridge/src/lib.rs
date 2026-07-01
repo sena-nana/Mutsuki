@@ -213,12 +213,52 @@ pub struct RunnerSummary {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthComponent {
+    pub healthy: bool,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeHealth {
+    pub healthy: bool,
+    pub status: String,
+    pub active_tasks: usize,
+    pub failed_tasks: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostRecentError {
+    pub source: String,
+    pub message: String,
+    pub timestamp_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HostStatus {
     pub app_name: String,
     pub profile_id: String,
     pub mode: String,
     pub healthy: bool,
+    pub runtime: RuntimeHealth,
+    pub host: HealthComponent,
+    pub plugins_health: HealthComponent,
+    pub runners_health: HealthComponent,
+    pub recent_errors: Vec<HostRecentError>,
     pub plugins: Vec<PluginSummary>,
     pub runners: Vec<RunnerSummary>,
 }

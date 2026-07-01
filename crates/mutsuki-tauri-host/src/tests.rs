@@ -30,8 +30,15 @@ fn default_host_reports_empty_plugin_and_runner_state() {
 
     assert!(host.plugins().is_empty());
     assert!(host.runners().is_empty());
-    assert!(host.status().plugins.is_empty());
-    assert!(host.status().runners.is_empty());
+    let status = host.status();
+    assert!(status.healthy);
+    assert!(status.runtime.healthy);
+    assert!(status.host.healthy);
+    assert!(status.plugins_health.healthy);
+    assert!(status.runners_health.healthy);
+    assert!(status.recent_errors.is_empty());
+    assert!(status.plugins.is_empty());
+    assert!(status.runners.is_empty());
 }
 
 #[test]
@@ -317,6 +324,7 @@ fn loader_records_malformed_plugin_manifest() {
         .expect("host builds with failed plugin state");
 
     let plugins = host.plugins();
+    let status = host.status();
     assert_eq!(plugins.len(), 1);
     assert!(!plugins[0].enabled);
     assert_eq!(plugins[0].status, "failed");
@@ -326,6 +334,12 @@ fn loader_records_malformed_plugin_manifest() {
             .as_deref()
             .is_some_and(|error| error.contains("failed to parse"))
     );
+    assert!(!status.healthy);
+    assert!(!status.plugins_health.healthy);
+    assert!(status.recent_errors.iter().any(|error| {
+        error.source == "mutsuki_tauri_host.plugin"
+            && error.plugin_id == Some(plugins[0].plugin_id.clone())
+    }));
 }
 
 #[test]
@@ -351,6 +365,7 @@ fn loader_records_missing_runner_spec() {
 
     let plugins = host.plugins();
     let runners = host.runners();
+    let status = host.status();
     assert_eq!(plugins[0].plugin_id, "fixture.missing_runner");
     assert!(!plugins[0].enabled);
     assert!(
@@ -359,6 +374,12 @@ fn loader_records_missing_runner_spec() {
             .as_deref()
             .is_some_and(|error| error.contains("missing runner.toml"))
     );
+    assert!(!status.healthy);
+    assert!(!status.plugins_health.healthy);
+    assert!(!status.runners_health.healthy);
+    assert!(status.runners.iter().any(|runner| {
+        runner.runner_id == "fixture.missing_runner.runner" && runner.status == "failed"
+    }));
     assert_eq!(runners[0].runner_id, "fixture.missing_runner.runner");
     assert!(!runners[0].enabled);
 }
@@ -552,6 +573,80 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
             MutsukiFrontendEvent::Runner { runner_id, status }
                 if runner_id == "fixture.process.runner" && status == "stderr"
         )
+    }));
+}
+
+#[test]
+fn health_reports_external_runner_runtime_failure() {
+    let workspace = TestWorkspace::new("external-runner-failure");
+    let script_path = workspace.root.join("jsonl-runner-fails.ps1");
+    std::fs::write(&script_path, failing_jsonl_runner_script()).expect("runner script written");
+    write_plugin_manifest(
+        &workspace.config.paths.plugins_dir.join("plugin"),
+        plugin_manifest(
+            "fixture.failing_process",
+            "1.0.0",
+            ArtifactType::Process,
+            vec![runner_descriptor(
+                "fixture.failing_process.runner",
+                "fixture.failing_process.echo",
+            )],
+        ),
+    );
+    write_runner_spec(
+        &workspace.config.paths.runners_dir.join("runner"),
+        &runner_launch_spec(
+            "fixture.failing_process.runner",
+            "fixture.failing_process",
+            "powershell.exe",
+            vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                script_path.display().to_string(),
+            ],
+        ),
+    );
+
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .build()
+        .expect("host builds with external runner");
+
+    let result = host
+        .call(FrontendTaskRequest {
+            protocol_id: "fixture.failing_process.echo".into(),
+            payload: json!({ "message": "hello" }),
+            task_id: Some("task:failing-process".into()),
+            trace_id: None,
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .expect("runner failure is reported as a task outcome");
+
+    assert!(matches!(
+        result.outcome,
+        Some(TaskOutcome::Failed { task_id, .. }) if task_id == "task:failing-process"
+    ));
+    let status = host.status();
+    assert!(!status.healthy);
+    assert!(status.runtime.healthy);
+    assert_eq!(status.runtime.failed_tasks, 1);
+    assert!(!status.plugins_health.healthy);
+    assert!(!status.runners_health.healthy);
+    assert!(status.plugins.iter().any(|plugin| {
+        plugin.plugin_id == "fixture.failing_process" && plugin.status == "degraded"
+    }));
+    assert!(status.runners.iter().any(|runner| {
+        runner.runner_id == "fixture.failing_process.runner" && runner.status == "failed"
+    }));
+    assert!(status.recent_errors.iter().any(|error| {
+        error.runner_id.as_deref() == Some("fixture.failing_process.runner")
+            && error.code.as_deref() == Some("fixture.runner_failed")
     }));
 }
 
@@ -886,6 +981,39 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     break
   } else {
     @{ id = $request.id; ok = $false; error = @{ code = 'test.unsupported'; source = 'test'; route = $request.method; lost_capability = $null; recovery = $null; cause = $null; evidence = @{} } } | ConvertTo-Json -Depth 20 -Compress
+  }
+}
+"#
+}
+
+fn failing_jsonl_runner_script() -> &'static str {
+    r#"
+$ErrorActionPreference = 'Stop'
+while (($line = [Console]::In.ReadLine()) -ne $null) {
+  if ($line.Trim().Length -eq 0) { continue }
+  $request = $line | ConvertFrom-Json
+  if ($request.method -eq 'runner.step') {
+    @{
+      id = $request.id
+      ok = $false
+      error = @{
+        code = 'fixture.runner_failed'
+        source = 'fixture.runner'
+        route = 'runner.step'
+        lost_capability = $null
+        recovery = $null
+        cause = $null
+        evidence = @{
+          plugin_id = 'fixture.failing_process'
+          runner_id = 'fixture.failing_process.runner'
+        }
+      }
+    } | ConvertTo-Json -Depth 20 -Compress
+  } elseif ($request.method -eq 'runner.dispose') {
+    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
+    break
+  } else {
+    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
   }
 }
 "#

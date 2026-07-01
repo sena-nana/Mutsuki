@@ -1,5 +1,6 @@
 use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::error::{HostError, HostResult};
+use crate::health::HostHealthState;
 use crate::host::MutsukiTauriHost;
 use crate::plugin_runner::{
     loaded_builtin_plugin_summary, loaded_builtin_runner_summary, scan_plugin_runners,
@@ -55,7 +56,8 @@ impl MutsukiTauriHostBuilder {
         let resource_store = Arc::new(TauriResourceStore::new(&self.config.paths.resources_dir));
         let event_buffer = self.config.event_buffer;
         let events = Arc::new(EventHub::new(event_buffer));
-        let mut loaded = scan_plugin_runners(&self.config, events.clone())?;
+        let health = Arc::new(HostHealthState::default());
+        let mut loaded = scan_plugin_runners(&self.config, events.clone(), health.clone())?;
         let mut bootstrapper = RuntimeBootstrapper::new();
         let runners = self.runners;
         let descriptors = runners
@@ -132,6 +134,7 @@ impl MutsukiTauriHostBuilder {
             runtime,
             resource_store,
             events,
+            health,
             loaded.plugins,
             loaded.runners,
         ))
