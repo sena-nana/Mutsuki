@@ -5,10 +5,11 @@ use std::thread;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::TaskStatus;
-use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
+use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
 use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway};
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
+use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
@@ -116,6 +117,35 @@ impl HostRuntime {
         reply_rx
             .recv()
             .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
+    }
+
+    pub fn reload(
+        &mut self,
+        prepared: PreparedRuntimeReload,
+        drain_timeout: Duration,
+    ) -> RuntimeResult<ReloadDecision> {
+        let capabilities = prepared.capabilities.clone();
+        let profile_id = prepared.profile_id.clone();
+        let registry_generation = prepared.registry_generation;
+        match self.dispatch(HostRuntimeCommand::Reload {
+            prepared,
+            drain_timeout,
+        })? {
+            HostRuntimeReply::Reloaded(decision) => {
+                self.capabilities = Arc::new(capabilities);
+                self.context = build_host_context(
+                    self.tx.clone(),
+                    self.capabilities.clone(),
+                    profile_id,
+                    registry_generation,
+                );
+                Ok(decision)
+            }
+            reply => Err(host_failure(
+                "host.reload",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
     }
 
     pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {

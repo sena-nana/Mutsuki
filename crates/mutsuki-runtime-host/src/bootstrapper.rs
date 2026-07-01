@@ -69,6 +69,14 @@ pub struct RuntimeBootstrapper {
     resource_providers: Vec<RegisteredResourceProvider>,
 }
 
+pub struct PreparedRuntimeReload {
+    pub(crate) plan: RuntimeLoadPlan,
+    pub(crate) runners: Vec<Box<dyn Runner>>,
+    pub(crate) capabilities: HostCapabilityRegistry,
+    pub(crate) profile_id: String,
+    pub(crate) registry_generation: u64,
+}
+
 struct RegisteredRunner {
     deployment_kind: PluginDeploymentKind,
     runner: Box<dyn Runner>,
@@ -158,27 +166,70 @@ impl RuntimeBootstrapper {
         )
     }
 
+    pub fn prepare_reload(
+        self,
+        profile: RuntimeProfile,
+        registry_generation: u64,
+    ) -> RuntimeResult<PreparedRuntimeReload> {
+        let mut prepared = self.prepare_runtime(profile)?;
+        prepared.plan.registry_generation = registry_generation;
+        for manifest in &mut prepared.plan.plugins {
+            for runner in &mut manifest.provides.runners {
+                runner.plugin_generation = registry_generation;
+            }
+        }
+        prepared.runners = prepared
+            .runners
+            .into_iter()
+            .map(|runner| {
+                Box::new(GenerationRunner::new(runner, registry_generation)) as Box<dyn Runner>
+            })
+            .collect();
+        append_core_kernel(&mut prepared.plan, &mut prepared.runners);
+        prepared.registry_generation = registry_generation;
+        Ok(PreparedRuntimeReload {
+            plan: prepared.plan,
+            runners: prepared.runners,
+            capabilities: prepared.capabilities,
+            profile_id: prepared.profile_id,
+            registry_generation: prepared.registry_generation,
+        })
+    }
+
     fn boot_core_runtime(self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
         self.boot_host_runtime(profile).map(|booted| booted.core)
     }
 
     fn boot_host_runtime(self, profile: RuntimeProfile) -> RuntimeResult<BootedRuntime> {
-        let mut plan = resolve_load_plan(&self.manifests, &profile)?;
+        let mut prepared = self.prepare_runtime(profile)?;
+        append_core_kernel(&mut prepared.plan, &mut prepared.runners);
+        let core = CoreRuntime::boot(prepared.plan, prepared.runners)?;
+        Ok(BootedRuntime {
+            core,
+            capabilities: prepared.capabilities,
+            profile_id: prepared.profile_id,
+            registry_generation: prepared.registry_generation,
+            active_resource_providers: prepared.active_resource_providers,
+            resource_providers: prepared.resource_providers,
+        })
+    }
+
+    fn prepare_runtime(self, profile: RuntimeProfile) -> RuntimeResult<PreparedRuntime> {
+        let plan = resolve_load_plan(&self.manifests, &profile)?;
         let profile_id = plan.profile_id.clone();
         let registry_generation = plan.registry_generation;
         let active_resource_providers = plan.capability_graph.active_resource_providers.clone();
         let capabilities = HostCapabilityRegistry::from_load_plan(&plan)?;
         validate_registered_runners(&plan, &self.runners)?;
         validate_registered_resource_providers(&self.resource_providers)?;
-        let mut runners: Vec<Box<dyn Runner>> = self
+        let runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()
             .map(|registered| registered.runner)
             .collect();
-        append_core_kernel(&mut plan, &mut runners);
-        let core = CoreRuntime::boot(plan, runners)?;
-        Ok(BootedRuntime {
-            core,
+        Ok(PreparedRuntime {
+            plan,
+            runners,
             capabilities,
             profile_id,
             registry_generation,
@@ -195,6 +246,47 @@ struct BootedRuntime {
     registry_generation: u64,
     active_resource_providers: Vec<String>,
     resource_providers: Vec<RegisteredResourceProvider>,
+}
+
+struct PreparedRuntime {
+    plan: RuntimeLoadPlan,
+    runners: Vec<Box<dyn Runner>>,
+    capabilities: HostCapabilityRegistry,
+    profile_id: String,
+    registry_generation: u64,
+    active_resource_providers: Vec<String>,
+    resource_providers: Vec<RegisteredResourceProvider>,
+}
+
+struct GenerationRunner {
+    descriptor: RunnerDescriptor,
+    inner: Box<dyn Runner>,
+}
+
+impl GenerationRunner {
+    fn new(inner: Box<dyn Runner>, generation: u64) -> Self {
+        let mut descriptor = inner.descriptor().clone();
+        descriptor.plugin_generation = generation;
+        Self { descriptor, inner }
+    }
+}
+
+impl Runner for GenerationRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
+        self.inner.step(ctx, tasks)
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.inner.cancel(invocation_id)
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        self.inner.dispose()
+    }
 }
 
 fn append_core_kernel(plan: &mut RuntimeLoadPlan, runners: &mut Vec<Box<dyn Runner>>) {

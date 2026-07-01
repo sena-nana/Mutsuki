@@ -118,6 +118,245 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
 }
 
 #[test]
+fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let new_descriptor = descriptor("new.runner", "new.input");
+    let echo_descriptor = descriptor("echo.runner", "raw.input");
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![echo_descriptor.clone(), new_descriptor.clone()],
+    ));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        new_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+
+    let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+    let decision = runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+
+    assert_eq!(runtime.host_context().registry_generation(), 2);
+    assert!(decision.changes.iter().any(|change| {
+        change.surface_id == "runner:new.runner"
+            && change.compatibility == SurfaceCompatibility::Additive
+    }));
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "new-task",
+            "new.input",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(runtime.task_status("new-task"), Some(TaskStatus::Completed));
+}
+
+#[test]
+fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
+    let runner_descriptor =
+        descriptor_with_class("reload.runner", "reload.work", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor.clone(),
+        move |_ctx, tasks| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "reload-running",
+            "reload.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    let join = std::thread::spawn(move || {
+        let result = runtime.reload(prepared, Duration::from_secs(2));
+        done_tx.send(result.is_ok()).unwrap();
+        runtime
+    });
+
+    assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
+    release_tx.send(()).unwrap();
+    assert!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+    let mut runtime = join.join().unwrap();
+    assert_eq!(runtime.host_context().registry_generation(), 2);
+    assert_eq!(
+        runtime.task_status("reload-running"),
+        Some(TaskStatus::Completed)
+    );
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "reload-after",
+            "reload.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(
+        runtime.task_status("reload-after"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn host_runtime_reload_timeout_preserves_active_generation() {
+    let runner_descriptor = descriptor_with_class(
+        "reload.timeout.runner",
+        "reload.timeout",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor.clone(),
+        move |_ctx, tasks| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "reload-timeout",
+            "reload.timeout",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+
+    assert!(runtime.reload(prepared, Duration::from_millis(20)).is_err());
+    assert_eq!(runtime.host_context().registry_generation(), 1);
+
+    release_tx.send(()).unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(
+        runtime.task_status("reload-timeout"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn failed_host_runtime_reload_disposes_prepared_runners() {
+    struct ObservedDisposeRunner {
+        descriptor: RunnerDescriptor,
+        disposed: Arc<Mutex<bool>>,
+    }
+
+    impl Runner for ObservedDisposeRunner {
+        fn descriptor(&self) -> &RunnerDescriptor {
+            &self.descriptor
+        }
+
+        fn step(
+            &mut self,
+            _ctx: RunnerContext,
+            tasks: Vec<Task>,
+        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        }
+
+        fn dispose(&mut self) -> mutsuki_runtime_core::RuntimeResult<()> {
+            *self.disposed.lock().expect("disposed mutex poisoned") = true;
+            Ok(())
+        }
+    }
+
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let mut changed_descriptor = descriptor("echo.runner", "raw.input");
+    changed_descriptor.input_schema = json!({"changed": true});
+    let disposed = Arc::new(Mutex::new(false));
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![changed_descriptor.clone()],
+    ));
+    reload_host.register_runner(Box::new(ObservedDisposeRunner {
+        descriptor: changed_descriptor,
+        disposed: disposed.clone(),
+    }));
+    let mut prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+    prepared.plan.contract_surfaces[0].fingerprint = "sha256:breaking".into();
+
+    assert!(runtime.reload(prepared, Duration::from_secs(1)).is_err());
+    assert_eq!(runtime.host_context().registry_generation(), 1);
+    assert!(*disposed.lock().expect("disposed mutex poisoned"));
+}
+
+#[test]
 fn host_runtime_routes_execution_classes_to_named_worker_pools() {
     let descriptor = descriptor_with_class("script.runner", "script.work", ExecutionClass::Script);
     let observed_thread = Arc::new(Mutex::new(String::new()));

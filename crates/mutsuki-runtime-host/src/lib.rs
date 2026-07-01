@@ -14,7 +14,7 @@ mod scheduler;
 mod worker;
 
 pub use backend::{HostExtension, PluginBackend};
-pub use bootstrapper::{NativeRunner, RuntimeBootstrapper};
+pub use bootstrapper::{NativeRunner, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,

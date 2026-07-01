@@ -3,8 +3,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{ExecutionClass, TaskStatus};
-use mutsuki_runtime_core::{CoreRuntime, RunnerCompletion, RunnerLoopReport, RuntimeResult};
+use mutsuki_runtime_core::{
+    CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerLoopReport, RuntimeResult,
+};
 
+use crate::PreparedRuntimeReload;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::{host_failure, resource_provider_missing};
 use crate::host::HostRuntimeConfig;
@@ -247,6 +250,171 @@ fn handle_command(
             ),
             false,
         )),
+        HostRuntimeCommand::Reload {
+            prepared,
+            drain_timeout,
+        } => {
+            let decision = reload_runtime(
+                prepared,
+                drain_timeout,
+                core,
+                config,
+                pools,
+                rx,
+                pending_cancels,
+                running_tasks,
+                draining_invocations,
+            )?;
+            Ok((HostRuntimeReply::Reloaded(decision), false))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reload_runtime(
+    prepared: PreparedRuntimeReload,
+    drain_timeout: Duration,
+    core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
+    pools: &mut HashMap<ExecutionClass, WorkerPool>,
+    rx: &mpsc::Receiver<CoreActorMsg>,
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    running_tasks: &mut BTreeMap<String, RunningTask>,
+    draining_invocations: &mut BTreeMap<String, String>,
+) -> RuntimeResult<ReloadDecision> {
+    drain_for_reload(
+        core,
+        config,
+        pools,
+        rx,
+        pending_cancels,
+        running_tasks,
+        draining_invocations,
+        drain_timeout,
+    )?;
+    let runners = prepared
+        .runners
+        .into_iter()
+        .map(|runner| Box::new(DisposeOnDropRunner::new(runner)) as Box<dyn Runner>)
+        .collect();
+    core.reload_with_runners(prepared.plan, runners)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drain_for_reload(
+    core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
+    pools: &mut HashMap<ExecutionClass, WorkerPool>,
+    rx: &mpsc::Receiver<CoreActorMsg>,
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    running_tasks: &mut BTreeMap<String, RunningTask>,
+    draining_invocations: &mut BTreeMap<String, String>,
+    drain_timeout: Duration,
+) -> RuntimeResult<()> {
+    let started_at = Instant::now();
+    loop {
+        supervise_running_invocations(
+            core,
+            config,
+            pools,
+            pending_cancels,
+            running_tasks,
+            draining_invocations,
+        );
+        if running_tasks.is_empty() {
+            return Ok(());
+        }
+        let elapsed = started_at.elapsed();
+        if elapsed >= drain_timeout {
+            return Err(host_failure(
+                "host.reload.drain_timeout",
+                format!(
+                    "timed out waiting for {} running task(s) to drain",
+                    running_tasks.len()
+                ),
+            ));
+        }
+        let wait = drain_timeout
+            .saturating_sub(elapsed)
+            .min(Duration::from_millis(10));
+        match rx.recv_timeout(wait) {
+            Ok(CoreActorMsg::WorkerStarted(started)) => {
+                mark_worker_started(started, running_tasks);
+            }
+            Ok(CoreActorMsg::WorkerCompleted(completion)) => {
+                let _ = handle_worker_completion(
+                    completion,
+                    core,
+                    pending_cancels,
+                    running_tasks,
+                    draining_invocations,
+                )?;
+            }
+            Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
+                let _ = reply_tx.send(core.task_status(&task_id));
+            }
+            Ok(CoreActorMsg::Command(_, reply_tx)) => {
+                let _ = reply_tx.send(Err(host_failure(
+                    "host.reload.busy",
+                    "runtime reload is draining active work",
+                )));
+            }
+            Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(host_failure(
+                    "host.reload.shutdown",
+                    "runtime actor stopped",
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+struct DisposeOnDropRunner {
+    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+    inner: Box<dyn Runner>,
+    disposed: bool,
+}
+
+impl DisposeOnDropRunner {
+    fn new(inner: Box<dyn Runner>) -> Self {
+        Self {
+            descriptor: inner.descriptor().clone(),
+            inner,
+            disposed: false,
+        }
+    }
+}
+
+impl Runner for DisposeOnDropRunner {
+    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn step(
+        &mut self,
+        ctx: mutsuki_runtime_contracts::RunnerContext,
+        tasks: Vec<mutsuki_runtime_contracts::Task>,
+    ) -> RuntimeResult<Vec<mutsuki_runtime_contracts::RunnerResult>> {
+        self.inner.step(ctx, tasks)
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.inner.cancel(invocation_id)
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        self.disposed = true;
+        self.inner.dispose()
+    }
+}
+
+impl Drop for DisposeOnDropRunner {
+    fn drop(&mut self) {
+        if !self.disposed {
+            let _ = self.inner.dispose();
+            self.disposed = true;
+        }
     }
 }
 

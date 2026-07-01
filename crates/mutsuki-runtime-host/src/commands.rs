@@ -2,7 +2,9 @@ use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SagaPlan,
     SnapshotDescriptor, StreamPlan, Task, TaskOutcome, WritePlan,
 };
-use mutsuki_runtime_core::RunnerLoopReport;
+use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport};
+
+use crate::PreparedRuntimeReload;
 
 pub enum HostRuntimeCommand {
     SubmitTask(Box<Task>),
@@ -40,6 +42,10 @@ pub enum HostRuntimeCommand {
     ExecuteCommandPlan(Box<CommandPlan>),
     ExecuteCommandBatch(Box<CommandBatch>),
     ExecuteSagaPlan(Box<SagaPlan>),
+    Reload {
+        prepared: PreparedRuntimeReload,
+        drain_timeout: std::time::Duration,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,4 +61,5 @@ pub enum HostRuntimeReply {
     StreamPlan(StreamPlan),
     PlanReceipt(PlanReceipt),
     PlanReceipts(Vec<PlanReceipt>),
+    Reloaded(ReloadDecision),
 }
