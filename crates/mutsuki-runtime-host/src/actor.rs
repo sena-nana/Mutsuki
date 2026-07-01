@@ -181,6 +181,10 @@ fn handle_command(
             HostRuntimeReply::TaskOutcome(core.task_outcome(&task_id)?),
             false,
         )),
+        HostRuntimeCommand::EventsAfter(sequence) => Ok((
+            HostRuntimeReply::Events(core.events_after(sequence).into_iter().cloned().collect()),
+            false,
+        )),
         HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
             HostRuntimeReply::ResourceCreated(
                 require_resource_provider(config)?.create_blob_resource(&schema, bytes)?,

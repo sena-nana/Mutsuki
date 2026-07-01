@@ -4,7 +4,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::TaskStatus;
+use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus};
 use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
 use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway};
 
@@ -161,6 +161,16 @@ impl HostRuntime {
             HostRuntimeReply::TaskSnapshots(snapshots) => Ok(snapshots),
             reply => Err(host_failure(
                 "host.task_snapshots",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn events_after(&mut self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
+        match self.dispatch(HostRuntimeCommand::EventsAfter(sequence))? {
+            HostRuntimeReply::Events(events) => Ok(events),
+            reply => Err(host_failure(
+                "host.events_after",
                 format!("unexpected reply: {reply:?}"),
             )),
         }

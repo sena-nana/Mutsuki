@@ -202,6 +202,62 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
 }
 
 #[test]
+fn events_after_returns_incremental_runtime_events() {
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "event-task",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    let events = runtime.events_after(0).unwrap();
+    assert!(
+        events
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence)
+    );
+    assert!(events.iter().any(|event| {
+        event.kind == RuntimeEventKind::Task
+            && event.name == "task.enqueue"
+            && event.subject_id.as_deref() == Some("event-task")
+    }));
+    assert!(events.iter().any(|event| {
+        event.kind == RuntimeEventKind::Task
+            && event.name == "task.completed"
+            && event.subject_id.as_deref() == Some("event-task")
+    }));
+
+    let last_sequence = events.last().expect("runtime events exist").sequence;
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "event-task-next",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+
+    let later_events = runtime.events_after(last_sequence).unwrap();
+    assert!(!later_events.is_empty());
+    assert!(
+        later_events
+            .iter()
+            .all(|event| event.sequence > last_sequence)
+    );
+    assert!(later_events.iter().any(|event| {
+        event.kind == RuntimeEventKind::Task
+            && event.subject_id.as_deref() == Some("event-task-next")
+    }));
+}
+
+#[test]
 fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     let mut runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())
