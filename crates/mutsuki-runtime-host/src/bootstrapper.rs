@@ -16,6 +16,7 @@ use crate::error::{
 };
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
+use crate::scheduler::{DefaultScheduler, SchedulerPolicy};
 
 pub type NativeStepHandler =
     Box<dyn FnMut(RunnerContext, Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> + Send>;
@@ -152,7 +153,12 @@ impl RuntimeBootstrapper {
         profile: RuntimeProfile,
         config: HostRuntimeConfig,
     ) -> RuntimeResult<HostRuntime> {
-        let booted = self.boot_host_runtime(profile)?;
+        let prepared = self.prepare_runtime(profile)?;
+        validate_configured_scheduler_policy(
+            &prepared.capabilities,
+            config.scheduler_policy.as_ref(),
+        )?;
+        let booted = boot_prepared_runtime(prepared)?;
         let config = configure_resource_provider(
             config,
             &booted.active_resource_providers,
@@ -202,17 +208,7 @@ impl RuntimeBootstrapper {
     }
 
     fn boot_host_runtime(self, profile: RuntimeProfile) -> RuntimeResult<BootedRuntime> {
-        let mut prepared = self.prepare_runtime(profile)?;
-        append_core_kernel(&mut prepared.plan, &mut prepared.runners);
-        let core = CoreRuntime::boot(prepared.plan, prepared.runners)?;
-        Ok(BootedRuntime {
-            core,
-            capabilities: prepared.capabilities,
-            profile_id: prepared.profile_id,
-            registry_generation: prepared.registry_generation,
-            active_resource_providers: prepared.active_resource_providers,
-            resource_providers: prepared.resource_providers,
-        })
+        boot_prepared_runtime(self.prepare_runtime(profile)?)
     }
 
     fn prepare_runtime(self, profile: RuntimeProfile) -> RuntimeResult<PreparedRuntime> {
@@ -239,6 +235,19 @@ impl RuntimeBootstrapper {
             resource_providers: self.resource_providers,
         })
     }
+}
+
+fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedRuntime> {
+    append_core_kernel(&mut prepared.plan, &mut prepared.runners);
+    let core = CoreRuntime::boot(prepared.plan, prepared.runners)?;
+    Ok(BootedRuntime {
+        core,
+        capabilities: prepared.capabilities,
+        profile_id: prepared.profile_id,
+        registry_generation: prepared.registry_generation,
+        active_resource_providers: prepared.active_resource_providers,
+        resource_providers: prepared.resource_providers,
+    })
 }
 
 struct BootedRuntime {
@@ -426,6 +435,28 @@ fn configure_resource_provider(
             providers.join(",")
         ))),
     }
+}
+
+fn validate_configured_scheduler_policy(
+    capabilities: &HostCapabilityRegistry,
+    policy: &dyn SchedulerPolicy,
+) -> RuntimeResult<()> {
+    let policy_id = policy.policy_id();
+    let Some(active_policy_id) = capabilities.active_scheduler_policy_id() else {
+        return if policy_id == DefaultScheduler::POLICY_ID {
+            Ok(())
+        } else {
+            capabilities.require_scheduler_policy(policy_id).map(|_| ())
+        };
+    };
+
+    if policy_id != DefaultScheduler::POLICY_ID {
+        return capabilities.require_scheduler_policy(policy_id).map(|_| ());
+    }
+
+    Err(capability_provider_missing(&format!(
+        "scheduler_policy:{active_policy_id}"
+    )))
 }
 
 fn validate_runner_deployment(

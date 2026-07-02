@@ -2,13 +2,15 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure};
+use mutsuki_runtime_core::{
+    Runner, RunnerContext, RuntimeFailure, RuntimeResult, ScheduleDecision,
+};
 use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
 
 use crate::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativeRunner,
-    RunnerLimits, RuntimeBootstrapper, runner_manifest,
+    RunnerLimits, RuntimeBootstrapper, ScheduleInput, SchedulerPolicy, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
@@ -19,6 +21,25 @@ struct BlockingObservedRunner {
     release_rx: mpsc::Receiver<()>,
     cancelled: Arc<Mutex<Vec<String>>>,
     disposed: Arc<Mutex<bool>>,
+}
+
+#[derive(Debug)]
+struct NamedScheduler {
+    policy_id: &'static str,
+}
+
+impl SchedulerPolicy for NamedScheduler {
+    fn policy_id(&self) -> &str {
+        self.policy_id
+    }
+
+    fn decide(&self, input: &ScheduleInput<'_>) -> RuntimeResult<ScheduleDecision> {
+        Ok(ScheduleDecision::new(
+            self.policy_id,
+            input.hard_capacity,
+            "test.named",
+        ))
+    }
 }
 
 impl Runner for BlockingObservedRunner {
@@ -1100,6 +1121,89 @@ fn worker_health_timeout_cancels_stalled_invocation() {
 }
 
 #[test]
+fn host_runtime_requires_active_scheduler_policy_instance() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
+    manifest.requires = vec!["scheduler_policy:scheduler.fair".into()];
+    manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
+        policy_id: "scheduler.fair".into(),
+        version: "1.0.0".into(),
+        decision_scope: "dispatch_budget".into(),
+    }];
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut profile = runtime_profile();
+    profile.mode = RuntimeProfileMode::LockedBuiltin;
+
+    let error = host
+        .into_host_runtime(profile)
+        .err()
+        .expect("active scheduler policy without configured instance should fail");
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String(
+            "scheduler_policy:scheduler.fair".into()
+        ))
+    );
+}
+
+#[test]
+fn host_runtime_rejects_pruned_scheduler_policy_instance() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
+    manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
+        policy_id: "scheduler.fair".into(),
+        version: "1.0.0".into(),
+        decision_scope: "dispatch_budget".into(),
+    }];
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, tasks| {
+            Ok(tasks
+                .into_iter()
+                .map(|task| RunnerResult::completed(task.task_id))
+                .collect())
+        },
+    )));
+    let mut profile = runtime_profile();
+    profile.mode = RuntimeProfileMode::LockedBuiltin;
+    let mut config = HostRuntimeConfig::default();
+    config.scheduler_policy = Arc::new(NamedScheduler {
+        policy_id: "scheduler.fair",
+    });
+
+    let error = host
+        .into_host_runtime_with_config(profile, config)
+        .err()
+        .expect("pruned scheduler policy instance should fail");
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String(
+            "scheduler_policy:scheduler.fair".into()
+        ))
+    );
+    assert_eq!(
+        error.error().evidence.get("detail"),
+        Some(&ScalarValue::String("inactive_load_plan".into()))
+    );
+}
+
+#[test]
 fn host_runtime_registers_only_active_capability_graph_extensions() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
@@ -1178,7 +1282,11 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::LockedBuiltin;
     profile.allow_hot_reload = false;
-    let runtime = host.into_host_runtime(profile).unwrap();
+    let mut config = HostRuntimeConfig::default();
+    config.scheduler_policy = Arc::new(NamedScheduler {
+        policy_id: "scheduler.fair",
+    });
+    let runtime = host.into_host_runtime_with_config(profile, config).unwrap();
 
     assert!(
         runtime

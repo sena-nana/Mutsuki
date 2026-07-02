@@ -164,6 +164,24 @@ pub(crate) fn capability_pruned(capability: &str) -> RuntimeFailure {
     RuntimeFailure::new(error)
 }
 
+pub(crate) fn capability_incompatible(
+    capability: &str,
+    detail: impl Into<String>,
+) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        format!("host.plugin.capability_incompatible.{capability}"),
+    );
+    error
+        .evidence
+        .insert("capability".into(), ScalarValue::String(capability.into()));
+    error
+        .evidence
+        .insert("detail".into(), ScalarValue::String(detail.into()));
+    RuntimeFailure::new(error)
+}
+
 pub(crate) fn permission_unauthorized(
     plugin_id: &str,
     permission_kind: &str,

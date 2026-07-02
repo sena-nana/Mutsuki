@@ -151,6 +151,68 @@ fn enabled_plugin_runner_requires_matching_deployment_bridge() {
 }
 
 #[test]
+fn active_plugin_backend_requires_matching_bridge_deployment() {
+    let (mut manifest, runner_descriptor) = abi_plugin_fixture();
+    manifest.provides.bridges[0].deployment_kind = PluginDeploymentKind::Builtin;
+    let reader = Cursor::new(Vec::<u8>::new());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_abi_runner(Box::new(JsonlRunner::new(
+        runner_descriptor,
+        reader,
+        writer,
+    )));
+
+    let error = host
+        .into_runtime(runtime_profile_with_deployment(
+            "plugin-abi",
+            PluginDeploymentKind::Abi,
+        ))
+        .err()
+        .expect("backend bridge deployment mismatch should fail");
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String(
+            "plugin_backend:plugin.backend.plugin-abi.abi".into()
+        ))
+    );
+}
+
+#[test]
+fn active_plugin_backend_requires_bridge_to_support_configured_codec() {
+    let (mut manifest, runner_descriptor) = abi_plugin_fixture();
+    manifest.provides.bridges[0].codec_ids.clear();
+    let reader = Cursor::new(Vec::<u8>::new());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_abi_runner(Box::new(JsonlRunner::new(
+        runner_descriptor,
+        reader,
+        writer,
+    )));
+
+    let error = host
+        .into_runtime(runtime_profile_with_deployment(
+            "plugin-abi",
+            PluginDeploymentKind::Abi,
+        ))
+        .err()
+        .expect("backend codec not supported by bridge should fail");
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String(
+            "plugin_backend:plugin.backend.plugin-abi.abi".into()
+        ))
+    );
+}
+
+#[test]
 fn loaded_plugin_resource_provider_is_injected_into_host_runtime() {
     let provider_id = "mutsuki.host.boot-resource";
     let mut host = RuntimeBootstrapper::new();

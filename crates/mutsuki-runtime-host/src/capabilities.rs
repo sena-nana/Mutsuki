@@ -8,7 +8,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::RuntimeResult;
 use mutsuki_runtime_sdk::CapabilityBroker;
 
-use crate::error::{capability_provider_missing, capability_pruned};
+use crate::error::{capability_incompatible, capability_provider_missing, capability_pruned};
 
 #[derive(Clone, Debug, Default)]
 pub struct HostCapabilityRegistry {
@@ -113,6 +113,10 @@ impl HostCapabilityRegistry {
         self.require("scheduler_policy", policy_id, &self.scheduler_policies)
     }
 
+    pub(crate) fn active_scheduler_policy_id(&self) -> Option<&str> {
+        self.scheduler_policies.keys().next().map(String::as_str)
+    }
+
     pub fn require_workflow(&self, workflow_id: &str) -> RuntimeResult<&WorkflowDescriptor> {
         self.require("workflow", workflow_id, &self.workflows)
     }
@@ -145,7 +149,24 @@ impl HostCapabilityRegistry {
                 self.require_codec(codec_id)?;
             }
             if let Some(bridge_id) = &backend.bridge_id {
-                self.require_bridge(bridge_id)?;
+                let bridge = self.require_bridge(bridge_id)?;
+                if bridge.deployment_kind != backend.deployment_kind {
+                    return Err(capability_incompatible(
+                        &format!("plugin_backend:{}", backend.backend_id),
+                        format!(
+                            "bridge {bridge_id} deployment {:?} does not match backend deployment {:?}",
+                            bridge.deployment_kind, backend.deployment_kind
+                        ),
+                    ));
+                }
+                if let Some(codec_id) = &backend.codec_id
+                    && !bridge.codec_ids.iter().any(|id| id == codec_id)
+                {
+                    return Err(capability_incompatible(
+                        &format!("plugin_backend:{}", backend.backend_id),
+                        format!("bridge {bridge_id} does not support codec {codec_id}"),
+                    ));
+                }
             }
         }
         for bridge in self.bridges.values() {

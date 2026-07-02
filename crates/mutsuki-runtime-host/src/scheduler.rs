@@ -38,13 +38,25 @@ pub struct ScheduleInput<'a> {
 }
 
 pub trait SchedulerPolicy: Send + Sync + std::fmt::Debug {
+    fn policy_id(&self) -> &str {
+        DefaultScheduler::POLICY_ID
+    }
+
     fn decide(&self, input: &ScheduleInput<'_>) -> RuntimeResult<ScheduleDecision>;
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct DefaultScheduler;
 
+impl DefaultScheduler {
+    pub const POLICY_ID: &'static str = "host.default";
+}
+
 impl SchedulerPolicy for DefaultScheduler {
+    fn policy_id(&self) -> &str {
+        Self::POLICY_ID
+    }
+
     fn decide(&self, input: &ScheduleInput<'_>) -> RuntimeResult<ScheduleDecision> {
         let reason = if input.hard_capacity == 0 {
             "capacity.exhausted"
