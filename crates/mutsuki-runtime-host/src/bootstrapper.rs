@@ -10,8 +10,9 @@ use mutsuki_runtime_sdk::{LoadedPlugin, ResourceProviderGateway};
 
 use crate::capabilities::HostCapabilityRegistry;
 use crate::error::{
-    deployment_mismatch, resource_provider_duplicate, resource_provider_missing,
-    resource_provider_unsupported, runner_for_disabled_plugin, runner_missing_for_deployment,
+    capability_provider_missing, capability_pruned, deployment_mismatch,
+    resource_provider_duplicate, resource_provider_missing, resource_provider_unsupported,
+    runner_for_disabled_plugin, runner_missing_for_deployment,
 };
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
@@ -220,6 +221,7 @@ impl RuntimeBootstrapper {
         let registry_generation = plan.registry_generation;
         let active_resource_providers = plan.capability_graph.active_resource_providers.clone();
         let capabilities = HostCapabilityRegistry::from_load_plan(&plan)?;
+        validate_host_startup_capabilities(&plan, &capabilities)?;
         validate_registered_runners(&plan, &self.runners)?;
         validate_registered_resource_providers(&self.resource_providers)?;
         let runners: Vec<Box<dyn Runner>> = self
@@ -327,6 +329,61 @@ fn validate_registered_runners(
         }
     }
     Ok(())
+}
+
+fn validate_host_startup_capabilities(
+    plan: &RuntimeLoadPlan,
+    capabilities: &HostCapabilityRegistry,
+) -> RuntimeResult<()> {
+    let mut runner_deployments = Vec::new();
+    for manifest in plan
+        .plugins
+        .iter()
+        .filter(|manifest| !manifest.provides.runners.is_empty())
+    {
+        let deployment = plan
+            .plugin_deployments
+            .get(&manifest.plugin_id)
+            .expect("enabled plugin has deployment");
+        if !runner_deployments.contains(&deployment) {
+            runner_deployments.push(deployment);
+        }
+    }
+    for deployment in runner_deployments {
+        ensure_active_backend_for_deployment(plan, capabilities, deployment)?;
+    }
+    Ok(())
+}
+
+fn ensure_active_backend_for_deployment(
+    plan: &RuntimeLoadPlan,
+    capabilities: &HostCapabilityRegistry,
+    deployment: &PluginDeploymentKind,
+) -> RuntimeResult<()> {
+    if capabilities
+        .active_plugin_backend_for_deployment(deployment)
+        .is_some()
+    {
+        return Ok(());
+    }
+    if let Some(backend_id) = declared_backend_for_deployment(plan, deployment) {
+        return Err(capability_pruned(&format!("plugin_backend:{backend_id}")));
+    }
+    Err(capability_provider_missing(&format!(
+        "plugin_backend:{deployment:?}"
+    )))
+}
+
+fn declared_backend_for_deployment(
+    plan: &RuntimeLoadPlan,
+    deployment: &PluginDeploymentKind,
+) -> Option<String> {
+    plan.plugins
+        .iter()
+        .flat_map(|manifest| manifest.provides.plugin_backends.iter())
+        .filter(|backend| &backend.deployment_kind == deployment)
+        .map(|backend| backend.backend_id.clone())
+        .min()
 }
 
 fn validate_registered_resource_providers(

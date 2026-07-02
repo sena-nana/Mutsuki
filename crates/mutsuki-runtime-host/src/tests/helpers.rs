@@ -56,7 +56,7 @@ pub(super) fn runtime_profile_with_deployment(
 pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
     let mut runner_descriptor = descriptor("abi.runner", "abi.work");
     runner_descriptor.plugin_id = "plugin-abi".into();
-    let manifest = runner_manifest_with_artifact(
+    let mut manifest = runner_manifest_with_artifact(
         "plugin-abi",
         PluginArtifact {
             artifact_type: ArtifactType::Abi,
@@ -65,6 +65,33 @@ pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
         },
         vec![runner_descriptor.clone()],
     );
+    manifest.provides.host_extensions = vec![HostExtensionDescriptor {
+        extension_id: "host.extension.plugin-abi.bridge".into(),
+        kind: HostExtensionKind::Bridge,
+        supported_deployments: vec![PluginDeploymentKind::Abi],
+        reload_policy: "drain_and_swap".into(),
+        drain_required: true,
+    }];
+    manifest.provides.plugin_backends = vec![PluginBackendDescriptor {
+        backend_id: "plugin.backend.plugin-abi.abi".into(),
+        deployment_kind: PluginDeploymentKind::Abi,
+        task_client_protocol: "mutsuki.task.v1".into(),
+        resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+        codec_id: Some("codec.plugin-abi.json".into()),
+        bridge_id: Some("bridge.plugin-abi.jsonl".into()),
+    }];
+    manifest.provides.codecs = vec![CodecDescriptor {
+        codec_id: "codec.plugin-abi.json".into(),
+        media_type: "application/json".into(),
+        version: "1.0.0".into(),
+        connection_scoped: true,
+    }];
+    manifest.provides.bridges = vec![BridgeDescriptor {
+        bridge_id: "bridge.plugin-abi.jsonl".into(),
+        deployment_kind: PluginDeploymentKind::Abi,
+        codec_ids: vec!["codec.plugin-abi.json".into()],
+        drain_policy: "connection_drain".into(),
+    }];
     (manifest, runner_descriptor)
 }
 

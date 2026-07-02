@@ -6,10 +6,11 @@ use mutsuki_runtime_core::{CoreRuntime, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{PluginBuilder, ResourcePlanGateway, ResourceProviderGateway};
 use serde_json::json;
 
-use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper};
+use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
 
 use super::helpers::{
-    abi_plugin_fixture, host_with_echo_runner, runtime_profile, runtime_profile_with_deployment,
+    abi_plugin_fixture, descriptor, host_with_echo_runner, runtime_profile,
+    runtime_profile_with_deployment,
 };
 
 #[test]
@@ -78,6 +79,44 @@ fn abi_plugin_boots_through_registered_abi_runner_bridge() {
     ));
 
     assert!(runtime.is_ok());
+}
+
+#[test]
+fn abi_plugin_runner_requires_active_plugin_backend_descriptor() {
+    let mut runner_descriptor = descriptor("abi.missing.backend", "abi.work");
+    runner_descriptor.plugin_id = "plugin-abi".into();
+    let manifest = runner_manifest_with_artifact(
+        "plugin-abi",
+        PluginArtifact {
+            artifact_type: ArtifactType::Abi,
+            path: "plugin-abi.so".into(),
+            sha256: "sha256:abi".into(),
+        },
+        vec![runner_descriptor.clone()],
+    );
+    let reader = Cursor::new(Vec::<u8>::new());
+    let writer = Cursor::new(Vec::<u8>::new());
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_abi_runner(Box::new(JsonlRunner::new(
+        runner_descriptor,
+        reader,
+        writer,
+    )));
+
+    let error = host
+        .into_runtime(runtime_profile_with_deployment(
+            "plugin-abi",
+            PluginDeploymentKind::Abi,
+        ))
+        .err()
+        .expect("abi runner without active backend should fail");
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("capability"),
+        Some(&ScalarValue::String("plugin_backend:Abi".into()))
+    );
 }
 
 #[test]

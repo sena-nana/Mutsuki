@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
     BridgeDescriptor, CodecDescriptor, HostExtensionDescriptor, PluginBackendDescriptor,
-    PluginManifest, RuntimeLoadPlan, SchedulerPolicyDescriptor, WorkflowDescriptor,
+    PluginDeploymentKind, PluginManifest, RuntimeLoadPlan, SchedulerPolicyDescriptor,
+    WorkflowDescriptor,
 };
 use mutsuki_runtime_core::RuntimeResult;
 use mutsuki_runtime_sdk::CapabilityBroker;
@@ -86,6 +87,15 @@ impl HostCapabilityRegistry {
         backend_id: &str,
     ) -> RuntimeResult<&PluginBackendDescriptor> {
         self.require("plugin_backend", backend_id, &self.plugin_backends)
+    }
+
+    pub(crate) fn active_plugin_backend_for_deployment(
+        &self,
+        deployment: &PluginDeploymentKind,
+    ) -> Option<&PluginBackendDescriptor> {
+        self.plugin_backends
+            .values()
+            .find(|backend| &backend.deployment_kind == deployment)
     }
 
     pub fn require_codec(&self, codec_id: &str) -> RuntimeResult<&CodecDescriptor> {
