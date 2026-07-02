@@ -33,7 +33,7 @@ fn runtime_bootstrapper_boots_runtime_and_runs_runner_loop() {
 
 #[test]
 fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
-    let mut runtime = host_with_echo_runner()
+    let runtime = host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
 
@@ -159,7 +159,7 @@ fn loaded_plugin_resource_provider_is_injected_into_host_runtime() {
         Some(Arc::new(BootResourceProvider)),
     ));
 
-    let mut runtime = host
+    let runtime = host
         .into_host_runtime(resource_provider_profile())
         .expect("resource provider plugin should boot");
     let created = runtime

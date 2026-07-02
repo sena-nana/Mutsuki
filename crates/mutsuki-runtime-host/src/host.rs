@@ -6,12 +6,14 @@ use std::time::Duration;
 
 use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus, TraceSpan};
 use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
-use mutsuki_runtime_sdk::{HostContext as SdkHostContext, ResourceProviderGateway};
+use mutsuki_runtime_sdk::{
+    HostContext as SdkHostContext, HostTaskSnapshot, ResourceProviderGateway,
+};
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
 use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
@@ -109,7 +111,7 @@ impl HostRuntime {
         &self.context
     }
 
-    pub fn dispatch(&mut self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
+    pub fn dispatch(&self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(CoreActorMsg::Command(command, reply_tx))
@@ -156,7 +158,7 @@ impl HostRuntime {
         reply_rx.recv().ok().flatten()
     }
 
-    pub fn task_snapshots(&mut self) -> RuntimeResult<Vec<HostTaskSnapshot>> {
+    pub fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>> {
         match self.dispatch(HostRuntimeCommand::TaskSnapshots)? {
             HostRuntimeReply::TaskSnapshots(snapshots) => Ok(snapshots),
             reply => Err(host_failure(
@@ -166,7 +168,7 @@ impl HostRuntime {
         }
     }
 
-    pub fn events_after(&mut self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
+    pub fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
         match self.dispatch(HostRuntimeCommand::EventsAfter(sequence))? {
             HostRuntimeReply::Events(events) => Ok(events),
             reply => Err(host_failure(
@@ -176,10 +178,7 @@ impl HostRuntime {
         }
     }
 
-    pub fn trace_spans_after(
-        &mut self,
-        start_index: usize,
-    ) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
+    pub fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
         match self.dispatch(HostRuntimeCommand::TraceSpansAfter(start_index))? {
             HostRuntimeReply::TraceSpans { next_index, spans } => Ok((next_index, spans)),
             reply => Err(host_failure(
@@ -200,7 +199,29 @@ impl Drop for HostRuntime {
 }
 
 impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
+    type PreparedReload = PreparedRuntimeReload;
+
     fn host_context(&self) -> &SdkHostContext {
         &self.context
+    }
+
+    fn reload(
+        &mut self,
+        prepared: Self::PreparedReload,
+        drain_timeout: Duration,
+    ) -> RuntimeResult<ReloadDecision> {
+        HostRuntime::reload(self, prepared, drain_timeout)
+    }
+
+    fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>> {
+        HostRuntime::task_snapshots(self)
+    }
+
+    fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
+        HostRuntime::events_after(self, sequence)
+    }
+
+    fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
+        HostRuntime::trace_spans_after(self, start_index)
     }
 }

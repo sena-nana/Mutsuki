@@ -2,13 +2,15 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
     BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor,
     PluginBackendDescriptor, PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan,
-    ScalarValue, SchedulerPolicyDescriptor, Task, TaskHandle, TaskOutcome, WorkflowDescriptor,
+    ScalarValue, SchedulerPolicyDescriptor, Task, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
+    WorkflowDescriptor,
 };
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 use serde_json::Value;
 
 use crate::{ResourcePlanGateway, RuntimeClient, RuntimeClientRef};
@@ -491,7 +493,39 @@ impl HostContext {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostTaskFailureSummary {
+    pub code: String,
+    pub source: String,
+    pub route: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostTaskSnapshot {
+    pub task_id: String,
+    pub protocol_id: String,
+    pub status: TaskStatus,
+    pub priority: i64,
+    pub ready_at_step: Option<u64>,
+    pub created_sequence: u64,
+    pub registry_generation: u64,
+    pub target_binding_id: Option<String>,
+    pub runner_hint: Option<String>,
+    pub claimed_by: Option<String>,
+    pub owner_runner: Option<String>,
+    pub lease_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub input_refs: Vec<String>,
+    pub output_ref: Option<String>,
+    pub continuation_ref: Option<String>,
+    pub required_surfaces: Vec<String>,
+    pub failure: Option<HostTaskFailureSummary>,
+}
+
 pub trait HostRuntime {
+    type PreparedReload;
+
     fn host_context(&self) -> &HostContext;
 
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
@@ -509,6 +543,18 @@ pub trait HostRuntime {
     fn request_shutdown(&self, reason: &str) -> RuntimeResult<()> {
         self.host_context().shutdown().request_shutdown(reason)
     }
+
+    fn reload(
+        &mut self,
+        prepared: Self::PreparedReload,
+        drain_timeout: Duration,
+    ) -> RuntimeResult<ReloadDecision>;
+
+    fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>>;
+
+    fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>>;
+
+    fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)>;
 }
 
 fn active_descriptors<T, D, I>(

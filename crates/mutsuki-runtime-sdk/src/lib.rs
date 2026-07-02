@@ -29,11 +29,11 @@ pub use descriptor::{
 };
 pub use host::{
     CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostService,
-    HostServiceRegistry, ManualShutdownController, NoopEventBridge, RecordingEventBridge,
-    ShutdownController, StaticCapabilityBroker, StaticConfigProvider, TaskSubmitter,
-    TaskSubmitterRuntimeClient,
+    HostServiceRegistry, HostTaskFailureSummary, HostTaskSnapshot, ManualShutdownController,
+    NoopEventBridge, RecordingEventBridge, ShutdownController, StaticCapabilityBroker,
+    StaticConfigProvider, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
-pub use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
+pub use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{
     BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader,

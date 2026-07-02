@@ -10,7 +10,7 @@ use super::helpers::{host_with_echo_runner, runtime_profile};
 
 #[test]
 fn host_runtime_resource_commands_require_provider() {
-    let mut runtime = host_with_echo_runner()
+    let runtime = host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
 
@@ -34,7 +34,7 @@ fn host_runtime_resource_commands_use_injected_resource_provider() {
         resource_provider: Some(Arc::new(CommandResourceProvider)),
         ..HostRuntimeConfig::default()
     };
-    let mut runtime = host_with_echo_runner()
+    let runtime = host_with_echo_runner()
         .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 

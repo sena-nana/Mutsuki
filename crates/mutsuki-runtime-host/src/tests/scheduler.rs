@@ -30,7 +30,7 @@ impl SchedulerPolicy for FixedScheduler {
 fn custom_scheduler_can_leave_ready_task_undispatched() {
     let mut config = crate::HostRuntimeConfig::default();
     config.scheduler_policy = Arc::new(FixedScheduler { limit: 0 });
-    let mut runtime = host_with_echo_runner()
+    let runtime = host_with_echo_runner()
         .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 
@@ -74,7 +74,7 @@ fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
     )));
     let mut config = crate::HostRuntimeConfig::default();
     config.scheduler_policy = Arc::new(FixedScheduler { limit: 99 });
-    let mut runtime = host
+    let runtime = host
         .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 

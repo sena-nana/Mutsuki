@@ -83,7 +83,7 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
                 .collect())
         },
     )));
-    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -142,7 +142,7 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
                 .collect())
         },
     )));
-    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
     let mut running_task = Task::new("snapshot-running", "snapshot.blocking", json!({}));
     running_task.priority = 7;
@@ -162,7 +162,7 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(ready_task)))
         .unwrap();
 
-    let snapshots = runtime.task_snapshots().unwrap();
+    let snapshots = SdkHostRuntime::task_snapshots(&runtime).unwrap();
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].task_id, "snapshot-running");
     assert_eq!(snapshots[1].task_id, "snapshot-ready");
@@ -203,7 +203,7 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
 
 #[test]
 fn events_after_returns_incremental_runtime_events() {
-    let mut runtime = super::helpers::host_with_echo_runner()
+    let runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
 
@@ -218,7 +218,7 @@ fn events_after_returns_incremental_runtime_events() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let events = runtime.events_after(0).unwrap();
+    let events = SdkHostRuntime::events_after(&runtime, 0).unwrap();
     assert!(
         events
             .windows(2)
@@ -244,7 +244,7 @@ fn events_after_returns_incremental_runtime_events() {
         ))))
         .unwrap();
 
-    let later_events = runtime.events_after(last_sequence).unwrap();
+    let later_events = SdkHostRuntime::events_after(&runtime, last_sequence).unwrap();
     assert!(!later_events.is_empty());
     assert!(
         later_events
@@ -259,7 +259,7 @@ fn events_after_returns_incremental_runtime_events() {
 
 #[test]
 fn trace_spans_after_returns_incremental_runtime_trace_spans() {
-    let mut runtime = super::helpers::host_with_echo_runner()
+    let runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
 
@@ -272,14 +272,14 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let (next_index, spans) = runtime.trace_spans_after(0).unwrap();
+    let (next_index, spans) = SdkHostRuntime::trace_spans_after(&runtime, 0).unwrap();
     assert!(!spans.is_empty());
     assert!(
         spans
             .iter()
             .any(|span| { span.name == "runner.step" && span.trace_id == "trace-custom" })
     );
-    let (_, empty) = runtime.trace_spans_after(next_index).unwrap();
+    let (_, empty) = SdkHostRuntime::trace_spans_after(&runtime, next_index).unwrap();
     assert!(empty.is_empty());
 
     let mut next_task = Task::new("trace-task-next", "raw.input", json!({}));
@@ -291,7 +291,8 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let (after_next, later_spans) = runtime.trace_spans_after(next_index).unwrap();
+    let (after_next, later_spans) =
+        SdkHostRuntime::trace_spans_after(&runtime, next_index).unwrap();
     assert!(after_next > next_index);
     assert!(
         later_spans
@@ -332,7 +333,7 @@ fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     )));
 
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
-    let decision = runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+    let decision = SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
 
     assert_eq!(runtime.host_context().registry_generation(), 2);
     assert!(decision.changes.iter().any(|change| {
@@ -405,7 +406,7 @@ fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
     assert!(done_rx.recv_timeout(Duration::from_millis(80)).is_err());
     release_tx.send(()).unwrap();
     assert!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap());
-    let mut runtime = join.join().unwrap();
+    let runtime = join.join().unwrap();
     assert_eq!(runtime.host_context().registry_generation(), 2);
     assert_eq!(
         runtime.task_status("reload-running"),
@@ -559,7 +560,7 @@ fn host_runtime_routes_execution_classes_to_named_worker_pools() {
                 .collect())
         },
     )));
-    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -606,7 +607,7 @@ fn host_worker_failure_marks_task_failed_and_returns_runner() {
                 .collect())
         },
     )));
-    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -688,7 +689,7 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
         release_rx,
         cancelled: cancelled.clone(),
     }));
-    let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -783,7 +784,7 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
         deadline_ticks: Some(1),
         ..RunnerLimits::default()
     };
-    let mut runtime = host
+    let runtime = host
         .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 
@@ -1235,7 +1236,7 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
 
 #[test]
 fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
-    let mut runtime = super::helpers::host_with_echo_runner()
+    let runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())
         .unwrap();
 

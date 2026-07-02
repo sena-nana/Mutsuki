@@ -1,40 +1,11 @@
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RuntimeEvent,
-    SagaPlan, SnapshotDescriptor, StreamPlan, Task, TaskOutcome, TaskStatus, TraceSpan, WritePlan,
+    SagaPlan, SnapshotDescriptor, StreamPlan, Task, TaskOutcome, TraceSpan, WritePlan,
 };
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport};
+use mutsuki_runtime_sdk::HostTaskSnapshot;
 
 use crate::PreparedRuntimeReload;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostTaskFailureSummary {
-    pub code: String,
-    pub source: String,
-    pub route: String,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct HostTaskSnapshot {
-    pub task_id: String,
-    pub protocol_id: String,
-    pub status: TaskStatus,
-    pub priority: i64,
-    pub ready_at_step: Option<u64>,
-    pub created_sequence: u64,
-    pub registry_generation: u64,
-    pub target_binding_id: Option<String>,
-    pub runner_hint: Option<String>,
-    pub claimed_by: Option<String>,
-    pub owner_runner: Option<String>,
-    pub lease_id: Option<String>,
-    pub trace_id: Option<String>,
-    pub correlation_id: Option<String>,
-    pub input_refs: Vec<String>,
-    pub output_ref: Option<String>,
-    pub continuation_ref: Option<String>,
-    pub required_surfaces: Vec<String>,
-    pub failure: Option<HostTaskFailureSummary>,
-}
 
 pub enum HostRuntimeCommand {
     SubmitTask(Box<Task>),

@@ -171,6 +171,9 @@ SDK 同时提供 Host / Plugin 扩展基础抽象，但这些抽象只服务于 
   `ShutdownController`。
 - `TaskSubmitter` 和 `ResourcePlanGateway` 只执行现有 `Task`、`TaskHandle`、`TaskOutcome`
   与 resource plan 协议；builtin/ABI 等部署差异仍停留在 host backend。
+- `HostRuntime` trait 是 SDK-facing host control-plane facade，可暴露 reload、
+  task snapshot、event 和 trace 查询；reload 的 prepared transaction 由具体 host
+  通过关联类型承载，SDK 不反向依赖 host crate，也不新增 contracts wire shape。
 
 这些 SDK trait 不新增 contracts wire shape，也不把 Host shell 或 SDK 本身变成运行时插件。
 

@@ -7,11 +7,10 @@ use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerLoopReport, RuntimeResult,
     TaskRecord,
 };
+use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
 use crate::PreparedRuntimeReload;
-use crate::commands::{
-    HostRuntimeCommand, HostRuntimeReply, HostTaskFailureSummary, HostTaskSnapshot,
-};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::{host_failure, resource_provider_missing};
 use crate::host::HostRuntimeConfig;
 use crate::scheduler::decide_schedule;
