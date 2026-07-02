@@ -198,29 +198,28 @@ fn handle_command(
                 false,
             ))
         }
-        HostRuntimeCommand::CreateBlobResource { schema, bytes } => Ok((
-            HostRuntimeReply::ResourceCreated(
-                require_resource_provider(config)?.create_blob_resource(&schema, bytes)?,
-            ),
-            false,
-        )),
+        HostRuntimeCommand::CreateBlobResource { schema, bytes } => {
+            let descriptor =
+                require_resource_provider(config)?.create_blob_resource(&schema, bytes)?;
+            let descriptor = core.register_resource_descriptor(descriptor)?;
+            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
+        }
         HostRuntimeCommand::CreateCowStateResource {
             kind_id,
             schema,
             bytes,
-        } => Ok((
-            HostRuntimeReply::ResourceCreated(
-                require_resource_provider(config)?
-                    .create_cow_state_resource(&kind_id, &schema, bytes)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => Ok((
-            HostRuntimeReply::ResourceCreated(
-                require_resource_provider(config)?.create_capability_resource(&kind_id, &schema)?,
-            ),
-            false,
-        )),
+        } => {
+            let descriptor = require_resource_provider(config)?
+                .create_cow_state_resource(&kind_id, &schema, bytes)?;
+            let descriptor = core.register_resource_descriptor(descriptor)?;
+            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
+        }
+        HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => {
+            let descriptor =
+                require_resource_provider(config)?.create_capability_resource(&kind_id, &schema)?;
+            let descriptor = core.register_resource_descriptor(descriptor)?;
+            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
+        }
         HostRuntimeCommand::CollectReadPlan(plan) => Ok((
             HostRuntimeReply::ResourceBytes(
                 require_resource_provider(config)?.collect_read_plan(&plan)?,
@@ -249,30 +248,26 @@ fn handle_command(
             ),
             false,
         )),
-        HostRuntimeCommand::CommitWritePlan { plan, bytes } => Ok((
-            HostRuntimeReply::PlanReceipt(
-                require_resource_provider(config)?.commit_write_plan(&plan, bytes)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::ExecuteCommandPlan(plan) => Ok((
-            HostRuntimeReply::PlanReceipt(
-                require_resource_provider(config)?.execute_command_plan(&plan)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::ExecuteCommandBatch(batch) => Ok((
-            HostRuntimeReply::PlanReceipts(
-                require_resource_provider(config)?.execute_command_batch(&batch)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::ExecuteSagaPlan(saga) => Ok((
-            HostRuntimeReply::PlanReceipts(
-                require_resource_provider(config)?.execute_saga_plan(&saga)?,
-            ),
-            false,
-        )),
+        HostRuntimeCommand::CommitWritePlan { plan, bytes } => {
+            let receipt = require_resource_provider(config)?.commit_write_plan(&plan, bytes)?;
+            core.sync_plan_receipt(&receipt)?;
+            Ok((HostRuntimeReply::PlanReceipt(receipt), false))
+        }
+        HostRuntimeCommand::ExecuteCommandPlan(plan) => {
+            let receipt = require_resource_provider(config)?.execute_command_plan(&plan)?;
+            core.sync_plan_receipt(&receipt)?;
+            Ok((HostRuntimeReply::PlanReceipt(receipt), false))
+        }
+        HostRuntimeCommand::ExecuteCommandBatch(batch) => {
+            let receipts = require_resource_provider(config)?.execute_command_batch(&batch)?;
+            core.sync_plan_receipts(&receipts)?;
+            Ok((HostRuntimeReply::PlanReceipts(receipts), false))
+        }
+        HostRuntimeCommand::ExecuteSagaPlan(saga) => {
+            let receipts = require_resource_provider(config)?.execute_saga_plan(&saga)?;
+            core.sync_plan_receipts(&receipts)?;
+            Ok((HostRuntimeReply::PlanReceipts(receipts), false))
+        }
         HostRuntimeCommand::Reload {
             prepared,
             drain_timeout,

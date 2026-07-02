@@ -264,6 +264,7 @@ pub struct PlanReceipt {
     pub status: String,
     pub resource_ref: Option<ResourceRef>,
     pub snapshot: Option<SnapshotDescriptor>,
+    pub descriptor_updates: Vec<ResourceRef>,
     pub new_version: Option<u64>,
     pub output: Value,
 }

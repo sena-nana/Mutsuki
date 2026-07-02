@@ -107,6 +107,60 @@ fn resource_manager_supports_value_refs_descriptors_and_write_lease_fencing() {
 }
 
 #[test]
+fn resource_manager_syncs_provider_receipt_descriptor_updates() {
+    let mut resources = ResourceManager::new();
+    let resource = resources
+        .register_resource_descriptor(external_resource_ref_with_semantic(
+            "resource:text",
+            "text_buffer",
+            "text.v1",
+            "mutsuki.std.resource.memory",
+            ResourceSemantic::CowVersionedState,
+            ResourceLifetime::Persistent,
+        ))
+        .unwrap();
+    let mut updated = resource.clone();
+    updated.version = 2;
+    updated.resource_id.version = 2;
+    updated.content_hash = Some("hash:v2".into());
+    let receipt = PlanReceipt {
+        plan_id: "write-plan:resource:text:1".into(),
+        status: "committed".into(),
+        resource_ref: Some(resource.clone()),
+        snapshot: None,
+        descriptor_updates: vec![updated.clone()],
+        new_version: Some(2),
+        output: json!({"accepted_bytes": 3}),
+    };
+
+    let synced = resources.sync_plan_receipt(&receipt).unwrap();
+
+    assert_eq!(synced, vec![updated.clone()]);
+    assert_eq!(resources.open_resource("resource:text").unwrap(), updated);
+
+    let mut stale = resource.clone();
+    stale.version = 1;
+    stale.resource_id.version = 1;
+    let stale_receipt = PlanReceipt {
+        plan_id: "write-plan:resource:text:stale".into(),
+        status: "committed".into(),
+        resource_ref: Some(stale),
+        snapshot: None,
+        descriptor_updates: Vec::new(),
+        new_version: Some(1),
+        output: json!(null),
+    };
+    assert_eq!(
+        resources
+            .sync_plan_receipt(&stale_receipt)
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_RESOURCE_GENERATION_MISMATCH
+    );
+}
+
+#[test]
 fn resource_manager_owns_resource_cells_and_step_leases() {
     let mut resources = ResourceManager::new();
     let cell = resources.create_resource_cell(

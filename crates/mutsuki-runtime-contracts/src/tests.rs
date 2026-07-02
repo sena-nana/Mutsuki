@@ -392,6 +392,7 @@ fn resource_plan_contracts_roundtrip_json() {
         status: "committed".into(),
         resource_ref: Some(resource),
         snapshot: Some(snapshot),
+        descriptor_updates: Vec::new(),
         new_version: Some(2),
         output: serde_json::Value::Null,
     };

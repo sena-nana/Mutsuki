@@ -116,6 +116,7 @@ fn jsonl_runner_uses_resource_plan_method_surface() {
         status: "commanded".into(),
         resource_ref: Some(capability),
         snapshot: None,
+        descriptor_updates: Vec::new(),
         new_version: None,
         output: json!({"ok": true}),
     };

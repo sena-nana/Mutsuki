@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
-    CommandPlan, ExclusiveWriteLease, ExportPlan, ReadPlan, ResourceCellRef, ResourceLease,
-    ResourceRef, StreamPlan, SurfaceOccupancyHandle, WritePlan,
+    CommandPlan, ExclusiveWriteLease, ExportPlan, PlanReceipt, ReadPlan, ResourceCellRef,
+    ResourceLease, ResourceRef, StreamPlan, SurfaceOccupancyHandle, WritePlan,
 };
 use serde_json::Value;
 
@@ -37,12 +37,32 @@ impl CoreRuntime {
         &mut self,
         descriptor: ResourceRef,
     ) -> RuntimeResult<ResourceRef> {
-        self.ensure_resource_surfaces_not_deprecated(
-            &descriptor.schema,
-            Some(&descriptor.provider_id),
-            "runtime.resource_manager",
-        )?;
+        self.ensure_resource_descriptor_not_deprecated(&descriptor)?;
         self.resources.register_resource_descriptor(descriptor)
+    }
+
+    pub fn sync_plan_receipt(&mut self, receipt: &PlanReceipt) -> RuntimeResult<Vec<ResourceRef>> {
+        if let Some(resource) = &receipt.resource_ref {
+            self.ensure_resource_descriptor_not_deprecated(resource)?;
+        }
+        if let Some(snapshot) = &receipt.snapshot {
+            self.ensure_resource_descriptor_not_deprecated(&snapshot.snapshot_ref)?;
+        }
+        for descriptor in &receipt.descriptor_updates {
+            self.ensure_resource_descriptor_not_deprecated(descriptor)?;
+        }
+        self.resources.sync_plan_receipt(receipt)
+    }
+
+    pub fn sync_plan_receipts(
+        &mut self,
+        receipts: &[PlanReceipt],
+    ) -> RuntimeResult<Vec<ResourceRef>> {
+        let mut synced = Vec::new();
+        for receipt in receipts {
+            synced.extend(self.sync_plan_receipt(receipt)?);
+        }
+        Ok(synced)
     }
 
     pub fn build_read_plan(&self, ref_id: &str, operation: &str) -> RuntimeResult<ReadPlan> {
@@ -167,5 +187,16 @@ impl CoreRuntime {
 
     pub fn resources_mut(&mut self) -> &mut ResourceManager {
         &mut self.resources
+    }
+
+    fn ensure_resource_descriptor_not_deprecated(
+        &self,
+        descriptor: &ResourceRef,
+    ) -> RuntimeResult<()> {
+        self.ensure_resource_surfaces_not_deprecated(
+            &descriptor.schema,
+            Some(&descriptor.provider_id),
+            "runtime.resource_manager",
+        )
     }
 }

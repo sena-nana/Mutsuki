@@ -133,6 +133,7 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
         status: "committed".into(),
         resource_ref: None,
         snapshot: None,
+        descriptor_updates: Vec::new(),
         new_version: Some(2),
         output: json!(null),
     };
@@ -278,6 +279,7 @@ fn abi_resource_client_encodes_every_plan_method_surface() {
         status: "commanded".into(),
         resource_ref: Some(capability),
         snapshot: None,
+        descriptor_updates: Vec::new(),
         new_version: None,
         output: json!({"ok": true}),
     };
@@ -383,17 +385,22 @@ impl mutsuki_runtime_sdk::ResourcePlanGateway for InjectedResourceProvider {
             status: "exported".into(),
             resource_ref: Some(plan.resource.clone()),
             snapshot: None,
+            descriptor_updates: Vec::new(),
             new_version: None,
             output: json!("provider"),
         })
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        let mut updated = plan.resource.clone();
+        updated.version = plan.base_version + 1;
+        updated.resource_id.version = updated.version;
         Ok(PlanReceipt {
             plan_id: plan.plan_id.clone(),
             status: "committed".into(),
-            resource_ref: Some(plan.resource.clone()),
+            resource_ref: Some(updated.clone()),
             snapshot: None,
+            descriptor_updates: vec![updated],
             new_version: Some(plan.base_version + 1),
             output: json!({ "accepted_bytes": bytes.len() }),
         })
@@ -405,6 +412,7 @@ impl mutsuki_runtime_sdk::ResourcePlanGateway for InjectedResourceProvider {
             status: "commanded".into(),
             resource_ref: Some(plan.capability.clone()),
             snapshot: None,
+            descriptor_updates: Vec::new(),
             new_version: None,
             output: json!({"provider": true}),
         })

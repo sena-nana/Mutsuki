@@ -1,11 +1,14 @@
 use mutsuki_runtime_contracts::{
-    ERR_CAPABILITY_EXHAUSTED, ERR_RESOURCE_GENERATION_MISMATCH, ResourceAccess, ResourceId,
-    ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
+    ERR_CAPABILITY_EXHAUSTED, PlanReceipt, ResourceAccess, ResourceId, ResourceLifetime,
+    ResourceRef, ResourceSealState, ResourceSemantic,
 };
 
 use crate::{IdSource, RuntimeResult};
 
-use super::{ResourceManager, hub::ResourceEntry, resource_not_found};
+use super::{
+    ResourceManager, hub::ResourceEntry, receipt_descriptors, resource_generation_mismatch,
+    resource_not_found,
+};
 
 impl ResourceManager {
     pub fn open_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
@@ -26,11 +29,10 @@ impl ResourceManager {
         if descriptor.resource_id.generation != descriptor.generation
             || descriptor.resource_id.version != descriptor.version
         {
-            return Err(crate::runtime_failure(
-                ERR_RESOURCE_GENERATION_MISMATCH,
-                "runtime.resource_manager",
-                format!("resource.register.{}", descriptor.ref_id),
-            ));
+            return Err(resource_generation_mismatch(format!(
+                "resource.register.{}",
+                descriptor.ref_id
+            )));
         }
         if self.hub.get(&descriptor.ref_id).is_some() {
             return Err(crate::runtime_failure(
@@ -41,6 +43,58 @@ impl ResourceManager {
         }
         self.hub.insert(ResourceEntry::new(descriptor.clone()));
         Ok(descriptor)
+    }
+
+    pub fn sync_resource_descriptor(
+        &mut self,
+        descriptor: ResourceRef,
+    ) -> RuntimeResult<ResourceRef> {
+        if descriptor.resource_id.generation != descriptor.generation
+            || descriptor.resource_id.version != descriptor.version
+        {
+            return Err(resource_generation_mismatch(format!(
+                "resource.sync.{}",
+                descriptor.ref_id
+            )));
+        }
+
+        if let Some(existing) = self.hub.get(&descriptor.ref_id).cloned() {
+            if descriptor.generation < existing.descriptor.generation
+                || (descriptor.generation == existing.descriptor.generation
+                    && descriptor.version < existing.descriptor.version)
+            {
+                return Err(resource_generation_mismatch(format!(
+                    "resource.sync.{}",
+                    descriptor.ref_id
+                )));
+            }
+            if existing
+                .writer
+                .as_ref()
+                .is_some_and(|writer| writer.generation != descriptor.generation)
+            {
+                return Err(resource_generation_mismatch(format!(
+                    "resource.sync.{}",
+                    descriptor.ref_id
+                )));
+            }
+            let writer = existing.writer;
+            self.hub.remove(&descriptor.ref_id);
+            let mut entry = ResourceEntry::new(descriptor.clone());
+            entry.writer = writer;
+            self.hub.insert(entry);
+            return Ok(descriptor);
+        }
+
+        self.hub.insert(ResourceEntry::new(descriptor.clone()));
+        Ok(descriptor)
+    }
+
+    pub fn sync_plan_receipt(&mut self, receipt: &PlanReceipt) -> RuntimeResult<Vec<ResourceRef>> {
+        receipt_descriptors(receipt)
+            .into_iter()
+            .map(|descriptor| self.sync_resource_descriptor(descriptor))
+            .collect()
     }
 
     pub fn create_stream_resource(

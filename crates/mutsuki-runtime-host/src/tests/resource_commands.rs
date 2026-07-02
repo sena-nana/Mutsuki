@@ -160,7 +160,53 @@ fn host_runtime_resource_commands_use_injected_resource_provider() {
     assert_eq!(saga_receipts.len(), 1);
 }
 
+#[test]
+fn host_runtime_syncs_provider_commit_receipt_into_resource_registry() {
+    let config = HostRuntimeConfig {
+        resource_provider: Some(Arc::new(MalformedCommitProvider)),
+        ..HostRuntimeConfig::default()
+    };
+    let runtime = host_with_echo_runner()
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+    let HostRuntimeReply::ResourceCreated(state) = runtime
+        .dispatch(HostRuntimeCommand::CreateCowStateResource {
+            kind_id: "text_buffer".into(),
+            schema: "text.state.v1".into(),
+            bytes: b"old".to_vec(),
+        })
+        .unwrap()
+    else {
+        panic!("expected state resource");
+    };
+    let write = WritePlan {
+        plan_id: "write:malformed".into(),
+        resource: state.clone(),
+        base_version: state.version,
+        conflict_policy: "replace".into(),
+        patch: PatchDescriptor {
+            patch_id: "patch:malformed".into(),
+            target_ref: state,
+            base_version: 1,
+            conflict_policy: "replace".into(),
+            operations: json!({"replace": "new"}),
+        },
+        returning: None,
+    };
+
+    let error = runtime
+        .dispatch(HostRuntimeCommand::CommitWritePlan {
+            plan: Box::new(write),
+            bytes: b"new".to_vec(),
+        })
+        .unwrap_err();
+
+    assert_eq!(error.error().code, ERR_RESOURCE_GENERATION_MISMATCH);
+}
+
 struct CommandResourceProvider;
+
+struct MalformedCommitProvider;
 
 impl mutsuki_runtime_sdk::ResourcePlanGateway for CommandResourceProvider {
     fn collect_read_plan(&self, _plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
@@ -198,17 +244,22 @@ impl mutsuki_runtime_sdk::ResourcePlanGateway for CommandResourceProvider {
             status: "exported".into(),
             resource_ref: Some(plan.resource.clone()),
             snapshot: None,
+            descriptor_updates: Vec::new(),
             new_version: None,
             output: json!("provider-export"),
         })
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, _bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        let mut updated = plan.resource.clone();
+        updated.version = plan.base_version + 1;
+        updated.resource_id.version = updated.version;
         Ok(PlanReceipt {
             plan_id: plan.plan_id.clone(),
             status: "committed".into(),
-            resource_ref: Some(plan.resource.clone()),
+            resource_ref: Some(updated.clone()),
             snapshot: None,
+            descriptor_updates: vec![updated],
             new_version: Some(plan.base_version + 1),
             output: json!(null),
         })
@@ -220,6 +271,7 @@ impl mutsuki_runtime_sdk::ResourcePlanGateway for CommandResourceProvider {
             status: "commanded".into(),
             resource_ref: Some(plan.capability.clone()),
             snapshot: None,
+            descriptor_updates: Vec::new(),
             new_version: None,
             output: json!({"provider": "injected"}),
         })
@@ -281,6 +333,90 @@ impl mutsuki_runtime_sdk::ResourceProviderGateway for CommandResourceProvider {
             ResourceSemantic::CapabilityResource,
         ))
     }
+}
+
+impl mutsuki_runtime_sdk::ResourcePlanGateway for MalformedCommitProvider {
+    fn collect_read_plan(&self, _plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+        Err(unused_test_provider_method("collect_read_plan"))
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        _plan: &ReadPlan,
+        _kind_id: &str,
+        _schema: &str,
+    ) -> RuntimeResult<SnapshotDescriptor> {
+        Err(unused_test_provider_method("snapshot_read_plan"))
+    }
+
+    fn open_stream_plan(&self, _plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+        Err(unused_test_provider_method("open_stream_plan"))
+    }
+
+    fn execute_export_plan(&self, _plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        Err(unused_test_provider_method("execute_export_plan"))
+    }
+
+    fn commit_write_plan(&self, plan: &WritePlan, _bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        let mut malformed = plan.resource.clone();
+        malformed.version = plan.base_version + 1;
+        Ok(PlanReceipt {
+            plan_id: plan.plan_id.clone(),
+            status: "committed".into(),
+            resource_ref: Some(malformed.clone()),
+            snapshot: None,
+            descriptor_updates: vec![malformed],
+            new_version: Some(plan.base_version + 1),
+            output: json!(null),
+        })
+    }
+
+    fn execute_command_plan(&self, _plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        Err(unused_test_provider_method("execute_command_plan"))
+    }
+
+    fn execute_command_batch(&self, _batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        Err(unused_test_provider_method("execute_command_batch"))
+    }
+
+    fn execute_saga_plan(&self, _saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        Err(unused_test_provider_method("execute_saga_plan"))
+    }
+}
+
+impl mutsuki_runtime_sdk::ResourceProviderGateway for MalformedCommitProvider {
+    fn create_blob_resource(&self, _schema: &str, _bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
+        Err(unused_test_provider_method("create_blob_resource"))
+    }
+
+    fn create_cow_state_resource(
+        &self,
+        kind_id: &str,
+        schema: &str,
+        _bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        Ok(command_resource_ref(
+            "provider:cow",
+            kind_id,
+            schema,
+            ResourceSemantic::CowVersionedState,
+        ))
+    }
+
+    fn create_capability_resource(
+        &self,
+        _kind_id: &str,
+        _schema: &str,
+    ) -> RuntimeResult<ResourceRef> {
+        Err(unused_test_provider_method("create_capability_resource"))
+    }
+}
+
+fn unused_test_provider_method(method: &str) -> mutsuki_runtime_core::RuntimeFailure {
+    crate::error::host_failure(
+        "host.test.unused_resource_provider_method",
+        method.to_string(),
+    )
 }
 
 fn command_resource_ref(
