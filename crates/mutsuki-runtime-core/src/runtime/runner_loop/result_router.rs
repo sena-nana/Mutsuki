@@ -259,7 +259,8 @@ fn pending_output_tasks(
                 .deltas
                 .iter()
                 .cloned()
-                .map(|delta| commit_task(source_task_id, delta, generation)),
+                .enumerate()
+                .map(|(index, delta)| commit_task(source_task_id, index, delta, generation)),
         );
         tasks.extend(
             outputs
@@ -343,9 +344,9 @@ fn is_terminal_task_status(status: &TaskStatus) -> bool {
     )
 }
 
-fn commit_task(source_task_id: &str, delta: StateDelta, generation: u64) -> Task {
+fn commit_task(source_task_id: &str, index: usize, delta: StateDelta, generation: u64) -> Task {
     let mut task = Task::new(
-        format!("{source_task_id}:commit"),
+        format!("{source_task_id}:commit:{index}"),
         "core.commit",
         serde_json::to_value(delta).expect("StateDelta serializes"),
     );

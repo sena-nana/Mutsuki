@@ -11,8 +11,9 @@ use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
 use crate::PreparedRuntimeReload;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
-use crate::error::{host_failure, resource_provider_missing};
+use crate::error::host_failure;
 use crate::host::HostRuntimeConfig;
+use crate::resource_router;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerPool, WorkerStarted, worker_pools};
 
@@ -198,76 +199,6 @@ fn handle_command(
                 false,
             ))
         }
-        HostRuntimeCommand::CreateBlobResource { schema, bytes } => {
-            let descriptor =
-                require_resource_provider(config)?.create_blob_resource(&schema, bytes)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
-        }
-        HostRuntimeCommand::CreateCowStateResource {
-            kind_id,
-            schema,
-            bytes,
-        } => {
-            let descriptor = require_resource_provider(config)?
-                .create_cow_state_resource(&kind_id, &schema, bytes)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
-        }
-        HostRuntimeCommand::CreateCapabilityResource { kind_id, schema } => {
-            let descriptor =
-                require_resource_provider(config)?.create_capability_resource(&kind_id, &schema)?;
-            let descriptor = core.register_resource_descriptor(descriptor)?;
-            Ok((HostRuntimeReply::ResourceCreated(descriptor), false))
-        }
-        HostRuntimeCommand::CollectReadPlan(plan) => Ok((
-            HostRuntimeReply::ResourceBytes(
-                require_resource_provider(config)?.collect_read_plan(&plan)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::SnapshotReadPlan {
-            plan,
-            kind_id,
-            schema,
-        } => Ok((
-            HostRuntimeReply::Snapshot(
-                require_resource_provider(config)?.snapshot_read_plan(&plan, &kind_id, &schema)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::OpenStreamPlan(plan) => Ok((
-            HostRuntimeReply::StreamPlan(
-                require_resource_provider(config)?.open_stream_plan(&plan)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::ExecuteExportPlan(plan) => Ok((
-            HostRuntimeReply::PlanReceipt(
-                require_resource_provider(config)?.execute_export_plan(&plan)?,
-            ),
-            false,
-        )),
-        HostRuntimeCommand::CommitWritePlan { plan, bytes } => {
-            let receipt = require_resource_provider(config)?.commit_write_plan(&plan, bytes)?;
-            core.sync_plan_receipt(&receipt)?;
-            Ok((HostRuntimeReply::PlanReceipt(receipt), false))
-        }
-        HostRuntimeCommand::ExecuteCommandPlan(plan) => {
-            let receipt = require_resource_provider(config)?.execute_command_plan(&plan)?;
-            core.sync_plan_receipt(&receipt)?;
-            Ok((HostRuntimeReply::PlanReceipt(receipt), false))
-        }
-        HostRuntimeCommand::ExecuteCommandBatch(batch) => {
-            let receipts = require_resource_provider(config)?.execute_command_batch(&batch)?;
-            core.sync_plan_receipts(&receipts)?;
-            Ok((HostRuntimeReply::PlanReceipts(receipts), false))
-        }
-        HostRuntimeCommand::ExecuteSagaPlan(saga) => {
-            let receipts = require_resource_provider(config)?.execute_saga_plan(&saga)?;
-            core.sync_plan_receipts(&receipts)?;
-            Ok((HostRuntimeReply::PlanReceipts(receipts), false))
-        }
         HostRuntimeCommand::Reload {
             prepared,
             drain_timeout,
@@ -285,6 +216,20 @@ fn handle_command(
             )?;
             Ok((HostRuntimeReply::Reloaded(decision), false))
         }
+        command @ (HostRuntimeCommand::CreateBlobResource { .. }
+        | HostRuntimeCommand::CreateCowStateResource { .. }
+        | HostRuntimeCommand::CreateCapabilityResource { .. }
+        | HostRuntimeCommand::CollectReadPlan(_)
+        | HostRuntimeCommand::SnapshotReadPlan { .. }
+        | HostRuntimeCommand::OpenStreamPlan(_)
+        | HostRuntimeCommand::ExecuteExportPlan(_)
+        | HostRuntimeCommand::CommitWritePlan { .. }
+        | HostRuntimeCommand::ExecuteCommandPlan(_)
+        | HostRuntimeCommand::ExecuteCommandBatch(_)
+        | HostRuntimeCommand::ExecuteSagaPlan(_)) => Ok((
+            resource_router::handle_resource_command(command, core, config)?,
+            false,
+        )),
     }
 }
 
@@ -473,15 +418,6 @@ impl Drop for DisposeOnDropRunner {
             self.disposed = true;
         }
     }
-}
-
-fn require_resource_provider(
-    config: &HostRuntimeConfig,
-) -> RuntimeResult<&dyn mutsuki_runtime_sdk::ResourceProviderGateway> {
-    config
-        .resource_provider
-        .as_deref()
-        .ok_or_else(|| resource_provider_missing("host.resource_provider"))
 }
 
 fn send_command_reply(

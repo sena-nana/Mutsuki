@@ -17,6 +17,7 @@ fn resource_manager_supports_value_refs_descriptors_and_write_lease_fencing() {
         PackedValue::Value(value_ref) => value_ref,
         _ => panic!("large value should be stored by ref"),
     };
+    assert_eq!(value_ref.content_hash, None);
     assert_eq!(
         resources.get_value(&value_ref).unwrap()["blob"]
             .as_str()

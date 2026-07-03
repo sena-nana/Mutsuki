@@ -46,7 +46,10 @@ impl CoreRuntime {
         self.draining_generations.len()
     }
 
-    pub fn reload(&mut self, new_plan: RuntimeLoadPlan) -> RuntimeResult<ReloadDecision> {
+    pub fn reload_load_plan_only(
+        &mut self,
+        new_plan: RuntimeLoadPlan,
+    ) -> RuntimeResult<ReloadDecision> {
         let occupancy = self.surface_occupancy();
         let decision = compare_surfaces(&self.surfaces, &new_plan.contract_surfaces, &occupancy)?;
         if decision.blocked {

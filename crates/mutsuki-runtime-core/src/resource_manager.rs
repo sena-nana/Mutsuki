@@ -112,10 +112,3 @@ fn merge_descriptor(descriptors: &mut BTreeMap<String, ResourceRef>, descriptor:
         })
         .or_insert(descriptor);
 }
-
-fn simple_hash(bytes: &[u8]) -> String {
-    let sum = bytes
-        .iter()
-        .fold(0u64, |acc, byte| acc.wrapping_add(*byte as u64));
-    format!("sum:{sum}:len:{}", bytes.len())
-}

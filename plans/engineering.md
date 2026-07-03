@@ -30,6 +30,9 @@ Mutsuki/
 
 - `mutsuki-runtime-contracts`：只定义纯数据结构，不包含 callable、socket、SDK client、
   真实 handle 或领域对象。
+  `TransactionPlan`、`CommandBatch`、`SagaPlan` 和 `WorkflowDescriptor` 属于
+  experimental descriptor：可作为 provider/workflow 边界 wire shape 保留，但默认不得被
+  描述为 CoreRuntime 解释或执行的稳定语义。
 - `mutsuki-runtime-core`：实现 TaskPool、TaskLease、RunnerRegistry、Executor dispatch、
   ResultRouter、StateStore、ResourceManager、EventLog、TraceLog、hot-reload surface checks。
   Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
@@ -87,6 +90,9 @@ cargo test
 - 长期资源状态归 ResourceManager / ResourceCell；runner 只能持有 step 期间的 ResourceLease。
 - 具体资源数据读写归 backend / provider；ResourceManager 保留 descriptor、lease、
   occupancy 和 generation 事实源。
+- 高级资源计划和 workflow 只能作为 provider/workflow plugin descriptor 暴露；
+  CoreRuntime 不实现 transaction executor、command batch executor、Saga engine 或
+  workflow runtime。
 - Resource Provider 的运行中替换必须基于 `ResourceProviderReloadPolicy`、
   `ResourceProviderCompatibility` 和 live occupancy 判定；不能绕过 ResourceManager 的
   registry、lease、generation 规则。

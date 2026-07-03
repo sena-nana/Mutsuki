@@ -81,6 +81,12 @@ fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
             patch: json!({"intent": "reply"}),
             conflict_policy: ConflictPolicy::Fail,
         });
+        result.deltas.push(StateDelta {
+            target_ref: "state:summary".into(),
+            expected_version: 0,
+            patch: json!({"status": "queued"}),
+            conflict_policy: ConflictPolicy::Fail,
+        });
         result.effects.push(EffectRequest {
             effect_id: "send-1".into(),
             kind: "effect.chat.send".into(),
@@ -100,7 +106,8 @@ fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
 
     runtime.tick_once().unwrap();
 
-    assert!(runtime.tasks().get("task-1:commit").is_some());
+    assert!(runtime.tasks().get("task-1:commit:0").is_some());
+    assert!(runtime.tasks().get("task-1:commit:1").is_some());
     assert!(runtime.tasks().get("task-1:effect:send-1").is_some());
 }
 
@@ -198,7 +205,7 @@ fn effectful_runner_cannot_return_core_derivations() {
     let error = runtime.tick_once().unwrap_err();
 
     assert_eq!(error.error().code, ERR_RUNNER_PURITY_VIOLATION);
-    assert!(runtime.tasks().get("effect-1:commit").is_none());
+    assert!(runtime.tasks().get("effect-1:commit:0").is_none());
     assert!(runtime.tasks().get("effect-1:effect:nested").is_none());
     assert!(runtime.state_value("state:actor").is_none());
 }

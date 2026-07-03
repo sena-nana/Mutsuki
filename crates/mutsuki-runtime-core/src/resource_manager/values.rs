@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::{IdSource, RuntimeResult};
 
-use super::{PackedValue, ResourceManager, simple_hash};
+use super::{PackedValue, ResourceManager};
 
 impl ResourceManager {
     pub fn pack_value(&mut self, schema: &str, value: Value) -> RuntimeResult<PackedValue> {
@@ -32,7 +32,7 @@ impl ResourceManager {
             version: 1,
             generation: 1,
             size_hint: Some(bytes.len() as u64),
-            content_hash: Some(simple_hash(&bytes)),
+            content_hash: None,
             lifetime: ResourceLifetime::Persistent,
             storage: ValueStorage::LocalValueStore,
         };

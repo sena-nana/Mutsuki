@@ -132,6 +132,9 @@ impl ResourceClient {
         }
     }
 
+    #[deprecated(
+        note = "experimental descriptor helper; CoreRuntime does not execute transaction semantics"
+    )]
     pub fn transaction_plan(
         &self,
         plan_id: impl Into<String>,
@@ -145,6 +148,9 @@ impl ResourceClient {
         }
     }
 
+    #[deprecated(
+        note = "experimental descriptor helper; CoreRuntime does not execute batch semantics"
+    )]
     pub fn command_batch(
         &self,
         batch_id: impl Into<String>,
@@ -158,6 +164,9 @@ impl ResourceClient {
         }
     }
 
+    #[deprecated(
+        note = "experimental descriptor helper; CoreRuntime does not execute saga semantics"
+    )]
     pub fn saga_plan(
         &self,
         saga_id: impl Into<String>,
@@ -189,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn resource_client_builds_all_resource_plan_shapes() {
+    fn resource_client_builds_stable_resource_plan_shapes() {
         let client = ResourceClient;
         let state = resource_ref("state", "text_buffer", ResourceSemantic::CowVersionedState);
         let state_handle = client.handle::<TestState>(state.clone());
@@ -214,18 +223,7 @@ mod tests {
         assert_eq!(export.target, "json");
         assert_eq!(command.capability.ref_id, capability.ref_id);
         assert_eq!(command.idempotency_key.as_deref(), Some("query:1"));
-
-        let tx = client.transaction_plan("tx:1", vec![write.clone()], true);
-        let batch = client.command_batch("batch:1", vec![command.clone()], false);
-        let saga = client.saga_plan("saga:1", vec![command.clone()], vec![command]);
-
         assert!(state_handle.descriptor_matches_kind());
-        assert!(tx.strict);
-        assert_eq!(tx.operations, vec![write]);
-        assert!(!batch.rollback_guarantee);
-        assert_eq!(batch.commands.len(), 1);
-        assert_eq!(saga.steps.len(), 1);
-        assert_eq!(saga.compensations.len(), 1);
     }
 
     fn resource_ref(slot_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {

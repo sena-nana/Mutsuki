@@ -119,11 +119,13 @@ impl CoreRuntime {
         self.current_step
     }
 
-    pub fn register_runner(&mut self, runner: Box<dyn Runner>) -> RuntimeResult<()> {
+    #[cfg(test)]
+    pub(crate) fn register_runner(&mut self, runner: Box<dyn Runner>) -> RuntimeResult<()> {
         self.registry.register(runner)
     }
 
-    pub fn unregister_runner(&mut self, runner_id: &str) -> RuntimeResult<()> {
+    #[cfg(test)]
+    pub(crate) fn unregister_runner(&mut self, runner_id: &str) -> RuntimeResult<()> {
         self.registry.unregister(runner_id)?;
         Ok(())
     }

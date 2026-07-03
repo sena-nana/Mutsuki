@@ -9,6 +9,7 @@ mod host;
 mod jsonl;
 mod manifest;
 mod resolver;
+mod resource_router;
 mod runtime_context;
 mod scheduler;
 mod worker;

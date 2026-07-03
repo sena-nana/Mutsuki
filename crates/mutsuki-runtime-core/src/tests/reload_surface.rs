@@ -13,7 +13,7 @@ fn deprecated_surface_blocks_new_task_occupancy() {
     let mut deprecated = plan;
     deprecated.registry_generation = 2;
     deprecated.contract_surfaces[0].deprecated = true;
-    runtime.reload(deprecated).unwrap();
+    runtime.reload_load_plan_only(deprecated).unwrap();
 
     let mut task = Task::new("deprecated-1", "sim.work", json!({}));
     task.required_surfaces = vec!["runner:orchestrator".into()];
@@ -41,11 +41,11 @@ fn removed_task_protocol_surface_uses_live_task_pool_occupancy() {
         fingerprint: "task_protocol:sim.work".into(),
         deprecated: false,
     });
-    runtime.reload(with_surface).unwrap();
+    runtime.reload_load_plan_only(with_surface).unwrap();
 
     let mut removed = plan;
     removed.registry_generation = 2;
-    let err = runtime.reload(removed).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed).unwrap_err();
 
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(
@@ -70,7 +70,7 @@ fn removed_effect_surface_uses_live_effect_inflight_occupancy() {
 
     let removed = remove_surfaces(plan, &["effect:effect.chat.send"]);
 
-    let err = runtime.reload(removed).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed).unwrap_err();
 
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(
@@ -97,7 +97,7 @@ fn deprecated_effect_surface_rejects_new_effect_tasks() {
         .find(|surface| surface.surface_id == "effect:effect.chat.send")
         .unwrap()
         .deprecated = true;
-    runtime.reload(deprecated).unwrap();
+    runtime.reload_load_plan_only(deprecated).unwrap();
 
     runtime
         .enqueue_task(Task::new(
@@ -129,7 +129,7 @@ fn removed_stream_surface_uses_live_stream_occupancy() {
 
     let removed = remove_surfaces(plan, &["stream:chat.events"]);
 
-    let err = runtime.reload(removed.clone()).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed.clone()).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(
         runtime
@@ -139,7 +139,7 @@ fn removed_stream_surface_uses_live_stream_occupancy() {
     );
 
     runtime.close_stream(&stream.ref_id).unwrap();
-    runtime.reload(removed).unwrap();
+    runtime.reload_load_plan_only(removed).unwrap();
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn removed_subscription_and_timer_surfaces_use_registered_occupancy() {
 
     let removed = remove_surfaces(plan, &["subscription:chat.messages", "timer:heartbeat"]);
 
-    let err = runtime.reload(removed.clone()).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed.clone()).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(runtime.surface_occupancy().iter().any(|item| {
         item.surface_id == "subscription:chat.messages" && item.subscriptions == 1
@@ -185,7 +185,7 @@ fn removed_subscription_and_timer_surfaces_use_registered_occupancy() {
     runtime
         .release_surface_occupancy("timer:heartbeat:1")
         .unwrap();
-    runtime.reload(removed).unwrap();
+    runtime.reload_load_plan_only(removed).unwrap();
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn deprecated_stream_subscription_and_timer_surfaces_reject_new_occupancy() {
             surface.deprecated = true;
         }
     }
-    runtime.reload(deprecated).unwrap();
+    runtime.reload_load_plan_only(deprecated).unwrap();
 
     let stream_err = runtime
         .open_stream(
@@ -257,7 +257,7 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
     let mut runtime = boot_with_kernel(schema_plan.clone());
 
     runtime
-        .reload(deprecated_plan(schema_plan, "resource_schema:bytes.v1"))
+        .reload_load_plan_only(deprecated_plan(schema_plan, "resource_schema:bytes.v1"))
         .unwrap();
 
     let schema_err = runtime
@@ -283,7 +283,7 @@ fn deprecated_resource_surfaces_reject_new_resource_creation() {
     let mut runtime = boot_with_kernel(provider_plan.clone());
 
     runtime
-        .reload(deprecated_plan(
+        .reload_load_plan_only(deprecated_plan(
             provider_plan,
             "resource_provider:mutsuki.std.resource.memory",
         ))
@@ -333,7 +333,7 @@ fn removed_resource_surfaces_use_live_resource_and_write_lease_occupancy() {
         ],
     );
 
-    let err = runtime.reload(removed).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(runtime.surface_occupancy().iter().any(|item| {
         item.surface_id == "resource_schema:bytes.v1"
@@ -375,14 +375,14 @@ fn removed_resource_schema_surface_uses_resource_cell_lease_occupancy() {
 
     let removed = remove_surfaces(plan, &["resource_schema:http.connection_pool.v1"]);
 
-    let err = runtime.reload(removed.clone()).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed.clone()).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(runtime.surface_occupancy().iter().any(|item| {
         item.surface_id == "resource_schema:http.connection_pool.v1" && item.active_leases == 1
     }));
 
     runtime.release_resource_lease(&lease).unwrap();
-    runtime.reload(removed).unwrap();
+    runtime.reload_load_plan_only(removed).unwrap();
 }
 
 #[test]
@@ -404,7 +404,7 @@ fn waiting_task_blocks_removed_task_protocol_surface() {
 
     let removed = remove_surfaces(plan, &["task_protocol:parent.work"]);
 
-    let err = runtime.reload(removed).unwrap_err();
+    let err = runtime.reload_load_plan_only(removed).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
     assert!(runtime.surface_occupancy().iter().any(|item| {
         item.surface_id == "task_protocol:parent.work" && item.running_invocations == 1

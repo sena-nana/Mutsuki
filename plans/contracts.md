@@ -41,7 +41,7 @@
 | `LeaseToken` | ref_id、owner、mode、expires_at_step、generation |
 | `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
 | `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 provider plan commit receipt；receipt 只能携带 descriptor 更新和小型结构化输出，不携带资源 bytes |
-| `TransactionPlan` / `CommandBatch` / `SagaPlan` | 严格事务、无回滚批量命令和带补偿的 saga 计划 |
+| `TransactionPlan` / `CommandBatch` / `SagaPlan` | Experimental provider/workflow descriptor；CoreRuntime 不解释事务、批处理或 saga 执行语义 |
 | `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、绑定哪些能力、是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
 | `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 视图，用于 host 声明与裁剪一致性 |
@@ -52,7 +52,7 @@
 | `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
 | `CodecDescriptor` / `BridgeDescriptor` | 连接级 codec 与 host-side shim/bridge descriptor |
 | `SchedulerPolicyDescriptor` | host 级 scheduler policy descriptor；只描述 dispatch budget 决策策略 |
-| `WorkflowDescriptor` | workflow 插件与外置实例状态资源的绑定 descriptor |
+| `WorkflowDescriptor` | Experimental workflow 插件与外置实例状态资源的绑定 descriptor；CoreRuntime 不拥有 workflow 实例状态 |
 | `RuntimeLoadPlan` | resolver 生成的确定性加载计划和 registry generation |
 | `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
 | `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
@@ -311,11 +311,13 @@ handle，`version` 用于 snapshot、冲突检测和回放。`ResourceRef.genera
 - `CommandPlan` v1 的标准 memory provider 支持 `CapabilityResource` 上的
   `operation = "query"`，返回 deterministic command receipt；不执行真实外部副作用，
   不承诺 provider RPC、幂等去重或事务保证。
-- `TransactionPlan` 要求 strict all-or-nothing；`CommandBatch` 只表示批量发送，不保证回滚；
-  `SagaPlan` 表示多个不可原子回滚步骤和可选补偿。
-- `CommandBatch.rollback_guarantee = true` 在 v1 中结构化失败；`SagaPlan` 按顺序执行
-  steps，step 失败后按反序尝试 compensations，并以 `resource.saga_failed` 返回原始
-  cause。
+- `TransactionPlan` / `CommandBatch` / `SagaPlan` 是 experimental provider/workflow
+  descriptor。CoreRuntime 不解释、调度或执行事务、批处理、补偿或 workflow 语义。
+  Provider 或 workflow plugin 可以在自身边界实现这些计划，并通过 `PlanReceipt`
+  只回写 descriptor 更新。
+- 若 provider 支持 experimental `CommandBatch` / `SagaPlan`，`CommandBatch.rollback_guarantee = true`
+  在 v1 中应结构化失败；`SagaPlan` 可按顺序执行 steps，step 失败后按反序尝试
+  compensations，并以 `resource.saga_failed` 返回原始 cause。
 - 公共插件 API 不暴露 `Arc<T>`、`&T`、`&mut T`、`downcast`、`with_native_*` 或闭包式 lazy op。
 
 Resource Provider 热替换规则：

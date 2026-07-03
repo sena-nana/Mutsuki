@@ -52,7 +52,7 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
 
     assert_eq!(runtime.task_status("smoke-1"), Some(TaskStatus::Completed));
     assert_eq!(
-        runtime.task_status("smoke-1:commit"),
+        runtime.task_status("smoke-1:commit:0"),
         Some(TaskStatus::Completed)
     );
     assert_eq!(

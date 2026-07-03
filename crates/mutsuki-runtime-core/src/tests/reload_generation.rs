@@ -21,7 +21,7 @@ fn reload_allows_additive_and_blocks_breaking_surfaces() {
         fingerprint: "sha256:new".into(),
         deprecated: false,
     });
-    let decision = runtime.reload(additive).unwrap();
+    let decision = runtime.reload_load_plan_only(additive).unwrap();
     assert!(
         decision
             .changes
@@ -31,7 +31,7 @@ fn reload_allows_additive_and_blocks_breaking_surfaces() {
 
     let mut breaking = plan;
     breaking.contract_surfaces[0].fingerprint = "sha256:changed".into();
-    let err = runtime.reload(breaking).unwrap_err();
+    let err = runtime.reload_load_plan_only(breaking).unwrap_err();
     assert_eq!(err.error().code, ERR_RELOAD_BLOCKED);
 }
 

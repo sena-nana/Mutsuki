@@ -54,6 +54,8 @@ impl Runner for CoreKernelRunner {
         &self.descriptor
     }
 
+    /// Marker runner used to authorize core.* tasks. Actual kernel task
+    /// handling is performed by CoreRuntime before runner dispatch.
     fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
         Ok(tasks
             .into_iter()

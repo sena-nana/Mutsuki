@@ -56,6 +56,8 @@ pub struct SchedulerPolicyDescriptor {
     pub decision_scope: String,
 }
 
+/// Experimental workflow plugin binding descriptor. Workflow instance state
+/// must live in an external resource; CoreRuntime does not own workflow state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowDescriptor {
     pub workflow_id: String,

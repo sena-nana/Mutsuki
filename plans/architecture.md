@@ -242,11 +242,13 @@ resource provider 执行，不进入 Rust core。
 
 资源平面按 `ResourceHub -> Typed Store -> backend/provider` 分层：
 
-- `ResourceHub` 负责 `ResourceId.kind_id` 路由、descriptor/generation/lease 校验、
-  surface occupancy、trace route 和 provider operation 分发。
-- Typed Store 按资源语义保存与优化本类资源，当前最小实现包含 `FrozenStore`、
-  `SnapshotStore`、`FactStore`、`CowStore`、`CapabilityStore`、`StreamStore` 和
-  `TransactionStore`。
+- `ResourceHub` 负责 descriptor/generation/lease 校验、surface occupancy、trace route
+  和 provider operation 分发所需的 registry 事实。当前 core 实现使用单一 descriptor
+  表，`ResourceSemantic` 只用于路由标签和占用解释，不表示 Core 内已有完整 typed
+  backend。
+- Typed Store 按资源语义保存与优化本类资源，例如 `FrozenStore`、`SnapshotStore`、
+  `FactStore`、`CowStore`、`CapabilityStore`、`StreamStore` 和 `TransactionStore`。
+  这些是 host resource backend / provider 的实现边界，不是 CoreRuntime 默认职责。
 - backend/provider 负责真实数据访问；builtin、ABI、WASM、process 的差异只存在于
   host/resource backend，不进入插件公共 API。
 

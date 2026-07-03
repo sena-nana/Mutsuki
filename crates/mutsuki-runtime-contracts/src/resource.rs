@@ -237,6 +237,8 @@ pub struct CommandPlan {
     pub idempotency_key: Option<String>,
 }
 
+/// Experimental provider/workflow descriptor. CoreRuntime does not interpret
+/// or execute transaction semantics.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TransactionPlan {
     pub plan_id: String,
@@ -244,6 +246,8 @@ pub struct TransactionPlan {
     pub strict: bool,
 }
 
+/// Experimental provider/workflow descriptor. CoreRuntime does not interpret
+/// or execute batch semantics.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommandBatch {
     pub batch_id: String,
@@ -251,6 +255,8 @@ pub struct CommandBatch {
     pub rollback_guarantee: bool,
 }
 
+/// Experimental provider/workflow descriptor. CoreRuntime does not interpret
+/// or execute saga semantics.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SagaPlan {
     pub saga_id: String,
