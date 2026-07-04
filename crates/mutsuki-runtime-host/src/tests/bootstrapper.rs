@@ -1,9 +1,12 @@
 use std::io::Cursor;
 use std::sync::Arc;
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{CoreRuntime, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, ResourcePlanGateway, ResourceProviderGateway};
+use mutsuki_runtime_sdk::{
+    BuiltinPluginLoader, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
+};
 use serde_json::json;
 
 use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
@@ -58,6 +61,84 @@ fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
     };
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+}
+
+#[test]
+fn loaded_plugin_host_service_is_reachable_from_host_context_after_boot() {
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(host_service_plugin(
+        "plugin-service",
+        "service.echo",
+        "ready",
+    ));
+
+    let runtime = host
+        .into_host_runtime(host_service_profile("plugin-service"))
+        .unwrap();
+
+    let service = runtime
+        .host_context()
+        .services()
+        .require::<String>("service.echo")
+        .unwrap();
+    assert_eq!(service.as_str(), "ready");
+    assert!(runtime.host_context().services().is_frozen());
+}
+
+#[test]
+fn plugin_loader_registers_sdk_built_plugin_services_for_host_boot() {
+    let mut loader = BuiltinPluginLoader::new().with_plugin(Box::new(host_service_builder(
+        "plugin-loader-service",
+        "service.loader",
+        "loaded",
+    )));
+    let mut host = RuntimeBootstrapper::new();
+    host.load_plugins(&mut loader).unwrap();
+
+    let runtime = host
+        .into_host_runtime(host_service_profile("plugin-loader-service"))
+        .unwrap();
+
+    let service = runtime
+        .host_context()
+        .services()
+        .require::<String>("service.loader")
+        .unwrap();
+    assert_eq!(service.as_str(), "loaded");
+}
+
+#[test]
+fn host_runtime_reload_preserves_prepared_plugin_services_in_host_context() {
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(host_service_plugin(
+        "plugin-service",
+        "service.echo",
+        "ready-v1",
+    ));
+    let mut runtime = host
+        .into_host_runtime(host_service_profile("plugin-service"))
+        .unwrap();
+
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_loaded_plugin(host_service_plugin(
+        "plugin-service",
+        "service.echo",
+        "ready-v2",
+    ));
+    let prepared = reload_host
+        .prepare_reload(host_service_profile("plugin-service"), 2)
+        .unwrap();
+
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+
+    let service = runtime
+        .host_context()
+        .services()
+        .require::<String>("service.echo")
+        .unwrap();
+    assert_eq!(service.as_str(), "ready-v2");
+    assert_eq!(runtime.host_context().registry_generation(), 2);
+    assert!(runtime.host_context().services().is_frozen());
 }
 
 #[test]
@@ -280,6 +361,30 @@ fn resource_provider_profile() -> RuntimeProfile {
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     }
+}
+
+fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
+    RuntimeProfile {
+        profile_id: "host-service".into(),
+        mode: RuntimeProfileMode::FullDev,
+        enabled_plugins: vec![plugin_id.into()],
+        bindings: Default::default(),
+        plugin_deployments: Default::default(),
+        allow_dynamic_registration: false,
+        allow_hot_reload: true,
+    }
+}
+
+fn host_service_plugin(
+    plugin_id: &str,
+    service_id: &str,
+    value: &str,
+) -> mutsuki_runtime_sdk::LoadedPlugin {
+    host_service_builder(plugin_id, service_id, value).build()
+}
+
+fn host_service_builder(plugin_id: &str, service_id: &str, value: &str) -> PluginBuilder {
+    PluginBuilder::new(plugin_id).host_service(service_id, Arc::new(value.to_string()), None)
 }
 
 fn resource_provider_plugin(

@@ -6,7 +6,10 @@ use mutsuki_runtime_contracts::{
     RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
 };
 use mutsuki_runtime_core::{CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{LoadedPlugin, ResourceProviderGateway};
+use mutsuki_runtime_sdk::{
+    HostServiceRegistry, LoadedPlugin, PluginLoader, ResourceProviderGateway,
+    RuntimeBootstrapperService,
+};
 
 use crate::capabilities::HostCapabilityRegistry;
 use crate::error::{
@@ -68,6 +71,7 @@ impl Runner for NativeRunner {
 pub struct RuntimeBootstrapper {
     manifests: Vec<PluginManifest>,
     runners: Vec<RegisteredRunner>,
+    host_services: Vec<RuntimeBootstrapperService>,
     resource_providers: Vec<RegisteredResourceProvider>,
 }
 
@@ -75,6 +79,7 @@ pub struct PreparedRuntimeReload {
     pub(crate) plan: RuntimeLoadPlan,
     pub(crate) runners: Vec<Box<dyn Runner>>,
     pub(crate) capabilities: HostCapabilityRegistry,
+    pub(crate) services: Arc<HostServiceRegistry>,
     pub(crate) profile_id: String,
     pub(crate) registry_generation: u64,
 }
@@ -102,19 +107,27 @@ impl RuntimeBootstrapper {
         let LoadedPlugin {
             manifest,
             runners,
-            host_services: _,
+            host_services,
             resource_providers,
         } = plugin;
         self.register_manifest(manifest);
         for runner in runners {
             self.register_builtin_runner(runner);
         }
+        self.host_services.extend(host_services);
         for resource_provider in resource_providers {
             self.resource_providers.push(RegisteredResourceProvider {
                 provider_id: resource_provider.provider_id,
                 provider: resource_provider.provider,
             });
         }
+    }
+
+    pub fn load_plugins(&mut self, loader: &mut dyn PluginLoader) -> RuntimeResult<()> {
+        for plugin in loader.load_plugins()? {
+            self.register_loaded_plugin(plugin);
+        }
+        Ok(())
     }
 
     pub fn register_runner(&mut self, runner: Box<dyn Runner>) {
@@ -168,6 +181,7 @@ impl RuntimeBootstrapper {
             booted.core,
             config,
             booted.capabilities,
+            booted.services,
             booted.profile_id,
             booted.registry_generation,
         )
@@ -198,6 +212,7 @@ impl RuntimeBootstrapper {
             plan: prepared.plan,
             runners: prepared.runners,
             capabilities: prepared.capabilities,
+            services: prepared.services,
             profile_id: prepared.profile_id,
             registry_generation: prepared.registry_generation,
         })
@@ -220,6 +235,7 @@ impl RuntimeBootstrapper {
         validate_host_startup_capabilities(&plan, &capabilities)?;
         validate_registered_runners(&plan, &self.runners)?;
         validate_registered_resource_providers(&self.resource_providers)?;
+        let services = build_host_service_registry(self.host_services)?;
         let runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()
@@ -229,6 +245,7 @@ impl RuntimeBootstrapper {
             plan,
             runners,
             capabilities,
+            services,
             profile_id,
             registry_generation,
             active_resource_providers,
@@ -243,6 +260,7 @@ fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedR
     Ok(BootedRuntime {
         core,
         capabilities: prepared.capabilities,
+        services: prepared.services,
         profile_id: prepared.profile_id,
         registry_generation: prepared.registry_generation,
         active_resource_providers: prepared.active_resource_providers,
@@ -253,6 +271,7 @@ fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedR
 struct BootedRuntime {
     core: CoreRuntime,
     capabilities: HostCapabilityRegistry,
+    services: Arc<HostServiceRegistry>,
     profile_id: String,
     registry_generation: u64,
     active_resource_providers: Vec<String>,
@@ -263,10 +282,27 @@ struct PreparedRuntime {
     plan: RuntimeLoadPlan,
     runners: Vec<Box<dyn Runner>>,
     capabilities: HostCapabilityRegistry,
+    services: Arc<HostServiceRegistry>,
     profile_id: String,
     registry_generation: u64,
     active_resource_providers: Vec<String>,
     resource_providers: Vec<RegisteredResourceProvider>,
+}
+
+fn build_host_service_registry(
+    host_services: Vec<RuntimeBootstrapperService>,
+) -> RuntimeResult<Arc<HostServiceRegistry>> {
+    let registry = Arc::new(HostServiceRegistry::new());
+    for service in host_services {
+        let RuntimeBootstrapperService {
+            service_id,
+            service,
+            ..
+        } = service;
+        registry.register_erased(service_id, service)?;
+    }
+    registry.freeze();
+    Ok(registry)
 }
 
 struct GenerationRunner {

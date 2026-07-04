@@ -7,7 +7,7 @@ use std::time::Duration;
 use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus, TraceSpan};
 use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    HostContext as SdkHostContext, HostTaskSnapshot, ResourceProviderGateway,
+    HostContext as SdkHostContext, HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway,
 };
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
@@ -79,6 +79,7 @@ impl HostRuntime {
         core: CoreRuntime,
         config: HostRuntimeConfig,
         capabilities: HostCapabilityRegistry,
+        services: Arc<HostServiceRegistry>,
         profile_id: String,
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
@@ -92,6 +93,7 @@ impl HostRuntime {
         let context = build_host_context(
             tx.clone(),
             capabilities.clone(),
+            services,
             profile_id,
             registry_generation,
         );
@@ -127,6 +129,7 @@ impl HostRuntime {
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision> {
         let capabilities = prepared.capabilities.clone();
+        let services = prepared.services.clone();
         let profile_id = prepared.profile_id.clone();
         let registry_generation = prepared.registry_generation;
         match self.dispatch(HostRuntimeCommand::Reload {
@@ -138,6 +141,7 @@ impl HostRuntime {
                 self.context = build_host_context(
                     self.tx.clone(),
                     self.capabilities.clone(),
+                    services,
                     profile_id,
                     registry_generation,
                 );

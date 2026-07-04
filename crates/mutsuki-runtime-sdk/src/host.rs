@@ -206,6 +206,14 @@ impl HostServiceRegistry {
     where
         T: HostService,
     {
+        self.register_erased(service_id, service)
+    }
+
+    pub fn register_erased(
+        &self,
+        service_id: impl Into<String>,
+        service: Arc<dyn Any + Send + Sync>,
+    ) -> RuntimeResult<()> {
         let service_id = service_id.into();
         if self.frozen.load(Ordering::SeqCst) {
             return Err(sdk_error(

@@ -19,14 +19,13 @@ use crate::error::host_failure;
 pub(crate) fn build_host_context(
     tx: mpsc::Sender<CoreActorMsg>,
     capabilities: Arc<HostCapabilityRegistry>,
+    services: Arc<HostServiceRegistry>,
     profile_id: String,
     registry_generation: u64,
 ) -> SdkHostContext {
     let command_client = Arc::new(ActorCommandClient { tx: tx.clone() });
     let task_submitter: Arc<dyn TaskSubmitter> = command_client.clone();
     let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client;
-    let services = Arc::new(HostServiceRegistry::new());
-    services.freeze();
     let shutdown = Arc::new(ActorShutdownController {
         tx,
         requested: AtomicBool::new(false),
