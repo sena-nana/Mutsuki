@@ -1,8 +1,8 @@
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
+use mutsuki_plugin_resource_memory::{MemoryResourceProvider, PROVIDER_ID};
 use mutsuki_runtime_contracts::*;
-use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use serde_json::json;
 
 use crate::{
@@ -163,7 +163,7 @@ fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() 
             bridge_id: None,
         },
         LocalTaskClient::new(runtime.clone()),
-        LocalResourceClient::with_provider("mutsuki.host.backend", BackendResourceProvider),
+        LocalResourceClient::with_provider(PROVIDER_ID, MemoryResourceProvider::new()),
     );
     let submitted = plugin_backend
         .task_client()
@@ -175,76 +175,4 @@ fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() 
         &PluginDeploymentKind::Builtin
     );
     assert_eq!(submitted.task_id, "backend-task");
-}
-
-struct BackendResourceProvider;
-
-impl mutsuki_runtime_sdk::ResourcePlanGateway for BackendResourceProvider {
-    fn collect_read_plan(&self, _plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        Err(unused_resource_provider_call("collect_read_plan"))
-    }
-
-    fn snapshot_read_plan(
-        &self,
-        _plan: &ReadPlan,
-        _kind_id: &str,
-        _schema: &str,
-    ) -> RuntimeResult<SnapshotDescriptor> {
-        Err(unused_resource_provider_call("snapshot_read_plan"))
-    }
-
-    fn open_stream_plan(&self, _plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        Err(unused_resource_provider_call("open_stream_plan"))
-    }
-
-    fn execute_export_plan(&self, _plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        Err(unused_resource_provider_call("execute_export_plan"))
-    }
-
-    fn commit_write_plan(&self, _plan: &WritePlan, _bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        Err(unused_resource_provider_call("commit_write_plan"))
-    }
-
-    fn execute_command_plan(&self, _plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        Err(unused_resource_provider_call("execute_command_plan"))
-    }
-
-    fn execute_command_batch(&self, _batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        Err(unused_resource_provider_call("execute_command_batch"))
-    }
-
-    fn execute_saga_plan(&self, _saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        Err(unused_resource_provider_call("execute_saga_plan"))
-    }
-}
-
-impl mutsuki_runtime_sdk::ResourceProviderGateway for BackendResourceProvider {
-    fn create_blob_resource(&self, _schema: &str, _bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
-        Err(unused_resource_provider_call("create_blob_resource"))
-    }
-
-    fn create_cow_state_resource(
-        &self,
-        _kind_id: &str,
-        _schema: &str,
-        _bytes: Vec<u8>,
-    ) -> RuntimeResult<ResourceRef> {
-        Err(unused_resource_provider_call("create_cow_state_resource"))
-    }
-
-    fn create_capability_resource(
-        &self,
-        _kind_id: &str,
-        _schema: &str,
-    ) -> RuntimeResult<ResourceRef> {
-        Err(unused_resource_provider_call("create_capability_resource"))
-    }
-}
-
-fn unused_resource_provider_call(method: &str) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new(
-        "test.resource_provider_unused",
-        "runtime.host.test",
-        format!("task_clients.backend_resource_provider.{method}"),
-    ))
 }
