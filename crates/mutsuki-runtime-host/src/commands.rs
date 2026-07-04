@@ -20,15 +20,18 @@ pub enum HostRuntimeCommand {
     TraceSpansAfter(usize),
     OpenResourceDescriptor(String),
     CreateBlobResource {
+        provider_id: String,
         schema: String,
         bytes: Vec<u8>,
     },
     CreateCowStateResource {
+        provider_id: String,
         kind_id: String,
         schema: String,
         bytes: Vec<u8>,
     },
     CreateCapabilityResource {
+        provider_id: String,
         kind_id: String,
         schema: String,
     },

@@ -163,7 +163,7 @@ fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() 
             bridge_id: None,
         },
         LocalTaskClient::new(runtime.clone()),
-        LocalResourceClient::with_provider(BackendResourceProvider),
+        LocalResourceClient::with_provider("mutsuki.host.backend", BackendResourceProvider),
     );
     let submitted = plugin_backend
         .task_client()

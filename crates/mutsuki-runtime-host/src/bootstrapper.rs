@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
@@ -14,8 +14,8 @@ use mutsuki_runtime_sdk::{
 use crate::capabilities::HostCapabilityRegistry;
 use crate::error::{
     capability_provider_missing, capability_pruned, deployment_mismatch,
-    resource_provider_duplicate, resource_provider_missing, resource_provider_unsupported,
-    runner_for_disabled_plugin, runner_missing_for_deployment,
+    resource_provider_duplicate, resource_provider_missing, runner_for_disabled_plugin,
+    runner_missing_for_deployment,
 };
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
@@ -448,29 +448,20 @@ fn configure_resource_provider(
     active_provider_ids: &[String],
     resource_providers: Vec<RegisteredResourceProvider>,
 ) -> RuntimeResult<HostRuntimeConfig> {
-    if config.resource_provider.is_some() {
-        return Ok(config);
+    for registered in resource_providers {
+        config
+            .resource_providers
+            .entry(registered.provider_id)
+            .or_insert(registered.provider);
     }
 
-    match active_provider_ids {
-        [] => Ok(config),
-        [provider_id] => {
-            let mut providers = BTreeMap::new();
-            for registered in resource_providers {
-                providers.insert(registered.provider_id, registered.provider);
-            }
-            let provider = providers
-                .remove(provider_id)
-                .ok_or_else(|| resource_provider_missing(provider_id))?;
-            config.resource_provider = Some(provider);
-            Ok(config)
+    for provider_id in active_provider_ids {
+        if !config.resource_providers.contains_key(provider_id) {
+            return Err(resource_provider_missing(provider_id));
         }
-        providers => Err(resource_provider_unsupported(format!(
-            "host config accepts one resource provider, load plan selected {}: {}",
-            providers.len(),
-            providers.join(",")
-        ))),
     }
+
+    Ok(config)
 }
 
 fn validate_configured_scheduler_policy(

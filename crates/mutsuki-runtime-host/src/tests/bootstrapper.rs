@@ -307,6 +307,7 @@ fn loaded_plugin_resource_provider_is_injected_into_host_runtime() {
         .expect("resource provider plugin should boot");
     let created = runtime
         .dispatch(crate::HostRuntimeCommand::CreateBlobResource {
+            provider_id: provider_id.into(),
             schema: "text.v1".into(),
             bytes: b"plugin".to_vec(),
         })

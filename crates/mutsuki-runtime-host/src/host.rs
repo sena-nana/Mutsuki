@@ -18,6 +18,8 @@ use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
 
+pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGateway>>;
+
 #[derive(Clone)]
 pub struct HostRuntimeConfig {
     pub worker_threads: usize,
@@ -26,9 +28,20 @@ pub struct HostRuntimeConfig {
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
-    pub resource_provider: Option<Arc<dyn ResourceProviderGateway>>,
+    pub resource_providers: HostResourceProviders,
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
+}
+
+impl HostRuntimeConfig {
+    pub fn with_resource_provider(
+        mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn ResourceProviderGateway>,
+    ) -> Self {
+        self.resource_providers.insert(provider_id.into(), provider);
+        self
+    }
 }
 
 impl fmt::Debug for HostRuntimeConfig {
@@ -41,7 +54,10 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("default_runner_limits", &self.default_runner_limits)
             .field("runner_limits", &self.runner_limits)
             .field("scheduler_policy", &self.scheduler_policy)
-            .field("resource_provider", &self.resource_provider.is_some())
+            .field(
+                "resource_providers",
+                &self.resource_providers.keys().collect::<Vec<_>>(),
+            )
             .field("cancel_grace_period", &self.cancel_grace_period)
             .field("worker_health_timeout", &self.worker_health_timeout)
             .finish()
@@ -60,7 +76,7 @@ impl Default for HostRuntimeConfig {
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
-            resource_provider: None,
+            resource_providers: BTreeMap::new(),
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
         }

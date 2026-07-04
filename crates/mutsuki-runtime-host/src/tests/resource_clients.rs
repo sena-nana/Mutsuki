@@ -8,6 +8,8 @@ use crate::{AbiResourceClient, LocalResourceClient, ResourcePlanClient};
 
 use super::helpers::test_resource_ref;
 
+const INJECTED_PROVIDER_ID: &str = "mutsuki.host.injected";
+
 #[test]
 fn host_resource_clients_execute_read_write_and_command_plans_across_backends() {
     let provider = InjectedResourceProvider;
@@ -63,7 +65,7 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
         args: json!({"sql": "select 1"}),
         idempotency_key: Some("query:1".into()),
     };
-    let local = LocalResourceClient::with_provider(provider);
+    let local = LocalResourceClient::with_provider(INJECTED_PROVIDER_ID, provider);
 
     assert_eq!(local.collect_read_plan(&read_plan).unwrap(), b"provider");
     assert_eq!(
@@ -92,14 +94,13 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
             .source_version,
         1
     );
+    let mut stream_resource =
+        test_resource_ref("stream:events", "events", ResourceSemantic::StreamResource);
+    stream_resource.provider_id = INJECTED_PROVIDER_ID.into();
     let stream_plan = local
         .open_stream_plan(&ReadPlan {
             plan_id: "stream-read:1".into(),
-            resource: test_resource_ref(
-                "stream:events",
-                "events",
-                ResourceSemantic::StreamResource,
-            ),
+            resource: stream_resource,
             operation: "open_stream".into(),
             args: json!(null),
         })
@@ -188,7 +189,8 @@ fn resource_clients_implement_sdk_resource_gateway_boundary() {
 
 #[test]
 fn local_resource_client_accepts_injected_resource_provider() {
-    let resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
+    let mut resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
+    resource.provider_id = INJECTED_PROVIDER_ID.into();
     let read_plan = ReadPlan {
         plan_id: "read:provider".into(),
         resource: resource.clone(),
@@ -209,7 +211,7 @@ fn local_resource_client_accepts_injected_resource_provider() {
         },
         returning: None,
     };
-    let client = LocalResourceClient::with_provider(InjectedResourceProvider);
+    let client = LocalResourceClient::with_provider(INJECTED_PROVIDER_ID, InjectedResourceProvider);
 
     assert_eq!(client.collect_read_plan(&read_plan).unwrap(), b"provider");
     assert_eq!(
@@ -491,7 +493,7 @@ fn injected_resource_ref(
         },
         ref_id: ref_id.into(),
         semantic,
-        provider_id: "mutsuki.host.injected".into(),
+        provider_id: INJECTED_PROVIDER_ID.into(),
         resource_kind: kind_id.into(),
         schema: schema.into(),
         version: 1,
