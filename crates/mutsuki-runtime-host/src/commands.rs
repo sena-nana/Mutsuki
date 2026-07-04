@@ -18,6 +18,7 @@ pub enum HostRuntimeCommand {
     TaskOutcome(String),
     EventsAfter(u64),
     TraceSpansAfter(usize),
+    OpenResourceDescriptor(String),
     CreateBlobResource {
         schema: String,
         bytes: Vec<u8>,
@@ -65,6 +66,7 @@ pub enum HostRuntimeReply {
         next_index: usize,
         spans: Vec<TraceSpan>,
     },
+    ResourceDescriptor(ResourceRef),
     ResourceCreated(ResourceRef),
     ResourceBytes(Vec<u8>),
     Snapshot(SnapshotDescriptor),

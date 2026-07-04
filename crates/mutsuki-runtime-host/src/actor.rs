@@ -199,6 +199,10 @@ fn handle_command(
                 false,
             ))
         }
+        HostRuntimeCommand::OpenResourceDescriptor(ref_id) => Ok((
+            HostRuntimeReply::ResourceDescriptor(core.open_resource(&ref_id)?),
+            false,
+        )),
         HostRuntimeCommand::Reload {
             prepared,
             drain_timeout,

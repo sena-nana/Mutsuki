@@ -9,7 +9,7 @@ instead of becoming permanent core behavior.
   or load-plan fixtures.
 - Core resource tests register explicit provider-backed descriptors instead of
   deriving a default provider id from `ResourceManager`.
-- `MutsukiStdPlugins` now has a concrete `mutsuki-plugin-resource-memory`
+- The workspace now has a concrete `mutsuki-plugin-resource-memory`
   provider for the standard put/get/stat/clone/drop and lease/release baseline,
   so the next core removal has an actual provider destination.
 - `mutsuki-plugin-resource-memory` also implements the SDK `ResourcePlanGateway`

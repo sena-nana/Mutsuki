@@ -51,6 +51,7 @@ pub const ERR_REGISTRY_UNAUTHORIZED: &str = "registry.unauthorized";
 pub const ERR_REGISTRY_GENERATION_MISMATCH: &str = "registry.generation_mismatch";
 pub const ERR_STATE_CONFLICT: &str = "state.conflict";
 pub const ERR_RESOURCE_NOT_FOUND: &str = "resource.not_found";
+pub const ERR_RESOURCE_UNSUPPORTED: &str = "resource.unsupported";
 pub const ERR_RESOURCE_LEASE_EXPIRED: &str = "resource.lease_expired";
 pub const ERR_RESOURCE_GENERATION_MISMATCH: &str = "resource.generation_mismatch";
 pub const ERR_RELOAD_BLOCKED: &str = "plugin.reload_blocked";

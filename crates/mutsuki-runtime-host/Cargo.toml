@@ -10,3 +10,6 @@ mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }

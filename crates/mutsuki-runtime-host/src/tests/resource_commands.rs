@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use mutsuki_plugin_resource_memory::{PLUGIN_ID, PROVIDER_ID};
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_sdk::BuiltinPluginLoader;
 use serde_json::json;
 
-use crate::{HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply};
+use crate::{HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, RuntimeBootstrapper};
 
 use super::helpers::{host_with_echo_runner, runtime_profile};
 
@@ -204,9 +206,172 @@ fn host_runtime_syncs_provider_commit_receipt_into_resource_registry() {
     assert_eq!(error.error().code, ERR_RESOURCE_GENERATION_MISMATCH);
 }
 
+#[test]
+fn std_memory_provider_loads_through_host_and_syncs_resource_receipts() {
+    let runtime = host_with_std_memory_provider();
+
+    let HostRuntimeReply::ResourceCreated(blob) = runtime
+        .dispatch(HostRuntimeCommand::CreateBlobResource {
+            schema: "text.v1".into(),
+            bytes: b"hello".to_vec(),
+        })
+        .unwrap()
+    else {
+        panic!("expected memory blob resource");
+    };
+    assert_eq!(blob.provider_id, PROVIDER_ID);
+
+    let HostRuntimeReply::ResourceBytes(bytes) = runtime
+        .dispatch(HostRuntimeCommand::CollectReadPlan(Box::new(ReadPlan {
+            plan_id: "read:memory".into(),
+            resource: blob.clone(),
+            operation: "collect".into(),
+            args: json!(null),
+        })))
+        .unwrap()
+    else {
+        panic!("expected memory bytes");
+    };
+    assert_eq!(bytes, b"hello");
+
+    let HostRuntimeReply::PlanReceipt(export_receipt) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteExportPlan(Box::new(
+            ExportPlan {
+                plan_id: "export:memory".into(),
+                resource: blob.clone(),
+                target: "inline_utf8".into(),
+                args: json!(null),
+            },
+        )))
+        .unwrap()
+    else {
+        panic!("expected memory export receipt");
+    };
+    assert_eq!(export_receipt.output, json!("hello"));
+
+    let HostRuntimeReply::Snapshot(snapshot) = runtime
+        .dispatch(HostRuntimeCommand::SnapshotReadPlan {
+            plan: Box::new(ReadPlan {
+                plan_id: "snapshot:memory".into(),
+                resource: blob,
+                operation: "collect".into(),
+                args: json!(null),
+            }),
+            kind_id: "text_snapshot".into(),
+            schema: "text.snapshot.v1".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected memory snapshot");
+    };
+    let HostRuntimeReply::ResourceDescriptor(snapshot_descriptor) = runtime
+        .dispatch(HostRuntimeCommand::OpenResourceDescriptor(
+            snapshot.snapshot_ref.ref_id.clone(),
+        ))
+        .unwrap()
+    else {
+        panic!("expected synced snapshot descriptor");
+    };
+    assert_eq!(
+        snapshot_descriptor.semantic,
+        ResourceSemantic::VersionedSnapshot
+    );
+}
+
+#[test]
+fn std_memory_provider_write_and_command_paths_sync_through_host() {
+    let runtime = host_with_std_memory_provider();
+
+    let HostRuntimeReply::ResourceCreated(state) = runtime
+        .dispatch(HostRuntimeCommand::CreateCowStateResource {
+            kind_id: "text_buffer".into(),
+            schema: "text.state.v1".into(),
+            bytes: b"old".to_vec(),
+        })
+        .unwrap()
+    else {
+        panic!("expected memory state resource");
+    };
+    let write = WritePlan {
+        plan_id: "write:memory".into(),
+        resource: state.clone(),
+        base_version: state.version,
+        conflict_policy: "replace".into(),
+        patch: PatchDescriptor {
+            patch_id: "patch:memory".into(),
+            target_ref: state.clone(),
+            base_version: state.version,
+            conflict_policy: "replace".into(),
+            operations: json!({"replace": true}),
+        },
+        returning: None,
+    };
+    let HostRuntimeReply::PlanReceipt(write_receipt) = runtime
+        .dispatch(HostRuntimeCommand::CommitWritePlan {
+            plan: Box::new(write),
+            bytes: b"new".to_vec(),
+        })
+        .unwrap()
+    else {
+        panic!("expected memory write receipt");
+    };
+    assert_eq!(write_receipt.new_version, Some(2));
+
+    let HostRuntimeReply::ResourceDescriptor(synced_state) = runtime
+        .dispatch(HostRuntimeCommand::OpenResourceDescriptor(state.ref_id))
+        .unwrap()
+    else {
+        panic!("expected synced state descriptor");
+    };
+    assert_eq!(synced_state.version, 2);
+    assert_eq!(synced_state.resource_id.version, 2);
+
+    let HostRuntimeReply::ResourceCreated(capability) = runtime
+        .dispatch(HostRuntimeCommand::CreateCapabilityResource {
+            kind_id: "memory_query".into(),
+            schema: "memory.query.v1".into(),
+        })
+        .unwrap()
+    else {
+        panic!("expected memory capability");
+    };
+    let HostRuntimeReply::PlanReceipt(command_receipt) = runtime
+        .dispatch(HostRuntimeCommand::ExecuteCommandPlan(Box::new(
+            CommandPlan {
+                plan_id: "command:memory".into(),
+                capability,
+                operation: "query".into(),
+                args: json!({"sql": "select 1"}),
+                idempotency_key: Some("query:memory".into()),
+            },
+        )))
+        .unwrap()
+    else {
+        panic!("expected memory command receipt");
+    };
+    assert_eq!(command_receipt.output["provider_id"], PROVIDER_ID);
+}
+
 struct CommandResourceProvider;
 
 struct MalformedCommitProvider;
+
+fn host_with_std_memory_provider() -> crate::HostRuntime {
+    let mut loader =
+        BuiltinPluginLoader::new().with_plugin(Box::new(mutsuki_plugin_resource_memory::plugin()));
+    let mut host = RuntimeBootstrapper::new();
+    host.load_plugins(&mut loader).unwrap();
+    host.into_host_runtime(RuntimeProfile {
+        profile_id: "std-memory-provider".into(),
+        mode: RuntimeProfileMode::FullDev,
+        enabled_plugins: vec![PLUGIN_ID.into()],
+        bindings: Default::default(),
+        plugin_deployments: Default::default(),
+        allow_dynamic_registration: false,
+        allow_hot_reload: true,
+    })
+    .unwrap()
+}
 
 impl mutsuki_runtime_sdk::ResourcePlanGateway for CommandResourceProvider {
     fn collect_read_plan(&self, _plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {

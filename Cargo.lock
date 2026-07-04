@@ -15,6 +15,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
+name = "mutsuki-plugin-resource-memory"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
 dependencies = [
@@ -35,6 +45,7 @@ dependencies = [
 name = "mutsuki-runtime-host"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-plugin-resource-memory",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",

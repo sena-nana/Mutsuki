@@ -40,15 +40,28 @@ pub(crate) fn handle_resource_command(
             plan,
             kind_id,
             schema,
-        } => Ok(HostRuntimeReply::Snapshot(
-            require_resource_provider(config)?.snapshot_read_plan(&plan, &kind_id, &schema)?,
-        )),
+        } => {
+            let snapshot =
+                require_resource_provider(config)?.snapshot_read_plan(&plan, &kind_id, &schema)?;
+            core.sync_plan_receipt(&mutsuki_runtime_contracts::PlanReceipt {
+                plan_id: format!("snapshot-receipt:{}", snapshot.snapshot_ref.ref_id),
+                status: "snapshotted".into(),
+                resource_ref: None,
+                snapshot: Some(snapshot.clone()),
+                descriptor_updates: Vec::new(),
+                new_version: Some(snapshot.snapshot_ref.version),
+                output: serde_json::Value::Null,
+            })?;
+            Ok(HostRuntimeReply::Snapshot(snapshot))
+        }
         HostRuntimeCommand::OpenStreamPlan(plan) => Ok(HostRuntimeReply::StreamPlan(
             require_resource_provider(config)?.open_stream_plan(&plan)?,
         )),
-        HostRuntimeCommand::ExecuteExportPlan(plan) => Ok(HostRuntimeReply::PlanReceipt(
-            require_resource_provider(config)?.execute_export_plan(&plan)?,
-        )),
+        HostRuntimeCommand::ExecuteExportPlan(plan) => {
+            let receipt = require_resource_provider(config)?.execute_export_plan(&plan)?;
+            core.sync_plan_receipt(&receipt)?;
+            Ok(HostRuntimeReply::PlanReceipt(receipt))
+        }
         HostRuntimeCommand::CommitWritePlan { plan, bytes } => {
             let receipt = require_resource_provider(config)?.commit_write_plan(&plan, bytes)?;
             core.sync_plan_receipt(&receipt)?;
