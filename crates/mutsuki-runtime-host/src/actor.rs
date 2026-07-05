@@ -545,7 +545,7 @@ fn handle_worker_completion(
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let invocation_id = completion_invocation_id(&completion).unwrap_or_default();
+    let invocation_id = completion.batch_id.clone();
     if let Some(runner_id) = draining_invocations.remove(&invocation_id) {
         remove_pending_cancel(pending_cancels, &runner_id, &invocation_id);
         let _ = completion.runner.cancel(&invocation_id);
@@ -559,10 +559,6 @@ fn handle_worker_completion(
     apply_pending_cancels(&mut completion, pending_cancels);
     remove_running_batch_entries(&completion, running_batches_by_task);
     core.complete_runner_dispatch(completion)
-}
-
-fn completion_invocation_id(completion: &RunnerCompletion) -> Option<String> {
-    Some(completion.batch_id.clone())
 }
 
 fn supervise_running_invocations(

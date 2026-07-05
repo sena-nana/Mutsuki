@@ -494,12 +494,11 @@ impl TaskPool {
             if record.status != TaskStatus::Running {
                 continue;
             }
-            let expired = record
+            if record
                 .lease
                 .as_ref()
-                .and_then(|lease| lease.expires_at_step)
-                .is_some_and(|expires_at| current_step >= expires_at);
-            if expired {
+                .is_some_and(|lease| task_lease_expired(lease, current_step))
+            {
                 if let Some(lease) = record.lease.clone() {
                     reclaimed.push(lease);
                 }
@@ -703,9 +702,7 @@ fn validate_record_lease(
     action: &str,
 ) -> RuntimeResult<()> {
     let active = record.lease.as_ref();
-    let expired = lease
-        .expires_at_step
-        .is_some_and(|expires_at| current_step >= expires_at);
+    let expired = task_lease_expired(lease, current_step);
     let matches_active = record.status == TaskStatus::Running
         && record.claimed_by.as_deref() == Some(lease.runner_id.as_str())
         && active.is_some_and(|active| active == lease);
@@ -785,6 +782,12 @@ fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {
         timers: 0,
         effect_inflight: 0,
     }
+}
+
+fn task_lease_expired(lease: &TaskLease, current_step: u64) -> bool {
+    lease
+        .expires_at_step
+        .is_some_and(|expires_at| current_step >= expires_at)
 }
 
 fn select_candidates_for_budget(
