@@ -1,7 +1,10 @@
 use std::io::Cursor;
+use std::sync::Arc;
 
 use mutsuki_plugin_resource_memory::PROVIDER_ID;
+use mutsuki_plugin_resource_shared_memory::PROVIDER_ID as SHARED_MEMORY_PROVIDER_ID;
 use mutsuki_runtime_contracts::*;
+use mutsuki_runtime_sdk::ResourceProviderGateway;
 use serde_json::json;
 
 use crate::{AbiResourceClient, LocalResourceClient, ResourcePlanClient};
@@ -171,6 +174,58 @@ fn resource_clients_implement_sdk_resource_gateway_boundary() {
     assert_eq!(
         mutsuki_runtime_sdk::ResourcePlanGateway::collect_read_plan(&abi, &read_plan).unwrap(),
         b"hello"
+    );
+}
+
+#[test]
+fn local_resource_client_routes_shared_memory_provider() {
+    let provider =
+        Arc::new(mutsuki_plugin_resource_shared_memory::SharedMemoryResourceProvider::new());
+    let blob = provider
+        .create_blob_resource("text.v1", b"hello".to_vec())
+        .unwrap();
+    let state = provider
+        .create_cow_state_resource("text_buffer", "text.state.v1", b"old".to_vec())
+        .unwrap();
+    let local = LocalResourceClient::from_provider(SHARED_MEMORY_PROVIDER_ID, provider);
+    let read_plan = ReadPlan {
+        plan_id: "read:shared-memory".into(),
+        resource: blob.clone(),
+        operation: "collect".into(),
+        args: json!(null),
+    };
+    let export_plan = ExportPlan {
+        plan_id: "export:shared-memory".into(),
+        resource: blob,
+        target: "inline_utf8".into(),
+        args: json!(null),
+    };
+    let write_plan = WritePlan {
+        plan_id: "write:shared-memory".into(),
+        resource: state.clone(),
+        base_version: state.version,
+        conflict_policy: "replace".into(),
+        patch: PatchDescriptor {
+            patch_id: "patch:shared-memory".into(),
+            target_ref: state,
+            base_version: 1,
+            conflict_policy: "replace".into(),
+            operations: json!({"replace": "all"}),
+        },
+        returning: None,
+    };
+
+    assert_eq!(local.collect_read_plan(&read_plan).unwrap(), b"hello");
+    assert_eq!(
+        local.execute_export_plan(&export_plan).unwrap().output,
+        json!("hello")
+    );
+    assert_eq!(
+        local
+            .commit_write_plan(&write_plan, b"new".to_vec())
+            .unwrap()
+            .new_version,
+        Some(2)
     );
 }
 

@@ -6,4 +6,5 @@ mod resolver;
 mod resource_clients;
 mod resource_commands;
 mod scheduler;
+mod shared_memory_resource_commands;
 mod task_clients;

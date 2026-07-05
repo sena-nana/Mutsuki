@@ -13,3 +13,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
+mutsuki-plugin-resource-shared-memory = { path = "../../plugins/mutsuki-plugin-resource-shared-memory" }

@@ -6,6 +6,7 @@ members = [
     "crates/mutsuki-runtime-sdk",
     "crates/mutsuki-runtime-sdk-macros",
     "plugins/mutsuki-plugin-resource-memory",
+    "plugins/mutsuki-plugin-resource-shared-memory",
 ]
 resolver = "2"
 
