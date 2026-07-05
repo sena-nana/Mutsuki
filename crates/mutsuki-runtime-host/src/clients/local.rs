@@ -6,9 +6,8 @@ use mutsuki_runtime_contracts::{
     StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
-use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, TaskSubmitter};
 
-use super::ResourcePlanProvider;
 use crate::error::{resource_provider_missing, resource_provider_unsupported};
 
 #[derive(Clone)]
@@ -47,20 +46,20 @@ impl TaskSubmitter for LocalTaskClient {
 
 #[derive(Clone)]
 pub struct LocalResourceClient {
-    providers: BTreeMap<String, Arc<dyn ResourcePlanProvider>>,
+    providers: BTreeMap<String, Arc<dyn ResourceProviderGateway>>,
 }
 
 impl LocalResourceClient {
     pub fn with_provider(
         provider_id: impl Into<String>,
-        provider: impl ResourcePlanProvider + 'static,
+        provider: impl ResourceProviderGateway + 'static,
     ) -> Self {
         Self::from_provider(provider_id, Arc::new(provider))
     }
 
     pub fn from_provider(
         provider_id: impl Into<String>,
-        provider: Arc<dyn ResourcePlanProvider>,
+        provider: Arc<dyn ResourceProviderGateway>,
     ) -> Self {
         let mut providers = BTreeMap::new();
         providers.insert(provider_id.into(), provider);
@@ -69,14 +68,14 @@ impl LocalResourceClient {
 
     pub fn with_providers<I>(providers: I) -> Self
     where
-        I: IntoIterator<Item = (String, Arc<dyn ResourcePlanProvider>)>,
+        I: IntoIterator<Item = (String, Arc<dyn ResourceProviderGateway>)>,
     {
         Self {
             providers: providers.into_iter().collect(),
         }
     }
 
-    fn require_provider(&self, provider_id: &str) -> RuntimeResult<&dyn ResourcePlanProvider> {
+    fn require_provider(&self, provider_id: &str) -> RuntimeResult<&dyn ResourceProviderGateway> {
         self.providers
             .get(provider_id)
             .map(|provider| provider.as_ref())

@@ -1,31 +1,31 @@
 use std::io::Cursor;
 
-use mutsuki_plugin_resource_memory::{MemoryResourceProvider, PROVIDER_ID};
+use mutsuki_plugin_resource_memory::PROVIDER_ID;
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
 use crate::{AbiResourceClient, LocalResourceClient, ResourcePlanClient};
 
-use super::helpers::test_resource_ref;
+use super::helpers::{std_memory_provider, test_resource_ref};
 
 #[test]
 fn host_resource_clients_execute_read_write_and_command_plans_across_backends() {
-    let provider = MemoryResourceProvider::new();
+    let provider = std_memory_provider();
     let blob = mutsuki_runtime_sdk::ResourceProviderGateway::create_blob_resource(
-        &provider,
+        provider.as_ref(),
         "text.v1",
         b"hello".to_vec(),
     )
     .unwrap();
     let state = mutsuki_runtime_sdk::ResourceProviderGateway::create_cow_state_resource(
-        &provider,
+        provider.as_ref(),
         "text_buffer",
         "text.state.v1",
         b"old".to_vec(),
     )
     .unwrap();
     let capability = mutsuki_runtime_sdk::ResourceProviderGateway::create_capability_resource(
-        &provider,
+        provider.as_ref(),
         "db_pool",
         "db.pool.v1",
     )
@@ -63,7 +63,7 @@ fn host_resource_clients_execute_read_write_and_command_plans_across_backends() 
         args: json!({"sql": "select 1"}),
         idempotency_key: Some("query:1".into()),
     };
-    let local = LocalResourceClient::with_provider(PROVIDER_ID, provider);
+    let local = LocalResourceClient::from_provider(PROVIDER_ID, provider.clone());
 
     assert_eq!(local.collect_read_plan(&read_plan).unwrap(), b"hello");
     assert_eq!(

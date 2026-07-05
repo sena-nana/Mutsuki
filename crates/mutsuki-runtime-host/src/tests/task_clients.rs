@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use mutsuki_plugin_resource_memory::{MemoryResourceProvider, PROVIDER_ID};
+use mutsuki_plugin_resource_memory::PROVIDER_ID;
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
@@ -9,7 +9,7 @@ use crate::{
     AbiTaskClient, HostExtension, LocalResourceClient, LocalTaskClient, PluginBackend, TaskClient,
 };
 
-use super::helpers::{host_with_echo_runner, runtime_profile};
+use super::helpers::{host_with_echo_runner, runtime_profile, std_memory_provider};
 
 #[test]
 fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
@@ -163,7 +163,7 @@ fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() 
             bridge_id: None,
         },
         LocalTaskClient::new(runtime.clone()),
-        LocalResourceClient::with_provider(PROVIDER_ID, MemoryResourceProvider::new()),
+        LocalResourceClient::from_provider(PROVIDER_ID, std_memory_provider()),
     );
     let submitted = plugin_backend
         .task_client()
