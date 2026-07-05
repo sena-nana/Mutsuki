@@ -1,0 +1,225 @@
+use std::collections::BTreeMap;
+
+use mutsuki_runtime_contracts::{
+    BatchEntry, BatchPayload, ResourceAccessMode, ResourceReadView, ResourceWriteLock,
+    RunnerDescriptor, ScalarValue, Task, TaskLease, VersionExpectation, WorkBatch,
+    WorkResourcePlan, WorkSet,
+};
+
+pub(super) fn dispatch_batch_attrs(
+    batch: &WorkBatch,
+    leased_tasks: &[(TaskLease, Task)],
+    task_leases: &[TaskLease],
+    executor_id: &str,
+) -> BTreeMap<String, ScalarValue> {
+    let mut attrs = BTreeMap::from([
+        (
+            "executor_id".into(),
+            ScalarValue::String(executor_id.into()),
+        ),
+        (
+            "task_count".into(),
+            ScalarValue::Int(batch.entries.len() as i64),
+        ),
+        (
+            "entry_count".into(),
+            ScalarValue::Int(batch.entries.len() as i64),
+        ),
+        (
+            "batch_id".into(),
+            ScalarValue::String(batch.batch_id.clone()),
+        ),
+        ("tick_id".into(), ScalarValue::String(batch.tick_id.clone())),
+        (
+            "payload_layout".into(),
+            ScalarValue::String(batch.payload.layout().as_str().into()),
+        ),
+        (
+            "resource_conflict_count".into(),
+            ScalarValue::Int(batch.resource_plan.conflict_entries.len() as i64),
+        ),
+    ]);
+    if let Some(entry) = batch.entries.first() {
+        attrs.insert(
+            "entry_id".into(),
+            ScalarValue::String(entry.entry_id.clone()),
+        );
+        attrs.insert("task_id".into(), ScalarValue::String(entry.task_id.clone()));
+        attrs.insert(
+            "lane".into(),
+            ScalarValue::String(format!("{:?}", entry.lane)),
+        );
+    }
+    if let Some((_, task)) = leased_tasks.first()
+        && let Some(correlation_id) = &task.correlation_id
+    {
+        attrs.insert(
+            "correlation_id".into(),
+            ScalarValue::String(correlation_id.clone()),
+        );
+    }
+    attrs.insert(
+        "task_lease_ids".into(),
+        ScalarValue::String(
+            task_leases
+                .iter()
+                .map(|lease| lease.lease_id.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+    );
+    attrs
+}
+
+pub(super) fn build_work_batch(
+    current_step: u64,
+    batch_id: &str,
+    descriptor: &RunnerDescriptor,
+    leased_tasks: &[(TaskLease, Task)],
+) -> WorkBatch {
+    let tick_id = format!("tick-{current_step}");
+    let mut resource_requirements = Vec::new();
+    let mut entries = Vec::with_capacity(leased_tasks.len());
+    for (payload_index, (_lease, task)) in leased_tasks.iter().enumerate() {
+        let resource_start = resource_requirements.len();
+        resource_requirements.extend(task.resource_requirements.clone());
+        let resource_requirement_indices =
+            (resource_start..resource_requirements.len()).collect::<Vec<_>>();
+        entries.push(BatchEntry {
+            entry_id: task.task_id.clone(),
+            task_id: task.task_id.clone(),
+            trace_id: task.trace_id.clone(),
+            parent_id: None,
+            payload_index,
+            resource_requirement_indices,
+            cancel_index: Some(payload_index),
+            deadline_tick: None,
+            priority: task.priority,
+            lane: task.dispatch_lane.clone(),
+            ordering: task.ordering.clone(),
+        });
+    }
+    let work_set = WorkSet {
+        tick_id: tick_id.clone(),
+        batch_key: descriptor.runner_id.clone(),
+        entries,
+        resource_requirements,
+    };
+    let resource_plan = build_work_resource_plan(&work_set);
+    WorkBatch {
+        batch_id: batch_id.into(),
+        tick_id,
+        batch_key: work_set.batch_key,
+        entries: work_set.entries,
+        payload: BatchPayload::from_task_refs(leased_tasks.iter().map(|(_lease, task)| task)),
+        resource_plan,
+        task_leases: leased_tasks
+            .iter()
+            .map(|(lease, _task)| lease.clone())
+            .collect(),
+    }
+}
+
+pub(super) fn split_leased_tasks_by_resource_conflict(
+    leased_tasks: Vec<(TaskLease, Task)>,
+) -> Vec<Vec<(TaskLease, Task)>> {
+    let mut groups: Vec<Vec<(TaskLease, Task)>> = Vec::new();
+    let mut current_group: Vec<(TaskLease, Task)> = Vec::new();
+    let mut current_write_refs: Vec<String> = Vec::new();
+    for leased_task in leased_tasks {
+        let write_refs = write_requirement_refs(&leased_task.1);
+        if !current_group.is_empty()
+            && write_refs
+                .iter()
+                .any(|ref_id| current_write_refs.contains(ref_id))
+        {
+            groups.push(current_group);
+            current_group = Vec::new();
+            current_write_refs.clear();
+        }
+        for ref_id in write_refs {
+            if !current_write_refs.contains(&ref_id) {
+                current_write_refs.push(ref_id);
+            }
+        }
+        current_group.push(leased_task);
+    }
+    if !current_group.is_empty() {
+        groups.push(current_group);
+    }
+    groups
+}
+
+fn write_requirement_refs(task: &Task) -> Vec<String> {
+    task.resource_requirements
+        .iter()
+        .filter(|requirement| {
+            matches!(
+                requirement.mode,
+                ResourceAccessMode::Write | ResourceAccessMode::ExclusiveWrite
+            )
+        })
+        .map(|requirement| requirement.ref_id.clone())
+        .collect()
+}
+
+fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
+    let mut plan = WorkResourcePlan::empty();
+    let mut read_views: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut write_locks: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (index, requirement) in work_set.resource_requirements.iter().enumerate() {
+        match requirement.mode {
+            ResourceAccessMode::Read => {
+                read_views
+                    .entry(requirement.ref_id.clone())
+                    .or_default()
+                    .push(index);
+            }
+            ResourceAccessMode::Write | ResourceAccessMode::ExclusiveWrite => {
+                write_locks
+                    .entry(requirement.ref_id.clone())
+                    .or_default()
+                    .push(index);
+            }
+        }
+        if let Some(expected_version) = requirement.expected_version {
+            plan.version_checks.push(VersionExpectation {
+                ref_id: requirement.ref_id.clone(),
+                expected_version,
+            });
+        }
+    }
+    plan.read_views = read_views
+        .into_iter()
+        .map(|(ref_id, requirement_indices)| ResourceReadView {
+            ref_id,
+            requirement_indices,
+        })
+        .collect();
+    plan.write_locks = write_locks
+        .into_iter()
+        .map(|(ref_id, requirement_indices)| {
+            if requirement_indices.len() > 1 {
+                for requirement_index in &requirement_indices {
+                    mark_conflict_entry(work_set, *requirement_index, &mut plan);
+                }
+            }
+            ResourceWriteLock {
+                ref_id,
+                requirement_indices,
+            }
+        })
+        .collect();
+    plan
+}
+
+fn mark_conflict_entry(work_set: &WorkSet, requirement_index: usize, plan: &mut WorkResourcePlan) {
+    if let Some(entry) = work_set.entries.iter().find(|entry| {
+        entry
+            .resource_requirement_indices
+            .contains(&requirement_index)
+    }) && !plan.conflict_entries.contains(&entry.entry_id)
+    {
+        plan.conflict_entries.push(entry.entry_id.clone());
+    }
+}

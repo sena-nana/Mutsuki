@@ -785,7 +785,10 @@ fn schedule_ready(
         let wall_clock_deadline_at = limits
             .wall_clock_deadline
             .map(|deadline| Instant::now() + deadline);
-        let tasks = dispatch.batch.row_payload_tasks();
+        let tasks = dispatch
+            .batch
+            .row_payload_tasks()
+            .map_err(mutsuki_runtime_core::RuntimeFailure::new)?;
         let Some(pool) = pools.get(&execution_class) else {
             return Err(host_failure(
                 "host.worker.pool_missing",

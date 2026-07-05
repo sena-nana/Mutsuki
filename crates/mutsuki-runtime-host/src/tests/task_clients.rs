@@ -176,7 +176,6 @@ fn task_clients_submit_batch_across_local_and_abi_backends() {
         Cursor::new(Vec::<u8>::new()),
     );
     let abi_batch = TaskBatchBuilder::new("abi-batch")
-        .payload_layout(PayloadLayout::Row)
         .task(Task::new("abi-batch-1", "raw.input", json!({})))
         .task(Task::new("abi-batch-2", "raw.input", json!({})))
         .build();

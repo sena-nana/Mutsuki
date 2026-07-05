@@ -8,24 +8,23 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 extern crate self as mutsuki_runtime_sdk;
 
 use mutsuki_runtime_contracts::{
-    BatchPayload, CancelPolicy, ColumnPayload, ColumnarPayload, CompletionBatch, EntryCompletion,
-    OrderingRequirement, PackedBuffer, PayloadLayout, ResourceAccess, ResourceAccessMode,
-    ResourceId, ResourceLifetime, ResourceRef, ResourceRequirement, ResourceSealState,
-    ResourceSemantic, ResourceSlice, ResourceSliceSet, RunnerDescriptor, RunnerResult,
-    RunnerStatus, Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation,
-    WorkBatch, WorkResourcePlan,
+    CancelPolicy, CompletionBatch, EntryCompletion, ResourceAccess, ResourceId, ResourceLifetime,
+    ResourceRef, ResourceSealState, ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus,
+    Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation, WorkBatch,
 };
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
 use serde_json::Value;
 
 mod backend;
+mod batch;
 mod descriptor;
 mod host;
 mod plugin;
 mod resource;
 
 pub use backend::{ResourcePlanGateway, ResourceProviderGateway};
+pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{
     HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,
     ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,
@@ -50,133 +49,6 @@ pub mod contracts {
 
 pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
-}
-
-#[derive(Clone, Debug)]
-pub struct TaskBatchBuilder {
-    batch_id: String,
-    tick_id: Option<String>,
-    tasks: Vec<Task>,
-    payload_layout: PayloadLayout,
-    resource_plan: Option<WorkResourcePlan>,
-}
-
-impl TaskBatchBuilder {
-    pub fn new(batch_id: impl Into<String>) -> Self {
-        Self {
-            batch_id: batch_id.into(),
-            tick_id: None,
-            tasks: Vec::new(),
-            payload_layout: PayloadLayout::Row,
-            resource_plan: None,
-        }
-    }
-
-    pub fn tick_id(mut self, tick_id: impl Into<String>) -> Self {
-        self.tick_id = Some(tick_id.into());
-        self
-    }
-
-    pub fn payload_layout(mut self, layout: PayloadLayout) -> Self {
-        self.payload_layout = layout;
-        self
-    }
-
-    pub fn resource_plan(mut self, plan: WorkResourcePlan) -> Self {
-        self.resource_plan = Some(plan);
-        self
-    }
-
-    pub fn task(mut self, task: Task) -> Self {
-        self.tasks.push(task);
-        self
-    }
-
-    pub fn build(self) -> TaskBatch {
-        TaskBatch {
-            batch_id: self.batch_id,
-            tick_id: self.tick_id,
-            tasks: self.tasks,
-            payload_layout: self.payload_layout,
-            resource_plan: self.resource_plan,
-        }
-    }
-}
-
-pub struct TaskOptions;
-
-impl TaskOptions {
-    pub fn read(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
-        ResourceRequirement {
-            ref_id: ref_id.into(),
-            mode: ResourceAccessMode::Read,
-            expected_version,
-        }
-    }
-
-    pub fn write(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
-        ResourceRequirement {
-            ref_id: ref_id.into(),
-            mode: ResourceAccessMode::Write,
-            expected_version,
-        }
-    }
-
-    pub fn exclusive_write(
-        ref_id: impl Into<String>,
-        expected_version: Option<u64>,
-    ) -> ResourceRequirement {
-        ResourceRequirement {
-            ref_id: ref_id.into(),
-            mode: ResourceAccessMode::ExclusiveWrite,
-            expected_version,
-        }
-    }
-
-    pub fn strict_sequence(sequence_id: impl Into<String>) -> OrderingRequirement {
-        OrderingRequirement::StrictSequence {
-            sequence_id: sequence_id.into(),
-        }
-    }
-}
-
-pub struct BatchPayloadBuilder;
-
-impl BatchPayloadBuilder {
-    pub fn row_tasks(tasks: &[Task]) -> BatchPayload {
-        BatchPayload::Row {
-            entries: tasks
-                .iter()
-                .map(|task| serde_json::to_value(task).expect("Task serializes"))
-                .collect(),
-        }
-    }
-
-    pub fn columnar(columns: Vec<ColumnPayload>, row_count: usize) -> BatchPayload {
-        BatchPayload::Columnar {
-            payload: ColumnarPayload { columns, row_count },
-        }
-    }
-
-    pub fn binary_packed(
-        encoding: impl Into<String>,
-        bytes: Vec<u8>,
-        row_count: usize,
-    ) -> BatchPayload {
-        BatchPayload::BinaryPacked {
-            buffer: PackedBuffer {
-                encoding: encoding.into(),
-                bytes,
-                row_count,
-            },
-        }
-    }
-
-    pub fn resource_backed(slices: Vec<ResourceSlice>) -> BatchPayload {
-        BatchPayload::ResourceBacked {
-            slices: ResourceSliceSet { slices },
-        }
-    }
 }
 
 pub trait RuntimeClient: Send + Sync {
@@ -618,7 +490,10 @@ impl Runner for AsyncRunnerAdapter {
         ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
-        let tasks = batch.row_payload_tasks();
+        let tasks = match batch.row_payload_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
+        };
         let mut results = Vec::with_capacity(batch.entries.len());
         for entry in &batch.entries {
             let Some(task) = tasks
@@ -799,9 +674,7 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
             lane: DispatchLane::Normal,
             ordering: OrderingRequirement::None,
         }],
-        payload: BatchPayload::Row {
-            entries: vec![serde_json::to_value(task).expect("Task serializes")],
-        },
+        payload: BatchPayload::from_tasks(&[task.clone()]),
         resource_plan: WorkResourcePlan::empty(),
         task_leases: vec![lease],
     }

@@ -10,10 +10,10 @@ mod task;
 mod trace;
 
 pub use batch::{
-    BatchEntry, BatchPayload, ColumnPayload, ColumnarPayload, CompletionBatch, DeferredResourceOp,
-    DispatchLane, EntryCompletion, OrderingRequirement, PackedBuffer, PayloadLayout,
-    ResourceAccessMode, ResourceReadView, ResourceRequirement, ResourceSlice, ResourceSliceSet,
-    ResourceWriteLock, TaskBatch, WorkBatch, WorkResourcePlan, WorkSet,
+    BatchEntry, BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload, CompletionBatch,
+    DeferredResourceOp, DispatchLane, EntryCompletion, OrderingRequirement, PayloadLayout,
+    ResourceAccessMode, ResourceBackedPayload, ResourceReadView, ResourceRequirement,
+    ResourceSlice, ResourceWriteLock, RowPayload, TaskBatch, WorkBatch, WorkResourcePlan, WorkSet,
 };
 pub use common::{
     BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,

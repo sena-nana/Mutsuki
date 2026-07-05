@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    ExecutionClass, HandlerBinding, OrderingRequirement, RunnerDescriptor, RunnerPurity,
-    RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
+    ExecutionClass, HandlerBinding, OrderingRequirement, PayloadLayout, RunnerDescriptor,
+    RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
 };
 
 use crate::{Runner, RuntimeResult};
@@ -337,6 +337,11 @@ fn validate_runner_batch_capabilities(runner: &RunnerDescriptor) -> RuntimeResul
             .layouts
             .iter()
             .any(|layout| layout == &runner.payload.preferred_layout)
+        || !runner
+            .payload
+            .layouts
+            .iter()
+            .any(|layout| layout == &PayloadLayout::Row)
     {
         return Err(crate::runtime_failure(
             ERR_REGISTRY_UNAUTHORIZED,

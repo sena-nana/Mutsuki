@@ -77,7 +77,10 @@ fn scalar_completion_batch(
     batch: &WorkBatch,
     mut result: impl FnMut(&Task) -> RuntimeResult<RunnerResult>,
 ) -> RuntimeResult<CompletionBatch> {
-    let tasks = batch.row_payload_tasks();
+    let tasks = match batch.row_payload_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return Ok(CompletionBatch::from_error(batch, error)),
+    };
     let mut results = Vec::with_capacity(batch.entries.len());
     for entry in &batch.entries {
         let Some(task) = tasks.iter().find(|task| task.task_id == entry.task_id) else {

@@ -16,10 +16,10 @@
 | 对象 | 语义 |
 |---|---|
 | `Task` | 统一待处理控制消息，包含 protocol_id、priority、ready_at_step、payload、refs、target_binding_id、lease_id、expected_versions、registry_generation、dispatch_lane、ordering 和 resource_requirements |
-| `TaskBatch` | SDK / host submit 面的 batch descriptor；单 task submit 也必须包装为 one-entry batch |
+| `TaskBatch` | SDK / host submit 面的 batch descriptor；只携带待入队 task 与可选 resource plan，不决定 runner dispatch payload layout；单 task submit 也必须包装为 one-entry batch |
 | `TaskLease` | 一次 batch entry 执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
 | `BatchEntry` / `WorkBatch` / `CompletionBatch` | Tick 内部标准执行单元；单 task 是单 entry batch，不再有独立 runner step 主路径 |
-| `BatchPayload` / `PayloadLayout` | Row、Columnar、BinaryPacked 或 ResourceBacked 的 SIMD-friendly payload layout |
+| `BatchPayload` / `PayloadLayout` | `layout + payload` 形式的执行面 payload descriptor；Row 携带 `RowPayload.rows`，Columnar / BinaryPacked / ResourceBacked 是 SIMD-friendly 能力面 |
 | `WorkResourcePlan` | WorkSet 派发前生成的资源读写计划、version check 和冲突 entry 描述 |
 | `TaskHandle` | SDK-facing task descriptor，包含 task id、protocol、target binding、取消策略和 trace/correlation |
 | `TaskAwait` | 当前 task 等待一个 child task 的 continuation registration |
@@ -141,8 +141,10 @@ Batch-first 迁移约束：
   `Runner.run_batch(ctx, batch) -> CompletionBatch`。
 - 标量 runner 可通过 SDK / host adapter 顺序遍历 `WorkBatch.entries`，逐 entry 产出
   `EntryCompletion`；这只是兼容执行形态，不是 single-task ABI。
-- runner 若只能读取 row payload，应在 `RunnerDescriptor.payload.layouts` 声明 Row；
-  支持同构输入的 runner 可额外声明 Columnar / BinaryPacked / ResourceBacked。
+- 当前 v1 Core dispatch 只生成 Row payload，因此可执行 runner 必须在
+  `RunnerDescriptor.payload.layouts` 声明 Row；支持同构输入的 runner 可额外声明
+  Columnar / BinaryPacked / ResourceBacked。非 Row encoder 是后续 host/core 优化点，
+  不改变 TaskPool、TaskLease 或 runner ABI。
 - `RunnerDescriptor.batch` 声明 preferred / max batch entries、max inflight batches、
   partial failure 和 preserve order 能力；Core / host 仍会按 scheduler budget 和资源冲突
   对实际 batch 入场做更严格限制。

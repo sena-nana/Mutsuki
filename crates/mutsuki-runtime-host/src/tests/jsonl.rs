@@ -109,9 +109,7 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
             lane: DispatchLane::Normal,
             ordering: OrderingRequirement::None,
         }],
-        payload: BatchPayload::Row {
-            entries: vec![serde_json::to_value(task).expect("Task serializes")],
-        },
+        payload: BatchPayload::from_tasks(&[task.clone()]),
         resource_plan: WorkResourcePlan::empty(),
         task_leases: vec![lease],
     }

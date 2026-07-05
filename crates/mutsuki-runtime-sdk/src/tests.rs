@@ -5,11 +5,14 @@ use std::sync::{Arc, Mutex};
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, ContractSurface, ContractSurfaceKind,
     DomainEvent, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
-    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, RunnerBatchCapability,
-    RunnerPayloadCapability, RuntimeCapabilityGraph, RuntimeEvent, RuntimeEventKind,
-    RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor, WorkflowDescriptor,
+    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, ResourceAccessMode,
+    ResourceRequirement, ResourceSlice, RunnerBatchCapability, RunnerPayloadCapability,
+    RuntimeCapabilityGraph, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, RuntimeProfileMode,
+    SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
-use mutsuki_runtime_contracts::{ExecutionClass, RunnerPurity, RuntimeError};
+use mutsuki_runtime_contracts::{
+    BatchPayload, ColumnPayload, ExecutionClass, PayloadLayout, RunnerPurity, RuntimeError,
+};
 use serde_json::json;
 
 struct ChildWork;
@@ -22,6 +25,33 @@ struct ParentWork;
 
 impl SdkProtocol for ParentWork {
     const PROTOCOL_ID: &'static str = "parent.work";
+}
+
+fn sdk_resource_ref(ref_id: &str) -> ResourceRef {
+    ResourceRef {
+        resource_id: ResourceId {
+            kind_id: "blob".into(),
+            slot_id: ref_id.into(),
+            generation: 1,
+            version: 1,
+        },
+        ref_id: ref_id.into(),
+        semantic: ResourceSemantic::FrozenValue,
+        provider_id: "mutsuki.std.resource.memory".into(),
+        resource_kind: "blob".into(),
+        schema: "bytes.v1".into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::ProviderRpc {
+            provider_id: "mutsuki.std.resource.memory".into(),
+            method: "read".into(),
+        },
+        size_hint: Some(4),
+        content_hash: None,
+        seal_state: ResourceSealState::Sealed,
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+    }
 }
 
 #[derive(mutsuki_runtime_sdk::SdkProtocol)]
@@ -549,7 +579,6 @@ fn batch_helpers_build_submit_and_payload_protocol_shapes() {
 
     let batch = TaskBatchBuilder::new("batch:sdk")
         .tick_id("tick:42")
-        .payload_layout(PayloadLayout::BinaryPacked)
         .task(first.clone())
         .task(second.clone())
         .build();
@@ -557,7 +586,6 @@ fn batch_helpers_build_submit_and_payload_protocol_shapes() {
     assert_eq!(batch.batch_id, "batch:sdk");
     assert_eq!(batch.tick_id.as_deref(), Some("tick:42"));
     assert_eq!(batch.tasks.len(), 2);
-    assert_eq!(batch.payload_layout, PayloadLayout::BinaryPacked);
     assert_eq!(
         batch.tasks[0].resource_requirements[0],
         ResourceRequirement {
@@ -568,13 +596,30 @@ fn batch_helpers_build_submit_and_payload_protocol_shapes() {
     );
 
     let row = BatchPayloadBuilder::row_tasks(&[first, second]);
-    assert!(matches!(row, BatchPayload::Row { entries } if entries.len() == 2));
+    assert_eq!(row.layout(), PayloadLayout::Row);
+    assert_eq!(row.row_count(), 2);
+    let columnar = BatchPayloadBuilder::columnar(
+        vec![ColumnPayload {
+            name: "n".into(),
+            values: vec![json!(1), json!(2)],
+        }],
+        2,
+    );
+    assert_eq!(columnar.layout(), PayloadLayout::Columnar);
+    assert_eq!(columnar.row_count(), 2);
     let packed = BatchPayloadBuilder::binary_packed("u32-le", vec![1, 0, 0, 0], 1);
     assert!(matches!(
         packed,
-        BatchPayload::BinaryPacked { buffer }
+        BatchPayload::BinaryPacked(buffer)
             if buffer.encoding == "u32-le" && buffer.row_count == 1
     ));
+    let resource = BatchPayloadBuilder::resource_backed(vec![ResourceSlice {
+        resource: sdk_resource_ref("resource:payload"),
+        offset: 0,
+        length: Some(4),
+    }]);
+    assert_eq!(resource.layout(), PayloadLayout::ResourceBacked);
+    assert_eq!(resource.row_count(), 1);
 }
 
 #[test]

@@ -178,9 +178,9 @@ fn batch_work_contracts_roundtrip_json() {
         tick_id: "tick-10".into(),
         batch_key: "runner-a".into(),
         entries: vec![entry.clone()],
-        payload: BatchPayload::Row {
-            entries: vec![serde_json::json!({"input": 1})],
-        },
+        payload: BatchPayload::Row(RowPayload {
+            rows: vec![serde_json::json!({"input": 1})],
+        }),
         resource_plan: resource_plan.clone(),
         task_leases: vec![lease],
     };
@@ -214,7 +214,6 @@ fn batch_work_contracts_roundtrip_json() {
             "raw.input",
             serde_json::json!({"input": 1}),
         )],
-        payload_layout: PayloadLayout::Row,
         resource_plan: Some(resource_plan.clone()),
     };
     assert_eq!(
@@ -236,6 +235,58 @@ fn batch_work_contracts_roundtrip_json() {
         serde_json::from_str::<WorkSet>(&serde_json::to_string(&work_set).unwrap()).unwrap(),
         work_set
     );
+}
+
+#[test]
+fn batch_payload_helpers_report_layout_counts_and_row_decode_errors() {
+    let task = Task::new(
+        "payload-task-1",
+        "raw.input",
+        serde_json::json!({"input": 1}),
+    );
+    let row = BatchPayload::from_tasks(&[task.clone()]);
+    assert_eq!(row.layout(), PayloadLayout::Row);
+    assert_eq!(row.row_count(), 1);
+    assert_eq!(row.try_row_tasks().unwrap(), vec![task]);
+
+    let invalid_row = BatchPayload::Row(RowPayload {
+        rows: vec![serde_json::json!({"task_id": "missing-fields"})],
+    });
+    let err = invalid_row.try_row_tasks().unwrap_err();
+    assert_eq!(err.code, ERR_TASK_CLAIM_CONFLICT);
+    assert_eq!(err.route, "payload.row.0");
+
+    let columnar = BatchPayload::Columnar(ColumnarPayload {
+        columns: vec![ColumnPayload {
+            name: "input".into(),
+            values: vec![serde_json::json!(1), serde_json::json!(2)],
+        }],
+        row_count: 2,
+    });
+    assert_eq!(columnar.layout(), PayloadLayout::Columnar);
+    assert_eq!(columnar.row_count(), 2);
+    assert_eq!(
+        columnar.try_row_tasks().unwrap_err().route,
+        "payload.layout.columnar"
+    );
+
+    let packed = BatchPayload::BinaryPacked(BinaryPackedPayload {
+        encoding: "u32-le".into(),
+        bytes: vec![1, 0, 0, 0],
+        row_count: 1,
+    });
+    assert_eq!(packed.layout(), PayloadLayout::BinaryPacked);
+    assert_eq!(packed.row_count(), 1);
+
+    let resource = BatchPayload::ResourceBacked(ResourceBackedPayload {
+        slices: vec![ResourceSlice {
+            resource: resource_ref("resource:payload", "blob", ResourceSemantic::FrozenValue),
+            offset: 0,
+            length: Some(4),
+        }],
+    });
+    assert_eq!(resource.layout(), PayloadLayout::ResourceBacked);
+    assert_eq!(resource.row_count(), 1);
 }
 
 #[test]
