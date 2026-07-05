@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, ContractSurface, ContractSurfaceKind,
     DomainEvent, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
-    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, RuntimeCapabilityGraph,
-    RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor,
-    WorkflowDescriptor,
+    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, RunnerBatchCapability,
+    RunnerPayloadCapability, RuntimeCapabilityGraph, RuntimeEvent, RuntimeEventKind,
+    RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_contracts::{ExecutionClass, RunnerPurity, RuntimeError};
 use serde_json::json;
@@ -61,6 +61,11 @@ fn async_descriptor() -> RunnerDescriptor {
         execution_class: ExecutionClass::Cpu,
         input_schema: json!({}),
         output_schema: json!({}),
+        batch: Default::default(),
+        payload: Default::default(),
+        resources: Default::default(),
+        ordering: Default::default(),
+        control: Default::default(),
         metadata: BTreeMap::new(),
         contract_surfaces: vec!["runner:async.runner".into()],
     }
@@ -71,24 +76,27 @@ struct ManualClient {
 }
 
 impl RuntimeClient for ManualClient {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        let handle = TaskHandle {
-            task_id: task.task_id.clone(),
-            protocol_id: task.protocol_id.clone(),
-            target_binding_id: task.target_binding_id.clone(),
-            cancel_policy: CancelPolicy::Cascade,
-            trace_id: task.trace_id.clone(),
-            correlation_id: task.correlation_id.clone(),
-        };
-        Ok(handle)
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        Ok(batch
+            .tasks
+            .into_iter()
+            .map(|task| TaskHandle {
+                task_id: task.task_id,
+                protocol_id: task.protocol_id,
+                target_binding_id: task.target_binding_id,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: task.trace_id,
+                correlation_id: task.correlation_id,
+            })
+            .collect())
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         Ok(self
             .outcomes
             .lock()
             .expect("outcomes mutex poisoned")
-            .get(task_id)
+            .get(&handle.task_id)
             .cloned())
     }
 }
@@ -156,7 +164,7 @@ fn async_runner_adapter_suspends_and_resumes_call() {
     );
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -164,12 +172,12 @@ fn async_runner_adapter_suspends_and_resumes_call() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    assert_eq!(first[0].status, RunnerStatus::Waiting);
-    assert_eq!(first[0].tasks[0].task_id, "parent-1:call:1");
+    assert_eq!(first.status, RunnerStatus::Waiting);
+    assert_eq!(first.tasks[0].task_id, "parent-1:call:1");
     client
         .outcomes
         .lock()
@@ -183,7 +191,7 @@ fn async_runner_adapter_suspends_and_resumes_call() {
         );
 
     let second = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 2,
@@ -191,11 +199,11 @@ fn async_runner_adapter_suspends_and_resumes_call() {
                 Some("lease:test-2".into()),
                 "invocation:test-2",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    assert_eq!(second[0].status, RunnerStatus::Completed);
+    assert_eq!(second.status, RunnerStatus::Completed);
 }
 
 #[test]
@@ -216,7 +224,7 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
     );
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -224,11 +232,11 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
                 Some("lease:test".into()),
                 "invocation:one",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    assert_eq!(first[0].status, RunnerStatus::Waiting);
+    assert_eq!(first.status, RunnerStatus::Waiting);
     client
         .outcomes
         .lock()
@@ -243,7 +251,7 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
 
     adapter.cancel("invocation:one").unwrap();
     let second = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 2,
@@ -251,12 +259,12 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
                 Some("lease:test-2".into()),
                 "invocation:two",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    assert_eq!(second[0].status, RunnerStatus::Waiting);
-    assert_eq!(second[0].tasks[0].task_id, "parent-1:call:1");
+    assert_eq!(second.status, RunnerStatus::Waiting);
+    assert_eq!(second.tasks[0].task_id, "parent-1:call:1");
 }
 
 #[test]
@@ -280,7 +288,7 @@ fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
     task.correlation_id = Some("corr-1".into());
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -288,15 +296,15 @@ fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![task],
+            task,
         )
         .unwrap();
 
-    assert_eq!(first[0].status, RunnerStatus::Waiting);
-    assert_eq!(first[0].tasks[0].protocol_id, "child.work");
-    assert_eq!(first[0].tasks[0].trace_id.as_deref(), Some("trace-1"));
-    assert_eq!(first[0].tasks[0].correlation_id.as_deref(), Some("corr-1"));
-    let task_await = first[0].task_await.as_ref().unwrap();
+    assert_eq!(first.status, RunnerStatus::Waiting);
+    assert_eq!(first.tasks[0].protocol_id, "child.work");
+    assert_eq!(first.tasks[0].trace_id.as_deref(), Some("trace-1"));
+    assert_eq!(first.tasks[0].correlation_id.as_deref(), Some("corr-1"));
+    let task_await = first.task_await.as_ref().unwrap();
     assert_eq!(task_await.cancel_policy, CancelPolicy::Cascade);
     assert_eq!(task_await.child.trace_id.as_deref(), Some("trace-1"));
     assert_eq!(task_await.child.correlation_id.as_deref(), Some("corr-1"));
@@ -324,7 +332,7 @@ fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
     );
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -332,11 +340,11 @@ fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    let task_await = first[0].task_await.as_ref().unwrap();
+    let task_await = first.task_await.as_ref().unwrap();
     assert_eq!(task_await.cancel_policy, CancelPolicy::Detach);
     assert_eq!(task_await.child.cancel_policy, CancelPolicy::Detach);
 }
@@ -366,7 +374,7 @@ fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
     .with_self_call_policy(false);
 
     let error = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -374,7 +382,7 @@ fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap_err();
 
@@ -404,7 +412,7 @@ fn async_runner_adapter_emits_targeted_child_task_descriptor() {
     );
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -412,21 +420,18 @@ fn async_runner_adapter_emits_targeted_child_task_descriptor() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![Task::new("parent-1", "parent.work", json!({}))],
+            Task::new("parent-1", "parent.work", json!({})),
         )
         .unwrap();
 
-    assert_eq!(first[0].status, RunnerStatus::Waiting);
+    assert_eq!(first.status, RunnerStatus::Waiting);
     assert_eq!(
-        first[0].tasks[0].target_binding_id.as_deref(),
+        first.tasks[0].target_binding_id.as_deref(),
         Some("binding:child")
     );
+    assert_eq!(first.tasks[0].runner_hint.as_deref(), Some("child.runner"));
     assert_eq!(
-        first[0].tasks[0].runner_hint.as_deref(),
-        Some("child.runner")
-    );
-    assert_eq!(
-        first[0]
+        first
             .task_await
             .as_ref()
             .unwrap()
@@ -494,6 +499,16 @@ fn descriptor_builders_create_sdk_authoring_surfaces() {
         .accepts::<MacroEchoInput>()
         .purity(RunnerPurity::Pure)
         .execution_class(ExecutionClass::Cpu)
+        .batch_capability(RunnerBatchCapability {
+            preferred_batch_size: 32,
+            max_batch_entries: 128,
+            ..Default::default()
+        })
+        .payload_capability(RunnerPayloadCapability {
+            layouts: vec![PayloadLayout::Row, PayloadLayout::BinaryPacked],
+            preferred_layout: PayloadLayout::BinaryPacked,
+            zero_copy: true,
+        })
         .build();
     let binding = HandlerBindingBuilder::from_protocols::<MacroEchoInput, MacroEchoInput>(
         "binding:builder",
@@ -513,6 +528,9 @@ fn descriptor_builders_create_sdk_authoring_surfaces() {
     assert_eq!(protocol.version, "2.0.0");
     assert_eq!(runner.accepted_protocol_ids, vec!["macro.echo".to_string()]);
     assert_eq!(runner.contract_surfaces, vec!["runner:builder.runner"]);
+    assert_eq!(runner.batch.preferred_batch_size, 32);
+    assert_eq!(runner.batch.max_batch_entries, 128);
+    assert_eq!(runner.payload.preferred_layout, PayloadLayout::BinaryPacked);
     assert_eq!(binding.pool_id, "cpu");
     assert_eq!(binding.priority, 7);
     assert_eq!(resource.provider_id, "builder.provider");
@@ -520,6 +538,43 @@ fn descriptor_builders_create_sdk_authoring_surfaces() {
         resource.compatibility.required_operations,
         vec!["collect".to_string(), "patch".to_string()]
     );
+}
+
+#[test]
+fn batch_helpers_build_submit_and_payload_protocol_shapes() {
+    let mut first = Task::new("batch-task-1", "macro.echo", json!({"n": 1}));
+    first.resource_requirements = vec![TaskOptions::read("resource:shared", Some(7))];
+    first.ordering = TaskOptions::strict_sequence("seq:macro");
+    let second = Task::new("batch-task-2", "macro.echo", json!({"n": 2}));
+
+    let batch = TaskBatchBuilder::new("batch:sdk")
+        .tick_id("tick:42")
+        .payload_layout(PayloadLayout::BinaryPacked)
+        .task(first.clone())
+        .task(second.clone())
+        .build();
+
+    assert_eq!(batch.batch_id, "batch:sdk");
+    assert_eq!(batch.tick_id.as_deref(), Some("tick:42"));
+    assert_eq!(batch.tasks.len(), 2);
+    assert_eq!(batch.payload_layout, PayloadLayout::BinaryPacked);
+    assert_eq!(
+        batch.tasks[0].resource_requirements[0],
+        ResourceRequirement {
+            ref_id: "resource:shared".into(),
+            mode: ResourceAccessMode::Read,
+            expected_version: Some(7),
+        }
+    );
+
+    let row = BatchPayloadBuilder::row_tasks(&[first, second]);
+    assert!(matches!(row, BatchPayload::Row { entries } if entries.len() == 2));
+    let packed = BatchPayloadBuilder::binary_packed("u32-le", vec![1, 0, 0, 0], 1);
+    assert!(matches!(
+        packed,
+        BatchPayload::BinaryPacked { buffer }
+            if buffer.encoding == "u32-le" && buffer.row_count == 1
+    ));
 }
 
 #[test]
@@ -546,7 +601,7 @@ fn macro_generated_runner_adapter_suspends_with_child_task_and_await() {
     let mut adapter = macro_echo_adapter(client);
 
     let first = adapter
-        .step(
+        .run_one_for_test(
             RunnerContext::new(
                 1,
                 1,
@@ -554,14 +609,14 @@ fn macro_generated_runner_adapter_suspends_with_child_task_and_await() {
                 Some("lease:test".into()),
                 "invocation:test",
             ),
-            vec![Task::new("macro-parent", "macro.echo", json!({}))],
+            Task::new("macro-parent", "macro.echo", json!({})),
         )
         .unwrap();
 
-    assert_eq!(first[0].status, RunnerStatus::Waiting);
-    assert_eq!(first[0].tasks[0].task_id, "macro-parent:call:1");
-    assert_eq!(first[0].tasks[0].protocol_id, "macro.echo");
-    let task_await = first[0].task_await.as_ref().unwrap();
+    assert_eq!(first.status, RunnerStatus::Waiting);
+    assert_eq!(first.tasks[0].task_id, "macro-parent:call:1");
+    assert_eq!(first.tasks[0].protocol_id, "macro.echo");
+    let task_await = first.task_await.as_ref().unwrap();
     assert_eq!(task_await.parent_task_id, "macro-parent");
     assert_eq!(task_await.child.task_id, "macro-parent:call:1");
 }
@@ -694,10 +749,10 @@ fn task_submitter_adapter_preserves_task_handle_and_outcome_contract() {
 
     assert_eq!(handle.task_id, "task-1");
     assert!(matches!(
-        client.task_outcome("task-1").unwrap(),
+        client.task_outcome(&handle).unwrap(),
         Some(TaskOutcome::Completed { output_ref, .. }) if output_ref.as_deref() == Some("value:1")
     ));
-    submitter.cancel_task("task-1").unwrap();
+    submitter.cancel_task(&handle).unwrap();
     assert_eq!(
         *submitter.cancelled.lock().expect("cancel mutex poisoned"),
         vec!["task-1".to_string()]
@@ -713,11 +768,22 @@ impl Runner for TestRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        Ok(tasks
-            .into_iter()
-            .map(|task| RunnerResult::completed(task.task_id))
-            .collect())
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let results = batch
+            .entries
+            .iter()
+            .map(|entry| EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: Some(RunnerResult::completed(entry.task_id.clone())),
+                error: None,
+            })
+            .collect();
+        Ok(CompletionBatch::from_results(&batch, results))
     }
 }
 
@@ -727,31 +793,35 @@ struct ManualSubmitter {
 }
 
 impl TaskSubmitter for ManualSubmitter {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        Ok(TaskHandle {
-            task_id: task.task_id,
-            protocol_id: task.protocol_id,
-            target_binding_id: task.target_binding_id,
-            cancel_policy: CancelPolicy::Cascade,
-            trace_id: task.trace_id,
-            correlation_id: task.correlation_id,
-        })
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        Ok(batch
+            .tasks
+            .into_iter()
+            .map(|task| TaskHandle {
+                task_id: task.task_id,
+                protocol_id: task.protocol_id,
+                target_binding_id: task.target_binding_id,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: task.trace_id,
+                correlation_id: task.correlation_id,
+            })
+            .collect())
     }
 
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
         self.cancelled
             .lock()
             .expect("cancel mutex poisoned")
-            .push(task_id.into());
+            .push(handle.task_id.clone());
         Ok(())
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         Ok(self
             .outcomes
             .lock()
             .expect("outcome mutex poisoned")
-            .get(task_id)
+            .get(&handle.task_id)
             .cloned())
     }
 }

@@ -9,18 +9,29 @@ use crate::JsonlRunner;
 use super::helpers::{descriptor, test_resource_ref};
 
 #[test]
-fn jsonl_runner_uses_runner_step_method_surface() {
+fn jsonl_runner_uses_runner_run_batch_method_surface() {
     let runner_descriptor = descriptor("jsonl.runner", "raw.input");
-    let result = vec![RunnerResult::completed("task-1")];
+    let mut task = Task::new("task-1", "raw.input", json!({}));
+    task.lease_id = Some("task-lease-test".into());
+    let batch = single_test_batch("batch-test", "task-lease-test", task);
+    let result = CompletionBatch {
+        batch_id: "batch-test".into(),
+        tick_id: "tick-1".into(),
+        results: vec![EntryCompletion {
+            entry_id: "task-1".into(),
+            task_id: "task-1".into(),
+            result: Some(RunnerResult::completed("task-1")),
+            error: None,
+        }],
+        metadata: Vec::new(),
+    };
     let response = format!("{}\n", json!({"id":"req-1","ok":true,"result": result}));
     let reader = Cursor::new(response.into_bytes());
     let writer = Cursor::new(Vec::<u8>::new());
     let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
-    let mut task = Task::new("task-1", "raw.input", json!({}));
-    task.lease_id = Some("task-lease-test".into());
 
-    let results = runner
-        .step(
+    let result = runner
+        .run_batch(
             RunnerContext::new(
                 1,
                 1,
@@ -28,17 +39,19 @@ fn jsonl_runner_uses_runner_step_method_surface() {
                 Some("task-lease-test".into()),
                 "invocation:test",
             ),
-            vec![task],
+            batch,
         )
         .unwrap();
     let (_reader, writer) = runner.into_inner();
     let request = String::from_utf8(writer.into_inner()).unwrap();
 
-    assert_eq!(results[0].task_id, "task-1");
-    assert!(request.contains("\"method\":\"runner.step\""));
+    assert_eq!(result.batch_id, "batch-test");
+    assert!(request.contains("\"method\":\"runner.run_batch\""));
+    assert!(request.contains("\"batch\":"));
+    assert!(!request.contains("\"task\":"));
     assert!(request.contains("\"registry_generation\":1"));
     assert!(request.contains("\"executor_id\":\"executor:test\""));
-    assert!(request.contains("\"task_lease_id\":\"task-lease-test\""));
+    assert!(request.contains("\"task_lease_ids\":[\"task-lease-test\"]"));
 }
 
 #[test]
@@ -49,9 +62,10 @@ fn jsonl_runner_rejects_task_lease_mismatch_before_writing_request() {
     let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
     let mut task = Task::new("task-1", "raw.input", json!({}));
     task.lease_id = Some("task-lease-task".into());
+    let batch = single_test_batch("batch-test", "task-lease-task", task);
 
     let error = runner
-        .step(
+        .run_batch(
             RunnerContext::new(
                 1,
                 1,
@@ -59,13 +73,48 @@ fn jsonl_runner_rejects_task_lease_mismatch_before_writing_request() {
                 Some("task-lease-ctx".into()),
                 "invocation:test",
             ),
-            vec![task],
+            batch,
         )
         .unwrap_err();
     let (_reader, writer) = runner.into_inner();
 
     assert_eq!(error.error().code, ERR_TASK_CLAIM_CONFLICT);
     assert!(writer.into_inner().is_empty());
+}
+
+fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
+    let lease = TaskLease {
+        lease_id: lease_id.into(),
+        task_id: task.task_id.clone(),
+        runner_id: "jsonl.runner".into(),
+        executor_id: "executor:test".into(),
+        registry_generation: 1,
+        acquired_at_step: 1,
+        expires_at_step: None,
+    };
+    WorkBatch {
+        batch_id: batch_id.into(),
+        tick_id: "tick-1".into(),
+        batch_key: "jsonl.runner".into(),
+        entries: vec![BatchEntry {
+            entry_id: task.task_id.clone(),
+            task_id: task.task_id.clone(),
+            trace_id: task.trace_id.clone(),
+            parent_id: None,
+            payload_index: 0,
+            resource_requirement_indices: Vec::new(),
+            cancel_index: Some(0),
+            deadline_tick: None,
+            priority: task.priority,
+            lane: DispatchLane::Normal,
+            ordering: OrderingRequirement::None,
+        }],
+        payload: BatchPayload::Row {
+            entries: vec![serde_json::to_value(task).expect("Task serializes")],
+        },
+        resource_plan: WorkResourcePlan::empty(),
+        task_leases: vec![lease],
+    }
 }
 
 #[test]

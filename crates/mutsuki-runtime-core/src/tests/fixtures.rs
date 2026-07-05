@@ -68,6 +68,11 @@ pub(super) fn runner_descriptor(
         execution_class: ExecutionClass::Cpu,
         input_schema: json!({}),
         output_schema: json!({}),
+        batch: Default::default(),
+        payload: Default::default(),
+        resources: Default::default(),
+        ordering: Default::default(),
+        control: Default::default(),
         metadata: BTreeMap::new(),
         contract_surfaces: vec![format!("runner:{id}")],
     }
@@ -265,11 +270,14 @@ impl Runner for ContinuingRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        Ok(tasks
-            .into_iter()
-            .map(|task| RunnerResult {
-                task_id: task.task_id,
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        scalar_batch_result(&batch, |task| {
+            Ok(RunnerResult {
+                task_id: task.task_id.clone(),
                 deltas: Vec::new(),
                 events: Vec::new(),
                 tasks: Vec::new(),
@@ -279,7 +287,7 @@ impl Runner for ContinuingRunner {
                 task_await: None,
                 status: RunnerStatus::Continue,
             })
-            .collect())
+        })
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
@@ -316,7 +324,49 @@ impl Runner for StaticRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        Ok(tasks.iter().map(|task| (self.result)(task)).collect())
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        scalar_batch_result(&batch, |task| Ok((self.result)(task)))
     }
+}
+
+pub(super) fn scalar_batch_result(
+    batch: &WorkBatch,
+    mut result: impl FnMut(&Task) -> RuntimeResult<RunnerResult>,
+) -> RuntimeResult<CompletionBatch> {
+    let tasks = batch.row_payload_tasks();
+    let mut results = Vec::with_capacity(batch.entries.len());
+    for entry in &batch.entries {
+        let Some(task) = tasks.iter().find(|task| task.task_id == entry.task_id) else {
+            results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(RuntimeError::new(
+                    ERR_TASK_CLAIM_CONFLICT,
+                    "test.runner",
+                    format!("batch.entry.{}", entry.entry_id),
+                )),
+            });
+            continue;
+        };
+        match result(task) {
+            Ok(result) => results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: Some(result),
+                error: None,
+            }),
+            Err(failure) => results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(failure.error().clone()),
+            }),
+        }
+    }
+    Ok(CompletionBatch::from_results(batch, results))
 }

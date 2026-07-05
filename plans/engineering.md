@@ -1,6 +1,6 @@
 # Mutsuki 工程实现规则
 
-根目录当前是 Rust-first 极薄 single-task runtime framework。Python runner kit 已拆分
+根目录当前是 Rust-first 极薄 Tick-first / Batch-first runtime framework。Python runner kit 已拆分
 到独立仓库；本仓库只保留 Rust core、contracts、host 和 Rust SDK。
 
 ## 1. 技术栈
@@ -33,7 +33,7 @@ Mutsuki/
   `TransactionPlan`、`CommandBatch`、`SagaPlan` 和 `WorkflowDescriptor` 属于
   experimental descriptor：可作为 provider/workflow 边界 wire shape 保留，但默认不得被
   描述为 CoreRuntime 解释或执行的稳定语义。
-- `mutsuki-runtime-core`：实现 TaskPool、TaskLease、RunnerRegistry、Executor dispatch、
+- `mutsuki-runtime-core`：实现 TaskPool、TaskLease、RunnerRegistry、WorkBatch dispatch、
   ResultRouter、StateStore、ResourceManager、EventLog、TraceLog、hot-reload surface checks。
   Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
   执行器，不绑定线程模型。

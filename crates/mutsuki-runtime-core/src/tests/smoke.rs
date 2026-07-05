@@ -74,7 +74,7 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
             .any(|event| { event.kind == RuntimeEventKind::Task && event.name == "domain.smoke" })
     );
     assert!(runtime.trace_spans().iter().any(|span| {
-        span.name == "runner.step"
+        span.name == "runner.run_batch"
             && span.attributes.get("runner_id") == Some(&ScalarValue::String("worker".into()))
     }));
 }

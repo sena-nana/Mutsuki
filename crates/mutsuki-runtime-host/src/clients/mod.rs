@@ -11,22 +11,39 @@ pub trait ResourcePlanProvider: ResourceProviderGateway + Send + Sync {}
 impl<T> ResourcePlanProvider for T where T: ResourceProviderGateway + Send + Sync {}
 
 pub trait TaskClient: TaskSubmitter {
+    fn submit_batch(
+        &self,
+        batch: mutsuki_runtime_contracts::TaskBatch,
+    ) -> mutsuki_runtime_core::RuntimeResult<Vec<mutsuki_runtime_contracts::TaskHandle>> {
+        TaskSubmitter::submit_batch(self, batch)
+    }
+
+    fn submit_one(
+        &self,
+        task: mutsuki_runtime_contracts::Task,
+    ) -> mutsuki_runtime_core::RuntimeResult<mutsuki_runtime_contracts::TaskHandle> {
+        TaskSubmitter::submit_one(self, task)
+    }
+
     fn submit_task(
         &self,
         task: mutsuki_runtime_contracts::Task,
     ) -> mutsuki_runtime_core::RuntimeResult<mutsuki_runtime_contracts::TaskHandle> {
-        TaskSubmitter::submit_task(self, task)
+        TaskSubmitter::submit_one(self, task)
     }
 
-    fn cancel_task(&self, task_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
-        TaskSubmitter::cancel_task(self, task_id)
+    fn cancel_task(
+        &self,
+        handle: &mutsuki_runtime_contracts::TaskHandle,
+    ) -> mutsuki_runtime_core::RuntimeResult<()> {
+        TaskSubmitter::cancel_task(self, handle)
     }
 
     fn task_outcome(
         &self,
-        task_id: &str,
+        handle: &mutsuki_runtime_contracts::TaskHandle,
     ) -> mutsuki_runtime_core::RuntimeResult<Option<mutsuki_runtime_contracts::TaskOutcome>> {
-        TaskSubmitter::task_outcome(self, task_id)
+        TaskSubmitter::task_outcome(self, handle)
     }
 }
 

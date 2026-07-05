@@ -27,7 +27,7 @@ pub use jsonl::JsonlRunner;
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 pub use resolver::resolve_load_plan;
-pub use scheduler::{DefaultScheduler, RunnerLimits, ScheduleInput, SchedulerPolicy};
+pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};
 
 #[cfg(test)]
 mod tests;

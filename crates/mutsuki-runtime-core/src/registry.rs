@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    ExecutionClass, HandlerBinding, RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility,
-    SurfaceOccupancy,
+    ExecutionClass, HandlerBinding, OrderingRequirement, RunnerDescriptor, RunnerPurity,
+    RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
 };
 
 use crate::{Runner, RuntimeResult};
@@ -272,7 +272,7 @@ pub struct ReloadDecision {
 
 pub fn validate_runtime_descriptors(
     load_plan: &RuntimeLoadPlan,
-    runners: &[mutsuki_runtime_contracts::RunnerDescriptor],
+    runners: &[RunnerDescriptor],
 ) -> RuntimeResult<()> {
     let planned: Vec<_> = load_plan
         .plugins
@@ -300,9 +300,7 @@ pub fn validate_runtime_descriptors(
     Ok(())
 }
 
-fn validate_runner_privilege(
-    runner: &mutsuki_runtime_contracts::RunnerDescriptor,
-) -> RuntimeResult<()> {
+fn validate_runner_privilege(runner: &RunnerDescriptor) -> RuntimeResult<()> {
     if runner.purity == RunnerPurity::Committer && runner.runner_id != "core.kernel" {
         return Err(crate::runtime_failure(
             ERR_REGISTRY_UNAUTHORIZED,
@@ -316,6 +314,54 @@ fn validate_runner_privilege(
             "runtime.load_plan",
             format!("runner.{}.control", runner.runner_id),
         ));
+    }
+    validate_runner_batch_capabilities(runner)?;
+    Ok(())
+}
+
+fn validate_runner_batch_capabilities(runner: &RunnerDescriptor) -> RuntimeResult<()> {
+    if runner.batch.preferred_batch_size == 0
+        || runner.batch.max_batch_entries == 0
+        || runner.batch.max_inflight_batches == 0
+        || runner.batch.preferred_batch_size > runner.batch.max_batch_entries
+    {
+        return Err(crate::runtime_failure(
+            ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.load_plan",
+            format!("runner.{}.batch", runner.runner_id),
+        ));
+    }
+    if runner.payload.layouts.is_empty()
+        || !runner
+            .payload
+            .layouts
+            .iter()
+            .any(|layout| layout == &runner.payload.preferred_layout)
+    {
+        return Err(crate::runtime_failure(
+            ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.load_plan",
+            format!("runner.{}.payload", runner.runner_id),
+        ));
+    }
+    match &runner.ordering.default {
+        OrderingRequirement::StrictSequence { .. } if !runner.ordering.supports_sequence => {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.load_plan",
+                format!("runner.{}.ordering.sequence", runner.runner_id),
+            ));
+        }
+        OrderingRequirement::SameResourceOrder { .. }
+            if !runner.ordering.supports_same_resource_order =>
+        {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.load_plan",
+                format!("runner.{}.ordering.resource", runner.runner_id),
+            ));
+        }
+        _ => {}
     }
     Ok(())
 }

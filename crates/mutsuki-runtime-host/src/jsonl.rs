@@ -2,8 +2,8 @@ use std::io::{BufRead, Write};
 use std::sync::Mutex;
 
 use mutsuki_runtime_contracts::{
-    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, RunnerDescriptor, RunnerResult,
-    RuntimeError, SagaPlan, ScalarValue, Task,
+    CommandBatch, CommandPlan, CompletionBatch, ExportPlan, PlanReceipt, RunnerDescriptor,
+    RuntimeError, SagaPlan, ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use serde::de::DeserializeOwned;
@@ -130,14 +130,18 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        validate_task_leases(&ctx, &tasks)?;
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        validate_batch_leases(&ctx, &batch)?;
         self.bridge.request_as(
-            "runner.step",
+            "runner.run_batch",
             json!({
                 "runner_id": self.descriptor.runner_id,
                 "ctx": ctx,
-                "tasks": tasks
+                "batch": batch
             }),
         )
     }
@@ -159,32 +163,31 @@ impl<R: BufRead + Send, W: Write + Send> Runner for JsonlRunner<R, W> {
     }
 }
 
-fn validate_task_leases(ctx: &RunnerContext, tasks: &[Task]) -> RuntimeResult<()> {
-    for task in tasks {
-        if task.lease_id != ctx.task_lease_id {
-            let mut error = RuntimeError::new(
-                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                "jsonl_runner",
-                format!("runner.step.{}", task.task_id),
-            );
-            if let Some(ctx_lease_id) = &ctx.task_lease_id {
-                error.evidence.insert(
-                    "ctx_task_lease_id".into(),
-                    ScalarValue::String(ctx_lease_id.clone()),
-                );
-            }
-            if let Some(task_lease_id) = &task.lease_id {
-                error.evidence.insert(
-                    "task_lease_id".into(),
-                    ScalarValue::String(task_lease_id.clone()),
-                );
-            }
-            error.evidence.insert(
-                "executor_id".into(),
-                ScalarValue::String(ctx.executor_id.clone()),
-            );
-            return Err(RuntimeFailure::new(error));
-        }
+fn validate_batch_leases(ctx: &RunnerContext, batch: &WorkBatch) -> RuntimeResult<()> {
+    let batch_lease_ids = batch
+        .task_leases
+        .iter()
+        .map(|lease| lease.lease_id.clone())
+        .collect::<Vec<_>>();
+    if batch_lease_ids != ctx.task_lease_ids {
+        let mut error = RuntimeError::new(
+            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+            "jsonl_runner",
+            format!("runner.run_batch.{}", batch.batch_id),
+        );
+        error.evidence.insert(
+            "ctx_task_lease_ids".into(),
+            ScalarValue::String(ctx.task_lease_ids.join(",")),
+        );
+        error.evidence.insert(
+            "batch_task_lease_ids".into(),
+            ScalarValue::String(batch_lease_ids.join(",")),
+        );
+        error.evidence.insert(
+            "executor_id".into(),
+            ScalarValue::String(ctx.executor_id.clone()),
+        );
+        return Err(RuntimeFailure::new(error));
     }
     Ok(())
 }

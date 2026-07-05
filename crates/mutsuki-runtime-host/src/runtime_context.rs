@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan,
-    SnapshotDescriptor, StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
+    CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan, SnapshotDescriptor,
+    StreamPlan, TaskBatch, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -62,30 +62,22 @@ impl ActorCommandClient {
 }
 
 impl TaskSubmitter for ActorCommandClient {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        let handle = TaskHandle {
-            task_id: task.task_id.clone(),
-            protocol_id: task.protocol_id.clone(),
-            target_binding_id: task.target_binding_id.clone(),
-            cancel_policy: CancelPolicy::Cascade,
-            trace_id: task.trace_id.clone(),
-            correlation_id: task.correlation_id.clone(),
-        };
-        match self.dispatch(HostRuntimeCommand::SubmitTask(Box::new(task)))? {
-            HostRuntimeReply::TaskSubmitted(_) => Ok(handle),
-            reply => Err(unexpected_reply("task.submit", reply)),
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        match self.dispatch(HostRuntimeCommand::SubmitBatch(Box::new(batch)))? {
+            HostRuntimeReply::TaskBatchSubmitted(handles) => Ok(handles),
+            reply => Err(unexpected_reply("task.submit_batch", reply)),
         }
     }
 
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
-        match self.dispatch(HostRuntimeCommand::CancelTask(task_id.into()))? {
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
+        match self.dispatch(HostRuntimeCommand::CancelTask(handle.clone()))? {
             HostRuntimeReply::TaskCancelled(_) => Ok(()),
             reply => Err(unexpected_reply("task.cancel", reply)),
         }
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
-        match self.dispatch(HostRuntimeCommand::TaskOutcome(task_id.into()))? {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+        match self.dispatch(HostRuntimeCommand::TaskOutcome(handle.clone()))? {
             HostRuntimeReply::TaskOutcome(outcome) => Ok(outcome),
             reply => Err(unexpected_reply("task.outcome", reply)),
         }

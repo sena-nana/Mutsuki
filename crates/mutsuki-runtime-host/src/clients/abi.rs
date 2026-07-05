@@ -2,7 +2,7 @@ use std::io::{BufRead, Write};
 
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan, SnapshotDescriptor,
-    StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
+    StreamPlan, TaskBatch, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
 use mutsuki_runtime_sdk::{ResourcePlanGateway, TaskSubmitter};
@@ -31,20 +31,20 @@ where
     R: BufRead + Send,
     W: Write + Send,
 {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         self.bridge
-            .request_as("task.submit", json!({ "task": task }))
+            .request_as("task.submit_batch", json!({ "batch": batch }))
     }
 
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
         self.bridge
-            .request("task.cancel", json!({ "task_id": task_id }))?;
+            .request("task.cancel", json!({ "handle": handle }))?;
         Ok(())
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.bridge
-            .request_as("task.outcome", json!({ "task_id": task_id }))
+            .request_as("task.outcome", json!({ "handle": handle }))
     }
 }
 

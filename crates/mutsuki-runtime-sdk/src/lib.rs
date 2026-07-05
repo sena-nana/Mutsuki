@@ -8,9 +8,12 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 extern crate self as mutsuki_runtime_sdk;
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef, ResourceSealState,
-    ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus, Task, TaskAwait, TaskHandle,
-    TaskOutcome, TaskStepContinuation,
+    BatchPayload, CancelPolicy, ColumnPayload, ColumnarPayload, CompletionBatch, EntryCompletion,
+    OrderingRequirement, PackedBuffer, PayloadLayout, ResourceAccess, ResourceAccessMode,
+    ResourceId, ResourceLifetime, ResourceRef, ResourceRequirement, ResourceSealState,
+    ResourceSemantic, ResourceSlice, ResourceSliceSet, RunnerDescriptor, RunnerResult,
+    RunnerStatus, Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation,
+    WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
@@ -49,25 +52,170 @@ pub trait SdkProtocol {
     const PROTOCOL_ID: &'static str;
 }
 
+#[derive(Clone, Debug)]
+pub struct TaskBatchBuilder {
+    batch_id: String,
+    tick_id: Option<String>,
+    tasks: Vec<Task>,
+    payload_layout: PayloadLayout,
+    resource_plan: Option<WorkResourcePlan>,
+}
+
+impl TaskBatchBuilder {
+    pub fn new(batch_id: impl Into<String>) -> Self {
+        Self {
+            batch_id: batch_id.into(),
+            tick_id: None,
+            tasks: Vec::new(),
+            payload_layout: PayloadLayout::Row,
+            resource_plan: None,
+        }
+    }
+
+    pub fn tick_id(mut self, tick_id: impl Into<String>) -> Self {
+        self.tick_id = Some(tick_id.into());
+        self
+    }
+
+    pub fn payload_layout(mut self, layout: PayloadLayout) -> Self {
+        self.payload_layout = layout;
+        self
+    }
+
+    pub fn resource_plan(mut self, plan: WorkResourcePlan) -> Self {
+        self.resource_plan = Some(plan);
+        self
+    }
+
+    pub fn task(mut self, task: Task) -> Self {
+        self.tasks.push(task);
+        self
+    }
+
+    pub fn build(self) -> TaskBatch {
+        TaskBatch {
+            batch_id: self.batch_id,
+            tick_id: self.tick_id,
+            tasks: self.tasks,
+            payload_layout: self.payload_layout,
+            resource_plan: self.resource_plan,
+        }
+    }
+}
+
+pub struct TaskOptions;
+
+impl TaskOptions {
+    pub fn read(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
+        ResourceRequirement {
+            ref_id: ref_id.into(),
+            mode: ResourceAccessMode::Read,
+            expected_version,
+        }
+    }
+
+    pub fn write(ref_id: impl Into<String>, expected_version: Option<u64>) -> ResourceRequirement {
+        ResourceRequirement {
+            ref_id: ref_id.into(),
+            mode: ResourceAccessMode::Write,
+            expected_version,
+        }
+    }
+
+    pub fn exclusive_write(
+        ref_id: impl Into<String>,
+        expected_version: Option<u64>,
+    ) -> ResourceRequirement {
+        ResourceRequirement {
+            ref_id: ref_id.into(),
+            mode: ResourceAccessMode::ExclusiveWrite,
+            expected_version,
+        }
+    }
+
+    pub fn strict_sequence(sequence_id: impl Into<String>) -> OrderingRequirement {
+        OrderingRequirement::StrictSequence {
+            sequence_id: sequence_id.into(),
+        }
+    }
+}
+
+pub struct BatchPayloadBuilder;
+
+impl BatchPayloadBuilder {
+    pub fn row_tasks(tasks: &[Task]) -> BatchPayload {
+        BatchPayload::Row {
+            entries: tasks
+                .iter()
+                .map(|task| serde_json::to_value(task).expect("Task serializes"))
+                .collect(),
+        }
+    }
+
+    pub fn columnar(columns: Vec<ColumnPayload>, row_count: usize) -> BatchPayload {
+        BatchPayload::Columnar {
+            payload: ColumnarPayload { columns, row_count },
+        }
+    }
+
+    pub fn binary_packed(
+        encoding: impl Into<String>,
+        bytes: Vec<u8>,
+        row_count: usize,
+    ) -> BatchPayload {
+        BatchPayload::BinaryPacked {
+            buffer: PackedBuffer {
+                encoding: encoding.into(),
+                bytes,
+                row_count,
+            },
+        }
+    }
+
+    pub fn resource_backed(slices: Vec<ResourceSlice>) -> BatchPayload {
+        BatchPayload::ResourceBacked {
+            slices: ResourceSliceSet { slices },
+        }
+    }
+}
+
 pub trait RuntimeClient: Send + Sync {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle>;
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>>;
-    fn register_waker(&self, _task_id: &str, _waker: &Waker) {}
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>>;
+    fn submit_one(&self, task: Task) -> RuntimeResult<TaskHandle> {
+        let batch_id = format!("sdk.submit.{}", task.task_id);
+        self.submit_batch(TaskBatch::one(batch_id, task))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                mutsuki_runtime_core::RuntimeFailure::new(
+                    mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                        "runtime.sdk",
+                        "task.submit_one.empty",
+                    ),
+                )
+            })
+    }
+    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+        self.submit_one(task)
+    }
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
+    fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
 }
 
 pub type RuntimeClientRef = Arc<dyn RuntimeClient>;
 
 impl RuntimeClient for Arc<Mutex<CoreRuntime>> {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         self.lock()
             .expect("runtime mutex poisoned")
-            .submit_task_handle(task)
+            .submit_batch(batch)
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.lock()
             .expect("runtime mutex poisoned")
-            .task_outcome(task_id)
+            .task_handle_outcome(handle)
     }
 }
 
@@ -90,10 +238,10 @@ impl Future for TaskHandleFuture {
     type Output = RuntimeResult<TaskOutcome>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.client.task_outcome(&self.handle.task_id) {
+        match self.client.task_outcome(&self.handle) {
             Ok(Some(outcome)) => Poll::Ready(Ok(outcome)),
             Ok(None) => {
-                self.client.register_waker(&self.handle.task_id, cx.waker());
+                self.client.register_waker(&self.handle, cx.waker());
                 Poll::Pending
             }
             Err(error) => Poll::Ready(Err(error)),
@@ -334,7 +482,7 @@ impl Future for CallFuture {
                 self.state = CallState::Submitted { handle };
                 Poll::Pending
             }
-            CallState::Submitted { handle } => match self.client.task_outcome(&handle.task_id) {
+            CallState::Submitted { handle } => match self.client.task_outcome(&handle) {
                 Ok(Some(outcome)) => {
                     self.state = CallState::Done;
                     Poll::Ready(Ok(outcome))
@@ -347,7 +495,7 @@ impl Future for CallFuture {
                             None,
                             handle.cancel_policy.clone(),
                         ));
-                    self.client.register_waker(&handle.task_id, cx.waker());
+                    self.client.register_waker(&handle, cx.waker());
                     self.state = CallState::Submitted { handle };
                     Poll::Pending
                 }
@@ -465,78 +613,47 @@ impl Runner for AsyncRunnerAdapter {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        let mut results = Vec::new();
-        let invocation_id = _ctx.invocation_id.clone();
-        for task in tasks {
-            let task_id = task.task_id.clone();
-            if !self.invocations.contains_key(&task_id) {
-                let pending = Arc::new(Mutex::new(None));
-                let async_ctx = AsyncRunnerContext {
-                    client: self.client.clone(),
-                    parent_task_id: task.task_id.clone(),
-                    current_runner_id: self.descriptor.runner_id.clone(),
-                    trace_id: task.trace_id.clone(),
-                    correlation_id: task.correlation_id.clone(),
-                    next_call: Arc::new(AtomicU64::new(0)),
-                    pending: pending.clone(),
-                    allow_self_call: self.allow_self_call,
-                };
-                let future = (self.factory)(async_ctx, task);
-                self.invocations
-                    .insert(task_id.clone(), AsyncInvocation { future, pending });
-            }
-            self.track_invocation(&task_id, &invocation_id);
-            let invocation = self
-                .invocations
-                .get_mut(&task_id)
-                .expect("invocation inserted before poll");
-            *invocation
-                .pending
-                .lock()
-                .expect("pending await mutex poisoned") = None;
-            let waker = noop_waker();
-            let mut cx = Context::from_waker(&waker);
-            match invocation.future.as_mut().poll(&mut cx) {
-                Poll::Ready(result) => {
-                    self.remove_invocation_by_task(&task_id);
-                    results.push(result?);
-                }
-                Poll::Pending => {
-                    if let Some(pending) = invocation
-                        .pending
-                        .lock()
-                        .expect("pending await mutex poisoned")
-                        .take()
-                    {
-                        results.push(RunnerResult {
-                            task_id,
-                            deltas: Vec::new(),
-                            events: Vec::new(),
-                            tasks: pending.task.into_iter().collect(),
-                            effects: Vec::new(),
-                            values: Vec::new(),
-                            resources: Vec::new(),
-                            task_await: Some(pending.task_await),
-                            status: RunnerStatus::Waiting,
-                        });
-                    } else {
-                        results.push(RunnerResult {
-                            task_id,
-                            deltas: Vec::new(),
-                            events: Vec::new(),
-                            tasks: Vec::new(),
-                            effects: Vec::new(),
-                            values: Vec::new(),
-                            resources: Vec::new(),
-                            task_await: None,
-                            status: RunnerStatus::Continue,
-                        });
-                    }
-                }
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let tasks = batch.row_payload_tasks();
+        let mut results = Vec::with_capacity(batch.entries.len());
+        for entry in &batch.entries {
+            let Some(task) = tasks
+                .iter()
+                .find(|task| task.task_id == entry.task_id)
+                .cloned()
+            else {
+                results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                        "sdk.async_runner_adapter",
+                        format!("batch.entry.{}", entry.entry_id),
+                    )),
+                });
+                continue;
+            };
+            match self.run_one(ctx.clone(), task) {
+                Ok(result) => results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: Some(result),
+                    error: None,
+                }),
+                Err(failure) => results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(failure.error().clone()),
+                }),
             }
         }
-        Ok(results)
+        Ok(CompletionBatch::from_results(&batch, results))
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
@@ -544,6 +661,149 @@ impl Runner for AsyncRunnerAdapter {
             self.remove_invocation_by_task(&task_id);
         }
         Ok(())
+    }
+}
+
+impl AsyncRunnerAdapter {
+    #[cfg(test)]
+    pub(crate) fn run_one_for_test(
+        &mut self,
+        ctx: RunnerContext,
+        task: Task,
+    ) -> RuntimeResult<RunnerResult> {
+        let batch = single_entry_batch(&ctx, task);
+        let completion = self.run_batch(ctx, batch)?;
+        let entry = completion
+            .results
+            .into_iter()
+            .next()
+            .expect("single entry batch returns one completion");
+        if let Some(error) = entry.error {
+            return Err(mutsuki_runtime_core::RuntimeFailure::new(error));
+        }
+        entry.result.ok_or_else(|| {
+            mutsuki_runtime_core::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                "sdk.test",
+                format!("batch.entry.empty.{}", entry.entry_id),
+            ))
+        })
+    }
+
+    fn run_one(&mut self, ctx: RunnerContext, task: Task) -> RuntimeResult<RunnerResult> {
+        let invocation_id = ctx.invocation_id.clone();
+        let task_id = task.task_id.clone();
+        if !self.invocations.contains_key(&task_id) {
+            let pending = Arc::new(Mutex::new(None));
+            let async_ctx = AsyncRunnerContext {
+                client: self.client.clone(),
+                parent_task_id: task.task_id.clone(),
+                current_runner_id: self.descriptor.runner_id.clone(),
+                trace_id: task.trace_id.clone(),
+                correlation_id: task.correlation_id.clone(),
+                next_call: Arc::new(AtomicU64::new(0)),
+                pending: pending.clone(),
+                allow_self_call: self.allow_self_call,
+            };
+            let future = (self.factory)(async_ctx, task);
+            self.invocations
+                .insert(task_id.clone(), AsyncInvocation { future, pending });
+        }
+        self.track_invocation(&task_id, &invocation_id);
+        let invocation = self
+            .invocations
+            .get_mut(&task_id)
+            .expect("invocation inserted before poll");
+        *invocation
+            .pending
+            .lock()
+            .expect("pending await mutex poisoned") = None;
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        match invocation.future.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => {
+                self.remove_invocation_by_task(&task_id);
+                result
+            }
+            Poll::Pending => {
+                if let Some(pending) = invocation
+                    .pending
+                    .lock()
+                    .expect("pending await mutex poisoned")
+                    .take()
+                {
+                    Ok(RunnerResult {
+                        task_id,
+                        deltas: Vec::new(),
+                        events: Vec::new(),
+                        tasks: pending.task.into_iter().collect(),
+                        effects: Vec::new(),
+                        values: Vec::new(),
+                        resources: Vec::new(),
+                        task_await: Some(pending.task_await),
+                        status: RunnerStatus::Waiting,
+                    })
+                } else {
+                    Ok(RunnerResult {
+                        task_id,
+                        deltas: Vec::new(),
+                        events: Vec::new(),
+                        tasks: Vec::new(),
+                        effects: Vec::new(),
+                        values: Vec::new(),
+                        resources: Vec::new(),
+                        task_await: None,
+                        status: RunnerStatus::Continue,
+                    })
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
+    use mutsuki_runtime_contracts::{
+        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, TaskLease, WorkResourcePlan,
+    };
+
+    let lease_id = ctx
+        .task_lease_ids
+        .first()
+        .cloned()
+        .unwrap_or_else(|| format!("lease:{}", task.task_id));
+    task.lease_id = Some(lease_id.clone());
+    let lease = TaskLease {
+        lease_id,
+        task_id: task.task_id.clone(),
+        runner_id: "sdk.test.runner".into(),
+        executor_id: ctx.executor_id.clone(),
+        registry_generation: ctx.registry_generation,
+        acquired_at_step: ctx.current_step,
+        expires_at_step: None,
+    };
+    WorkBatch {
+        batch_id: ctx.batch_id.clone(),
+        tick_id: ctx.tick_id.clone(),
+        batch_key: "sdk.test.runner".into(),
+        entries: vec![BatchEntry {
+            entry_id: task.task_id.clone(),
+            task_id: task.task_id.clone(),
+            trace_id: task.trace_id.clone(),
+            parent_id: None,
+            payload_index: 0,
+            resource_requirement_indices: Vec::new(),
+            cancel_index: Some(0),
+            deadline_tick: ctx.deadline_tick,
+            priority: task.priority,
+            lane: DispatchLane::Normal,
+            ordering: OrderingRequirement::None,
+        }],
+        payload: BatchPayload::Row {
+            entries: vec![serde_json::to_value(task).expect("Task serializes")],
+        },
+        resource_plan: WorkResourcePlan::empty(),
+        task_leases: vec![lease],
     }
 }
 

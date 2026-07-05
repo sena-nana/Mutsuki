@@ -22,7 +22,7 @@ fn runtime_bootstrapper_boots_runtime_and_runs_runner_loop() {
         .unwrap();
 
     runtime
-        .enqueue_task(Task::new("task-1", "raw.input", json!({"ok": true})))
+        .submit_task(Task::new("task-1", "raw.input", json!({"ok": true})))
         .unwrap();
     let report = runtime.run_until_idle(4).unwrap();
 
@@ -46,10 +46,10 @@ fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
             json!({"ok": true}),
         ))))
         .unwrap();
-    assert_eq!(
-        submitted,
-        crate::HostRuntimeReply::TaskSubmitted("task-1".into())
-    );
+    let crate::HostRuntimeReply::TaskSubmitted(handle) = submitted else {
+        panic!("expected task submitted reply");
+    };
+    assert_eq!(handle.task_id, "task-1");
 
     let reply = runtime
         .dispatch(crate::HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
@@ -217,12 +217,7 @@ fn enabled_plugin_runner_requires_matching_deployment_bridge() {
     mismatched_host.register_manifest(manifest);
     mismatched_host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
 
     let mismatched = mismatched_host.into_runtime(profile).err().unwrap();
@@ -349,6 +344,7 @@ fn active_resource_provider_requires_loaded_provider_instance() {
         Some(&ScalarValue::String(PROVIDER_ID.into()))
     );
 }
+
 fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
     RuntimeProfile {
         profile_id: "host-service".into(),

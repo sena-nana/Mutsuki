@@ -47,17 +47,16 @@ impl Runner for BlockingObservedRunner {
         &self.descriptor
     }
 
-    fn step(
+    fn run_batch(
         &mut self,
         _ctx: RunnerContext,
-        tasks: Vec<Task>,
-    ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+        batch: WorkBatch,
+    ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
         self.started_tx.send(()).unwrap();
         let _ = self.release_rx.recv();
-        Ok(tasks
-            .into_iter()
-            .map(|task| RunnerResult::completed(task.task_id))
-            .collect())
+        scalar_completion_batch(&batch, |task| {
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
     }
 
     fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
@@ -72,6 +71,44 @@ impl Runner for BlockingObservedRunner {
         *self.disposed.lock().expect("disposed mutex poisoned") = true;
         Ok(())
     }
+}
+
+fn scalar_completion_batch(
+    batch: &WorkBatch,
+    mut result: impl FnMut(&Task) -> RuntimeResult<RunnerResult>,
+) -> RuntimeResult<CompletionBatch> {
+    let tasks = batch.row_payload_tasks();
+    let mut results = Vec::with_capacity(batch.entries.len());
+    for entry in &batch.entries {
+        let Some(task) = tasks.iter().find(|task| task.task_id == entry.task_id) else {
+            results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(RuntimeError::new(
+                    ERR_TASK_CLAIM_CONFLICT,
+                    "host.test.runner",
+                    format!("batch.entry.{}", entry.entry_id),
+                )),
+            });
+            continue;
+        };
+        match result(task) {
+            Ok(result) => results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: Some(result),
+                error: None,
+            }),
+            Err(failure) => results.push(EntryCompletion {
+                entry_id: entry.entry_id.clone(),
+                task_id: entry.task_id.clone(),
+                result: None,
+                error: Some(failure.error().clone()),
+            }),
+        }
+    }
+    Ok(CompletionBatch::from_results(batch, results))
 }
 
 #[test]
@@ -89,20 +126,12 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
         blocking_descriptor,
         move |_ctx, tasks| {
             release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     host.register_runner(Box::new(NativeRunner::new(
         echo_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
@@ -157,10 +186,7 @@ fn task_snapshots_return_live_task_metadata_in_actor_order() {
         move |_ctx, tasks| {
             started_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
@@ -298,7 +324,7 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
     assert!(
         spans
             .iter()
-            .any(|span| { span.name == "runner.step" && span.trace_id == "trace-custom" })
+            .any(|span| { span.name == "runner.run_batch" && span.trace_id == "trace-custom" })
     );
     let (_, empty) = SdkHostRuntime::trace_spans_after(&runtime, next_index).unwrap();
     assert!(empty.is_empty());
@@ -318,7 +344,7 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
     assert!(
         later_spans
             .iter()
-            .any(|span| { span.name == "runner.step" && span.trace_id == "trace-next" })
+            .any(|span| { span.name == "runner.run_batch" && span.trace_id == "trace-next" })
     );
 }
 
@@ -336,21 +362,11 @@ fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
     ));
     reload_host.register_runner(Box::new(NativeRunner::new(
         echo_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     reload_host.register_runner(Box::new(NativeRunner::new(
         new_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
 
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
@@ -388,10 +404,7 @@ fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
         move |_ctx, tasks| {
             started_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
@@ -409,12 +422,7 @@ fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
     reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     reload_host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
     let (done_tx, done_rx) = mpsc::channel();
@@ -466,10 +474,7 @@ fn host_runtime_reload_timeout_preserves_active_generation() {
         move |_ctx, tasks| {
             started_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     let mut runtime = host.into_host_runtime(runtime_profile()).unwrap();
@@ -487,12 +492,7 @@ fn host_runtime_reload_timeout_preserves_active_generation() {
     reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     reload_host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
 
@@ -521,15 +521,14 @@ fn failed_host_runtime_reload_disposes_prepared_runners() {
             &self.descriptor
         }
 
-        fn step(
+        fn run_batch(
             &mut self,
             _ctx: RunnerContext,
-            tasks: Vec<Task>,
-        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            batch: WorkBatch,
+        ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
+            scalar_completion_batch(&batch, |task| {
+                Ok(RunnerResult::completed(task.task_id.clone()))
+            })
         }
 
         fn dispose(&mut self) -> mutsuki_runtime_core::RuntimeResult<()> {
@@ -575,10 +574,7 @@ fn host_runtime_routes_execution_classes_to_named_worker_pools() {
                 .name()
                 .unwrap_or_default()
                 .to_string();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
@@ -622,10 +618,7 @@ fn host_worker_failure_marks_task_failed_and_returns_runner() {
                     "flaky.first_attempt",
                 )));
             }
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            Ok(RunnerResult::completed(tasks.task_id))
         },
     )));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
@@ -675,17 +668,16 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
             &self.descriptor
         }
 
-        fn step(
+        fn run_batch(
             &mut self,
             _ctx: RunnerContext,
-            tasks: Vec<Task>,
-        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+            batch: WorkBatch,
+        ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
             self.started_tx.send(()).unwrap();
             self.release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            scalar_completion_batch(&batch, |task| {
+                Ok(RunnerResult::completed(task.task_id.clone()))
+            })
         }
 
         fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
@@ -712,22 +704,26 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     }));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
 
-    runtime
+    let slow_handle = match runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "slow-1",
             "slow.work",
             json!({}),
         ))))
-        .unwrap();
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("expected task submitted, got {reply:?}"),
+    };
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Running));
 
     assert_eq!(
         runtime
-            .dispatch(HostRuntimeCommand::CancelTask("slow-1".into()))
+            .dispatch(HostRuntimeCommand::CancelTask(slow_handle.clone()))
             .unwrap(),
-        HostRuntimeReply::TaskCancelled("slow-1".into())
+        HostRuntimeReply::TaskCancelled(slow_handle)
     );
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
     assert!(
@@ -745,7 +741,7 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["task-lease-1-slow-1".to_string()]
+        vec!["batch-1-cancellable.runner-1".to_string()]
     );
 }
 
@@ -763,19 +759,18 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
             &self.descriptor
         }
 
-        fn step(
+        fn run_batch(
             &mut self,
             ctx: RunnerContext,
-            tasks: Vec<Task>,
-        ) -> mutsuki_runtime_core::RuntimeResult<Vec<RunnerResult>> {
+            batch: WorkBatch,
+        ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
             assert_eq!(ctx.deadline_tick, Some(2));
-            assert_eq!(ctx.invocation_id, "task-lease-1-deadline-1");
+            assert_eq!(ctx.invocation_id, "batch-1-deadline.runner-1");
             self.started_tx.send(()).unwrap();
             self.release_rx.recv().unwrap();
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            scalar_completion_batch(&batch, |task| {
+                Ok(RunnerResult::completed(task.task_id.clone()))
+            })
         }
 
         fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
@@ -844,7 +839,7 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
     );
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["task-lease-1-deadline-1".to_string()]
+        vec!["batch-1-deadline.runner-1".to_string()]
     );
 }
 
@@ -872,12 +867,7 @@ fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
     }));
     host.register_runner(Box::new(NativeRunner::new(
         echo_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let mut config = HostRuntimeConfig {
         blocking_threads: 1,
@@ -937,7 +927,7 @@ fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
     );
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["task-lease-1-wall-stuck-1".to_string()]
+        vec!["batch-1-stuck.wall.runner-1".to_string()]
     );
     assert!(*disposed.lock().expect("disposed mutex poisoned"));
 }
@@ -972,12 +962,7 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
     }));
     host.register_runner(Box::new(NativeRunner::new(
         echo_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let config = HostRuntimeConfig {
         blocking_threads: 1,
@@ -988,17 +973,21 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
         .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 
-    runtime
+    let cancel_handle = match runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "cancel-stuck-1",
             "cancel.stuck",
             json!({}),
         ))))
-        .unwrap();
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("expected task submitted, got {reply:?}"),
+    };
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     runtime
-        .dispatch(HostRuntimeCommand::CancelTask("cancel-stuck-1".into()))
+        .dispatch(HostRuntimeCommand::CancelTask(cancel_handle))
         .unwrap();
     assert_eq!(
         runtime.task_status("cancel-stuck-1"),
@@ -1027,7 +1016,7 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
     wait_for_dispose(&mut runtime, &disposed);
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["task-lease-1-cancel-stuck-1".to_string()]
+        vec!["batch-1-stuck.cancel.runner-1".to_string()]
     );
     assert!(*disposed.lock().expect("disposed mutex poisoned"));
 }
@@ -1062,12 +1051,7 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     }));
     host.register_runner(Box::new(NativeRunner::new(
         echo_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let config = HostRuntimeConfig {
         blocking_threads: 1,
@@ -1115,7 +1099,7 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     wait_for_dispose(&mut runtime, &disposed);
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["task-lease-1-health-stuck-1".to_string()]
+        vec!["batch-1-stuck.health.runner-1".to_string()]
     );
     assert!(*disposed.lock().expect("disposed mutex poisoned"));
 }
@@ -1134,12 +1118,7 @@ fn host_runtime_requires_active_scheduler_policy_instance() {
     host.register_manifest(manifest);
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::LockedBuiltin;
@@ -1171,12 +1150,7 @@ fn host_runtime_rejects_pruned_scheduler_policy_instance() {
     host.register_manifest(manifest);
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::LockedBuiltin;
@@ -1272,12 +1246,7 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     host.register_manifest(manifest);
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::LockedBuiltin;
@@ -1363,7 +1332,7 @@ fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
 
     assert_eq!(handle.task_id, "sdk-host-task");
     assert!(matches!(
-        SdkHostRuntime::task_outcome(&runtime, "sdk-host-task").unwrap(),
+        SdkHostRuntime::task_outcome(&runtime, &handle).unwrap(),
         Some(TaskOutcome::Completed { task_id, .. }) if task_id == "sdk-host-task"
     ));
     SdkHostRuntime::request_shutdown(&runtime, "test.shutdown").unwrap();

@@ -1,3 +1,4 @@
+mod batch;
 mod common;
 mod error;
 mod event;
@@ -8,9 +9,16 @@ mod runner;
 mod task;
 mod trace;
 
+pub use batch::{
+    BatchEntry, BatchPayload, ColumnPayload, ColumnarPayload, CompletionBatch, DeferredResourceOp,
+    DispatchLane, EntryCompletion, OrderingRequirement, PackedBuffer, PayloadLayout,
+    ResourceAccessMode, ResourceReadView, ResourceRequirement, ResourceSlice, ResourceSliceSet,
+    ResourceWriteLock, TaskBatch, WorkBatch, WorkResourcePlan, WorkSet,
+};
 pub use common::{
-    BindingId, ExecutorId, PluginId, ProtocolId, RefId, ResourceCellId, ResourceLeaseId, RunnerId,
-    ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId, TraceId,
+    BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,
+    ResourceCellId, ResourceLeaseId, RunnerId, ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId,
+    TickId, TraceId,
 };
 pub use error::{
     ERR_CAPABILITY_EXHAUSTED, ERR_PLUGIN_DISABLED, ERR_PLUGIN_NOT_FOUND, ERR_REGISTRY_FROZEN,
@@ -41,8 +49,10 @@ pub use resource::{
     SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef, ValueStorage, WritePlan,
 };
 pub use runner::{
-    DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerContext,
-    RunnerDescriptor, RunnerPurity, RunnerResult, RunnerStatus,
+    DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerBatchCapability,
+    RunnerContext, RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
+    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult, RunnerStatus,
+    TimeoutGranularity,
 };
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,

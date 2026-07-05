@@ -27,10 +27,20 @@ impl Default for RunnerLimits {
 }
 
 #[derive(Debug)]
+pub struct HostCapacity {
+    pub running_batches: usize,
+    pub queued_batches: usize,
+    pub saturation: f32,
+    pub preferred_batch_size: usize,
+    pub max_inflight_bytes: usize,
+}
+
+#[derive(Debug)]
 pub struct ScheduleInput<'a> {
     pub runner: &'a RunnerDescriptor,
     pub load: &'a RunnerLoad,
     pub limits: &'a RunnerLimits,
+    pub host_capacity: HostCapacity,
     pub pool_slots: usize,
     pub hard_capacity: usize,
     pub current_step: u64,
@@ -78,26 +88,39 @@ pub(crate) fn decide_schedule(
     registry_generation: u64,
     limits: &RunnerLimits,
     pool_slots: usize,
+    running_batches: usize,
     policy: &dyn SchedulerPolicy,
-) -> ScheduleDecision {
+) -> RuntimeResult<ScheduleDecision> {
     let hard_capacity = hard_dispatch_capacity(descriptor, load, limits, pool_slots);
+    let host_capacity = host_capacity(descriptor, load, limits, running_batches);
     let input = ScheduleInput {
         runner: descriptor,
         load,
         limits,
+        host_capacity,
         pool_slots,
         hard_capacity,
         current_step,
         registry_generation,
     };
-    let decision = policy.decide(&input).unwrap_or_else(|failure| {
-        ScheduleDecision::new(
-            "host.default",
-            hard_capacity,
-            format!("fallback.{}", failure.error().code),
-        )
-    });
-    decision.clamp_to(hard_capacity)
+    let decision = policy.decide(&input)?;
+    Ok(decision.clamp_to(hard_capacity))
+}
+
+fn host_capacity(
+    descriptor: &RunnerDescriptor,
+    load: &RunnerLoad,
+    limits: &RunnerLimits,
+    running_batches: usize,
+) -> HostCapacity {
+    let max_inflight = limits.max_inflight.max(1);
+    HostCapacity {
+        running_batches,
+        queued_batches: load.queued_count,
+        saturation: (load.pending_weight as f32 / max_inflight as f32).min(1.0),
+        preferred_batch_size: descriptor.batch.preferred_batch_size.max(1),
+        max_inflight_bytes: usize::MAX,
+    }
 }
 
 fn hard_dispatch_capacity(

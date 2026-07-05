@@ -1,9 +1,46 @@
+use std::collections::BTreeMap;
+
+use mutsuki_runtime_contracts::DispatchLane;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneBudget {
+    pub max_entries: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DispatchBudget {
+    pub max_entries: usize,
+    pub max_batches: usize,
+    pub max_bytes: usize,
+    pub lane_budget: BTreeMap<DispatchLane, LaneBudget>,
+}
+
+impl DispatchBudget {
+    pub fn single_batch(max_entries: usize) -> Self {
+        Self {
+            max_entries,
+            max_batches: usize::from(max_entries > 0),
+            max_bytes: usize::MAX,
+            lane_budget: BTreeMap::new(),
+        }
+    }
+
+    pub fn clamp_to(mut self, hard_capacity: usize) -> Self {
+        self.max_entries = self.max_entries.min(hard_capacity);
+        if self.max_entries == 0 {
+            self.max_batches = 0;
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScheduleDecision {
     pub scheduler_id: String,
     pub reason: String,
     pub requested_dispatch_limit: usize,
     pub dispatch_limit: usize,
+    pub budget: DispatchBudget,
 }
 
 impl ScheduleDecision {
@@ -17,11 +54,19 @@ impl ScheduleDecision {
             reason: reason.into(),
             requested_dispatch_limit: dispatch_limit,
             dispatch_limit,
+            budget: DispatchBudget::single_batch(dispatch_limit),
         }
     }
 
     pub fn clamp_to(mut self, hard_capacity: usize) -> Self {
         self.dispatch_limit = self.dispatch_limit.min(hard_capacity);
+        self.budget = self.budget.clamp_to(hard_capacity);
+        self
+    }
+
+    pub fn with_budget(mut self, budget: DispatchBudget) -> Self {
+        self.budget = budget;
+        self.dispatch_limit = self.dispatch_limit.min(self.budget.max_entries);
         self
     }
 }

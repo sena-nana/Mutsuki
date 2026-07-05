@@ -21,7 +21,7 @@ pub use registry::{
 pub use resource_manager::{PackedValue, ResourceManager};
 pub use runner::{CoreKernelRunner, Runner, RunnerLoopReport};
 pub use runtime::{
-    CoreRuntime, InvocationPollution, RunnerCompletion, RunnerDispatch,
+    CoreRuntime, DispatchBudget, InvocationPollution, LaneBudget, RunnerCompletion, RunnerDispatch,
     RunningInvocationDisposition, ScheduleDecision, TaskResultSnapshot,
 };
 pub use task_pool::{RunnerLoad, TaskPool, TaskRecord};

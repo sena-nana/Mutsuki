@@ -18,10 +18,6 @@ impl ResourceManager {
             .ok_or_else(|| resource_not_found(format!("resource.open.{ref_id}")))
     }
 
-    pub fn map_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
-        self.open_resource(ref_id)
-    }
-
     pub fn register_resource_descriptor(
         &mut self,
         descriptor: ResourceRef,

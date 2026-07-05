@@ -26,6 +26,11 @@ pub(super) fn descriptor_with_class(
         execution_class,
         input_schema: json!({}),
         output_schema: json!({}),
+        batch: Default::default(),
+        payload: Default::default(),
+        resources: Default::default(),
+        ordering: Default::default(),
+        control: Default::default(),
         metadata: BTreeMap::new(),
         contract_surfaces: vec![format!("runner:{id}")],
     }
@@ -85,6 +90,7 @@ pub(super) fn std_memory_provider() -> std::sync::Arc<dyn ResourceProviderGatewa
         .expect("std memory plugin should provide memory provider")
         .provider
 }
+
 pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
     let mut runner_descriptor = descriptor("abi.runner", "abi.work");
     runner_descriptor.plugin_id = "plugin-abi".into();
@@ -133,12 +139,7 @@ pub(super) fn host_with_echo_runner() -> RuntimeBootstrapper {
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
     host.register_runner(Box::new(NativeRunner::new(
         runner_descriptor,
-        |_ctx: RunnerContext, tasks| {
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
-        },
+        |_ctx: RunnerContext, tasks| Ok(RunnerResult::completed(tasks.task_id)),
     )));
     host
 }

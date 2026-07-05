@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginManifest, RunnerDescriptor,
-    RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
+    CompletionBatch, ContractSurface, ContractSurfaceKind, EntryCompletion, PluginDeploymentKind,
+    PluginManifest, RunnerDescriptor, RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -21,12 +22,12 @@ use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
 use crate::scheduler::{DefaultScheduler, SchedulerPolicy};
 
-pub type NativeStepHandler =
-    Box<dyn FnMut(RunnerContext, Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> + Send>;
+pub type NativeEntryHandler =
+    Box<dyn FnMut(RunnerContext, Task) -> RuntimeResult<RunnerResult> + Send>;
 
 pub struct NativeRunner {
     descriptor: RunnerDescriptor,
-    handler: NativeStepHandler,
+    handler: NativeEntryHandler,
     cancelled: Vec<String>,
     disposed: bool,
 }
@@ -34,9 +35,7 @@ pub struct NativeRunner {
 impl NativeRunner {
     pub fn new(
         descriptor: RunnerDescriptor,
-        handler: impl FnMut(RunnerContext, Vec<Task>) -> RuntimeResult<Vec<RunnerResult>>
-        + Send
-        + 'static,
+        handler: impl FnMut(RunnerContext, Task) -> RuntimeResult<RunnerResult> + Send + 'static,
     ) -> Self {
         Self {
             descriptor,
@@ -52,8 +51,47 @@ impl Runner for NativeRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        (self.handler)(ctx, tasks)
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let tasks = batch.row_payload_tasks();
+        let mut results = Vec::with_capacity(batch.entries.len());
+        for entry in &batch.entries {
+            let Some(task) = tasks
+                .iter()
+                .find(|task| task.task_id == entry.task_id)
+                .cloned()
+            else {
+                results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                        "native_runner",
+                        format!("batch.entry.{}", entry.entry_id),
+                    )),
+                });
+                continue;
+            };
+            match (self.handler)(ctx.clone(), task) {
+                Ok(result) => results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: Some(result),
+                    error: None,
+                }),
+                Err(failure) => results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(failure.error().clone()),
+                }),
+            }
+        }
+        Ok(CompletionBatch::from_results(&batch, results))
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
@@ -323,8 +361,12 @@ impl Runner for GenerationRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        self.inner.step(ctx, tasks)
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        self.inner.run_batch(ctx, batch)
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {

@@ -9,17 +9,17 @@ use super::fixtures::*;
 
 struct ResultListRunner {
     descriptor: RunnerDescriptor,
-    results: Box<dyn Fn(&[Task]) -> Vec<RunnerResult> + Send>,
+    result: Box<dyn Fn(&Task) -> RunnerResult + Send>,
 }
 
 impl ResultListRunner {
     fn new(
         descriptor: RunnerDescriptor,
-        results: impl Fn(&[Task]) -> Vec<RunnerResult> + Send + 'static,
+        result: impl Fn(&Task) -> RunnerResult + Send + 'static,
     ) -> Self {
         Self {
             descriptor,
-            results: Box::new(results),
+            result: Box::new(result),
         }
     }
 }
@@ -29,8 +29,12 @@ impl Runner for ResultListRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        Ok((self.results)(&tasks))
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        scalar_batch_result(&batch, |task| Ok((self.result)(task)))
     }
 }
 
@@ -55,7 +59,11 @@ fn pure_runner_explicitly_enqueues_derived_tasks() {
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     runtime
-        .publish_raw_input("raw-1", "raw.input.chat", json!({"text": "hello"}))
+        .submit_task(Task::new(
+            "raw-1",
+            "raw.input.chat",
+            json!({"text": "hello"}),
+        ))
         .unwrap();
     let report = runtime.tick_once().unwrap();
 
@@ -65,7 +73,7 @@ fn pure_runner_explicitly_enqueues_derived_tasks() {
         runtime
             .trace_spans()
             .iter()
-            .any(|span| span.name == "runner.step")
+            .any(|span| span.name == "runner.run_batch")
     );
 }
 
@@ -400,7 +408,7 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
         .trace_spans()
         .iter()
         .find(|span| {
-            span.name == "runner.step"
+            span.name == "runner.run_batch"
                 && span.attributes.get("runner_id") == Some(&ScalarValue::String("worker".into()))
         })
         .unwrap();
@@ -418,7 +426,7 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
         Some(&ScalarValue::String("trace-task".into()))
     );
     assert_eq!(
-        span.attributes.get("task_lease_id"),
+        span.attributes.get("task_lease_ids"),
         Some(&ScalarValue::String("task-lease-1-trace-task".into()))
     );
     assert_eq!(
@@ -566,7 +574,7 @@ fn cancelling_waiting_parent_cascades_to_child() {
         .unwrap();
     runtime.tick_once().unwrap();
 
-    runtime.cancel_task("parent-1").unwrap();
+    runtime.cancel_task_by_id("parent-1").unwrap();
 
     assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Cancelled));
     assert_eq!(runtime.task_status("child-1"), Some(TaskStatus::Cancelled));
@@ -596,7 +604,7 @@ fn cancelling_waiting_parent_rejects_reserved_cancel_policy() {
     for policy in [CancelPolicy::Detach, CancelPolicy::Shield] {
         let mut runtime = runtime_waiting_on_child_with(policy);
 
-        let error = runtime.cancel_task("parent-1").unwrap_err();
+        let error = runtime.cancel_task_by_id("parent-1").unwrap_err();
 
         assert_eq!(error.error().code, "task.cancel_policy_unsupported");
         assert_eq!(runtime.task_status("parent-1"), Some(TaskStatus::Waiting));
@@ -746,15 +754,15 @@ fn duplicate_output_task_id_rejects_result_before_partial_routing() {
 }
 
 #[test]
-fn runner_dispatch_missing_result_fails_leased_task_without_retry() {
+fn runner_dispatch_unknown_result_fails_leased_task_without_retry() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let calls = Arc::new(Mutex::new(0));
     let observed_calls = calls.clone();
     let runners: Vec<Box<dyn Runner>> =
-        runners_with_kernel!(Box::new(ResultListRunner::new(worker, move |_tasks| {
+        runners_with_kernel!(Box::new(ResultListRunner::new(worker, move |_task| {
             *observed_calls.lock().expect("calls mutex poisoned") += 1;
-            Vec::new()
+            RunnerResult::completed("unknown-task")
         },)) as Box<dyn Runner>);
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime
@@ -772,17 +780,16 @@ fn runner_dispatch_missing_result_fails_leased_task_without_retry() {
 }
 
 #[test]
-fn duplicate_runner_results_fail_before_partial_routing() {
+fn mismatched_runner_result_fails_before_partial_routing() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> =
-        runners_with_kernel!(Box::new(ResultListRunner::new(worker, |tasks| {
-            let task = tasks.first().expect("runner should receive a task");
-            let mut first = RunnerResult::completed(task.task_id.clone());
-            first
+        runners_with_kernel!(Box::new(ResultListRunner::new(worker, |_task| {
+            let mut result = RunnerResult::completed("unknown-task");
+            result
                 .tasks
                 .push(Task::new("child-duplicate-result", "child.work", json!({})));
-            first.values.push(ValueRef {
+            result.values.push(ValueRef {
                 ref_id: "value:duplicate-result".into(),
                 provider_id: "mutsuki.std.resource.memory".into(),
                 schema: "value.small.v1".into(),
@@ -793,8 +800,7 @@ fn duplicate_runner_results_fail_before_partial_routing() {
                 lifetime: ResourceLifetime::Persistent,
                 storage: ValueStorage::LocalValueStore,
             });
-            let second = RunnerResult::completed(task.task_id.clone());
-            vec![first, second]
+            result
         },)) as Box<dyn Runner>);
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     runtime
@@ -970,11 +976,11 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             &self.descriptor
         }
 
-        fn step(
+        fn run_batch(
             &mut self,
             _ctx: RunnerContext,
-            tasks: Vec<Task>,
-        ) -> RuntimeResult<Vec<RunnerResult>> {
+            batch: WorkBatch,
+        ) -> RuntimeResult<CompletionBatch> {
             let mut calls = self.calls.lock().expect("calls mutex poisoned");
             *calls += 1;
             if *calls == 1 {
@@ -984,10 +990,9 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
                     "first call fails",
                 ));
             }
-            Ok(tasks
-                .into_iter()
-                .map(|task| RunnerResult::completed(task.task_id))
-                .collect())
+            scalar_batch_result(&batch, |task| {
+                Ok(RunnerResult::completed(task.task_id.clone()))
+            })
         }
     }
 
@@ -1006,8 +1011,18 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
         .enqueue_task(Task::new("task-1", "sim.work", json!({})))
         .unwrap();
 
-    let error = runtime.tick_once().unwrap_err();
-    assert_eq!(error.error().code, "runner.step_failed");
+    let report = runtime.tick_once().unwrap();
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Failed));
+    assert_eq!(
+        runtime
+            .task_result("task-1")
+            .unwrap()
+            .failure
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("runner.step_failed")
+    );
     assert!(
         runtime
             .registry_snapshot()
@@ -1015,12 +1030,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             .iter()
             .any(|runner| runner.runner_id == "worker")
     );
-
-    let report = runtime.tick_once().unwrap();
-
-    assert_eq!(report.completed_tasks, 1);
-    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
-    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 2);
+    assert_eq!(*calls.lock().expect("calls mutex poisoned"), 1);
 }
 
 #[test]
@@ -1030,7 +1040,7 @@ fn task_handle_facade_exposes_status_result_cancel_and_events() {
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
 
     let handle = runtime
-        .submit_task_handle(Task::new("handle-task", "manual.work", json!({})))
+        .submit_task(Task::new("handle-task", "manual.work", json!({})))
         .unwrap();
 
     assert_eq!(runtime.task_handle_status(&handle), Some(TaskStatus::Ready));

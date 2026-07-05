@@ -68,6 +68,13 @@ fn task_runner_resource_contracts_roundtrip_json() {
         runner_hint: Some("orchestrator".into()),
         registry_generation: 3,
         required_surfaces: vec!["task_protocol:raw.input.chat_message".into()],
+        dispatch_lane: DispatchLane::Interactive,
+        ordering: OrderingRequirement::PreserveSubmitOrder,
+        resource_requirements: vec![ResourceRequirement {
+            ref_id: "resource:1".into(),
+            mode: ResourceAccessMode::Read,
+            expected_version: Some(1),
+        }],
         created_sequence: 4,
     };
     assert_eq!(
@@ -84,6 +91,35 @@ fn task_runner_resource_contracts_roundtrip_json() {
         execution_class: ExecutionClass::Cpu,
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: serde_json::json!({"type": "object"}),
+        batch: RunnerBatchCapability {
+            mode: RunnerMode::Batch,
+            preferred_batch_size: 64,
+            max_batch_entries: 256,
+            max_inflight_batches: 4,
+            partial_failure: true,
+            preserve_order: false,
+        },
+        payload: RunnerPayloadCapability {
+            layouts: vec![PayloadLayout::Row, PayloadLayout::Columnar],
+            preferred_layout: PayloadLayout::Columnar,
+            zero_copy: true,
+        },
+        resources: RunnerResourceCapability {
+            batch_read: true,
+            batch_write: true,
+            requires_resource_plan: true,
+            supports_shared_memory: true,
+        },
+        ordering: RunnerOrderingCapability {
+            default: OrderingRequirement::None,
+            supports_sequence: true,
+            supports_same_resource_order: true,
+        },
+        control: RunnerControlCapability {
+            entry_cancel: true,
+            batch_cancel: true,
+            timeout_granularity: TimeoutGranularity::Entry,
+        },
         metadata: Default::default(),
         contract_surfaces: vec!["runner:runner-a".into()],
     };
@@ -97,6 +133,108 @@ fn task_runner_resource_contracts_roundtrip_json() {
     assert_eq!(
         serde_json::from_str::<ResourceRef>(&serde_json::to_string(&resource).unwrap()).unwrap(),
         resource
+    );
+}
+
+#[test]
+fn batch_work_contracts_roundtrip_json() {
+    let lease = TaskLease {
+        lease_id: "lease-1".into(),
+        task_id: "task-1".into(),
+        runner_id: "runner-a".into(),
+        executor_id: "executor-a".into(),
+        registry_generation: 3,
+        acquired_at_step: 10,
+        expires_at_step: Some(11),
+    };
+    let entry = BatchEntry {
+        entry_id: "entry-1".into(),
+        task_id: "task-1".into(),
+        trace_id: Some("trace-1".into()),
+        parent_id: None,
+        payload_index: 0,
+        resource_requirement_indices: vec![0],
+        cancel_index: Some(0),
+        deadline_tick: Some(20),
+        priority: 10,
+        lane: DispatchLane::Interactive,
+        ordering: OrderingRequirement::PreserveSubmitOrder,
+    };
+    let resource_plan = WorkResourcePlan {
+        read_views: vec![ResourceReadView {
+            ref_id: "resource:1".into(),
+            requirement_indices: vec![0],
+        }],
+        write_locks: Vec::new(),
+        version_checks: vec![VersionExpectation {
+            ref_id: "resource:1".into(),
+            expected_version: 1,
+        }],
+        deferred_writes: Vec::new(),
+        conflict_entries: Vec::new(),
+    };
+    let batch = WorkBatch {
+        batch_id: "batch-1".into(),
+        tick_id: "tick-10".into(),
+        batch_key: "runner-a".into(),
+        entries: vec![entry.clone()],
+        payload: BatchPayload::Row {
+            entries: vec![serde_json::json!({"input": 1})],
+        },
+        resource_plan: resource_plan.clone(),
+        task_leases: vec![lease],
+    };
+    assert_eq!(
+        serde_json::from_str::<WorkBatch>(&serde_json::to_string(&batch).unwrap()).unwrap(),
+        batch
+    );
+
+    let completion = CompletionBatch {
+        batch_id: "batch-1".into(),
+        tick_id: "tick-10".into(),
+        results: vec![EntryCompletion {
+            entry_id: entry.entry_id,
+            task_id: entry.task_id,
+            result: Some(RunnerResult::completed("task-1")),
+            error: None,
+        }],
+        metadata: vec![("payload_layout".into(), ScalarValue::String("row".into()))],
+    };
+    assert_eq!(
+        serde_json::from_str::<CompletionBatch>(&serde_json::to_string(&completion).unwrap())
+            .unwrap(),
+        completion
+    );
+
+    let task_batch = TaskBatch {
+        batch_id: "submit-batch-1".into(),
+        tick_id: Some("tick-10".into()),
+        tasks: vec![Task::new(
+            "task-submit-1",
+            "raw.input",
+            serde_json::json!({"input": 1}),
+        )],
+        payload_layout: PayloadLayout::Row,
+        resource_plan: Some(resource_plan.clone()),
+    };
+    assert_eq!(
+        serde_json::from_str::<TaskBatch>(&serde_json::to_string(&task_batch).unwrap()).unwrap(),
+        task_batch
+    );
+
+    let work_set = WorkSet {
+        tick_id: "tick-10".into(),
+        batch_key: "runner-a".into(),
+        entries: batch.entries,
+        resource_requirements: vec![ResourceRequirement {
+            ref_id: "resource:1".into(),
+            mode: ResourceAccessMode::Read,
+            expected_version: Some(1),
+        }],
+    };
+    assert_eq!(
+        serde_json::from_str::<WorkSet>(&serde_json::to_string(&work_set).unwrap()).unwrap(),
+        work_set
     );
 }
 
@@ -480,7 +618,7 @@ fn error_event_and_trace_contracts_roundtrip_json() {
         trace_id: "trace-1".into(),
         span_id: "span-1".into(),
         parent_span_id: None,
-        name: "runner.step".into(),
+        name: "runner.run_batch".into(),
         start: 1.0,
         end: Some(2.0),
         attributes: [("runner_id".into(), ScalarValue::String("worker".into()))].into(),

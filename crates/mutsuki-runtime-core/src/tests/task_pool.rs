@@ -308,7 +308,7 @@ fn core_task_facade_returns_result_snapshot_and_task_events() {
             .iter()
             .any(|event| event.name == "task.enqueue")
     );
-    runtime.cancel_task("task-1").unwrap();
+    runtime.cancel_task_by_id("task-1").unwrap();
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Cancelled));
 }
 

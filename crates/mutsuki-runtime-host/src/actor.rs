@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use mutsuki_runtime_contracts::{ExecutionClass, TaskStatus};
+use mutsuki_runtime_contracts::{
+    CancelPolicy, CompletionBatch, ExecutionClass, TaskHandle, TaskStatus, WorkBatch,
+};
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerLoopReport, RuntimeResult,
     TaskRecord,
@@ -32,7 +34,9 @@ pub(crate) enum CoreActorMsg {
 struct RunningTask {
     runner_id: String,
     invocation_id: String,
+    batch_id: String,
     execution_class: ExecutionClass,
+    handle: TaskHandle,
     deadline_tick: Option<u64>,
     wall_clock_deadline_at: Option<Instant>,
     cancel_requested_at: Option<Instant>,
@@ -82,7 +86,7 @@ pub(crate) fn core_actor_loop(
                 }
             }
             CoreActorMsg::TaskStatus(task_id, reply_tx) => {
-                let _ = reply_tx.send(core.task_status(&task_id));
+                let _ = reply_tx.send(task_status(&core, &task_id));
             }
             CoreActorMsg::WorkerStarted(started) => {
                 mark_worker_started(started, &mut running_tasks);
@@ -114,8 +118,12 @@ fn handle_command(
 ) -> RuntimeResult<(HostRuntimeReply, bool)> {
     match command {
         HostRuntimeCommand::SubmitTask(task) => {
-            let task_id = core.submit_task(*task)?;
-            Ok((HostRuntimeReply::TaskSubmitted(task_id), false))
+            let handle = core.submit_task(*task)?;
+            Ok((HostRuntimeReply::TaskSubmitted(handle), false))
+        }
+        HostRuntimeCommand::SubmitBatch(batch) => {
+            let handles = core.submit_batch(*batch)?;
+            Ok((HostRuntimeReply::TaskBatchSubmitted(handles), false))
         }
         HostRuntimeCommand::TickOnce => {
             let mut report = schedule_ready(core, config, pools, running_tasks)?;
@@ -162,9 +170,9 @@ fn handle_command(
             }
             Ok((HostRuntimeReply::Idle(aggregate), shutdown))
         }
-        HostRuntimeCommand::CancelTask(task_id) => {
-            let running_task = running_tasks.get(&task_id).cloned();
-            core.cancel_task(&task_id)?;
+        HostRuntimeCommand::CancelTask(handle) => {
+            let running_task = running_tasks.get(&handle.task_id).cloned();
+            core.cancel_task_handle(&handle)?;
             if let Some(task) = running_task {
                 mark_cancel_requested(&task.invocation_id, running_tasks);
                 pending_cancels
@@ -172,13 +180,13 @@ fn handle_command(
                     .or_default()
                     .push(task.invocation_id);
             }
-            Ok((HostRuntimeReply::TaskCancelled(task_id), false))
+            Ok((HostRuntimeReply::TaskCancelled(handle), false))
         }
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
         }
-        HostRuntimeCommand::TaskOutcome(task_id) => Ok((
-            HostRuntimeReply::TaskOutcome(core.task_outcome(&task_id)?),
+        HostRuntimeCommand::TaskOutcome(handle) => Ok((
+            HostRuntimeReply::TaskOutcome(core.task_handle_outcome(&handle)?),
             false,
         )),
         HostRuntimeCommand::EventsAfter(sequence) => Ok((
@@ -357,7 +365,7 @@ fn drain_for_reload(
                 )?;
             }
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
-                let _ = reply_tx.send(core.task_status(&task_id));
+                let _ = reply_tx.send(task_status(&core, &task_id));
             }
             Ok(CoreActorMsg::Command(_, reply_tx)) => {
                 let _ = reply_tx.send(Err(host_failure(
@@ -397,12 +405,12 @@ impl Runner for DisposeOnDropRunner {
         &self.descriptor
     }
 
-    fn step(
+    fn run_batch(
         &mut self,
         ctx: mutsuki_runtime_contracts::RunnerContext,
-        tasks: Vec<mutsuki_runtime_contracts::Task>,
-    ) -> RuntimeResult<Vec<mutsuki_runtime_contracts::RunnerResult>> {
-        self.inner.step(ctx, tasks)
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        self.inner.run_batch(ctx, batch)
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
@@ -474,7 +482,7 @@ fn drain_worker_completions(
                 }
             }
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
-                let _ = reply_tx.send(core.task_status(&task_id));
+                let _ = reply_tx.send(task_status(&core, &task_id));
             }
             Ok(CoreActorMsg::Command(command, reply_tx)) => {
                 if send_command_reply(
@@ -553,10 +561,7 @@ fn handle_worker_completion(
 }
 
 fn completion_invocation_id(completion: &RunnerCompletion) -> Option<String> {
-    completion
-        .task_leases
-        .first()
-        .map(|lease| lease.lease_id.clone())
+    Some(completion.batch_id.clone())
 }
 
 fn supervise_running_invocations(
@@ -617,8 +622,8 @@ fn cancel_expired_tick_deadlines(
         let Some(task) = running_tasks.remove(&task_id) else {
             continue;
         };
-        if core.task_status(&task_id) == Some(TaskStatus::Running) {
-            let _ = core.cancel_task(&task_id);
+        if task_status(core, &task_id) == Some(TaskStatus::Running) {
+            let _ = core.cancel_task_handle(&task.handle);
             pending_cancels
                 .entry(task.runner_id)
                 .or_default()
@@ -652,8 +657,10 @@ fn isolate_invocation(
         return;
     };
     for task_id in &task_ids {
-        if core.task_status(task_id) == Some(TaskStatus::Running) {
-            let _ = core.cancel_task(task_id);
+        if let Some(task) = running_tasks.get(task_id) {
+            if task_status(core, task_id) == Some(TaskStatus::Running) {
+                let _ = core.cancel_task_handle(&task.handle);
+            }
         }
         running_tasks.remove(task_id);
     }
@@ -667,6 +674,12 @@ fn isolate_invocation(
     }
 }
 
+fn task_status(core: &CoreRuntime, task_id: &str) -> Option<TaskStatus> {
+    core.tasks()
+        .get(task_id)
+        .map(|record| record.status.clone())
+}
+
 fn isolate_worker(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     execution_class: &ExecutionClass,
@@ -678,15 +691,17 @@ fn isolate_worker(
 
 fn mark_worker_started(started: WorkerStarted, running_tasks: &mut BTreeMap<String, RunningTask>) {
     let now = Instant::now();
-    for task_id in started.task_ids {
-        if let Some(task) = running_tasks.get_mut(&task_id) {
-            if task.invocation_id == started.invocation_id
-                && task.runner_id == started.runner_id
-                && task.execution_class == started.execution_class
-            {
-                task.worker_id = Some(started.worker_id.clone());
-                task.worker_started_at = Some(now);
-            }
+    for task_id in &started.task_ids {
+        let Some(task) = running_tasks.get_mut(task_id) else {
+            continue;
+        };
+        if task.invocation_id == started.invocation_id
+            && task.runner_id == started.runner_id
+            && task.batch_id == started.batch_id
+            && task.execution_class == started.execution_class
+        {
+            task.worker_id = Some(started.worker_id.clone());
+            task.worker_started_at = Some(now);
         }
     }
 }
@@ -708,6 +723,18 @@ fn remove_running_tasks(
     }
 }
 
+fn running_batch_count_for_runner(
+    running_tasks: &BTreeMap<String, RunningTask>,
+    runner_id: &str,
+) -> usize {
+    running_tasks
+        .values()
+        .filter(|task| task.runner_id == runner_id)
+        .map(|task| task.batch_id.clone())
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
 fn schedule_ready(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
@@ -724,6 +751,8 @@ fn schedule_ready(
                 .get(&descriptor.execution_class)
                 .map(WorkerPool::available_slots)
                 .unwrap_or(0);
+            let running_batches =
+                running_batch_count_for_runner(running_tasks, &descriptor.runner_id);
             decide_schedule(
                 descriptor,
                 load,
@@ -731,6 +760,7 @@ fn schedule_ready(
                 registry_generation,
                 limits,
                 pool_slots,
+                running_batches,
                 config.scheduler_policy.as_ref(),
             )
         },
@@ -747,15 +777,12 @@ fn schedule_ready(
             .deadline_ticks
             .map(|ticks| dispatch.ctx.current_step.saturating_add(ticks));
         let invocation_id = dispatch.ctx.invocation_id.clone();
+        let batch_id = dispatch.ctx.batch_id.clone();
         let deadline_tick = dispatch.ctx.deadline_tick;
         let wall_clock_deadline_at = limits
             .wall_clock_deadline
             .map(|deadline| Instant::now() + deadline);
-        let task_ids: Vec<_> = dispatch
-            .tasks
-            .iter()
-            .map(|task| task.task_id.clone())
-            .collect();
+        let tasks = dispatch.batch.row_payload_tasks();
         let Some(pool) = pools.get(&execution_class) else {
             return Err(host_failure(
                 "host.worker.pool_missing",
@@ -763,13 +790,23 @@ fn schedule_ready(
             ));
         };
         pool.send(dispatch)?;
-        for task_id in task_ids {
+        for task in tasks {
+            let handle = TaskHandle {
+                task_id: task.task_id.clone(),
+                protocol_id: task.protocol_id.clone(),
+                target_binding_id: task.target_binding_id.clone(),
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: task.trace_id.clone(),
+                correlation_id: task.correlation_id.clone(),
+            };
             running_tasks.insert(
-                task_id,
+                task.task_id.clone(),
                 RunningTask {
                     runner_id: runner_id.clone(),
                     invocation_id: invocation_id.clone(),
+                    batch_id: batch_id.clone(),
                     execution_class: execution_class.clone(),
+                    handle,
                     deadline_tick,
                     wall_clock_deadline_at,
                     cancel_requested_at: None,
@@ -783,4 +820,57 @@ fn schedule_ready(
         claimed_tasks: report.claimed_tasks,
         completed_tasks: report.completed_tasks,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn running_task(runner_id: &str, batch_id: &str, task_id: &str) -> RunningTask {
+        RunningTask {
+            runner_id: runner_id.into(),
+            invocation_id: batch_id.into(),
+            batch_id: batch_id.into(),
+            execution_class: ExecutionClass::Cpu,
+            handle: TaskHandle {
+                task_id: task_id.into(),
+                protocol_id: "test.protocol".into(),
+                target_binding_id: None,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: None,
+                correlation_id: None,
+            },
+            deadline_tick: None,
+            wall_clock_deadline_at: None,
+            cancel_requested_at: None,
+            worker_id: None,
+            worker_started_at: None,
+        }
+    }
+
+    #[test]
+    fn running_batch_count_deduplicates_entries_by_batch_id() {
+        let mut running_tasks = BTreeMap::new();
+        running_tasks.insert(
+            "task-a".into(),
+            running_task("batch.runner", "batch-1", "task-a"),
+        );
+        running_tasks.insert(
+            "task-b".into(),
+            running_task("batch.runner", "batch-1", "task-b"),
+        );
+        running_tasks.insert(
+            "task-c".into(),
+            running_task("batch.runner", "batch-2", "task-c"),
+        );
+        running_tasks.insert(
+            "task-d".into(),
+            running_task("other.runner", "batch-3", "task-d"),
+        );
+
+        assert_eq!(
+            running_batch_count_for_runner(&running_tasks, "batch.runner"),
+            2
+        );
+    }
 }

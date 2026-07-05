@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    BindingId, ExecutorId, ProtocolId, RefId, ResourceRef, RunnerId, RuntimeError, SurfaceId,
-    TaskId,
+    BindingId, DispatchLane, ExecutorId, OrderingRequirement, ProtocolId, RefId, ResourceRef,
+    ResourceRequirement, RunnerId, RuntimeError, SurfaceId, TaskId,
 };
 use crate::{TaskLeaseId, TraceId};
 
@@ -47,6 +47,9 @@ pub struct Task {
     pub runner_hint: Option<String>,
     pub registry_generation: u64,
     pub required_surfaces: Vec<SurfaceId>,
+    pub dispatch_lane: DispatchLane,
+    pub ordering: OrderingRequirement,
+    pub resource_requirements: Vec<ResourceRequirement>,
     pub created_sequence: u64,
 }
 
@@ -71,6 +74,9 @@ impl Task {
             runner_hint: None,
             registry_generation: 0,
             required_surfaces: Vec::new(),
+            dispatch_lane: DispatchLane::Normal,
+            ordering: OrderingRequirement::None,
+            resource_requirements: Vec::new(),
             created_sequence: 0,
         }
     }

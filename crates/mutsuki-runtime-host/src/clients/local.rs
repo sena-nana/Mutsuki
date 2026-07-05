@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::{
     CommandBatch, CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SagaPlan, SnapshotDescriptor,
-    StreamPlan, Task, TaskHandle, TaskOutcome, WritePlan,
+    StreamPlan, TaskBatch, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{CoreRuntime, RuntimeResult};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, TaskSubmitter};
@@ -22,25 +22,25 @@ impl LocalTaskClient {
 }
 
 impl TaskSubmitter for LocalTaskClient {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         self.runtime
             .lock()
             .expect("runtime mutex poisoned")
-            .submit_task_handle(task)
+            .submit_batch(batch)
     }
 
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
         self.runtime
             .lock()
             .expect("runtime mutex poisoned")
-            .cancel_task(task_id)
+            .cancel_task_handle(handle)
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         self.runtime
             .lock()
             .expect("runtime mutex poisoned")
-            .task_outcome(task_id)
+            .task_handle_outcome(handle)
     }
 }
 

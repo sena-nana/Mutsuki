@@ -15,8 +15,12 @@
 
 | 对象 | 语义 |
 |---|---|
-| `Task` | 统一待处理控制消息，包含 protocol_id、priority、ready_at_step、payload、refs、target_binding_id、lease_id、expected_versions、registry_generation |
-| `TaskLease` | 一次 task step 的执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
+| `Task` | 统一待处理控制消息，包含 protocol_id、priority、ready_at_step、payload、refs、target_binding_id、lease_id、expected_versions、registry_generation、dispatch_lane、ordering 和 resource_requirements |
+| `TaskBatch` | SDK / host submit 面的 batch descriptor；单 task submit 也必须包装为 one-entry batch |
+| `TaskLease` | 一次 batch entry 执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
+| `BatchEntry` / `WorkBatch` / `CompletionBatch` | Tick 内部标准执行单元；单 task 是单 entry batch，不再有独立 runner step 主路径 |
+| `BatchPayload` / `PayloadLayout` | Row、Columnar、BinaryPacked 或 ResourceBacked 的 SIMD-friendly payload layout |
+| `WorkResourcePlan` | WorkSet 派发前生成的资源读写计划、version check 和冲突 entry 描述 |
 | `TaskHandle` | SDK-facing task descriptor，包含 task id、protocol、target binding、取消策略和 trace/correlation |
 | `TaskAwait` | 当前 task 等待一个 child task 的 continuation registration |
 | `TaskOutcome` | SDK 读取的 terminal task 结果映射 |
@@ -24,7 +28,7 @@
 | `TaskStatus` | created、ready、running、waiting、blocked、completed、failed、cancelled、expired、dead_letter |
 | `ProtocolDescriptor` | protocol_id、schema、codec、version、compatibility 等纯数据契约 |
 | `HandlerBinding` | 插件对 protocol 的逻辑消费绑定，指向目标 protocol / runner hint / pool |
-| `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_protocol_ids、purity、execution_class、schema、metadata |
+| `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_protocol_ids、purity、execution_class、schema、batch/payload/resource/ordering/control capability、metadata |
 | `ExecutionClass` | host 执行池分类：Control、Orchestration、Io、Cpu、Blocking、Script |
 | `RunnerPurity` | Pure、Committer、Effectful |
 | `RunnerResult` | task_id、deltas、events、tasks、effects、values、resources、status |
@@ -64,10 +68,27 @@
 `Task.protocol_id` 是当前调度事实源。wire shape 不包含额外 task kind 兼容字段。
 
 ```text
-Runner.step(ctx, tasks) -> Vec<RunnerResult>
+Runner.run_batch(ctx, batch) -> CompletionBatch
 Runner.cancel(invocation_id)
 Runner.dispose()
 ```
+
+JSONL runner ABI 只暴露 batch 方法面：
+
+```text
+runner.run_batch({ runner_id, ctx, batch }) -> CompletionBatch
+runner.cancel({ runner_id, invocation_id })
+runner.dispose({ runner_id })
+```
+
+Host / SDK 的 task submit 面同样以 batch 为标准入口：
+
+```text
+task.submit_batch({ batch: TaskBatch }) -> TaskHandle[]
+```
+
+`submit_task` / `submit_one` 只允许作为 SDK / host facade，它们内部必须构造
+`TaskBatch::one(...)`，不得重新引入 `task.submit` 或 runner single-step ABI。
 
 `RunnerDescriptor.execution_class` 只描述 host 物理执行池选择，不是业务协议语义。
 `Control` 仅用于 core kernel 控制任务；普通插件不得因为声明 Control 而在 core 控制面
@@ -78,23 +99,25 @@ Runner.dispose()
 - `registry_generation`
 - `current_step`
 - `executor_id`
-- `task_lease_id`
+- `tick_id`
+- `batch_id`
+- `task_lease_ids`
+- `entry_count`
 - `invocation_id`
 - `cancel_token`
 - `deadline_tick`
 - `cancel_requested`
 
-Core 记录 `runner.step` trace span 时必须绑定本次 dispatch 的 task 事实：优先使用
-task descriptor 的 `trace_id`，缺失时使用 deterministic `trace-task-<task_id>`；span
-attributes 必须包含 task id、task lease id、executor id、task count，以及存在时的
-correlation id。
+Core 记录 `runner.run_batch` trace span 时必须绑定本次 dispatch 的 batch / entry 事实：
+优先使用首个 entry 对应 task descriptor 的 `trace_id`，缺失时使用 deterministic
+`trace-task-<task_id>`；span attributes 必须包含 batch id、tick id、entry count、
+task lease ids、executor id、payload layout，以及存在时的 correlation id。
 
-当前 `tasks` 仍保留 Vec wire shape 以兼容 host/JSONL runner client，但 Core 每次只
-lease 一个 Task 给一个 Executor 调用 Runner。
-每次 runner completion 必须为本次 dispatch 的每个 `TaskLease` 返回且只返回一个
-`RunnerResult`，且 `RunnerResult.task_id` 必须属于本次 leased task 集合。缺失、重复或
-未知 task result 都必须在写入任何输出事实前结构化失败为 `task.claim_conflict`，并终止
-对应 leased task，不能依赖 lease expiry 伪装为可重试。
+Core 每个 tick 可按 scheduler budget 为同一 runner claim 多个 ready task，并构造
+`WorkSet -> WorkResourcePlan -> WorkBatch` 后一次交给 Runner。每个 runner completion
+必须返回对应 `CompletionBatch`，其中每个 `EntryCompletion` 必须可唯一映射到本 batch
+的 entry / task lease。缺失、重复或未知 entry 都必须在写入任何输出事实前结构化失败为
+`task.claim_conflict`，并终止对应 leased task，不能依赖 lease expiry 伪装为可重试。
 
 SDK 层可以把 task 原语包装成语言 awaitable。当前仓库内 issue #5 的 Rust 侧落点是
 Rust SDK；Python runner kit 位于独立仓库。JS/TS SDK 只作为同一
@@ -111,6 +134,20 @@ JS/TS SDK: future package 可包装同一 TaskHandle / TaskOutcome wire shape
 Rust SDK 的 derive / attribute 宏只生成同一 `ProtocolDescriptor`、`ResourceTypeDescriptor`、
 `RunnerDescriptor`、`PluginManifest` 和 `AsyncRunnerAdapter` glue；它们不是新的 wire
 protocol object，也不能引入 workflow、broadcast、本地直调或绕过 TaskPool 的执行语义。
+
+Batch-first 迁移约束：
+
+- 旧 `Runner.step(ctx, task) -> RunnerResult` 实现必须迁移为
+  `Runner.run_batch(ctx, batch) -> CompletionBatch`。
+- 标量 runner 可通过 SDK / host adapter 顺序遍历 `WorkBatch.entries`，逐 entry 产出
+  `EntryCompletion`；这只是兼容执行形态，不是 single-task ABI。
+- runner 若只能读取 row payload，应在 `RunnerDescriptor.payload.layouts` 声明 Row；
+  支持同构输入的 runner 可额外声明 Columnar / BinaryPacked / ResourceBacked。
+- `RunnerDescriptor.batch` 声明 preferred / max batch entries、max inflight batches、
+  partial failure 和 preserve order 能力；Core / host 仍会按 scheduler budget 和资源冲突
+  对实际 batch 入场做更严格限制。
+- `RunnerDescriptor.resources` 和 `RunnerDescriptor.ordering` 只声明 runner 能力边界；
+  资源计划仍由 Core dispatch 前生成，排序事实仍来自 TaskPool 和 batch entry。
 
 Core 不暴露 Rust `Future`、Promise、Coroutine、join/select、TaskGroup、WaitSet 或通用
 executor。
@@ -141,8 +178,9 @@ replacement worker。若隔离后的 runner 迟到返回，host 只投递 `Runne
 `Runner.dispose`，不提交旧结果，也不把旧 runner 放回 Core。单连接同步 JSONL step 的
 独立 management channel 和进程级强制终止属于 host/sidecar 执行面，不进入 contracts。
 
-Core 保留既有 string task id facade，同时提供以 `TaskHandle` descriptor 为入口的
-status / result / outcome / events / cancel / wake facade。`TaskHandle` 不代表语言级
+Core 的公开 task facade 以 `TaskHandle` descriptor 为入口。字符串 task id 只允许作为
+TaskPool、cascade cancel、host actor bookkeeping 等内部事实键使用，不再作为公开
+status / result / outcome / events / cancel / wake 入口。`TaskHandle` 不代表语言级
 future、真实执行句柄或长期持有的 runtime object。
 
 ## 4. TaskPool
@@ -212,10 +250,13 @@ Scheduler v1 不是公开 wire contract，也不进入 `PluginManifest` / `Runti
 当前只允许 host 级 `SchedulerPolicy` 返回每个 runner 本轮 dispatch budget：
 
 - 输入来自 Core / host 只读 snapshot：runner descriptor、RunnerLoad、runner limits、
-  worker pool slots、hard capacity、current_step 和 registry_generation。
-- 输出只包含 scheduler id、reason 和 requested dispatch limit。
-- host 必须将 requested limit clamp 到 hard capacity。
-- Core 继续执行 runner acceptance、TaskPool 排序、TaskLease 创建和状态提交。
+  HostCapacity、worker pool slots、hard capacity、current_step 和 registry_generation。
+- 输出包含 scheduler id、reason、requested dispatch limit 和
+  `DispatchBudget { max_entries, max_batches, max_bytes, lane_budget }`。
+- host 必须将 requested limit 和 budget max_entries clamp 到 hard capacity。
+- Core 继续执行 runner acceptance、TaskPool 排序、WorkBatch 构造、TaskLease 创建和状态提交。
+- Core 在 claim 时必须按 `DispatchBudget` 筛选 ready task；lane budget 只限制本 batch
+  各 `DispatchLane` 可进入的 entry 数，不能改变 TaskPool 的基础排序。
 - scheduler 不能执行 task、不能创建子 task、不能完成 task、不能修改 TaskPool、
   不能访问真实资源本体。
 

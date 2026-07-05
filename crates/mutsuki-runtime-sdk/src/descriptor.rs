@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
     ExecutionClass, HandlerBinding, ProtocolDescriptor, ResourceProviderCompatibility,
-    ResourceProviderReloadPolicy, ResourceSemantic, ResourceTypeDescriptor, RunnerDescriptor,
-    RunnerPurity, ScalarValue,
+    ResourceProviderReloadPolicy, ResourceSemantic, ResourceTypeDescriptor, RunnerBatchCapability,
+    RunnerControlCapability, RunnerDescriptor, RunnerOrderingCapability, RunnerPayloadCapability,
+    RunnerPurity, RunnerResourceCapability, ScalarValue,
 };
 use serde_json::{Value, json};
 
@@ -146,6 +147,11 @@ pub struct RunnerDescriptorBuilder {
     execution_class: ExecutionClass,
     input_schema: Value,
     output_schema: Value,
+    batch: RunnerBatchCapability,
+    payload: RunnerPayloadCapability,
+    resources: RunnerResourceCapability,
+    ordering: RunnerOrderingCapability,
+    control: RunnerControlCapability,
     metadata: BTreeMap<String, ScalarValue>,
     contract_surfaces: Vec<String>,
 }
@@ -163,6 +169,11 @@ impl RunnerDescriptorBuilder {
             execution_class: ExecutionClass::Cpu,
             input_schema: json!({}),
             output_schema: json!({}),
+            batch: RunnerBatchCapability::default(),
+            payload: RunnerPayloadCapability::default(),
+            resources: RunnerResourceCapability::default(),
+            ordering: RunnerOrderingCapability::default(),
+            control: RunnerControlCapability::default(),
             metadata: BTreeMap::new(),
         }
     }
@@ -205,6 +216,31 @@ impl RunnerDescriptorBuilder {
         self
     }
 
+    pub fn batch_capability(mut self, capability: RunnerBatchCapability) -> Self {
+        self.batch = capability;
+        self
+    }
+
+    pub fn payload_capability(mut self, capability: RunnerPayloadCapability) -> Self {
+        self.payload = capability;
+        self
+    }
+
+    pub fn resource_capability(mut self, capability: RunnerResourceCapability) -> Self {
+        self.resources = capability;
+        self
+    }
+
+    pub fn ordering_capability(mut self, capability: RunnerOrderingCapability) -> Self {
+        self.ordering = capability;
+        self
+    }
+
+    pub fn control_capability(mut self, capability: RunnerControlCapability) -> Self {
+        self.control = capability;
+        self
+    }
+
     pub fn metadata(mut self, key: impl Into<String>, value: ScalarValue) -> Self {
         self.metadata.insert(key.into(), value);
         self
@@ -225,6 +261,11 @@ impl RunnerDescriptorBuilder {
             execution_class: self.execution_class,
             input_schema: self.input_schema,
             output_schema: self.output_schema,
+            batch: self.batch,
+            payload: self.payload,
+            resources: self.resources,
+            ordering: self.ordering,
+            control: self.control,
             metadata: self.metadata,
             contract_surfaces: self.contract_surfaces,
         }

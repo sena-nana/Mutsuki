@@ -23,7 +23,7 @@ mod task_api;
 
 pub use reload::{InvocationPollution, RunningInvocationDisposition};
 pub use runner_loop::{RunnerCompletion, RunnerDispatch};
-pub use scheduler::ScheduleDecision;
+pub use scheduler::{DispatchBudget, LaneBudget, ScheduleDecision};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskResultSnapshot {

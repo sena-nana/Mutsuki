@@ -18,10 +18,20 @@
 JSONL runner 方法面：
 
 ```text
-runner.step
+runner.run_batch(ctx, batch) -> CompletionBatch
 runner.cancel
 runner.dispose
 ```
+
+JSONL task backend 方法面：
+
+```text
+task.submit_batch(batch) -> TaskHandle[]
+```
+
+旧 `runner.step`、`task.submit` 和任何单 task runner ABI 均不再是边界契约。
+Python runner kit 可以在语言 API 层保留单 task submit/await 的用户体验，但必须在
+bridge 内部生成 one-entry `TaskBatch`。
 
 Python runner kit 的 public API 位于独立仓库，必须围绕上述方法面和 Rust contracts
 mirror 展开。

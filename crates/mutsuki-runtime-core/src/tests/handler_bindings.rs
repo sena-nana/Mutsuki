@@ -52,7 +52,11 @@ fn handler_bindings_are_queryable_but_do_not_fan_out_tasks() {
     );
 
     runtime
-        .publish_raw_input("raw-1", "im.message.received.v1", json!({"text": "hello"}))
+        .submit_task(Task::new(
+            "raw-1",
+            "im.message.received.v1",
+            json!({"text": "hello"}),
+        ))
         .unwrap();
     let report = runtime.tick_once().unwrap();
 
@@ -128,6 +132,20 @@ fn runtime_boot_rejects_non_kernel_control_runner() {
     let err = boot_error(plan, runners);
 
     assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn runtime_boot_rejects_incoherent_runner_batch_capability() {
+    let mut runner = runner_descriptor("batch.worker", "cap.work", RunnerPurity::Pure);
+    runner.payload.preferred_layout = PayloadLayout::BinaryPacked;
+    runner.payload.layouts = vec![PayloadLayout::Row];
+    let plan = load_plan(vec![runner.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(err.error().route, "runner.batch.worker.payload");
 }
 
 #[test]

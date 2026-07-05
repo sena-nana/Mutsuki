@@ -102,10 +102,6 @@ impl CoreRuntime {
         self.resources.open_resource(ref_id)
     }
 
-    pub fn map_resource(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
-        self.resources.map_resource(ref_id)
-    }
-
     pub fn lock_resource(
         &mut self,
         ref_id: &str,

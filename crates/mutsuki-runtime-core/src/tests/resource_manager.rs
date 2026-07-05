@@ -305,7 +305,7 @@ fn core_resource_facade_wraps_descriptor_and_lease_operations() {
         .unwrap();
 
     assert_eq!(runtime.open_resource(&resource.ref_id).unwrap(), resource);
-    assert_eq!(runtime.map_resource(&resource.ref_id).unwrap(), resource);
+    assert_eq!(runtime.open_resource(&resource.ref_id).unwrap(), resource);
 
     let lease = runtime
         .lock_resource(&resource.ref_id, "runner-a", Some(3))

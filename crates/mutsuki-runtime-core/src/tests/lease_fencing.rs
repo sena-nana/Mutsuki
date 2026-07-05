@@ -18,7 +18,7 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     let (_report, mut dispatches) = runtime
         .claim_ready_dispatches(
             |_descriptor, _load, _step, _generation| {
-                ScheduleDecision::new("test.scheduler", 1, "test.claim").clamp_to(1)
+                Ok(ScheduleDecision::new("test.scheduler", 1, "test.claim").clamp_to(1))
             },
             Some(2),
         )
@@ -40,11 +40,23 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     stale_result
         .tasks
         .push(Task::new("child-1", "runtime.lease.child", json!({})));
+    let stale_completion = CompletionBatch {
+        batch_id: dispatch.batch.batch_id.clone(),
+        tick_id: dispatch.batch.tick_id.clone(),
+        results: vec![EntryCompletion {
+            entry_id: dispatch.batch.entries[0].entry_id.clone(),
+            task_id: "task-1".into(),
+            result: Some(stale_result),
+            error: None,
+        }],
+        metadata: Vec::new(),
+    };
     let report = runtime
         .complete_runner_dispatch(RunnerCompletion {
             runner: dispatch.runner,
             task_leases: dispatch.task_leases,
-            results: Ok(vec![stale_result]),
+            batch_id: dispatch.batch.batch_id,
+            result: Ok(stale_completion),
         })
         .unwrap();
 

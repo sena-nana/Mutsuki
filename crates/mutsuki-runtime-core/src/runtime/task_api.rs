@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::ScalarValue;
 use mutsuki_runtime_contracts::{
-    CancelPolicy, ERR_TASK_DEAD_LETTER, ERR_TASK_EXPIRED, RuntimeEvent, RuntimeEventKind, Task,
-    TaskHandle, TaskOutcome, TaskStatus,
+    CancelPolicy, ERR_TASK_DEAD_LETTER, ERR_TASK_DUPLICATE, ERR_TASK_EXPIRED, RuntimeEvent,
+    RuntimeEventKind, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus,
 };
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ use crate::{RuntimeResult, TaskPool};
 use super::{CoreRuntime, TaskResultSnapshot};
 
 impl CoreRuntime {
-    pub fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
+    pub(crate) fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
         }
@@ -41,22 +41,32 @@ impl CoreRuntime {
         Ok(task_id)
     }
 
-    pub fn publish_raw_input(
-        &mut self,
-        task_id: &str,
-        kind: &str,
-        payload: Value,
-    ) -> RuntimeResult<String> {
-        self.enqueue_task(Task::new(task_id, kind, payload))
-    }
-
-    pub fn submit_task(&mut self, task: Task) -> RuntimeResult<String> {
-        self.enqueue_task(task)
-    }
-
-    pub fn submit_task_handle(&mut self, task: Task) -> RuntimeResult<TaskHandle> {
+    pub fn submit_task(&mut self, task: Task) -> RuntimeResult<TaskHandle> {
         let task_id = self.enqueue_task(task)?;
-        self.task_handle(&task_id)
+        self.task_handle_for_id(&task_id)
+    }
+
+    pub fn submit_batch(&mut self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        let mut seen = BTreeMap::new();
+        for task in &batch.tasks {
+            if seen.insert(task.task_id.clone(), ()).is_some()
+                || self.tasks.get(&task.task_id).is_some()
+            {
+                return Err(crate::runtime_failure(
+                    ERR_TASK_DUPLICATE,
+                    "runtime.task",
+                    format!("task.batch.{}.{}", batch.batch_id, task.task_id),
+                ));
+            }
+        }
+        let mut task_ids = Vec::with_capacity(batch.tasks.len());
+        for task in batch.tasks {
+            task_ids.push(self.enqueue_task(task)?);
+        }
+        task_ids
+            .iter()
+            .map(|task_id| self.task_handle_for_id(task_id))
+            .collect()
     }
 
     pub fn submit_targeted_task(
@@ -64,7 +74,7 @@ impl CoreRuntime {
         task_id: &str,
         binding_id: &str,
         payload: Value,
-    ) -> RuntimeResult<String> {
+    ) -> RuntimeResult<TaskHandle> {
         let binding = self
             .handler_bindings
             .all()
@@ -80,20 +90,10 @@ impl CoreRuntime {
         let mut task = Task::new(task_id, &binding.target_protocol_id, payload);
         task.target_binding_id = Some(binding.binding_id.clone());
         task.runner_hint = binding.target_runner_hint.clone();
-        self.enqueue_task(task)
+        self.submit_task(task)
     }
 
-    pub fn submit_targeted_task_handle(
-        &mut self,
-        task_id: &str,
-        binding_id: &str,
-        payload: Value,
-    ) -> RuntimeResult<TaskHandle> {
-        let task_id = self.submit_targeted_task(task_id, binding_id, payload)?;
-        self.task_handle(&task_id)
-    }
-
-    pub fn task_handle(&self, task_id: &str) -> RuntimeResult<TaskHandle> {
+    fn task_handle_for_id(&self, task_id: &str) -> RuntimeResult<TaskHandle> {
         let record = self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
@@ -111,7 +111,7 @@ impl CoreRuntime {
         })
     }
 
-    pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
+    pub(crate) fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
         self.tasks.get(task_id).map(|record| record.status.clone())
     }
 
@@ -119,7 +119,7 @@ impl CoreRuntime {
         self.task_status(&handle.task_id)
     }
 
-    pub fn task_result(&self, task_id: &str) -> Option<TaskResultSnapshot> {
+    pub(crate) fn task_result(&self, task_id: &str) -> Option<TaskResultSnapshot> {
         self.tasks.get(task_id).map(|record| TaskResultSnapshot {
             task_id: record.task.task_id.clone(),
             status: record.status.clone(),
@@ -133,7 +133,7 @@ impl CoreRuntime {
         self.task_result(&handle.task_id)
     }
 
-    pub fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
+    pub(crate) fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
         let record = self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_NOT_FOUND,
@@ -176,7 +176,7 @@ impl CoreRuntime {
         self.task_outcome(&handle.task_id)
     }
 
-    pub fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
+    pub(crate) fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
         self.events
             .snapshot()
             .iter()
@@ -196,7 +196,7 @@ impl CoreRuntime {
             .collect()
     }
 
-    pub fn cancel_task(&mut self, task_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn cancel_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {
         let awaits = self.tasks.awaits_for_parent(task_id);
         if awaits
             .iter()
@@ -221,7 +221,7 @@ impl CoreRuntime {
                         | TaskStatus::Blocked
                 )
             ) {
-                self.cancel_task(&task_await.child.task_id)?;
+                self.cancel_task_by_id(&task_await.child.task_id)?;
             }
         }
         self.wake_tasks_waiting_on(task_id)?;
@@ -229,7 +229,7 @@ impl CoreRuntime {
     }
 
     pub fn cancel_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {
-        self.cancel_task(&handle.task_id)
+        self.cancel_task_by_id(&handle.task_id)
     }
 
     pub fn expire_task(&mut self, task_id: &str, reason: impl Into<String>) -> RuntimeResult<()> {
@@ -266,12 +266,12 @@ impl CoreRuntime {
         Ok(())
     }
 
-    pub fn wake_task(&mut self, task_id: &str) -> RuntimeResult<()> {
+    pub(crate) fn wake_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {
         self.tasks.wake(task_id)
     }
 
     pub fn wake_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {
-        self.wake_task(&handle.task_id)
+        self.wake_task_by_id(&handle.task_id)
     }
 
     pub fn tasks(&self) -> &TaskPool {

@@ -26,6 +26,7 @@ pub(crate) struct WorkerStarted {
     pub execution_class: ExecutionClass,
     pub runner_id: String,
     pub invocation_id: String,
+    pub batch_id: String,
     pub task_ids: Vec<String>,
 }
 
@@ -118,13 +119,15 @@ fn execute_dispatch(dispatch: RunnerDispatch) -> RunnerCompletion {
         mut runner,
         ctx,
         task_leases,
-        tasks,
+        batch,
     } = dispatch;
-    let results = runner.step(ctx, tasks);
+    let batch_id = batch.batch_id.clone();
+    let result = runner.run_batch(ctx, batch);
     RunnerCompletion {
         runner,
         task_leases,
-        results,
+        batch_id,
+        result,
     }
 }
 
@@ -134,10 +137,12 @@ fn worker_started(worker_id: &str, dispatch: &RunnerDispatch) -> WorkerStarted {
         execution_class: dispatch.runner.descriptor().execution_class.clone(),
         runner_id: dispatch.runner.descriptor().runner_id.clone(),
         invocation_id: dispatch.ctx.invocation_id.clone(),
+        batch_id: dispatch.batch.batch_id.clone(),
         task_ids: dispatch
-            .tasks
+            .batch
+            .entries
             .iter()
-            .map(|task| task.task_id.clone())
+            .map(|entry| entry.task_id.clone())
             .collect(),
     }
 }

@@ -7,8 +7,8 @@ use std::time::Duration;
 use mutsuki_runtime_contracts::{
     BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor,
     PluginBackendDescriptor, PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan,
-    ScalarValue, SchedulerPolicyDescriptor, Task, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
-    WorkflowDescriptor,
+    ScalarValue, SchedulerPolicyDescriptor, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus,
+    TraceSpan, WorkflowDescriptor,
 };
 use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 use serde_json::Value;
@@ -16,9 +16,25 @@ use serde_json::Value;
 use crate::{ResourcePlanGateway, RuntimeClient, RuntimeClientRef};
 
 pub trait TaskSubmitter: Send + Sync {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle>;
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()>;
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>>;
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>>;
+    fn submit_one(&self, task: Task) -> RuntimeResult<TaskHandle> {
+        let batch_id = format!("sdk.submit.{}", task.task_id);
+        self.submit_batch(TaskBatch::one(batch_id, task))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                RuntimeFailure::new(RuntimeError::new(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.sdk",
+                    "task.submit_one.empty",
+                ))
+            })
+    }
+    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
+        self.submit_one(task)
+    }
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()>;
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
 }
 
 #[derive(Clone)]
@@ -37,12 +53,12 @@ impl TaskSubmitterRuntimeClient {
 }
 
 impl RuntimeClient for TaskSubmitterRuntimeClient {
-    fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        self.submitter.submit_task(task)
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        self.submitter.submit_batch(batch)
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
-        self.submitter.task_outcome(task_id)
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+        self.submitter.task_outcome(handle)
     }
 }
 
@@ -537,15 +553,19 @@ pub trait HostRuntime {
     fn host_context(&self) -> &HostContext;
 
     fn submit_task(&self, task: Task) -> RuntimeResult<TaskHandle> {
-        self.host_context().task_submitter().submit_task(task)
+        self.host_context().task_submitter().submit_one(task)
     }
 
-    fn cancel_task(&self, task_id: &str) -> RuntimeResult<()> {
-        self.host_context().task_submitter().cancel_task(task_id)
+    fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        self.host_context().task_submitter().submit_batch(batch)
     }
 
-    fn task_outcome(&self, task_id: &str) -> RuntimeResult<Option<TaskOutcome>> {
-        self.host_context().task_submitter().task_outcome(task_id)
+    fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
+        self.host_context().task_submitter().cancel_task(handle)
+    }
+
+    fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+        self.host_context().task_submitter().task_outcome(handle)
     }
 
     fn request_shutdown(&self, reason: &str) -> RuntimeResult<()> {
