@@ -120,7 +120,7 @@ fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
 }
 
 #[test]
-fn effect_preconditions_are_checked_before_effect_runner_step() {
+fn effect_preconditions_are_checked_before_effect_runner_batch() {
     let worker = runner_descriptor("worker", "sim.effect.produce", RunnerPurity::Pure);
     let effect_runner =
         runner_descriptor("effect.chat", "effect.chat.send", RunnerPurity::Effectful);
@@ -306,7 +306,7 @@ fn committer_task_is_the_only_state_store_mutation_path() {
 }
 
 #[test]
-fn stale_task_version_expectation_fails_before_runner_step() {
+fn stale_task_version_expectation_fails_before_runner_batch() {
     let worker = runner_descriptor("worker", "sim.versioned", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let calls = Arc::new(Mutex::new(0));
@@ -965,7 +965,7 @@ fn continue_result_rejects_outputs_before_partial_routing() {
 }
 
 #[test]
-fn failed_runner_step_keeps_runner_registered_for_retry() {
+fn failed_runner_batch_keeps_runner_registered_for_retry() {
     struct FailsFirstRunner {
         descriptor: RunnerDescriptor,
         calls: Arc<Mutex<usize>>,
@@ -985,7 +985,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             *calls += 1;
             if *calls == 1 {
                 return Err(crate::runtime_failure(
-                    "runner.step_failed",
+                    "runner.run_batch_failed",
                     "test.runner",
                     "first call fails",
                 ));
@@ -1021,7 +1021,7 @@ fn failed_runner_step_keeps_runner_registered_for_retry() {
             .failure
             .as_ref()
             .map(|error| error.code.as_str()),
-        Some("runner.step_failed")
+        Some("runner.run_batch_failed")
     );
     assert!(
         runtime

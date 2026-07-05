@@ -31,7 +31,7 @@ pub(crate) enum CoreActorMsg {
 }
 
 #[derive(Clone, Debug)]
-struct RunningTask {
+struct RunningBatch {
     runner_id: String,
     invocation_id: String,
     batch_id: String,
@@ -55,7 +55,7 @@ pub(crate) fn core_actor_loop(
         Err(_) => return,
     };
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut running_tasks: BTreeMap<String, RunningTask> = BTreeMap::new();
+    let mut running_batches_by_task: BTreeMap<String, RunningBatch> = BTreeMap::new();
     let mut draining_invocations: BTreeMap<String, String> = BTreeMap::new();
     while let Ok(msg) = rx.recv() {
         supervise_running_invocations(
@@ -63,7 +63,7 @@ pub(crate) fn core_actor_loop(
             &config,
             &mut pools,
             &mut pending_cancels,
-            &mut running_tasks,
+            &mut running_batches_by_task,
             &mut draining_invocations,
         );
         match msg {
@@ -76,7 +76,7 @@ pub(crate) fn core_actor_loop(
                         &mut pools,
                         &rx,
                         &mut pending_cancels,
-                        &mut running_tasks,
+                        &mut running_batches_by_task,
                         &mut draining_invocations,
                     ),
                     reply_tx,
@@ -89,17 +89,18 @@ pub(crate) fn core_actor_loop(
                 let _ = reply_tx.send(task_status(&core, &task_id));
             }
             CoreActorMsg::WorkerStarted(started) => {
-                mark_worker_started(started, &mut running_tasks);
+                mark_worker_started(started, &mut running_batches_by_task);
             }
             CoreActorMsg::WorkerCompleted(completion) => {
                 let _ = handle_worker_completion(
                     completion,
                     &mut core,
                     &mut pending_cancels,
-                    &mut running_tasks,
+                    &mut running_batches_by_task,
                     &mut draining_invocations,
                 );
-                let _ = schedule_ready(&mut core, &config, &mut pools, &mut running_tasks);
+                let _ =
+                    schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
             }
             CoreActorMsg::Shutdown => break,
         }
@@ -113,7 +114,7 @@ fn handle_command(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) -> RuntimeResult<(HostRuntimeReply, bool)> {
     match command {
@@ -126,14 +127,14 @@ fn handle_command(
             Ok((HostRuntimeReply::TaskBatchSubmitted(handles), false))
         }
         HostRuntimeCommand::TickOnce => {
-            let mut report = schedule_ready(core, config, pools, running_tasks)?;
+            let mut report = schedule_ready(core, config, pools, running_batches_by_task)?;
             let shutdown = drain_worker_completions(
                 core,
                 config,
                 pools,
                 rx,
                 pending_cancels,
-                running_tasks,
+                running_batches_by_task,
                 draining_invocations,
                 &mut report,
                 1,
@@ -147,7 +148,7 @@ fn handle_command(
                 completed_tasks: 0,
             };
             for _ in 0..max_ticks {
-                let report = schedule_ready(core, config, pools, running_tasks)?;
+                let report = schedule_ready(core, config, pools, running_batches_by_task)?;
                 aggregate.claimed_tasks += report.claimed_tasks;
                 aggregate.completed_tasks += report.completed_tasks;
                 shutdown = drain_worker_completions(
@@ -156,7 +157,7 @@ fn handle_command(
                     pools,
                     rx,
                     pending_cancels,
-                    running_tasks,
+                    running_batches_by_task,
                     draining_invocations,
                     &mut aggregate,
                     8,
@@ -171,10 +172,10 @@ fn handle_command(
             Ok((HostRuntimeReply::Idle(aggregate), shutdown))
         }
         HostRuntimeCommand::CancelTask(handle) => {
-            let running_task = running_tasks.get(&handle.task_id).cloned();
+            let running_batch = running_batches_by_task.get(&handle.task_id).cloned();
             core.cancel_task_handle(&handle)?;
-            if let Some(task) = running_task {
-                mark_cancel_requested(&task.invocation_id, running_tasks);
+            if let Some(task) = running_batch {
+                mark_cancel_requested(&task.invocation_id, running_batches_by_task);
                 pending_cancels
                     .entry(task.runner_id)
                     .or_default()
@@ -223,7 +224,7 @@ fn handle_command(
                 pools,
                 rx,
                 pending_cancels,
-                running_tasks,
+                running_batches_by_task,
                 draining_invocations,
             )?;
             Ok((HostRuntimeReply::Reloaded(decision), false))
@@ -293,7 +294,7 @@ fn reload_runtime(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) -> RuntimeResult<ReloadDecision> {
     drain_for_reload(
@@ -302,7 +303,7 @@ fn reload_runtime(
         pools,
         rx,
         pending_cancels,
-        running_tasks,
+        running_batches_by_task,
         draining_invocations,
         drain_timeout,
     )?;
@@ -321,7 +322,7 @@ fn drain_for_reload(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
     drain_timeout: Duration,
 ) -> RuntimeResult<()> {
@@ -332,10 +333,10 @@ fn drain_for_reload(
             config,
             pools,
             pending_cancels,
-            running_tasks,
+            running_batches_by_task,
             draining_invocations,
         );
-        if running_tasks.is_empty() {
+        if running_batches_by_task.is_empty() {
             return Ok(());
         }
         let elapsed = started_at.elapsed();
@@ -343,8 +344,8 @@ fn drain_for_reload(
             return Err(host_failure(
                 "host.reload.drain_timeout",
                 format!(
-                    "timed out waiting for {} running task(s) to drain",
-                    running_tasks.len()
+                    "timed out waiting for {} running batch entry/entries to drain",
+                    running_batches_by_task.len()
                 ),
             ));
         }
@@ -353,14 +354,14 @@ fn drain_for_reload(
             .min(Duration::from_millis(10));
         match rx.recv_timeout(wait) {
             Ok(CoreActorMsg::WorkerStarted(started)) => {
-                mark_worker_started(started, running_tasks);
+                mark_worker_started(started, running_batches_by_task);
             }
             Ok(CoreActorMsg::WorkerCompleted(completion)) => {
                 let _ = handle_worker_completion(
                     completion,
                     core,
                     pending_cancels,
-                    running_tasks,
+                    running_batches_by_task,
                     draining_invocations,
                 )?;
             }
@@ -448,7 +449,7 @@ fn drain_worker_completions(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
     aggregate: &mut RunnerLoopReport,
     max_messages: usize,
@@ -459,24 +460,24 @@ fn drain_worker_completions(
             config,
             pools,
             pending_cancels,
-            running_tasks,
+            running_batches_by_task,
             draining_invocations,
         );
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(CoreActorMsg::WorkerStarted(started)) => {
-                mark_worker_started(started, running_tasks);
+                mark_worker_started(started, running_batches_by_task);
             }
             Ok(CoreActorMsg::WorkerCompleted(completion)) => {
                 if let Ok(report) = handle_worker_completion(
                     completion,
                     core,
                     pending_cancels,
-                    running_tasks,
+                    running_batches_by_task,
                     draining_invocations,
                 ) {
                     aggregate.completed_tasks += report.completed_tasks;
                 }
-                if let Ok(report) = schedule_ready(core, config, pools, running_tasks) {
+                if let Ok(report) = schedule_ready(core, config, pools, running_batches_by_task) {
                     aggregate.claimed_tasks += report.claimed_tasks;
                     aggregate.completed_tasks += report.completed_tasks;
                 }
@@ -493,7 +494,7 @@ fn drain_worker_completions(
                         pools,
                         rx,
                         pending_cancels,
-                        running_tasks,
+                        running_batches_by_task,
                         draining_invocations,
                     ),
                     reply_tx,
@@ -541,7 +542,7 @@ fn handle_worker_completion(
     mut completion: RunnerCompletion,
     core: &mut CoreRuntime,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let invocation_id = completion_invocation_id(&completion).unwrap_or_default();
@@ -556,7 +557,7 @@ fn handle_worker_completion(
     }
 
     apply_pending_cancels(&mut completion, pending_cancels);
-    remove_running_tasks(&completion, running_tasks);
+    remove_running_batch_entries(&completion, running_batches_by_task);
     core.complete_runner_dispatch(completion)
 }
 
@@ -569,12 +570,12 @@ fn supervise_running_invocations(
     config: &HostRuntimeConfig,
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) {
-    cancel_expired_tick_deadlines(core, pending_cancels, running_tasks);
+    cancel_expired_tick_deadlines(core, pending_cancels, running_batches_by_task);
     let now = Instant::now();
-    let expired: Vec<_> = running_tasks
+    let expired: Vec<_> = running_batches_by_task
         .values()
         .filter(|task| {
             task.wall_clock_deadline_at
@@ -598,7 +599,7 @@ fn supervise_running_invocations(
             core,
             pools,
             pending_cancels,
-            running_tasks,
+            running_batches_by_task,
             draining_invocations,
         );
     }
@@ -607,10 +608,10 @@ fn supervise_running_invocations(
 fn cancel_expired_tick_deadlines(
     core: &mut CoreRuntime,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) {
     let current_step = core.current_step();
-    let expired: Vec<_> = running_tasks
+    let expired: Vec<_> = running_batches_by_task
         .iter()
         .filter_map(|(task_id, task)| {
             task.deadline_tick
@@ -619,7 +620,7 @@ fn cancel_expired_tick_deadlines(
         })
         .collect();
     for task_id in expired {
-        let Some(task) = running_tasks.remove(&task_id) else {
+        let Some(task) = running_batches_by_task.remove(&task_id) else {
             continue;
         };
         if task_status(core, &task_id) == Some(TaskStatus::Running) {
@@ -637,13 +638,13 @@ fn isolate_invocation(
     core: &mut CoreRuntime,
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
 ) {
     if draining_invocations.contains_key(invocation_id) {
         return;
     }
-    let task_ids: Vec<_> = running_tasks
+    let task_ids: Vec<_> = running_batches_by_task
         .iter()
         .filter_map(|(task_id, task)| {
             (task.invocation_id == invocation_id).then(|| task_id.clone())
@@ -651,18 +652,18 @@ fn isolate_invocation(
         .collect();
     let Some(first_task) = task_ids
         .first()
-        .and_then(|task_id| running_tasks.get(task_id))
+        .and_then(|task_id| running_batches_by_task.get(task_id))
         .cloned()
     else {
         return;
     };
     for task_id in &task_ids {
-        if let Some(task) = running_tasks.get(task_id) {
+        if let Some(task) = running_batches_by_task.get(task_id) {
             if task_status(core, task_id) == Some(TaskStatus::Running) {
                 let _ = core.cancel_task_handle(&task.handle);
             }
         }
-        running_tasks.remove(task_id);
+        running_batches_by_task.remove(task_id);
     }
     pending_cancels
         .entry(first_task.runner_id.clone())
@@ -689,10 +690,13 @@ fn isolate_worker(
     }
 }
 
-fn mark_worker_started(started: WorkerStarted, running_tasks: &mut BTreeMap<String, RunningTask>) {
+fn mark_worker_started(
+    started: WorkerStarted,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+) {
     let now = Instant::now();
     for task_id in &started.task_ids {
-        let Some(task) = running_tasks.get_mut(task_id) else {
+        let Some(task) = running_batches_by_task.get_mut(task_id) else {
             continue;
         };
         if task.invocation_id == started.invocation_id
@@ -706,28 +710,31 @@ fn mark_worker_started(started: WorkerStarted, running_tasks: &mut BTreeMap<Stri
     }
 }
 
-fn mark_cancel_requested(invocation_id: &str, running_tasks: &mut BTreeMap<String, RunningTask>) {
+fn mark_cancel_requested(
+    invocation_id: &str,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+) {
     let now = Instant::now();
-    for task in running_tasks.values_mut() {
+    for task in running_batches_by_task.values_mut() {
         if task.invocation_id == invocation_id {
             task.cancel_requested_at = Some(now);
         }
     }
 }
-fn remove_running_tasks(
+fn remove_running_batch_entries(
     completion: &RunnerCompletion,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) {
     for lease in &completion.task_leases {
-        running_tasks.remove(&lease.task_id);
+        running_batches_by_task.remove(&lease.task_id);
     }
 }
 
 fn running_batch_count_for_runner(
-    running_tasks: &BTreeMap<String, RunningTask>,
+    running_batches_by_task: &BTreeMap<String, RunningBatch>,
     runner_id: &str,
 ) -> usize {
-    running_tasks
+    running_batches_by_task
         .values()
         .filter(|task| task.runner_id == runner_id)
         .map(|task| task.batch_id.clone())
@@ -739,7 +746,7 @@ fn schedule_ready(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
-    running_tasks: &mut BTreeMap<String, RunningTask>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) -> RuntimeResult<RunnerLoopReport> {
     let (report, dispatches) = core.claim_ready_dispatches(
         |descriptor, load, current_step, registry_generation| {
@@ -752,7 +759,7 @@ fn schedule_ready(
                 .map(WorkerPool::available_slots)
                 .unwrap_or(0);
             let running_batches =
-                running_batch_count_for_runner(running_tasks, &descriptor.runner_id);
+                running_batch_count_for_runner(running_batches_by_task, &descriptor.runner_id);
             decide_schedule(
                 descriptor,
                 load,
@@ -799,9 +806,9 @@ fn schedule_ready(
                 trace_id: task.trace_id.clone(),
                 correlation_id: task.correlation_id.clone(),
             };
-            running_tasks.insert(
+            running_batches_by_task.insert(
                 task.task_id.clone(),
-                RunningTask {
+                RunningBatch {
                     runner_id: runner_id.clone(),
                     invocation_id: invocation_id.clone(),
                     batch_id: batch_id.clone(),
@@ -826,8 +833,8 @@ fn schedule_ready(
 mod tests {
     use super::*;
 
-    fn running_task(runner_id: &str, batch_id: &str, task_id: &str) -> RunningTask {
-        RunningTask {
+    fn running_batch(runner_id: &str, batch_id: &str, task_id: &str) -> RunningBatch {
+        RunningBatch {
             runner_id: runner_id.into(),
             invocation_id: batch_id.into(),
             batch_id: batch_id.into(),
@@ -850,26 +857,26 @@ mod tests {
 
     #[test]
     fn running_batch_count_deduplicates_entries_by_batch_id() {
-        let mut running_tasks = BTreeMap::new();
-        running_tasks.insert(
+        let mut running_batches_by_task = BTreeMap::new();
+        running_batches_by_task.insert(
             "task-a".into(),
-            running_task("batch.runner", "batch-1", "task-a"),
+            running_batch("batch.runner", "batch-1", "task-a"),
         );
-        running_tasks.insert(
+        running_batches_by_task.insert(
             "task-b".into(),
-            running_task("batch.runner", "batch-1", "task-b"),
+            running_batch("batch.runner", "batch-1", "task-b"),
         );
-        running_tasks.insert(
+        running_batches_by_task.insert(
             "task-c".into(),
-            running_task("batch.runner", "batch-2", "task-c"),
+            running_batch("batch.runner", "batch-2", "task-c"),
         );
-        running_tasks.insert(
+        running_batches_by_task.insert(
             "task-d".into(),
-            running_task("other.runner", "batch-3", "task-d"),
+            running_batch("other.runner", "batch-3", "task-d"),
         );
 
         assert_eq!(
-            running_batch_count_for_runner(&running_tasks, "batch.runner"),
+            running_batch_count_for_runner(&running_batches_by_task, "batch.runner"),
             2
         );
     }
