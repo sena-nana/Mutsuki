@@ -97,14 +97,14 @@ pub trait ResourcePlanClient: ResourcePlanGateway {
 
     fn execute_command_batch(
         &self,
-        batch: &mutsuki_runtime_contracts::CommandBatch,
+        batch: &mutsuki_runtime_contracts::resource::experimental::CommandBatch,
     ) -> mutsuki_runtime_core::RuntimeResult<Vec<mutsuki_runtime_contracts::PlanReceipt>> {
         ResourcePlanGateway::execute_command_batch(self, batch)
     }
 
     fn execute_saga_plan(
         &self,
-        saga: &mutsuki_runtime_contracts::SagaPlan,
+        saga: &mutsuki_runtime_contracts::resource::experimental::SagaPlan,
     ) -> mutsuki_runtime_core::RuntimeResult<Vec<mutsuki_runtime_contracts::PlanReceipt>> {
         ResourcePlanGateway::execute_saga_plan(self, saga)
     }

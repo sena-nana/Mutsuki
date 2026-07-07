@@ -7,7 +7,6 @@ use mutsuki_runtime_contracts::{
 };
 use serde_json::Value;
 
-use crate::task_pool::surface_ids_for_task;
 use crate::{RuntimeResult, TaskPool};
 
 use super::{CoreRuntime, TaskResultSnapshot};
@@ -17,7 +16,9 @@ impl CoreRuntime {
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
         }
-        let deprecated_surface = surface_ids_for_task(&task)
+        let deprecated_surface = self
+            .tasks
+            .surface_ids_for_task(&task)
             .into_iter()
             .find(|surface_id| self.is_surface_deprecated(surface_id));
         let task_id = self.tasks.enqueue(task)?;

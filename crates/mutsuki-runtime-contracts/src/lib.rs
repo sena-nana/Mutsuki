@@ -4,7 +4,7 @@ mod error;
 mod event;
 mod extension;
 mod plugin;
-mod resource;
+pub mod resource;
 mod runner;
 mod task;
 mod trace;
@@ -42,11 +42,11 @@ pub use plugin::{
     SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use resource::{
-    CommandBatch, CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor,
-    PlanReceipt, ReadPlan, ResourceAccess, ResourceCellRef, ResourceId, ResourceLease,
-    ResourceLifetime, ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceRef,
-    ResourceSealState, ResourceSemantic, ResourceTypeDescriptor, ResourceValue, SagaPlan,
-    SnapshotDescriptor, StreamPlan, TransactionPlan, ValueRef, ValueStorage, WritePlan,
+    CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor, PlanReceipt,
+    ReadPlan, ResourceAccess, ResourceCellRef, ResourceId, ResourceLease, ResourceLifetime,
+    ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceRef, ResourceSealState,
+    ResourceSemantic, ResourceTypeDescriptor, ResourceValue, SnapshotDescriptor, StreamPlan,
+    ValueRef, ValueStorage, WritePlan,
 };
 pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerBatchCapability,

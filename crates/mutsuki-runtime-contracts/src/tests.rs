@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 
+use crate::resource::experimental::{CommandBatch, SagaPlan, TransactionPlan};
 use crate::*;
 
 fn assert_missing_fields_fail<T: DeserializeOwned>(value: serde_json::Value) {

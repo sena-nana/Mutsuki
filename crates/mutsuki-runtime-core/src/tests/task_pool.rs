@@ -204,9 +204,9 @@ fn task_pool_reclaims_expired_running_leases_to_ready() {
         .0
         .clone();
 
-    assert_eq!(pool.reclaim_expired_leases(3), 0);
+    assert_eq!(pool.reclaim_expired_task_leases(3).len(), 0);
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Running);
-    assert_eq!(pool.reclaim_expired_leases(4), 1);
+    assert_eq!(pool.reclaim_expired_task_leases(4).len(), 1);
     let record = pool.get("task-1").unwrap();
     assert_eq!(record.status, TaskStatus::Ready);
     assert!(record.lease.is_none());
@@ -225,7 +225,7 @@ fn task_pool_rejects_stale_or_mismatched_lease_commits() {
     let stale_lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 1, 1, 1)[0]
         .0
         .clone();
-    pool.reclaim_expired_leases(2);
+    pool.reclaim_expired_task_leases(2);
     let fresh_lease = pool.claim_ready_for_executor(&descriptor, "executor-2", 2, 1, 1)[0]
         .0
         .clone();
