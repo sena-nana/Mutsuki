@@ -104,6 +104,8 @@ cargo test
 - Core 不提供 TaskGroup、WaitSet、pipeline、broadcast、matcher、actor 或 endpoint runtime 实体。
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。
+- Runner capability 必须区分 `native_batch` 和 `scalar_adapter`；默认 capability 是
+  scalar adapter 串行执行，不能因为插件作者使用 scalar 写法而重新引入 single-task ABI。
 - JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python
   runner-side awaitable adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
   也不承诺调度任意 `asyncio` future。

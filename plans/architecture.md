@@ -154,6 +154,9 @@ CoreActor 调度延迟。
 当前 Rust core 的 `Runner.run_batch` 使用 `WorkBatch` wire shape；单 task 只是
 `entries.len() == 1` 的 batch。host 可在同一 tick 产生多个 batch dispatch，每个
 dispatch 携带该 batch 的 entry、payload、resource plan 和 task leases。
+`RunnerDescriptor.batch.mode` 只声明实现形态：`native_batch` 可在 runner 内做原生 batch
+优化，`scalar_adapter` 表示 SDK/Host adapter 串行把每个 entry 降到作者侧 scalar 函数；
+两者对 Core 暴露的 ABI 都仍是 `run_batch`。
 
 SDK / host submit 面也保持 batch-first：`submit_batch(TaskBatch)` 是标准入口，
 `submit_task` / `submit_one` 只是构造 one-entry `TaskBatch` 的用户体验 facade。ABI

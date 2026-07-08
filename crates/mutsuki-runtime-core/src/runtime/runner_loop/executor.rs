@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{CompletionBatch, TaskLease, WorkBatch};
+use mutsuki_runtime_contracts::{BatchEntry, CompletionBatch, TaskLease, WorkBatch};
 
 use crate::RuntimeResult;
 use crate::runner::Runner;
@@ -15,6 +15,7 @@ pub struct RunnerCompletion {
     pub runner: Box<dyn Runner>,
     pub task_leases: Vec<TaskLease>,
     pub batch_id: String,
+    pub expected_entries: Vec<BatchEntry>,
     pub result: RuntimeResult<CompletionBatch>,
 }
 
@@ -33,11 +34,13 @@ impl RunnerExecutor for InlineRunnerExecutor {
             batch,
         } = dispatch;
         let batch_id = batch.batch_id.clone();
+        let expected_entries = batch.entries.clone();
         let result = runner.run_batch(ctx, batch);
         RunnerCompletion {
             runner,
             task_leases,
             batch_id,
+            expected_entries,
             result,
         }
     }

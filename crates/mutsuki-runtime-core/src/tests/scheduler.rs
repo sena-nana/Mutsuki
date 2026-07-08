@@ -248,7 +248,8 @@ fn claim_ready_dispatches_splits_conflicting_writes_before_dispatch() {
             .complete_runner_dispatch(RunnerCompletion {
                 runner,
                 task_leases: dispatch.task_leases,
-                batch_id: dispatch.batch.batch_id,
+                batch_id: dispatch.batch.batch_id.clone(),
+                expected_entries: dispatch.batch.entries.clone(),
                 result,
             })
             .unwrap();
@@ -282,7 +283,8 @@ fn claim_ready_dispatches_splits_conflicting_writes_before_dispatch() {
             .complete_runner_dispatch(RunnerCompletion {
                 runner,
                 task_leases: dispatch.task_leases,
-                batch_id: dispatch.batch.batch_id,
+                batch_id: dispatch.batch.batch_id.clone(),
+                expected_entries: dispatch.batch.entries.clone(),
                 result,
             })
             .unwrap();

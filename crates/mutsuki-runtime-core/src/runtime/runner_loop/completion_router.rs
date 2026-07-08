@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    CompletionBatch, EntryCompletion, RunnerDescriptor, RuntimeError, TaskLease,
+    BatchEntry, CompletionBatch, EntryCompletion, RunnerDescriptor, RuntimeError, TaskLease,
 };
 
 use crate::RuntimeResult;
@@ -41,7 +41,13 @@ pub(super) fn complete_runner_dispatch(
             completed_tasks: completed,
         });
     }
-    let completed = route_completion_batch(runtime, &descriptor, &completion.task_leases, result)?;
+    let completed = route_completion_batch(
+        runtime,
+        &descriptor,
+        &completion.task_leases,
+        &completion.expected_entries,
+        result,
+    )?;
     Ok(RunnerLoopReport {
         claimed_tasks: 0,
         completed_tasks: completed,
@@ -52,18 +58,48 @@ fn route_completion_batch(
     runtime: &mut CoreRuntime,
     descriptor: &RunnerDescriptor,
     leases: &[TaskLease],
+    expected_entries: &[BatchEntry],
     batch: CompletionBatch,
 ) -> RuntimeResult<usize> {
     let mut leases_by_task = BTreeMap::new();
     for lease in leases {
-        leases_by_task.insert(lease.task_id.clone(), lease.clone());
+        leases_by_task.insert(lease.task_id.as_str(), lease);
     }
-    let mut seen_entries = BTreeMap::new();
-    for completion in &batch.results {
-        if seen_entries
-            .insert(completion.entry_id.clone(), completion.task_id.clone())
+    let mut expected_entries_by_id = BTreeMap::new();
+    for entry in expected_entries {
+        if expected_entries_by_id
+            .insert(entry.entry_id.as_str(), entry)
             .is_some()
-            || !leases_by_task.contains_key(&completion.task_id)
+            || !leases_by_task.contains_key(entry.task_id.as_str())
+        {
+            return super::failure_reporting::fail_runner_dispatches(
+                runtime,
+                leases,
+                batch_claim_conflict(format!("batch.entry.expected.{}", entry.entry_id)),
+            );
+        }
+    }
+    let mut completions_by_entry = BTreeMap::new();
+    for completion in &batch.results {
+        let Some(entry) = expected_entries_by_id.get(completion.entry_id.as_str()) else {
+            return super::failure_reporting::fail_runner_dispatches(
+                runtime,
+                leases,
+                batch_claim_conflict(format!("batch.entry.{}", completion.entry_id)),
+            );
+        };
+        if entry.task_id != completion.task_id
+            || !leases_by_task.contains_key(completion.task_id.as_str())
+        {
+            return super::failure_reporting::fail_runner_dispatches(
+                runtime,
+                leases,
+                batch_claim_conflict(format!("batch.entry.{}", completion.entry_id)),
+            );
+        }
+        if completions_by_entry
+            .insert(completion.entry_id.as_str(), completion)
+            .is_some()
         {
             return super::failure_reporting::fail_runner_dispatches(
                 runtime,
@@ -73,20 +109,23 @@ fn route_completion_batch(
         }
     }
     let mut completed = 0;
-    for lease in leases {
-        let Some(completion) = batch
-            .results
-            .iter()
-            .find(|completion| completion.task_id == lease.task_id)
-        else {
+    for entry in expected_entries {
+        let Some(lease) = leases_by_task.get(entry.task_id.as_str()) else {
+            return super::failure_reporting::fail_runner_dispatches(
+                runtime,
+                leases,
+                batch_claim_conflict(format!("batch.entry.expected.{}", entry.entry_id)),
+            );
+        };
+        let Some(completion) = completions_by_entry.get(entry.entry_id.as_str()) else {
             completed += super::failure_reporting::fail_runner_dispatch(
                 runtime,
                 lease,
-                batch_claim_conflict(format!("batch.missing.{}", lease.task_id)),
+                batch_claim_conflict(format!("batch.missing.{}", entry.entry_id)),
             )?;
             continue;
         };
-        completed += route_entry_completion(runtime, descriptor, lease, completion.clone())?;
+        completed += route_entry_completion(runtime, descriptor, lease, (*completion).clone())?;
     }
     Ok(completed)
 }

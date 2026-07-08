@@ -122,11 +122,13 @@ fn execute_dispatch(dispatch: RunnerDispatch) -> RunnerCompletion {
         batch,
     } = dispatch;
     let batch_id = batch.batch_id.clone();
+    let expected_entries = batch.entries.clone();
     let result = runner.run_batch(ctx, batch);
     RunnerCompletion {
         runner,
         task_leases,
         batch_id,
+        expected_entries,
         result,
     }
 }

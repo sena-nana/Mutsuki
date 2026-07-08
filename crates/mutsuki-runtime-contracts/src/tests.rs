@@ -93,7 +93,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: serde_json::json!({"type": "object"}),
         batch: RunnerBatchCapability {
-            mode: RunnerMode::Batch,
+            mode: RunnerMode::NativeBatch,
             preferred_batch_size: 64,
             max_batch_entries: 256,
             max_inflight_batches: 4,

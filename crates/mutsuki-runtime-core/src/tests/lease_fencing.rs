@@ -55,7 +55,8 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
         .complete_runner_dispatch(RunnerCompletion {
             runner: dispatch.runner,
             task_leases: dispatch.task_leases,
-            batch_id: dispatch.batch.batch_id,
+            batch_id: dispatch.batch.batch_id.clone(),
+            expected_entries: dispatch.batch.entries.clone(),
             result: Ok(stale_completion),
         })
         .unwrap();

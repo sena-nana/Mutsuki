@@ -145,6 +145,9 @@ Batch-first 迁移约束：
   `RunnerDescriptor.payload.layouts` 声明 Row；支持同构输入的 runner 可额外声明
   Columnar / BinaryPacked / ResourceBacked。非 Row encoder 是后续 host/core 优化点，
   不改变 TaskPool、TaskLease 或 runner ABI。
+- `RunnerDescriptor.batch.mode` 必须声明 runner 是 `native_batch` 还是
+  `scalar_adapter`；兼容旧 lock 的 `batch` 值只表示 legacy native batch 声明。未声明
+  或使用默认 capability 时按 scalar adapter 处理，adapter 内部串行执行 entry。
 - `RunnerDescriptor.batch` 声明 preferred / max batch entries、max inflight batches、
   partial failure 和 preserve order 能力；Core / host 仍会按 scheduler budget 和资源冲突
   对实际 batch 入场做更严格限制。

@@ -50,6 +50,8 @@ pub struct RunnerDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerMode {
+    ScalarAdapter,
+    NativeBatch,
     Batch,
 }
 
@@ -66,7 +68,7 @@ pub struct RunnerBatchCapability {
 impl Default for RunnerBatchCapability {
     fn default() -> Self {
         Self {
-            mode: RunnerMode::Batch,
+            mode: RunnerMode::ScalarAdapter,
             preferred_batch_size: 1,
             max_batch_entries: 1,
             max_inflight_batches: 1,

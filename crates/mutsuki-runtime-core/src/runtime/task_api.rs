@@ -43,8 +43,17 @@ impl CoreRuntime {
     }
 
     pub fn submit_task(&mut self, task: Task) -> RuntimeResult<TaskHandle> {
-        let task_id = self.enqueue_task(task)?;
-        self.task_handle_for_id(&task_id)
+        let batch_id = format!("core.submit.{}", task.task_id);
+        self.submit_batch(TaskBatch::one(batch_id, task))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                crate::runtime_failure(
+                    mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                    "runtime.task",
+                    "task.submit.empty",
+                )
+            })
     }
 
     pub fn submit_batch(&mut self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {

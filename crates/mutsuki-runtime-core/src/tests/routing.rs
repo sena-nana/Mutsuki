@@ -12,6 +12,11 @@ struct ResultListRunner {
     result: Box<dyn Fn(&Task) -> RunnerResult + Send>,
 }
 
+struct BatchCompletionRunner {
+    descriptor: RunnerDescriptor,
+    complete: Box<dyn FnMut(&WorkBatch) -> CompletionBatch + Send>,
+}
+
 impl ResultListRunner {
     fn new(
         descriptor: RunnerDescriptor,
@@ -20,6 +25,18 @@ impl ResultListRunner {
         Self {
             descriptor,
             result: Box::new(result),
+        }
+    }
+}
+
+impl BatchCompletionRunner {
+    fn new(
+        descriptor: RunnerDescriptor,
+        complete: impl FnMut(&WorkBatch) -> CompletionBatch + Send + 'static,
+    ) -> Self {
+        Self {
+            descriptor,
+            complete: Box::new(complete),
         }
     }
 }
@@ -35,6 +52,20 @@ impl Runner for ResultListRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         scalar_batch_result(&batch, |task| Ok((self.result)(task)))
+    }
+}
+
+impl Runner for BatchCompletionRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        Ok((self.complete)(&batch))
     }
 }
 
@@ -821,6 +852,103 @@ fn mismatched_runner_result_fails_before_partial_routing() {
 }
 
 #[test]
+fn completion_batch_unknown_entry_fails_leased_task_before_routing_outputs() {
+    let runtime = run_completion_batch(&["task-1"], |batch| {
+        let task_id = batch.entries[0].task_id.clone();
+        let mut result = RunnerResult::completed(task_id.clone());
+        result.tasks.push(Task::new(
+            "child-from-unknown-entry",
+            "child.work",
+            json!({}),
+        ));
+        CompletionBatch {
+            batch_id: batch.batch_id.clone(),
+            tick_id: batch.tick_id.clone(),
+            results: vec![EntryCompletion {
+                entry_id: "entry:unknown".into(),
+                task_id,
+                result: Some(result),
+                error: None,
+            }],
+            metadata: Vec::new(),
+        }
+    });
+
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("child-from-unknown-entry").is_none());
+}
+
+#[test]
+fn completion_batch_duplicate_entry_fails_all_leased_tasks() {
+    let runtime = run_completion_batch(&["task-1", "task-2"], |batch| CompletionBatch {
+        batch_id: batch.batch_id.clone(),
+        tick_id: batch.tick_id.clone(),
+        results: vec![
+            EntryCompletion {
+                entry_id: batch.entries[0].entry_id.clone(),
+                task_id: batch.entries[0].task_id.clone(),
+                result: Some(RunnerResult::completed(batch.entries[0].task_id.clone())),
+                error: None,
+            },
+            EntryCompletion {
+                entry_id: batch.entries[0].entry_id.clone(),
+                task_id: batch.entries[1].task_id.clone(),
+                result: Some(RunnerResult::completed(batch.entries[1].task_id.clone())),
+                error: None,
+            },
+        ],
+        metadata: Vec::new(),
+    });
+
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert_failed_with_code(&runtime, "task-2", ERR_TASK_CLAIM_CONFLICT);
+}
+
+#[test]
+fn completion_batch_unknown_task_fails_all_leased_tasks() {
+    let runtime = run_completion_batch(&["task-1", "task-2"], |batch| CompletionBatch {
+        batch_id: batch.batch_id.clone(),
+        tick_id: batch.tick_id.clone(),
+        results: vec![
+            EntryCompletion {
+                entry_id: batch.entries[0].entry_id.clone(),
+                task_id: batch.entries[0].task_id.clone(),
+                result: Some(RunnerResult::completed(batch.entries[0].task_id.clone())),
+                error: None,
+            },
+            EntryCompletion {
+                entry_id: batch.entries[1].entry_id.clone(),
+                task_id: "task:unknown".into(),
+                result: Some(RunnerResult::completed("task:unknown")),
+                error: None,
+            },
+        ],
+        metadata: Vec::new(),
+    });
+
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert_failed_with_code(&runtime, "task-2", ERR_TASK_CLAIM_CONFLICT);
+}
+
+#[test]
+fn completion_batch_missing_entry_fails_only_that_leased_task() {
+    let runtime = run_completion_batch(&["task-1", "task-2"], |batch| CompletionBatch {
+        batch_id: batch.batch_id.clone(),
+        tick_id: batch.tick_id.clone(),
+        results: vec![EntryCompletion {
+            entry_id: batch.entries[0].entry_id.clone(),
+            task_id: batch.entries[0].task_id.clone(),
+            result: Some(RunnerResult::completed(batch.entries[0].task_id.clone())),
+            error: None,
+        }],
+        metadata: Vec::new(),
+    });
+
+    assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+    assert_failed_with_code(&runtime, "task-2", ERR_TASK_CLAIM_CONFLICT);
+}
+
+#[test]
 fn task_await_requires_waiting_status_before_child_task_is_enqueued() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
@@ -1206,6 +1334,29 @@ fn runner_result_with_status(task: &Task, status: RunnerStatus) -> RunnerResult 
         task_await: None,
         status,
     }
+}
+
+fn run_completion_batch(
+    task_ids: &[&str],
+    complete: impl FnMut(&WorkBatch) -> CompletionBatch + Send + 'static,
+) -> CoreRuntime {
+    let mut worker = runner_descriptor("worker", "sim.batch", RunnerPurity::Pure);
+    worker.batch.preferred_batch_size = task_ids.len().max(1);
+    worker.batch.max_batch_entries = task_ids.len().max(1);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(Box::new(BatchCompletionRunner::new(
+        worker, complete
+    )) as Box<dyn Runner>);
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    for task_id in task_ids {
+        runtime
+            .submit_task(Task::new(*task_id, "sim.batch", json!({})))
+            .unwrap();
+    }
+
+    let report = runtime.tick_once().unwrap();
+    assert_eq!(report.claimed_tasks, task_ids.len());
+    runtime
 }
 
 fn assert_failed_with_code(runtime: &CoreRuntime, task_id: &str, code: &str) {
