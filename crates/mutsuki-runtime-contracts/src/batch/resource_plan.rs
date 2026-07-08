@@ -27,6 +27,9 @@ pub struct DeferredResourceOp {
 pub struct WorkResourcePlan {
     pub read_views: Vec<ResourceReadView>,
     pub write_locks: Vec<ResourceWriteLock>,
+    pub parallel_groups: Vec<Vec<EntryId>>,
+    pub serial_groups: Vec<Vec<EntryId>>,
+    pub parallelism_limit: usize,
     pub version_checks: Vec<VersionExpectation>,
     pub deferred_writes: Vec<DeferredResourceOp>,
     pub conflict_entries: Vec<EntryId>,
@@ -37,6 +40,9 @@ impl WorkResourcePlan {
         Self {
             read_views: Vec::new(),
             write_locks: Vec::new(),
+            parallel_groups: Vec::new(),
+            serial_groups: Vec::new(),
+            parallelism_limit: 1,
             version_checks: Vec::new(),
             deferred_writes: Vec::new(),
             conflict_entries: Vec::new(),

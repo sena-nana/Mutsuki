@@ -30,8 +30,11 @@ impl Default for RunnerLimits {
 pub struct HostCapacity {
     pub running_batches: usize,
     pub queued_batches: usize,
+    pub running_entries: usize,
+    pub queued_entries: usize,
     pub saturation: f32,
     pub preferred_batch_size: usize,
+    pub max_entry_concurrency: usize,
     pub max_inflight_bytes: usize,
 }
 
@@ -117,8 +120,15 @@ fn host_capacity(
     HostCapacity {
         running_batches,
         queued_batches: load.queued_count,
+        running_entries: load.running_count,
+        queued_entries: load.queued_count,
         saturation: (load.pending_weight as f32 / max_inflight as f32).min(1.0),
         preferred_batch_size: descriptor.batch.preferred_batch_size.max(1),
+        max_entry_concurrency: descriptor
+            .batch
+            .max_entry_concurrency
+            .min(descriptor.batch.max_batch_entries)
+            .min(limits.max_inflight.max(1)),
         max_inflight_bytes: usize::MAX,
     }
 }

@@ -56,13 +56,26 @@ pub enum RunnerMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerSideEffect {
+    None,
+    Resource,
+    External,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerBatchCapability {
     pub mode: RunnerMode,
     pub preferred_batch_size: usize,
     pub max_batch_entries: usize,
+    pub max_entry_concurrency: usize,
     pub max_inflight_batches: usize,
+    pub scalar_thread_safe: bool,
+    pub scalar_reentrant: bool,
     pub partial_failure: bool,
     pub preserve_order: bool,
+    pub side_effect: RunnerSideEffect,
 }
 
 impl Default for RunnerBatchCapability {
@@ -71,9 +84,13 @@ impl Default for RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             preferred_batch_size: 1,
             max_batch_entries: 1,
+            max_entry_concurrency: 1,
             max_inflight_batches: 1,
+            scalar_thread_safe: false,
+            scalar_reentrant: false,
             partial_failure: true,
-            preserve_order: false,
+            preserve_order: true,
+            side_effect: RunnerSideEffect::Unknown,
         }
     }
 }
@@ -106,8 +123,8 @@ pub struct RunnerResourceCapability {
 impl Default for RunnerResourceCapability {
     fn default() -> Self {
         Self {
-            batch_read: true,
-            batch_write: true,
+            batch_read: false,
+            batch_write: false,
             requires_resource_plan: true,
             supports_shared_memory: false,
         }
@@ -148,9 +165,9 @@ pub struct RunnerControlCapability {
 impl Default for RunnerControlCapability {
     fn default() -> Self {
         Self {
-            entry_cancel: true,
+            entry_cancel: false,
             batch_cancel: true,
-            timeout_granularity: TimeoutGranularity::Entry,
+            timeout_granularity: TimeoutGranularity::Batch,
         }
     }
 }

@@ -149,6 +149,20 @@ fn runtime_boot_rejects_incoherent_runner_batch_capability() {
 }
 
 #[test]
+fn runtime_boot_rejects_entry_concurrency_above_batch_limit() {
+    let mut runner = runner_descriptor("batch.worker", "cap.work", RunnerPurity::Pure);
+    runner.batch.max_batch_entries = 2;
+    runner.batch.max_entry_concurrency = 3;
+    let plan = load_plan(vec![runner.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(runner));
+
+    let err = boot_error(plan, runners);
+
+    assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(err.error().route, "runner.batch.worker.batch");
+}
+
+#[test]
 fn runner_control_facade_respects_freeze_and_authorized_capabilities() {
     let runner = runner_descriptor("worker", "cap.work", RunnerPurity::Pure);
     let plan = load_plan(vec![runner.clone()], Vec::new());

@@ -20,7 +20,7 @@
 | `TaskLease` | 一次 batch entry 执行租约，绑定 task、runner、executor、registry generation 和租约时间 |
 | `BatchEntry` / `WorkBatch` / `CompletionBatch` | Tick 内部标准执行单元；单 task 是单 entry batch，不再有独立 runner step 主路径 |
 | `BatchPayload` / `PayloadLayout` | `layout + payload` 形式的执行面 payload descriptor；Row 携带 `RowPayload.rows`，Columnar / BinaryPacked / ResourceBacked 是 SIMD-friendly 能力面 |
-| `WorkResourcePlan` | WorkSet 派发前生成的资源读写计划、version check 和冲突 entry 描述 |
+| `WorkResourcePlan` | WorkSet 派发前生成的资源读写计划、version check、parallel/serial entry group、parallelism limit 和冲突 entry 描述 |
 | `TaskHandle` | SDK-facing task descriptor，包含 task id、protocol、target binding、取消策略和 trace/correlation |
 | `TaskAwait` | 当前 task 等待一个 child task 的 continuation registration |
 | `TaskOutcome` | SDK 读取的 terminal task 结果映射 |
@@ -147,10 +147,14 @@ Batch-first 迁移约束：
   不改变 TaskPool、TaskLease 或 runner ABI。
 - `RunnerDescriptor.batch.mode` 必须声明 runner 是 `native_batch` 还是
   `scalar_adapter`；兼容旧 lock 的 `batch` 值只表示 legacy native batch 声明。未声明
-  或使用默认 capability 时按 scalar adapter 处理，adapter 内部串行执行 entry。
+  或使用默认 capability 时按 scalar adapter 处理，`max_entry_concurrency = 1`、
+  `preserve_order = true`、`side_effect = unknown`、`entry_cancel = false`，
+  adapter 内部串行执行 entry。
 - `RunnerDescriptor.batch` 声明 preferred / max batch entries、max inflight batches、
-  partial failure 和 preserve order 能力；Core / host 仍会按 scheduler budget 和资源冲突
-  对实际 batch 入场做更严格限制。
+  max entry concurrency、partial failure、preserve order、scalar thread safety /
+  reentrancy 和 side-effect 能力；Core / host 仍会按 scheduler budget 和资源冲突
+  对实际 batch 入场做更严格限制。非法声明必须在 load-plan / registry materialize
+  阶段结构化失败。
 - `RunnerDescriptor.resources` 和 `RunnerDescriptor.ordering` 只声明 runner 能力边界；
   资源计划仍由 Core dispatch 前生成，排序事实仍来自 TaskPool 和 batch entry。
 
@@ -262,6 +266,9 @@ Scheduler v1 不是公开 wire contract，也不进入 `PluginManifest` / `Runti
 - Core 继续执行 runner acceptance、TaskPool 排序、WorkBatch 构造、TaskLease 创建和状态提交。
 - Core 在 claim 时必须按 `DispatchBudget` 筛选 ready task；lane budget 只限制本 batch
   各 `DispatchLane` 可进入的 entry 数，不能改变 TaskPool 的基础排序。
+- `HostCapacity` 必须暴露 running / queued batch 与 entry 数、saturation、
+  preferred batch size、max entry concurrency 和 max inflight bytes，供 host scheduler
+  只读决策。
 - scheduler 不能执行 task、不能创建子 task、不能完成 task、不能修改 TaskPool、
   不能访问真实资源本体。
 

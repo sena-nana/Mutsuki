@@ -47,7 +47,13 @@ impl SchedulerPolicy for CapacityAssertingScheduler {
             ));
         }
         assert_eq!(input.host_capacity.running_batches, 0);
+        assert_eq!(input.host_capacity.running_entries, 0);
+        assert_eq!(
+            input.host_capacity.queued_entries,
+            input.host_capacity.queued_batches
+        );
         assert!(input.host_capacity.saturation > 0.0);
+        assert_eq!(input.host_capacity.max_entry_concurrency, 1);
         Ok(ScheduleDecision::new(
             "test.capacity",
             input.host_capacity.preferred_batch_size,

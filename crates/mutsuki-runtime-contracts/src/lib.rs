@@ -51,8 +51,8 @@ pub use resource::{
 pub use runner::{
     DomainEvent, EffectPrecondition, EffectRequest, ExecutionClass, RunnerBatchCapability,
     RunnerContext, RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
-    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult, RunnerStatus,
-    TimeoutGranularity,
+    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
+    RunnerSideEffect, RunnerStatus, TimeoutGranularity,
 };
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,

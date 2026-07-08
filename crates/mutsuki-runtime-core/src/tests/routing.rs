@@ -879,6 +879,39 @@ fn completion_batch_unknown_entry_fails_leased_task_before_routing_outputs() {
 }
 
 #[test]
+fn completion_batch_id_mismatch_fails_all_leased_tasks_before_routing_outputs() {
+    let runtime = run_completion_batch(&["task-1", "task-2"], |batch| {
+        let mut result = RunnerResult::completed(batch.entries[0].task_id.clone());
+        result
+            .tasks
+            .push(Task::new("child-from-wrong-batch", "child.work", json!({})));
+        CompletionBatch {
+            batch_id: "batch:wrong".into(),
+            tick_id: batch.tick_id.clone(),
+            results: vec![
+                EntryCompletion {
+                    entry_id: batch.entries[0].entry_id.clone(),
+                    task_id: batch.entries[0].task_id.clone(),
+                    result: Some(result),
+                    error: None,
+                },
+                EntryCompletion {
+                    entry_id: batch.entries[1].entry_id.clone(),
+                    task_id: batch.entries[1].task_id.clone(),
+                    result: Some(RunnerResult::completed(batch.entries[1].task_id.clone())),
+                    error: None,
+                },
+            ],
+            metadata: Vec::new(),
+        }
+    });
+
+    assert_failed_with_code(&runtime, "task-1", ERR_TASK_CLAIM_CONFLICT);
+    assert_failed_with_code(&runtime, "task-2", ERR_TASK_CLAIM_CONFLICT);
+    assert!(runtime.tasks().get("child-from-wrong-batch").is_none());
+}
+
+#[test]
 fn completion_batch_duplicate_entry_fails_all_leased_tasks() {
     let runtime = run_completion_batch(&["task-1", "task-2"], |batch| CompletionBatch {
         batch_id: batch.batch_id.clone(),

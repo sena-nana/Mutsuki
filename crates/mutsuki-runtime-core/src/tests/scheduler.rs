@@ -155,6 +155,45 @@ fn claim_ready_dispatches_clamps_to_runner_max_batch_entries() {
 }
 
 #[test]
+fn max_batch_entries_one_still_dispatches_single_entry_work_batch() {
+    let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
+    worker.batch.max_batch_entries = 1;
+    worker.batch.preferred_batch_size = 1;
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    for index in 1..=2 {
+        runtime
+            .submit_task(Task::new(
+                format!("schedule-{index}"),
+                "runtime.schedule.input",
+                json!({}),
+            ))
+            .unwrap();
+    }
+
+    let (report, dispatches) = runtime
+        .claim_ready_dispatches(
+            |_descriptor, _load, _step, _generation| {
+                Ok(ScheduleDecision::new(
+                    "test.scheduler",
+                    4,
+                    "test.single-entry",
+                ))
+            },
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(report.claimed_tasks, 1);
+    assert_eq!(dispatches.len(), 1);
+    assert_eq!(dispatches[0].ctx.entry_count, 1);
+    assert_eq!(dispatches[0].batch.entries.len(), 1);
+    assert_eq!(dispatches[0].batch.task_leases.len(), 1);
+    assert_eq!(runtime.task_status("schedule-2"), Some(TaskStatus::Ready));
+}
+
+#[test]
 fn claim_ready_dispatches_applies_byte_budget_before_batch_build() {
     let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
     worker.batch.max_batch_entries = 3;
@@ -340,5 +379,11 @@ fn claim_ready_dispatches_keeps_shared_reads_in_one_work_batch() {
     assert_eq!(dispatch.batch.entries.len(), 2);
     assert_eq!(dispatch.batch.resource_plan.read_views.len(), 1);
     assert_eq!(dispatch.batch.resource_plan.write_locks.len(), 0);
+    assert_eq!(
+        dispatch.batch.resource_plan.parallel_groups,
+        vec![vec!["schedule-1".to_string(), "schedule-2".to_string()]]
+    );
+    assert!(dispatch.batch.resource_plan.serial_groups.is_empty());
+    assert_eq!(dispatch.batch.resource_plan.parallelism_limit, 2);
     assert!(dispatch.batch.resource_plan.conflict_entries.is_empty());
 }

@@ -33,6 +33,7 @@ pub(super) fn build_runner_dispatch(
     let batch = build_work_batch(runtime.current_step, &batch_id, descriptor, &leased_tasks);
     let mut attrs = runner_attrs(descriptor, &runtime.load_plan);
     attrs.extend(dispatch_batch_attrs(
+        descriptor,
         &batch,
         &leased_tasks,
         &task_leases,

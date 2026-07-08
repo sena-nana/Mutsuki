@@ -10,7 +10,8 @@ extern crate self as mutsuki_runtime_sdk;
 use mutsuki_runtime_contracts::{
     CancelPolicy, CompletionBatch, EntryCompletion, ResourceAccess, ResourceId, ResourceLifetime,
     ResourceRef, ResourceSealState, ResourceSemantic, RunnerDescriptor, RunnerResult, RunnerStatus,
-    Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation, WorkBatch,
+    RuntimeError, Task, TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStepContinuation,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
@@ -73,6 +74,41 @@ pub trait RuntimeClient: Send + Sync {
     }
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>>;
     fn register_waker(&self, _handle: &TaskHandle, _waker: &Waker) {}
+}
+
+pub fn map_work_batch_entries(
+    batch: &WorkBatch,
+    mut handler: impl FnMut(&Task) -> Result<RunnerResult, RuntimeError>,
+) -> RuntimeResult<CompletionBatch> {
+    let tasks = match batch.row_payload_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return Ok(CompletionBatch::from_error(batch, error)),
+    };
+    let results = batch
+        .entries
+        .iter()
+        .map(|entry| {
+            let task = tasks
+                .iter()
+                .find(|task| task.task_id == entry.task_id)
+                .expect("row payload task should exist for batch entry");
+            match handler(task) {
+                Ok(result) => EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: Some(result),
+                    error: None,
+                },
+                Err(error) => EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(error),
+                },
+            }
+        })
+        .collect();
+    Ok(CompletionBatch::from_results(batch, results))
 }
 
 pub type RuntimeClientRef = Arc<dyn RuntimeClient>;

@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, ResourceAccessMode, ResourceReadView, ResourceWriteLock,
-    RunnerDescriptor, ScalarValue, Task, TaskLease, VersionExpectation, WorkBatch,
-    WorkResourcePlan, WorkSet,
+    BatchEntry, BatchPayload, OrderingRequirement, ResourceAccessMode, ResourceReadView,
+    ResourceWriteLock, RunnerDescriptor, ScalarValue, Task, TaskLease, VersionExpectation,
+    WorkBatch, WorkResourcePlan, WorkSet,
 };
 
 pub(super) fn dispatch_batch_attrs(
+    descriptor: &RunnerDescriptor,
     batch: &WorkBatch,
     leased_tasks: &[(TaskLease, Task)],
     task_leases: &[TaskLease],
@@ -37,6 +38,22 @@ pub(super) fn dispatch_batch_attrs(
         (
             "resource_conflict_count".into(),
             ScalarValue::Int(batch.resource_plan.conflict_entries.len() as i64),
+        ),
+        (
+            "parallel_group_count".into(),
+            ScalarValue::Int(batch.resource_plan.parallel_groups.len() as i64),
+        ),
+        (
+            "serial_group_count".into(),
+            ScalarValue::Int(batch.resource_plan.serial_groups.len() as i64),
+        ),
+        (
+            "effective_concurrency".into(),
+            ScalarValue::Int(batch.resource_plan.parallelism_limit as i64),
+        ),
+        (
+            "runner_mode".into(),
+            ScalarValue::String(format!("{:?}", descriptor.batch.mode)),
         ),
     ]);
     if let Some(entry) = batch.entries.first() {
@@ -210,6 +227,24 @@ fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
             }
         })
         .collect();
+    let mut parallel_group = Vec::new();
+    for entry in &work_set.entries {
+        if plan.conflict_entries.contains(&entry.entry_id) {
+            continue;
+        }
+        match entry.ordering {
+            OrderingRequirement::None => parallel_group.push(entry.entry_id.clone()),
+            _ => plan.serial_groups.push(vec![entry.entry_id.clone()]),
+        }
+    }
+    if !parallel_group.is_empty() {
+        plan.parallel_groups.push(parallel_group);
+    }
+    plan.parallelism_limit = if plan.serial_groups.is_empty() && plan.conflict_entries.is_empty() {
+        work_set.entries.len().max(1)
+    } else {
+        1
+    };
     plan
 }
 

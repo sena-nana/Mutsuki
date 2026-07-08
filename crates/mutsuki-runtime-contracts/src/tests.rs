@@ -96,9 +96,13 @@ fn task_runner_resource_contracts_roundtrip_json() {
             mode: RunnerMode::NativeBatch,
             preferred_batch_size: 64,
             max_batch_entries: 256,
+            max_entry_concurrency: 8,
             max_inflight_batches: 4,
+            scalar_thread_safe: true,
+            scalar_reentrant: true,
             partial_failure: true,
             preserve_order: false,
+            side_effect: RunnerSideEffect::Resource,
         },
         payload: RunnerPayloadCapability {
             layouts: vec![PayloadLayout::Row, PayloadLayout::Columnar],
@@ -128,6 +132,22 @@ fn task_runner_resource_contracts_roundtrip_json() {
         serde_json::from_str::<RunnerDescriptor>(&serde_json::to_string(&descriptor).unwrap())
             .unwrap(),
         descriptor
+    );
+
+    let safe_batch_defaults = RunnerBatchCapability::default();
+    assert_eq!(safe_batch_defaults.mode, RunnerMode::ScalarAdapter);
+    assert_eq!(safe_batch_defaults.max_entry_concurrency, 1);
+    assert!(!safe_batch_defaults.scalar_thread_safe);
+    assert!(!safe_batch_defaults.scalar_reentrant);
+    assert!(safe_batch_defaults.partial_failure);
+    assert!(safe_batch_defaults.preserve_order);
+    assert_eq!(safe_batch_defaults.side_effect, RunnerSideEffect::Unknown);
+    let safe_control_defaults = RunnerControlCapability::default();
+    assert!(!safe_control_defaults.entry_cancel);
+    assert!(safe_control_defaults.batch_cancel);
+    assert_eq!(
+        safe_control_defaults.timeout_granularity,
+        TimeoutGranularity::Batch
     );
 
     let resource = resource_ref("resource:1", "blob", ResourceSemantic::FrozenValue);
@@ -167,6 +187,9 @@ fn batch_work_contracts_roundtrip_json() {
             requirement_indices: vec![0],
         }],
         write_locks: Vec::new(),
+        parallel_groups: Vec::new(),
+        serial_groups: vec![vec!["entry-1".into()]],
+        parallelism_limit: 1,
         version_checks: vec![VersionExpectation {
             ref_id: "resource:1".into(),
             expected_version: 1,

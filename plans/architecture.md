@@ -130,6 +130,11 @@ clamp 后的 budget，并继续通过 TaskPool 排序、lane budget 筛选、cla
 和 route_result 维护唯一事实源。scheduler 不能选择具体 task、不能调用 runner、不能
 修改 task 状态，也不能访问资源本体。
 
+HostCapacity 包含 batch 与 entry 两级 running / queued 计数、saturation、preferred
+batch size、max entry concurrency 和 max inflight bytes。Core 构造 WorkResourcePlan 时
+给出 parallel_groups、serial_groups 和 parallelism_limit；Host / SDK scalar adapter 只能
+在 scheduler budget、HostCapacity、runner capability 和 resource plan 都允许时有界并行。
+
 长期如果 scheduler provider / plugin 化，关系仍保持：
 
 ```text
@@ -317,6 +322,13 @@ Core 负责：
 - 校验 runner descriptor 不超出 lock 授权。
 - 构建并 freeze RunnerRegistry、HandlerBindingRegistry 和 contract surface。
 - 记录 registry generation、plugin generation 和 contract fingerprint。
+
+与 GitHub issue #13 对齐后的职责边界是：Core 拥有 load-plan materialization、
+registry / binding index、surface occupancy 和 generation 切换的事实源；Host / SDK
+拥有具体 `PluginLoader`、builtin / ABI / WASM / process / Python bridge、路径发现和
+运行环境适配。插件加载只能在 boot 或 prepared reload transaction 中生成新的
+`RuntimeLoadPlan` / registry generation；Core v1 不提供运行中 lazy load 后动态注册 runner
+或 provider 的入口。
 
 ### 8.1 运行时可替换边界
 

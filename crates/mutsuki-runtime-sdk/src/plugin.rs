@@ -2,12 +2,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, HandlerBinding, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest,
+    ArtifactType, HandlerBinding, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy,
+    PermissionGrant, PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, PluginManifest,
     PluginProvides, ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 
-use crate::{HostService, ProtocolSpec, ResourceKindSpec, ResourceProviderGateway};
+use crate::{
+    HandlerBindingBuilder, HostService, ProtocolSpec, ResourceKindSpec, ResourceProviderGateway,
+};
 
 pub struct RuntimeBootstrapperService {
     pub service_id: String,
@@ -143,12 +146,14 @@ impl PluginBuilder {
     }
 
     pub fn runner(mut self, runner: Box<dyn Runner>) -> Self {
+        self.ensure_builtin_plugin_backend();
         self.provides.runners.push(runner.descriptor().clone());
         self.runners.push(runner);
         self
     }
 
     pub fn runner_descriptor(mut self, descriptor: RunnerDescriptor) -> Self {
+        self.ensure_builtin_plugin_backend();
         self.provides.runners.push(descriptor);
         self
     }
@@ -163,6 +168,28 @@ impl PluginBuilder {
 
     pub fn protocol_descriptor(mut self, descriptor: ProtocolDescriptor) -> Self {
         self.provides.protocols.push(descriptor);
+        self
+    }
+
+    pub fn protocol_handler(
+        mut self,
+        descriptor: ProtocolDescriptor,
+        target_runner_hint: impl Into<String>,
+        pool_id: impl Into<String>,
+    ) -> Self {
+        let protocol_id = descriptor.protocol_id.clone();
+        self.provides.protocols.push(descriptor);
+        self.provides.handler_bindings.push(
+            HandlerBindingBuilder::new(
+                format!("binding:{protocol_id}"),
+                self.plugin_id.clone(),
+                protocol_id.clone(),
+                protocol_id,
+            )
+            .target_runner_hint(target_runner_hint)
+            .pool_id(pool_id)
+            .build(),
+        );
         self
     }
 
@@ -257,6 +284,36 @@ impl PluginBuilder {
             runners: self.runners,
             host_services: self.host_services,
             resource_providers: self.resource_providers,
+        }
+    }
+
+    fn ensure_builtin_plugin_backend(&mut self) {
+        let backend_id = format!("plugin.backend.{}.builtin", self.plugin_id);
+        if !self.provides.host_extensions.iter().any(|extension| {
+            extension.extension_id == format!("host.extension.{}.builtin", self.plugin_id)
+        }) {
+            self.provides.host_extensions.push(HostExtensionDescriptor {
+                extension_id: format!("host.extension.{}.builtin", self.plugin_id),
+                kind: HostExtensionKind::PluginBackend,
+                supported_deployments: vec![PluginDeploymentKind::Builtin],
+                reload_policy: "static".into(),
+                drain_required: false,
+            });
+        }
+        if !self
+            .provides
+            .plugin_backends
+            .iter()
+            .any(|backend| backend.backend_id == backend_id)
+        {
+            self.provides.plugin_backends.push(PluginBackendDescriptor {
+                backend_id,
+                deployment_kind: PluginDeploymentKind::Builtin,
+                task_client_protocol: "mutsuki.task.v1".into(),
+                resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+                codec_id: None,
+                bridge_id: None,
+            });
         }
     }
 }

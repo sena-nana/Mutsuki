@@ -105,7 +105,12 @@ cargo test
 - Rust SDK 可以提供 `ctx.call(...).await`，但其 wire 语义必须落到普通 task、
   `TaskAwait`、`Waiting`、wake 和 `TaskOutcome`。
 - Runner capability 必须区分 `native_batch` 和 `scalar_adapter`；默认 capability 是
-  scalar adapter 串行执行，不能因为插件作者使用 scalar 写法而重新引入 single-task ABI。
+  scalar adapter 串行执行，`max_entry_concurrency = 1`、`preserve_order = true`、
+  `side_effect = unknown`、`entry_cancel = false`，不能因为插件作者使用 scalar 写法而
+  重新引入 single-task ABI。entry 并发声明不得超过 batch entry 上限。
+- `WorkResourcePlan` 必须在 dispatch 前给出 parallel_groups、serial_groups 和
+  parallelism_limit；Host/SDK adapter 只能在资源计划、runner capability、HostCapacity
+  和 scheduler budget 均允许时并行执行 scalar entries。
 - JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python
   runner-side awaitable adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
   也不承诺调度任意 `asyncio` future。

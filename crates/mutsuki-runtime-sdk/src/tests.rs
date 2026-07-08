@@ -477,16 +477,8 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
     let descriptor = async_descriptor();
     let plugin = PluginBuilder::new("plugin-a")
         .version("1.2.3")
-        .protocol::<MacroEchoInput>()
+        .protocol_handler(MacroEchoInput::descriptor(), "macro.echo.runner", "default")
         .resource_type::<MacroTextBuffer>()
-        .handler_binding(
-            HandlerBindingBuilder::from_protocols::<MacroEchoInput, MacroEchoInput>(
-                "binding:macro.echo",
-                "plugin-a",
-            )
-            .target_runner_hint("macro.echo.runner")
-            .build(),
-        )
         .runner(Box::new(TestRunner {
             descriptor: descriptor.clone(),
         }))
@@ -496,6 +488,12 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
     assert_eq!(plugin.manifest.plugin_id, "plugin-a");
     assert_eq!(plugin.manifest.version, "1.2.3");
     assert_eq!(plugin.manifest.provides.runners, vec![descriptor]);
+    assert_eq!(plugin.manifest.provides.host_extensions.len(), 1);
+    assert_eq!(plugin.manifest.provides.plugin_backends.len(), 1);
+    assert_eq!(
+        plugin.manifest.provides.plugin_backends[0].deployment_kind,
+        PluginDeploymentKind::Builtin
+    );
     assert_eq!(
         plugin.manifest.provides.protocols[0].protocol_id,
         "macro.echo"
