@@ -9,6 +9,7 @@ from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor,
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.resources.manager import PythonResourceManager
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
+from mutsuki_runner_kit.testing.batches import runner_context, single_test_batch
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
 from mutsuki_runner_kit.transport.stdio_jsonl import StdioJsonlBridge
 
@@ -18,52 +19,41 @@ class CaptureContextRunner(EchoRunner):
         super().__init__(descriptor)
         self.contexts: list[RunnerContext] = []
 
-    async def step(
-        self, ctx: RunnerContext, tasks: tuple[Task, ...]
-    ) -> tuple[RunnerResult, ...]:
+    async def run_one(self, ctx: RunnerContext, task: Task) -> RunnerResult:
         self.contexts.append(ctx)
-        return await super().step(ctx, tasks)
+        return await super().run_one(ctx, task)
 
 
 @pytest.mark.asyncio
-async def test_stdio_runner_step_dispatches_to_host() -> None:
+async def test_stdio_runner_run_batch_dispatches_to_host() -> None:
     backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
     backend.register_runner(runner)
     bridge = StdioJsonlBridge(backend, PythonResourceManager())
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    ctx = replace(runner_context(deadline_tick=3), invocation_id="task-1", cancel_token="task-1")
+    batch = single_test_batch(task)
 
     response = await bridge.handle_request(
         {
             "id": "req-1",
-            "method": "runner.step",
+            "method": "runner.run_batch",
             "params": {
                 "runner_id": "echo.runner",
-                "ctx": to_json_dict(
-                    RunnerContext(
-                        registry_generation=1,
-                        current_step=1,
-                        executor_id="executor:test",
-                        task_lease_id="task-lease-test",
-                        invocation_id="task-1",
-                        cancel_token="task-1",
-                        deadline_tick=3,
-                    )
-                ),
-                "tasks": [
-                    to_json_dict(
-                        replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
-                    )
-                ],
+                "ctx": to_json_dict(ctx),
+                "batch": to_json_dict(batch),
             },
         }
     )
 
     assert response["ok"] is True
-    assert response["result"][0]["task_id"] == "task-1"  # type: ignore[index]
-    assert response["result"][0]["task_await"] is None  # type: ignore[index]
+    assert response["result"]["batch_id"] == "batch-test"  # type: ignore[index]
+    assert response["result"]["results"][0]["task_id"] == "task-1"  # type: ignore[index]
+    assert response["result"]["results"][0]["result"]["task_await"] is None  # type: ignore[index]
     assert runner.contexts[0].invocation_id == "task-1"
     assert runner.contexts[0].cancel_token == "task-1"
     assert runner.contexts[0].deadline_tick == 3
+    assert runner.contexts[0].task_lease_ids == ("task-lease-test",)
 
 
 @pytest.mark.asyncio
@@ -163,33 +153,38 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
 
 
 @pytest.mark.asyncio
-async def test_stdio_runner_step_returns_structured_lease_mismatch_error() -> None:
+async def test_stdio_runner_run_batch_returns_structured_lease_mismatch_error() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(EchoRunner(echo_descriptor()))
     bridge = StdioJsonlBridge(backend, PythonResourceManager())
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
+    batch = single_test_batch(task, lease_id="task-lease-task")
+    ctx = runner_context(lease_ids=("task-lease-ctx",))
 
     response = await bridge.handle_request(
         {
             "id": "req-1",
-            "method": "runner.step",
+            "method": "runner.run_batch",
             "params": {
                 "runner_id": "echo.runner",
-                "ctx": to_json_dict(
-                    RunnerContext(
-                        registry_generation=1,
-                        current_step=1,
-                        executor_id="executor:test",
-                        task_lease_id="task-lease-ctx",
-                    )
-                ),
-                "tasks": [
-                    to_json_dict(
-                        replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
-                    )
-                ],
+                "ctx": to_json_dict(ctx),
+                "batch": to_json_dict(batch),
             },
         }
     )
 
     assert response["ok"] is False
     assert response["error"]["code"] == "task.claim_conflict"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_stdio_unknown_method_and_runner_step_are_rejected() -> None:
+    bridge = StdioJsonlBridge(PythonRunnerBackend(), PythonResourceManager())
+
+    unknown = await bridge.handle_request(
+        {"id": "req-1", "method": "runner.step", "params": {"runner_id": "echo.runner"}}
+    )
+
+    assert unknown["ok"] is False
+    assert unknown["error"]["code"] == "runtime.host_failed"  # type: ignore[index]
+    assert unknown["error"]["evidence"]["reason"] == "unknown_method"  # type: ignore[index]

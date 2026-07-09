@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import TextIO
 
+from mutsuki_runner_kit.contracts.batch import WorkBatch
 from mutsuki_runner_kit.contracts.codec import JsonValue, from_json_dict, to_json_dict
 from mutsuki_runner_kit.contracts.errors import ERR_RUNTIME_HOST_FAILED, RuntimeError
 from mutsuki_runner_kit.contracts.resource import (
@@ -13,7 +14,6 @@ from mutsuki_runner_kit.contracts.resource import (
     SagaPlan,
 )
 from mutsuki_runner_kit.contracts.runner import RunnerContext
-from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.resources.manager import PythonResourceManager
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
@@ -69,17 +69,13 @@ class StdioJsonlBridge:
     async def dispatch_runner_method(
         self, method: str, params: dict[str, object]
     ) -> JsonValue:
-        if method == "runner.step":
+        if method == "runner.run_batch":
             runner_id = self.str_param(params, "runner_id")
             ctx = from_json_dict(RunnerContext, self.mapping_param(params, "ctx"))
-            tasks = tuple(
-                from_json_dict(Task, self.mapping(item, "Task"))
-                for item in self.sequence_param(params, "tasks")
+            batch = from_json_dict(WorkBatch, self.mapping_param(params, "batch"))
+            return to_json_dict(
+                await self._runner_backend.run_batch_runner(runner_id, ctx, batch)
             )
-            return [
-                to_json_dict(result)
-                for result in await self._runner_backend.step_runner(runner_id, ctx, tasks)
-            ]
         if method == "runner.cancel":
             await self._runner_backend.cancel_runner(
                 self.str_param(params, "runner_id"),

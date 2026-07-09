@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.errors import RuntimeError
-from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
-from mutsuki_runner_kit.contracts.task import Task
+from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor
 
 
 class RunnerInvokeError(Exception):
@@ -17,9 +17,7 @@ class Runner(Protocol):
     @property
     def descriptor(self) -> RunnerDescriptor: ...
 
-    async def step(
-        self, ctx: RunnerContext, tasks: tuple[Task, ...]
-    ) -> tuple[RunnerResult, ...]: ...
+    async def run_batch(self, ctx: RunnerContext, batch: WorkBatch) -> CompletionBatch: ...
 
     async def cancel(self, invocation_id: str) -> None: ...
 

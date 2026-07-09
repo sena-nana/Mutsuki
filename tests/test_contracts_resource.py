@@ -251,6 +251,7 @@ def test_resource_plan_contracts_roundtrip() -> None:
             status="committed",
             resource_ref=resource,
             snapshot=snapshot,
+            descriptor_updates=(resource,),
             new_version=2,
             output=None,
         ),

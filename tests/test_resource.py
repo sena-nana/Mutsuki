@@ -82,6 +82,7 @@ def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
 
     assert receipt.new_version == 2
     assert receipt.resource_ref is not None
+    assert receipt.descriptor_updates == (receipt.resource_ref,)
     assert manager.read_resource(receipt.resource_ref) == b"world"
     assert manager.open_stream_plan(manager.build_read_plan(stream, "open")).resource == stream
 

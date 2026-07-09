@@ -18,6 +18,11 @@ from mutsuki_runner_kit.contracts.codec import (
     to_json_value,
     tuple_from_json,
 )
+from mutsuki_runner_kit.contracts.entry import (
+    DispatchLane,
+    OrderingRequirement,
+    ResourceRequirement,
+)
 from mutsuki_runner_kit.contracts.errors import RuntimeError
 from mutsuki_runner_kit.contracts.resource import ResourceRef
 from mutsuki_runner_kit.contracts.state import VersionExpectation
@@ -61,6 +66,9 @@ class Task:
     runner_hint: str | None
     registry_generation: int
     required_surfaces: tuple[str, ...]
+    dispatch_lane: DispatchLane
+    ordering: OrderingRequirement
+    resource_requirements: tuple[ResourceRequirement, ...]
     created_sequence: int
 
     @classmethod
@@ -83,8 +91,12 @@ class Task:
             runner_hint=None,
             registry_generation=0,
             required_surfaces=(),
+            dispatch_lane=DispatchLane.NORMAL,
+            ordering=OrderingRequirement.none(),
+            resource_requirements=(),
             created_sequence=0,
         )
+
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "Task")
@@ -128,6 +140,15 @@ class Task:
             ),
             required_surfaces=as_str_tuple(
                 field_value(raw, "required_surfaces"), "required_surfaces"
+            ),
+            dispatch_lane=DispatchLane(
+                as_str(field_value(raw, "dispatch_lane"), "dispatch_lane")
+            ),
+            ordering=OrderingRequirement.from_json_dict(
+                as_mapping(field_value(raw, "ordering"), "ordering")
+            ),
+            resource_requirements=tuple_from_json(
+                raw, "resource_requirements", ResourceRequirement
             ),
             created_sequence=as_int(field_value(raw, "created_sequence"), "created_sequence"),
         )

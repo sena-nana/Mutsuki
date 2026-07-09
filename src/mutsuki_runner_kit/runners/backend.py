@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.errors import (
     ERR_RUNNER_NOT_FOUND,
     ERR_TASK_CLAIM_CONFLICT,
     RuntimeError,
 )
-from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
-from mutsuki_runner_kit.contracts.task import Task
+from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor
 from mutsuki_runner_kit.runners.protocol import Runner, RunnerInvokeError
 
 
@@ -23,31 +23,31 @@ class PythonRunnerBackend:
     def descriptors(self) -> tuple[RunnerDescriptor, ...]:
         return tuple(runner.descriptor for runner in self._runners.values())
 
-    async def step_runner(
+    async def run_batch_runner(
         self,
         runner_id: str,
         ctx: RunnerContext,
-        tasks: tuple[Task, ...],
-    ) -> tuple[RunnerResult, ...]:
-        for task in tasks:
-            if task.lease_id != ctx.task_lease_id:
-                raise RunnerInvokeError(
-                    RuntimeError(
-                        code=ERR_TASK_CLAIM_CONFLICT,
-                        source="python_runner_backend",
-                        route=f"python.runner.step.{task.task_id}",
-                        evidence={
-                            "ctx_task_lease_id": ctx.task_lease_id or "",
-                            "task_lease_id": task.lease_id or "",
-                            "executor_id": ctx.executor_id,
-                        },
-                    )
+        batch: WorkBatch,
+    ) -> CompletionBatch:
+        batch_lease_ids = tuple(lease.lease_id for lease in batch.task_leases)
+        if batch_lease_ids != ctx.task_lease_ids:
+            raise RunnerInvokeError(
+                RuntimeError(
+                    code=ERR_TASK_CLAIM_CONFLICT,
+                    source="python_runner_backend",
+                    route=f"python.runner.run_batch.{batch.batch_id}",
+                    evidence={
+                        "ctx_task_lease_ids": ",".join(ctx.task_lease_ids),
+                        "batch_task_lease_ids": ",".join(batch_lease_ids),
+                        "executor_id": ctx.executor_id,
+                    },
                 )
+            )
         cancel_requested = ctx.cancel_requested or ctx.invocation_id in self._cancelled_invocations
         self._cancelled_invocations.discard(ctx.invocation_id)
         if cancel_requested != ctx.cancel_requested:
             ctx = replace(ctx, cancel_requested=True)
-        return await self._runner(runner_id).step(ctx, tasks)
+        return await self._runner(runner_id).run_batch(ctx, batch)
 
     async def cancel_runner(self, runner_id: str, invocation_id: str) -> None:
         self._cancelled_invocations.add(invocation_id)

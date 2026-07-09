@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from mutsuki_runner_kit.contracts.batch import PayloadLayout
+from mutsuki_runner_kit.contracts.entry import (
+    DispatchLane,
+    OrderingRequirement,
+    ResourceAccessMode,
+    ResourceRequirement,
+)
 from mutsuki_runner_kit.contracts.resource import (
     ResourceAccess,
     ResourceId,
@@ -12,10 +19,19 @@ from mutsuki_runner_kit.contracts.resource import (
 )
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
+    RunnerBatchCapability,
+    RunnerContext,
+    RunnerControlCapability,
     RunnerDescriptor,
+    RunnerMode,
+    RunnerOrderingCapability,
+    RunnerPayloadCapability,
     RunnerPurity,
+    RunnerResourceCapability,
     RunnerResult,
+    RunnerSideEffect,
     RunnerStatus,
+    TimeoutGranularity,
 )
 from mutsuki_runner_kit.contracts.state import VersionExpectation
 from mutsuki_runner_kit.contracts.task import (
@@ -50,6 +66,15 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         runner_hint="runner-a",
         registry_generation=3,
         required_surfaces=("task_protocol:raw.input",),
+        dispatch_lane=DispatchLane.INTERACTIVE,
+        ordering=OrderingRequirement.preserve_submit_order(),
+        resource_requirements=(
+            ResourceRequirement(
+                ref_id="resource:1",
+                mode=ResourceAccessMode.READ,
+                expected_version=1,
+            ),
+        ),
         created_sequence=4,
     )
     assert_json_roundtrip(Task, task)
@@ -63,10 +88,59 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         execution_class=ExecutionClass.CPU,
         input_schema={"type": "object"},
         output_schema={"type": "object"},
+        batch=RunnerBatchCapability(
+            mode=RunnerMode.NATIVE_BATCH,
+            preferred_batch_size=64,
+            max_batch_entries=256,
+            max_entry_concurrency=8,
+            max_inflight_batches=4,
+            scalar_thread_safe=True,
+            scalar_reentrant=True,
+            partial_failure=True,
+            preserve_order=False,
+            side_effect=RunnerSideEffect.RESOURCE,
+        ),
+        payload=RunnerPayloadCapability(
+            layouts=(PayloadLayout.ROW, PayloadLayout.COLUMNAR),
+            preferred_layout=PayloadLayout.COLUMNAR,
+            zero_copy=True,
+        ),
+        resources=RunnerResourceCapability(
+            batch_read=True,
+            batch_write=True,
+            requires_resource_plan=True,
+            supports_shared_memory=True,
+        ),
+        ordering=RunnerOrderingCapability(
+            default=OrderingRequirement.none(),
+            supports_sequence=True,
+            supports_same_resource_order=True,
+        ),
+        control=RunnerControlCapability(
+            entry_cancel=True,
+            batch_cancel=True,
+            timeout_granularity=TimeoutGranularity.ENTRY,
+        ),
         metadata={"rank": 1},
         contract_surfaces=("runner:runner-a",),
     )
     assert_json_roundtrip(RunnerDescriptor, descriptor)
+    assert_json_roundtrip(
+        RunnerContext,
+        RunnerContext(
+            registry_generation=1,
+            current_step=2,
+            tick_id="tick-2",
+            batch_id="batch-1",
+            executor_id="executor-a",
+            task_lease_ids=("lease-1", "lease-2"),
+            entry_count=2,
+            invocation_id="inv-1",
+            cancel_token="inv-1",
+            deadline_tick=9,
+            cancel_requested=False,
+        ),
+    )
     assert_json_roundtrip(
         TaskLease,
         TaskLease(

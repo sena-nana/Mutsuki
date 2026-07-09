@@ -16,6 +16,7 @@ from mutsuki_runner_kit.contracts.codec import (
     optional_int,
     optional_str,
     sequence,
+    tuple_from_json,
 )
 
 if TYPE_CHECKING:
@@ -261,6 +262,7 @@ class PlanReceipt:
     status: str
     resource_ref: ResourceRef | None
     snapshot: SnapshotDescriptor | None
+    descriptor_updates: tuple[ResourceRef, ...]
     new_version: int | None
     output: JsonValue
 
@@ -280,6 +282,7 @@ class PlanReceipt:
             snapshot=None
             if snapshot is None
             else SnapshotDescriptor.from_json_dict(as_mapping(snapshot, "snapshot")),
+            descriptor_updates=tuple_from_json(raw, "descriptor_updates", ResourceRef),
             new_version=optional_int(field_value(raw, "new_version"), "new_version"),
             output=as_json_value(field_value(raw, "output")),
         )

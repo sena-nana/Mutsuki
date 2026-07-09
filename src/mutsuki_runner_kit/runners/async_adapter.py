@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable, Generator
 from dataclasses import replace
 from typing import Any, Protocol
 
+from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.codec import JsonValue
 from mutsuki_runner_kit.contracts.errors import RuntimeError
 from mutsuki_runner_kit.contracts.resource import (
@@ -29,6 +30,7 @@ from mutsuki_runner_kit.contracts.task import (
     TaskStepContinuation,
 )
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
+from mutsuki_runner_kit.runners.scalar import ScalarBatchAdapter
 
 
 class RuntimeClient(Protocol):
@@ -202,63 +204,59 @@ class AsyncRunnerAdapter:
     def descriptor(self) -> RunnerDescriptor:
         return self._descriptor
 
-    async def step(
-        self, _ctx: RunnerContext, tasks: tuple[Task, ...]
-    ) -> tuple[RunnerResult, ...]:
-        results: list[RunnerResult] = []
-        for task in tasks:
-            invocation = self._invocations.get(task.task_id)
-            if invocation is None:
-                runner_ctx = AsyncRunnerContext(
-                    self._client,
-                    task,
-                    self._descriptor.runner_id,
-                    invocation_id=_ctx.invocation_id,
-                    cancel_token=_ctx.cancel_token,
-                    deadline_tick=_ctx.deadline_tick,
-                    cancel_requested=_ctx.cancel_requested,
-                    allow_self_call=self._allow_self_call,
-                )
-                invocation = _Invocation(self._factory(runner_ctx, task).__await__())
-                self._invocations[task.task_id] = invocation
-            self._track_invocation(task.task_id, _ctx.invocation_id)
+    async def run_one(self, ctx: RunnerContext, task: Task) -> RunnerResult:
+        invocation = self._invocations.get(task.task_id)
+        if invocation is None:
+            runner_ctx = AsyncRunnerContext(
+                self._client,
+                task,
+                self._descriptor.runner_id,
+                invocation_id=ctx.invocation_id,
+                cancel_token=ctx.cancel_token,
+                deadline_tick=ctx.deadline_tick,
+                cancel_requested=ctx.cancel_requested,
+                allow_self_call=self._allow_self_call,
+            )
+            invocation = _Invocation(self._factory(runner_ctx, task).__await__())
+            self._invocations[task.task_id] = invocation
+        self._track_invocation(task.task_id, ctx.invocation_id)
 
-            outcome: TaskOutcome | None = None
-            if invocation.pending is not None:
-                outcome = self._client.task_outcome(invocation.pending.task_await.child.task_id)
-                if outcome is None:
-                    results.append(_waiting_result(task.task_id, invocation.pending.without_task()))
-                    continue
+        outcome: TaskOutcome | None = None
+        if invocation.pending is not None:
+            outcome = self._client.task_outcome(invocation.pending.task_await.child.task_id)
+            if outcome is None:
+                return _waiting_result(task.task_id, invocation.pending.without_task())
 
-            try:
-                yielded = invocation.iterator.send(outcome)
-            except StopIteration as stop:
-                self._remove_invocation(task.task_id)
-                result = stop.value
-                if not isinstance(result, RunnerResult):
-                    raise RunnerInvokeError(
-                        RuntimeError(
-                            code="runner.invalid_result",
-                            source="python_async_runner",
-                            route=f"python.async_runner.{task.task_id}",
-                            evidence={"result_type": type(result).__name__},
-                        )
-                    )
-                results.append(result)
-                continue
-
-            if not isinstance(yielded, PendingCall):
+        try:
+            yielded = invocation.iterator.send(outcome)
+        except StopIteration as stop:
+            self._remove_invocation(task.task_id)
+            result = stop.value
+            if not isinstance(result, RunnerResult):
                 raise RunnerInvokeError(
                     RuntimeError(
-                        code="runner.awaitable_unsupported",
+                        code="runner.invalid_result",
                         source="python_async_runner",
                         route=f"python.async_runner.{task.task_id}",
-                        evidence={"yielded_type": type(yielded).__name__},
+                        evidence={"result_type": type(result).__name__},
                     )
                 )
-            invocation.pending = yielded
-            results.append(_waiting_result(task.task_id, yielded))
-        return tuple(results)
+            return result
+
+        if not isinstance(yielded, PendingCall):
+            raise RunnerInvokeError(
+                RuntimeError(
+                    code="runner.awaitable_unsupported",
+                    source="python_async_runner",
+                    route=f"python.async_runner.{task.task_id}",
+                    evidence={"yielded_type": type(yielded).__name__},
+                )
+            )
+        invocation.pending = yielded
+        return _waiting_result(task.task_id, yielded)
+
+    async def run_batch(self, ctx: RunnerContext, batch: WorkBatch) -> CompletionBatch:
+        return await ScalarBatchAdapter(self).run_batch(ctx, batch)
 
     async def cancel(self, invocation_id: str) -> None:
         task_id = self._invocation_tasks.get(invocation_id)

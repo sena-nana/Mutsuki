@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mutsuki_runner_kit.contracts.batch import CompletionBatch, WorkBatch
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
     RunnerContext,
@@ -8,6 +9,7 @@ from mutsuki_runner_kit.contracts.runner import (
     RunnerResult,
 )
 from mutsuki_runner_kit.contracts.task import Task
+from mutsuki_runner_kit.runners.scalar import ScalarBatchAdapter
 
 
 class EchoRunner:
@@ -15,17 +17,17 @@ class EchoRunner:
         self._descriptor = descriptor
         self.cancelled: list[str] = []
         self.disposed = False
+        self._adapter = ScalarBatchAdapter(self)
 
     @property
     def descriptor(self) -> RunnerDescriptor:
         return self._descriptor
 
-    async def step(
-        self,
-        ctx: RunnerContext,
-        tasks: tuple[Task, ...],
-    ) -> tuple[RunnerResult, ...]:
-        return tuple(RunnerResult.completed(task.task_id) for task in tasks)
+    async def run_one(self, ctx: RunnerContext, task: Task) -> RunnerResult:
+        return RunnerResult.completed(task.task_id)
+
+    async def run_batch(self, ctx: RunnerContext, batch: WorkBatch) -> CompletionBatch:
+        return await self._adapter.run_batch(ctx, batch)
 
     async def cancel(self, invocation_id: str) -> None:
         self.cancelled.append(invocation_id)

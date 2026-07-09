@@ -7,7 +7,6 @@ import pytest
 
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
-    RunnerContext,
     RunnerDescriptor,
     RunnerPurity,
     RunnerResult,
@@ -16,6 +15,7 @@ from mutsuki_runner_kit.contracts.runner import (
 from mutsuki_runner_kit.contracts.task import CancelPolicy, Task, TaskOutcome
 from mutsuki_runner_kit.runners.async_adapter import AsyncRunnerAdapter, AsyncRunnerContext
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
+from mutsuki_runner_kit.testing.batches import runner_context
 
 
 class ManualClient:
@@ -38,15 +38,15 @@ def async_descriptor() -> RunnerDescriptor:
     )
 
 
-def runner_context() -> RunnerContext:
-    return RunnerContext(
-        registry_generation=1,
-        current_step=1,
-        executor_id="executor:test",
-        task_lease_id="lease:test",
-        invocation_id="parent-1",
-        cancel_token="parent-1",
-    )
+def async_runner_context(**kwargs: object):
+    defaults = {
+        "lease_ids": ("lease:test",),
+        "invocation_id": "parent-1",
+        "batch_id": "parent-1",
+        "tick_id": "tick-1",
+    }
+    defaults.update(kwargs)
+    return runner_context(**defaults)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -62,11 +62,11 @@ async def test_async_runner_context_exposes_deadline_and_cancel_fields() -> None
         return RunnerResult.completed(task.task_id)
 
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
-    ctx = replace(runner_context(), deadline_tick=3, cancel_requested=True)
+    ctx = replace(async_runner_context(), deadline_tick=3, cancel_requested=True)
 
-    result = await adapter.step(ctx, (Task.new("parent-1", "parent.work"),))
+    result = await adapter.run_one(ctx, Task.new("parent-1", "parent.work"))
 
-    assert result[0].status == RunnerStatus.COMPLETED
+    assert result.status == RunnerStatus.COMPLETED
     assert observed == {
         "invocation_id": "parent-1",
         "cancel_token": "parent-1",
@@ -91,22 +91,22 @@ async def test_async_runner_adapter_suspends_and_resumes_call() -> None:
         correlation_id="corr-1",
     )
 
-    first = await adapter.step(runner_context(), (task,))
+    first = await adapter.run_one(async_runner_context(), task)
 
-    assert first[0].status == RunnerStatus.WAITING
-    assert first[0].tasks[0].task_id == "parent-1:call:1"
-    assert first[0].tasks[0].protocol_id == "child.work"
-    assert first[0].tasks[0].trace_id == "trace-1"
-    assert first[0].tasks[0].correlation_id == "corr-1"
-    assert first[0].task_await is not None
-    assert first[0].task_await.cancel_policy == CancelPolicy.CASCADE
-    assert first[0].task_await.child.trace_id == "trace-1"
-    assert first[0].task_await.child.correlation_id == "corr-1"
+    assert first.status == RunnerStatus.WAITING
+    assert first.tasks[0].task_id == "parent-1:call:1"
+    assert first.tasks[0].protocol_id == "child.work"
+    assert first.tasks[0].trace_id == "trace-1"
+    assert first.tasks[0].correlation_id == "corr-1"
+    assert first.task_await is not None
+    assert first.task_await.cancel_policy == CancelPolicy.CASCADE
+    assert first.task_await.child.trace_id == "trace-1"
+    assert first.task_await.child.correlation_id == "corr-1"
 
     client.outcomes["parent-1:call:1"] = TaskOutcome.completed("parent-1:call:1")
-    second = await adapter.step(runner_context(), (task,))
+    second = await adapter.run_one(async_runner_context(), task)
 
-    assert second[0].status == RunnerStatus.COMPLETED
+    assert second.status == RunnerStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -120,22 +120,22 @@ async def test_async_runner_adapter_cancel_removes_invocation_by_invocation_id()
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
     task = Task.new("parent-1", "parent.work")
 
-    first = await adapter.step(
-        replace(runner_context(), invocation_id="invocation:one"),
-        (task,),
+    first = await adapter.run_one(
+        replace(async_runner_context(), invocation_id="invocation:one"),
+        task,
     )
 
-    assert first[0].status == RunnerStatus.WAITING
+    assert first.status == RunnerStatus.WAITING
     client.outcomes["parent-1:call:1"] = TaskOutcome.completed("parent-1:call:1")
 
     await adapter.cancel("invocation:one")
-    second = await adapter.step(
-        replace(runner_context(), invocation_id="invocation:two"),
-        (task,),
+    second = await adapter.run_one(
+        replace(async_runner_context(), invocation_id="invocation:two"),
+        task,
     )
 
-    assert second[0].status == RunnerStatus.WAITING
-    assert second[0].tasks[0].task_id == "parent-1:call:1"
+    assert second.status == RunnerStatus.WAITING
+    assert second.tasks[0].task_id == "parent-1:call:1"
 
 
 @pytest.mark.asyncio
@@ -153,13 +153,15 @@ async def test_async_runner_adapter_emits_targeted_child_task_descriptor() -> No
 
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
-    first = await adapter.step(runner_context(), (Task.new("parent-1", "parent.work"),))
+    first = await adapter.run_one(
+        async_runner_context(), Task.new("parent-1", "parent.work")
+    )
 
-    assert first[0].status == RunnerStatus.WAITING
-    assert first[0].tasks[0].target_binding_id == "binding:child"
-    assert first[0].tasks[0].runner_hint == "child.runner"
-    assert first[0].task_await is not None
-    assert first[0].task_await.child.target_binding_id == "binding:child"
+    assert first.status == RunnerStatus.WAITING
+    assert first.tasks[0].target_binding_id == "binding:child"
+    assert first.tasks[0].runner_hint == "child.runner"
+    assert first.task_await is not None
+    assert first.task_await.child.target_binding_id == "binding:child"
 
 
 @pytest.mark.asyncio
@@ -176,11 +178,13 @@ async def test_async_runner_adapter_emits_explicit_cancel_policy_descriptor() ->
 
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
-    first = await adapter.step(runner_context(), (Task.new("parent-1", "parent.work"),))
+    first = await adapter.run_one(
+        async_runner_context(), Task.new("parent-1", "parent.work")
+    )
 
-    assert first[0].task_await is not None
-    assert first[0].task_await.cancel_policy == CancelPolicy.SHIELD
-    assert first[0].task_await.child.cancel_policy == CancelPolicy.SHIELD
+    assert first.task_await is not None
+    assert first.task_await.cancel_policy == CancelPolicy.SHIELD
+    assert first.task_await.child.cancel_policy == CancelPolicy.SHIELD
 
 
 @pytest.mark.asyncio
@@ -199,7 +203,9 @@ async def test_async_runner_adapter_rejects_self_call_when_policy_disallows_it()
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run, allow_self_call=False)
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await adapter.step(runner_context(), (Task.new("parent-1", "parent.work"),))
+        await adapter.run_one(
+            async_runner_context(), Task.new("parent-1", "parent.work")
+        )
 
     assert exc_info.value.error.code == "task.self_call_blocked"
 
@@ -215,7 +221,9 @@ async def test_async_runner_adapter_rejects_non_mutsuki_awaitable() -> None:
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await adapter.step(runner_context(), (Task.new("parent-1", "parent.work"),))
+        await adapter.run_one(
+            async_runner_context(), Task.new("parent-1", "parent.work")
+        )
 
     assert exc_info.value.error.code == "runner.awaitable_unsupported"
 

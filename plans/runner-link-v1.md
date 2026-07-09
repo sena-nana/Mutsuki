@@ -9,26 +9,31 @@ runners. This repository implements the Python side of that protocol.
 transport: stdio now, named pipe / unix socket later
 frame: JSONL debug path now, length-prefixed MessagePack later
 codec: JSON-compatible contract objects
-envelope/task: runner.step, runner.cancel, runner.dispose
+envelope/task: runner.run_batch, runner.cancel, runner.dispose
 sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
 ```
 
 ## Current Implemented Surface
 
-- Python dataclass mirrors for runtime contracts.
+- Python dataclass mirrors for runtime contracts, including batch-first shapes:
+  `BatchEntry`, `WorkBatch`, `CompletionBatch`, `EntryCompletion`,
+  `BatchPayload`, `WorkResourcePlan`, and `TaskBatch`.
 - JSON roundtrip helpers.
 - `PythonRunnerBackend` runner registry and invocation.
 - `StdioJsonlBridge` methods:
-  - `runner.step`
+  - `runner.run_batch`
   - `runner.cancel`
   - `runner.dispose`
   - resource read/write helper methods used by current tests.
 - `PythonResourceManager` for descriptor-based test/resource flows.
-- Runner-side async adapter for Mutsuki task awaitables.
+- Runner-side async adapter and scalar `run_one` adapter sugar that lower to
+  `run_batch`.
 
 ## Required Invariants
 
 - Python runner code never owns Core task state.
+- Wire ABI is batch-first: `runner.run_batch({ runner_id, ctx, batch }) ->
+  CompletionBatch`. Scalar `run_one` exists only as adapter sugar.
 - `ctx.call` must lower to a child `Task` / `TaskAwait` flow handled by Core.
 - Resource access must use `ResourceRef`, `ValueRef`, plans, leases, and
   structured generation checks.

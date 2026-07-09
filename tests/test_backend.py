@@ -8,6 +8,7 @@ from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor,
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
+from mutsuki_runner_kit.testing.batches import multi_entry_batch, runner_context, single_test_batch
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
 
 
@@ -16,31 +17,28 @@ class CaptureContextRunner(EchoRunner):
         super().__init__(descriptor)
         self.contexts: list[RunnerContext] = []
 
-    async def step(
-        self, ctx: RunnerContext, tasks: tuple[Task, ...]
-    ) -> tuple[RunnerResult, ...]:
+    async def run_one(self, ctx: RunnerContext, task: Task) -> RunnerResult:
         self.contexts.append(ctx)
-        return await super().step(ctx, tasks)
+        return await super().run_one(ctx, task)
 
 
 @pytest.mark.asyncio
-async def test_python_runner_backend_steps_registered_runner() -> None:
+async def test_python_runner_backend_runs_registered_runner_batch() -> None:
     backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
     backend.register_runner(runner)
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
 
-    results = await backend.step_runner(
+    completion = await backend.run_batch_runner(
         "echo.runner",
-        RunnerContext(
-            registry_generation=1,
-            current_step=1,
-            executor_id="executor:test",
-            task_lease_id="task-lease-test",
-        ),
-        (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test"),),
+        runner_context(),
+        single_test_batch(task),
     )
 
-    assert results[0].task_id == "task-1"
+    assert completion.batch_id == "batch-test"
+    assert completion.results[0].task_id == "task-1"
+    assert completion.results[0].result is not None
+    assert completion.results[0].result.task_id == "task-1"
     assert backend.descriptors()[0].runner_id == "echo.runner"
 
 
@@ -58,27 +56,20 @@ async def test_python_runner_backend_cancel_and_dispose_are_management_channel()
 
 
 @pytest.mark.asyncio
-async def test_python_runner_backend_propagates_prior_cancel_into_next_step_context() -> None:
+async def test_python_runner_backend_propagates_prior_cancel_into_next_batch_context() -> None:
     backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
     backend.register_runner(runner)
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
 
     await backend.cancel_runner("echo.runner", "task-1")
-    results = await backend.step_runner(
+    completion = await backend.run_batch_runner(
         "echo.runner",
-        RunnerContext(
-            registry_generation=1,
-            current_step=2,
-            executor_id="executor:test",
-            task_lease_id="task-lease-test",
-            invocation_id="task-1",
-            cancel_token="task-1",
-            deadline_tick=3,
-        ),
-        (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test"),),
+        runner_context(deadline_tick=3, current_step=2),
+        single_test_batch(task),
     )
 
-    assert results[0].task_id == "task-1"
+    assert completion.results[0].task_id == "task-1"
     assert runner.contexts[0].cancel_requested is True
     assert runner.contexts[0].deadline_tick == 3
 
@@ -87,17 +78,33 @@ async def test_python_runner_backend_propagates_prior_cancel_into_next_step_cont
 async def test_python_runner_backend_rejects_task_lease_mismatch() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(EchoRunner(echo_descriptor()))
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await backend.step_runner(
+        await backend.run_batch_runner(
             "echo.runner",
-            RunnerContext(
-                registry_generation=1,
-                current_step=1,
-                executor_id="executor:test",
-                task_lease_id="task-lease-ctx",
-            ),
-            (replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task"),),
+            runner_context(lease_ids=("task-lease-ctx",)),
+            single_test_batch(task, lease_id="task-lease-task"),
         )
 
     assert exc_info.value.error.code == "task.claim_conflict"
+
+
+@pytest.mark.asyncio
+async def test_python_runner_backend_returns_independent_entry_completions() -> None:
+    backend = PythonRunnerBackend()
+    backend.register_runner(EchoRunner(echo_descriptor()))
+    tasks = (
+        Task.new("task-1", "raw.input"),
+        Task.new("task-2", "raw.input"),
+    )
+    lease_ids = ("lease-1", "lease-2")
+
+    completion = await backend.run_batch_runner(
+        "echo.runner",
+        runner_context(lease_ids=lease_ids, batch_id="batch-multi"),
+        multi_entry_batch(tasks, lease_ids=lease_ids),
+    )
+
+    assert [item.entry_id for item in completion.results] == ["task-1", "task-2"]
+    assert all(item.result is not None and item.error is None for item in completion.results)

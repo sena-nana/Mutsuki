@@ -127,6 +127,7 @@ def execute_export_plan(gateway: ResourcePlanGateway, plan: ExportPlan) -> PlanR
         status="exported",
         resource_ref=plan.resource,
         snapshot=None,
+        descriptor_updates=(),
         new_version=None,
         output=output,
     )
@@ -149,6 +150,7 @@ def execute_command_plan(gateway: ResourcePlanGateway, plan: CommandPlan) -> Pla
         status="commanded",
         resource_ref=plan.capability,
         snapshot=None,
+        descriptor_updates=(),
         new_version=None,
         output={
             "capability_ref": plan.capability.ref_id,
@@ -251,6 +253,7 @@ def commit_write_plan(gateway: ResourcePlanGateway, plan: WritePlan, data: bytes
         status="committed",
         resource_ref=updated,
         snapshot=None,
+        descriptor_updates=(updated,),
         new_version=updated.version,
         output=None,
     )

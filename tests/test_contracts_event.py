@@ -33,7 +33,7 @@ def test_error_event_and_trace_contracts_roundtrip() -> None:
         trace_id="trace-1",
         span_id="span-1",
         parent_span_id=None,
-        name="runner.step",
+        name="runner.run_batch",
         start=1.0,
         end=2.0,
         attributes={"runner_id": "worker"},
