@@ -2,8 +2,9 @@ use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
 use mutsuki_runtime_contracts::{
-    ArtifactType, PluginDeploymentKind, PluginManifest, RunnerDescriptor, RunnerResult,
-    RuntimeError, ScalarValue, Task,
+    ArtifactType, CompletionBatch, HostExtensionDescriptor, HostExtensionKind,
+    PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, RunnerDescriptor, RuntimeError,
+    ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_host::JsonlRunner;
@@ -204,6 +205,7 @@ pub(crate) fn scan_plugin_runners(
             continue;
         }
 
+        let manifest = ensure_process_plugin_backend(manifest);
         load.plugins.push(loaded_plugin_summary(
             &manifest,
             PluginDeploymentKind::Process,
@@ -243,6 +245,41 @@ fn read_plugin_manifest(path: &Path) -> Result<PluginManifest, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     toml::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", path.display()))
+}
+
+fn ensure_process_plugin_backend(mut manifest: PluginManifest) -> PluginManifest {
+    let has_process_backend = manifest
+        .provides
+        .plugin_backends
+        .iter()
+        .any(|backend| backend.deployment_kind == PluginDeploymentKind::Process);
+    if has_process_backend {
+        return manifest;
+    }
+
+    let plugin_id = &manifest.plugin_id;
+    manifest
+        .provides
+        .host_extensions
+        .push(HostExtensionDescriptor {
+            extension_id: format!("host.extension.{plugin_id}.process"),
+            kind: HostExtensionKind::PluginBackend,
+            supported_deployments: vec![PluginDeploymentKind::Process],
+            reload_policy: "drain_and_swap".into(),
+            drain_required: true,
+        });
+    manifest
+        .provides
+        .plugin_backends
+        .push(PluginBackendDescriptor {
+            backend_id: format!("plugin.backend.{plugin_id}.process"),
+            deployment_kind: PluginDeploymentKind::Process,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: None,
+            bridge_id: None,
+        });
+    manifest
 }
 
 fn read_runner_spec(path: &Path) -> Result<RunnerLaunchSpec, String> {
@@ -477,8 +514,12 @@ impl Runner for ExternalProcessRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        let result = self.inner.step(ctx, tasks);
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let result = self.inner.run_batch(ctx, batch);
         if let Err(error) = &result {
             self.health.record_runner_runtime_error(
                 &self.descriptor.runner_id,

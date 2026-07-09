@@ -26,10 +26,10 @@ tokio = { version = "1.38", features = ["fs", "io-util", "macros", "process", "r
 toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
-mutsuki-runtime-contracts = { path = "../NanoBot/crates/mutsuki-runtime-contracts" }
-mutsuki-runtime-core = { path = "../NanoBot/crates/mutsuki-runtime-core" }
-mutsuki-runtime-host = { path = "../NanoBot/crates/mutsuki-runtime-host" }
-mutsuki-runtime-sdk = { path = "../NanoBot/crates/mutsuki-runtime-sdk" }
+mutsuki-runtime-contracts = { path = "../MutsukiCore/crates/mutsuki-runtime-contracts" }
+mutsuki-runtime-core = { path = "../MutsukiCore/crates/mutsuki-runtime-core" }
+mutsuki-runtime-host = { path = "../MutsukiCore/crates/mutsuki-runtime-host" }
+mutsuki-runtime-sdk = { path = "../MutsukiCore/crates/mutsuki-runtime-sdk" }
 
 mutsuki-tauri-bridge = { path = "crates/mutsuki-tauri-bridge" }
 mutsuki-tauri-resource = { path = "crates/mutsuki-tauri-resource" }

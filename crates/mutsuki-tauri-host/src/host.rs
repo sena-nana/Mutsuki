@@ -3,7 +3,7 @@ use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
 use mutsuki_runtime_contracts::{
-    RuntimeEvent, RuntimeEventKind, TaskOutcome, TaskStatus, TraceSpan,
+    RuntimeEvent, RuntimeEventKind, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply};
 use mutsuki_tauri_bridge::{
@@ -15,7 +15,7 @@ use mutsuki_tauri_bridge::{
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -41,7 +41,7 @@ struct TaskSupervisor {
 
 #[derive(Debug, Default)]
 struct TaskSupervisorState {
-    active: BTreeSet<String>,
+    active: BTreeMap<String, TaskHandle>,
     events_by_task: BTreeMap<String, Vec<RuntimeEvent>>,
     results: BTreeMap<String, FrontendTaskResult>,
     errors: BTreeMap<String, String>,
@@ -51,17 +51,17 @@ struct TaskSupervisorState {
 }
 
 impl TaskSupervisor {
-    fn track(&self, task_id: &str) {
+    fn track(&self, handle: TaskHandle) {
         let mut state = self.state.lock();
-        state.active.insert(task_id.to_string());
-        state.errors.remove(task_id);
-        state.results.remove(task_id);
-        state.events_by_task.remove(task_id);
+        let task_id = handle.task_id.clone();
+        state.active.insert(task_id.clone(), handle);
+        state.errors.remove(&task_id);
+        state.results.remove(&task_id);
+        state.events_by_task.remove(&task_id);
     }
 
-    fn forget(&self, task_id: &str) {
-        self.state.lock().active.remove(task_id);
-        self.changed.notify_all();
+    fn handle_for(&self, task_id: &str) -> Option<TaskHandle> {
+        self.state.lock().active.get(task_id).cloned()
     }
 
     fn wait_result(&self, task_id: &str) -> HostResult<FrontendTaskResult> {
@@ -73,7 +73,7 @@ impl TaskSupervisor {
             if let Some(error) = state.errors.remove(task_id) {
                 return Err(HostError::Runtime(error));
             }
-            if !state.active.contains(task_id) {
+            if !state.active.contains_key(task_id) {
                 return Err(HostError::Runtime(format!(
                     "task result is not tracked: {task_id}"
                 )));
@@ -91,14 +91,14 @@ impl TaskSupervisor {
         true
     }
 
-    fn active_snapshot(&self) -> Option<Vec<String>> {
+    fn active_snapshot(&self) -> Option<Vec<TaskHandle>> {
         let mut state = self.state.lock();
         if state.active.is_empty() {
             state.pump_running = false;
             self.changed.notify_all();
             return None;
         }
-        Some(state.active.iter().cloned().collect())
+        Some(state.active.values().cloned().collect())
     }
 
     fn observe_cursor(&self) -> (u64, usize) {
@@ -122,7 +122,7 @@ impl TaskSupervisor {
             let event = redact_runtime_event(event);
             health.record_runtime_event_error(&event);
             if let Some(task_id) = task_event_id(&event) {
-                if state.active.contains(&task_id) {
+                if state.active.contains_key(&task_id) {
                     state
                         .events_by_task
                         .entry(task_id)
@@ -176,7 +176,7 @@ impl TaskSupervisor {
         let mut state = self.state.lock();
         state.pump_running = false;
         let active = std::mem::take(&mut state.active);
-        for task_id in active {
+        for task_id in active.into_keys() {
             state.errors.insert(task_id, message.clone());
         }
         self.changed.notify_all();
@@ -334,17 +334,14 @@ impl MutsukiTauriHost {
 
     pub fn start_task(&self, request: FrontendTaskRequest) -> HostResult<FrontendTaskRun> {
         let task = request.into_task();
-        let task_id = task.task_id.clone();
-        self.tasks.track(&task_id);
 
-        let mut runtime = self.runtime.lock();
+        let runtime = self.runtime.lock();
         let submitted = runtime.dispatch(HostRuntimeCommand::SubmitTask(Box::new(task)));
         drop(runtime);
 
         let submitted = match submitted {
             Ok(reply) => reply,
             Err(error) => {
-                self.tasks.forget(&task_id);
                 self.emit_runtime_error_log(
                     "mutsuki_tauri_host.runtime",
                     "runtime task submit failed",
@@ -353,13 +350,14 @@ impl MutsukiTauriHost {
                 return Err(error.into());
             }
         };
-        match submitted {
-            HostRuntimeReply::TaskSubmitted(_) => {}
+        let handle = match submitted {
+            HostRuntimeReply::TaskSubmitted(handle) => handle,
             _ => {
-                self.tasks.forget(&task_id);
                 return Err(HostError::Runtime("unexpected submit reply".into()));
             }
-        }
+        };
+        let task_id = handle.task_id.clone();
+        self.tasks.track(handle);
 
         self.drain_observability()?;
         self.ensure_task_pump();
@@ -371,8 +369,11 @@ impl MutsukiTauriHost {
     }
 
     pub fn cancel_task(&self, request: TaskCancelRequest) -> HostResult<String> {
-        let mut runtime = self.runtime.lock();
-        let reply = runtime.dispatch(HostRuntimeCommand::CancelTask(request.task_id.clone()));
+        let handle = self.tasks.handle_for(&request.task_id).ok_or_else(|| {
+            HostError::Runtime(format!("task is not tracked: {}", request.task_id))
+        })?;
+        let runtime = self.runtime.lock();
+        let reply = runtime.dispatch(HostRuntimeCommand::CancelTask(handle));
         drop(runtime);
         let reply = match reply {
             Ok(reply) => reply,
@@ -386,10 +387,10 @@ impl MutsukiTauriHost {
             }
         };
         match reply {
-            HostRuntimeReply::TaskCancelled(task_id) => {
+            HostRuntimeReply::TaskCancelled(handle) => {
                 self.drain_observability()?;
                 self.ensure_task_pump();
-                Ok(task_id)
+                Ok(handle.task_id)
             }
             _ => Err(HostError::Runtime("unexpected cancel reply".into())),
         }
@@ -576,20 +577,21 @@ fn run_task_pump(
         };
 
         let snapshot = {
-            let mut runtime = runtime.lock();
+            let runtime = runtime.lock();
             let tick = runtime
                 .dispatch(HostRuntimeCommand::TickOnce)
                 .map_err(|error| format!("{:?}", error.error()));
             tick.and_then(|_| {
                 let mut outcomes = Vec::new();
-                for task_id in active {
+                for handle in active {
+                    let task_id = handle.task_id.clone();
                     let status = runtime.task_status(&task_id);
                     if status.is_none() {
                         outcomes.push((task_id, status, None));
                         continue;
                     }
                     let outcome = match runtime
-                        .dispatch(HostRuntimeCommand::TaskOutcome(task_id.clone()))
+                        .dispatch(HostRuntimeCommand::TaskOutcome(handle))
                         .map_err(|error| format!("{:?}", error.error()))?
                     {
                         HostRuntimeReply::TaskOutcome(outcome) => outcome,
@@ -695,7 +697,7 @@ fn drain_observability(
 ) -> Result<(), String> {
     let (last_event_sequence, last_trace_span_index) = tasks.observe_cursor();
     let (core_events, next_trace_index, trace_spans) = {
-        let mut runtime = runtime.lock();
+        let runtime = runtime.lock();
         let core_events = runtime
             .events_after(last_event_sequence)
             .map_err(|error| format!("{:?}", error.error()))?;

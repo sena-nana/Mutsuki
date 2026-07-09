@@ -2,9 +2,9 @@ use crate::MutsukiTauriHost;
 use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::echo::{ECHO_PROTOCOL_ID, EchoRunner};
 use mutsuki_runtime_contracts::{
-    ArtifactType, ExecutionClass, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest,
-    PluginProvides, RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeEventKind, Task,
-    TaskOutcome,
+    ArtifactType, CompletionBatch, EntryCompletion, ExecutionClass, LifecyclePolicy,
+    PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor,
+    RunnerPurity, RunnerResult, RuntimeEventKind, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{
@@ -135,7 +135,7 @@ fn host_emits_runtime_events_and_trace_spans_for_task() {
         matches!(
             &event.payload,
             MutsukiFrontendEvent::Trace { span }
-                if span.name == "runner.step" && span.trace_id == "trace:test:observe"
+                if span.name == "runner.run_batch" && span.trace_id == "trace:test:observe"
         )
     }));
 }
@@ -661,6 +661,11 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
         execution_class: ExecutionClass::Blocking,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
+        batch: Default::default(),
+        payload: Default::default(),
+        resources: Default::default(),
+        ordering: Default::default(),
+        control: Default::default(),
         metadata: BTreeMap::new(),
         contract_surfaces: vec!["task_protocol:stream.blocking".into()],
     };
@@ -756,13 +761,34 @@ impl Runner for BlockingRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, _ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
         self.started_tx.send(()).expect("started signal sends");
         self.release_rx.recv().expect("runner release received");
-        Ok(tasks
-            .into_iter()
-            .map(|task| RunnerResult::completed(task.task_id))
-            .collect())
+        let tasks = match batch.row_payload_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
+        };
+        let results = batch
+            .entries
+            .iter()
+            .map(|entry| {
+                let result = tasks
+                    .iter()
+                    .find(|task| task.task_id == entry.task_id)
+                    .map(|task| RunnerResult::completed(task.task_id.clone()));
+                EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result,
+                    error: None,
+                }
+            })
+            .collect();
+        Ok(CompletionBatch::from_results(&batch, results))
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
@@ -908,6 +934,11 @@ fn runner_descriptor(runner_id: &str, protocol_id: &str) -> RunnerDescriptor {
         execution_class: ExecutionClass::Io,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
+        batch: Default::default(),
+        payload: Default::default(),
+        resources: Default::default(),
+        ordering: Default::default(),
+        control: Default::default(),
         metadata: BTreeMap::new(),
         contract_surfaces: vec![format!("task_protocol:{protocol_id}")],
     }
@@ -957,23 +988,35 @@ $ErrorActionPreference = 'Stop'
 while (($line = [Console]::In.ReadLine()) -ne $null) {
   if ($line.Trim().Length -eq 0) { continue }
   $request = $line | ConvertFrom-Json
-  if ($request.method -eq 'runner.step') {
+  if ($request.method -eq 'runner.run_batch') {
     [Console]::Error.WriteLine('runner stderr token=secret-token')
-    $results = @()
-    foreach ($task in @($request.params.tasks)) {
-      $results += @{
-        task_id = $task.task_id
-        deltas = @()
-        events = @()
-        tasks = @()
-        effects = @()
-        values = @()
-        resources = @()
-        task_await = $null
-        status = 'completed'
+    $batch = $request.params.batch
+    $completions = @()
+    foreach ($entry in @($batch.entries)) {
+      $completions += @{
+        entry_id = $entry.entry_id
+        task_id = $entry.task_id
+        result = @{
+          task_id = $entry.task_id
+          deltas = @()
+          events = @()
+          tasks = @()
+          effects = @()
+          values = @()
+          resources = @()
+          task_await = $null
+          status = 'completed'
+        }
+        error = $null
       }
     }
-    @{ id = $request.id; ok = $true; result = @($results) } | ConvertTo-Json -Depth 20 -Compress
+    $result = @{
+      batch_id = $batch.batch_id
+      tick_id = $batch.tick_id
+      results = @($completions)
+      metadata = @()
+    }
+    @{ id = $request.id; ok = $true; result = $result } | ConvertTo-Json -Depth 20 -Compress
   } elseif ($request.method -eq 'runner.cancel') {
     @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
   } elseif ($request.method -eq 'runner.dispose') {
@@ -992,14 +1035,14 @@ $ErrorActionPreference = 'Stop'
 while (($line = [Console]::In.ReadLine()) -ne $null) {
   if ($line.Trim().Length -eq 0) { continue }
   $request = $line | ConvertFrom-Json
-  if ($request.method -eq 'runner.step') {
+  if ($request.method -eq 'runner.run_batch') {
     @{
       id = $request.id
       ok = $false
       error = @{
         code = 'fixture.runner_failed'
         source = 'fixture.runner'
-        route = 'runner.step'
+        route = 'runner.run_batch'
         lost_capability = $null
         recovery = $null
         cause = $null
@@ -1040,4 +1083,28 @@ async fn resource_store_round_trips_written_bytes() {
         .expect("resource text readable");
 
     assert_eq!(text.text, "after");
+}
+
+#[tokio::test]
+async fn host_resource_provider_id_matches_registered_gateway() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostProviderIdTest")
+        .build()
+        .expect("host builds");
+    let resource = host
+        .resource_store()
+        .create_blob(
+            "text/plain",
+            b"provider-id".to_vec(),
+            Some("text/plain".into()),
+        )
+        .await
+        .expect("resource created");
+    assert_eq!(resource.provider_id, mutsuki_tauri_resource::PROVIDER_ID);
+
+    let preview = host
+        .create_preview_handle(&resource.ref_id)
+        .expect("preview handle created");
+    assert!(preview.url.starts_with("mutsuki-resource://"));
+    assert_eq!(preview.ref_id, resource.ref_id);
 }

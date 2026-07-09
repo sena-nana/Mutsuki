@@ -124,10 +124,10 @@ impl MutsukiTauriHostBuilder {
         };
         let runtime = bootstrapper.into_host_runtime_with_config(
             profile,
-            HostRuntimeConfig {
-                resource_provider: Some(resource_store.clone()),
-                ..HostRuntimeConfig::default()
-            },
+            HostRuntimeConfig::default().with_resource_provider(
+                mutsuki_tauri_resource::PROVIDER_ID,
+                resource_store.provider(),
+            ),
         )?;
         Ok(MutsukiTauriHost::new(
             self.config,
