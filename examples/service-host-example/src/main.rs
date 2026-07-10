@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recording = Arc::new(Mutex::new(Vec::new()));
     let task = qqbot_group_message_task(&config);
     let (bootstrapper, profile) = build_bootstrapper(config, recording.clone());
-    let mut host = bootstrapper.into_host_runtime(profile)?;
+    let host = bootstrapper.into_host_runtime(profile)?;
     let task_id = match host.dispatch(HostRuntimeCommand::SubmitTask(Box::new(task)))? {
         HostRuntimeReply::TaskSubmitted(task_id) => task_id,
         unexpected => return Err(format!("unexpected submit reply: {unexpected:?}").into()),
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         unexpected => return Err(format!("unexpected idle reply: {unexpected:?}").into()),
     }
-    let status = host.task_status(&task_id);
+    let status = host.task_status(&task_id.task_id);
     if status != Some(TaskStatus::Completed) {
         return Err(format!("gateway task did not complete: {status:?}").into());
     }

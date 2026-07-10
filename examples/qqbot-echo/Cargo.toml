@@ -12,4 +12,5 @@ mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-host.workspace = true
+mutsuki-runtime-sdk.workspace = true
 serde_json.workspace = true

@@ -18,6 +18,12 @@ It does not own:
 - Host startup.
 - Core scheduling.
 
+## Batch Execution
+
+The gateway mapper and OpenAPI adapter implement `Runner::run_batch` over row payloads. Gateway frames are mapped independently and emit standard Bot ingestion tasks with the active `registry_generation`.
+
+OpenAPI operations are external side effects. Its descriptor therefore preserves submit order, declares external side effects, and limits entry concurrency to one. A decode, mapping, unsupported-protocol, or API failure is returned on that entry without failing unrelated entries. Result events include the source `task_id` and `protocol_id` for tracing.
+
 Provided task protocols:
 
 - `mutsuki.bot.message/send@1`

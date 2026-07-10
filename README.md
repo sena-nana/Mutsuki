@@ -1,6 +1,6 @@
 # MutsukiBotPlugins
 
-MutsukiBotPlugins is the Bot domain plugin collection for Mutsuki. It is not a Host and it is not a Core extension.
+MutsukiBotPlugins is the batch-first Bot domain plugin collection for Mutsuki. It is not a Host and it is not a Core extension.
 
 The repository owns Bot protocol objects, Bot authoring helpers, Bot event routing, Bot command parsing, and platform adapter plugins such as QQBot. Runtime scheduling, runner lifecycle, host startup, Python runner execution, plugin marketplace behavior, and product-specific business bots stay outside this repository.
 
@@ -31,6 +31,8 @@ MutsukiServiceHost / MutsukiCliHost / MutsukiTauriHost
 ```
 
 Do not introduce `BotHost`. A standalone Bot service should run through `MutsukiServiceHost`.
+
+All native runners implement the current MutsukiCore `Runner::run_batch` contract. A single task is represented as a one-entry `WorkBatch`; there is no separate scalar `step` execution path. Row payload tasks are mapped back to their matching `BatchEntry`, and each entry produces its own `EntryCompletion` inside a `CompletionBatch`.
 
 ## Boundary Rule
 

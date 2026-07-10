@@ -6,7 +6,10 @@ use mutsuki_bot_protocol::{
     BotMessageRecallRequest, BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
     QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
 };
-use mutsuki_runtime_contracts::Task;
+use mutsuki_runtime_contracts::{
+    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerResult,
+    RunnerSideEffect, RuntimeError, Task, WorkBatch, WorkResourcePlan,
+};
 use mutsuki_runtime_core::{Runner, RunnerContext};
 use serde_json::{Value, json};
 
@@ -60,15 +63,59 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
     );
     task.registry_generation = 1;
 
-    let result = runner.step(test_context(1), vec![task]).unwrap();
+    let result = run_one(&mut runner, task).unwrap();
 
-    assert_eq!(result[0].tasks.len(), 1);
+    assert_eq!(result.tasks.len(), 1);
     let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result[0].tasks[0].payload.clone()).unwrap();
+        serde_json::from_value(result.tasks[0].payload.clone()).unwrap();
     assert_eq!(event.kind, BotEventKind::MessageCreated);
     let message = event.message.unwrap();
     assert_eq!(message.plain_text(), "ping");
     assert_eq!(message.time_ms, None);
+}
+
+#[test]
+fn gateway_runner_maps_multiple_frames_in_one_batch() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let mut tasks = ["first", "second"]
+        .into_iter()
+        .map(|id| {
+            Task::new(
+                format!("gateway-{id}"),
+                QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+                json!({
+                    "op": 0,
+                    "s": 24,
+                    "t": "C2C_MESSAGE_CREATE",
+                    "id": format!("C2C_MESSAGE_CREATE:{id}"),
+                    "d": {
+                        "id": format!("message-{id}"),
+                        "content": id,
+                        "author": {"user_openid": "USER_OPENID"}
+                    }
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    tasks.insert(
+        1,
+        Task::new(
+            "gateway-invalid-op",
+            QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+            json!({"op": 1, "d": {}}),
+        ),
+    );
+
+    let completion = run_tasks(&mut runner, tasks);
+
+    assert_eq!(completion.results.len(), 3);
+    assert!(completion.results[1].result.is_none());
+    assert!(completion.results[1].error.is_some());
+    for index in [0, 2] {
+        let result = completion.results[index].result.as_ref().unwrap();
+        assert_eq!(result.tasks.len(), 1);
+        assert_eq!(result.tasks[0].registry_generation, 1);
+    }
 }
 
 #[test]
@@ -101,9 +148,9 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
         .unwrap(),
     );
 
-    let result = runner.step(test_context(1), vec![task]).unwrap();
+    let result = run_one(&mut runner, task).unwrap();
 
-    assert_eq!(result[0].events[0].payload["response"]["id"], "MESSAGE_ID");
+    assert_eq!(result.events[0].payload["response"]["id"], "MESSAGE_ID");
     let requests = requests.lock().unwrap();
     assert_eq!(requests[1].method, HttpMethod::Post);
     assert_eq!(requests[1].headers["Authorization"], "QQBot TOKEN_A");
@@ -131,9 +178,9 @@ fn openapi_runner_maps_standard_recall_to_qqbot_delete() {
         .unwrap(),
     );
 
-    let result = runner.step(test_context(1), vec![task]).unwrap();
+    let result = run_one(&mut runner, task).unwrap();
 
-    assert_eq!(result[0].events[0].payload["response"]["ok"], true);
+    assert_eq!(result.events[0].payload["response"]["ok"], true);
     let requests = requests.lock().unwrap();
     assert_eq!(requests[1].method, HttpMethod::Delete);
     assert!(
@@ -157,9 +204,9 @@ fn openapi_runner_gets_qqbot_account_from_openapi() {
     );
     let task = Task::new("account", QQBOT_ACCOUNT_GET_PROTOCOL_ID, json!({}));
 
-    let result = runner.step(test_context(1), vec![task]).unwrap();
+    let result = run_one(&mut runner, task).unwrap();
 
-    let response = &result[0].events[0].payload["response"];
+    let response = &result.events[0].payload["response"];
     assert_eq!(response["account"]["account_id"], "main");
     assert_eq!(response["account"]["platform"], "qqbot");
     assert_eq!(response["app_id"], "APP_ID");
@@ -188,9 +235,9 @@ fn openapi_runner_gets_gateway_status_from_openapi() {
         json!({}),
     );
 
-    let result = runner.step(test_context(1), vec![task]).unwrap();
+    let result = run_one(&mut runner, task).unwrap();
 
-    let response = &result[0].events[0].payload["response"];
+    let response = &result.events[0].payload["response"];
     assert_eq!(response["account_id"], "main");
     assert_eq!(response["platform"], "qqbot");
     assert_eq!(response["gateway"]["url"], "wss://gateway.example.invalid");
@@ -217,6 +264,76 @@ fn openapi_descriptor_accepts_manifest_provided_qqbot_protocols() {
             .accepted_protocol_ids
             .contains(&QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into())
     );
+    assert_eq!(descriptor.batch.max_entry_concurrency, 1);
+    assert_eq!(descriptor.batch.side_effect, RunnerSideEffect::External);
+    assert!(descriptor.batch.preserve_order);
+    assert_eq!(
+        descriptor.ordering.default,
+        OrderingRequirement::PreserveSubmitOrder
+    );
+}
+
+#[test]
+fn openapi_batch_isolates_unsupported_protocol_and_traces_success_event() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests,
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "BOT_OPENID"})),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+    let unsupported = Task::new("unsupported", "mutsuki.bot.unsupported@1", json!({}));
+    let account = Task::new("account", QQBOT_ACCOUNT_GET_PROTOCOL_ID, json!({}));
+
+    let completion = run_tasks(&mut runner, vec![unsupported, account]);
+
+    assert!(completion.results[0].result.is_none());
+    assert!(completion.results[0].error.is_some());
+    let event = &completion.results[1].result.as_ref().unwrap().events[0];
+    assert_eq!(event.event_id, "account:result");
+    assert_eq!(event.payload["task_id"], "account");
+    assert_eq!(event.payload["protocol_id"], QQBOT_ACCOUNT_GET_PROTOCOL_ID);
+}
+
+#[test]
+fn openapi_batch_isolates_api_failure_and_continues_in_order() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests,
+        vec![
+            token_response("TOKEN_A"),
+            Err(QqOpenApiError::HttpStatus {
+                status: 400,
+                body: json!({"message": "invalid send"}),
+            }),
+            ok_response(json!({"id": "BOT_OPENID"})),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+    let send = Task::new(
+        "send",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage::text(
+            BotTarget::User {
+                user_id: "USER_OPENID".into(),
+            },
+            "hello",
+        ))
+        .unwrap(),
+    );
+    let account = Task::new("account", QQBOT_ACCOUNT_GET_PROTOCOL_ID, json!({}));
+
+    let completion = run_tasks(&mut runner, vec![send, account]);
+
+    assert!(completion.results[0].result.is_none());
+    assert!(completion.results[0].error.is_some());
+    assert!(completion.results[1].error.is_none());
+    assert_eq!(
+        completion.results[1].result.as_ref().unwrap().events[0].payload["task_id"],
+        "account"
+    );
 }
 
 #[test]
@@ -234,7 +351,7 @@ fn openapi_runner_rejects_raw_call_absolute_url_without_request() {
         }),
     );
 
-    let result = runner.step(test_context(1), vec![task]);
+    let result = run_one(&mut runner, task);
 
     assert!(result.is_err());
     assert!(requests.lock().unwrap().is_empty());
@@ -266,7 +383,7 @@ fn openapi_runner_rejects_qqbot_raw_body_in_standard_send() {
         .unwrap(),
     );
 
-    let result = runner.step(test_context(1), vec![task]);
+    let result = run_one(&mut runner, task);
 
     assert!(result.is_err());
     assert!(requests.lock().unwrap().is_empty());
@@ -350,4 +467,50 @@ fn test_context(current_step: u64) -> RunnerContext {
         Some("task-lease-test".into()),
         "invocation:test",
     )
+}
+
+fn run_one(runner: &mut impl Runner, task: Task) -> Result<RunnerResult, RuntimeError> {
+    let completion = run_tasks(runner, vec![task]);
+    let entry = completion
+        .results
+        .into_iter()
+        .next()
+        .expect("single-entry batch completion");
+    match (entry.result, entry.error) {
+        (Some(result), None) => Ok(result),
+        (None, Some(error)) => Err(error),
+        _ => panic!("entry completion must contain exactly one outcome"),
+    }
+}
+
+fn run_tasks(runner: &mut impl Runner, tasks: Vec<Task>) -> CompletionBatch {
+    let entries = tasks
+        .iter()
+        .enumerate()
+        .map(|(index, task)| BatchEntry {
+            entry_id: format!("entry-{index}"),
+            task_id: task.task_id.clone(),
+            trace_id: task.trace_id.clone(),
+            parent_id: None,
+            payload_index: index,
+            resource_requirement_indices: Vec::new(),
+            cancel_index: None,
+            deadline_tick: None,
+            priority: 0,
+            lane: DispatchLane::Normal,
+            ordering: OrderingRequirement::PreserveSubmitOrder,
+        })
+        .collect();
+    let batch = WorkBatch {
+        batch_id: "batch:test".into(),
+        tick_id: "tick:test".into(),
+        batch_key: runner.descriptor().runner_id.clone(),
+        entries,
+        payload: BatchPayload::from_tasks(&tasks),
+        resource_plan: WorkResourcePlan::empty(),
+        task_leases: Vec::new(),
+    };
+    runner
+        .run_batch(test_context(1).with_batch("batch:test", tasks.len()), batch)
+        .unwrap()
 }

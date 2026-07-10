@@ -4,10 +4,13 @@ use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
 };
 use mutsuki_runtime_contracts::{
-    ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
-    RuntimeError, ScalarValue, Task,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
+    RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
+    RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::map_work_batch_entries;
 use serde_json::json;
 
 use crate::{CommandParseError, CommandParser, message_text};
@@ -34,40 +37,41 @@ impl Runner for BotCommandRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        tasks
-            .into_iter()
-            .map(|task| {
-                let event: BotEvent = serde_json::from_value(task.payload.clone())
-                    .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
-                let Some(text) = message_text(&event) else {
-                    return Ok(RunnerResult::completed(task.task_id));
-                };
-                let command = match self.parser.parse(&text) {
-                    Ok(command) => command,
-                    Err(CommandParseError::MissingPrefix) => {
-                        return Ok(RunnerResult::completed(task.task_id));
-                    }
-                    Err(error) => return Err(failure("mutsuki.bot.command.parse", error)),
-                };
-                let command_event = BotCommandEvent {
-                    source: event,
-                    name: command.name,
-                    args: command.args,
-                    raw_text: command.raw_text,
-                };
-                let mut child = Task::new(
-                    format!("mutsuki.bot.command.handle:{}", task.task_id),
-                    BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                    serde_json::to_value(command_event)
-                        .map_err(|error| failure("mutsuki.bot.command.encode", error))?,
-                );
-                child.registry_generation = ctx.registry_generation;
-                let mut result = RunnerResult::completed(task.task_id);
-                result.tasks.push(child);
-                Ok(result)
-            })
-            .collect()
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let event: BotEvent = serde_json::from_value(task.payload.clone())
+                .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
+            let Some(text) = message_text(&event) else {
+                return Ok(RunnerResult::completed(task.task_id.clone()));
+            };
+            let command = match self.parser.parse(&text) {
+                Ok(command) => command,
+                Err(CommandParseError::MissingPrefix) => {
+                    return Ok(RunnerResult::completed(task.task_id.clone()));
+                }
+                Err(error) => return Err(failure("mutsuki.bot.command.parse", error)),
+            };
+            let command_event = BotCommandEvent {
+                source: event,
+                name: command.name,
+                args: command.args,
+                raw_text: command.raw_text,
+            };
+            let mut child = Task::new(
+                format!("mutsuki.bot.command.handle:{}", task.task_id),
+                BOT_COMMAND_HANDLE_PROTOCOL_ID,
+                serde_json::to_value(command_event)
+                    .map_err(|error| failure("mutsuki.bot.command.encode", error))?,
+            );
+            child.registry_generation = ctx.registry_generation;
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.tasks.push(child);
+            Ok(result)
+        })
     }
 }
 
@@ -86,6 +90,24 @@ pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         output_schema: json!({
             "tasks": [BOT_COMMAND_HANDLE_PROTOCOL_ID]
         }),
+        batch: RunnerBatchCapability {
+            mode: RunnerMode::NativeBatch,
+            preferred_batch_size: 16,
+            max_batch_entries: 64,
+            side_effect: RunnerSideEffect::None,
+            ..Default::default()
+        },
+        payload: RunnerPayloadCapability::default(),
+        resources: RunnerResourceCapability {
+            requires_resource_plan: false,
+            ..Default::default()
+        },
+        ordering: RunnerOrderingCapability {
+            default: OrderingRequirement::PreserveSubmitOrder,
+            supports_sequence: true,
+            supports_same_resource_order: true,
+        },
+        control: RunnerControlCapability::default(),
         metadata: BTreeMap::from([(
             "description".into(),
             ScalarValue::String("Bot command parser".into()),
@@ -97,11 +119,115 @@ pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     }
 }
 
-fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeFailure {
+fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeError {
     let mut runtime_error =
         RuntimeError::new(ERR_RUNTIME_HOST_FAILED, BOT_COMMAND_PLUGIN_ID, route.into());
     runtime_error
         .evidence
         .insert("message".into(), ScalarValue::String(error.to_string()));
-    RuntimeFailure::new(runtime_error)
+    runtime_error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_bot_protocol::{BotAccountRef, BotEventKind, BotMessage, BotPlatform, BotTarget};
+    use mutsuki_runtime_contracts::{
+        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, WorkResourcePlan,
+    };
+
+    #[test]
+    fn command_runner_batches_parse_tasks_and_isolates_decode_failure() {
+        let mut runner = BotCommandRunner::new(1, vec!["/".into()]);
+        let valid_a = command_task("task-a", "event-a", "/echo one");
+        let invalid = Task::new("task-invalid", BOT_COMMAND_PARSE_PROTOCOL_ID, json!({}));
+        let valid_b = command_task("task-b", "event-b", "/ping two");
+
+        let completion = runner
+            .run_batch(test_context(11, 3), batch(vec![valid_a, invalid, valid_b]))
+            .unwrap();
+
+        assert_eq!(completion.results.len(), 3);
+        assert!(completion.results[1].result.is_none());
+        assert!(completion.results[1].error.is_some());
+        let first = &completion.results[0].result.as_ref().unwrap().tasks[0];
+        let third = &completion.results[2].result.as_ref().unwrap().tasks[0];
+        assert_eq!(first.registry_generation, 11);
+        assert_eq!(third.registry_generation, 11);
+        let first_command: BotCommandEvent = serde_json::from_value(first.payload.clone()).unwrap();
+        let third_command: BotCommandEvent = serde_json::from_value(third.payload.clone()).unwrap();
+        assert_eq!(first_command.name, "echo");
+        assert_eq!(first_command.args, ["one"]);
+        assert_eq!(third_command.name, "ping");
+        assert_eq!(third_command.args, ["two"]);
+    }
+
+    fn command_task(task_id: &str, event_id: &str, text: &str) -> Task {
+        let target = BotTarget::User {
+            user_id: "user".into(),
+        };
+        Task::new(
+            task_id,
+            BOT_COMMAND_PARSE_PROTOCOL_ID,
+            serde_json::to_value(BotEvent {
+                event_id: event_id.into(),
+                platform: BotPlatform::QqBot,
+                bot: BotAccountRef {
+                    account_id: "main".into(),
+                    platform: BotPlatform::QqBot,
+                },
+                kind: BotEventKind::MessageCreated,
+                time_ms: 1,
+                target: target.clone(),
+                actor: None,
+                message: Some(BotMessage::text(target, text)),
+                raw: None,
+                ext: Default::default(),
+            })
+            .unwrap(),
+        )
+    }
+
+    fn batch(tasks: Vec<Task>) -> WorkBatch {
+        WorkBatch {
+            batch_id: "batch:command".into(),
+            tick_id: "tick:command".into(),
+            batch_key: BOT_COMMAND_RUNNER_ID.into(),
+            entries: entries(&tasks),
+            payload: BatchPayload::from_tasks(&tasks),
+            resource_plan: WorkResourcePlan::empty(),
+            task_leases: Vec::new(),
+        }
+    }
+
+    fn entries(tasks: &[Task]) -> Vec<BatchEntry> {
+        tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| BatchEntry {
+                entry_id: format!("entry-{index}"),
+                task_id: task.task_id.clone(),
+                trace_id: None,
+                parent_id: None,
+                payload_index: index,
+                resource_requirement_indices: Vec::new(),
+                cancel_index: None,
+                deadline_tick: None,
+                priority: 0,
+                lane: DispatchLane::Normal,
+                ordering: OrderingRequirement::PreserveSubmitOrder,
+            })
+            .collect()
+    }
+
+    fn test_context(registry_generation: u64, entry_count: usize) -> RunnerContext {
+        RunnerContext::new(
+            registry_generation,
+            1,
+            "executor:command",
+            Vec::<String>::new(),
+            "batch:command",
+        )
+        .with_batch("batch:command", entry_count)
+    }
 }

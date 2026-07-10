@@ -18,7 +18,7 @@ $env:QQBOT_ECHO_TEXT="/echo hello from qqbot"
 cargo run -p qqbot-echo
 ```
 
-The executable submits one QQBot gateway `GROUP_MESSAGE_CREATE` frame, routes it through:
+The executable submits one QQBot gateway `GROUP_MESSAGE_CREATE` frame as a one-entry batch and routes it through:
 
 ```text
 QQBot gateway frame
@@ -32,4 +32,4 @@ QQBot gateway frame
   -> mutsuki-plugin-bot-adapter-qqbot OpenAPI runner
 ```
 
-The OpenAPI client is a recording client, so the smoke is deterministic and does not send network traffic. A production host should provide real config and transport when registering the QQBot adapter runner.
+Every runner in the path uses the current MutsukiCore `run_batch` API. The OpenAPI client is a recording client, so the smoke is deterministic and does not send network traffic. A production host should provide real config and transport when registering the QQBot adapter runner.

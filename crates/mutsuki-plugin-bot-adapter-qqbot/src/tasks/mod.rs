@@ -7,10 +7,13 @@ use mutsuki_bot_protocol::{
     QqBotAccountGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
-    ERR_RUNTIME_HOST_FAILED, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
-    RuntimeError, ScalarValue, Task,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
+    RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
+    RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::map_work_batch_entries;
 use serde_json::{Value, json};
 
 use crate::adapter::{
@@ -59,26 +62,27 @@ impl Runner for QqGatewayMapRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        tasks
-            .into_iter()
-            .map(|task| {
-                let frame: GatewayFrame = serde_json::from_value(task.payload.clone())
-                    .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
-                let event = qq_gateway_frame_to_bot_event(&self.account_id, frame)
-                    .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
-                let mut ingest = Task::new(
-                    format!("mutsuki.bot.event.ingest:{}", task.task_id),
-                    BOT_EVENT_INGEST_PROTOCOL_ID,
-                    serde_json::to_value(event)
-                        .map_err(|error| failure("mutsuki.bot.qqbot.gateway.encode", error))?,
-                );
-                ingest.registry_generation = ctx.registry_generation;
-                let mut result = RunnerResult::completed(task.task_id);
-                result.tasks.push(ingest);
-                Ok(result)
-            })
-            .collect()
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let frame: GatewayFrame = serde_json::from_value(task.payload.clone())
+                .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
+            let event = qq_gateway_frame_to_bot_event(&self.account_id, frame)
+                .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
+            let mut ingest = Task::new(
+                format!("mutsuki.bot.event.ingest:{}", task.task_id),
+                BOT_EVENT_INGEST_PROTOCOL_ID,
+                serde_json::to_value(event)
+                    .map_err(|error| failure("mutsuki.bot.qqbot.gateway.encode", error))?,
+            );
+            ingest.registry_generation = ctx.registry_generation;
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.tasks.push(ingest);
+            Ok(result)
+        })
     }
 }
 
@@ -106,9 +110,12 @@ impl Runner for QqOpenApiRunner {
         &self.descriptor
     }
 
-    fn step(&mut self, ctx: RunnerContext, tasks: Vec<Task>) -> RuntimeResult<Vec<RunnerResult>> {
-        let mut results = Vec::new();
-        for task in tasks {
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
                     let message: BotMessage = serde_json::from_value(task.payload.clone())
@@ -165,10 +172,9 @@ impl Runner for QqOpenApiRunner {
             .map_err(|error| openapi_failure(&task.protocol_id, error))?;
 
             let mut result = RunnerResult::completed(task.task_id.clone());
-            result.events.push(result_event(&task, response));
-            results.push(result);
-        }
-        Ok(results)
+            result.events.push(result_event(task, response));
+            Ok(result)
+        })
     }
 }
 
@@ -187,6 +193,11 @@ pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         output_schema: json!({
             "tasks": [BOT_EVENT_INGEST_PROTOCOL_ID]
         }),
+        batch: native_batch_capability(RunnerSideEffect::None, 16, 64),
+        payload: RunnerPayloadCapability::default(),
+        resources: resource_capability(),
+        ordering: preserve_submit_order(),
+        control: RunnerControlCapability::default(),
         metadata: metadata("QQBot Gateway frame mapper"),
         contract_surfaces: vec![
             format!("runner:{QQBOT_GATEWAY_RUNNER_ID}"),
@@ -217,6 +228,11 @@ pub fn openapi_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         output_schema: json!({
             "events": [QQBOT_OPENAPI_RESULT_EVENT]
         }),
+        batch: native_batch_capability(RunnerSideEffect::External, 1, 32),
+        payload: RunnerPayloadCapability::default(),
+        resources: resource_capability(),
+        ordering: preserve_submit_order(),
+        control: RunnerControlCapability::default(),
         metadata: metadata("QQBot OpenAPI adapter"),
         contract_surfaces: vec![format!("runner:{QQBOT_OPENAPI_RUNNER_ID}")],
     }
@@ -227,9 +243,40 @@ fn result_event(task: &Task, response: Value) -> mutsuki_runtime_contracts::Doma
         event_id: format!("{}:result", task.task_id),
         kind: QQBOT_OPENAPI_RESULT_EVENT.into(),
         payload: json!({
-            "task_protocol": task.protocol_id,
+            "task_id": task.task_id,
+            "protocol_id": task.protocol_id,
             "response": response,
         }),
+    }
+}
+
+fn native_batch_capability(
+    side_effect: RunnerSideEffect,
+    preferred_batch_size: usize,
+    max_batch_entries: usize,
+) -> RunnerBatchCapability {
+    RunnerBatchCapability {
+        mode: RunnerMode::NativeBatch,
+        preferred_batch_size,
+        max_batch_entries,
+        preserve_order: true,
+        side_effect,
+        ..Default::default()
+    }
+}
+
+fn resource_capability() -> RunnerResourceCapability {
+    RunnerResourceCapability {
+        requires_resource_plan: false,
+        ..Default::default()
+    }
+}
+
+fn preserve_submit_order() -> RunnerOrderingCapability {
+    RunnerOrderingCapability {
+        default: OrderingRequirement::PreserveSubmitOrder,
+        supports_sequence: true,
+        supports_same_resource_order: true,
     }
 }
 
@@ -243,7 +290,7 @@ fn metadata(description: &str) -> BTreeMap<String, ScalarValue> {
     ])
 }
 
-fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeFailure {
+fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeError {
     let mut runtime_error = RuntimeError::new(
         ERR_RUNTIME_HOST_FAILED,
         QQBOT_ADAPTER_PLUGIN_ID,
@@ -252,10 +299,10 @@ fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeFa
     runtime_error
         .evidence
         .insert("message".into(), ScalarValue::String(error.to_string()));
-    RuntimeFailure::new(runtime_error)
+    runtime_error
 }
 
-fn openapi_failure(route: &str, error: QqOpenApiError) -> RuntimeFailure {
+fn openapi_failure(route: &str, error: QqOpenApiError) -> RuntimeError {
     let mut runtime_error =
         RuntimeError::new(ERR_RUNTIME_HOST_FAILED, QQBOT_ADAPTER_PLUGIN_ID, route);
     runtime_error.evidence = BTreeMap::from([(
@@ -268,5 +315,5 @@ fn openapi_failure(route: &str, error: QqOpenApiError) -> RuntimeFailure {
             ScalarValue::String(redact_json(&body).to_string()),
         );
     }
-    RuntimeFailure::new(runtime_error)
+    runtime_error
 }

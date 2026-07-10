@@ -16,9 +16,10 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
-mutsuki-runtime-contracts = { path = "../NanoBot/crates/mutsuki-runtime-contracts" }
-mutsuki-runtime-core = { path = "../NanoBot/crates/mutsuki-runtime-core" }
-mutsuki-runtime-host = { path = "../NanoBot/crates/mutsuki-runtime-host" }
+mutsuki-runtime-contracts = { path = "../MutsukiCore/crates/mutsuki-runtime-contracts" }
+mutsuki-runtime-core = { path = "../MutsukiCore/crates/mutsuki-runtime-core" }
+mutsuki-runtime-host = { path = "../MutsukiCore/crates/mutsuki-runtime-host" }
+mutsuki-runtime-sdk = { path = "../MutsukiCore/crates/mutsuki-runtime-sdk" }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }

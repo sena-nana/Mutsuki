@@ -17,11 +17,14 @@ use mutsuki_plugin_bot_adapter_qqbot::{
 use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandRunner};
 use mutsuki_plugin_bot_event_router::{BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner};
 use mutsuki_runtime_contracts::{
-    ExecutionClass, RunnerDescriptor, RunnerPurity, RuntimeError, RuntimeProfile,
-    RuntimeProfileMode, ScalarValue, Task,
+    CompletionBatch, ExecutionClass, OrderingRequirement, RunnerBatchCapability,
+    RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
+    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerSideEffect,
+    RuntimeError, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{RuntimeBootstrapper, runner_manifest};
+use mutsuki_runtime_sdk::map_work_batch_entries;
 use serde_json::{Value, json};
 
 pub const ECHO_PLUGIN_ID: &str = "example.qqbot.echo";
@@ -231,33 +234,29 @@ impl Runner for EchoCommandRunner {
         &self.descriptor
     }
 
-    fn step(
+    fn run_batch(
         &mut self,
         ctx: RunnerContext,
-        tasks: Vec<Task>,
-    ) -> RuntimeResult<Vec<mutsuki_runtime_contracts::RunnerResult>> {
-        tasks
-            .into_iter()
-            .map(|task| {
-                let command: BotCommandEvent = serde_json::from_value(task.payload.clone())
-                    .map_err(|error| runtime_failure(format!("echo.command.decode:{error}")))?;
-                let mut result = mutsuki_runtime_contracts::RunnerResult::completed(task.task_id);
-                if command.name == "echo" {
-                    let text = command.args.join(" ");
-                    let mut send = Task::new(
-                        format!("example.qqbot.echo.send:{}", command.source.event_id),
-                        BOT_MESSAGE_SEND_PROTOCOL_ID,
-                        serde_json::to_value(BotMessage::text(command.source.target, text))
-                            .map_err(|error| {
-                                runtime_failure(format!("echo.message.encode:{error}"))
-                            })?,
-                    );
-                    send.registry_generation = ctx.registry_generation;
-                    result.tasks.push(send);
-                }
-                Ok(result)
-            })
-            .collect()
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let command: BotCommandEvent = serde_json::from_value(task.payload.clone())
+                .map_err(|error| echo_error(format!("echo.command.decode:{error}")))?;
+            let mut result =
+                mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
+            if command.name == "echo" {
+                let text = command.args.join(" ");
+                let mut send = Task::new(
+                    format!("example.qqbot.echo.send:{}", command.source.event_id),
+                    BOT_MESSAGE_SEND_PROTOCOL_ID,
+                    serde_json::to_value(BotMessage::text(command.source.target, text))
+                        .map_err(|error| echo_error(format!("echo.message.encode:{error}")))?,
+                );
+                send.registry_generation = ctx.registry_generation;
+                result.tasks.push(send);
+            }
+            Ok(result)
+        })
     }
 }
 
@@ -276,6 +275,24 @@ fn echo_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         output_schema: json!({
             "tasks": [BOT_MESSAGE_SEND_PROTOCOL_ID]
         }),
+        batch: RunnerBatchCapability {
+            mode: RunnerMode::NativeBatch,
+            preferred_batch_size: 16,
+            max_batch_entries: 64,
+            side_effect: RunnerSideEffect::None,
+            ..Default::default()
+        },
+        payload: RunnerPayloadCapability::default(),
+        resources: RunnerResourceCapability {
+            requires_resource_plan: false,
+            ..Default::default()
+        },
+        ordering: RunnerOrderingCapability {
+            default: OrderingRequirement::PreserveSubmitOrder,
+            supports_sequence: true,
+            supports_same_resource_order: true,
+        },
+        control: RunnerControlCapability::default(),
         metadata: BTreeMap::from([(
             "description".into(),
             ScalarValue::String("Example echo command handler".into()),
@@ -287,12 +304,12 @@ fn echo_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     }
 }
 
-fn runtime_failure(route: impl Into<String>) -> RuntimeFailure {
-    RuntimeFailure::new(RuntimeError::new(
+fn echo_error(route: impl Into<String>) -> RuntimeError {
+    RuntimeError::new(
         mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
         ECHO_PLUGIN_ID,
         route,
-    ))
+    )
 }
 
 struct RecordingQqHttpClient {
