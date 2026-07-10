@@ -14,11 +14,15 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 
 ## Plugin Discovery
 
-The substantive native plugin crates carry `plugin.toml` manifests:
+The substantive native plugin crates generate current `PluginManifest` values from their runner
+descriptors through the Mutsuki SDK `PluginBuilder`:
 
 - `mutsuki-plugin-bot-event-router`: provides `mutsuki.bot.event/ingest@1`.
 - `mutsuki-plugin-bot-command`: provides `mutsuki.bot.command/parse@1`.
 - `mutsuki-plugin-bot-adapter-qqbot`: provides standard Bot message/media tasks and QQBot-specific account, gateway status, and raw call tasks.
+
+The generated manifest is the only host-loadable source of truth. This repository does not keep
+the legacy `[plugin]` / `[[provides]]` authoring format alongside it.
 
 `mutsuki-bot-protocol` and `mutsuki-bot-sdk` are library crates and are not host-loadable plugins.
 

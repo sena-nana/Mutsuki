@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-bot-protocol.workspace = true
+mutsuki-bot-sdk.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-host.workspace = true
+mutsuki-runtime-sdk.workspace = true
 qqbot-echo = { path = "../qqbot-echo" }
 serde_json.workspace = true
-

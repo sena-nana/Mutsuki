@@ -30,6 +30,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
  "serde",
  "serde_json",
  "thiserror",
@@ -202,8 +203,11 @@ dependencies = [
 name = "service-host-example"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-bot-protocol",
+ "mutsuki-bot-sdk",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-host",
+ "mutsuki-runtime-sdk",
  "qqbot-echo",
  "serde_json",
 ]

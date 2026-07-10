@@ -4,19 +4,26 @@ use mutsuki_bot_protocol::{
     BOT_EVENT_HANDLE_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID, BotEvent, BotEventSubscription,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement, PluginManifest,
     RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
     RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
     RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::map_work_batch_entries;
+use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
 use serde_json::json;
 
 use crate::{build_dispatch_task, matches_subscription};
 
 pub const BOT_EVENT_ROUTER_PLUGIN_ID: &str = "mutsuki.bot.router.event";
 pub const BOT_EVENT_ROUTER_RUNNER_ID: &str = "mutsuki.bot.router.event.ingest";
+
+pub fn bot_event_router_manifest(plugin_generation: u64) -> PluginManifest {
+    PluginBuilder::new(BOT_EVENT_ROUTER_PLUGIN_ID)
+        .runner_descriptor(router_descriptor(plugin_generation))
+        .build()
+        .manifest
+}
 
 pub struct BotEventRouter {
     subscriptions: Vec<BotEventSubscription>,

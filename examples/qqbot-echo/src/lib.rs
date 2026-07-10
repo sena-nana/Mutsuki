@@ -10,12 +10,15 @@ use mutsuki_plugin_bot_adapter_qqbot::api::{
 };
 use mutsuki_plugin_bot_adapter_qqbot::tasks::{
     QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner,
+    qqbot_adapter_manifest,
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
     QqBotClients, QqBotConfig, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource,
 };
-use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandRunner};
-use mutsuki_plugin_bot_event_router::{BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner};
+use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandRunner, bot_command_manifest};
+use mutsuki_plugin_bot_event_router::{
+    BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
+};
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, OrderingRequirement, RunnerBatchCapability,
     RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
@@ -127,14 +130,7 @@ pub fn build_bootstrapper(
         ),
         Box::new(SequentialIdSource::new(1000)),
     );
-    let adapter_manifest = runner_manifest(
-        QQBOT_ADAPTER_PLUGIN_ID,
-        vec![
-            gateway_runner.descriptor().clone(),
-            openapi_runner.descriptor().clone(),
-        ],
-    );
-    bootstrapper.register_manifest(adapter_manifest);
+    bootstrapper.register_manifest(qqbot_adapter_manifest(1));
     bootstrapper.register_builtin_runner(Box::new(gateway_runner));
     bootstrapper.register_builtin_runner(Box::new(openapi_runner));
 
@@ -148,17 +144,11 @@ pub fn build_bootstrapper(
             event_kind: Some(BotEventKind::MessageCreated),
         }],
     );
-    bootstrapper.register_manifest(runner_manifest(
-        BOT_EVENT_ROUTER_PLUGIN_ID,
-        vec![router_runner.descriptor().clone()],
-    ));
+    bootstrapper.register_manifest(bot_event_router_manifest(1));
     bootstrapper.register_builtin_runner(Box::new(router_runner));
 
     let command_runner = BotCommandRunner::new(1, vec!["/".into()]);
-    bootstrapper.register_manifest(runner_manifest(
-        BOT_COMMAND_PLUGIN_ID,
-        vec![command_runner.descriptor().clone()],
-    ));
+    bootstrapper.register_manifest(bot_command_manifest(1));
     bootstrapper.register_builtin_runner(Box::new(command_runner));
 
     let echo_runner = EchoCommandRunner::new(1);
@@ -330,6 +320,10 @@ impl RecordingQqHttpClient {
                     status: 200,
                     body: json!({"id": "QQBOT_ECHO_REPLY_ID"}),
                 }),
+                Ok(QqHttpResponse {
+                    status: 200,
+                    body: json!({"id": "QQBOT_DIRECT_MESSAGE_ID"}),
+                }),
             ])),
         }
     }
@@ -442,6 +436,8 @@ fn env_or(key: &str, fallback: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_runtime_contracts::PluginManifest;
+    use mutsuki_runtime_host::resolve_load_plan;
 
     #[test]
     fn qqbot_gateway_event_reaches_echo_send_request() {
@@ -459,5 +455,52 @@ mod tests {
             "hello from qqbot"
         );
         assert_eq!(report.requests[1].body.as_ref().unwrap()["msg_seq"], 1000);
+    }
+
+    #[test]
+    fn generated_plugin_manifests_roundtrip_and_resolve() {
+        let manifests = vec![
+            qqbot_adapter_manifest(1),
+            bot_event_router_manifest(1),
+            bot_command_manifest(1),
+        ]
+        .into_iter()
+        .map(|manifest| {
+            let encoded = serde_json::to_value(&manifest).unwrap();
+            let decoded: PluginManifest = serde_json::from_value(encoded).unwrap();
+            assert_eq!(decoded, manifest);
+            assert!(decoded.provides.runners.iter().all(|runner| {
+                runner.batch.max_batch_entries > 0
+                    && !runner.payload.layouts.is_empty()
+                    && runner.ordering.supports_sequence
+                    && runner.control.batch_cancel
+            }));
+            decoded
+        })
+        .collect::<Vec<_>>();
+        let profile = RuntimeProfile {
+            profile_id: "manifest-roundtrip".into(),
+            mode: RuntimeProfileMode::FullDev,
+            enabled_plugins: vec![
+                QQBOT_ADAPTER_PLUGIN_ID.into(),
+                BOT_EVENT_ROUTER_PLUGIN_ID.into(),
+                BOT_COMMAND_PLUGIN_ID.into(),
+            ],
+            bindings: BTreeMap::new(),
+            plugin_deployments: BTreeMap::new(),
+            allow_dynamic_registration: false,
+            allow_hot_reload: false,
+        };
+
+        let plan = resolve_load_plan(&manifests, &profile).unwrap();
+
+        assert_eq!(plan.plugins.len(), 3);
+        assert_eq!(
+            plan.plugins
+                .iter()
+                .flat_map(|manifest| manifest.provides.runners.iter())
+                .count(),
+            4
+        );
     }
 }

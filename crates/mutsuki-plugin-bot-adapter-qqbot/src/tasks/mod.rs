@@ -7,13 +7,13 @@ use mutsuki_bot_protocol::{
     QqBotAccountGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement, PluginManifest,
     RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
     RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
     RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::map_work_batch_entries;
+use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
 use serde_json::{Value, json};
 
 use crate::adapter::{
@@ -31,6 +31,16 @@ pub const QQBOT_ADAPTER_PLUGIN_ID: &str = "mutsuki.bot.adapter.qqbot";
 pub const QQBOT_GATEWAY_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.gateway";
 pub const QQBOT_OPENAPI_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.openapi";
 pub const QQBOT_OPENAPI_RESULT_EVENT: &str = "mutsuki.bot.qqbot.openapi.result";
+
+pub fn qqbot_adapter_manifest(plugin_generation: u64) -> PluginManifest {
+    PluginBuilder::new(QQBOT_ADAPTER_PLUGIN_ID)
+        .metadata("platform", ScalarValue::String("qqbot".into()))
+        .metadata("adapter", ScalarValue::Bool(true))
+        .runner_descriptor(gateway_descriptor(plugin_generation))
+        .runner_descriptor(openapi_descriptor(plugin_generation))
+        .build()
+        .manifest
+}
 
 pub fn qqbot_runners(
     config: QqBotConfig,

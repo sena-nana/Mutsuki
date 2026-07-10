@@ -4,19 +4,26 @@ use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement, PluginManifest,
     RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
     RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
     RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::map_work_batch_entries;
+use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
 use serde_json::json;
 
 use crate::{CommandParseError, CommandParser, message_text};
 
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
+
+pub fn bot_command_manifest(plugin_generation: u64) -> PluginManifest {
+    PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
+        .runner_descriptor(command_descriptor(plugin_generation))
+        .build()
+        .manifest
+}
 
 pub struct BotCommandRunner {
     descriptor: RunnerDescriptor,
