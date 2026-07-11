@@ -23,3 +23,19 @@ pub fn redact_json(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+
+pub fn redact_urls(message: &str) -> String {
+    let mut redacted = message.to_owned();
+    for scheme in ["https://", "http://", "wss://", "ws://"] {
+        while let Some(start) = redacted.find(scheme) {
+            let end = redacted[start..]
+                .find(|character: char| {
+                    character.is_whitespace() || matches!(character, ')' | ']' | '}')
+                })
+                .map(|offset| start + offset)
+                .unwrap_or(redacted.len());
+            redacted.replace_range(start..end, "<url:redacted>");
+        }
+    }
+    redacted
+}

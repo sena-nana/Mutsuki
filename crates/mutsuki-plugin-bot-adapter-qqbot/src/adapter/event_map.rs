@@ -3,6 +3,7 @@ use mutsuki_bot_protocol::{
     MessageSegment,
 };
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::adapter::qq_target_from_payload;
 use crate::gateway::{GatewayFrame, dedup_key};
@@ -35,11 +36,7 @@ pub fn qq_gateway_frame_to_bot_event(
             platform: BotPlatform::QqBot,
         },
         kind: qq_event_kind(event_type),
-        time_ms: data
-            .get("timestamp")
-            .or_else(|| data.get("time_ms"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        time_ms: event_time_ms(data).unwrap_or(0),
         target,
         actor,
         message,
@@ -65,7 +62,11 @@ fn qq_event_kind(event_type: &str) -> BotEventKind {
 fn qq_actor(data: &Value) -> Option<BotUser> {
     let author = data.get("author").unwrap_or(data);
     let user_id = author
-        .get("user_openid")
+        .get("member_openid")
+        .or_else(|| author.get("group_member_openid"))
+        .or_else(|| author.get("user_openid"))
+        .or_else(|| author.get("openid"))
+        .or_else(|| author.get("user_id"))
         .or_else(|| author.get("id"))
         .and_then(Value::as_str)?;
     Some(BotUser {
@@ -94,11 +95,7 @@ fn qq_message(
     ) {
         return None;
     }
-    let content = data
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let content = message_content(event_type, data);
     Some(BotMessage {
         message_id: data.get("id").and_then(Value::as_str).map(str::to_owned),
         target,
@@ -109,10 +106,63 @@ fn qq_message(
             .and_then(|reference| reference.get("message_id"))
             .and_then(Value::as_str)
             .map(str::to_owned),
-        time_ms: data
-            .get("timestamp")
-            .or_else(|| data.get("time_ms"))
-            .and_then(Value::as_i64),
+        time_ms: event_time_ms(data),
         ext: BotExtMap::new(),
     })
+}
+
+fn message_content(event_type: &str, data: &Value) -> String {
+    let raw = data
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let decoded = html_escape::decode_html_entities(raw);
+    let mut content = decoded.trim();
+    if event_type == "GROUP_AT_MESSAGE_CREATE"
+        && let Some(bot_id) = data
+            .get("mentions")
+            .and_then(Value::as_array)
+            .and_then(|mentions| {
+                mentions.iter().find_map(|mention| {
+                    mention
+                        .get("is_you")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        .then(|| mention.get("id").and_then(Value::as_str))
+                        .flatten()
+                })
+            })
+    {
+        let prefixes = [
+            format!("<@{bot_id}>"),
+            format!("<@!{bot_id}>"),
+            format!("<qqbot-at-user id=\"{bot_id}\" />"),
+        ];
+        if let Some(remainder) = prefixes
+            .iter()
+            .find_map(|prefix| content.strip_prefix(prefix))
+        {
+            content = remainder.trim_start();
+        }
+    }
+    content.trim().to_owned()
+}
+
+fn event_time_ms(data: &Value) -> Option<i64> {
+    if let Some(milliseconds) = data.get("time_ms").and_then(Value::as_i64) {
+        return Some(milliseconds);
+    }
+    let value = data.get("timestamp")?;
+    if let Some(timestamp) = value.as_i64() {
+        return Some(if timestamp.unsigned_abs() < 100_000_000_000 {
+            timestamp.saturating_mul(1_000)
+        } else {
+            timestamp
+        });
+    }
+    let timestamp = value.as_str()?;
+    let nanos = OffsetDateTime::parse(timestamp, &Rfc3339)
+        .ok()?
+        .unix_timestamp_nanos();
+    i64::try_from(nanos / 1_000_000).ok()
 }

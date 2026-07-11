@@ -21,7 +21,8 @@ use crate::adapter::{
     bot_recall_to_qq_recall, qq_gateway_frame_to_bot_event, redact_json,
 };
 use crate::api::{
-    QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService, RawCallPayload, parse_payload,
+    QqAuthManager, QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService, RawCallPayload,
+    parse_payload,
 };
 use crate::config::QqBotConfig;
 use crate::gateway::GatewayFrame;
@@ -82,6 +83,14 @@ impl Runner for QqGatewayMapRunner {
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
             let event = qq_gateway_frame_to_bot_event(&self.account_id, frame)
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
+            tracing::info!(
+                account_id = %self.account_id,
+                event_id = %event.event_id,
+                task_id = %task.task_id,
+                runner_id = QQBOT_GATEWAY_RUNNER_ID,
+                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
+                "QQBot Gateway event mapped"
+            );
             let mut ingest = Task::new(
                 format!("mutsuki.bot.event.ingest:{}", task.task_id),
                 BOT_EVENT_INGEST_PROTOCOL_ID,
@@ -89,6 +98,8 @@ impl Runner for QqGatewayMapRunner {
                     .map_err(|error| failure("mutsuki.bot.qqbot.gateway.encode", error))?,
             );
             ingest.registry_generation = ctx.registry_generation;
+            ingest.trace_id = task.trace_id.clone();
+            ingest.correlation_id = task.correlation_id.clone();
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks.push(ingest);
             Ok(result)
@@ -113,6 +124,19 @@ impl QqOpenApiRunner {
             service: QqOpenApiService::new(config, clients, id_source),
         }
     }
+
+    pub fn new_with_auth(
+        plugin_generation: u64,
+        config: QqBotConfig,
+        clients: QqBotClients,
+        id_source: Box<dyn QqIdSource>,
+        auth: QqAuthManager,
+    ) -> Self {
+        Self {
+            descriptor: openapi_descriptor(plugin_generation),
+            service: QqOpenApiService::new_with_auth(config, clients, id_source, auth),
+        }
+    }
 }
 
 impl Runner for QqOpenApiRunner {
@@ -122,9 +146,10 @@ impl Runner for QqOpenApiRunner {
 
     fn run_batch(
         &mut self,
-        ctx: RunnerContext,
+        _ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
+        let account_id = self.service.account_id().to_owned();
         map_work_batch_entries(&batch, |task| {
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
@@ -134,7 +159,6 @@ impl Runner for QqOpenApiRunner {
                         map_bot_message_to_qq_send(message).map_err(|error| {
                             failure("mutsuki.bot.message.send.map.qqbot", error)
                         })?,
-                        ctx.current_step,
                     )
                 }
                 BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
@@ -144,7 +168,6 @@ impl Runner for QqOpenApiRunner {
                         bot_media_upload_to_qq_upload(request).map_err(|error| {
                             failure("mutsuki.bot.media.upload.map.qqbot", error)
                         })?,
-                        ctx.current_step,
                     )
                 }
                 BOT_MESSAGE_RECALL_PROTOCOL_ID => {
@@ -154,25 +177,23 @@ impl Runner for QqOpenApiRunner {
                         bot_recall_to_qq_recall(request).map_err(|error| {
                             failure("mutsuki.bot.message.recall.map.qqbot", error)
                         })?,
-                        ctx.current_step,
                     )
                 }
                 QQBOT_ACCOUNT_GET_PROTOCOL_ID => {
                     let _: QqBotAccountGetRequest = parse_payload(task.payload.clone())
                         .map_err(|error| failure("mutsuki.bot.qqbot.account.get.payload", error))?;
-                    self.service.get_account(ctx.current_step)
+                    self.service.get_account()
                 }
                 QQBOT_GATEWAY_STATUS_PROTOCOL_ID => {
                     let _: QqBotGatewayStatusRequest = parse_payload(task.payload.clone())
                         .map_err(|error| {
                             failure("mutsuki.bot.qqbot.gateway.status.payload", error)
                         })?;
-                    self.service.gateway_status(ctx.current_step)
+                    self.service.gateway_status()
                 }
                 QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
                     parse_payload::<RawCallPayload>(task.payload.clone())
                         .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,
-                    ctx.current_step,
                 ),
                 _ => Err(QqOpenApiError::InvalidPayload(format!(
                     "unsupported task protocol {}",
@@ -180,6 +201,16 @@ impl Runner for QqOpenApiRunner {
                 ))),
             }
             .map_err(|error| openapi_failure(&task.protocol_id, error))?;
+
+            tracing::info!(
+                account_id = %account_id,
+                task_id = %task.task_id,
+                runner_id = QQBOT_OPENAPI_RUNNER_ID,
+                protocol_id = %task.protocol_id,
+                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
+                reply_request_id = %task.task_id,
+                "QQBot OpenAPI request completed"
+            );
 
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.events.push(result_event(task, response));

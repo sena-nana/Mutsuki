@@ -11,6 +11,7 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 - `mutsuki-plugin-bot-event-router`: standard `mutsuki.bot.event/ingest@1` router plugin.
 - `mutsuki-plugin-bot-command`: generic message command parser plugin.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
+- `examples/bot-echo`: platform-neutral example business plugin that depends only on Bot protocols and SDK helpers.
 
 ## Plugin Discovery
 
@@ -37,6 +38,26 @@ MutsukiServiceHost / MutsukiCliHost / MutsukiTauriHost
 Do not introduce `BotHost`. A standalone Bot service should run through `MutsukiServiceHost`.
 
 All native runners implement the current MutsukiCore `Runner::run_batch` contract. A single task is represented as a one-entry `WorkBatch`; there is no separate scalar `step` execution path. Row payload tasks are mapped back to their matching `BatchEntry`, and each entry produces its own `EntryCompletion` inside a `CompletionBatch`.
+
+## QQBot Production Bundle
+
+`QqBotPluginBundle` assembles the QQBot manifest, batch runners and the
+ServiceHost-managed Gateway EventSource. The production HTTP transport uses
+`reqwest` with the Rustls TLS backend; Gateway WebSocket uses
+`tokio-tungstenite` with Rustls webpki roots. Product code installs the bundle
+into `ServiceRuntimeBuilder`; it does not create a Bot-specific Host.
+At source startup and reconnect, the adapter validates the configured account
+through `/users/@me`, obtains `/gateway/bot`, and lets Gateway reject invalid or
+disallowed intent/shard configurations as permanent structured failures.
+
+See `examples/service-host-example` for the deterministic SDK smoke and the
+ServiceHost integration test. Product-specific config loading remains in the
+product Host; this repository only accepts an already constructed
+`QqBotConfig` at the bundle boundary.
+
+`examples/qqbot-echo` is only the deterministic product assembly. Its Echo
+business runner lives in the separate `examples/bot-echo` crate and has no
+QQBot, HTTP, WebSocket, or ServiceHost dependency.
 
 ## Boundary Rule
 

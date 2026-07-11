@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use mutsuki_bot_protocol::{
-    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BotCommandEvent, BotEventKind, BotEventSubscription, BotMessage,
-};
+pub use bot_echo::{ECHO_PLUGIN_ID, ECHO_RUNNER_ID, echo_manifest, echo_runner};
+use mutsuki_bot_protocol::{BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind, BotEventSubscription};
 use mutsuki_plugin_bot_adapter_qqbot::api::{
     HttpMethod, MediaChunk, QqMediaError, QqMediaProvider, QqOpenApiError,
 };
@@ -14,26 +12,18 @@ use mutsuki_plugin_bot_adapter_qqbot::tasks::{
 };
 use mutsuki_plugin_bot_adapter_qqbot::{
     QqBotClients, QqBotConfig, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource,
+    StaticQqCredentials,
 };
 use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandRunner, bot_command_manifest};
 use mutsuki_plugin_bot_event_router::{
     BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
 };
-use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, OrderingRequirement, RunnerBatchCapability,
-    RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
-    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerSideEffect,
-    RuntimeError, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task, WorkBatch,
-};
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_host::{RuntimeBootstrapper, runner_manifest};
-use mutsuki_runtime_sdk::map_work_batch_entries;
+use mutsuki_runtime_contracts::{RuntimeProfile, RuntimeProfileMode, Task};
+use mutsuki_runtime_core::RuntimeResult;
+use mutsuki_runtime_host::RuntimeBootstrapper;
 use serde_json::{Value, json};
 
-pub const ECHO_PLUGIN_ID: &str = "example.qqbot.echo";
-pub const ECHO_RUNNER_ID: &str = "example.qqbot.echo.command";
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EchoSmokeConfig {
     pub account_id: String,
     pub app_id: String,
@@ -52,20 +42,6 @@ impl Default for EchoSmokeConfig {
             group_openid: "GROUP_OPENID".into(),
             user_openid: "USER_OPENID".into(),
             command_text: "/echo hello from qqbot".into(),
-        }
-    }
-}
-
-impl EchoSmokeConfig {
-    pub fn from_env() -> Self {
-        let defaults = Self::default();
-        Self {
-            account_id: env_or("QQBOT_ACCOUNT_ID", defaults.account_id),
-            app_id: env_or("QQBOT_APP_ID", defaults.app_id),
-            client_secret: env_or("QQBOT_CLIENT_SECRET", defaults.client_secret),
-            group_openid: env_or("QQBOT_GROUP_OPENID", defaults.group_openid),
-            user_openid: env_or("QQBOT_USER_OPENID", defaults.user_openid),
-            command_text: env_or("QQBOT_ECHO_TEXT", defaults.command_text),
         }
     }
 }
@@ -127,6 +103,7 @@ pub fn build_bootstrapper(
         QqBotClients::new(
             Box::new(RecordingQqHttpClient::new(recording)),
             Box::new(NoopMediaProvider),
+            Arc::new(StaticQqCredentials::new(&config.client_secret)),
         ),
         Box::new(SequentialIdSource::new(1000)),
     );
@@ -151,12 +128,8 @@ pub fn build_bootstrapper(
     bootstrapper.register_manifest(bot_command_manifest(1));
     bootstrapper.register_builtin_runner(Box::new(command_runner));
 
-    let echo_runner = EchoCommandRunner::new(1);
-    bootstrapper.register_manifest(runner_manifest(
-        ECHO_PLUGIN_ID,
-        vec![echo_runner.descriptor().clone()],
-    ));
-    bootstrapper.register_builtin_runner(Box::new(echo_runner));
+    bootstrapper.register_manifest(echo_manifest(1));
+    bootstrapper.register_builtin_runner(echo_runner(1));
 
     let profile = RuntimeProfile {
         profile_id: "qqbot-echo-smoke".into(),
@@ -200,106 +173,11 @@ pub fn qqbot_group_message_task(config: &EchoSmokeConfig) -> Task {
 }
 
 fn qqbot_config(config: &EchoSmokeConfig) -> QqBotConfig {
-    let mut qqbot = QqBotConfig::new(&config.account_id, &config.app_id, &config.client_secret);
+    let mut qqbot = QqBotConfig::new(&config.account_id, &config.app_id);
     qqbot.token_url = "https://qqbot.example.invalid/app/getAppAccessToken".into();
     qqbot.openapi_base_url = "https://qqbot.example.invalid".into();
     qqbot.max_retry_attempts = 1;
     qqbot
-}
-
-struct EchoCommandRunner {
-    descriptor: RunnerDescriptor,
-}
-
-impl EchoCommandRunner {
-    pub fn new(plugin_generation: u64) -> Self {
-        Self {
-            descriptor: echo_descriptor(plugin_generation),
-        }
-    }
-}
-
-impl Runner for EchoCommandRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| {
-            let command: BotCommandEvent = serde_json::from_value(task.payload.clone())
-                .map_err(|error| echo_error(format!("echo.command.decode:{error}")))?;
-            let mut result =
-                mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
-            if command.name == "echo" {
-                let text = command.args.join(" ");
-                let mut send = Task::new(
-                    format!("example.qqbot.echo.send:{}", command.source.event_id),
-                    BOT_MESSAGE_SEND_PROTOCOL_ID,
-                    serde_json::to_value(BotMessage::text(command.source.target, text))
-                        .map_err(|error| echo_error(format!("echo.message.encode:{error}")))?,
-                );
-                send.registry_generation = ctx.registry_generation;
-                result.tasks.push(send);
-            }
-            Ok(result)
-        })
-    }
-}
-
-fn echo_descriptor(plugin_generation: u64) -> RunnerDescriptor {
-    RunnerDescriptor {
-        runner_id: ECHO_RUNNER_ID.into(),
-        plugin_id: ECHO_PLUGIN_ID.into(),
-        plugin_generation,
-        accepted_protocol_ids: vec![BOT_COMMAND_HANDLE_PROTOCOL_ID.into()],
-        purity: RunnerPurity::Pure,
-        execution_class: ExecutionClass::Orchestration,
-        input_schema: json!({
-            "type": "object",
-            "required": ["source", "name", "args"]
-        }),
-        output_schema: json!({
-            "tasks": [BOT_MESSAGE_SEND_PROTOCOL_ID]
-        }),
-        batch: RunnerBatchCapability {
-            mode: RunnerMode::NativeBatch,
-            preferred_batch_size: 16,
-            max_batch_entries: 64,
-            side_effect: RunnerSideEffect::None,
-            ..Default::default()
-        },
-        payload: RunnerPayloadCapability::default(),
-        resources: RunnerResourceCapability {
-            requires_resource_plan: false,
-            ..Default::default()
-        },
-        ordering: RunnerOrderingCapability {
-            default: OrderingRequirement::PreserveSubmitOrder,
-            supports_sequence: true,
-            supports_same_resource_order: true,
-        },
-        control: RunnerControlCapability::default(),
-        metadata: BTreeMap::from([(
-            "description".into(),
-            ScalarValue::String("Example echo command handler".into()),
-        )]),
-        contract_surfaces: vec![
-            format!("runner:{ECHO_RUNNER_ID}"),
-            format!("task_protocol:{BOT_COMMAND_HANDLE_PROTOCOL_ID}"),
-        ],
-    }
-}
-
-fn echo_error(route: impl Into<String>) -> RuntimeError {
-    RuntimeError::new(
-        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-        ECHO_PLUGIN_ID,
-        route,
-    )
 }
 
 struct RecordingQqHttpClient {
@@ -314,14 +192,17 @@ impl RecordingQqHttpClient {
             responses: Mutex::new(VecDeque::from([
                 Ok(QqHttpResponse {
                     status: 200,
+                    headers: BTreeMap::new(),
                     body: json!({"access_token": "SMOKE_TOKEN", "expires_in": 7200}),
                 }),
                 Ok(QqHttpResponse {
                     status: 200,
+                    headers: BTreeMap::new(),
                     body: json!({"id": "QQBOT_ECHO_REPLY_ID"}),
                 }),
                 Ok(QqHttpResponse {
                     status: 200,
+                    headers: BTreeMap::new(),
                     body: json!({"id": "QQBOT_DIRECT_MESSAGE_ID"}),
                 }),
             ])),
@@ -339,6 +220,7 @@ impl QqHttpClient for RecordingQqHttpClient {
             .unwrap_or_else(|| {
                 Ok(QqHttpResponse {
                     status: 200,
+                    headers: BTreeMap::new(),
                     body: json!({"ok": true}),
                 })
             })
@@ -426,13 +308,6 @@ fn http_method_name(method: &HttpMethod) -> &'static str {
     }
 }
 
-fn env_or(key: &str, fallback: String) -> String {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(fallback)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,6 +330,20 @@ mod tests {
             "hello from qqbot"
         );
         assert_eq!(report.requests[1].body.as_ref().unwrap()["msg_seq"], 1000);
+        assert_eq!(
+            report.requests[1].body.as_ref().unwrap()["msg_id"],
+            "QQBOT_MESSAGE_ID"
+        );
+    }
+
+    #[test]
+    fn ping_command_replies_pong_through_standard_message_task() {
+        let mut config = EchoSmokeConfig::default();
+        config.command_text = "/ping".into();
+        let report = run_smoke(config).unwrap();
+
+        assert_eq!(report.requests.len(), 2);
+        assert_eq!(report.requests[1].body.as_ref().unwrap()["content"], "pong");
     }
 
     #[test]
@@ -463,6 +352,7 @@ mod tests {
             qqbot_adapter_manifest(1),
             bot_event_router_manifest(1),
             bot_command_manifest(1),
+            echo_manifest(1),
         ]
         .into_iter()
         .map(|manifest| {
@@ -485,6 +375,7 @@ mod tests {
                 QQBOT_ADAPTER_PLUGIN_ID.into(),
                 BOT_EVENT_ROUTER_PLUGIN_ID.into(),
                 BOT_COMMAND_PLUGIN_ID.into(),
+                ECHO_PLUGIN_ID.into(),
             ],
             bindings: BTreeMap::new(),
             plugin_deployments: BTreeMap::new(),
@@ -494,13 +385,13 @@ mod tests {
 
         let plan = resolve_load_plan(&manifests, &profile).unwrap();
 
-        assert_eq!(plan.plugins.len(), 3);
+        assert_eq!(plan.plugins.len(), 4);
         assert_eq!(
             plan.plugins
                 .iter()
                 .flat_map(|manifest| manifest.provides.runners.iter())
                 .count(),
-            4
+            5
         );
     }
 }

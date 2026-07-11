@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::api::{
-    HttpMethod, MediaUploadPayload, QqBotClients, QqHttpRequest, QqIdSource, QqMediaProvider,
-    QqOpenApiError, QqOpenApiTransport, RawCallPayload, RecallMessagePayload, SendMessagePayload,
-    json_field,
+    HttpMethod, MediaUploadPayload, QqAuthManager, QqBotClients, QqHttpRequest, QqIdSource,
+    QqMediaProvider, QqOpenApiError, QqOpenApiTransport, RawCallPayload, RecallMessagePayload,
+    SendMessagePayload, json_field,
 };
 use crate::config::QqBotConfig;
 
@@ -16,20 +16,33 @@ pub struct QqOpenApiService {
 }
 
 impl QqOpenApiService {
+    pub fn account_id(&self) -> &str {
+        &self.transport.config().account_id
+    }
+
     pub fn new(config: QqBotConfig, clients: QqBotClients, id_source: Box<dyn QqIdSource>) -> Self {
-        let QqBotClients { http, media } = clients;
+        Self::new_with_auth(config, clients, id_source, QqAuthManager::new())
+    }
+
+    pub fn new_with_auth(
+        config: QqBotConfig,
+        clients: QqBotClients,
+        id_source: Box<dyn QqIdSource>,
+        auth: QqAuthManager,
+    ) -> Self {
+        let QqBotClients {
+            http,
+            media,
+            credentials,
+        } = clients;
         Self {
-            transport: QqOpenApiTransport::new(config, http),
+            transport: QqOpenApiTransport::new_with_auth(config, http, credentials, auth),
             media,
             id_source,
         }
     }
 
-    pub fn send_message(
-        &mut self,
-        payload: SendMessagePayload,
-        current_step: u64,
-    ) -> Result<Value, QqOpenApiError> {
+    pub fn send_message(&mut self, payload: SendMessagePayload) -> Result<Value, QqOpenApiError> {
         let mut body = payload
             .validated_body()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
@@ -38,18 +51,14 @@ impl QqOpenApiService {
             HttpMethod::Post,
             payload.scene.messages_path(&payload.target_openid),
             body,
-            current_step,
         )
     }
 
-    pub fn get_account(&mut self, current_step: u64) -> Result<Value, QqOpenApiError> {
+    pub fn get_account(&mut self) -> Result<Value, QqOpenApiError> {
         let config = self.transport.config().clone();
-        let openapi_user = self.transport.execute_json(
-            HttpMethod::Get,
-            "/users/@me".into(),
-            Value::Null,
-            current_step,
-        )?;
+        let openapi_user =
+            self.transport
+                .execute_json(HttpMethod::Get, "/users/@me".into(), Value::Null)?;
         Ok(json!({
             "account": {
                 "account_id": config.account_id,
@@ -60,14 +69,11 @@ impl QqOpenApiService {
         }))
     }
 
-    pub fn gateway_status(&mut self, current_step: u64) -> Result<Value, QqOpenApiError> {
+    pub fn gateway_status(&mut self) -> Result<Value, QqOpenApiError> {
         let config = self.transport.config().clone();
-        let gateway = self.transport.execute_json(
-            HttpMethod::Get,
-            "/gateway".into(),
-            Value::Null,
-            current_step,
-        )?;
+        let gateway =
+            self.transport
+                .execute_json(HttpMethod::Get, "/gateway/bot".into(), Value::Null)?;
         Ok(json!({
             "account_id": config.account_id,
             "platform": "qqbot",
@@ -77,19 +83,15 @@ impl QqOpenApiService {
         }))
     }
 
-    pub fn upload_media(
-        &mut self,
-        payload: MediaUploadPayload,
-        current_step: u64,
-    ) -> Result<Value, QqOpenApiError> {
+    pub fn upload_media(&mut self, payload: MediaUploadPayload) -> Result<Value, QqOpenApiError> {
         payload
             .validate()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
         if let Some(upload_id) = &payload.upload_id {
-            return self.exchange_upload_id(&payload, upload_id, current_step);
+            return self.exchange_upload_id(&payload, upload_id);
         }
         if payload.resource_ref.is_some() {
-            return self.upload_resource_chunks(payload, current_step);
+            return self.upload_resource_chunks(payload);
         }
         let mut body = json!({
             "file_type": payload.file_type,
@@ -102,7 +104,6 @@ impl QqOpenApiService {
             HttpMethod::Post,
             payload.scene.files_path(&payload.target_openid),
             body,
-            current_step,
         )?;
         ensure_file_info(&response)?;
         Ok(response)
@@ -111,7 +112,6 @@ impl QqOpenApiService {
     pub fn recall_message(
         &mut self,
         payload: RecallMessagePayload,
-        current_step: u64,
     ) -> Result<Value, QqOpenApiError> {
         if payload.target_openid.trim().is_empty() || payload.message_id.trim().is_empty() {
             return Err(QqOpenApiError::InvalidPayload(
@@ -124,40 +124,29 @@ impl QqOpenApiService {
                 .scene
                 .recall_path(&payload.target_openid, &payload.message_id),
             Value::Null,
-            current_step,
         )
     }
 
-    pub fn raw_call(
-        &mut self,
-        payload: RawCallPayload,
-        current_step: u64,
-    ) -> Result<Value, QqOpenApiError> {
+    pub fn raw_call(&mut self, payload: RawCallPayload) -> Result<Value, QqOpenApiError> {
         let method = match payload.method.as_str() {
             "POST" | "post" => HttpMethod::Post,
             "PUT" | "put" => HttpMethod::Put,
             "DELETE" | "delete" => HttpMethod::Delete,
             _ => return Err(QqOpenApiError::InvalidPayload("unsupported method".into())),
         };
-        self.transport.execute_json(
-            method,
-            payload.path,
-            payload.body.unwrap_or(Value::Null),
-            current_step,
-        )
+        self.transport
+            .execute_json(method, payload.path, payload.body.unwrap_or(Value::Null))
     }
 
     fn exchange_upload_id(
         &mut self,
         payload: &MediaUploadPayload,
         upload_id: &str,
-        current_step: u64,
     ) -> Result<Value, QqOpenApiError> {
         let response = self.transport.execute_json(
             HttpMethod::Post,
             payload.scene.files_path(&payload.target_openid),
             json!({ "upload_id": upload_id }),
-            current_step,
         )?;
         ensure_file_info(&response)?;
         Ok(response)
@@ -166,7 +155,6 @@ impl QqOpenApiService {
     fn upload_resource_chunks(
         &mut self,
         payload: MediaUploadPayload,
-        current_step: u64,
     ) -> Result<Value, QqOpenApiError> {
         let resource_ref = payload
             .resource_ref
@@ -183,7 +171,6 @@ impl QqOpenApiService {
                 "sha1": payload.sha1.clone().unwrap_or_default(),
                 "md5_10m": payload.md5_10m.clone().unwrap_or_default(),
             }),
-            current_step,
         )?;
         let upload_id = json_field(&prepare, "upload_id")?.to_owned();
         let block_size = prepare
@@ -206,6 +193,7 @@ impl QqOpenApiService {
             if !(200..300).contains(&response.status) {
                 return Err(QqOpenApiError::HttpStatus {
                     status: response.status,
+                    headers: response.headers,
                     body: response.body,
                 });
             }
@@ -220,10 +208,9 @@ impl QqOpenApiService {
                     "block_size": block_size,
                     "md5": chunk.md5,
                 }),
-                current_step,
             )?;
         }
-        self.exchange_upload_id(&payload, &upload_id, current_step)
+        self.exchange_upload_id(&payload, &upload_id)
     }
 }
 

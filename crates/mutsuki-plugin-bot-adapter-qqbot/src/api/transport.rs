@@ -1,22 +1,41 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use serde_json::Value;
+use url::Url;
 
 use crate::api::{
-    HttpMethod, QqAuthManager, QqHttpClient, QqOpenApiError, authorization_header, request_empty,
-    request_json,
+    HttpMethod, QqAuthManager, QqCredentialProvider, QqHttpClient, QqOpenApiError,
+    authorization_header, request_empty, request_json,
 };
 use crate::config::QqBotConfig;
 
 pub struct QqOpenApiTransport {
     config: QqBotConfig,
     auth: QqAuthManager,
+    credentials: Arc<dyn QqCredentialProvider>,
     http: Box<dyn QqHttpClient>,
 }
 
 impl QqOpenApiTransport {
-    pub fn new(config: QqBotConfig, http: Box<dyn QqHttpClient>) -> Self {
+    pub fn new(
+        config: QqBotConfig,
+        http: Box<dyn QqHttpClient>,
+        credentials: Arc<dyn QqCredentialProvider>,
+    ) -> Self {
+        Self::new_with_auth(config, http, credentials, QqAuthManager::new())
+    }
+
+    pub fn new_with_auth(
+        config: QqBotConfig,
+        http: Box<dyn QqHttpClient>,
+        credentials: Arc<dyn QqCredentialProvider>,
+        auth: QqAuthManager,
+    ) -> Self {
         Self {
             config,
-            auth: QqAuthManager::new(),
+            auth,
+            credentials,
             http,
         }
     }
@@ -26,15 +45,17 @@ impl QqOpenApiTransport {
         method: HttpMethod,
         path: String,
         body: Value,
-        current_step: u64,
     ) -> Result<Value, QqOpenApiError> {
         let url = openapi_url(&self.config.openapi_base_url, &path)?;
         let mut refreshed_for_401 = false;
         let max_attempts = self.config.max_retry_attempts.max(1);
-        for attempt in 1..=max_attempts {
-            let token = self
-                .auth
-                .bearer_token(&self.config, self.http.as_mut(), current_step)?;
+        let mut transient_attempt = 1_u8;
+        loop {
+            let token = self.auth.bearer_token(
+                &self.config,
+                self.credentials.as_ref(),
+                self.http.as_mut(),
+            )?;
             let mut request = match &method {
                 HttpMethod::Get => request_empty(method.clone(), url.clone()),
                 _ => request_json(method.clone(), url.clone(), body.clone()),
@@ -53,22 +74,35 @@ impl QqOpenApiTransport {
                 Ok(response) => {
                     let error = QqOpenApiError::HttpStatus {
                         status: response.status,
+                        headers: response.headers,
                         body: response.body,
                     };
-                    if error.retryable() && attempt < max_attempts {
+                    if error.retryable() && transient_attempt < max_attempts {
+                        self.backoff(transient_attempt, error.retry_after_ms());
+                        transient_attempt = transient_attempt.saturating_add(1);
                         continue;
                     }
                     return Err(error);
                 }
                 Err(error) => {
-                    if error.retryable() && attempt < max_attempts {
+                    if error.retryable() && transient_attempt < max_attempts {
+                        self.backoff(transient_attempt, error.retry_after_ms());
+                        transient_attempt = transient_attempt.saturating_add(1);
                         continue;
                     }
                     return Err(error);
                 }
             }
         }
-        Err(QqOpenApiError::InvalidResponse("retry exhausted".into()))
+    }
+
+    pub fn access_token(&mut self) -> Result<String, QqOpenApiError> {
+        self.auth
+            .bearer_token(&self.config, self.credentials.as_ref(), self.http.as_mut())
+    }
+
+    pub fn invalidate_token(&self) {
+        self.auth.invalidate();
     }
 
     pub fn http(&mut self) -> &mut dyn QqHttpClient {
@@ -78,18 +112,37 @@ impl QqOpenApiTransport {
     pub fn config(&self) -> &QqBotConfig {
         &self.config
     }
+
+    fn backoff(&self, attempt: u8, server_delay_ms: Option<u64>) {
+        let exponent = u32::from(attempt.saturating_sub(1)).min(20);
+        let configured = self
+            .config
+            .retry_base_delay_ms
+            .saturating_mul(1_u64 << exponent)
+            .min(self.config.retry_max_delay_ms);
+        let delay = server_delay_ms
+            .unwrap_or(configured)
+            .min(self.config.retry_max_delay_ms);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_millis(delay));
+        }
+    }
 }
 
 fn openapi_url(base: &str, path: &str) -> Result<String, QqOpenApiError> {
-    if path.starts_with("http://") || path.starts_with("https://") {
-        Err(QqOpenApiError::InvalidPayload(
-            "OpenAPI path must be relative".into(),
-        ))
-    } else {
-        Ok(format!(
-            "{}/{}",
-            base.trim_end_matches('/'),
-            path.trim_start_matches('/')
-        ))
+    if path.trim().is_empty()
+        || path.starts_with("http://")
+        || path.starts_with("https://")
+        || path.starts_with("//")
+        || path.contains(['\r', '\n'])
+    {
+        return Err(QqOpenApiError::InvalidPayload(
+            "OpenAPI path must be a non-empty relative path".into(),
+        ));
     }
+    let base = Url::parse(&format!("{}/", base.trim_end_matches('/')))
+        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
+    base.join(path.trim_start_matches('/'))
+        .map(|url| url.to_string())
+        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))
 }

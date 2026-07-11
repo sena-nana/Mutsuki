@@ -86,10 +86,23 @@ impl Runner for BotEventRouterRunner {
         map_work_batch_entries(&batch, |task| {
             let event: BotEvent = serde_json::from_value(task.payload.clone())
                 .map_err(|error| failure("mutsuki.bot.router.event.decode", error))?;
-            let dispatch_tasks = self
+            let mut dispatch_tasks = self
                 .router
                 .route(&event, ctx.registry_generation)
                 .map_err(|error| failure("mutsuki.bot.router.event.dispatch", error))?;
+            for child in &mut dispatch_tasks {
+                child.trace_id = task.trace_id.clone();
+                child.correlation_id = task.correlation_id.clone();
+            }
+            tracing::info!(
+                account_id = %event.bot.account_id,
+                event_id = %event.event_id,
+                task_id = %task.task_id,
+                runner_id = BOT_EVENT_ROUTER_RUNNER_ID,
+                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
+                dispatched_tasks = dispatch_tasks.len(),
+                "Bot event routed"
+            );
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks = dispatch_tasks;
             Ok(result)

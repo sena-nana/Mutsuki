@@ -4,24 +4,38 @@ use serde_json::Value;
 use crate::api::QqScene;
 
 pub fn qq_target_from_payload(event_type: &str, data: &Value) -> BotTarget {
-    if event_type.starts_with("GROUP") {
-        let group_id = data
-            .get("group_openid")
-            .or_else(|| data.get("group_id"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown_group");
+    if let Some(group_id) = data
+        .get("group_openid")
+        .or_else(|| data.get("group_id"))
+        .and_then(Value::as_str)
+    {
         BotTarget::Group {
             group_id: group_id.into(),
         }
-    } else if event_type.starts_with("C2C") {
-        let user_id = data
-            .get("author")
-            .and_then(|author| author.get("user_openid"))
-            .or_else(|| data.get("user_openid"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown_user");
+    } else if let Some(user_id) = data
+        .get("author")
+        .and_then(|author| {
+            author
+                .get("user_openid")
+                .or_else(|| author.get("member_openid"))
+                .or_else(|| author.get("id"))
+        })
+        .or_else(|| data.get("group_member_openid"))
+        .or_else(|| data.get("user_openid"))
+        .or_else(|| data.get("openid"))
+        .or_else(|| data.get("user_id"))
+        .and_then(Value::as_str)
+    {
         BotTarget::User {
             user_id: user_id.into(),
+        }
+    } else if event_type.starts_with("GROUP") {
+        BotTarget::Group {
+            group_id: "unknown_group".into(),
+        }
+    } else if event_type.starts_with("C2C") || event_type.starts_with("FRIEND") {
+        BotTarget::User {
+            user_id: "unknown_user".into(),
         }
     } else {
         BotTarget::platform_specific("qqbot", event_type, "unknown")

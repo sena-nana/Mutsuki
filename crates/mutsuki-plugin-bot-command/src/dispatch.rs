@@ -68,6 +68,15 @@ impl Runner for BotCommandRunner {
                 args: command.args,
                 raw_text: command.raw_text,
             };
+            tracing::info!(
+                account_id = %command_event.source.bot.account_id,
+                event_id = %command_event.source.event_id,
+                task_id = %task.task_id,
+                runner_id = BOT_COMMAND_RUNNER_ID,
+                command = %command_event.name,
+                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
+                "Bot command parsed"
+            );
             let mut child = Task::new(
                 format!("mutsuki.bot.command.handle:{}", task.task_id),
                 BOT_COMMAND_HANDLE_PROTOCOL_ID,
@@ -75,6 +84,8 @@ impl Runner for BotCommandRunner {
                     .map_err(|error| failure("mutsuki.bot.command.encode", error))?,
             );
             child.registry_generation = ctx.registry_generation;
+            child.trace_id = task.trace_id.clone();
+            child.correlation_id = task.correlation_id.clone();
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks.push(child);
             Ok(result)

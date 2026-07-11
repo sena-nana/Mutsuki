@@ -5,6 +5,7 @@ members = [
     "crates/mutsuki-plugin-bot-event-router",
     "crates/mutsuki-plugin-bot-command",
     "crates/mutsuki-plugin-bot-adapter-qqbot",
+    "examples/bot-echo",
     "examples/qqbot-echo",
     "examples/service-host-example",
 ]
@@ -20,14 +21,28 @@ mutsuki-runtime-contracts = { path = "../MutsukiCore/crates/mutsuki-runtime-cont
 mutsuki-runtime-core = { path = "../MutsukiCore/crates/mutsuki-runtime-core" }
 mutsuki-runtime-host = { path = "../MutsukiCore/crates/mutsuki-runtime-host" }
 mutsuki-runtime-sdk = { path = "../MutsukiCore/crates/mutsuki-runtime-sdk" }
+mutsuki-service-config = { path = "../MutsukiServiceHost/crates/mutsuki-service-config" }
+mutsuki-service-control = { path = "../MutsukiServiceHost/crates/mutsuki-service-control" }
+mutsuki-service-ipc = { path = "../MutsukiServiceHost/crates/mutsuki-service-ipc" }
+mutsuki-service-runtime = { path = "../MutsukiServiceHost/crates/mutsuki-service-runtime", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
 mutsuki-plugin-bot-command = { path = "crates/mutsuki-plugin-bot-command" }
 mutsuki-plugin-bot-event-router = { path = "crates/mutsuki-plugin-bot-event-router" }
+bot-echo = { path = "examples/bot-echo" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
+time = { version = "0.3", features = ["parsing"] }
+fastrand = "2.4"
+futures-util = "0.3"
+html-escape = "0.2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tracing = "0.1"
+url = "2.5"
 
 [profile.dev]
 debug = "line-tables-only"

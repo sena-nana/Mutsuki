@@ -8,7 +8,7 @@ use mutsuki_runtime_sdk::HostRuntime as _;
 use qqbot_echo::{EchoSmokeConfig, build_bootstrapper, qqbot_group_message_task, request_log_json};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = EchoSmokeConfig::from_env();
+    let config = EchoSmokeConfig::default();
     let recording = Arc::new(Mutex::new(Vec::new()));
     let task = qqbot_group_message_task(&config);
     let group_id = config.group_openid.clone();
