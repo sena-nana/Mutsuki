@@ -37,9 +37,10 @@ pub use extension::{
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, ContractSurface, ContractSurfaceKind,
     HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant, PluginArtifact,
-    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolDescriptor,
-    RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode,
-    SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
+    PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides,
+    ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
+    RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle,
+    SurfaceOccupancyHandleKind,
 };
 pub use resource::{
     CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor, PlanReceipt,

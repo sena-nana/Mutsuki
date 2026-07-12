@@ -363,8 +363,14 @@ policy。active backend 引用的 bridge deployment 和 codec 支持关系必须
 
 ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动态库提供版本化的最小
 bytes transport：固定入口建立 connection，Host 与 guest 互相发送既有 JSONL request /
-response。`runner.run_batch`、management cancel/dispose、TaskClient 与 ResourcePlanClient
-继续使用同一 wire shape；平台动态库发现、校验、装载、drain 和卸载仍由具体 Host 负责。
+response。首个 JSONL 请求必须是 `plugin.initialize({ config })`，配置来自与 builtin 相同的
+owner-defined product config；初始化返回 manifest、codec、bridge 与 provider surface。
+`runner.run_batch`、management cancel/dispose、TaskClient 与 ResourcePlanClient 继续使用同一
+wire shape；平台动态库发现、校验、装载、drain 和卸载仍由具体 Host 负责。
+
+同一业务插件的不同 deployment 通过 `PluginManifest::business_surface` 比较。该 surface
+排除 artifact、lifecycle 与 codec/bridge/backend 等部署 transport，只保留协议、Runner、
+Resource、workflow、requires 和 permission 等业务事实；配置不得改变该 surface。
 
 Resource Registry、ResourceId 分配、lease 基础规则和 owner 路由事实属于 Core /
 ResourceManager；`ResourceProvider`、typed store backend、export/query/patch/stream

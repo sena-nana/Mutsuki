@@ -402,6 +402,11 @@ Core 只消费 `RuntimeLoadPlan`：
 enabled plugin 的部署形态写入 `RuntimeLoadPlan.plugin_deployments`，并校验部署形态与
 artifact 类型兼容。部署形态属于 host 执行面约束，不得进入插件业务代码分支。
 
+`PluginManifest::business_surface` 是跨 deployment 的业务等价判断权威。它忽略 artifact、
+lifecycle、Host extension、plugin backend、codec 和 bridge，只比较领域无关的业务契约。
+ABI bridge v2 必须先执行 `plugin.initialize({ config })`，且 guest 返回的 manifest 必须与
+安装清单一致；未初始化连接不得调用 Runner 或 Resource 方法。
+
 `RuntimeProfile.mode` 描述发行形态：
 
 - `full_dev`：开发模式，resolver 保留 manifest 声明的系统扩展 surface，便于调试和覆盖测试。

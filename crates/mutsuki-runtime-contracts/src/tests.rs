@@ -7,6 +7,64 @@ fn assert_missing_fields_fail<T: DeserializeOwned>(value: serde_json::Value) {
     assert!(serde_json::from_value::<T>(value).is_err());
 }
 
+#[test]
+fn plugin_business_surface_ignores_deployment_transport() {
+    let mut builtin = PluginManifest {
+        plugin_id: "plugin-a".into(),
+        version: "1.0.0".into(),
+        api_version: "mutsuki-plugin-v1".into(),
+        artifact: PluginArtifact {
+            artifact_type: ArtifactType::Native,
+            path: "native".into(),
+            sha256: "sha256:native".into(),
+        },
+        provides: PluginProvides::default(),
+        requires: vec!["cap.input".into()],
+        permissions: PermissionGrant {
+            effects: vec!["effect.output".into()],
+            resources: vec![],
+        },
+        lifecycle: LifecyclePolicy {
+            reload_policy: "static".into(),
+            unload_timeout_ms: 0,
+            supports_cancel: true,
+            supports_dispose: true,
+            supports_snapshot: false,
+        },
+        metadata: Default::default(),
+    };
+    builtin
+        .provides
+        .plugin_backends
+        .push(PluginBackendDescriptor {
+            backend_id: "plugin.backend.plugin-a.builtin".into(),
+            deployment_kind: PluginDeploymentKind::Builtin,
+            task_client_protocol: "mutsuki.task.v1".into(),
+            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
+            codec_id: None,
+            bridge_id: None,
+        });
+    let mut abi = builtin.clone();
+    abi.artifact = PluginArtifact {
+        artifact_type: ArtifactType::Abi,
+        path: "plugin-a.dll".into(),
+        sha256: "sha256:abi".into(),
+    };
+    abi.lifecycle.reload_policy = "drain_and_swap".into();
+    abi.provides.plugin_backends[0].backend_id = "plugin.backend.plugin-a.abi".into();
+    abi.provides.plugin_backends[0].deployment_kind = PluginDeploymentKind::Abi;
+    abi.provides.codecs.push(CodecDescriptor {
+        codec_id: "mutsuki.codec.jsonl.v1".into(),
+        media_type: "application/x-ndjson".into(),
+        version: "1".into(),
+        connection_scoped: true,
+    });
+
+    assert_eq!(builtin.business_surface(), abi.business_surface());
+    abi.requires.push("cap.extra".into());
+    assert_ne!(builtin.business_surface(), abi.business_surface());
+}
+
 fn resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {
     ResourceRef {
         ref_id: ref_id.into(),

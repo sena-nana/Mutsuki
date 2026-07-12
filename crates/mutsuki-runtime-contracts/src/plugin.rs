@@ -148,6 +148,37 @@ pub struct PluginManifest {
     pub metadata: BTreeMap<String, ScalarValue>,
 }
 
+/// Deployment-neutral capability surface used to compare multiple artifacts of the same plugin.
+///
+/// Artifact identity, lifecycle policy and the Host transport descriptors are deliberately
+/// excluded. Those fields may differ between builtin, ABI and process deployments without
+/// changing the business contract exposed by the plugin.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginBusinessSurface {
+    pub plugin_id: String,
+    pub api_version: String,
+    pub provides: PluginProvides,
+    pub requires: Vec<String>,
+    pub permissions: PermissionGrant,
+}
+
+impl PluginManifest {
+    pub fn business_surface(&self) -> PluginBusinessSurface {
+        let mut provides = self.provides.clone();
+        provides.host_extensions.clear();
+        provides.plugin_backends.clear();
+        provides.codecs.clear();
+        provides.bridges.clear();
+        PluginBusinessSurface {
+            plugin_id: self.plugin_id.clone(),
+            api_version: self.api_version.clone(),
+            provides,
+            requires: self.requires.clone(),
+            permissions: self.permissions.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeProfile {
     pub profile_id: String,

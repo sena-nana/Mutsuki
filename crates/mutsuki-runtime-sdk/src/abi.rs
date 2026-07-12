@@ -18,7 +18,7 @@ use crate::{LoadedPlugin, ResourcePlanGateway, ResourceProviderGateway, TaskSubm
 pub const ABI_TRANSPORT_VERSION: u32 = 1;
 pub const ABI_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
 pub const ABI_CODEC_ID: &str = "mutsuki.codec.jsonl.v1";
-pub const ABI_BRIDGE_ID: &str = "mutsuki.bridge.abi.jsonl.v1";
+pub const ABI_BRIDGE_ID: &str = "mutsuki.bridge.abi.jsonl.v2";
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -370,13 +370,6 @@ impl JsonlPluginGuest {
 
     fn dispatch(&mut self, method: &str, params: Value) -> RuntimeResult<Value> {
         match method {
-            "plugin.handshake" => Ok(json!({
-                "transport_version": ABI_TRANSPORT_VERSION,
-                "codec_id": ABI_CODEC_ID,
-                "bridge_id": ABI_BRIDGE_ID,
-                "manifest": self.manifest,
-                "resource_provider_ids": self.providers.keys().collect::<Vec<_>>(),
-            })),
             "runner.run_batch" => {
                 let runner_id = required_str(&params, "runner_id")?;
                 let ctx = decode_field(&params, "ctx")?;
@@ -470,6 +463,16 @@ impl JsonlPluginGuest {
         }
     }
 
+    fn initialize_response(&self) -> Value {
+        json!({
+            "transport_version": ABI_TRANSPORT_VERSION,
+            "codec_id": ABI_CODEC_ID,
+            "bridge_id": ABI_BRIDGE_ID,
+            "manifest": self.manifest,
+            "resource_provider_ids": self.providers.keys().collect::<Vec<_>>(),
+        })
+    }
+
     fn provider(
         &self,
         params: &Value,
@@ -482,6 +485,99 @@ impl JsonlPluginGuest {
             )
         })
     }
+}
+
+type ConfiguredPluginFactory =
+    Box<dyn FnOnce(Value) -> RuntimeResult<LoadedPlugin> + Send + 'static>;
+
+/// ABI guest that requires the Host to provide owner-defined configuration before any plugin
+/// method can be used. The factory is consumed exactly once.
+pub struct ConfiguredJsonlPluginGuest {
+    factory: Option<ConfiguredPluginFactory>,
+    plugin: Option<JsonlPluginGuest>,
+    initialization_attempted: bool,
+}
+
+impl ConfiguredJsonlPluginGuest {
+    pub fn new(factory: ConfiguredPluginFactory) -> Self {
+        Self {
+            factory: Some(factory),
+            plugin: None,
+            initialization_attempted: false,
+        }
+    }
+
+    fn dispatch(&mut self, method: &str, params: Value) -> RuntimeResult<Value> {
+        if method == "plugin.initialize" {
+            if self.initialization_attempted {
+                return Err(abi_failure(
+                    "abi.already_initialized",
+                    "plugin.initialize may only be called once",
+                ));
+            }
+            self.initialization_attempted = true;
+            let config = params.get("config").cloned().ok_or_else(|| {
+                abi_failure("abi.field_missing", "missing plugin initialize config")
+            })?;
+            let factory = self.factory.take().expect("ABI factory is available once");
+            let plugin = JsonlPluginGuest::new(factory(config)?)?;
+            let response = plugin.initialize_response();
+            self.plugin = Some(plugin);
+            return Ok(response);
+        }
+        let plugin = self.plugin.as_mut().ok_or_else(|| {
+            abi_failure(
+                "abi.not_initialized",
+                format!("plugin.initialize must precede {method}"),
+            )
+        })?;
+        plugin.dispatch(method, params)
+    }
+}
+
+impl AbiGuest for ConfiguredJsonlPluginGuest {
+    fn request(&mut self, request: &[u8]) -> Vec<u8> {
+        guest_response(request, |method, params| self.dispatch(method, params))
+    }
+}
+
+fn guest_response(
+    request: &[u8],
+    mut dispatch: impl FnMut(&str, Value) -> RuntimeResult<Value>,
+) -> Vec<u8> {
+    let parsed: Result<Value, _> = serde_json::from_slice(request);
+    let response = match parsed {
+        Ok(request) => {
+            let id = request.get("id").cloned().unwrap_or(Value::Null);
+            let method = request.get("method").and_then(Value::as_str);
+            let params = request.get("params").cloned().unwrap_or(Value::Null);
+            match method {
+                Some(method) => match dispatch(method, params) {
+                    Ok(result) => json!({ "id": id, "ok": true, "result": result }),
+                    Err(error) => json!({ "id": id, "ok": false, "error": error.error() }),
+                },
+                None => json!({
+                    "id": id,
+                    "ok": false,
+                    "error": RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                        "abi.guest",
+                        "abi.method_missing",
+                    ),
+                }),
+            }
+        }
+        Err(error) => json!({
+            "id": null,
+            "ok": false,
+            "error": RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                "abi.guest",
+                format!("abi.decode:{error}"),
+            ),
+        }),
+    };
+    serde_json::to_vec(&response).expect("ABI JSON response must serialize")
 }
 
 impl AbiGuest for JsonlPluginGuest {
@@ -584,13 +680,10 @@ macro_rules! export_mutsuki_plugin_abi_v1 {
             host: $crate::abi::AbiHostV1,
         ) -> $crate::abi::AbiPluginV1 {
             let host_client = $crate::abi::AbiHostClient::new(host);
-            let guest: Box<dyn $crate::abi::AbiGuest> = match $factory(host_client) {
-                Ok(plugin) => match $crate::abi::JsonlPluginGuest::new(plugin) {
-                    Ok(guest) => Box::new(guest),
-                    Err(error) => Box::new($crate::abi::FailedAbiGuest::new(error)),
-                },
-                Err(error) => Box::new($crate::abi::FailedAbiGuest::new(error)),
-            };
+            let guest: Box<dyn $crate::abi::AbiGuest> =
+                Box::new($crate::abi::ConfiguredJsonlPluginGuest::new(Box::new(
+                    move |config| $factory(host_client, config),
+                )));
             $crate::abi::plugin_api_from_guest(guest)
         }
     };
@@ -693,15 +786,40 @@ mod tests {
     }
 
     #[test]
-    fn guest_handshake_uses_existing_manifest_and_jsonl_envelope() {
+    fn guest_initialize_passes_config_and_returns_manifest() {
         let plugin = PluginBuilder::new("test.abi").build();
-        let mut guest = JsonlPluginGuest::new(plugin).unwrap();
-        let response = guest.request(br#"{"id":"req-1","method":"plugin.handshake","params":{}}"#);
+        let mut guest = ConfiguredJsonlPluginGuest::new(Box::new(move |config| {
+            assert_eq!(config, json!({"mode": "test"}));
+            Ok(plugin)
+        }));
+        let response = guest.request(
+            br#"{"id":"req-1","method":"plugin.initialize","params":{"config":{"mode":"test"}}}"#,
+        );
         let response: Value = serde_json::from_slice(&response).unwrap();
         assert_eq!(response["id"], "req-1");
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["manifest"]["plugin_id"], "test.abi");
         assert_eq!(response["result"]["codec_id"], ABI_CODEC_ID);
+    }
+
+    #[test]
+    fn guest_rejects_calls_before_initialize_and_duplicate_initialize() {
+        let mut guest = ConfiguredJsonlPluginGuest::new(Box::new(|_| {
+            Ok(PluginBuilder::new("test.abi").build())
+        }));
+        let before = guest.request(
+            br#"{"id":"before","method":"runner.dispose","params":{"runner_id":"missing"}}"#,
+        );
+        let before: Value = serde_json::from_slice(&before).unwrap();
+        assert_eq!(before["ok"], false);
+        assert_eq!(before["error"]["route"], "abi.not_initialized");
+
+        let initialize = br#"{"id":"init","method":"plugin.initialize","params":{"config":{}}}"#;
+        let first: Value = serde_json::from_slice(&guest.request(initialize)).unwrap();
+        assert_eq!(first["ok"], true);
+        let second: Value = serde_json::from_slice(&guest.request(initialize)).unwrap();
+        assert_eq!(second["ok"], false);
+        assert_eq!(second["error"]["route"], "abi.already_initialized");
     }
 
     #[test]
