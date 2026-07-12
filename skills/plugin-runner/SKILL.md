@@ -18,4 +18,5 @@ Use this for plugin and runner capability in `crates/mutsuki-tauri-host`.
 - Builtin plugin registration must call real plugin crates behind features or report unavailable.
 - Plugin reload goes through scan, validate, generation/load-plan comparison, drain and swap.
 - External runners get session token, controlled cwd and allowlisted environment.
+- Resolve that exact environment in TauriHost and launch through Core `SpawnedJsonlRunner`.
 - stdout/stderr must be drained and forwarded to observe/event bridge.

@@ -7,7 +7,7 @@ use mutsuki_runtime_contracts::{
     ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_host::JsonlRunner;
+use mutsuki_runtime_host::{ProcessRunnerSpec, SpawnedJsonlRunner};
 use mutsuki_tauri_bridge::{
     EventHub, FrontendLogRecord, MutsukiFrontendEvent, PluginSummary, RunnerSummary,
     redact_log_record,
@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::ChildStderr;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -402,8 +402,7 @@ fn deployment_label(deployment: &PluginDeploymentKind) -> &'static str {
 
 pub(crate) struct ExternalProcessRunner {
     descriptor: RunnerDescriptor,
-    inner: JsonlRunner<BufReader<ChildStdout>, ChildStdin>,
-    child: Child,
+    inner: SpawnedJsonlRunner,
     stderr_thread: Option<thread::JoinHandle<()>>,
     events: Arc<EventHub>,
     health: Arc<HostHealthState>,
@@ -427,49 +426,34 @@ impl ExternalProcessRunner {
         let command_path = resolve_command(source_dir, &located.spec.command);
         let session_token = Uuid::new_v4().to_string();
 
-        let mut command = Command::new(command_path);
-        command
-            .args(&located.spec.args)
-            .current_dir(&cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_clear();
-        inherit_required_env(&mut command);
+        let mut env = BTreeMap::new();
+        inherit_required_env(&mut env);
         for key in &located.spec.env_inherit {
-            if let Some(value) = std::env::var_os(key) {
-                command.env(key, value);
+            if let Ok(value) = std::env::var(key) {
+                env.insert(key.clone(), value);
             }
         }
         for (key, value) in &located.spec.env {
-            command.env(key, value);
+            env.insert(key.clone(), value.clone());
         }
-        command
-            .env("MUTSUKI_RUNNER_SESSION_TOKEN", session_token)
-            .env("MUTSUKI_PLUGIN_ID", &descriptor.plugin_id)
-            .env("MUTSUKI_RUNNER_ID", &descriptor.runner_id)
-            .env("MUTSUKI_PROFILE_ID", profile_id);
-
-        let mut child = command.spawn().map_err(|error| {
+        env.insert("MUTSUKI_RUNNER_SESSION_TOKEN".into(), session_token);
+        env.insert("MUTSUKI_PLUGIN_ID".into(), descriptor.plugin_id.clone());
+        env.insert("MUTSUKI_RUNNER_ID".into(), descriptor.runner_id.clone());
+        env.insert("MUTSUKI_PROFILE_ID".into(), profile_id.into());
+        let spec = ProcessRunnerSpec {
+            command: command_path,
+            args: located.spec.args.clone(),
+            cwd: Some(cwd),
+            env,
+        };
+        let mut inner = SpawnedJsonlRunner::spawn(descriptor.clone(), &spec).map_err(|error| {
             HostError::Config(format!(
                 "failed to spawn runner {} from {}: {error}",
                 descriptor.runner_id,
                 located.source.display()
             ))
         })?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            HostError::Config(format!(
-                "runner {} stdin was not piped",
-                descriptor.runner_id
-            ))
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            HostError::Config(format!(
-                "runner {} stdout was not piped",
-                descriptor.runner_id
-            ))
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
+        let stderr = inner.take_stderr().ok_or_else(|| {
             HostError::Config(format!(
                 "runner {} stderr was not piped",
                 descriptor.runner_id
@@ -484,8 +468,7 @@ impl ExternalProcessRunner {
         emit_runner_status(&events, &descriptor.runner_id, "started");
         Ok(Self {
             descriptor: descriptor.clone(),
-            inner: JsonlRunner::new(descriptor, BufReader::new(stdout), stdin),
-            child,
+            inner,
             stderr_thread: Some(stderr_thread),
             events,
             health,
@@ -493,8 +476,8 @@ impl ExternalProcessRunner {
     }
 
     fn stop_child(&mut self) -> RuntimeResult<()> {
-        let _ = self.child.kill();
-        if let Err(error) = self.child.wait() {
+        let _ = self.inner.kill();
+        if let Err(error) = self.inner.wait() {
             return Err(runtime_failure(
                 "process.wait",
                 "exception_repr",
@@ -536,6 +519,7 @@ impl Runner for ExternalProcessRunner {
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
+        self.inner.dispose()?;
         self.stop_child()
     }
 }
@@ -567,10 +551,10 @@ fn resolve_command(source_dir: &Path, command: &str) -> PathBuf {
     }
 }
 
-fn inherit_required_env(command: &mut Command) {
+fn inherit_required_env(env: &mut BTreeMap<String, String>) {
     for key in ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
+        if let Ok(value) = std::env::var(key) {
+            env.insert(key.into(), value);
         }
     }
 }
