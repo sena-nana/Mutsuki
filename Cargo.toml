@@ -1,0 +1,37 @@
+[workspace]
+members = [
+    "plugins/mutsuki-plugin-config-permission",
+    "plugins/mutsuki-plugin-db-sqlite",
+    "plugins/mutsuki-plugin-dev-mock",
+    "plugins/mutsuki-plugin-io-fs",
+    "plugins/mutsuki-plugin-io-http-client",
+    "plugins/mutsuki-plugin-observe-log",
+    "plugins/mutsuki-plugin-resource-memory",
+    "plugins/mutsuki-plugin-resource-shared-memory",
+    "plugins/mutsuki-plugin-workflow-broadcast",
+    "plugins/mutsuki-plugin-workflow-linear",
+    "protocols/mutsuki-protocol-config",
+    "protocols/mutsuki-protocol-db",
+    "protocols/mutsuki-protocol-dev",
+    "protocols/mutsuki-protocol-fs",
+    "protocols/mutsuki-protocol-http",
+    "protocols/mutsuki-protocol-observe",
+    "protocols/mutsuki-protocol-resource",
+    "protocols/mutsuki-protocol-workflow",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+serde_json = "1.0"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
