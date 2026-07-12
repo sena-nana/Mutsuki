@@ -116,6 +116,90 @@ pub trait AbiGuest: Send {
     fn request(&mut self, request: &[u8]) -> Vec<u8>;
 }
 
+pub fn dispatch_host_request(
+    task_submitter: &dyn TaskSubmitter,
+    resource_gateway: &dyn ResourcePlanGateway,
+    request: &[u8],
+) -> Vec<u8> {
+    let parsed: Result<Value, _> = serde_json::from_slice(request);
+    let response = match parsed {
+        Ok(request) => {
+            let id = request.get("id").cloned().unwrap_or(Value::Null);
+            let method = request.get("method").and_then(Value::as_str);
+            let params = request.get("params").cloned().unwrap_or(Value::Null);
+            let result = match method {
+                Some("task.submit_batch") => decode_field(&params, "batch")
+                    .and_then(|batch| task_submitter.submit_batch(batch))
+                    .and_then(encode_value),
+                Some("task.cancel") => decode_field(&params, "handle")
+                    .and_then(|handle| task_submitter.cancel_task(&handle))
+                    .map(|()| Value::Null),
+                Some("task.outcome") => decode_field(&params, "handle")
+                    .and_then(|handle| task_submitter.task_outcome(&handle))
+                    .and_then(encode_value),
+                Some("resource.read.collect") => decode_field(&params, "plan")
+                    .and_then(|plan| resource_gateway.collect_read_plan(&plan))
+                    .and_then(encode_value),
+                Some("resource.read.snapshot") => {
+                    let plan = decode_field(&params, "plan");
+                    let kind_id = required_str(&params, "kind_id");
+                    let schema = required_str(&params, "schema");
+                    match (plan, kind_id, schema) {
+                        (Ok(plan), Ok(kind_id), Ok(schema)) => resource_gateway
+                            .snapshot_read_plan(&plan, kind_id, schema)
+                            .and_then(encode_value),
+                        (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => Err(error),
+                    }
+                }
+                Some("resource.stream.open") => decode_field(&params, "plan")
+                    .and_then(|plan| resource_gateway.open_stream_plan(&plan))
+                    .and_then(encode_value),
+                Some("resource.export") => decode_field(&params, "plan")
+                    .and_then(|plan| resource_gateway.execute_export_plan(&plan))
+                    .and_then(encode_value),
+                Some("resource.write.commit") => {
+                    let plan = decode_field(&params, "plan");
+                    let bytes = decode_field(&params, "bytes");
+                    match (plan, bytes) {
+                        (Ok(plan), Ok(bytes)) => resource_gateway
+                            .commit_write_plan(&plan, bytes)
+                            .and_then(encode_value),
+                        (Err(error), _) | (_, Err(error)) => Err(error),
+                    }
+                }
+                Some("resource.command") => decode_field(&params, "plan")
+                    .and_then(|plan| resource_gateway.execute_command_plan(&plan))
+                    .and_then(encode_value),
+                Some("resource.command_batch") => decode_field(&params, "batch")
+                    .and_then(|batch| resource_gateway.execute_command_batch(&batch))
+                    .and_then(encode_value),
+                Some("resource.saga") => decode_field(&params, "saga")
+                    .and_then(|saga| resource_gateway.execute_saga_plan(&saga))
+                    .and_then(encode_value),
+                Some(method) => Err(abi_failure(
+                    "abi.host_method_unsupported",
+                    format!("unsupported host method {method}"),
+                )),
+                None => Err(abi_failure("abi.method_missing", "missing method")),
+            };
+            match result {
+                Ok(result) => json!({ "id": id, "ok": true, "result": result }),
+                Err(error) => json!({ "id": id, "ok": false, "error": error.error() }),
+            }
+        }
+        Err(error) => json!({
+            "id": null,
+            "ok": false,
+            "error": RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                "abi.host",
+                format!("abi.decode:{error}"),
+            ),
+        }),
+    };
+    serde_json::to_vec(&response).expect("ABI host response must serialize")
+}
+
 #[derive(Clone, Copy)]
 pub struct AbiHostClient {
     host: AbiHostV1,

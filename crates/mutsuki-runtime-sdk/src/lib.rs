@@ -27,7 +27,7 @@ mod resource;
 
 pub use abi::{
     ABI_BRIDGE_ID, ABI_CODEC_ID, ABI_ENTRY_SYMBOL, ABI_TRANSPORT_VERSION, AbiBuffer, AbiCallResult,
-    AbiGuest, AbiHostClient, AbiHostV1, AbiPluginV1, JsonlPluginGuest,
+    AbiGuest, AbiHostClient, AbiHostV1, AbiPluginV1, JsonlPluginGuest, dispatch_host_request,
 };
 pub use backend::{ResourcePlanGateway, ResourceProviderGateway};
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
