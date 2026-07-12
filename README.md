@@ -27,6 +27,10 @@ descriptors through the Mutsuki SDK `PluginBuilder`:
 The generated manifest is the only host-loadable source of truth. This repository does not keep
 the legacy `[plugin]` / `[[provides]]` authoring format alongside it.
 
+`mutsuki-plugin-bot-command` also builds as a Core ABI v2 `cdylib`. Its builtin configured factory
+and ABI `plugin.initialize` path both parse `BotCommandConfig` and instantiate the same
+`BotCommandRunner`; their deployment-neutral business surfaces are tested for equality.
+
 `mutsuki-bot-protocol` and `mutsuki-bot-sdk` are library crates and are not host-loadable plugins.
 
 ## Runtime Relationship

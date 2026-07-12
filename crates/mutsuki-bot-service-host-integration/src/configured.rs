@@ -1,6 +1,8 @@
 use mutsuki_bot_protocol::BotEventSubscription;
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
-use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandRunner, bot_command_manifest};
+use mutsuki_plugin_bot_command::{
+    BOT_COMMAND_PLUGIN_ID, BotCommandConfig, BotCommandRunner, bot_command_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
     BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
 };
@@ -18,12 +20,6 @@ struct EventRouterConfig {
     subscriptions: Vec<BotEventSubscription>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CommandConfig {
-    prefixes: Vec<String>,
-}
-
 pub struct BotEventRouterConfiguredPlugin;
 
 impl ConfiguredPluginFactory for BotEventRouterConfiguredPlugin {
@@ -31,7 +27,7 @@ impl ConfiguredPluginFactory for BotEventRouterConfiguredPlugin {
         BOT_EVENT_ROUTER_PLUGIN_ID
     }
 
-    fn install(
+    fn prepare(
         &self,
         config: &Value,
         builder: ServiceRuntimeBuilder,
@@ -57,16 +53,14 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
         BOT_COMMAND_PLUGIN_ID
     }
 
-    fn install(
+    fn prepare(
         &self,
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: CommandConfig =
+        let config: BotCommandConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        if config.prefixes.is_empty() || config.prefixes.iter().any(|prefix| prefix.is_empty()) {
-            return Err("prefixes must contain non-empty values".into());
-        }
+        config.validate()?;
         let prefixes = config.prefixes;
         Ok(builder
             .register_builtin_plugin(bot_command_manifest(1))
@@ -81,7 +75,7 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
         QQBOT_ADAPTER_PLUGIN_ID
     }
 
-    fn install(
+    fn prepare(
         &self,
         config: &Value,
         builder: ServiceRuntimeBuilder,

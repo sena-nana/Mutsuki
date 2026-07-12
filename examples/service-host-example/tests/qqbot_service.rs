@@ -138,7 +138,6 @@ tcp_debug_addr = "{}"
 token = "test-token"
 
 [plugins]
-builtin = []
 dynamic_dirs = []
 disabled_dir = "disabled"
 
@@ -168,6 +167,9 @@ retry_max_delay_ms = 0
 reconnect_initial_delay_ms = 10
 reconnect_max_delay_ms = 20
 reconnect_jitter_ms = 0
+
+[[plugins.configured]]
+id = "example.bot.echo"
 
 [security]
 secret_file = "local.secret.toml"
@@ -215,7 +217,6 @@ async fn test_service_config() -> (ServiceConfig, tempfile::TempDir) {
     service.service.home_dir = home.path().to_path_buf();
     service.service.log_dir = home.path().join("logs");
     service.service.run_dir = home.path().join("run");
-    service.plugins.builtin.clear();
     service.plugins.dynamic_dirs.clear();
     service.plugins.disabled_dir = home.path().join("disabled");
     service.observe.console = false;

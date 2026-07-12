@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true

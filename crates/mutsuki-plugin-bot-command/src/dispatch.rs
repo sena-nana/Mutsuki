@@ -4,25 +4,83 @@ use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement, PluginManifest,
-    RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
-    RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
-    RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
+    ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
+    PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerControlCapability,
+    RunnerDescriptor, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
+    RunnerResourceCapability, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
+    WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
-use serde_json::json;
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_sdk::{AbiHostClient, LoadedPlugin, PluginBuilder, map_work_batch_entries};
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::{CommandParseError, CommandParser, message_text};
 
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotCommandConfig {
+    pub prefixes: Vec<String>,
+}
+
+impl BotCommandConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.prefixes.is_empty() || self.prefixes.iter().any(|prefix| prefix.is_empty()) {
+            return Err("prefixes must contain non-empty values".into());
+        }
+        Ok(())
+    }
+}
+
 pub fn bot_command_manifest(plugin_generation: u64) -> PluginManifest {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
         .runner_descriptor(command_descriptor(plugin_generation))
         .build()
         .manifest
+}
+
+pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
+    command_plugin(
+        1,
+        vec!["/".into()],
+        PluginArtifact {
+            artifact_type: ArtifactType::Abi,
+            path: path.into(),
+            sha256: sha256.into(),
+        },
+    )
+    .manifest
+}
+
+fn command_plugin(
+    plugin_generation: u64,
+    prefixes: Vec<String>,
+    artifact: PluginArtifact,
+) -> LoadedPlugin {
+    PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
+        .runner(Box::new(BotCommandRunner::new(plugin_generation, prefixes)))
+        .artifact(artifact)
+        .build()
+}
+
+fn create_abi_plugin(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
+    let config: BotCommandConfig = serde_json::from_value(config)
+        .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
+    config
+        .validate()
+        .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
+    Ok(command_plugin(
+        1,
+        config.prefixes,
+        PluginArtifact {
+            artifact_type: ArtifactType::Abi,
+            path: "plugin".into(),
+            sha256: "sha256:plugin".into(),
+        },
+    ))
 }
 
 pub struct BotCommandRunner {
@@ -146,6 +204,8 @@ fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeEr
     runtime_error
 }
 
+mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v1!(create_abi_plugin);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +238,13 @@ mod tests {
         assert_eq!(first_command.args, ["one"]);
         assert_eq!(third_command.name, "ping");
         assert_eq!(third_command.args, ["two"]);
+    }
+
+    #[test]
+    fn builtin_and_abi_artifacts_expose_the_same_business_surface() {
+        let builtin = bot_command_manifest(1);
+        let abi = bot_command_abi_manifest("command.dll", &format!("sha256:{}", "1".repeat(64)));
+        assert_eq!(builtin.business_surface(), abi.business_surface());
     }
 
     fn command_task(task_id: &str, event_id: &str, text: &str) -> Task {
