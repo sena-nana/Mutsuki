@@ -3,9 +3,7 @@ use std::sync::{Arc, Mutex};
 
 pub use bot_echo::{ECHO_PLUGIN_ID, ECHO_RUNNER_ID, echo_manifest, echo_runner};
 use mutsuki_bot_protocol::{BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind, BotEventSubscription};
-use mutsuki_plugin_bot_adapter_qqbot::api::{
-    HttpMethod, MediaChunk, QqMediaError, QqMediaProvider, QqOpenApiError,
-};
+use mutsuki_plugin_bot_adapter_qqbot::api::{HttpMethod, QqOpenApiError};
 use mutsuki_plugin_bot_adapter_qqbot::tasks::{
     QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner,
     qqbot_adapter_manifest,
@@ -102,12 +100,11 @@ pub fn build_bootstrapper(
         qqbot_config(&config),
         QqBotClients::new(
             Box::new(RecordingQqHttpClient::new(recording)),
-            Box::new(NoopMediaProvider),
             Arc::new(StaticQqCredentials::new(&config.client_secret)),
         ),
         Box::new(SequentialIdSource::new(1000)),
     );
-    bootstrapper.register_manifest(qqbot_adapter_manifest(1));
+    bootstrapper.register_manifest(qqbot_adapter_manifest(1, false));
     bootstrapper.register_builtin_runner(Box::new(gateway_runner));
     bootstrapper.register_builtin_runner(Box::new(openapi_runner));
 
@@ -227,18 +224,6 @@ impl QqHttpClient for RecordingQqHttpClient {
     }
 }
 
-struct NoopMediaProvider;
-
-impl QqMediaProvider for NoopMediaProvider {
-    fn read_chunks(
-        &mut self,
-        _resource_ref: &str,
-        _block_size: u64,
-    ) -> Result<Vec<MediaChunk>, QqMediaError> {
-        Ok(Vec::new())
-    }
-}
-
 struct SequentialIdSource {
     next: u64,
 }
@@ -349,7 +334,7 @@ mod tests {
     #[test]
     fn generated_plugin_manifests_roundtrip_and_resolve() {
         let manifests = vec![
-            qqbot_adapter_manifest(1),
+            qqbot_adapter_manifest(1, false),
             bot_event_router_manifest(1),
             bot_command_manifest(1),
             echo_manifest(1),

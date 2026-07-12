@@ -33,12 +33,12 @@ pub const QQBOT_GATEWAY_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.gateway";
 pub const QQBOT_OPENAPI_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.openapi";
 pub const QQBOT_OPENAPI_RESULT_EVENT: &str = "mutsuki.bot.qqbot.openapi.result";
 
-pub fn qqbot_adapter_manifest(plugin_generation: u64) -> PluginManifest {
+pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> PluginManifest {
     PluginBuilder::new(QQBOT_ADAPTER_PLUGIN_ID)
         .metadata("platform", ScalarValue::String("qqbot".into()))
         .metadata("adapter", ScalarValue::Bool(true))
         .runner_descriptor(gateway_descriptor(plugin_generation))
-        .runner_descriptor(openapi_descriptor(plugin_generation))
+        .runner_descriptor(openapi_descriptor(plugin_generation, media_enabled))
         .build()
         .manifest
 }
@@ -119,8 +119,9 @@ impl QqOpenApiRunner {
         clients: QqBotClients,
         id_source: Box<dyn QqIdSource>,
     ) -> Self {
+        let media_enabled = clients.has_media_provider();
         Self {
-            descriptor: openapi_descriptor(plugin_generation),
+            descriptor: openapi_descriptor(plugin_generation, media_enabled),
             service: QqOpenApiService::new(config, clients, id_source),
         }
     }
@@ -132,8 +133,9 @@ impl QqOpenApiRunner {
         id_source: Box<dyn QqIdSource>,
         auth: QqAuthManager,
     ) -> Self {
+        let media_enabled = clients.has_media_provider();
         Self {
-            descriptor: openapi_descriptor(plugin_generation),
+            descriptor: openapi_descriptor(plugin_generation, media_enabled),
             service: QqOpenApiService::new_with_auth(config, clients, id_source, auth),
         }
     }
@@ -247,19 +249,22 @@ pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     }
 }
 
-pub fn openapi_descriptor(plugin_generation: u64) -> RunnerDescriptor {
+pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> RunnerDescriptor {
+    let mut accepted_protocol_ids = vec![
+        BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+        BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
+        QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
+        QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
+        QQBOT_RAW_CALL_PROTOCOL_ID.into(),
+    ];
+    if media_enabled {
+        accepted_protocol_ids.push(BOT_MEDIA_UPLOAD_PROTOCOL_ID.into());
+    }
     RunnerDescriptor {
         runner_id: QQBOT_OPENAPI_RUNNER_ID.into(),
         plugin_id: QQBOT_ADAPTER_PLUGIN_ID.into(),
         plugin_generation,
-        accepted_protocol_ids: vec![
-            BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
-            BOT_MEDIA_UPLOAD_PROTOCOL_ID.into(),
-            BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
-            QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
-            QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
-            QQBOT_RAW_CALL_PROTOCOL_ID.into(),
-        ],
+        accepted_protocol_ids,
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Blocking,
         input_schema: json!({

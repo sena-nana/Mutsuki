@@ -6,6 +6,7 @@ members = [
     "crates/mutsuki-plugin-bot-command",
     "crates/mutsuki-plugin-bot-adapter-qqbot",
     "crates/mutsuki-bot-service-host-integration",
+    "crates/mutsuki-bot-testkit",
     "examples/bot-echo",
     "examples/qqbot-echo",
     "examples/service-host-example",
@@ -22,16 +23,17 @@ mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.gi
 mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9ce802af696732d05920b0a091637138e6afc88c" }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9ce802af696732d05920b0a091637138e6afc88c" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9ce802af696732d05920b0a091637138e6afc88c" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9ce802af696732d05920b0a091637138e6afc88c", default-features = false }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "bb34b59bfa5ba9549f08775f45ad8b10f3fafddb" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "bb34b59bfa5ba9549f08775f45ad8b10f3fafddb" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "bb34b59bfa5ba9549f08775f45ad8b10f3fafddb" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "bb34b59bfa5ba9549f08775f45ad8b10f3fafddb", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
 mutsuki-plugin-bot-command = { path = "crates/mutsuki-plugin-bot-command" }
 mutsuki-plugin-bot-event-router = { path = "crates/mutsuki-plugin-bot-event-router" }
 mutsuki-bot-service-host-integration = { path = "crates/mutsuki-bot-service-host-integration" }
+mutsuki-bot-testkit = { path = "crates/mutsuki-bot-testkit" }
 bot-echo = { path = "examples/bot-echo" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -11,7 +11,7 @@ use crate::config::QqBotConfig;
 
 pub struct QqOpenApiService {
     transport: QqOpenApiTransport,
-    media: Box<dyn QqMediaProvider>,
+    media: Option<Box<dyn QqMediaProvider>>,
     id_source: Box<dyn QqIdSource>,
 }
 
@@ -179,6 +179,8 @@ impl QqOpenApiService {
             .ok_or_else(|| QqOpenApiError::InvalidResponse("block_size".into()))?;
         let chunks = self
             .media
+            .as_mut()
+            .ok_or_else(|| QqOpenApiError::Media("media provider is not configured".into()))?
             .read_chunks(&resource_ref, block_size)
             .map_err(|error| QqOpenApiError::Media(error.to_string()))?;
         for chunk in chunks {

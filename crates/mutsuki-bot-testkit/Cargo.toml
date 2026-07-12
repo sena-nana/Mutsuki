@@ -1,0 +1,13 @@
+[package]
+name = "mutsuki-bot-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+futures-util.workspace = true
+mutsuki-plugin-bot-adapter-qqbot.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-tungstenite.workspace = true
+

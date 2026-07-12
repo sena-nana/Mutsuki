@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mutsuki_runtime_contracts::PluginManifest;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
@@ -22,21 +21,18 @@ type IdFactory = Arc<dyn Fn() -> Box<dyn QqIdSource> + Send + Sync>;
 /// client secret is populated by `QqGatewayEventSource` through the Host secret
 /// boundary when the ServiceRuntime starts.
 pub struct QqBotPluginBundle {
-    manifest: PluginManifest,
     config: QqBotConfig,
     credentials: SharedQqCredentials,
     auth: QqAuthManager,
     health: QqGatewayHealthHandle,
     event_source: Option<QqGatewayEventSource>,
-    media_factory: MediaFactory,
+    media_factory: Option<MediaFactory>,
     id_factory: IdFactory,
 }
 
 impl QqBotPluginBundle {
-    pub fn new<F>(config: QqBotConfig, media_factory: F) -> Result<Self, QqOpenApiError>
-    where
-        F: Fn() -> Box<dyn QqMediaProvider> + Send + Sync + 'static,
-    {
+    /// Builds the text/recall/account/Gateway bundle without declaring media upload.
+    pub fn new(config: QqBotConfig) -> Result<Self, QqOpenApiError> {
         config
             .validate()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
@@ -46,15 +42,23 @@ impl QqBotPluginBundle {
             QqGatewayEventSource::new(config.clone(), credentials.clone(), auth.clone());
         let health = event_source.health_handle();
         Ok(Self {
-            manifest: qqbot_adapter_manifest(1),
             config,
             credentials,
             auth,
             health,
             event_source: Some(event_source),
-            media_factory: Arc::new(media_factory),
+            media_factory: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
         })
+    }
+
+    /// Enables media upload only when a real resource provider is available.
+    pub fn with_media_provider<F>(mut self, media_factory: F) -> Self
+    where
+        F: Fn() -> Box<dyn QqMediaProvider> + Send + Sync + 'static,
+    {
+        self.media_factory = Some(Arc::new(media_factory));
+        self
     }
 
     pub fn with_id_source_factory<F>(mut self, factory: F) -> Self
@@ -78,6 +82,7 @@ impl QqBotPluginBundle {
         let credentials = self.credentials.clone();
         let auth = self.auth.clone();
         let media_factory = self.media_factory.clone();
+        let media_enabled = media_factory.is_some();
         let id_factory = self.id_factory.clone();
         let health = self.health.clone();
         let health_component_id = format!("mutsuki.bot.qqbot.gateway:{}", self.config.account_id);
@@ -86,7 +91,7 @@ impl QqBotPluginBundle {
             .take()
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
         Ok(builder
-            .register_builtin_plugin(self.manifest)
+            .register_builtin_plugin(qqbot_adapter_manifest(1, media_enabled))
             .register_builtin_runner(move || {
                 Box::new(QqGatewayMapRunner::new(
                     1,
@@ -100,11 +105,14 @@ impl QqBotPluginBundle {
                     QqOpenApiRunner::new_with_auth(
                         1,
                         openapi_config.clone(),
-                        QqBotClients::new(
-                            Box::new(http),
-                            media_factory(),
-                            Arc::new(credentials.clone()),
-                        ),
+                        {
+                            let clients =
+                                QqBotClients::new(Box::new(http), Arc::new(credentials.clone()));
+                            match &media_factory {
+                                Some(factory) => clients.with_media_provider(factory()),
+                                None => clients,
+                            }
+                        },
                         id_factory(),
                         auth.clone(),
                     ),

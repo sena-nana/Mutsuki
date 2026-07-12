@@ -11,6 +11,8 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 - `mutsuki-plugin-bot-event-router`: standard `mutsuki.bot.event/ingest@1` router plugin.
 - `mutsuki-plugin-bot-command`: generic message command parser plugin.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
+- `mutsuki-bot-service-host-integration`: configured native factories and QQ EventSource bundle.
+- `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
 - `examples/bot-echo`: platform-neutral example business plugin that depends only on Bot protocols and SDK helpers.
 
 ## Plugin Discovery
@@ -47,16 +49,15 @@ ServiceHost dependency. The production HTTP transport uses
 `reqwest` with the Rustls TLS backend; Gateway WebSocket uses
 `tokio-tungstenite` with Rustls webpki roots. Product code installs the bundle
 into `ServiceRuntimeBuilder`; it does not create a Bot-specific Host.
-Construction requires an explicit media provider factory; no unavailable production fallback is
-registered.
+The configured factory is text-only. Media upload is declared only when product code explicitly
+adds a real media provider; no unavailable production fallback is registered.
 At source startup and reconnect, the adapter validates the configured account
 through `/users/@me`, obtains `/gateway/bot`, and lets Gateway reject invalid or
 disallowed intent/shard configurations as permanent structured failures.
 
-See `examples/service-host-example` for the deterministic SDK smoke and the
-ServiceHost integration test. Product-specific config loading remains in the
-product Host; this repository only accepts an already constructed
-`QqBotConfig` at the bundle boundary.
+See `docs/qqbot-adapter.md` and `examples/service-host-example` for configured ServiceHost
+assembly, fake-server E2E and real-account smoke boundaries. `configured_bot_plugin_catalog()`
+exports owner-defined config factories without moving QQ fields into ServiceHost.
 
 `examples/qqbot-echo` is only the deterministic product assembly. Its Echo
 business runner lives in the separate `examples/bot-echo` crate and has no

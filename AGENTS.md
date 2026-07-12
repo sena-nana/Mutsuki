@@ -12,6 +12,7 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 - `skills/platform-adapters/SKILL.md`：QQBot 等平台 Adapter、Gateway 和 transport。
 - `skills/service-host-integration/SKILL.md`：bundle、manifest、EventSource 和 ServiceRuntime 装配。
 - `skills/bot-testing/SKILL.md`：batch Runner、fake transport、闭环和真实 smoke。
+- `skills/qqbot-documentation/SKILL.md`：QQBot 配置、能力矩阵、官方协议核对、运行与排障文档。
 
 运行时边界同时读取 `../MutsukiCore/AGENTS.md`；Host 装配读取
 `../MutsukiServiceHost/AGENTS.md`。
@@ -28,6 +29,7 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 8. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
 9. 平台 Adapter crate 不依赖具体 Host；`HostEventSource`、health 和 builder 安装只能位于显式 integration crate。
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
+11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
 
 ## 验证
 

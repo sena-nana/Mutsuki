@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotMessage,
-    BotMessageRecallRequest, BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID,
-    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
+    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BotEventKind, BotMessage, BotMessageRecallRequest, BotTarget, MessageSegment,
+    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerResult,
@@ -21,6 +21,7 @@ use crate::config::QqBotConfig;
 use crate::gateway::{GatewayAction, QqGatewayPump};
 use crate::tasks::{
     QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqGatewayMapRunner, QqOpenApiRunner, openapi_descriptor,
+    qqbot_adapter_manifest,
 };
 use crate::{
     QqBotClients, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource, StaticQqCredentials,
@@ -416,7 +417,7 @@ fn openapi_runner_gets_gateway_status_from_openapi() {
 
 #[test]
 fn openapi_descriptor_accepts_manifest_provided_qqbot_protocols() {
-    let descriptor = openapi_descriptor(1);
+    let descriptor = openapi_descriptor(1, true);
 
     assert!(
         descriptor
@@ -434,6 +435,44 @@ fn openapi_descriptor_accepts_manifest_provided_qqbot_protocols() {
     assert_eq!(
         descriptor.ordering.default,
         OrderingRequirement::PreserveSubmitOrder
+    );
+}
+
+#[test]
+fn text_only_descriptor_does_not_claim_media_upload() {
+    let descriptor = openapi_descriptor(1, false);
+    assert!(
+        !descriptor
+            .accepted_protocol_ids
+            .contains(&BOT_MEDIA_UPLOAD_PROTOCOL_ID.into())
+    );
+    let manifest = qqbot_adapter_manifest(1, false);
+    assert!(
+        manifest
+            .provides
+            .protocols
+            .iter()
+            .all(|protocol| protocol.protocol_id != BOT_MEDIA_UPLOAD_PROTOCOL_ID)
+    );
+}
+
+#[test]
+fn qqbot_config_deserializes_defaults_and_rejects_unknown_fields() {
+    let config: QqBotConfig = serde_json::from_value(json!({
+        "account_id": "main",
+        "app_id": "APP_ID",
+        "client_secret_key": "QQBOT_SECRET"
+    }))
+    .unwrap();
+    assert_eq!(config.openapi_base_url, "https://api.sgroup.qq.com");
+    assert!(config.validate().is_ok());
+    assert!(
+        serde_json::from_value::<QqBotConfig>(json!({
+            "account_id": "main",
+            "app_id": "APP_ID",
+            "raw_secret": "forbidden"
+        }))
+        .is_err()
     );
 }
 
@@ -863,9 +902,9 @@ fn openapi_runner_with_shared(
             requests,
             responses: Mutex::new(VecDeque::from(responses)),
         }),
-        Box::new(FakeMediaProvider),
         Arc::new(StaticQqCredentials::new("CLIENT_SECRET")),
-    );
+    )
+    .with_media_provider(Box::new(FakeMediaProvider));
     QqOpenApiRunner::new(1, config, clients, id_source)
 }
 

@@ -122,21 +122,26 @@ pub trait QqIdSource: Send {
 
 pub struct QqBotClients {
     pub http: Box<dyn QqHttpClient>,
-    pub media: Box<dyn QqMediaProvider>,
+    pub media: Option<Box<dyn QqMediaProvider>>,
     pub credentials: Arc<dyn QqCredentialProvider>,
 }
 
 impl QqBotClients {
-    pub fn new(
-        http: Box<dyn QqHttpClient>,
-        media: Box<dyn QqMediaProvider>,
-        credentials: Arc<dyn QqCredentialProvider>,
-    ) -> Self {
+    pub fn new(http: Box<dyn QqHttpClient>, credentials: Arc<dyn QqCredentialProvider>) -> Self {
         Self {
             http,
-            media,
+            media: None,
             credentials,
         }
+    }
+
+    pub fn with_media_provider(mut self, media: Box<dyn QqMediaProvider>) -> Self {
+        self.media = Some(media);
+        self
+    }
+
+    pub fn has_media_provider(&self) -> bool {
+        self.media.is_some()
     }
 }
 

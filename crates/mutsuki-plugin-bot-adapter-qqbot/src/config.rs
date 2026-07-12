@@ -1,9 +1,11 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
 pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct QqBotConfig {
     pub account_id: String,
     pub app_id: String,
@@ -30,6 +32,12 @@ pub struct QqBotConfig {
     pub gateway_rate_limit_delay_ms: u64,
     /// Test/local-only escape hatch. Production defaults require HTTPS and WSS.
     pub allow_insecure_transport: bool,
+}
+
+impl Default for QqBotConfig {
+    fn default() -> Self {
+        Self::new("", "")
+    }
 }
 
 impl QqBotConfig {

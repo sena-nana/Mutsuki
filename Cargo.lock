@@ -848,15 +848,31 @@ version = "0.1.0"
 dependencies = [
  "fastrand",
  "futures-util",
+ "mutsuki-bot-protocol",
  "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-command",
+ "mutsuki-plugin-bot-event-router",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
+ "mutsuki-service-config",
  "mutsuki-service-runtime",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+]
+
+[[package]]
+name = "mutsuki-bot-testkit"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mutsuki-plugin-bot-adapter-qqbot",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -965,10 +981,11 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "dirs",
  "serde",
+ "serde_json",
  "thiserror",
  "toml",
 ]
@@ -976,7 +993,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "futures",
  "serde",
@@ -987,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -1000,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -1011,7 +1028,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1022,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -1035,7 +1052,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9ce802af696732d05920b0a091637138e6afc88c#9ce802af696732d05920b0a091637138e6afc88c"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=bb34b59bfa5ba9549f08775f45ad8b10f3fafddb#bb34b59bfa5ba9549f08775f45ad8b10f3fafddb"
 dependencies = [
  "anyhow",
  "futures",
@@ -1586,6 +1603,7 @@ dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-bot-sdk",
  "mutsuki-bot-service-host-integration",
+ "mutsuki-bot-testkit",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-event-router",
