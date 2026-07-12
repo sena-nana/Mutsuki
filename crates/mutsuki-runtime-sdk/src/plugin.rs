@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, HandlerBinding, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy,
-    PermissionGrant, PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, PluginManifest,
-    PluginProvides, ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
+    ArtifactType, BridgeDescriptor, CodecDescriptor, HandlerBinding, HostExtensionDescriptor,
+    HostExtensionKind, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor,
+    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolDescriptor,
+    ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 
@@ -146,14 +147,12 @@ impl PluginBuilder {
     }
 
     pub fn runner(mut self, runner: Box<dyn Runner>) -> Self {
-        self.ensure_builtin_plugin_backend();
         self.provides.runners.push(runner.descriptor().clone());
         self.runners.push(runner);
         self
     }
 
     pub fn runner_descriptor(mut self, descriptor: RunnerDescriptor) -> Self {
-        self.ensure_builtin_plugin_backend();
         self.provides.runners.push(descriptor);
         self
     }
@@ -268,7 +267,8 @@ impl PluginBuilder {
         self
     }
 
-    pub fn build(self) -> LoadedPlugin {
+    pub fn build(mut self) -> LoadedPlugin {
+        self.ensure_plugin_backend();
         LoadedPlugin {
             manifest: PluginManifest {
                 plugin_id: self.plugin_id,
@@ -287,15 +287,26 @@ impl PluginBuilder {
         }
     }
 
-    fn ensure_builtin_plugin_backend(&mut self) {
-        let backend_id = format!("plugin.backend.{}.builtin", self.plugin_id);
+    fn ensure_plugin_backend(&mut self) {
+        if self.provides.runners.is_empty() {
+            return;
+        }
+        let deployment = PluginDeploymentKind::default_for_artifact(&self.artifact.artifact_type);
+        let deployment_name = match deployment {
+            PluginDeploymentKind::Builtin => "builtin",
+            PluginDeploymentKind::Abi => "abi",
+            PluginDeploymentKind::Wasm => "wasm",
+            PluginDeploymentKind::Process => "process",
+            PluginDeploymentKind::Python => "python",
+        };
+        let backend_id = format!("plugin.backend.{}.{deployment_name}", self.plugin_id);
         if !self.provides.host_extensions.iter().any(|extension| {
-            extension.extension_id == format!("host.extension.{}.builtin", self.plugin_id)
+            extension.extension_id == format!("host.extension.{}.{deployment_name}", self.plugin_id)
         }) {
             self.provides.host_extensions.push(HostExtensionDescriptor {
-                extension_id: format!("host.extension.{}.builtin", self.plugin_id),
+                extension_id: format!("host.extension.{}.{deployment_name}", self.plugin_id),
                 kind: HostExtensionKind::PluginBackend,
-                supported_deployments: vec![PluginDeploymentKind::Builtin],
+                supported_deployments: vec![deployment.clone()],
                 reload_policy: "static".into(),
                 drain_required: false,
             });
@@ -308,12 +319,42 @@ impl PluginBuilder {
         {
             self.provides.plugin_backends.push(PluginBackendDescriptor {
                 backend_id,
-                deployment_kind: PluginDeploymentKind::Builtin,
+                deployment_kind: deployment.clone(),
                 task_client_protocol: "mutsuki.task.v1".into(),
                 resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-                codec_id: None,
-                bridge_id: None,
+                codec_id: (deployment == PluginDeploymentKind::Abi)
+                    .then(|| crate::abi::ABI_CODEC_ID.into()),
+                bridge_id: (deployment == PluginDeploymentKind::Abi)
+                    .then(|| crate::abi::ABI_BRIDGE_ID.into()),
             });
+        }
+        if deployment == PluginDeploymentKind::Abi {
+            if !self
+                .provides
+                .codecs
+                .iter()
+                .any(|codec| codec.codec_id == crate::abi::ABI_CODEC_ID)
+            {
+                self.provides.codecs.push(CodecDescriptor {
+                    codec_id: crate::abi::ABI_CODEC_ID.into(),
+                    media_type: "application/x-ndjson".into(),
+                    version: crate::abi::ABI_TRANSPORT_VERSION.to_string(),
+                    connection_scoped: true,
+                });
+            }
+            if !self
+                .provides
+                .bridges
+                .iter()
+                .any(|bridge| bridge.bridge_id == crate::abi::ABI_BRIDGE_ID)
+            {
+                self.provides.bridges.push(BridgeDescriptor {
+                    bridge_id: crate::abi::ABI_BRIDGE_ID.into(),
+                    deployment_kind: PluginDeploymentKind::Abi,
+                    codec_ids: vec![crate::abi::ABI_CODEC_ID.into()],
+                    drain_policy: "drain_and_swap".into(),
+                });
+            }
         }
     }
 }

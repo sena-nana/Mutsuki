@@ -586,6 +586,27 @@ fn abi_failure(route: impl Into<String>, detail: impl Into<String>) -> RuntimeFa
 mod tests {
     use super::*;
     use crate::PluginBuilder;
+    use mutsuki_runtime_contracts::{ArtifactType, PluginArtifact, RunnerDescriptor};
+    use mutsuki_runtime_core::{RunnerContext, RuntimeResult};
+
+    struct NoopRunner(RunnerDescriptor);
+
+    impl Runner for NoopRunner {
+        fn descriptor(&self) -> &RunnerDescriptor {
+            &self.0
+        }
+
+        fn run_batch(
+            &mut self,
+            _ctx: RunnerContext,
+            batch: mutsuki_runtime_contracts::WorkBatch,
+        ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
+            Ok(mutsuki_runtime_contracts::CompletionBatch::from_results(
+                &batch,
+                Vec::new(),
+            ))
+        }
+    }
 
     #[test]
     fn guest_handshake_uses_existing_manifest_and_jsonl_envelope() {
@@ -606,5 +627,32 @@ mod tests {
         assert_eq!(unsafe { buffer.as_slice() }, b"payload");
         // SAFETY: buffer was allocated by AbiBuffer::from_bytes and is released once.
         unsafe { release_buffer(buffer) };
+    }
+
+    #[test]
+    fn plugin_builder_uses_final_abi_artifact_for_backend_surface() {
+        let descriptor = crate::RunnerDescriptorBuilder::new("test.abi.runner", "test.abi")
+            .accepted_protocol("test.abi.run")
+            .build();
+        let plugin = PluginBuilder::new("test.abi")
+            .runner(Box::new(NoopRunner(descriptor)))
+            .artifact(PluginArtifact {
+                artifact_type: ArtifactType::Abi,
+                path: "test_abi.dll".into(),
+                sha256: "sha256:test".into(),
+            })
+            .build();
+
+        assert_eq!(
+            plugin.manifest.provides.plugin_backends[0].deployment_kind,
+            mutsuki_runtime_contracts::PluginDeploymentKind::Abi
+        );
+        assert_eq!(
+            plugin.manifest.provides.plugin_backends[0]
+                .codec_id
+                .as_deref(),
+            Some(ABI_CODEC_ID)
+        );
+        assert_eq!(plugin.manifest.provides.bridges[0].bridge_id, ABI_BRIDGE_ID);
     }
 }
