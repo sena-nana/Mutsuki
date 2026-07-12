@@ -102,9 +102,7 @@ class CodecDescriptor:
             codec_id=as_str(field_value(raw, "codec_id"), "codec_id"),
             media_type=as_str(field_value(raw, "media_type"), "media_type"),
             version=as_str(field_value(raw, "version"), "version"),
-            connection_scoped=as_bool(
-                field_value(raw, "connection_scoped"), "connection_scoped"
-            ),
+            connection_scoped=as_bool(field_value(raw, "connection_scoped"), "connection_scoped"),
         )
 
 
@@ -162,8 +160,6 @@ class WorkflowDescriptor:
             state_resource_kind=as_str(
                 field_value(raw, "state_resource_kind"), "state_resource_kind"
             ),
-            runner_protocol_id=as_str(
-                field_value(raw, "runner_protocol_id"), "runner_protocol_id"
-            ),
+            runner_protocol_id=as_str(field_value(raw, "runner_protocol_id"), "runner_protocol_id"),
             reload_policy=as_str(field_value(raw, "reload_policy"), "reload_policy"),
         )

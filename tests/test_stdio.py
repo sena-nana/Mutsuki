@@ -7,9 +7,9 @@ import pytest
 from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.runner import RunnerContext, RunnerDescriptor, RunnerResult
 from mutsuki_runner_kit.contracts.task import Task
-from mutsuki_runner_kit.resources.manager import PythonResourceManager
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.testing.batches import runner_context, single_test_batch
+from mutsuki_runner_kit.testing.fake_resource_provider import FakeResourceProvider
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
 from mutsuki_runner_kit.transport.stdio_jsonl import StdioJsonlBridge
 
@@ -29,7 +29,7 @@ async def test_stdio_runner_run_batch_dispatches_to_host() -> None:
     backend = PythonRunnerBackend()
     runner = CaptureContextRunner(echo_descriptor())
     backend.register_runner(runner)
-    bridge = StdioJsonlBridge(backend, PythonResourceManager())
+    bridge = StdioJsonlBridge(backend)
     task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
     ctx = replace(runner_context(deadline_tick=3), invocation_id="task-1", cancel_token="task-1")
     batch = single_test_batch(task)
@@ -58,7 +58,7 @@ async def test_stdio_runner_run_batch_dispatches_to_host() -> None:
 
 @pytest.mark.asyncio
 async def test_stdio_unknown_runner_returns_structured_error() -> None:
-    bridge = StdioJsonlBridge(PythonRunnerBackend(), PythonResourceManager())
+    bridge = StdioJsonlBridge(PythonRunnerBackend())
 
     response = await bridge.handle_request(
         {
@@ -77,7 +77,7 @@ async def test_stdio_cancel_and_dispose_dispatch_to_host_management_channel() ->
     backend = PythonRunnerBackend()
     runner = EchoRunner(echo_descriptor())
     backend.register_runner(runner)
-    bridge = StdioJsonlBridge(backend, PythonResourceManager())
+    bridge = StdioJsonlBridge(backend)
 
     cancel_response = await bridge.handle_request(
         {
@@ -102,7 +102,7 @@ async def test_stdio_cancel_and_dispose_dispatch_to_host_management_channel() ->
 
 @pytest.mark.asyncio
 async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     text = manager.create_blob_resource("text.v1", b"hello")
     capability = manager.create_capability_resource("db_pool", "db.pool.v1")
     command = manager.command_plan(capability, "query", {"sql": "select 1"}, "query:1")
@@ -137,9 +137,7 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
         {
             "id": "req-4",
             "method": "resource.saga",
-            "params": {
-                "saga": to_json_dict(manager.saga_plan("saga:1", (command,), (command,)))
-            },
+            "params": {"saga": to_json_dict(manager.saga_plan("saga:1", (command,), (command,)))},
         }
     )
 
@@ -156,7 +154,7 @@ async def test_stdio_resource_plan_methods_dispatch_to_resource_manager() -> Non
 async def test_stdio_runner_run_batch_returns_structured_lease_mismatch_error() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(EchoRunner(echo_descriptor()))
-    bridge = StdioJsonlBridge(backend, PythonResourceManager())
+    bridge = StdioJsonlBridge(backend)
     task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-task")
     batch = single_test_batch(task, lease_id="task-lease-task")
     ctx = runner_context(lease_ids=("task-lease-ctx",))
@@ -179,7 +177,7 @@ async def test_stdio_runner_run_batch_returns_structured_lease_mismatch_error() 
 
 @pytest.mark.asyncio
 async def test_stdio_unknown_method_and_runner_step_are_rejected() -> None:
-    bridge = StdioJsonlBridge(PythonRunnerBackend(), PythonResourceManager())
+    bridge = StdioJsonlBridge(PythonRunnerBackend())
 
     unknown = await bridge.handle_request(
         {"id": "req-1", "method": "runner.step", "params": {"runner_id": "echo.runner"}}
@@ -188,3 +186,9 @@ async def test_stdio_unknown_method_and_runner_step_are_rejected() -> None:
     assert unknown["ok"] is False
     assert unknown["error"]["code"] == "runtime.host_failed"  # type: ignore[index]
     assert unknown["error"]["evidence"]["reason"] == "unknown_method"  # type: ignore[index]
+
+    missing_resource = await bridge.handle_request(
+        {"id": "req-2", "method": "resource.export", "params": {}}
+    )
+    assert missing_resource["ok"] is False
+    assert missing_resource["error"]["evidence"]["reason"] == "resource_handler_missing"  # type: ignore[index]

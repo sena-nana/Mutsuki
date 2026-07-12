@@ -9,9 +9,9 @@ from mutsuki_runner_kit.contracts.resource import ResourceSemantic, ValueRef
 from mutsuki_runner_kit.resources import ResourceClient, ResourceKind
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
-PythonResourceManager = importlib.import_module(
-    "mutsuki_runner_kit." + "resources.manager"
-).PythonResourceManager
+FakeResourceProvider = importlib.import_module(
+    "mutsuki_runner_kit." + "testing.fake_resource_provider"
+).FakeResourceProvider
 
 
 def resource_kind(kind_id: str, semantic: ResourceSemantic) -> type[ResourceKind]:
@@ -23,7 +23,7 @@ def resource_kind(kind_id: str, semantic: ResourceSemantic) -> type[ResourceKind
 
 
 def test_resource_manager_packs_small_and_large_values() -> None:
-    manager = PythonResourceManager(inline_value_max_bytes=16)
+    manager = FakeResourceProvider(inline_value_max_bytes=16)
 
     assert manager.pack_value("small.v1", {"a": 1}) == {"a": 1}
     large = manager.pack_value("large.v1", {"blob": "x" * 100})
@@ -33,7 +33,7 @@ def test_resource_manager_packs_small_and_large_values() -> None:
 
 
 def test_resource_manager_supports_mmap_cow_and_exclusive_write_lease() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     resource = manager.create_mmap_resource("bytes.v1", b"abc")
 
     assert manager.read_resource(resource) == b"abc"
@@ -51,7 +51,7 @@ def test_resource_manager_supports_mmap_cow_and_exclusive_write_lease() -> None:
 
 
 def test_expired_write_lease_fails_loudly() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     resource = manager.create_mmap_resource("bytes.v1", b"abc")
     lease = manager.acquire_write_lease(resource.ref_id, "runner-a", expires_at_step=1)
 
@@ -60,7 +60,7 @@ def test_expired_write_lease_fails_loudly() -> None:
 
 
 def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     text = manager.create_cow_state_resource("text_buffer", "text.v1", b"hello")
     ast = manager.create_snapshot_resource("ast_snapshot", "ast.v1", text, b"ast")
     facts = manager.create_fact_resource("project_facts", "facts.v1", {"root": "."})
@@ -101,7 +101,7 @@ def test_resource_manager_supports_typed_resources_and_lazy_plans() -> None:
 
 
 def test_resource_client_builds_issue_9_example_resource_plans() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     client = ResourceClient()
     text = client.handle(
         manager.create_cow_state_resource("text_buffer", "text.v1", b"hello"),
@@ -139,7 +139,7 @@ def test_resource_client_builds_issue_9_example_resource_plans() -> None:
 
 
 def test_resource_manager_executes_export_command_batch_and_saga_plans() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     text = manager.create_blob_resource("text.v1", b"hello")
     capability = manager.create_capability_resource("db_pool", "db.pool.v1")
 
@@ -162,7 +162,7 @@ def test_resource_manager_executes_export_command_batch_and_saga_plans() -> None
 
 
 def test_resource_manager_rejects_invalid_executable_plans_loudly() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     text = manager.create_blob_resource("text.v1", b"hello")
     binary = manager.create_blob_resource("bytes.v1", b"\xff")
     capability = manager.create_capability_resource("db_pool", "db.pool.v1")
@@ -197,7 +197,7 @@ def test_resource_manager_rejects_invalid_executable_plans_loudly() -> None:
 
 
 def test_stale_write_plan_fails_loudly() -> None:
-    manager = PythonResourceManager()
+    manager = FakeResourceProvider()
     text = manager.create_cow_state_resource("text_buffer", "text.v1", b"hello")
     stale = manager.build_write_plan(text, "fail", {"replace": "old"})
     fresh = manager.build_write_plan(text, "fail", {"replace": "new"})

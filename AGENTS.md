@@ -28,6 +28,8 @@ load-plan 校验和调度事实源。
    awaitable 必须 fail-loud，禁止吞异常返回默认值。
 8. **保持领域中立**：不得加入 Agent、LLM、记忆、HTTP/FS/IM 真实 provider、插件市场、
    venv 管理器或 Tauri 专用逻辑。
+9. **资源实现只允许测试替身**：生产 transport 只接受显式注入的 resource request handler；
+   generation、lease、transaction 和 bytes store 实现不得从 `testing` 导出到生产入口。
 
 ## 命名边界
 

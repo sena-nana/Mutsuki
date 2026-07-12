@@ -107,9 +107,7 @@ class RowPayload:
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "RowPayload")
         return cls(
-            rows=tuple(
-                as_json_value(item) for item in sequence(field_value(raw, "rows"), "rows")
-            )
+            rows=tuple(as_json_value(item) for item in sequence(field_value(raw, "rows"), "rows"))
         )
 
 
@@ -325,9 +323,7 @@ class WorkResourcePlan:
             parallelism_limit=as_int(field_value(raw, "parallelism_limit"), "parallelism_limit"),
             version_checks=tuple_from_json(raw, "version_checks", VersionExpectation),
             deferred_writes=tuple_from_json(raw, "deferred_writes", DeferredResourceOp),
-            conflict_entries=as_str_tuple(
-                field_value(raw, "conflict_entries"), "conflict_entries"
-            ),
+            conflict_entries=as_str_tuple(field_value(raw, "conflict_entries"), "conflict_entries"),
         )
 
 
@@ -497,9 +493,7 @@ def _str_group_tuple(value: object, field_name: str) -> tuple[tuple[str, ...], .
     return tuple(as_str_tuple(group, field_name) for group in sequence(value, field_name))
 
 
-def _metadata_pairs(
-    value: object, field_name: str
-) -> tuple[tuple[str, ScalarValue], ...]:
+def _metadata_pairs(value: object, field_name: str) -> tuple[tuple[str, ScalarValue], ...]:
     pairs: list[tuple[str, ScalarValue]] = []
     for item in sequence(value, field_name):
         if not isinstance(item, Sequence) or isinstance(item, str | bytes | bytearray):

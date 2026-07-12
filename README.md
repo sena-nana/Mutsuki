@@ -14,8 +14,8 @@ This repository owns:
 - Python mirrors of the Mutsuki runtime contracts.
 - `PythonRunnerBackend` for runner registration, invocation, cancel, and dispose.
 - `StdioJsonlBridge` for the current JSONL runner bridge.
-- `PythonResourceManager` and descriptor-based resource helpers used by Python
-  runners and conformance tests.
+- descriptor-based resource clients and an explicitly injected resource request handler.
+- `FakeResourceProvider` under `testing` for conformance tests only.
 - Testing helpers for Python-owned runners.
 
 This repository does not own:

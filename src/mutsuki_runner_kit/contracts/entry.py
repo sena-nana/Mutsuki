@@ -99,7 +99,5 @@ class ResourceRequirement:
         return cls(
             ref_id=as_str(field_value(raw, "ref_id"), "ref_id"),
             mode=ResourceAccessMode(as_str(field_value(raw, "mode"), "mode")),
-            expected_version=optional_int(
-                field_value(raw, "expected_version"), "expected_version"
-            ),
+            expected_version=optional_int(field_value(raw, "expected_version"), "expected_version"),
         )

@@ -113,9 +113,7 @@ class Task:
             task_id=as_str(field_value(raw, "task_id"), "task_id"),
             protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
             priority=as_int(field_value(raw, "priority"), "priority"),
-            ready_at_step=None
-            if ready_at_step is None
-            else as_int(ready_at_step, "ready_at_step"),
+            ready_at_step=None if ready_at_step is None else as_int(ready_at_step, "ready_at_step"),
             payload=as_json_value(field_value(raw, "payload")),
             input_refs=as_str_tuple(field_value(raw, "input_refs"), "input_refs"),
             output_ref=None if output_ref is None else as_str(output_ref, "output_ref"),
@@ -141,9 +139,7 @@ class Task:
             required_surfaces=as_str_tuple(
                 field_value(raw, "required_surfaces"), "required_surfaces"
             ),
-            dispatch_lane=DispatchLane(
-                as_str(field_value(raw, "dispatch_lane"), "dispatch_lane")
-            ),
+            dispatch_lane=DispatchLane(as_str(field_value(raw, "dispatch_lane"), "dispatch_lane")),
             ordering=OrderingRequirement.from_json_dict(
                 as_mapping(field_value(raw, "ordering"), "ordering")
             ),

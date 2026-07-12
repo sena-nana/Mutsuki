@@ -46,9 +46,7 @@ class ResourceClient:
     ) -> TypedResourceHandle[TResourceKind]:
         return TypedResourceHandle(resource=resource, kind=kind)
 
-    def read_plan(
-        self, handle: TypedResourceHandle[TResourceKind], operation: str
-    ) -> ReadPlan:
+    def read_plan(self, handle: TypedResourceHandle[TResourceKind], operation: str) -> ReadPlan:
         return resource_plans.build_read_plan(handle.resource, operation)
 
     def write_plan(
@@ -64,9 +62,7 @@ class ResourceClient:
             resource_plans.build_read_plan(handle.resource, "open_stream")
         )
 
-    def export_plan(
-        self, handle: TypedResourceHandle[TResourceKind], target: str
-    ) -> ExportPlan:
+    def export_plan(self, handle: TypedResourceHandle[TResourceKind], target: str) -> ExportPlan:
         return resource_plans.export_plan(handle.resource, target)
 
     def command_plan(

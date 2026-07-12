@@ -49,9 +49,7 @@ class RuntimeProfileMode(StrEnum):
     LOCKED_BUILTIN = "locked_builtin"
 
 
-def as_plugin_deployments(
-    value: object, field: str
-) -> dict[str, PluginDeploymentKind]:
+def as_plugin_deployments(value: object, field: str) -> dict[str, PluginDeploymentKind]:
     raw = as_mapping(value, field)
     return {
         str(plugin_id): PluginDeploymentKind(as_str(deployment, field))
@@ -153,9 +151,7 @@ class HandlerBinding:
             binding_id=as_str(field_value(raw, "binding_id"), "binding_id"),
             plugin_id=as_str(field_value(raw, "plugin_id"), "plugin_id"),
             protocol_id=as_str(field_value(raw, "protocol_id"), "protocol_id"),
-            target_protocol_id=as_str(
-                field_value(raw, "target_protocol_id"), "target_protocol_id"
-            ),
+            target_protocol_id=as_str(field_value(raw, "target_protocol_id"), "target_protocol_id"),
             target_runner_hint=None
             if target_runner_hint is None
             else as_str(target_runner_hint, "target_runner_hint"),
@@ -292,9 +288,7 @@ class CapabilityProviderSelection:
         provider_version = field_value(raw, "provider_version")
         return cls(
             capability=as_str(field_value(raw, "capability"), "capability"),
-            provider_plugin_id=as_str(
-                field_value(raw, "provider_plugin_id"), "provider_plugin_id"
-            ),
+            provider_plugin_id=as_str(field_value(raw, "provider_plugin_id"), "provider_plugin_id"),
             provider_version=None
             if provider_version is None
             else as_str(provider_version, "provider_version"),
@@ -379,9 +373,7 @@ class RuntimeCapabilityGraph:
                 field_value(raw, "active_scheduler_policies"),
                 "active_scheduler_policies",
             ),
-            active_workflows=as_str_tuple(
-                field_value(raw, "active_workflows"), "active_workflows"
-            ),
+            active_workflows=as_str_tuple(field_value(raw, "active_workflows"), "active_workflows"),
             permission_audit=tuple_from_json(raw, "permission_audit", PermissionAuditEntry),
         )
 

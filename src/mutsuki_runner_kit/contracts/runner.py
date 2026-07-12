@@ -275,9 +275,7 @@ class RunnerContext:
             invocation_id=as_str(field_value(raw, "invocation_id"), "invocation_id"),
             cancel_token=as_str(field_value(raw, "cancel_token"), "cancel_token"),
             deadline_tick=optional_int(field_value(raw, "deadline_tick"), "deadline_tick"),
-            cancel_requested=as_bool(
-                field_value(raw, "cancel_requested"), "cancel_requested"
-            ),
+            cancel_requested=as_bool(field_value(raw, "cancel_requested"), "cancel_requested"),
         )
 
 

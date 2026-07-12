@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TextIO
+from typing import Protocol, TextIO
 
 from mutsuki_runner_kit.contracts.batch import WorkBatch
 from mutsuki_runner_kit.contracts.codec import JsonValue, from_json_dict, to_json_dict
@@ -11,20 +11,32 @@ from mutsuki_runner_kit.contracts.resource import (
     CommandBatch,
     CommandPlan,
     ExportPlan,
+    PlanReceipt,
     SagaPlan,
 )
 from mutsuki_runner_kit.contracts.runner import RunnerContext
-from mutsuki_runner_kit.resources.manager import PythonResourceManager
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
 
+class ResourceRequestHandler(Protocol):
+    def execute_export_plan(self, plan: ExportPlan) -> PlanReceipt: ...
+
+    def execute_command_plan(self, plan: CommandPlan) -> PlanReceipt: ...
+
+    def execute_command_batch(self, batch: CommandBatch) -> tuple[PlanReceipt, ...]: ...
+
+    def execute_saga_plan(self, saga: SagaPlan) -> tuple[PlanReceipt, ...]: ...
+
+
 class StdioJsonlBridge:
     def __init__(
-        self, runner_backend: PythonRunnerBackend, resources: PythonResourceManager
+        self,
+        runner_backend: PythonRunnerBackend,
+        resource_handler: ResourceRequestHandler | None = None,
     ) -> None:
         self._runner_backend = runner_backend
-        self._resources = resources
+        self._resource_handler = resource_handler
 
     async def handle_request(self, request: object) -> dict[str, JsonValue]:
         try:
@@ -63,19 +75,17 @@ class StdioJsonlBridge:
         if method.startswith("runner."):
             return await self.dispatch_runner_method(method, params)
         if method.startswith("resource."):
+            if self._resource_handler is None:
+                raise resource_handler_missing(method)
             return self.dispatch_resource_method(method, params)
         raise unknown_method(method)
 
-    async def dispatch_runner_method(
-        self, method: str, params: dict[str, object]
-    ) -> JsonValue:
+    async def dispatch_runner_method(self, method: str, params: dict[str, object]) -> JsonValue:
         if method == "runner.run_batch":
             runner_id = self.str_param(params, "runner_id")
             ctx = from_json_dict(RunnerContext, self.mapping_param(params, "ctx"))
             batch = from_json_dict(WorkBatch, self.mapping_param(params, "batch"))
-            return to_json_dict(
-                await self._runner_backend.run_batch_runner(runner_id, ctx, batch)
-            )
+            return to_json_dict(await self._runner_backend.run_batch_runner(runner_id, ctx, batch))
         if method == "runner.cancel":
             await self._runner_backend.cancel_runner(
                 self.str_param(params, "runner_id"),
@@ -88,20 +98,21 @@ class StdioJsonlBridge:
         raise unknown_method(method)
 
     def dispatch_resource_method(self, method: str, params: dict[str, object]) -> JsonValue:
+        resources = self._resource_handler
+        if resources is None:
+            raise resource_handler_missing(method)
         if method == "resource.export":
             plan = from_json_dict(ExportPlan, self.mapping_param(params, "plan"))
-            return to_json_dict(self._resources.execute_export_plan(plan))
+            return to_json_dict(resources.execute_export_plan(plan))
         if method == "resource.command":
             plan = from_json_dict(CommandPlan, self.mapping_param(params, "plan"))
-            return to_json_dict(self._resources.execute_command_plan(plan))
+            return to_json_dict(resources.execute_command_plan(plan))
         if method == "resource.command_batch":
             batch = from_json_dict(CommandBatch, self.mapping_param(params, "batch"))
-            return [
-                to_json_dict(receipt) for receipt in self._resources.execute_command_batch(batch)
-            ]
+            return [to_json_dict(receipt) for receipt in resources.execute_command_batch(batch)]
         if method == "resource.saga":
             saga = from_json_dict(SagaPlan, self.mapping_param(params, "saga"))
-            return [to_json_dict(receipt) for receipt in self._resources.execute_saga_plan(saga)]
+            return [to_json_dict(receipt) for receipt in resources.execute_saga_plan(saga)]
         raise unknown_method(method)
 
     @staticmethod
@@ -159,11 +170,20 @@ class StdioJsonlBridge:
 
 def run_stdio_bridge(
     runner_backend: PythonRunnerBackend,
-    resource_manager: PythonResourceManager,
     input_stream: TextIO,
     output_stream: TextIO,
 ) -> None:
-    bridge = StdioJsonlBridge(runner_backend, resource_manager)
+    bridge = StdioJsonlBridge(runner_backend)
+    asyncio.run(bridge.serve(input_stream, output_stream))
+
+
+def run_stdio_provider_bridge(
+    runner_backend: PythonRunnerBackend,
+    resource_handler: ResourceRequestHandler,
+    input_stream: TextIO,
+    output_stream: TextIO,
+) -> None:
+    bridge = StdioJsonlBridge(runner_backend, resource_handler)
     asyncio.run(bridge.serve(input_stream, output_stream))
 
 
@@ -174,5 +194,16 @@ def unknown_method(method: str) -> RunnerInvokeError:
             source="python_stdio_jsonl",
             route=f"python.stdio.{method}",
             evidence={"reason": "unknown_method", "method": method},
+        )
+    )
+
+
+def resource_handler_missing(method: str) -> RunnerInvokeError:
+    return RunnerInvokeError(
+        RuntimeError(
+            code=ERR_RUNTIME_HOST_FAILED,
+            source="python_stdio_jsonl",
+            route=f"python.stdio.{method}",
+            evidence={"reason": "resource_handler_missing", "method": method},
         )
     )

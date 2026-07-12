@@ -33,4 +33,3 @@ def test_surface_occupancy_roundtrips() -> None:
     assert occupancy.is_zero()
     assert_json_roundtrip(SurfaceOccupancy, occupancy)
     assert_json_roundtrip(SurfaceOccupancyHandle, handle)
-

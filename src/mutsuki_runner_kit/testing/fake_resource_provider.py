@@ -37,7 +37,7 @@ from mutsuki_runner_kit.resources import plans as resource_plans
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 
 
-class PythonResourceManager:
+class FakeResourceProvider:
     def __init__(self, inline_value_max_bytes: int = 4096) -> None:
         self.inline_value_max_bytes = inline_value_max_bytes
         self._next = 0

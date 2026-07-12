@@ -25,7 +25,7 @@ sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
   - `runner.cancel`
   - `runner.dispose`
   - resource read/write helper methods used by current tests.
-- `PythonResourceManager` for descriptor-based test/resource flows.
+- Explicit resource request handler injection; the bundled provider implementation is testing-only.
 - Runner-side async adapter and scalar `run_one` adapter sugar that lower to
   `run_batch`.
 

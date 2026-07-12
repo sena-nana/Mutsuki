@@ -153,9 +153,7 @@ async def test_async_runner_adapter_emits_targeted_child_task_descriptor() -> No
 
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
-    first = await adapter.run_one(
-        async_runner_context(), Task.new("parent-1", "parent.work")
-    )
+    first = await adapter.run_one(async_runner_context(), Task.new("parent-1", "parent.work"))
 
     assert first.status == RunnerStatus.WAITING
     assert first.tasks[0].target_binding_id == "binding:child"
@@ -178,9 +176,7 @@ async def test_async_runner_adapter_emits_explicit_cancel_policy_descriptor() ->
 
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
-    first = await adapter.run_one(
-        async_runner_context(), Task.new("parent-1", "parent.work")
-    )
+    first = await adapter.run_one(async_runner_context(), Task.new("parent-1", "parent.work"))
 
     assert first.task_await is not None
     assert first.task_await.cancel_policy == CancelPolicy.SHIELD
@@ -203,9 +199,7 @@ async def test_async_runner_adapter_rejects_self_call_when_policy_disallows_it()
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run, allow_self_call=False)
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await adapter.run_one(
-            async_runner_context(), Task.new("parent-1", "parent.work")
-        )
+        await adapter.run_one(async_runner_context(), Task.new("parent-1", "parent.work"))
 
     assert exc_info.value.error.code == "task.self_call_blocked"
 
@@ -221,9 +215,7 @@ async def test_async_runner_adapter_rejects_non_mutsuki_awaitable() -> None:
     adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
 
     with pytest.raises(RunnerInvokeError) as exc_info:
-        await adapter.run_one(
-            async_runner_context(), Task.new("parent-1", "parent.work")
-        )
+        await adapter.run_one(async_runner_context(), Task.new("parent-1", "parent.work"))
 
     assert exc_info.value.error.code == "runner.awaitable_unsupported"
 

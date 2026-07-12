@@ -8,6 +8,7 @@ description: Change Python Runner Link transport, stdio JSONL framing, codecs, m
 - Keep transport language-neutral, framed and fail-loud on malformed or unsupported messages.
 - Separate stdout protocol frames from stderr diagnostics; never leak secrets into either stream.
 - Pass `ResourceRef`/`ValueRef` descriptors across the link and fetch bytes through the broker.
+- Require an explicitly injected resource request handler; keep concrete stores and fake providers out of production transport.
 - Validate generation, lifetime, sealing, lease and resource-plan authorization before access.
 - Do not add process supervision, environment inheritance or Host lifecycle here.
 
