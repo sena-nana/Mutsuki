@@ -512,6 +512,10 @@ impl HostContext {
         self.resource_gateway.as_ref()
     }
 
+    pub fn resource_gateway_ref(&self) -> Arc<dyn ResourcePlanGateway> {
+        self.resource_gateway.clone()
+    }
+
     pub fn shutdown(&self) -> &dyn ShutdownController {
         self.shutdown.as_ref()
     }
