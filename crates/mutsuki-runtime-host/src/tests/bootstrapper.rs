@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_plugin_resource_memory::PROVIDER_ID;
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::CoreRuntime;
 use mutsuki_runtime_sdk::{BuiltinPluginLoader, PluginBuilder};
@@ -11,8 +10,8 @@ use serde_json::json;
 use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
 
 use super::helpers::{
-    abi_plugin_fixture, descriptor, host_with_echo_runner, load_std_memory_plugin, runtime_profile,
-    runtime_profile_with_deployment, std_memory_profile,
+    abi_plugin_fixture, descriptor, host_with_echo_runner, runtime_profile,
+    runtime_profile_with_deployment,
 };
 
 #[test]
@@ -284,64 +283,6 @@ fn active_plugin_backend_requires_bridge_to_support_configured_codec() {
         Some(&ScalarValue::String(
             "plugin_backend:plugin.backend.plugin-abi.abi".into()
         ))
-    );
-}
-
-#[test]
-fn loaded_plugin_resource_provider_is_injected_into_host_runtime() {
-    let mut host = RuntimeBootstrapper::new();
-    load_std_memory_plugin(&mut host);
-
-    let runtime = host
-        .into_host_runtime(std_memory_profile())
-        .expect("resource provider plugin should boot");
-    let created = runtime
-        .dispatch(crate::HostRuntimeCommand::CreateBlobResource {
-            provider_id: PROVIDER_ID.into(),
-            schema: "text.v1".into(),
-            bytes: b"plugin".to_vec(),
-        })
-        .unwrap();
-
-    let crate::HostRuntimeReply::ResourceCreated(resource) = created else {
-        panic!("expected resource created reply");
-    };
-    assert_eq!(resource.provider_id, PROVIDER_ID);
-    assert_eq!(resource.resource_kind, "mutsuki.resource.memory.blob");
-    assert_eq!(resource.resource_id.kind_id, "mutsuki.resource.memory.blob");
-    assert!(resource.ref_id.starts_with("memory-resource-"));
-
-    let bytes = runtime
-        .dispatch(crate::HostRuntimeCommand::CollectReadPlan(Box::new(
-            ReadPlan {
-                plan_id: "read:boot".into(),
-                resource,
-                operation: "collect".into(),
-                args: serde_json::Value::Null,
-            },
-        )))
-        .unwrap();
-    assert_eq!(
-        bytes,
-        crate::HostRuntimeReply::ResourceBytes(b"plugin".to_vec())
-    );
-}
-
-#[test]
-fn active_resource_provider_requires_loaded_provider_instance() {
-    let plugin = mutsuki_plugin_resource_memory::loaded_plugin();
-    let mut host = RuntimeBootstrapper::new();
-    host.register_manifest(plugin.manifest);
-
-    let error = host
-        .into_host_runtime(std_memory_profile())
-        .err()
-        .expect("active resource provider without instance should fail");
-
-    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
-    assert_eq!(
-        error.error().evidence.get("provider_id"),
-        Some(&ScalarValue::String(PROVIDER_ID.into()))
     );
 }
 

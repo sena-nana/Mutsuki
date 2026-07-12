@@ -1,16 +1,13 @@
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use mutsuki_plugin_resource_memory::PROVIDER_ID;
 use mutsuki_runtime_contracts::*;
 use serde_json::json;
 
-use crate::{
-    AbiTaskClient, HostExtension, LocalResourceClient, LocalTaskClient, PluginBackend, TaskClient,
-};
+use crate::{AbiTaskClient, LocalTaskClient, TaskClient};
 use mutsuki_runtime_sdk::TaskBatchBuilder;
 
-use super::helpers::{host_with_echo_runner, runtime_profile, std_memory_provider};
+use super::helpers::{host_with_echo_runner, runtime_profile};
 
 #[test]
 fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
@@ -186,46 +183,4 @@ fn task_clients_submit_batch_across_local_and_abi_backends() {
     assert_eq!(submitted.len(), 2);
     assert!(request.contains("\"method\":\"task.submit_batch\""));
     assert!(request.contains("\"batch_id\":\"abi-batch\""));
-}
-
-#[test]
-fn plugin_backend_groups_task_and_resource_clients_behind_deployment_boundary() {
-    let runtime = Arc::new(Mutex::new(
-        host_with_echo_runner()
-            .into_runtime(runtime_profile())
-            .unwrap(),
-    ));
-    let backend_descriptor = HostExtensionDescriptor {
-        extension_id: "host.extension.builtin".into(),
-        kind: HostExtensionKind::PluginBackend,
-        supported_deployments: vec![PluginDeploymentKind::Builtin],
-        reload_policy: "drain_and_swap".into(),
-        drain_required: true,
-    };
-    let host_extension = HostExtension::new(backend_descriptor);
-    assert!(host_extension.supports_deployment(&PluginDeploymentKind::Builtin));
-    assert!(!host_extension.supports_deployment(&PluginDeploymentKind::Abi));
-
-    let plugin_backend = PluginBackend::new(
-        PluginBackendDescriptor {
-            backend_id: "plugin.backend.builtin".into(),
-            deployment_kind: PluginDeploymentKind::Builtin,
-            task_client_protocol: "mutsuki.task.v1".into(),
-            resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-            codec_id: None,
-            bridge_id: None,
-        },
-        LocalTaskClient::new(runtime.clone()),
-        LocalResourceClient::from_provider(PROVIDER_ID, std_memory_provider()),
-    );
-    let submitted = plugin_backend
-        .task_client()
-        .submit_task(Task::new("backend-task", "raw.input", json!({})))
-        .unwrap();
-
-    assert_eq!(
-        plugin_backend.deployment_kind(),
-        &PluginDeploymentKind::Builtin
-    );
-    assert_eq!(submitted.task_id, "backend-task");
 }

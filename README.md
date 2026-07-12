@@ -1,8 +1,8 @@
 # Mutsuki
 
-> A domain-neutral single-task runtime kernel implemented as a Rust framework.
+> A domain-neutral batch-first runtime kernel implemented as a Rust framework.
 
-**Current boundary: Rust-first single-task runtime kernel**
+**Current boundary: Rust-first batch-first runtime kernel**
 
 The root workspace is the Rust framework surface. It provides serializable
 runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
@@ -30,7 +30,8 @@ RuntimeProfile + PluginManifest
   ResultRouter, StateStore, ResourceManager, reload surface checks, event log,
   and trace log.
 - `crates/mutsuki-runtime-host` - native Rust host helper:
-  runtime bootstrapper, deterministic load-plan resolver, and stdio JSONL runner client.
+  runtime bootstrapper, deterministic load-plan resolver, stdio JSONL runner client,
+  and policy-free process runner transport.
 ## Standard Plugin Naming
 
 The first standard plugin batch follows GitHub issue #8:
@@ -39,6 +40,9 @@ The first standard plugin batch follows GitHub issue #8:
 - protocol packages use `mutsuki-protocol-<domain>`;
 - standard runtime plugin ids reserve the `mutsuki.std.<domain>.<name>` prefix;
 - protocol ids use `mutsuki.<domain>.<action>` and do not include `plugin`.
+
+The implementations live in `MutsukiStdPlugins`; Core owns none of these domain protocols or
+providers.
 
 ## Verification
 

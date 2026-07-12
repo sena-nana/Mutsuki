@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 
-use mutsuki_plugin_resource_memory::{PLUGIN_ID, PROVIDER_ID};
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::RunnerContext;
-use mutsuki_runtime_sdk::{BuiltinPluginLoader, PluginLoader, ResourceProviderGateway};
 use serde_json::json;
 
 use crate::{NativeRunner, RuntimeBootstrapper, runner_manifest, runner_manifest_with_artifact};
@@ -58,37 +56,6 @@ pub(super) fn runtime_profile_with_deployment(
         .plugin_deployments
         .insert(plugin_id.into(), deployment);
     profile
-}
-
-pub(super) fn std_memory_profile() -> RuntimeProfile {
-    RuntimeProfile {
-        profile_id: "std-memory-provider".into(),
-        mode: RuntimeProfileMode::FullDev,
-        enabled_plugins: vec![PLUGIN_ID.into()],
-        bindings: BTreeMap::new(),
-        plugin_deployments: BTreeMap::new(),
-        allow_dynamic_registration: false,
-        allow_hot_reload: true,
-    }
-}
-
-pub(super) fn load_std_memory_plugin(host: &mut RuntimeBootstrapper) {
-    let mut loader =
-        BuiltinPluginLoader::new().with_plugin(Box::new(mutsuki_plugin_resource_memory::plugin()));
-    host.load_plugins(&mut loader).unwrap();
-}
-
-pub(super) fn std_memory_provider() -> std::sync::Arc<dyn ResourceProviderGateway> {
-    let mut loader =
-        BuiltinPluginLoader::new().with_plugin(Box::new(mutsuki_plugin_resource_memory::plugin()));
-    let mut plugins = PluginLoader::load_plugins(&mut loader).unwrap();
-    let plugin = plugins.pop().expect("std memory plugin should load");
-    plugin
-        .resource_providers
-        .into_iter()
-        .find(|provider| provider.provider_id == PROVIDER_ID)
-        .expect("std memory plugin should provide memory provider")
-        .provider
 }
 
 pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {

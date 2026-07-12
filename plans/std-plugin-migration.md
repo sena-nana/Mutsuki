@@ -3,7 +3,10 @@
 This document tracks runtime capabilities that must live in standard plugins
 instead of becoming permanent core behavior.
 
-## Migrated This Pass
+## Migrated
+
+All standard protocols and plugins now live in `MutsukiStdPlugins`. This repository contains no
+standard domain implementation and does not depend on that repository for its own tests.
 
 - The former `resource.local` provider surface is no longer used by core tests
   or load-plan fixtures.

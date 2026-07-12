@@ -10,15 +10,3 @@ mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-mutsuki-plugin-config-permission = { path = "../../plugins/mutsuki-plugin-config-permission" }
-mutsuki-plugin-db-sqlite = { path = "../../plugins/mutsuki-plugin-db-sqlite" }
-mutsuki-plugin-dev-mock = { path = "../../plugins/mutsuki-plugin-dev-mock" }
-mutsuki-plugin-io-fs = { path = "../../plugins/mutsuki-plugin-io-fs" }
-mutsuki-plugin-io-http-client = { path = "../../plugins/mutsuki-plugin-io-http-client" }
-mutsuki-plugin-observe-log = { path = "../../plugins/mutsuki-plugin-observe-log" }
-mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
-mutsuki-plugin-resource-shared-memory = { path = "../../plugins/mutsuki-plugin-resource-shared-memory" }
-mutsuki-plugin-workflow-broadcast = { path = "../../plugins/mutsuki-plugin-workflow-broadcast" }
-mutsuki-plugin-workflow-linear = { path = "../../plugins/mutsuki-plugin-workflow-linear" }

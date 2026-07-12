@@ -8,6 +8,7 @@ mod error;
 mod host;
 mod jsonl;
 mod manifest;
+mod process;
 mod resolver;
 mod resource_router;
 mod runtime_context;
@@ -26,6 +27,7 @@ pub use host::{HostRuntime, HostRuntimeConfig};
 pub use jsonl::JsonlRunner;
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
+pub use process::{ProcessRunnerSpec, SpawnedJsonlRunner};
 pub use resolver::resolve_load_plan;
 pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};
 
