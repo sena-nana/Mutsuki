@@ -1,20 +1,18 @@
-use std::sync::Mutex;
 use std::time::Duration;
 
 use bot_echo::{echo_manifest, echo_runner};
-use mutsuki_bot_protocol::{BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind, BotEventSubscription};
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
 use mutsuki_bot_testkit::FakeQqServer;
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID;
 use mutsuki_plugin_bot_event_router::BOT_EVENT_ROUTER_PLUGIN_ID;
-use mutsuki_service_config::{ConfiguredPluginSelection, IpcTransport, ServiceConfig};
+use mutsuki_service_config::{
+    ConfigOverrides, ConfiguredPluginSelection, IpcTransport, ServiceConfig,
+};
 use mutsuki_service_control::ControlMethod;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test]
 async fn configured_qqbot_requires_host_secret_during_service_preflight() {
@@ -36,39 +34,26 @@ async fn configured_qqbot_requires_host_secret_during_service_preflight() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
-    let _env = ENV_LOCK.lock().unwrap();
     let fake = FakeQqServer::start().await;
     let secret_key = format!("QQBOT_TEST_SECRET_{}", fake.websocket_addr().port());
-    let secret_env = format!("MUTSUKI_SECRET_{secret_key}");
-    unsafe { std::env::set_var(&secret_env, "TEST_CLIENT_SECRET") };
-
-    let (mut service, _home) = test_service_config().await;
+    let home = tempfile::tempdir().unwrap();
+    let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = probe.local_addr().unwrap();
+    drop(probe);
+    let qq = fake.config("integration", "TEST_APP_ID", &secret_key);
+    std::fs::write(
+        home.path().join("local.secret.toml"),
+        format!("[secrets]\n{secret_key} = \"TEST_CLIENT_SECRET\"\n"),
+    )
+    .unwrap();
+    let config_path = home.path().join("local.toml");
+    std::fs::write(&config_path, product_toml(home.path(), address, &qq)).unwrap();
+    let service = ServiceConfig::load(ConfigOverrides {
+        config_file: Some(config_path),
+        ..Default::default()
+    })
+    .unwrap();
     let control_config = service.clone();
-    let qq_config =
-        serde_json::to_value(fake.config("integration", "TEST_APP_ID", &secret_key)).unwrap();
-    service.plugins.configured = vec![
-        ConfiguredPluginSelection {
-            id: BOT_EVENT_ROUTER_PLUGIN_ID.into(),
-            enabled: true,
-            config: json!({"subscriptions": [BotEventSubscription {
-                subscription_id: "qqbot-message-to-command".into(),
-                handler_protocol_id: BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
-                handler_binding_id: None,
-                platform: Some("qqbot".into()),
-                event_kind: Some(BotEventKind::MessageCreated),
-            }]}),
-        },
-        ConfiguredPluginSelection {
-            id: BOT_COMMAND_PLUGIN_ID.into(),
-            enabled: true,
-            config: json!({"prefixes": ["/"]}),
-        },
-        ConfiguredPluginSelection {
-            id: QQBOT_ADAPTER_PLUGIN_ID.into(),
-            enabled: true,
-            config: qq_config,
-        },
-    ];
 
     let runtime = ServiceRuntimeBuilder::new(service)
         .with_configured_plugin_catalog(configured_bot_plugin_catalog().unwrap())
@@ -123,12 +108,84 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
         .await
         .unwrap();
     let snapshot = fake.shutdown().await;
-    unsafe { std::env::remove_var(&secret_env) };
     assert_eq!(snapshot.websocket_connections, 2);
     assert_eq!(snapshot.gateway_auth_frames[0]["op"], 2);
     assert_eq!(snapshot.gateway_auth_frames[1]["op"], 6);
     assert!(snapshot.account_checks >= 2);
     assert_eq!(snapshot.clean_closes, 1);
+}
+
+fn product_toml(
+    root: &std::path::Path,
+    ipc_addr: std::net::SocketAddr,
+    qq: &mutsuki_plugin_bot_adapter_qqbot::QqBotConfig,
+) -> String {
+    format!(
+        r#"[service]
+profile = "qqbot-fake"
+instance_id = "qqbot-fake"
+home_dir = "{}"
+data_dir = "data"
+log_dir = "logs"
+plugin_dir = "plugins"
+run_dir = "run"
+
+[ipc]
+enabled = true
+transport = "tcp-debug"
+name = "qqbot-fake"
+tcp_debug_addr = "{}"
+token = "test-token"
+
+[plugins]
+builtin = []
+dynamic_dirs = []
+disabled_dir = "disabled"
+
+[[plugins.configured]]
+id = "mutsuki.bot.router.event"
+[plugins.configured.config]
+subscriptions = [{{ subscription_id = "qq-command", handler_protocol_id = "mutsuki.bot.command/parse@1", platform = "qqbot", event_kind = "message_created" }}]
+
+[[plugins.configured]]
+id = "mutsuki.bot.command"
+[plugins.configured.config]
+prefixes = ["/"]
+
+[[plugins.configured]]
+id = "mutsuki.bot.adapter.qqbot"
+[plugins.configured.config]
+account_id = "{}"
+app_id = "{}"
+client_secret_key = "{}"
+token_url = "{}"
+openapi_base_url = "{}"
+allow_insecure_transport = true
+gateway_hello_timeout_ms = 1000
+gateway_ack_timeout_ms = 500
+retry_base_delay_ms = 0
+retry_max_delay_ms = 0
+reconnect_initial_delay_ms = 10
+reconnect_max_delay_ms = 20
+reconnect_jitter_ms = 0
+
+[security]
+secret_file = "local.secret.toml"
+
+[observe]
+console = false
+json = false
+log_file = "service.log"
+panic_file = "panic.log"
+"#,
+        root.to_string_lossy().replace('\\', "/"),
+        ipc_addr,
+        qq.account_id,
+        qq.app_id,
+        qq.client_secret_key,
+        qq.token_url,
+        qq.openapi_base_url,
+    )
 }
 
 fn configured_qq(secret_key: &str, overrides: Value) -> ConfiguredPluginSelection {
