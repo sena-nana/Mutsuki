@@ -142,23 +142,42 @@ impl QqBotPluginBundle {
 }
 
 struct SystemQqIdSource {
-    next: u64,
+    next: u16,
 }
 
 impl SystemQqIdSource {
     fn new() -> Self {
         let next = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
+            .map(|duration| duration.as_millis() as u16)
             .unwrap_or(1);
+        Self { next }
+    }
+
+    #[cfg(test)]
+    fn from_seed(next: u16) -> Self {
         Self { next }
     }
 }
 
 impl QqIdSource for SystemQqIdSource {
     fn next_msg_seq(&mut self) -> u64 {
-        let current = self.next;
-        self.next = self.next.saturating_add(1);
+        let current = u64::from(self.next);
+        self.next = self.next.wrapping_add(1);
         current
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_message_sequence_stays_within_qq_unsigned_16_bit_range() {
+        let mut source = SystemQqIdSource::from_seed(u16::MAX);
+
+        assert_eq!(source.next_msg_seq(), u64::from(u16::MAX));
+        assert_eq!(source.next_msg_seq(), 0);
+        assert_eq!(source.next_msg_seq(), 1);
     }
 }
