@@ -1,49 +1,35 @@
-# MutsukiBotPlugins Agents Guide
+# MutsukiBotPlugins 工作规范
 
-MutsukiBotPlugins is a Bot domain plugin collection. Keep it separate from Mutsuki Core and from application Hosts.
+本仓库拥有 Mutsuki Bot 领域协议、Rust SDK、通用事件/命令 Runner 和平台
+Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或产品装配。
 
-## Required Reading Order
+## 阅读顺序与技能路由
 
-Before changing behavior, read:
+先读 `README.md`、`docs/architecture.md`、`docs/protocol.md` 和相关 crate/test，再按方向读取：
 
-1. `README.md`
-2. `docs/architecture.md`
-3. `docs/protocol.md`
-4. The crate and tests you are touching
+- `skills/bot-protocol-sdk/SKILL.md`：`mutsuki.bot.*` DTO、协议和 SDK。
+- `skills/event-routing-command/SKILL.md`：事件路由、订阅、命令解析和 dispatch。
+- `skills/platform-adapters/SKILL.md`：QQBot 等平台 Adapter、Gateway 和 transport。
+- `skills/service-host-integration/SKILL.md`：bundle、manifest、EventSource 和 ServiceRuntime 装配。
+- `skills/bot-testing/SKILL.md`：batch Runner、fake transport、闭环和真实 smoke。
 
-For runtime boundary questions, also read NanoBot `plans/architecture.md`, `plans/engineering.md`, and `plans/contracts.md`.
+运行时边界同时读取 `../MutsukiCore/AGENTS.md`；Host 装配读取
+`../MutsukiServiceHost/AGENTS.md`。
 
 ## Hard Rules
 
-- Do not add `BotHost`, `QQBotHost`, or any host runtime here. Use `MutsukiServiceHost`, `MutsukiCliHost`, or `MutsukiTauriHost` from the host layer.
-- Do not put Bot protocols, QQBot APIs, command parsing, subscriptions, or business bot state into Mutsuki Core.
-- QQBot is only a platform Adapter. Business plugins must use `mutsuki.bot.*` by default.
-- Platform-specific behavior must stay under `mutsuki.bot.qqbot.*` or adapter internals.
-- Raw QQBot payloads and media bytes must travel as resource descriptors when they are large or long lived.
-- Do not pass sockets, SDK clients, database connections, Rust pointers, `Arc<T>`, or language objects across runtime boundaries.
-- Secrets belong to host/config services. Do not place real tokens in manifests, examples, fixtures, or tests.
-- Tests must verify behavior. Do not add tests that only hard-match logs, formatting, or placeholder strings.
+1. 业务插件默认只依赖 `mutsuki.bot.*`；平台字段和行为留在平台命名空间或 Adapter 内部。
+2. 不创建 BotHost/QQBotHost；常驻生命周期归 ServiceHost，桌面生命周期归 TauriHost。
+3. Runner 只走 batch-first `run_batch`，每个 entry 独立完成；task 提交、取消和 outcome 使用 `TaskHandle`。
+4. socket、HTTP client、SDK client、数据库连接和媒体字节不得跨 runtime 边界；大数据使用资源 descriptor。
+5. token/secret 由 Host key 引用和注入，不进入 manifest、示例、fixture、日志或提交配置。
+6. manifest、RunnerDescriptor、EventSource 和 LoadPlan capability 必须与真实实现一致；缺失时 fail loud。
+7. 禁止复制 Core/Host/Agent 实现、生产 fallback 或兼容 shim。
+8. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
 
-## Naming
+## 验证
 
-- Pure contracts: `Protocol`
-- Plugin author helpers: `SDK`
-- Replaceable behavior: `Plugin`
-- External platform translation: `Adapter`
-- Permission or side-effect exits: `Gateway`
-- Persistent state abstractions: `Store` or `Repository`
+Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。平台和装配改动补充
+外部边界 fake 或 smoke；最终报告实际命令、测试层级和远端 revision。
 
-## Verification
-
-For Rust changes in this repository, run:
-
-```powershell
-cargo fmt --check
-cargo test
-```
-
-If a change also modifies NanoBot runtime contracts/core/host/sdk, run the same commands in `C:\Files\workspace\NanoBot`.
-
-## Git
-
-Use short Chinese commit titles when committing. Check `git status --short` and targeted diffs before staging.
+提交前检查 `git status --short` 和定向 diff，提交标题使用中文短句。
