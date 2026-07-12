@@ -361,6 +361,11 @@ policy。active backend 引用的 bridge deployment 和 codec 支持关系必须
 启动前校验；host config 中配置的 scheduler policy 必须匹配 active scheduler descriptor。
 完整 backend instantiation supervision、连接 drain / replacement 仍是后续工作。
 
+ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动态库提供版本化的最小
+bytes transport：固定入口建立 connection，Host 与 guest 互相发送既有 JSONL request /
+response。`runner.run_batch`、management cancel/dispose、TaskClient 与 ResourcePlanClient
+继续使用同一 wire shape；平台动态库发现、校验、装载、drain 和卸载仍由具体 Host 负责。
+
 Resource Registry、ResourceId 分配、lease 基础规则和 owner 路由事实属于 Core /
 ResourceManager；`ResourceProvider`、typed store backend、export/query/patch/stream
 handler 可以替换。provider 热替换必须按 `ResourceProviderReloadPolicy` 与

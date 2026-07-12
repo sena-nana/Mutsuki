@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::CoreRuntime;
-use mutsuki_runtime_sdk::{BuiltinPluginLoader, PluginBuilder};
+use mutsuki_runtime_sdk::{BuiltinPluginLoader, LoadedPlugin, PluginBuilder};
 use serde_json::json;
 
 use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
@@ -151,6 +151,29 @@ fn abi_plugin_boots_through_registered_abi_runner_bridge() {
         reader,
         writer,
     )));
+
+    let runtime = host.into_runtime(runtime_profile_with_deployment(
+        "plugin-abi",
+        PluginDeploymentKind::Abi,
+    ));
+
+    assert!(runtime.is_ok());
+}
+
+#[test]
+fn loaded_abi_plugin_keeps_abi_runner_deployment() {
+    let (manifest, runner_descriptor) = abi_plugin_fixture();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(LoadedPlugin {
+        manifest,
+        runners: vec![Box::new(JsonlRunner::new(
+            runner_descriptor,
+            Cursor::new(Vec::<u8>::new()),
+            Cursor::new(Vec::<u8>::new()),
+        ))],
+        host_services: Vec::new(),
+        resource_providers: Vec::new(),
+    });
 
     let runtime = host.into_runtime(runtime_profile_with_deployment(
         "plugin-abi",

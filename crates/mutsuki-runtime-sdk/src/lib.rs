@@ -17,6 +17,7 @@ use mutsuki_runtime_core::{CoreRuntime, Runner, RunnerContext};
 use serde::Serialize;
 use serde_json::Value;
 
+pub mod abi;
 mod backend;
 mod batch;
 mod descriptor;
@@ -24,6 +25,10 @@ mod host;
 mod plugin;
 mod resource;
 
+pub use abi::{
+    ABI_BRIDGE_ID, ABI_CODEC_ID, ABI_ENTRY_SYMBOL, ABI_TRANSPORT_VERSION, AbiBuffer, AbiCallResult,
+    AbiGuest, AbiHostClient, AbiHostV1, AbiPluginV1, JsonlPluginGuest,
+};
 pub use backend::{ResourcePlanGateway, ResourceProviderGateway};
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{

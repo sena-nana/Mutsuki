@@ -444,6 +444,9 @@ Host 执行面必须把部署形态限制在后端实现中：
   provider 缺少实例必须结构化失败，不能静默退回 core 兼容 store。
 - ABI 插件通过 `AbiTaskClient`、`AbiResourceClient` 将同一 `Task` / resource plan
   wire shape 编码到 bridge。
+- ABI 动态库入口只承载版本化 connection 与 UTF-8 JSONL bytes request/response；guest-side
+  shim 必须把这些 bytes 映射回上述既有 batch-first runner/task/resource 方法，禁止再定义
+  一套按语言对象、Rust trait 或 native pointer 展开的插件 ABI。
 - 两条路径不得向插件业务代码暴露 `Arc<T>`、`&T`、`&mut T`、`downcast` 或
   `with_native_*` 之类 builtin-only 能力。
 - `ReadPlan` 的 collect / snapshot / stream open、`WritePlan` 的 commit，以及

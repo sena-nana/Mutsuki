@@ -151,9 +151,11 @@ impl RuntimeBootstrapper {
             host_services,
             resource_providers,
         } = plugin;
+        let deployment_kind =
+            PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type);
         self.register_manifest(manifest);
         for runner in runners {
-            self.register_builtin_runner(runner);
+            self.register_external_runner(deployment_kind.clone(), runner);
         }
         self.host_services.extend(host_services);
         for resource_provider in resource_providers {
