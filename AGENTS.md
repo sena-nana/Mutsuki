@@ -23,6 +23,16 @@ plugin、runner 或 sidecar 组合实现。
 
 没有契约位置或设计文档归属的新机制，先更新 plans / contracts，再写实现。
 
+## 技能路由
+
+- `skills/contracts/SKILL.md`：公共 DTO、协议 ID、错误码和序列化契约。
+- `skills/runtime-kernel/SKILL.md`：TaskPool、batch-first Runner、Executor 和 ResultRouter。
+- `skills/resource-state-effects/SKILL.md`：ResourceRef、lease、StateStore、event 和 effect。
+- `skills/load-plan-reload/SKILL.md`：manifest、RuntimeLoadPlan、generation 和热重载。
+- `skills/sdk-runner-host/SKILL.md`：Rust SDK、宏、native/JSONL runner host helper。
+
+跨多个方向时先读 contracts，再读具体实现技能。
+
 ## Hard Rules
 
 1. **Task 是一等运行事实**：所有待处理控制消息进入 `TaskPool`；不得引入实例私有队列或多队列调度形态作为核心事实源。
@@ -37,6 +47,7 @@ plugin、runner 或 sidecar 组合实现。
 10. **热重载不原地替换**：新插件 generation 通过 Identical/Additive/Deprecated/Removed/Breaking surface 比较进入；Deprecated 禁止新增占用，Removed 必须 zero occupancy，Breaking 必须 migration/drain/restart。
 11. **决定性时间与 ID 由 runtime / host 注入**：core 不直接调用全局时间、UUID 或 random 源；资源租约 token 由注入式 ID source 生成。
 12. **结构化错误**：fallback 必须显式记录原因；禁止吞异常返回默认值。
+13. **仓库必须可独立解析**：禁止指向仓库外的 Cargo `path` 或本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
 
 ## 工作规程
 
