@@ -23,6 +23,8 @@
 - 前端只能通过协议和 capability 调用 Core，不能直接获得 Core handle 或真实文件/进程/secret handle。
 - ResourceRef 是跨边界 descriptor；大文本、图片、音视频、模型文件不得 base64 塞进 Tauri invoke payload。
 - 审批、插件、runner、资源和 dev command 必须真实接入后端；禁止 UI 或 API 看起来可用但未接线。
+- Core、StdPlugins、AgentKit、BotPlugins 和 Runner Kit 能力必须由 owner 仓库实现；缺失时先补齐上游并报告 unavailable，不复制实现或添加生产 fallback/shim。
+- 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`，并在独立 checkout 验证。
 - 修复问题必须定位根因并在正确层级修正，禁止绕症状打补丁。
 - 新测试必须验证功能行为；无功能变动不添加低价值测试，不硬匹配日志或字符串。
 
