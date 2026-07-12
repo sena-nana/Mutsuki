@@ -41,11 +41,14 @@ All native runners implement the current MutsukiCore `Runner::run_batch` contrac
 
 ## QQBot Production Bundle
 
-`QqBotPluginBundle` assembles the QQBot manifest, batch runners and the
-ServiceHost-managed Gateway EventSource. The production HTTP transport uses
+`mutsuki-bot-service-host-integration::QqBotPluginBundle` assembles the QQBot manifest,
+batch runners and the ServiceHost-managed Gateway EventSource. The adapter crate itself has no
+ServiceHost dependency. The production HTTP transport uses
 `reqwest` with the Rustls TLS backend; Gateway WebSocket uses
 `tokio-tungstenite` with Rustls webpki roots. Product code installs the bundle
 into `ServiceRuntimeBuilder`; it does not create a Bot-specific Host.
+Construction requires an explicit media provider factory; no unavailable production fallback is
+registered.
 At source startup and reconnect, the adapter validates the configured account
 through `/users/@me`, obtains `/gateway/bot`, and lets Gateway reject invalid or
 disallowed intent/shard configurations as permanent structured failures.

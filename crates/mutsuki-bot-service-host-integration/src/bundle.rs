@@ -5,13 +5,13 @@ use mutsuki_runtime_contracts::PluginManifest;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
-use crate::api::{
-    MediaChunk, QqAuthManager, QqBotClients, QqIdSource, QqMediaError, QqMediaProvider,
-    QqOpenApiError, ReqwestQqHttpClient, SharedQqCredentials,
+use mutsuki_plugin_bot_adapter_qqbot::{
+    QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqIdSource, QqMediaProvider,
+    QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient, SharedQqCredentials,
+    qqbot_adapter_manifest,
 };
-use crate::config::QqBotConfig;
-use crate::gateway::{QqGatewayEventSource, QqGatewayHealthHandle};
-use crate::tasks::{QqGatewayMapRunner, QqOpenApiRunner, qqbot_adapter_manifest};
+
+use crate::event_source::{QqGatewayEventSource, QqGatewayHealthHandle};
 
 type MediaFactory = Arc<dyn Fn() -> Box<dyn QqMediaProvider> + Send + Sync>;
 type IdFactory = Arc<dyn Fn() -> Box<dyn QqIdSource> + Send + Sync>;
@@ -33,7 +33,10 @@ pub struct QqBotPluginBundle {
 }
 
 impl QqBotPluginBundle {
-    pub fn new(config: QqBotConfig) -> Result<Self, QqOpenApiError> {
+    pub fn new<F>(config: QqBotConfig, media_factory: F) -> Result<Self, QqOpenApiError>
+    where
+        F: Fn() -> Box<dyn QqMediaProvider> + Send + Sync + 'static,
+    {
         config
             .validate()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
@@ -49,17 +52,9 @@ impl QqBotPluginBundle {
             auth,
             health,
             event_source: Some(event_source),
-            media_factory: Arc::new(|| Box::new(UnavailableMediaProvider)),
+            media_factory: Arc::new(media_factory),
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
         })
-    }
-
-    pub fn with_media_factory<F>(mut self, factory: F) -> Self
-    where
-        F: Fn() -> Box<dyn QqMediaProvider> + Send + Sync + 'static,
-    {
-        self.media_factory = Arc::new(factory);
-        self
     }
 
     pub fn with_id_source_factory<F>(mut self, factory: F) -> Self
@@ -157,19 +152,5 @@ impl QqIdSource for SystemQqIdSource {
         let current = self.next;
         self.next = self.next.saturating_add(1);
         current
-    }
-}
-
-struct UnavailableMediaProvider;
-
-impl QqMediaProvider for UnavailableMediaProvider {
-    fn read_chunks(
-        &mut self,
-        resource_ref: &str,
-        _block_size: u64,
-    ) -> Result<Vec<MediaChunk>, QqMediaError> {
-        Err(QqMediaError::NotReadable(format!(
-            "{resource_ref}; install a Host-backed QqMediaProvider on the bundle"
-        )))
     }
 }

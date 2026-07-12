@@ -8,6 +8,7 @@ description: Change Bot plugin bundles, manifests, native runner factories, heal
 - Expose reusable bundle/install APIs; do not create a host process or own application lifecycle.
 - Register real manifests, runners, EventSources and health probes before ServiceRuntime freezes its plan.
 - Keep secrets as Host references and populate credentials only at the Host boundary.
+- Keep ServiceHost dependencies in the dedicated integration crate, never in platform adapter crates.
 - Ensure declared capabilities and deployment match installed implementations.
 - Return unavailable on missing upstream capability instead of registering placeholder health or runners.
 

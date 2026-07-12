@@ -123,7 +123,7 @@ pub enum QqConfigError {
     Invalid(String),
 }
 
-pub(crate) fn validate_gateway_url(url: &str, allow_insecure: bool) -> Result<Url, QqConfigError> {
+pub fn validate_gateway_url(url: &str, allow_insecure: bool) -> Result<Url, QqConfigError> {
     let parsed = Url::parse(url).map_err(|error| QqConfigError::Invalid(error.to_string()))?;
     let allowed = parsed.scheme() == "wss" || (allow_insecure && parsed.scheme() == "ws");
     if !allowed

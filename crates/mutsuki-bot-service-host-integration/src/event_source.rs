@@ -10,13 +10,11 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::api::{
-    HttpMethod, QqAuthManager, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient,
-    SharedQqCredentials,
+use mutsuki_plugin_bot_adapter_qqbot::{
+    GatewayAction, GatewayFrame, HttpMethod, QQBOT_ADAPTER_PLUGIN_ID, QqAuthManager, QqBotConfig,
+    QqGatewayPump, QqOpenApiError, QqOpenApiTransport, ReqwestQqHttpClient, SharedQqCredentials,
+    session_summary, validate_gateway_url,
 };
-use crate::config::{QqBotConfig, validate_gateway_url};
-use crate::gateway::{GatewayAction, GatewayFrame, QqGatewayPump, session_summary};
-use crate::tasks::QQBOT_ADAPTER_PLUGIN_ID;
 
 pub const QQBOT_GATEWAY_SOURCE_ID: &str = "mutsuki.bot.adapter.qqbot.gateway.source";
 
@@ -667,11 +665,15 @@ enum GatewayFailure {
 }
 
 fn recoverable_failure(error: impl std::fmt::Display) -> GatewayFailure {
-    GatewayFailure::Recoverable(crate::adapter::redact_urls(&error.to_string()))
+    GatewayFailure::Recoverable(mutsuki_plugin_bot_adapter_qqbot::adapter::redact_urls(
+        &error.to_string(),
+    ))
 }
 
 fn fatal_failure(error: impl std::fmt::Display) -> GatewayFailure {
-    GatewayFailure::Fatal(crate::adapter::redact_urls(&error.to_string()))
+    GatewayFailure::Fatal(mutsuki_plugin_bot_adapter_qqbot::adapter::redact_urls(
+        &error.to_string(),
+    ))
 }
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
@@ -722,7 +724,7 @@ fn source_error(
 
 #[cfg(test)]
 mod tests {
-    use crate::api::QqCredentialProvider;
+    use mutsuki_plugin_bot_adapter_qqbot::QqCredentialProvider;
 
     use super::*;
 

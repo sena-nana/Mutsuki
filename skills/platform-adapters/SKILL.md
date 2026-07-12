@@ -8,7 +8,8 @@ description: Implement or change QQBot or other platform gateway connections, au
 - Translate platform events into generic Bot protocols and generic operations back into platform requests.
 - Keep platform-only fields under the platform namespace or adapter internals.
 - Obtain credentials from Host secret injection; redact tokens and platform-sensitive payloads.
-- Keep transport clients and sockets inside EventSource/Gateway objects; use ResourceRef for large media.
+- Keep transport clients and sockets inside Gateway objects; wrap them as Host EventSources only in the integration crate. Use ResourceRef for large media.
+- Require explicit media/resource providers; never install an unavailable production fallback.
 - Report disconnect, auth, rate-limit and unsupported operation failures structurally.
 
 Test translation, reconnect, heartbeat, retry/rate limit, media and redaction with external-boundary fakes.

@@ -15,7 +15,8 @@ QQBot Gateway
 
 Core still sees only tasks, runner descriptors, results, events, resource refs, and effect requests. It does not know Bot, QQBot, commands, sessions, or permissions.
 
-`QqBotPluginBundle` is the QQBot product assembly unit. It registers the adapter
+`QqBotPluginBundle` lives in `mutsuki-bot-service-host-integration`, the explicit bridge between
+the platform adapter and ServiceHost. It registers the adapter
 manifest and recreatable native batch runners with `ServiceRuntimeBuilder`, and
 registers `QqGatewayEventSource` as a Host-managed long-lived source. The source
 receives its client secret through `HostEventSourceConfig::secret` and can enter
@@ -32,6 +33,7 @@ reconnect and last-error snapshot through the standard health control surface.
 - `mutsuki-plugin-bot-event-router`: event subscription and dispatch.
 - `mutsuki-plugin-bot-command`: generic command parsing.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
+- `mutsuki-bot-service-host-integration`: EventSource, health and ServiceRuntime assembly only.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.
 
 ## Deferred Plugins

@@ -6,11 +6,12 @@ use std::time::Duration;
 use bot_echo::{echo_manifest, echo_runner};
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_protocol::{BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind, BotEventSubscription};
-use mutsuki_plugin_bot_adapter_qqbot::{QqBotConfig, QqBotPluginBundle};
+use mutsuki_bot_service_host_integration::QqBotPluginBundle;
+use mutsuki_plugin_bot_adapter_qqbot::{MediaChunk, QqBotConfig, QqMediaError, QqMediaProvider};
 use mutsuki_plugin_bot_command::{BotCommandRunner, bot_command_manifest};
 use mutsuki_plugin_bot_event_router::{BotEventRouterRunner, bot_event_router_manifest};
 use mutsuki_service_config::{IpcTransport, ServiceConfig};
-use mutsuki_service_control::{ControlMethod, ControlRequest};
+use mutsuki_service_control::ControlMethod;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,12 +21,24 @@ use tokio_tungstenite::tungstenite::Message;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+struct NoopMediaProvider;
+
+impl QqMediaProvider for NoopMediaProvider {
+    fn read_chunks(
+        &mut self,
+        _resource_ref: &str,
+        _block_size: u64,
+    ) -> Result<Vec<MediaChunk>, QqMediaError> {
+        Ok(Vec::new())
+    }
+}
+
 #[tokio::test]
 async fn qqbot_bundle_requires_host_secret_during_service_preflight() {
     let secret_key = format!("MISSING_QQBOT_SECRET_{}", std::process::id());
     let mut qqbot_config = QqBotConfig::new("preflight", "TEST_APP_ID");
     qqbot_config.client_secret_key = secret_key.clone();
-    let bundle = QqBotPluginBundle::new(qqbot_config).unwrap();
+    let bundle = QqBotPluginBundle::new(qqbot_config, || Box::new(NoopMediaProvider)).unwrap();
     let builder = bundle
         .install(ServiceRuntimeBuilder::new(ServiceConfig::default()))
         .unwrap();
@@ -145,7 +158,7 @@ async fn real_service_runtime_runs_gateway_resume_echo_and_clean_shutdown() {
         })
         .register_builtin_runner(|| Box::new(BotCommandRunner::new(1, vec!["/".into()])))
         .register_builtin_runner(|| echo_runner(1));
-    let bundle = QqBotPluginBundle::new(qqbot_config).unwrap();
+    let bundle = QqBotPluginBundle::new(qqbot_config, || Box::new(NoopMediaProvider)).unwrap();
     let health = bundle.health_handle();
     let builder = bundle.install(builder).unwrap();
 
@@ -305,16 +318,8 @@ fn assert_logs_do_not_contain_secrets(log_dir: &std::path::Path) {
 }
 
 async fn control(config: &ServiceConfig, method: ControlMethod) -> Value {
-    let response = mutsuki_service_ipc::request(
-        config,
-        ControlRequest {
-            token: "test-token".into(),
-            method,
-            params: Value::Null,
-        },
-    )
-    .await
-    .unwrap();
+    let client = mutsuki_service_ipc::ControlClient::new(config.into());
+    let response = client.request(method, Value::Null).await.unwrap();
     assert!(response.ok, "control error: {:?}", response.error);
     response.result.unwrap_or(Value::Null)
 }
