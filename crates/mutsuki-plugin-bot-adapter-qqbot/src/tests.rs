@@ -626,6 +626,27 @@ fn auth_uses_wall_clock_expiry_and_refreshes_after_real_seconds() {
 }
 
 #[test]
+fn auth_accepts_numeric_expires_in() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut client = FakeHttpClient {
+        requests,
+        responses: Mutex::new(VecDeque::from([ok_response(json!({
+            "access_token": "TOKEN_A",
+            "expires_in": 7200
+        }))])),
+    };
+    let config = QqBotConfig::new("main", "APP_ID");
+    let credentials = StaticQqCredentials::new("CLIENT_SECRET");
+
+    assert_eq!(
+        QqAuthManager::new()
+            .bearer_token_at(&config, &credentials, &mut client, 1_000)
+            .unwrap(),
+        "TOKEN_A"
+    );
+}
+
+#[test]
 fn transport_retries_429_and_5xx_with_bounded_attempts() {
     for status in [429, 503] {
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -909,7 +930,7 @@ fn openapi_runner_with_shared(
 }
 
 fn token_response(token: &str) -> Result<QqHttpResponse, QqOpenApiError> {
-    ok_response(json!({"access_token": token, "expires_in": 7200}))
+    ok_response(json!({"access_token": token, "expires_in": "7200"}))
 }
 
 fn ok_response(body: Value) -> Result<QqHttpResponse, QqOpenApiError> {

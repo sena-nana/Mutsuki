@@ -234,7 +234,7 @@ impl QqAuthManager {
         let expires_in = response
             .body
             .get("expires_in")
-            .and_then(Value::as_u64)
+            .and_then(json_u64)
             .ok_or_else(|| QqOpenApiError::InvalidResponse("expires_in".into()))?;
         *self.token.lock().expect("QQBot auth mutex") = Some(AccessToken {
             token: token.clone(),
@@ -242,6 +242,12 @@ impl QqAuthManager {
         });
         Ok(token)
     }
+}
+
+fn json_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str()?.trim().parse().ok())
 }
 
 /// Production HTTP client. Requests are executed by async reqwest on a dedicated
