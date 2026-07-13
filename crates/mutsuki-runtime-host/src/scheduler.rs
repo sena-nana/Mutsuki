@@ -8,7 +8,6 @@ pub struct RunnerLimits {
     pub max_running: usize,
     pub max_waiting: usize,
     pub max_inflight: usize,
-    pub queue_limit: usize,
     pub deadline_ticks: Option<u64>,
     pub wall_clock_deadline: Option<Duration>,
 }
@@ -19,7 +18,6 @@ impl Default for RunnerLimits {
             max_running: 1,
             max_waiting: 64,
             max_inflight: 64,
-            queue_limit: 1024,
             deadline_ticks: None,
             wall_clock_deadline: None,
         }
@@ -146,13 +144,60 @@ fn hard_dispatch_capacity(
             0
         };
     }
+    standard_dispatch_capacity(load, limits, pool_slots)
+}
+
+fn standard_dispatch_capacity(
+    load: &RunnerLoad,
+    limits: &RunnerLimits,
+    pool_slots: usize,
+) -> usize {
     if load.waiting_count >= limits.max_waiting {
         return 0;
     }
+    let inflight = load.running_count.saturating_add(load.waiting_count);
     limits
         .max_running
         .saturating_sub(load.running_count)
-        .min(limits.max_inflight.saturating_sub(load.pending_weight))
-        .min(limits.queue_limit.saturating_sub(load.queued_count))
+        .min(limits.max_inflight.saturating_sub(inflight))
         .min(pool_slots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_backlog_does_not_consume_inflight_capacity() {
+        let load = RunnerLoad {
+            running_count: 0,
+            waiting_count: 0,
+            queued_count: 1_024,
+            pending_weight: 1_024,
+        };
+        let limits = RunnerLimits {
+            max_running: 4,
+            max_inflight: 4,
+            ..RunnerLimits::default()
+        };
+
+        assert_eq!(standard_dispatch_capacity(&load, &limits, 1_024), 4);
+    }
+
+    #[test]
+    fn running_and_waiting_consume_inflight_capacity() {
+        let load = RunnerLoad {
+            running_count: 1,
+            waiting_count: 1,
+            queued_count: 1,
+            pending_weight: 3,
+        };
+        let limits = RunnerLimits {
+            max_running: 4,
+            max_inflight: 2,
+            ..RunnerLimits::default()
+        };
+
+        assert_eq!(standard_dispatch_capacity(&load, &limits, 4), 0);
+    }
 }

@@ -135,6 +135,10 @@ batch size、max entry concurrency 和 max inflight bytes。Core 构造 WorkReso
 给出 parallel_groups、serial_groups 和 parallelism_limit；Host / SDK scalar adapter 只能
 在 scheduler budget、HostCapacity、runner capability 和 resource plan 都允许时有界并行。
 
+Host runner limit 中，`max_inflight` 只统计 Running 与 Waiting entry；Ready backlog 是
+TaskPool 中等待 claim 的供给，不占用 inflight，也不能反向阻止自身出队。Host 的
+`pool_queue_limit` 只限制物理 worker dispatch 队列，不限制 TaskPool Ready backlog。
+
 长期如果 scheduler provider / plugin 化，关系仍保持：
 
 ```text

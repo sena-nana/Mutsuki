@@ -100,6 +100,90 @@ fn custom_scheduler_can_leave_ready_task_undispatched() {
 }
 
 #[test]
+fn default_scheduler_dispatches_single_task_at_inflight_limit() {
+    let mut config = crate::HostRuntimeConfig::default();
+    config.default_runner_limits = crate::RunnerLimits {
+        max_running: 1,
+        max_inflight: 1,
+        ..crate::RunnerLimits::default()
+    };
+    let runtime = host_with_echo_runner()
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "single-at-limit",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    let reply = runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+
+    let HostRuntimeReply::Idle(report) = reply else {
+        panic!("expected idle reply");
+    };
+    assert_eq!(report.claimed_tasks, 1);
+    assert_eq!(
+        runtime.task_status("single-at-limit"),
+        Some(TaskStatus::Completed)
+    );
+}
+
+#[test]
+fn default_scheduler_claims_full_batch_and_drains_ready_backlog() {
+    let mut runner_descriptor = descriptor("batch.runner", "batch.work");
+    runner_descriptor.batch.preferred_batch_size = 4;
+    runner_descriptor.batch.max_batch_entries = 4;
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, task| Ok(RunnerResult::completed(task.task_id)),
+    )));
+    let config = crate::HostRuntimeConfig {
+        default_runner_limits: crate::RunnerLimits {
+            max_running: 4,
+            max_inflight: 4,
+            ..crate::RunnerLimits::default()
+        },
+        ..crate::HostRuntimeConfig::default()
+    };
+    let runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+    let tasks = (1..=5)
+        .map(|index| Task::new(format!("batch-{index}"), "batch.work", json!({})))
+        .collect::<Vec<_>>();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitBatch(Box::new(TaskBatch {
+            batch_id: "ready-backlog".into(),
+            tick_id: None,
+            tasks,
+            resource_plan: None,
+        })))
+        .unwrap();
+    let first_tick = runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    let HostRuntimeReply::Tick(first_report) = first_tick else {
+        panic!("expected tick reply");
+    };
+    assert_eq!(first_report.claimed_tasks, 4);
+
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 8 })
+        .unwrap();
+    for index in 1..=5 {
+        assert_eq!(
+            runtime.task_status(&format!("batch-{index}")),
+            Some(TaskStatus::Completed)
+        );
+    }
+}
+
+#[test]
 fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
     let runner_descriptor = descriptor("slow.runner", "slow.work");
     let (release_tx, release_rx) = mpsc::channel::<()>();

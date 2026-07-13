@@ -78,6 +78,8 @@ cargo test
   线程执行，CoreActor 不能直接执行插件 handler。
 - `RunnerDescriptor.execution_class` 只用于 host 选择执行池，不改变 core 调度语义。
 - Waiting task 释放 worker / lease，但继续占 runner 逻辑 inflight 配额。
+- Runner inflight 只包含 Running 与 Waiting；Ready task 保留在 TaskPool backlog 中，
+  不占用 inflight。Host `pool_queue_limit` 仅约束物理 worker dispatch 队列。
 - HostRuntime cancel 先更新 Core task 状态，再通过 `Runner.cancel` 管理面投递。
   tick deadline 保持确定性取消语义；host-only wall-clock deadline、取消宽限和
   worker health timeout 可把卡死 native worker 隔离并补 replacement worker。迟到
