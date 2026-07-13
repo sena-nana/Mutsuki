@@ -3,9 +3,9 @@ use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
 use mutsuki_runtime_contracts::{
-    RuntimeEvent, RuntimeEventKind, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
+    RuntimeEvent, RuntimeEventKind, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
 };
-use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply};
+use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
     FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,
@@ -15,7 +15,7 @@ use mutsuki_tauri_bridge::{
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -43,20 +43,22 @@ struct TaskSupervisor {
 struct TaskSupervisorState {
     active: BTreeMap<String, TaskHandle>,
     events_by_task: BTreeMap<String, Vec<RuntimeEvent>>,
-    results: BTreeMap<String, FrontendTaskResult>,
-    errors: BTreeMap<String, String>,
+    terminal_results: BTreeMap<String, Result<FrontendTaskResult, String>>,
+    terminal_order: VecDeque<String>,
     last_runtime_event_sequence: u64,
     last_trace_span_index: usize,
     pump_running: bool,
 }
 
 impl TaskSupervisor {
+    const MAX_RETAINED_RESULTS: usize = 256;
+
     fn track(&self, handle: TaskHandle) {
         let mut state = self.state.lock();
         let task_id = handle.task_id.clone();
         state.active.insert(task_id.clone(), handle);
-        state.errors.remove(&task_id);
-        state.results.remove(&task_id);
+        state.terminal_results.remove(&task_id);
+        state.terminal_order.retain(|retained| retained != &task_id);
         state.events_by_task.remove(&task_id);
     }
 
@@ -67,11 +69,10 @@ impl TaskSupervisor {
     fn wait_result(&self, task_id: &str) -> HostResult<FrontendTaskResult> {
         let mut state = self.state.lock();
         loop {
-            if let Some(result) = state.results.get(task_id) {
-                return Ok(result.clone());
-            }
-            if let Some(error) = state.errors.remove(task_id) {
-                return Err(HostError::Runtime(error));
+            if let Some(result) = state.terminal_results.remove(task_id) {
+                state.terminal_order.retain(|retained| retained != task_id);
+                state.events_by_task.remove(task_id);
+                return result.map_err(HostError::Runtime);
             }
             if !state.active.contains_key(task_id) {
                 return Err(HostError::Runtime(format!(
@@ -157,14 +158,10 @@ impl TaskSupervisor {
                 task_id: task_id.clone(),
                 status,
                 outcome,
-                events: state
-                    .events_by_task
-                    .get(&task_id)
-                    .cloned()
-                    .unwrap_or_default(),
+                events: state.events_by_task.remove(&task_id).unwrap_or_default(),
             };
             state.active.remove(&task_id);
-            state.results.insert(task_id, result);
+            Self::retain_terminal(&mut state, task_id, Ok(result));
             completed = true;
         }
         if completed {
@@ -177,9 +174,25 @@ impl TaskSupervisor {
         state.pump_running = false;
         let active = std::mem::take(&mut state.active);
         for task_id in active.into_keys() {
-            state.errors.insert(task_id, message.clone());
+            state.events_by_task.remove(&task_id);
+            Self::retain_terminal(&mut state, task_id, Err(message.clone()));
         }
         self.changed.notify_all();
+    }
+
+    fn retain_terminal(
+        state: &mut TaskSupervisorState,
+        task_id: String,
+        result: Result<FrontendTaskResult, String>,
+    ) {
+        state.terminal_results.insert(task_id.clone(), result);
+        state.terminal_order.push_back(task_id);
+        while state.terminal_order.len() > Self::MAX_RETAINED_RESULTS {
+            if let Some(evicted) = state.terminal_order.pop_front() {
+                state.terminal_results.remove(&evicted);
+                state.events_by_task.remove(&evicted);
+            }
+        }
     }
 }
 
@@ -333,13 +346,41 @@ impl MutsukiTauriHost {
     }
 
     pub fn start_task(&self, request: FrontendTaskRequest) -> HostResult<FrontendTaskRun> {
-        let task = request.into_task();
+        let handle = self.submit_task(request.into_task())?;
+        Ok(FrontendTaskRun {
+            task_id: handle.task_id,
+        })
+    }
 
-        let runtime = self.runtime.lock();
-        let submitted = runtime.dispatch(HostRuntimeCommand::SubmitTask(Box::new(task)));
-        drop(runtime);
+    pub fn submit_task(&self, task: Task) -> HostResult<TaskHandle> {
+        let submitted = self.dispatch_submission(HostRuntimeCommand::SubmitTask(Box::new(task)))?;
+        let handle = match submitted {
+            HostRuntimeReply::TaskSubmitted(handle) => handle,
+            _ => return Err(HostError::Runtime("unexpected submit reply".into())),
+        };
+        self.track_submitted(std::slice::from_ref(&handle))?;
+        Ok(handle)
+    }
 
-        let submitted = match submitted {
+    pub fn submit_batch(&self, batch: TaskBatch) -> HostResult<Vec<TaskHandle>> {
+        let submitted =
+            self.dispatch_submission(HostRuntimeCommand::SubmitBatch(Box::new(batch)))?;
+        let handles = match submitted {
+            HostRuntimeReply::TaskBatchSubmitted(handles) => handles,
+            _ => return Err(HostError::Runtime("unexpected submit batch reply".into())),
+        };
+        self.track_submitted(&handles)?;
+        Ok(handles)
+    }
+
+    pub fn task_snapshots(&self) -> HostResult<Vec<HostTaskSnapshot>> {
+        self.runtime.lock().task_snapshots().map_err(Into::into)
+    }
+
+    fn dispatch_submission(&self, command: HostRuntimeCommand) -> HostResult<HostRuntimeReply> {
+        let submitted = self.runtime.lock().dispatch(command);
+
+        let reply = match submitted {
             Ok(reply) => reply,
             Err(error) => {
                 self.emit_runtime_error_log(
@@ -350,18 +391,16 @@ impl MutsukiTauriHost {
                 return Err(error.into());
             }
         };
-        let handle = match submitted {
-            HostRuntimeReply::TaskSubmitted(handle) => handle,
-            _ => {
-                return Err(HostError::Runtime("unexpected submit reply".into()));
-            }
-        };
-        let task_id = handle.task_id.clone();
-        self.tasks.track(handle);
+        Ok(reply)
+    }
 
-        self.drain_observability()?;
+    fn track_submitted(&self, handles: &[TaskHandle]) -> HostResult<()> {
+        for handle in handles {
+            self.tasks.track(handle.clone());
+        }
+        let observed = self.drain_observability();
         self.ensure_task_pump();
-        Ok(FrontendTaskRun { task_id })
+        observed
     }
 
     pub fn task_result(&self, request: TaskResultRequest) -> HostResult<FrontendTaskResult> {
@@ -372,6 +411,10 @@ impl MutsukiTauriHost {
         let handle = self.tasks.handle_for(&request.task_id).ok_or_else(|| {
             HostError::Runtime(format!("task is not tracked: {}", request.task_id))
         })?;
+        self.cancel_task_handle(handle).map(|handle| handle.task_id)
+    }
+
+    pub fn cancel_task_handle(&self, handle: TaskHandle) -> HostResult<TaskHandle> {
         let runtime = self.runtime.lock();
         let reply = runtime.dispatch(HostRuntimeCommand::CancelTask(handle));
         drop(runtime);
@@ -388,9 +431,9 @@ impl MutsukiTauriHost {
         };
         match reply {
             HostRuntimeReply::TaskCancelled(handle) => {
-                self.drain_observability()?;
+                let observed = self.drain_observability();
                 self.ensure_task_pump();
-                Ok(handle.task_id)
+                observed.map(|_| handle)
             }
             _ => Err(HostError::Runtime("unexpected cancel reply".into())),
         }
@@ -737,4 +780,75 @@ fn current_timestamp_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod supervisor_tests {
+    use super::TaskSupervisor;
+    use mutsuki_runtime_contracts::{CancelPolicy, TaskHandle, TaskOutcome, TaskStatus};
+
+    #[test]
+    fn unread_terminal_results_are_bounded() {
+        let supervisor = TaskSupervisor::default();
+        let handles = (0..=TaskSupervisor::MAX_RETAINED_RESULTS)
+            .map(|index| TaskHandle {
+                task_id: format!("task:retained:{index:03}"),
+                protocol_id: "test.retention".into(),
+                target_binding_id: None,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: None,
+                correlation_id: None,
+            })
+            .collect::<Vec<_>>();
+        for handle in &handles {
+            supervisor.track(handle.clone());
+        }
+        supervisor.finish_tasks(
+            handles
+                .iter()
+                .map(|handle| {
+                    (
+                        handle.task_id.clone(),
+                        Some(TaskStatus::Completed),
+                        Some(TaskOutcome::Completed {
+                            task_id: handle.task_id.clone(),
+                            output_ref: None,
+                        }),
+                    )
+                })
+                .collect(),
+        );
+        assert_eq!(
+            supervisor.state.lock().terminal_results.len(),
+            TaskSupervisor::MAX_RETAINED_RESULTS
+        );
+
+        assert!(
+            supervisor
+                .wait_result(&handles.last().expect("newest handle").task_id)
+                .is_ok()
+        );
+        assert!(
+            supervisor
+                .wait_result(&handles.first().expect("oldest handle").task_id)
+                .is_err()
+        );
+
+        let failed = TaskSupervisor::default();
+        for handle in &handles {
+            failed.track(handle.clone());
+        }
+        failed.fail_active("pump failed".into());
+        let state = failed.state.lock();
+        assert_eq!(
+            state.terminal_results.len(),
+            TaskSupervisor::MAX_RETAINED_RESULTS
+        );
+        assert!(!state.terminal_results.contains_key(&handles[0].task_id));
+        assert!(
+            state
+                .terminal_results
+                .contains_key(&handles.last().expect("newest handle").task_id)
+        );
+    }
 }

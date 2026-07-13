@@ -15,6 +15,14 @@ pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 pub fn init_with_host<R: Runtime>(
     builder: MutsukiTauriHostBuilder,
 ) -> tauri::plugin::TauriPlugin<R> {
+    init_with_app(move |_| Ok(builder))
+}
+
+pub fn init_with_app<R, F>(factory: F) -> tauri::plugin::TauriPlugin<R>
+where
+    R: Runtime,
+    F: FnOnce(&AppHandle<R>) -> Result<MutsukiTauriHostBuilder, String> + Send + 'static,
+{
     tauri::plugin::Builder::new("mutsuki")
         .invoke_handler(tauri::generate_handler![
             mutsuki_call,
@@ -34,6 +42,7 @@ pub fn init_with_host<R: Runtime>(
             mutsuki_approval_pending,
         ])
         .setup(move |app, _api| {
+            let builder = factory(app.app_handle())?;
             let host = Arc::new(builder.build().map_err(|error| error.to_string())?);
             forward_events(app.app_handle().clone(), host.clone());
             app.manage(host);

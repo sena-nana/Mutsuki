@@ -4,17 +4,19 @@ use crate::echo::{ECHO_PROTOCOL_ID, EchoRunner};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, EntryCompletion, ExecutionClass, LifecyclePolicy,
     PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor,
-    RunnerPurity, RunnerResult, RuntimeEventKind, TaskOutcome, WorkBatch,
+    RunnerPurity, RunnerResult, RuntimeEventKind, Task, TaskBatch, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_host::{DefaultScheduler, HostRuntimeConfig, ScheduleInput, SchedulerPolicy};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
-    MutsukiFrontendEvent, TaskCancelRequest,
+    MutsukiFrontendEvent,
 };
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -85,6 +87,129 @@ fn explicit_echo_runner_still_runs_task() {
             .iter()
             .all(|event| event.name != "task.submit")
     );
+}
+
+#[test]
+fn native_task_and_batch_submission_use_the_supervised_runtime_path() {
+    let workspace = TestWorkspace::new("native-submission");
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+
+    let single = host
+        .submit_task(Task::new(
+            "task:native:single",
+            ECHO_PROTOCOL_ID,
+            json!({ "text": "single" }),
+        ))
+        .expect("native task submits");
+    let batch = host
+        .submit_batch(TaskBatch {
+            batch_id: "batch:native".into(),
+            tick_id: None,
+            tasks: vec![
+                Task::new(
+                    "task:native:batch:1",
+                    ECHO_PROTOCOL_ID,
+                    json!({ "text": "one" }),
+                ),
+                Task::new(
+                    "task:native:batch:2",
+                    ECHO_PROTOCOL_ID,
+                    json!({ "text": "two" }),
+                ),
+            ],
+            resource_plan: None,
+        })
+        .expect("native batch submits");
+
+    assert_eq!(batch.len(), 2);
+    let snapshots = host.task_snapshots().expect("task snapshots are readable");
+    assert!(
+        snapshots
+            .iter()
+            .any(|snapshot| snapshot.task_id == single.task_id)
+    );
+    for handle in std::iter::once(single).chain(batch) {
+        let result = host
+            .task_result(mutsuki_tauri_bridge::TaskResultRequest {
+                task_id: handle.task_id.clone(),
+            })
+            .expect("native task completes through supervisor");
+        assert!(matches!(
+            result.outcome,
+            Some(TaskOutcome::Completed { .. })
+        ));
+    }
+}
+
+#[test]
+fn configured_runtime_policy_is_used() {
+    let workspace = TestWorkspace::new("runtime-config");
+    let decisions = Arc::new(AtomicUsize::new(0));
+    let runtime_config = HostRuntimeConfig {
+        scheduler_policy: Arc::new(CountingScheduler(decisions.clone())),
+        ..HostRuntimeConfig::default()
+    };
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runtime_config(runtime_config)
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+
+    host.submit_task(Task::new(
+        "task:configured-runtime",
+        ECHO_PROTOCOL_ID,
+        json!({ "text": "configured" }),
+    ))
+    .and_then(|handle| {
+        host.task_result(mutsuki_tauri_bridge::TaskResultRequest {
+            task_id: handle.task_id,
+        })
+    })
+    .expect("configured runtime executes task");
+
+    assert!(decisions.load(Ordering::SeqCst) > 0);
+}
+
+#[derive(Debug)]
+struct CountingScheduler(Arc<AtomicUsize>);
+
+impl SchedulerPolicy for CountingScheduler {
+    fn decide(
+        &self,
+        input: &ScheduleInput<'_>,
+    ) -> RuntimeResult<mutsuki_runtime_core::ScheduleDecision> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        DefaultScheduler.decide(input)
+    }
+}
+
+#[test]
+fn completed_results_are_consumed_when_read() {
+    let workspace = TestWorkspace::new("result-consumption");
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+    let handle = host
+        .submit_task(Task::new(
+            "task:consumed-result",
+            ECHO_PROTOCOL_ID,
+            json!({ "text": "once" }),
+        ))
+        .expect("task submits");
+    let request = mutsuki_tauri_bridge::TaskResultRequest {
+        task_id: handle.task_id,
+    };
+
+    host.task_result(request.clone())
+        .expect("first result read succeeds");
+    assert!(host.task_result(request).is_err());
 }
 
 #[test]
@@ -684,32 +809,19 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
         .expect("host builds");
     let mut rx = host.event_hub().subscribe();
 
-    let run = host
-        .start_task(FrontendTaskRequest {
-            protocol_id: "stream.blocking".into(),
-            payload: json!({}),
-            task_id: Some("stream-cancel".into()),
-            trace_id: None,
-            correlation_id: None,
-            idempotency_key: None,
-            input_refs: Vec::new(),
-            priority: 0,
-            context: Default::default(),
-        })
+    let handle = host
+        .submit_task(Task::new("stream-cancel", "stream.blocking", json!({})))
         .expect("task starts");
 
-    assert_eq!(run.task_id, "stream-cancel");
+    assert_eq!(handle.task_id, "stream-cancel");
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("runner starts");
 
     let cancelled_task = host
-        .cancel_task(TaskCancelRequest {
-            task_id: "stream-cancel".into(),
-            reason: Some("test".into()),
-        })
+        .cancel_task_handle(handle)
         .expect("task cancels while runner is running");
-    assert_eq!(cancelled_task, "stream-cancel");
+    assert_eq!(cancelled_task.task_id, "stream-cancel");
 
     let result = host
         .task_result(mutsuki_tauri_bridge::TaskResultRequest {

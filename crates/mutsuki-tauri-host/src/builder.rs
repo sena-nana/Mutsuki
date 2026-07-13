@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 pub struct MutsukiTauriHostBuilder {
     config: MutsukiTauriConfig,
+    runtime_config: HostRuntimeConfig,
     runners: Vec<Box<dyn Runner>>,
 }
 
@@ -22,6 +23,7 @@ impl MutsukiTauriHostBuilder {
     pub fn new() -> Self {
         Self {
             config: MutsukiTauriConfig::for_app("MutsukiTauriApp"),
+            runtime_config: HostRuntimeConfig::default(),
             runners: Vec::new(),
         }
     }
@@ -35,6 +37,11 @@ impl MutsukiTauriHostBuilder {
 
     pub fn config(mut self, config: MutsukiTauriConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    pub fn runtime_config(mut self, runtime_config: HostRuntimeConfig) -> Self {
+        self.runtime_config = runtime_config;
         self
     }
 
@@ -124,7 +131,7 @@ impl MutsukiTauriHostBuilder {
         };
         let runtime = bootstrapper.into_host_runtime_with_config(
             profile,
-            HostRuntimeConfig::default().with_resource_provider(
+            self.runtime_config.with_resource_provider(
                 mutsuki_tauri_resource::PROVIDER_ID,
                 resource_store.provider(),
             ),
