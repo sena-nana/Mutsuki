@@ -1,13 +1,15 @@
 use crate::MutsukiTauriHost;
 use crate::config::{MutsukiTauriConfig, PathsConfig};
-use crate::echo::{ECHO_PROTOCOL_ID, EchoRunner};
+use crate::echo::{ECHO_PROTOCOL_ID, ECHO_RUNNER_ID, EchoRunner};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, EntryCompletion, ExecutionClass, LifecyclePolicy,
     PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor,
     RunnerPurity, RunnerResult, RuntimeEventKind, Task, TaskBatch, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_host::{DefaultScheduler, HostRuntimeConfig, ScheduleInput, SchedulerPolicy};
+use mutsuki_runtime_host::{
+    DefaultScheduler, HostRuntimeConfig, RunnerLimits, ScheduleInput, SchedulerPolicy,
+};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
     MutsukiFrontendEvent,
@@ -143,6 +145,62 @@ fn native_task_and_batch_submission_use_the_supervised_runtime_path() {
             Some(TaskOutcome::Completed { .. })
         ));
     }
+}
+
+#[test]
+fn native_task_pump_executes_with_single_inflight_slot() {
+    let workspace = TestWorkspace::new("single-inflight");
+    let mut runtime_config = HostRuntimeConfig::default();
+    runtime_config.runner_limits.insert(
+        ECHO_RUNNER_ID.into(),
+        RunnerLimits {
+            max_running: 1,
+            max_inflight: 1,
+            ..RunnerLimits::default()
+        },
+    );
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runtime_config(runtime_config)
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+    let mut events = host.event_hub().subscribe();
+    let handle = host
+        .submit_task(Task::new(
+            "task:native:single-inflight",
+            ECHO_PROTOCOL_ID,
+            json!({ "text": "single-inflight" }),
+        ))
+        .expect("native task submits");
+
+    let observed = collect_events_until(&mut events, Duration::from_secs(1), |events| {
+        events.iter().any(|envelope| {
+            matches!(
+                &envelope.payload,
+                MutsukiFrontendEvent::Task { task_id, event }
+                    if task_id == "task:native:single-inflight"
+                        && event.name == "task.completed"
+            )
+        })
+    });
+    assert!(observed.iter().any(|envelope| {
+        matches!(
+            &envelope.payload,
+            MutsukiFrontendEvent::Task { task_id, event }
+                if task_id == "task:native:single-inflight" && event.name == "task.completed"
+        )
+    }));
+
+    let result = host
+        .task_result(mutsuki_tauri_bridge::TaskResultRequest {
+            task_id: handle.task_id,
+        })
+        .expect("single-inflight task completes through task pump");
+    assert!(matches!(
+        result.outcome,
+        Some(TaskOutcome::Completed { .. })
+    ));
 }
 
 #[test]
