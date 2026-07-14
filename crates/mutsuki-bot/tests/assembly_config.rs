@@ -89,7 +89,6 @@ id = "mutsuki.bot.bilibili.workshop"
 
 [plugins.configured.config]
 media_provider_id = "missing.media.provider"
-max_media_bytes = 8388608
 "#,
         ),
     )
@@ -120,7 +119,6 @@ id = "mutsuki.bot.mihuashi"
 
 [plugins.configured.config]
 media_provider_id = "mutsuki.std.resource.memory"
-max_media_bytes = 8388608
 "#,
         ),
     )
