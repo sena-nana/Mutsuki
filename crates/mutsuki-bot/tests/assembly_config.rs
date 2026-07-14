@@ -189,6 +189,53 @@ media_provider_id = "mutsuki.std.resource.memory"
 }
 
 #[tokio::test]
+async fn bilibili_chromium_backend_fails_startup_without_browser_protocol() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let secret_path = root.path().join("product.secret.toml");
+    std::fs::write(&secret_path, "[secrets]\n").unwrap();
+    let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &format!(
+                r#"
+[security]
+secret_file = "{secret_path}"
+
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.bot.bilibili"
+
+[plugins.configured.config]
+cookie_secret_key = "BILIBILI_COOKIE"
+live_interval_ms = 60000
+dynamic_interval_ms = 60000
+video_interval_ms = 60000
+retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
+subscriptions = []
+link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
+media_provider_id = "mutsuki.std.resource.memory"
+risk_control = {{ backend = "chromium", timeout_ms = 10000, max_response_bytes = 2097152 }}
+management = {{ enabled = true, allow_self_binding = true, command = "bili", admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
+"#,
+            ),
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing browser protocol must fail startup");
+    assert!(error.to_string().contains("mutsuki.browser.snapshot"));
+}
+
+#[tokio::test]
 async fn chromium_factory_rejects_missing_artifact_during_assembly() {
     let root = tempdir().unwrap();
     let config_path = root.path().join("product.toml");
