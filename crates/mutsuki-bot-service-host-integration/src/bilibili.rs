@@ -111,6 +111,7 @@ async fn run_polling(
     let mut inflight: BTreeMap<(u64, String, String), TaskHandle> = BTreeMap::new();
     let mut next_due: BTreeMap<(u64, String, String), Instant> = BTreeMap::new();
     let mut failures: BTreeMap<(u64, String, String), u32> = BTreeMap::new();
+    let mut task_sequence = 0_u64;
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
     let mut host_shutdown = ctx.shutdown.clone();
     loop {
@@ -153,7 +154,8 @@ async fn run_polling(
                         let now = Instant::now();
                         if next_due.get(&key).is_some_and(|due| *due > now) { continue; }
                         let request = PollRequest { uid: subscription.uid, kind: kind.clone(), target: subscription.target.clone(), outbound_binding: subscription.outbound_binding.clone() };
-                        let task_id = format!("bilibili:{:?}:{}:{}", kind, subscription.uid, next_due.len());
+                        task_sequence = task_sequence.wrapping_add(1);
+                        let task_id = format!("bilibili:{:?}:{}:{task_sequence}", kind, subscription.uid);
                         let task = Task::new(task_id.clone(), kind.protocol_id(), serde_json::to_value(request)?);
                         match ctx.task_submitter.submit_batch(TaskBatch::one(format!("batch:{task_id}"), task)) {
                             Ok(mut handles) if !handles.is_empty() => { inflight.insert(key.clone(), handles.remove(0)); }
