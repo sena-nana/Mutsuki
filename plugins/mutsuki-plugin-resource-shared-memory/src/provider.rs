@@ -24,7 +24,7 @@ use crate::descriptor::{
 use crate::error::{detailed_failure, runtime_failure, unsupported};
 use crate::mapping::{OwnedMapping, create_mapping, read_mapping};
 
-static PROVIDER_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static MAPPING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 struct SharedMemoryResourceEntry {
     descriptor: ResourceRef,
@@ -38,7 +38,6 @@ struct SharedMemoryResourceState {
 }
 
 pub struct SharedMemoryResourceProvider {
-    instance_id: u64,
     state: Mutex<SharedMemoryResourceState>,
 }
 
@@ -51,7 +50,6 @@ impl Default for SharedMemoryResourceProvider {
 impl SharedMemoryResourceProvider {
     pub fn new() -> Self {
         Self {
-            instance_id: PROVIDER_SEQUENCE.fetch_add(1, Ordering::Relaxed),
             state: Mutex::new(SharedMemoryResourceState::default()),
         }
     }
@@ -92,12 +90,7 @@ impl SharedMemoryResourceProvider {
     ) -> RuntimeResult<(ResourceRef, OwnedMapping)> {
         state.next_slot += 1;
         let ref_id = format!("shared-memory-resource-{}", state.next_slot);
-        let mapping_name = format!(
-            "/mutsuki_resource_shared_memory_{}_{}_{}",
-            process::id(),
-            self.instance_id,
-            state.next_slot
-        );
+        let mapping_name = mapping_name();
         let mapping = create_mapping(&mapping_name, &bytes)?;
         let descriptor = resource_ref(
             &ref_id,
@@ -135,6 +128,11 @@ impl SharedMemoryResourceProvider {
         let (name, offset, len) = shared_memory_access(descriptor, route)?;
         read_mapping(name, offset, len, route)
     }
+}
+
+fn mapping_name() -> String {
+    let sequence = MAPPING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("/mtk_{:x}_{sequence:x}", process::id())
 }
 
 impl ResourcePlanGateway for SharedMemoryResourceProvider {
@@ -306,10 +304,37 @@ mod tests {
         else {
             panic!("expected shared-memory access");
         };
-        assert!(name.contains("mutsuki_resource_shared_memory"));
+        assert!(name.starts_with("/mtk_"));
+        assert!(name.len() <= 30, "shared-memory OS id is too long: {name}");
         assert_eq!(*offset, 0);
         assert_eq!(*len, 5);
         assert!(*readonly);
+    }
+
+    #[test]
+    fn mapping_names_are_short_and_unique_across_provider_instances() {
+        let first = SharedMemoryResourceProvider::new()
+            .create_blob_resource("bytes.v1", vec![1])
+            .unwrap();
+        let second = SharedMemoryResourceProvider::new()
+            .create_blob_resource("bytes.v1", vec![2])
+            .unwrap();
+
+        let ResourceAccess::SharedMemory {
+            name: first_name, ..
+        } = first.access
+        else {
+            panic!("expected first shared-memory access");
+        };
+        let ResourceAccess::SharedMemory {
+            name: second_name, ..
+        } = second.access
+        else {
+            panic!("expected second shared-memory access");
+        };
+        assert_ne!(first_name, second_name);
+        assert!(first_name.len() <= 30);
+        assert!(second_name.len() <= 30);
     }
 
     #[test]
