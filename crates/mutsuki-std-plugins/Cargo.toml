@@ -1,0 +1,14 @@
+[package]
+name = "mutsuki-std-plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-plugin-io-browser-chromium = { path = "../../plugins/mutsuki-plugin-io-browser-chromium" }
+mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "36736048e887f1133d5a09a4d599904d715c8866" }
+serde.workspace = true
+serde_json.workspace = true
