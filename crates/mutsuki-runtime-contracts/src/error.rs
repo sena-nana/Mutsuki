@@ -41,6 +41,7 @@ pub const ERR_RUNTIME_NOT_ACCEPTING: &str = "runtime.not_accepting";
 pub const ERR_RUNTIME_ABORTED: &str = "runtime.aborted";
 pub const ERR_PORTABLE_SCHEMA_UNSUPPORTED: &str = "portable.schema_unsupported";
 pub const ERR_CHECKPOINT_INCOMPATIBLE: &str = "checkpoint.incompatible";
+pub const ERR_EXECUTION_NO_VARIANT: &str = "execution.no_variant";
 pub const ERR_CAPABILITY_EXHAUSTED: &str = "capability.exhausted";
 pub const ERR_TASK_NOT_FOUND: &str = "task.not_found";
 pub const ERR_TASK_DUPLICATE: &str = "task.duplicate";

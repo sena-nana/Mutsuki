@@ -133,6 +133,9 @@ bash scripts/check-distributed-boundary.sh
 - portable/checkpoint/content contracts 必须保持独立可选；不得把 attempt lease、部署位置、
   复制策略或恢复调度写入 descriptor。SDK `Checkpointable` 只能作为 side contract，不能
   修改 `Runner::run_batch`。未启用时不得执行哈希扫描、持久化 I/O 或启动后台线程。
+- execution policy/variant/profile contracts 必须保持本地、可选和显式：禁止静默降质、隐式
+  stale cache/partial result；画像只能使用固定容量窗口/直方图或标量，并由 Host 显式记录，
+  不得接入每 tick 事件或后台采样。
 
 ## 6. Git 与范围
 
