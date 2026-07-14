@@ -324,6 +324,87 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
 }
 
 #[test]
+fn openapi_runner_preserves_image_then_text_send_order() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"upload_id": "UPLOAD", "block_size": 1024})),
+            ok_response(json!({"file_info": "FILE_INFO"})),
+            ok_response(json!({"id": "IMAGE_MESSAGE"})),
+            ok_response(json!({"id": "TEXT_MESSAGE"})),
+        ],
+        Box::new(NoopIdSource::new(800)),
+    );
+    let message = BotMessage {
+        message_id: None,
+        target: BotTarget::User {
+            user_id: "USER_OPENID".into(),
+        },
+        sender: None,
+        segments: vec![
+            MessageSegment::Image {
+                resource: test_image_resource(),
+            },
+            MessageSegment::Text {
+                text: "caption".into(),
+            },
+        ],
+        reply_to: None,
+        time_ms: None,
+        ext: Default::default(),
+    };
+    run_one(
+        &mut runner,
+        Task::new(
+            "image-text",
+            BOT_MESSAGE_SEND_PROTOCOL_ID,
+            serde_json::to_value(message).unwrap(),
+        ),
+    )
+    .unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[3].body.as_ref().unwrap()["msg_type"], 7);
+    assert_eq!(
+        requests[3].body.as_ref().unwrap()["media"]["file_info"],
+        "FILE_INFO"
+    );
+    assert_eq!(requests[4].body.as_ref().unwrap()["content"], "caption");
+}
+
+fn test_image_resource() -> mutsuki_runtime_contracts::ResourceRef {
+    use mutsuki_runtime_contracts::{
+        ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
+    };
+    mutsuki_runtime_contracts::ResourceRef {
+        ref_id: "image-1".into(),
+        resource_id: ResourceId {
+            kind_id: "image".into(),
+            slot_id: "image-1".into(),
+            generation: 1,
+            version: 1,
+        },
+        semantic: ResourceSemantic::FrozenValue,
+        provider_id: "mutsuki.std.resource.memory".into(),
+        resource_kind: "image".into(),
+        schema: "mutsuki.bot.image.original.v1".into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::ProviderRpc {
+            provider_id: "mutsuki.std.resource.memory".into(),
+            method: "memory".into(),
+        },
+        size_hint: Some(3),
+        content_hash: None,
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
+}
+
+#[test]
 fn openapi_runner_maps_standard_recall_to_qqbot_delete() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut runner = openapi_runner_with_shared(
@@ -962,7 +1043,7 @@ struct FakeMediaProvider;
 impl QqMediaProvider for FakeMediaProvider {
     fn read_chunks(
         &mut self,
-        _resource_ref: &str,
+        _resource_ref: &mutsuki_runtime_contracts::ResourceRef,
         _block_size: u64,
     ) -> Result<Vec<MediaChunk>, QqMediaError> {
         Ok(Vec::new())

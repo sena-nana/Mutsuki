@@ -12,7 +12,17 @@ use mutsuki_service_runtime::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::QqBotPluginBundle;
+use crate::{BilibiliPollingEventSource, QqBotPluginBundle};
+use mutsuki_plugin_bot_bilibili::{
+    BilibiliConfig, BilibiliRunner, PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliTransport,
+    SharedBilibiliCredential, SqliteBilibiliRepository,
+};
+use mutsuki_plugin_bot_bilibili_workshop::{
+    PLUGIN_ID as WORKSHOP_PLUGIN_ID, ReqwestWorkshopTransport, WorkshopRunner,
+};
+use mutsuki_plugin_bot_mihuashi::PLUGIN_ID as MIHUASHI_PLUGIN_ID;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,10 +92,158 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
     ) -> Result<ServiceRuntimeBuilder, String> {
         let config: QqBotConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        QqBotPluginBundle::new(config)
-            .map_err(|error| error.redacted_message())?
+        let media_provider_id = config.media_provider_id.clone();
+        let mut bundle =
+            QqBotPluginBundle::new(config).map_err(|error| error.redacted_message())?;
+        if let Some(provider_id) = media_provider_id {
+            bundle = bundle.with_resource_media_provider(provider_id);
+        }
+        bundle
             .install(builder)
             .map_err(|error| error.redacted_message())
+    }
+}
+
+pub struct BilibiliConfiguredPlugin;
+
+impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        BILIBILI_PLUGIN_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config: BilibiliConfig =
+            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        config.validate()?;
+        let repository = Arc::new(
+            SqliteBilibiliRepository::open(builder.data_dir().join("bilibili/state.sqlite3"))
+                .map_err(|error| error.to_string())?,
+        );
+        let credential = SharedBilibiliCredential::default();
+        let runner_config = config.clone();
+        let runner_repository = repository.clone();
+        let runner_credential = credential.clone();
+        let source = BilibiliPollingEventSource::new(config, credential);
+        let mut manifest = mutsuki_plugin_bot_bilibili::manifest();
+        manifest.requires.push(format!(
+            "resource_strategy:{}",
+            runner_config.media_provider_id
+        ));
+        Ok(builder
+            .register_builtin_plugin(manifest)
+            .register_fallible_runtime_services_runner(move |_client, resources| {
+                let transport = ReqwestBilibiliTransport::new(
+                    runner_credential.clone(),
+                    Duration::from_secs(15),
+                )?;
+                Ok::<
+                    Box<dyn mutsuki_runtime_core::Runner>,
+                    mutsuki_plugin_bot_bilibili::BilibiliError,
+                >(Box::new(BilibiliRunner::new(
+                    Box::new(transport),
+                    runner_repository.clone(),
+                    resources,
+                    runner_config.media_provider_id.clone(),
+                    runner_config.max_media_bytes,
+                )))
+            })
+            .register_event_source(Box::new(source)))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LinkCardPluginConfig {
+    media_provider_id: String,
+    #[serde(default = "default_media_limit")]
+    max_media_bytes: usize,
+}
+
+fn default_media_limit() -> usize {
+    8 * 1024 * 1024
+}
+
+impl LinkCardPluginConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.media_provider_id.trim().is_empty() {
+            return Err("media_provider_id is required".into());
+        }
+        if self.max_media_bytes == 0 || self.max_media_bytes > default_media_limit() {
+            return Err("max_media_bytes must be between 1 and 8 MiB".into());
+        }
+        Ok(())
+    }
+}
+
+pub struct WorkshopConfiguredPlugin;
+
+impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        WORKSHOP_PLUGIN_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config: LinkCardPluginConfig =
+            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        config.validate()?;
+        let mut manifest = mutsuki_plugin_bot_bilibili_workshop::manifest();
+        manifest
+            .requires
+            .push(format!("resource_strategy:{}", config.media_provider_id));
+        Ok(builder
+            .register_builtin_plugin(manifest)
+            .register_fallible_runtime_services_runner(move |_client, resources| {
+                let transport = ReqwestWorkshopTransport::new()?;
+                Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(WorkshopRunner::new(
+                    Box::new(transport),
+                    resources,
+                    config.media_provider_id.clone(),
+                    config.max_media_bytes,
+                )))
+            }))
+    }
+}
+
+pub struct MihuashiConfiguredPlugin;
+
+impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        MIHUASHI_PLUGIN_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config: LinkCardPluginConfig =
+            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        config.validate()?;
+        let mut manifest = mutsuki_plugin_bot_mihuashi::manifest();
+        manifest
+            .requires
+            .push(format!("resource_strategy:{}", config.media_provider_id));
+        manifest
+            .requires
+            .push("task_protocol:mutsuki.browser.snapshot".into());
+        Ok(builder
+            .register_builtin_plugin(manifest)
+            .register_runtime_services_runner(move |client, resources| {
+                mutsuki_plugin_bot_mihuashi::runner(
+                    client,
+                    resources,
+                    config.media_provider_id.clone(),
+                    config.max_media_bytes,
+                )
+            }))
     }
 }
 
@@ -97,6 +255,9 @@ pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginC
     catalog.register(BotEventRouterConfiguredPlugin)?;
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(QqBotConfiguredPlugin)?;
+    catalog.register(BilibiliConfiguredPlugin)?;
+    catalog.register(WorkshopConfiguredPlugin)?;
+    catalog.register(MihuashiConfiguredPlugin)?;
     Ok(catalog)
 }
 

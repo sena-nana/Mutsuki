@@ -7,6 +7,10 @@ members = [
     "crates/mutsuki-plugin-bot-adapter-qqbot",
     "crates/mutsuki-bot-service-host-integration",
     "crates/mutsuki-bot-testkit",
+    "crates/mutsuki-bot-link-parser",
+    "crates/mutsuki-plugin-bot-bilibili",
+    "crates/mutsuki-plugin-bot-bilibili-workshop",
+    "crates/mutsuki-plugin-bot-mihuashi",
     "examples/bot-echo",
     "examples/qqbot-echo",
     "examples/service-host-example",
@@ -19,14 +23,14 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "dbaf3c6f3b110e8f4edfc0e73e68fa24c472acb9" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "dbaf3c6f3b110e8f4edfc0e73e68fa24c472acb9" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "dbaf3c6f3b110e8f4edfc0e73e68fa24c472acb9" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "dbaf3c6f3b110e8f4edfc0e73e68fa24c472acb9" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "948879ad5c82f5a77767843da70f175bb4ff0e9d" }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "948879ad5c82f5a77767843da70f175bb4ff0e9d" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "948879ad5c82f5a77767843da70f175bb4ff0e9d" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "948879ad5c82f5a77767843da70f175bb4ff0e9d", default-features = false }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
@@ -34,6 +38,11 @@ mutsuki-plugin-bot-command = { path = "crates/mutsuki-plugin-bot-command" }
 mutsuki-plugin-bot-event-router = { path = "crates/mutsuki-plugin-bot-event-router" }
 mutsuki-bot-service-host-integration = { path = "crates/mutsuki-bot-service-host-integration" }
 mutsuki-bot-testkit = { path = "crates/mutsuki-bot-testkit" }
+mutsuki-bot-link-parser = { path = "crates/mutsuki-bot-link-parser" }
+mutsuki-plugin-bot-bilibili = { path = "crates/mutsuki-plugin-bot-bilibili" }
+mutsuki-plugin-bot-bilibili-workshop = { path = "crates/mutsuki-plugin-bot-bilibili-workshop" }
+mutsuki-plugin-bot-mihuashi = { path = "crates/mutsuki-plugin-bot-mihuashi" }
+mutsuki-protocol-browser = { git = "https://github.com/sena-nana/MutsukiStdPlugins.git", rev = "e97fb63d120ff7b0a7ebb7f680061a660c3d5ad8" }
 bot-echo = { path = "examples/bot-echo" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -42,11 +51,16 @@ time = { version = "0.3", features = ["parsing"] }
 fastrand = "2.4"
 futures-util = "0.3"
 html-escape = "0.2"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
+md5 = "0.8"
+sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tracing = "0.1"
 url = "2.5"
+regex = "1.11"
+rusqlite = { version = "0.32", features = ["bundled"] }
+scraper = "0.23"
 
 [profile.dev]
 debug = "line-tables-only"

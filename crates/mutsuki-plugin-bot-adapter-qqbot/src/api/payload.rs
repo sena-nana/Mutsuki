@@ -1,3 +1,4 @@
+use mutsuki_runtime_contracts::ResourceRef;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -63,7 +64,7 @@ pub struct MediaUploadPayload {
     #[serde(default)]
     pub file_data: Option<String>,
     #[serde(default)]
-    pub resource_ref: Option<String>,
+    pub resource_ref: Option<ResourceRef>,
     #[serde(default)]
     pub upload_id: Option<String>,
     #[serde(default)]

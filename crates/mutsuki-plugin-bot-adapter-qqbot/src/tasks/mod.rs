@@ -17,8 +17,8 @@ use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
 use serde_json::{Value, json};
 
 use crate::adapter::{
-    bot_media_upload_to_qq_upload, bot_message_to_qq_send as map_bot_message_to_qq_send,
-    bot_recall_to_qq_recall, qq_gateway_frame_to_bot_event, redact_json,
+    bot_media_upload_to_qq_upload, bot_recall_to_qq_recall, qq_gateway_frame_to_bot_event,
+    redact_json,
 };
 use crate::api::{
     QqAuthManager, QqBotClients, QqIdSource, QqOpenApiError, QqOpenApiService, RawCallPayload,
@@ -157,11 +157,7 @@ impl Runner for QqOpenApiRunner {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
                     let message: BotMessage = serde_json::from_value(task.payload.clone())
                         .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
-                    self.service.send_message(
-                        map_bot_message_to_qq_send(message).map_err(|error| {
-                            failure("mutsuki.bot.message.send.map.qqbot", error)
-                        })?,
-                    )
+                    self.service.send_bot_message(message)
                 }
                 BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
                     let request: BotMediaUploadRequest = parse_payload(task.payload.clone())

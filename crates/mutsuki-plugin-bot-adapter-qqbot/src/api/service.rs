@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
+use mutsuki_bot_protocol::{BotMessage, MessageSegment};
 use serde_json::{Value, json};
 
+use crate::adapter::{qq_message_body_from_segments, qq_scene_and_openid};
 use crate::api::{
     HttpMethod, MediaUploadPayload, QqAuthManager, QqBotClients, QqHttpRequest, QqIdSource,
     QqMediaProvider, QqOpenApiError, QqOpenApiTransport, RawCallPayload, RecallMessagePayload,
@@ -52,6 +54,93 @@ impl QqOpenApiService {
             payload.scene.messages_path(&payload.target_openid),
             body,
         )
+    }
+
+    pub fn send_bot_message(&mut self, message: BotMessage) -> Result<Value, QqOpenApiError> {
+        let (scene, target_openid) = qq_scene_and_openid(&message.target)
+            .ok_or_else(|| QqOpenApiError::InvalidPayload("unsupported QQ target".into()))?;
+        let mut responses = Vec::new();
+        let mut pending = Vec::new();
+        for segment in message.segments {
+            match segment {
+                MessageSegment::Image { resource } => {
+                    if !pending.is_empty() {
+                        responses.push(self.send_segment_group(
+                            scene.clone(),
+                            target_openid.clone(),
+                            std::mem::take(&mut pending),
+                            message.reply_to.clone(),
+                        )?);
+                    }
+                    let file_size = resource.size_hint;
+                    let upload = self.upload_media(MediaUploadPayload {
+                        scene: scene.clone(),
+                        target_openid: target_openid.clone(),
+                        file_type: 1,
+                        url: None,
+                        file_data: None,
+                        resource_ref: Some(resource),
+                        upload_id: None,
+                        srv_send_msg: Some(false),
+                        file_name: Some("image".into()),
+                        file_size,
+                        md5: None,
+                        sha1: None,
+                        md5_10m: None,
+                    })?;
+                    let file_info = json_field(&upload, "file_info")?.to_owned();
+                    responses.push(self.send_message(SendMessagePayload {
+                        scene: scene.clone(),
+                        target_openid: target_openid.clone(),
+                        body: json!({
+                            "msg_type": 7,
+                            "media": {"file_info": file_info},
+                            "content": "",
+                        }),
+                    })?);
+                }
+                MessageSegment::Text { .. }
+                | MessageSegment::MentionUser { .. }
+                | MessageSegment::MentionAll => pending.push(segment),
+                _ => {
+                    return Err(QqOpenApiError::InvalidPayload(
+                        "QQ message/send supports text, mention and image segments".into(),
+                    ));
+                }
+            }
+        }
+        if !pending.is_empty() {
+            responses.push(self.send_segment_group(
+                scene,
+                target_openid,
+                pending,
+                message.reply_to,
+            )?);
+        }
+        if responses.len() == 1 {
+            Ok(responses.remove(0))
+        } else {
+            Ok(json!({"responses": responses}))
+        }
+    }
+
+    fn send_segment_group(
+        &mut self,
+        scene: crate::api::QqScene,
+        target_openid: String,
+        segments: Vec<MessageSegment>,
+        reply_to: Option<String>,
+    ) -> Result<Value, QqOpenApiError> {
+        let mut body = qq_message_body_from_segments(&segments)
+            .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
+        if let (Value::Object(body), Some(reply_to)) = (&mut body, reply_to) {
+            body.insert("msg_id".into(), Value::String(reply_to));
+        }
+        self.send_message(SendMessagePayload {
+            scene,
+            target_openid,
+            body,
+        })
     }
 
     pub fn get_account(&mut self) -> Result<Value, QqOpenApiError> {

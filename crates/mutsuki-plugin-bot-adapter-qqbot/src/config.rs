@@ -11,6 +11,8 @@ pub struct QqBotConfig {
     pub app_id: String,
     /// Key resolved through `HostEventSourceConfig::secret`; never the secret value.
     pub client_secret_key: String,
+    /// Host resource provider used for platform media upload. `None` keeps a text-only adapter.
+    pub media_provider_id: Option<String>,
     pub token_url: String,
     pub openapi_base_url: String,
     pub gateway_intents: u64,
@@ -46,6 +48,7 @@ impl QqBotConfig {
             account_id: account_id.into(),
             app_id: app_id.into(),
             client_secret_key: "QQBOT_CLIENT_SECRET".into(),
+            media_provider_id: None,
             token_url: "https://bots.qq.com/app/getAppAccessToken".into(),
             openapi_base_url: "https://api.sgroup.qq.com".into(),
             gateway_intents: DEFAULT_QQBOT_INTENTS,
@@ -73,6 +76,15 @@ impl QqBotConfig {
         required("account_id", &self.account_id)?;
         required("app_id", &self.app_id)?;
         required("client_secret_key", &self.client_secret_key)?;
+        if self
+            .media_provider_id
+            .as_deref()
+            .is_some_and(|provider_id| provider_id.trim().is_empty())
+        {
+            return Err(QqConfigError::Invalid(
+                "media_provider_id must be non-empty when configured".into(),
+            ));
+        }
         validate_http_url("token_url", &self.token_url, self.allow_insecure_transport)?;
         validate_http_url(
             "openapi_base_url",

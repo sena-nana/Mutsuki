@@ -22,7 +22,7 @@ pub fn bot_media_upload_to_qq_upload(
         file_type: qq_file_type(request.kind),
         url: None,
         file_data: None,
-        resource_ref: Some(request.resource.ref_id),
+        resource_ref: Some(request.resource),
         upload_id: None,
         srv_send_msg: None,
         file_name: request.file_name,

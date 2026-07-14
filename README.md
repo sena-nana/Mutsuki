@@ -1,5 +1,28 @@
 # MutsukiBotPlugins
 
+## Bilibili / Workshop / Mihuashi
+
+Mutsuki-native 迁移提供以下 builtin Rust 协议：
+
+- `mutsuki.bot.bilibili.poll/live@1`
+- `mutsuki.bot.bilibili.poll/dynamic@1`
+- `mutsuki.bot.bilibili.poll/video@1`
+- `mutsuki.bot.bilibili.link/resolve@1`
+- `mutsuki.bot.bilibili.workshop.link/resolve@1`
+- `mutsuki.bot.mihuashi.link/resolve@1`
+
+`mutsuki-bot-link-parser` 是共享库而非 Host 插件，负责卡片 JSON 展开、URL 提取去重
+与冷却辅助。Bilibili 状态固定写入 ServiceHost `data_dir/bilibili/state.sqlite3`；首次
+轮询只建立 cursor，不补发历史。Cookie 只通过 `cookie_secret_key` 进入共享 credential
+boundary，WBI 请求使用运行时获取的 mixin key 和注入式签名函数。
+
+图片通过显式 `media_provider_id` 创建 `ResourceRef`，单资源上限 8 MiB。QQ adapter
+从 Host registry 打开最新版 descriptor、读取并校验摘要、分块上传，随后按 segment
+顺序发送 image/text。米画师 runner 使用 `AsyncRunnerAdapter` 调用
+`mutsuki.browser.snapshot`，不拥有 Chromium 生命周期。
+
+第一版不包含扫码登录、聊天管理/自助绑定、HTML 卡片截图或 Bilibili 352 浏览器回退。
+
 MutsukiBotPlugins is the batch-first Bot domain plugin collection for Mutsuki. It is not a Host and it is not a Core extension.
 
 The repository owns Bot protocol objects, Bot authoring helpers, Bot event routing, Bot command parsing, and platform adapter plugins such as QQBot. Runtime scheduling, runner lifecycle, host startup, Python runner execution, plugin marketplace behavior, and product-specific business bots stay outside this repository.

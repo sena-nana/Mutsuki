@@ -1,18 +1,23 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
 use mutsuki_plugin_bot_adapter_qqbot::{
     QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqIdSource, QqMediaProvider,
-    QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient, SharedQqCredentials,
-    qqbot_adapter_manifest,
+    QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient, ResourceGatewayQqMediaProvider,
+    SharedQqCredentials, qqbot_adapter_manifest,
 };
 
 use crate::event_source::{QqGatewayEventSource, QqGatewayHealthHandle};
 
-type MediaFactory = Arc<dyn Fn() -> Box<dyn QqMediaProvider> + Send + Sync>;
+type MediaFactory = Arc<
+    dyn Fn(Arc<dyn ResourceRegistryGateway>) -> Result<Box<dyn QqMediaProvider>, String>
+        + Send
+        + Sync,
+>;
 type IdFactory = Arc<dyn Fn() -> Box<dyn QqIdSource> + Send + Sync>;
 
 /// Complete product bundle for `MutsukiServiceHost` assembly.
@@ -27,6 +32,7 @@ pub struct QqBotPluginBundle {
     health: QqGatewayHealthHandle,
     event_source: Option<QqGatewayEventSource>,
     media_factory: Option<MediaFactory>,
+    media_provider_id: Option<String>,
     id_factory: IdFactory,
 }
 
@@ -48,6 +54,7 @@ impl QqBotPluginBundle {
             health,
             event_source: Some(event_source),
             media_factory: None,
+            media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
         })
     }
@@ -57,7 +64,18 @@ impl QqBotPluginBundle {
     where
         F: Fn() -> Box<dyn QqMediaProvider> + Send + Sync + 'static,
     {
-        self.media_factory = Some(Arc::new(media_factory));
+        self.media_factory = Some(Arc::new(move |_resources| Ok(media_factory())));
+        self
+    }
+
+    pub fn with_resource_media_provider(mut self, provider_id: impl Into<String>) -> Self {
+        let provider_id = provider_id.into();
+        self.media_provider_id = Some(provider_id.clone());
+        self.media_factory = Some(Arc::new(move |resources| {
+            ResourceGatewayQqMediaProvider::new(provider_id.clone(), resources)
+                .map(|provider| Box::new(provider) as Box<dyn QqMediaProvider>)
+                .map_err(|error| error.to_string())
+        }));
         self
     }
 
@@ -82,6 +100,7 @@ impl QqBotPluginBundle {
         let credentials = self.credentials.clone();
         let auth = self.auth.clone();
         let media_factory = self.media_factory.clone();
+        let media_provider_id = self.media_provider_id.clone();
         let media_enabled = media_factory.is_some();
         let id_factory = self.id_factory.clone();
         let health = self.health.clone();
@@ -90,15 +109,21 @@ impl QqBotPluginBundle {
             .event_source
             .take()
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
+        let mut manifest = qqbot_adapter_manifest(1, media_enabled);
+        if let Some(provider_id) = media_provider_id {
+            manifest
+                .requires
+                .push(format!("resource_strategy:{provider_id}"));
+        }
         Ok(builder
-            .register_builtin_plugin(qqbot_adapter_manifest(1, media_enabled))
+            .register_builtin_plugin(manifest)
             .register_builtin_runner(move || {
                 Box::new(QqGatewayMapRunner::new(
                     1,
                     gateway_config.account_id.clone(),
                 ))
             })
-            .register_fallible_builtin_runner(move || {
+            .register_fallible_runtime_services_runner(move |_runtime, resources| {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;
                 Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(
@@ -109,7 +134,7 @@ impl QqBotPluginBundle {
                             let clients =
                                 QqBotClients::new(Box::new(http), Arc::new(credentials.clone()));
                             match &media_factory {
-                                Some(factory) => clients.with_media_provider(factory()),
+                                Some(factory) => clients.with_media_provider(factory(resources)?),
                                 None => clients,
                             }
                         },
