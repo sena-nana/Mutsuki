@@ -61,8 +61,10 @@ Mutsuki/
 根级 Rust 改动必须运行：
 
 ```powershell
+cargo metadata --locked --format-version 1
 cargo fmt --check
 cargo test
+bash scripts/check-distributed-boundary.sh
 ```
 
 改动外部 Python backend kit 时，在 `MutsukiPythonRunnerKit` 仓库运行其 `uv` 验证命令。
@@ -119,6 +121,9 @@ cargo test
 - registry boot 后 freeze；能力变化必须走新 registry generation。
 - 错误必须结构化，不能吞异常返回默认值。
 - ID、时间、随机源必须可注入或由 runtime/host 控制。
+- Core、contracts、SDK 与普通 Host 的分布式零侵入边界按
+  `plans/distributed-zero-intrusion-boundary.md` 执行；禁止多节点专用类型、依赖和
+  `distributed` feature 分支进入插件编程模型。
 
 ## 6. Git 与范围
 

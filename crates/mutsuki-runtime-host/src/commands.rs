@@ -8,6 +8,8 @@ use mutsuki_runtime_sdk::HostTaskSnapshot;
 
 use crate::PreparedRuntimeReload;
 
+// Variant boxing is part of this public control-plane API and must not drift for a lint.
+#[allow(clippy::large_enum_variant)]
 pub enum HostRuntimeCommand {
     SubmitTask(Box<Task>),
     SubmitBatch(Box<TaskBatch>),
@@ -59,6 +61,8 @@ pub enum HostRuntimeCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+// Keep reply payloads directly matchable without changing the public API to boxed variants.
+#[allow(clippy::large_enum_variant)]
 pub enum HostRuntimeReply {
     TaskSubmitted(TaskHandle),
     TaskBatchSubmitted(Vec<TaskHandle>),

@@ -82,6 +82,8 @@ impl SchedulerPolicy for DefaultScheduler {
     }
 }
 
+// Inputs remain explicit because each value is an independently clamped scheduling fact.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn decide_schedule(
     descriptor: &RunnerDescriptor,
     load: &RunnerLoad,

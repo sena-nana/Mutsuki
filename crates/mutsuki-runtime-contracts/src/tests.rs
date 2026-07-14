@@ -326,7 +326,7 @@ fn batch_payload_helpers_report_layout_counts_and_row_decode_errors() {
         "raw.input",
         serde_json::json!({"input": 1}),
     );
-    let row = BatchPayload::from_tasks(&[task.clone()]);
+    let row = BatchPayload::from_tasks(std::slice::from_ref(&task));
     assert_eq!(row.layout(), PayloadLayout::Row);
     assert_eq!(row.row_count(), 1);
     assert_eq!(row.try_row_tasks().unwrap(), vec![task]);
@@ -680,7 +680,7 @@ fn resource_plan_contracts_roundtrip_json() {
         serde_json::from_str::<WritePlan>(&serde_json::to_string(&write_plan).unwrap()).unwrap(),
         write_plan
     );
-    assert_eq!(
+    assert!(
         serde_json::from_str::<TransactionPlan>(
             &serde_json::to_string(&TransactionPlan {
                 plan_id: "tx:1".into(),
@@ -690,8 +690,7 @@ fn resource_plan_contracts_roundtrip_json() {
             .unwrap()
         )
         .unwrap()
-        .strict,
-        true
+        .strict
     );
     assert_eq!(
         serde_json::from_str::<CommandBatch>(

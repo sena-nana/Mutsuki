@@ -58,6 +58,8 @@ pub struct WorkBatch {
 }
 
 impl WorkBatch {
+    // Keep the same structured RuntimeError contract as BatchPayload::try_row_tasks.
+    #[allow(clippy::result_large_err)]
     pub fn row_payload_tasks(&self) -> Result<Vec<Task>, crate::RuntimeError> {
         self.payload.try_row_tasks()
     }

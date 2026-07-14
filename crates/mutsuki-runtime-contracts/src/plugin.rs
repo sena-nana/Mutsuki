@@ -53,19 +53,14 @@ impl PluginDeploymentKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeProfileMode {
+    #[default]
     FullDev,
     ExtensibleRuntime,
     BuiltinOnly,
     LockedBuiltin,
-}
-
-impl Default for RuntimeProfileMode {
-    fn default() -> Self {
-        Self::FullDev
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

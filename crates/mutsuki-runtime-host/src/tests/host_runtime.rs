@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
