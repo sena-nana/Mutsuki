@@ -211,8 +211,9 @@ pub trait BilibiliTransport: Send {
 }
 
 pub struct ReqwestBilibiliTransport {
-    client: Client,
+    client: Option<Client>,
     credential: SharedBilibiliCredential,
+    timeout: Duration,
 }
 
 impl ReqwestBilibiliTransport {
@@ -220,20 +221,33 @@ impl ReqwestBilibiliTransport {
         credential: SharedBilibiliCredential,
         timeout: Duration,
     ) -> Result<Self, BilibiliError> {
-        let client = Client::builder()
-            .timeout(timeout)
-            .user_agent("Mozilla/5.0 MutsukiBot/0.1")
-            .build()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        Ok(Self { client, credential })
+        Ok(Self {
+            client: None,
+            credential,
+            timeout,
+        })
     }
 
-    fn json(&self, url: &str) -> Result<Value, BilibiliError> {
+    fn client(&mut self) -> Result<&Client, BilibiliError> {
+        if self.client.is_none() {
+            self.client = Some(
+                Client::builder()
+                    .timeout(self.timeout)
+                    .user_agent("Mozilla/5.0 MutsukiBot/0.1")
+                    .build()
+                    .map_err(|error| BilibiliError::Transport(error.to_string()))?,
+            );
+        }
+        Ok(self.client.as_ref().expect("client initialized"))
+    }
+
+    fn json(&mut self, url: &str) -> Result<Value, BilibiliError> {
         ensure_bilibili_domain(url)?;
+        let cookie = self.credential.get()?;
         let response = self
-            .client
+            .client()?
             .get(url)
-            .header("Cookie", self.credential.get()?)
+            .header("Cookie", cookie)
             .send()
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
         if response.status().as_u16() == 429 {
@@ -250,7 +264,11 @@ impl ReqwestBilibiliTransport {
         }
     }
 
-    fn wbi_url(&self, path: &str, params: Vec<(String, String)>) -> Result<String, BilibiliError> {
+    fn wbi_url(
+        &mut self,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> Result<String, BilibiliError> {
         let nav = self.json("https://api.bilibili.com/x/web-interface/nav")?;
         let img = string_field(&nav["data"]["wbi_img"], "img_url")?;
         let sub = string_field(&nav["data"]["wbi_img"], "sub_url")?;
@@ -298,7 +316,7 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
             Url::parse(url).map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         if parsed.host_str() == Some("b23.tv") {
             let response = self
-                .client
+                .client()?
                 .get(parsed.clone())
                 .send()
                 .map_err(|error| BilibiliError::Transport(error.to_string()))?;
@@ -330,7 +348,7 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
         ensure_bilibili_domain(url)?;
         let response = self
-            .client
+            .client()?
             .get(url)
             .send()
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;

@@ -35,21 +35,28 @@ pub trait WorkshopTransport: Send {
 }
 
 pub struct ReqwestWorkshopTransport {
-    client: reqwest::blocking::Client,
+    client: Option<reqwest::blocking::Client>,
 }
 impl ReqwestWorkshopTransport {
     pub fn new() -> Result<Self, String> {
-        reqwest::blocking::Client::builder()
-            .build()
-            .map(|client| Self { client })
-            .map_err(|error| error.to_string())
+        Ok(Self { client: None })
+    }
+    fn client(&mut self) -> Result<&reqwest::blocking::Client, String> {
+        if self.client.is_none() {
+            self.client = Some(
+                reqwest::blocking::Client::builder()
+                    .build()
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        Ok(self.client.as_ref().expect("client initialized"))
     }
 }
 impl WorkshopTransport for ReqwestWorkshopTransport {
     fn resolve(&mut self, url: &str) -> Result<ResolvedLinkCard, String> {
         ensure_domain(url)?;
         let html = self
-            .client
+            .client()?
             .get(url)
             .send()
             .and_then(|response| response.error_for_status())
@@ -75,7 +82,7 @@ impl WorkshopTransport for ReqwestWorkshopTransport {
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
         ensure_domain(url)?;
         let bytes = self
-            .client
+            .client()?
             .get(url)
             .send()
             .and_then(|response| response.error_for_status())
