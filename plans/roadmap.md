@@ -132,6 +132,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `Detach` / `Shield` 是协议预留，当前不扩展为 core workflow 语义。
   - task await 前会检查 ResourceManager 中当前 task 持有的短期可变 lease；存在
     exclusive write / exclusive ResourceLease 时 fail-loud，禁止跨 await。
+  - 可选 `PortableTask` / `TaskCheckpoint` / `ContentId` / `PortabilityCatalog` 支持单机录制、
+    流式重放、checkpoint 恢复和内容寻址；恢复仍创建普通本地 Task/ResourceRef，默认
+    LocalOnly 路径不增加后台线程、哈希或持久化开销。
   - registry boot 后 freeze；runner descriptor 必须在 `RuntimeLoadPlan` 授权内。
   - hot reload 支持 contract surface 比较：Identical、Additive、Deprecated、
     Removed、Breaking；breaking 会阻断。

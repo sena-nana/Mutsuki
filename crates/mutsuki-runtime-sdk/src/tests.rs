@@ -988,3 +988,61 @@ fn capability_plan() -> RuntimeLoadPlan {
         }],
     }
 }
+
+struct DemoCheckpointCodec;
+
+impl Checkpointable for DemoCheckpointCodec {
+    fn checkpoint(
+        &mut self,
+        task: &mutsuki_runtime_contracts::PortableTask,
+        sequence: u64,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::TaskCheckpoint> {
+        Ok(mutsuki_runtime_contracts::TaskCheckpoint::new(
+            mutsuki_runtime_contracts::SchemaIdentity::new("demo.checkpoint", "1.0.0"),
+            3,
+            sequence,
+            task.clone(),
+            vec![7, 8, 9],
+        ))
+    }
+
+    fn restore(
+        &mut self,
+        checkpoint: &mutsuki_runtime_contracts::TaskCheckpoint,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::PortableTask> {
+        checkpoint
+            .validate_restore(
+                &checkpoint.task.task_schema,
+                3,
+                &checkpoint.task.input_content_id,
+            )
+            .map_err(RuntimeFailure::new)?;
+        Ok(checkpoint.task.clone())
+    }
+}
+
+#[test]
+fn optional_checkpointable_plugin_can_persist_and_restore_a_local_task() {
+    let task = mutsuki_runtime_contracts::PortableTask::new(
+        Task::new("portable-sdk", "demo.portable", json!({"offset": 12})),
+        mutsuki_runtime_contracts::SchemaIdentity::new("demo.portable", "1.0.0"),
+        mutsuki_runtime_contracts::ContentId::new("sha256", "input-digest", 13, "application/json"),
+        mutsuki_runtime_contracts::PortabilityCapability {
+            mobility: mutsuki_runtime_contracts::ExecutionMobility::Checkpointable,
+            retry_safety: mutsuki_runtime_contracts::RetrySafety::Verifiable,
+            task_acceptance: mutsuki_runtime_contracts::TaskAcceptanceDurability::Persisted,
+            resource_persistence: mutsuki_runtime_contracts::ResourcePersistence::Durable,
+            recovery: mutsuki_runtime_contracts::RecoveryMode::RestoreCheckpoint,
+        },
+    );
+    let mut codec = DemoCheckpointCodec;
+
+    let checkpoint = codec.checkpoint(&task, 4).unwrap();
+    let restored = codec.restore(&checkpoint).unwrap().into_local_task();
+
+    assert_eq!(checkpoint.sequence, 4);
+    assert_eq!(checkpoint.payload, vec![7, 8, 9]);
+    assert_eq!(restored.task_id, "portable-sdk");
+    assert_eq!(restored.lease_id, None);
+    assert_eq!(restored.registry_generation, 0);
+}

@@ -130,6 +130,9 @@ bash scripts/check-distributed-boundary.sh
 - Core、contracts、SDK 与普通 Host 的分布式零侵入边界按
   `plans/distributed-zero-intrusion-boundary.md` 执行；禁止多节点专用类型、依赖和
   `distributed` feature 分支进入插件编程模型。
+- portable/checkpoint/content contracts 必须保持独立可选；不得把 attempt lease、部署位置、
+  复制策略或恢复调度写入 descriptor。SDK `Checkpointable` 只能作为 side contract，不能
+  修改 `Runner::run_batch`。未启用时不得执行哈希扫描、持久化 I/O 或启动后台线程。
 
 ## 6. Git 与范围
 

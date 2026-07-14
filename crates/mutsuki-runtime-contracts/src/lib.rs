@@ -4,6 +4,7 @@ mod error;
 mod event;
 mod extension;
 mod plugin;
+mod portability;
 pub mod resource;
 mod runner;
 mod task;
@@ -21,7 +22,8 @@ pub use common::{
     TickId, TraceId,
 };
 pub use error::{
-    ERR_CAPABILITY_EXHAUSTED, ERR_PLUGIN_DISABLED, ERR_PLUGIN_NOT_FOUND, ERR_REGISTRY_FROZEN,
+    ERR_CAPABILITY_EXHAUSTED, ERR_CHECKPOINT_INCOMPATIBLE, ERR_PLUGIN_DISABLED,
+    ERR_PLUGIN_NOT_FOUND, ERR_PORTABLE_SCHEMA_UNSUPPORTED, ERR_REGISTRY_FROZEN,
     ERR_REGISTRY_GENERATION_MISMATCH, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
     ERR_RESOURCE_GENERATION_MISMATCH, ERR_RESOURCE_LEASE_EXPIRED, ERR_RESOURCE_NOT_FOUND,
     ERR_RESOURCE_UNSUPPORTED, ERR_RUNNER_NOT_FOUND, ERR_RUNNER_PURITY_VIOLATION,
@@ -41,6 +43,13 @@ pub use plugin::{
     ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
     RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle,
     SurfaceOccupancyHandleKind,
+};
+pub use portability::{
+    ContentId, ExecutionMobility, PORTABLE_TASK_ENVELOPE_SCHEMA_ID,
+    PORTABLE_TASK_ENVELOPE_SCHEMA_VERSION, PortabilityCapability, PortabilityCatalog,
+    PortableResourceDescriptor, PortableTask, RecoveryMode, ResourcePersistence, RetrySafety,
+    SchemaIdentity, TASK_CHECKPOINT_ENVELOPE_SCHEMA_ID, TASK_CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
+    TaskAcceptanceDurability, TaskCheckpoint, TaskPortabilityDescriptor,
 };
 pub use resource::{
     CommandPlan, ExclusiveWriteLease, ExportPlan, LeaseToken, PatchDescriptor, PlanReceipt,
