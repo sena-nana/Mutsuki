@@ -281,6 +281,8 @@ fn pending_output_tasks(
     tasks
 }
 
+// The explicit output slices mirror RunnerResult and keep validation allocation-free.
+#[allow(clippy::too_many_arguments)]
 fn validate_continue_outputs(
     task_id: &str,
     status: &RunnerStatus,

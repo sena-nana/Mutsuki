@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
+use crate::DispatchBudget;
 use mutsuki_runtime_contracts::{
     ExecutorId, RunnerDescriptor, RunnerPurity, Task, TaskLease, TaskStatus,
 };
-use serde_json;
-
-use crate::DispatchBudget;
 
 use super::{TaskPool, TaskRecord};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn claim_ready_for_executor_with_budget(
     task_pool: &mut TaskPool,
     runner: &RunnerDescriptor,

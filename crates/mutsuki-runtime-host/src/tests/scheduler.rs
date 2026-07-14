@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use std::sync::{Arc, mpsc};
 
 use mutsuki_runtime_contracts::*;

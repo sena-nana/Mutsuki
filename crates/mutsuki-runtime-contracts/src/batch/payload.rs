@@ -100,6 +100,8 @@ impl BatchPayload {
         }
     }
 
+    // RuntimeError is the stable, structured wire error; boxing it would change the public API.
+    #[allow(clippy::result_large_err)]
     pub fn try_row_tasks(&self) -> Result<Vec<Task>, RuntimeError> {
         let Self::Row(payload) = self else {
             return Err(payload_error(format!(

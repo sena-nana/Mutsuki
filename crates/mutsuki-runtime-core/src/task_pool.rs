@@ -197,6 +197,8 @@ impl TaskPool {
         )
     }
 
+    // Keep the explicit claim facts visible at this internal scheduling boundary.
+    #[allow(clippy::too_many_arguments)]
     pub fn claim_ready_for_executor_with_budget(
         &mut self,
         runner: &RunnerDescriptor,

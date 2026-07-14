@@ -19,6 +19,8 @@ use crate::resource_router;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerPool, WorkerStarted, worker_pools};
 
+// Mailbox messages own structured Host commands; boxing would add allocation to every command.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum CoreActorMsg {
     Command(
         HostRuntimeCommand,
@@ -107,6 +109,7 @@ pub(crate) fn core_actor_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_command(
     command: HostRuntimeCommand,
     core: &mut CoreRuntime,
@@ -366,7 +369,7 @@ fn drain_for_reload(
                 )?;
             }
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
-                let _ = reply_tx.send(task_status(&core, &task_id));
+                let _ = reply_tx.send(task_status(core, &task_id));
             }
             Ok(CoreActorMsg::Command(_, reply_tx)) => {
                 let _ = reply_tx.send(Err(host_failure(
@@ -443,6 +446,7 @@ fn send_command_reply(
     shutdown
 }
 
+#[allow(clippy::too_many_arguments)]
 fn drain_worker_completions(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
@@ -483,7 +487,7 @@ fn drain_worker_completions(
                 }
             }
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
-                let _ = reply_tx.send(task_status(&core, &task_id));
+                let _ = reply_tx.send(task_status(core, &task_id));
             }
             Ok(CoreActorMsg::Command(command, reply_tx)) => {
                 if send_command_reply(
@@ -609,11 +613,11 @@ fn cancel_expired_tick_deadlines(
     let current_step = core.current_step();
     let expired: Vec<_> = running_batches_by_task
         .iter()
-        .filter_map(|(task_id, task)| {
+        .filter(|&(_task_id, task)| {
             task.deadline_tick
                 .is_some_and(|deadline_tick| current_step >= deadline_tick)
-                .then(|| task_id.clone())
         })
+        .map(|(task_id, _task)| task_id.clone())
         .collect();
     for task_id in expired {
         let Some(task) = running_batches_by_task.remove(&task_id) else {
@@ -642,9 +646,8 @@ fn isolate_invocation(
     }
     let task_ids: Vec<_> = running_batches_by_task
         .iter()
-        .filter_map(|(task_id, task)| {
-            (task.invocation_id == invocation_id).then(|| task_id.clone())
-        })
+        .filter(|&(_task_id, task)| task.invocation_id == invocation_id)
+        .map(|(task_id, _task)| task_id.clone())
         .collect();
     let Some(first_task) = task_ids
         .first()
@@ -654,10 +657,10 @@ fn isolate_invocation(
         return;
     };
     for task_id in &task_ids {
-        if let Some(task) = running_batches_by_task.get(task_id) {
-            if task_status(core, task_id) == Some(TaskStatus::Running) {
-                let _ = core.cancel_task_handle(&task.handle);
-            }
+        if let Some(task) = running_batches_by_task.get(task_id)
+            && task_status(core, task_id) == Some(TaskStatus::Running)
+        {
+            let _ = core.cancel_task_handle(&task.handle);
         }
         running_batches_by_task.remove(task_id);
     }

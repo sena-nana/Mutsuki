@@ -110,7 +110,7 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
             lane: DispatchLane::Normal,
             ordering: OrderingRequirement::None,
         }],
-        payload: BatchPayload::from_tasks(&[task.clone()]),
+        payload: BatchPayload::from_tasks(std::slice::from_ref(&task)),
         resource_plan: WorkResourcePlan::empty(),
         task_leases: vec![lease],
     }
