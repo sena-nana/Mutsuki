@@ -3,6 +3,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum HostError {
+    #[error(transparent)]
+    RuntimeFailure(mutsuki_runtime_core::RuntimeFailure),
     #[error("runtime failure: {0}")]
     Runtime(String),
     #[error("resource failure: {0}")]
@@ -19,7 +21,7 @@ pub type HostResult<T> = Result<T, HostError>;
 
 impl From<mutsuki_runtime_core::RuntimeFailure> for HostError {
     fn from(error: mutsuki_runtime_core::RuntimeFailure) -> Self {
-        Self::Runtime(format!("{:?}", error.error()))
+        Self::RuntimeFailure(error)
     }
 }
 
@@ -32,6 +34,7 @@ impl From<mutsuki_tauri_resource::ResourceBridgeError> for HostError {
 impl From<HostError> for FrontendError {
     fn from(error: HostError) -> Self {
         match error {
+            HostError::RuntimeFailure(failure) => failure.error().clone().into(),
             HostError::Runtime(message) => Self::new("runtime.failed", message),
             HostError::Resource(message) => Self::new("resource.failed", message),
             HostError::Approval(message) => Self::new("approval.failed", message),

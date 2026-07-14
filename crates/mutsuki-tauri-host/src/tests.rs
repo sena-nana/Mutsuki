@@ -1,10 +1,11 @@
-use crate::MutsukiTauriHost;
 use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::echo::{ECHO_PROTOCOL_ID, ECHO_RUNNER_ID, EchoRunner};
+use crate::{HostError, MutsukiTauriHost};
 use mutsuki_runtime_contracts::{
-    ArtifactType, CompletionBatch, EntryCompletion, ExecutionClass, LifecyclePolicy,
-    PermissionGrant, PluginArtifact, PluginManifest, PluginProvides, RunnerDescriptor,
-    RunnerPurity, RunnerResult, RuntimeEventKind, Task, TaskBatch, TaskOutcome, WorkBatch,
+    ArtifactType, CompletionBatch, ERR_RUNNER_NOT_FOUND, EntryCompletion, ExecutionClass,
+    LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest, PluginProvides,
+    RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeEventKind, Task, TaskBatch, TaskOutcome,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
@@ -18,8 +19,9 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
@@ -565,6 +567,24 @@ fn loader_records_missing_runner_spec() {
     }));
     assert_eq!(runners[0].runner_id, "fixture.missing_runner.runner");
     assert!(!runners[0].enabled);
+
+    let error = host
+        .call(FrontendTaskRequest {
+            protocol_id: "fixture.missing".into(),
+            payload: json!({}),
+            task_id: Some("task:missing-runner".into()),
+            trace_id: None,
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        HostError::RuntimeFailure(failure) if failure.error().code == ERR_RUNNER_NOT_FOUND
+    ));
 }
 
 #[test]
@@ -662,8 +682,7 @@ fn loader_records_duplicate_plugin_and_runner_ids() {
 #[test]
 fn external_process_runner_completes_task_and_forwards_stderr() {
     let workspace = TestWorkspace::new("external-runner");
-    let script_path = workspace.root.join("jsonl-runner.ps1");
-    std::fs::write(&script_path, jsonl_runner_script()).expect("runner script written");
+    let runner = jsonl_fixture_runner();
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
@@ -681,14 +700,8 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
         &runner_launch_spec(
             "fixture.process.runner",
             "fixture.process",
-            "powershell.exe",
-            vec![
-                "-NoProfile".into(),
-                "-ExecutionPolicy".into(),
-                "Bypass".into(),
-                "-File".into(),
-                script_path.display().to_string(),
-            ],
+            runner.to_str().expect("fixture runner path is UTF-8"),
+            Vec::new(),
         ),
     );
 
@@ -762,8 +775,7 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
 #[test]
 fn health_reports_external_runner_runtime_failure() {
     let workspace = TestWorkspace::new("external-runner-failure");
-    let script_path = workspace.root.join("jsonl-runner-fails.ps1");
-    std::fs::write(&script_path, failing_jsonl_runner_script()).expect("runner script written");
+    let runner = jsonl_fixture_runner();
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
@@ -781,14 +793,8 @@ fn health_reports_external_runner_runtime_failure() {
         &runner_launch_spec(
             "fixture.failing_process.runner",
             "fixture.failing_process",
-            "powershell.exe",
-            vec![
-                "-NoProfile".into(),
-                "-ExecutionPolicy".into(),
-                "Bypass".into(),
-                "-File".into(),
-                script_path.display().to_string(),
-            ],
+            runner.to_str().expect("fixture runner path is UTF-8"),
+            vec!["--fail".into()],
         ),
     );
 
@@ -1152,84 +1158,36 @@ fn write_runner_spec(dir: &Path, spec: &RunnerSpecFixture) {
     std::fs::write(dir.join("runner.toml"), text).expect("runner spec written");
 }
 
-fn jsonl_runner_script() -> &'static str {
-    r#"
-$ErrorActionPreference = 'Stop'
-while (($line = [Console]::In.ReadLine()) -ne $null) {
-  if ($line.Trim().Length -eq 0) { continue }
-  $request = $line | ConvertFrom-Json
-  if ($request.method -eq 'runner.run_batch') {
-    [Console]::Error.WriteLine('runner stderr token=secret-token')
-    $batch = $request.params.batch
-    $completions = @()
-    foreach ($entry in @($batch.entries)) {
-      $completions += @{
-        entry_id = $entry.entry_id
-        task_id = $entry.task_id
-        result = @{
-          task_id = $entry.task_id
-          deltas = @()
-          events = @()
-          tasks = @()
-          effects = @()
-          values = @()
-          resources = @()
-          task_await = $null
-          status = 'completed'
-        }
-        error = $null
-      }
-    }
-    $result = @{
-      batch_id = $batch.batch_id
-      tick_id = $batch.tick_id
-      results = @($completions)
-      metadata = @()
-    }
-    @{ id = $request.id; ok = $true; result = $result } | ConvertTo-Json -Depth 20 -Compress
-  } elseif ($request.method -eq 'runner.cancel') {
-    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
-  } elseif ($request.method -eq 'runner.dispose') {
-    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
-    break
-  } else {
-    @{ id = $request.id; ok = $false; error = @{ code = 'test.unsupported'; source = 'test'; route = $request.method; lost_capability = $null; recovery = $null; cause = $null; evidence = @{} } } | ConvertTo-Json -Depth 20 -Compress
-  }
-}
-"#
-}
-
-fn failing_jsonl_runner_script() -> &'static str {
-    r#"
-$ErrorActionPreference = 'Stop'
-while (($line = [Console]::In.ReadLine()) -ne $null) {
-  if ($line.Trim().Length -eq 0) { continue }
-  $request = $line | ConvertFrom-Json
-  if ($request.method -eq 'runner.run_batch') {
-    @{
-      id = $request.id
-      ok = $false
-      error = @{
-        code = 'fixture.runner_failed'
-        source = 'fixture.runner'
-        route = 'runner.run_batch'
-        lost_capability = $null
-        recovery = $null
-        cause = $null
-        evidence = @{
-          plugin_id = 'fixture.failing_process'
-          runner_id = 'fixture.failing_process.runner'
-        }
-      }
-    } | ConvertTo-Json -Depth 20 -Compress
-  } elseif ($request.method -eq 'runner.dispose') {
-    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
-    break
-  } else {
-    @{ id = $request.id; ok = $true; result = $null } | ConvertTo-Json -Depth 20 -Compress
-  }
-}
-"#
+fn jsonl_fixture_runner() -> PathBuf {
+    static RUNNER: OnceLock<PathBuf> = OnceLock::new();
+    RUNNER
+        .get_or_init(|| {
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(2)
+                .expect("host crate is inside workspace");
+            let target = workspace.join("target/test-fixtures");
+            let status = Command::new(env!("CARGO"))
+                .args([
+                    "build",
+                    "--locked",
+                    "--manifest-path",
+                    workspace.join("Cargo.toml").to_str().unwrap(),
+                    "--target-dir",
+                    target.to_str().unwrap(),
+                    "-p",
+                    "mutsuki-tauri-jsonl-fixture",
+                ])
+                .status()
+                .expect("build JSONL fixture runner");
+            assert!(status.success(), "JSONL fixture runner build failed");
+            target.join("debug").join(if cfg!(windows) {
+                "mutsuki-tauri-jsonl-fixture.exe"
+            } else {
+                "mutsuki-tauri-jsonl-fixture"
+            })
+        })
+        .clone()
 }
 
 #[tokio::test]

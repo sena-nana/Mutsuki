@@ -3,8 +3,10 @@ use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
 use mutsuki_runtime_contracts::{
-    RuntimeEvent, RuntimeEventKind, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
+    ERR_RUNNER_NOT_FOUND, RuntimeError, RuntimeEvent, RuntimeEventKind, ScalarValue, Task,
+    TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
 };
+use mutsuki_runtime_core::RuntimeFailure;
 use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
@@ -15,7 +17,7 @@ use mutsuki_tauri_bridge::{
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
@@ -31,6 +33,7 @@ pub struct MutsukiTauriHost {
     health: Arc<HostHealthState>,
     plugins: Vec<PluginSummary>,
     runners: Vec<RunnerSummary>,
+    active_protocols: BTreeSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +208,7 @@ impl MutsukiTauriHost {
         health: Arc<HostHealthState>,
         plugins: Vec<PluginSummary>,
         runners: Vec<RunnerSummary>,
+        active_protocols: BTreeSet<String>,
     ) -> Self {
         health.record_summary_failures(&plugins, &runners);
         Self {
@@ -217,6 +221,7 @@ impl MutsukiTauriHost {
             health,
             plugins,
             runners,
+            active_protocols,
         }
     }
 
@@ -353,6 +358,7 @@ impl MutsukiTauriHost {
     }
 
     pub fn submit_task(&self, task: Task) -> HostResult<TaskHandle> {
+        self.ensure_protocol_available(&task.protocol_id)?;
         let submitted = self.dispatch_submission(HostRuntimeCommand::SubmitTask(Box::new(task)))?;
         let handle = match submitted {
             HostRuntimeReply::TaskSubmitted(handle) => handle,
@@ -363,6 +369,9 @@ impl MutsukiTauriHost {
     }
 
     pub fn submit_batch(&self, batch: TaskBatch) -> HostResult<Vec<TaskHandle>> {
+        for task in &batch.tasks {
+            self.ensure_protocol_available(&task.protocol_id)?;
+        }
         let submitted =
             self.dispatch_submission(HostRuntimeCommand::SubmitBatch(Box::new(batch)))?;
         let handles = match submitted {
@@ -371,6 +380,22 @@ impl MutsukiTauriHost {
         };
         self.track_submitted(&handles)?;
         Ok(handles)
+    }
+
+    fn ensure_protocol_available(&self, protocol_id: &str) -> HostResult<()> {
+        if self.active_protocols.contains(protocol_id) {
+            return Ok(());
+        }
+        let mut error = RuntimeError::new(
+            ERR_RUNNER_NOT_FOUND,
+            "mutsuki_tauri_host",
+            "host.task.submit",
+        );
+        error.evidence.insert(
+            "protocol_id".into(),
+            ScalarValue::String(protocol_id.into()),
+        );
+        Err(HostError::RuntimeFailure(RuntimeFailure::new(error)))
     }
 
     pub fn task_snapshots(&self) -> HostResult<Vec<HostTaskSnapshot>> {

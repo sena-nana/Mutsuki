@@ -4,6 +4,7 @@ members = [
     "crates/mutsuki-tauri-resource",
     "crates/mutsuki-tauri-host",
     "crates/tauri-plugin-mutsuki",
+    "fixtures/jsonl-runner",
 ]
 resolver = "2"
 

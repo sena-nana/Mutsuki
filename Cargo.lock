@@ -1609,6 +1609,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-tauri-jsonl-fixture"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-tauri-resource"
 version = "0.1.0"
 dependencies = [

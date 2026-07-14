@@ -80,8 +80,16 @@ impl MutsukiTauriHostBuilder {
         }
         let mut enabled_plugins = BTreeSet::new();
         let mut plugin_deployments = BTreeMap::new();
+        let mut active_protocols = BTreeSet::new();
 
         for manifest in loaded.manifests {
+            active_protocols.extend(
+                manifest
+                    .provides
+                    .runners
+                    .iter()
+                    .flat_map(|runner| runner.accepted_protocol_ids.iter().cloned()),
+            );
             enabled_plugins.insert(manifest.plugin_id.clone());
             plugin_deployments.insert(manifest.plugin_id.clone(), PluginDeploymentKind::Process);
             bootstrapper.register_manifest(manifest);
@@ -102,6 +110,7 @@ impl MutsukiTauriHostBuilder {
                 .plugins
                 .push(loaded_builtin_plugin_summary(&manifest));
             for descriptor in &descriptors {
+                active_protocols.extend(descriptor.accepted_protocol_ids.iter().cloned());
                 loaded
                     .runners
                     .push(loaded_builtin_runner_summary(descriptor));
@@ -144,6 +153,7 @@ impl MutsukiTauriHostBuilder {
             health,
             loaded.plugins,
             loaded.runners,
+            active_protocols,
         ))
     }
 }
