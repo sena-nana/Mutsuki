@@ -4,13 +4,42 @@ use mutsuki_runtime_contracts::{
     RuntimeError, RuntimeEvent, RuntimeEventKind, ScalarValue, SpanStatus, TraceSpan,
 };
 
-#[derive(Clone, Debug, Default)]
+pub const DEFAULT_EVENT_CAPACITY: usize = 4096;
+
+#[derive(Clone, Debug)]
 pub struct EventLog {
     events: Vec<RuntimeEvent>,
     next_sequence: u64,
+    capacity: usize,
+    dropped: u64,
+}
+
+impl Default for EventLog {
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_EVENT_CAPACITY)
+    }
 }
 
 impl EventLog {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            events: Vec::with_capacity(capacity),
+            next_sequence: 0,
+            capacity,
+            dropped: 0,
+        }
+    }
+
+    pub fn set_capacity(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        if self.events.len() > capacity {
+            let removed = self.events.len() - capacity;
+            self.events.truncate(capacity);
+            self.dropped = self.dropped.saturating_add(removed as u64);
+        }
+        self.events.shrink_to(capacity);
+    }
+
     pub fn record(
         &mut self,
         kind: RuntimeEventKind,
@@ -28,7 +57,11 @@ impl EventLog {
             attributes,
             error,
         };
-        self.events.push(event.clone());
+        if self.events.len() < self.capacity {
+            self.events.push(event.clone());
+        } else {
+            self.dropped = self.dropped.saturating_add(1);
+        }
         event
     }
 
@@ -38,6 +71,14 @@ impl EventLog {
 
     pub fn drain(&mut self) -> Vec<RuntimeEvent> {
         self.events.drain(..).collect()
+    }
+
+    pub fn retained(&self) -> usize {
+        self.events.len()
+    }
+
+    pub fn dropped(&self) -> u64 {
+        self.dropped
     }
 }
 

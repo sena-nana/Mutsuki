@@ -11,8 +11,14 @@ pub(super) fn complete(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "complete")?;
-    mark_terminal_record(record, TaskStatus::Completed, None);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "complete")?;
+        mark_terminal_record(record, TaskStatus::Completed, None);
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Completed));
+    record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
 
@@ -22,8 +28,14 @@ pub(super) fn fail(
     current_step: u64,
     failure: RuntimeError,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "fail")?;
-    mark_terminal_record(record, TaskStatus::Failed, Some(failure));
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "fail")?;
+        mark_terminal_record(record, TaskStatus::Failed, Some(failure));
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Failed));
+    record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
 
@@ -33,10 +45,16 @@ pub(super) fn wait(
     current_step: u64,
     ready_at_step: Option<u64>,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
-    record.status = TaskStatus::Waiting;
-    record.task.ready_at_step = ready_at_step;
-    release_record_lease(record);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
+        record.status = TaskStatus::Waiting;
+        record.task.ready_at_step = ready_at_step;
+        release_record_lease(record);
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Waiting));
+    record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
 
@@ -45,10 +63,17 @@ pub(super) fn defer_leased(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "defer")?;
-    record.status = TaskStatus::Ready;
-    release_record_lease(record);
-    clear_record_owner(record);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "defer")?;
+        record.status = TaskStatus::Ready;
+        record.ready_since_step = current_step;
+        release_record_lease(record);
+        clear_record_owner(record);
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+    record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
 
@@ -57,23 +82,41 @@ pub(super) fn block(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "block")?;
-    record.status = TaskStatus::Blocked;
-    release_record_lease(record);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "block")?;
+        record.status = TaskStatus::Blocked;
+        release_record_lease(record);
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Blocked));
+    record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
 
-pub(super) fn wake(task_pool: &mut TaskPool, task_id: &str) -> RuntimeResult<()> {
-    let record = task_pool.record_mut(task_id)?;
-    if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
-        return Err(crate::runtime_failure(
-            ERR_TASK_CLAIM_CONFLICT,
-            "runtime.task_pool",
-            format!("task.wake.{task_id}"),
-        ));
-    }
-    record.status = TaskStatus::Ready;
-    release_record_lease(record);
+pub(super) fn wake(
+    task_pool: &mut TaskPool,
+    task_id: &str,
+    current_step: u64,
+) -> RuntimeResult<()> {
+    let previous_status = {
+        let record = task_pool.record_mut(task_id)?;
+        if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
+            return Err(crate::runtime_failure(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.wake.{task_id}"),
+            ));
+        }
+        let previous_status = record.status.clone();
+        record.status = TaskStatus::Ready;
+        record.ready_since_step = current_step;
+        release_record_lease(record);
+        previous_status
+    };
+    task_pool
+        .statistics
+        .record_status_transition(Some(&previous_status), Some(&TaskStatus::Ready));
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
     Ok(())
 }
@@ -95,8 +138,13 @@ pub(super) fn wake_due_tasks(task_pool: &mut TaskPool, current_step: u64) -> Vec
         .collect();
     for (task_id, _) in &due_tasks {
         if let Some(record) = task_pool.tasks.get_mut(task_id) {
+            let previous_status = record.status.clone();
             record.status = TaskStatus::Ready;
+            record.ready_since_step = current_step;
             release_record_lease(record);
+            task_pool
+                .statistics
+                .record_status_transition(Some(&previous_status), Some(&TaskStatus::Ready));
         }
         crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
     }
@@ -108,16 +156,21 @@ pub(super) fn reject_ready(
     task_id: &str,
     failure: RuntimeError,
 ) -> RuntimeResult<()> {
-    let record = task_pool.record_mut(task_id)?;
-    if record.status != TaskStatus::Ready {
-        return Err(crate::runtime_failure(
-            ERR_TASK_CLAIM_CONFLICT,
-            "runtime.task_pool",
-            format!("task.reject.{task_id}"),
-        ));
+    {
+        let record = task_pool.record_mut(task_id)?;
+        if record.status != TaskStatus::Ready {
+            return Err(crate::runtime_failure(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.reject.{task_id}"),
+            ));
+        }
+        record.status = TaskStatus::Failed;
+        record.failure = Some(failure);
     }
-    record.status = TaskStatus::Failed;
-    record.failure = Some(failure);
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Ready), Some(&TaskStatus::Failed));
     Ok(())
 }
 
@@ -125,6 +178,7 @@ pub(super) fn cancel_running_invocation(
     task_pool: &mut TaskPool,
     runner_id: &str,
     invocation_id: &str,
+    current_step: u64,
 ) -> usize {
     let mut cancelled = 0;
     for record in task_pool.tasks.values_mut() {
@@ -136,7 +190,14 @@ pub(super) fn cancel_running_invocation(
             .as_ref()
             .is_some_and(|lease| lease.lease_id == invocation_id)
         {
+            if let Some(lease) = record.lease.clone() {
+                record_attempt_finished_value(&mut task_pool.statistics, &lease, current_step);
+            }
             record.status = TaskStatus::Ready;
+            task_pool
+                .statistics
+                .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+            record.ready_since_step = current_step;
             release_record_lease(record);
             cancelled = 1;
             break;
@@ -150,8 +211,14 @@ pub(super) fn cancel_task(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let record = task_pool.leased_record_mut(lease, current_step, "cancel")?;
-    mark_terminal_record(record, TaskStatus::Cancelled, None);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "cancel")?;
+        mark_terminal_record(record, TaskStatus::Cancelled, None);
+    }
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Cancelled));
+    record_attempt_finished(task_pool, lease, current_step);
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, &lease.task_id);
     Ok(())
 }
@@ -162,16 +229,28 @@ pub(super) fn terminal_by_core(
     status: TaskStatus,
     failure: Option<RuntimeError>,
     action: &str,
+    current_step: u64,
 ) -> RuntimeResult<()> {
-    let record = task_pool.record_mut(task_id)?;
-    if is_terminal_status(&record.status) {
-        return Err(crate::runtime_failure(
-            ERR_TASK_CLAIM_CONFLICT,
-            "runtime.task_pool",
-            format!("task.{action}.{task_id}"),
-        ));
+    let (active_lease, previous_status) = {
+        let record = task_pool.record_mut(task_id)?;
+        if is_terminal_status(&record.status) {
+            return Err(crate::runtime_failure(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.{action}.{task_id}"),
+            ));
+        }
+        let active_lease = record.lease.clone();
+        let previous_status = record.status.clone();
+        mark_terminal_record(record, status.clone(), failure);
+        (active_lease, previous_status)
+    };
+    task_pool
+        .statistics
+        .record_status_transition(Some(&previous_status), Some(&status));
+    if let Some(lease) = active_lease {
+        record_attempt_finished(task_pool, &lease, current_step);
     }
-    mark_terminal_record(record, status, failure);
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
     Ok(())
 }
@@ -204,10 +283,69 @@ pub(super) fn reclaim_expired_task_leases(
                 reclaimed.push(lease);
             }
             record.status = TaskStatus::Ready;
+            task_pool
+                .statistics
+                .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+            record.ready_since_step = current_step;
             release_record_lease(record);
         }
     }
+    for lease in &reclaimed {
+        record_attempt_finished(task_pool, lease, current_step);
+    }
     reclaimed
+}
+
+pub(super) fn abort_all(
+    task_pool: &mut TaskPool,
+    current_step: u64,
+    failure: RuntimeError,
+) -> Vec<String> {
+    let mut aborted = Vec::new();
+    let mut finished_leases = Vec::new();
+    for record in task_pool.tasks.values_mut() {
+        if is_terminal_status(&record.status) {
+            continue;
+        }
+        if let Some(lease) = record.lease.clone() {
+            finished_leases.push(lease);
+        }
+        aborted.push(record.task.task_id.clone());
+        let previous_status = record.status.clone();
+        mark_terminal_record(record, TaskStatus::Cancelled, Some(failure.clone()));
+        task_pool
+            .statistics
+            .record_status_transition(Some(&previous_status), Some(&TaskStatus::Cancelled));
+    }
+    for lease in &finished_leases {
+        record_attempt_finished(task_pool, lease, current_step);
+    }
+    aborted.sort();
+    for task_id in &aborted {
+        crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
+    }
+    aborted
+}
+
+pub(super) fn record_attempt_finished(
+    task_pool: &mut TaskPool,
+    lease: &TaskLease,
+    current_step: u64,
+) {
+    record_attempt_finished_value(&mut task_pool.statistics, lease, current_step);
+}
+
+fn record_attempt_finished_value(
+    statistics: &mut super::TaskPoolStatistics,
+    lease: &TaskLease,
+    current_step: u64,
+) {
+    let elapsed = current_step
+        .saturating_sub(lease.acquired_at_step)
+        .saturating_add(1);
+    statistics.cumulative_execution_steps = statistics
+        .cumulative_execution_steps
+        .saturating_add(elapsed);
 }
 
 pub(super) fn rebind_ready_generation(

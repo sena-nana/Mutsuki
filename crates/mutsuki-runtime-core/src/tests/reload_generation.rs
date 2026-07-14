@@ -100,7 +100,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
     );
     assert_eq!(
         runtime.running_invocations()[0].invocation_id,
-        "task-lease-1-running-clean"
+        "task-lease-1-running-clean-1"
     );
 
     let mut worker_v2 = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
@@ -113,7 +113,7 @@ fn reload_cancels_clean_running_invocation_and_retries_on_new_generation() {
 
     assert_eq!(
         calls.lock().expect("calls mutex poisoned").as_slice(),
-        &["cancel:task-lease-1-running-clean", "dispose:worker"]
+        &["cancel:task-lease-1-running-clean-1", "dispose:worker"]
     );
     let record = runtime.tasks().get("running-clean").unwrap();
     assert_eq!(record.status, TaskStatus::Ready);

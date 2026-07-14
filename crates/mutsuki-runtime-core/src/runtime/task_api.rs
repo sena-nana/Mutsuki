@@ -13,6 +13,7 @@ use super::{CoreRuntime, TaskResultSnapshot};
 
 impl CoreRuntime {
     pub(crate) fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
+        self.ensure_not_aborted()?;
         if task.registry_generation == 0 {
             task.registry_generation = self.load_plan.registry_generation;
         }
@@ -21,7 +22,7 @@ impl CoreRuntime {
             .surface_ids_for_task(&task)
             .into_iter()
             .find(|surface_id| self.is_surface_deprecated(surface_id));
-        let task_id = self.tasks.enqueue(task)?;
+        let task_id = self.tasks.enqueue_at(task, self.current_step)?;
         if let Some(surface_id) = deprecated_surface {
             let _ = self.tasks.reject_ready(
                 &task_id,
@@ -35,6 +36,13 @@ impl CoreRuntime {
         self.events.record(
             RuntimeEventKind::Task,
             "task.enqueue",
+            Some(task_id.clone()),
+            BTreeMap::new(),
+            None,
+        );
+        self.events.record(
+            RuntimeEventKind::Task,
+            "task.submitted",
             Some(task_id.clone()),
             BTreeMap::new(),
             None,
@@ -57,6 +65,7 @@ impl CoreRuntime {
     }
 
     pub fn submit_batch(&mut self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        self.ensure_accepting_external_tasks()?;
         let mut seen = BTreeMap::new();
         for task in &batch.tasks {
             if seen.insert(task.task_id.clone(), ()).is_some()
@@ -218,7 +227,7 @@ impl CoreRuntime {
                 format!("task.cancel.{task_id}"),
             ));
         }
-        self.tasks.cancel_by_core(task_id)?;
+        self.tasks.cancel_by_core(task_id, self.current_step)?;
         self.record_task_terminal_event(task_id, "task.cancelled", None);
         for task_await in awaits {
             if matches!(
@@ -251,7 +260,8 @@ impl CoreRuntime {
         failure
             .evidence
             .insert("reason".into(), ScalarValue::String(reason.into()));
-        self.tasks.expire_by_core(task_id, failure.clone())?;
+        self.tasks
+            .expire_by_core(task_id, failure.clone(), self.current_step)?;
         self.record_task_terminal_event(task_id, "task.expired", Some(failure));
         self.wake_tasks_waiting_on(task_id)?;
         Ok(())
@@ -270,14 +280,15 @@ impl CoreRuntime {
         failure
             .evidence
             .insert("reason".into(), ScalarValue::String(reason.into()));
-        self.tasks.dead_letter_by_core(task_id, failure.clone())?;
+        self.tasks
+            .dead_letter_by_core(task_id, failure.clone(), self.current_step)?;
         self.record_task_terminal_event(task_id, "task.dead_lettered", Some(failure));
         self.wake_tasks_waiting_on(task_id)?;
         Ok(())
     }
 
     pub(crate) fn wake_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {
-        self.tasks.wake(task_id)
+        self.tasks.wake(task_id, self.current_step)
     }
 
     pub fn wake_task_handle(&mut self, handle: &TaskHandle) -> RuntimeResult<()> {

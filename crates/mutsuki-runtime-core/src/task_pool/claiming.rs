@@ -42,10 +42,18 @@ pub(super) fn claim_ready_for_executor_with_budget(
     });
     candidates = select_candidates_for_budget(candidates, limit, budget);
     let mut leased = Vec::new();
+    let mut queue_steps = 0u64;
+    let mut attempts_started = 0u64;
     for mut task in candidates {
         if let Some(record) = task_pool.tasks.get_mut(&task.task_id) {
+            record.attempt_generation = record.attempt_generation.saturating_add(1);
+            queue_steps = queue_steps.saturating_add(step.saturating_sub(record.ready_since_step));
+            attempts_started = attempts_started.saturating_add(1);
             let lease = TaskLease {
-                lease_id: format!("task-lease-{}-{}", step, task.task_id),
+                lease_id: format!(
+                    "task-lease-{step}-{}-{}",
+                    task.task_id, record.attempt_generation
+                ),
                 task_id: task.task_id.clone(),
                 runner_id: runner.runner_id.clone(),
                 executor_id: executor_id.clone(),
@@ -54,6 +62,9 @@ pub(super) fn claim_ready_for_executor_with_budget(
                 expires_at_step,
             };
             record.status = TaskStatus::Running;
+            task_pool
+                .statistics
+                .record_status_transition(Some(&TaskStatus::Ready), Some(&TaskStatus::Running));
             record.claimed_by = Some(runner.runner_id.clone());
             record.owner_runner = Some(runner.runner_id.clone());
             record.lease = Some(lease.clone());
@@ -62,6 +73,14 @@ pub(super) fn claim_ready_for_executor_with_budget(
             leased.push((lease, task));
         }
     }
+    task_pool.statistics.attempts_started = task_pool
+        .statistics
+        .attempts_started
+        .saturating_add(attempts_started);
+    task_pool.statistics.cumulative_queue_steps = task_pool
+        .statistics
+        .cumulative_queue_steps
+        .saturating_add(queue_steps);
     leased
 }
 

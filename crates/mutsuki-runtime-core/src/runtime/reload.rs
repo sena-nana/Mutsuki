@@ -117,6 +117,7 @@ impl CoreRuntime {
                     self.tasks.cancel_running_invocation(
                         &disposition.runner_id,
                         &disposition.invocation_id,
+                        self.current_step,
                     );
                     self.events.record(
                         RuntimeEventKind::Runner,

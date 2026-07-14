@@ -5,7 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus, TraceSpan};
-use mutsuki_runtime_core::{CoreRuntime, ReloadDecision, RuntimeResult};
+use mutsuki_runtime_core::{
+    CoreRuntime, DEFAULT_EVENT_CAPACITY, ReloadDecision, RuntimeResult, RuntimeStatistics,
+    RuntimeStopState,
+};
 use mutsuki_runtime_sdk::{
     HostContext as SdkHostContext, HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway,
 };
@@ -31,6 +34,7 @@ pub struct HostRuntimeConfig {
     pub resource_providers: HostResourceProviders,
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
+    pub event_capacity: usize,
 }
 
 impl HostRuntimeConfig {
@@ -60,6 +64,7 @@ impl fmt::Debug for HostRuntimeConfig {
             )
             .field("cancel_grace_period", &self.cancel_grace_period)
             .field("worker_health_timeout", &self.worker_health_timeout)
+            .field("event_capacity", &self.event_capacity)
             .finish()
     }
 }
@@ -79,6 +84,7 @@ impl Default for HostRuntimeConfig {
             resource_providers: BTreeMap::new(),
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
+            event_capacity: DEFAULT_EVENT_CAPACITY,
         }
     }
 }
@@ -92,13 +98,14 @@ pub struct HostRuntime {
 
 impl HostRuntime {
     pub(crate) fn start(
-        core: CoreRuntime,
+        mut core: CoreRuntime,
         config: HostRuntimeConfig,
         capabilities: HostCapabilityRegistry,
         services: Arc<HostServiceRegistry>,
         profile_id: String,
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
+        core.configure_event_capacity(config.event_capacity);
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let actor = thread::Builder::new()
@@ -188,6 +195,48 @@ impl HostRuntime {
         }
     }
 
+    pub fn begin_drain(&self) -> RuntimeResult<RuntimeStopState> {
+        match self.dispatch(HostRuntimeCommand::BeginDrain)? {
+            HostRuntimeReply::DrainStarted(state) => Ok(state),
+            reply => Err(host_failure(
+                "host.begin_drain",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn abort(&self, reason: impl Into<String>) -> RuntimeResult<usize> {
+        match self.dispatch(HostRuntimeCommand::Abort {
+            reason: reason.into(),
+        })? {
+            HostRuntimeReply::RuntimeAborted { cancelled_tasks } => Ok(cancelled_tasks),
+            reply => Err(host_failure(
+                "host.abort",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn stop_state(&self) -> RuntimeResult<RuntimeStopState> {
+        match self.dispatch(HostRuntimeCommand::StopState)? {
+            HostRuntimeReply::StopState(state) => Ok(state),
+            reply => Err(host_failure(
+                "host.stop_state",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn statistics(&self) -> RuntimeResult<RuntimeStatistics> {
+        match self.dispatch(HostRuntimeCommand::Statistics)? {
+            HostRuntimeReply::Statistics(statistics) => Ok(statistics),
+            reply => Err(host_failure(
+                "host.statistics",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
     pub fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
         match self.dispatch(HostRuntimeCommand::EventsAfter(sequence))? {
             HostRuntimeReply::Events(events) => Ok(events),
@@ -231,6 +280,22 @@ impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision> {
         HostRuntime::reload(self, prepared, drain_timeout)
+    }
+
+    fn begin_drain(&self) -> RuntimeResult<RuntimeStopState> {
+        HostRuntime::begin_drain(self)
+    }
+
+    fn abort(&self, reason: &str) -> RuntimeResult<usize> {
+        HostRuntime::abort(self, reason)
+    }
+
+    fn stop_state(&self) -> RuntimeResult<RuntimeStopState> {
+        HostRuntime::stop_state(self)
+    }
+
+    fn statistics(&self) -> RuntimeResult<RuntimeStatistics> {
+        HostRuntime::statistics(self)
     }
 
     fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>> {

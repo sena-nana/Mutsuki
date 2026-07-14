@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, HandlerBinding, RuntimeError, RuntimeEventKind, RuntimeLoadPlan, ScalarValue,
-    TaskStatus,
+    ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding, RuntimeError,
+    RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus,
 };
 use serde_json::Value;
 
@@ -13,7 +13,7 @@ use crate::registry::{
 };
 use crate::runner::Runner;
 use crate::state_store::StateStore;
-use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool};
+use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool, TaskPoolStatistics};
 
 mod reload;
 mod resource_api;
@@ -32,6 +32,21 @@ pub struct TaskResultSnapshot {
     pub output_ref: Option<String>,
     pub continuation_ref: Option<String>,
     pub failure: Option<RuntimeError>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RuntimeStopState {
+    #[default]
+    Running,
+    Draining,
+    Aborted,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeStatistics {
+    pub tasks: TaskPoolStatistics,
+    pub retained_events: usize,
+    pub dropped_events: u64,
 }
 
 struct DrainingGeneration {
@@ -53,6 +68,7 @@ pub struct CoreRuntime {
     events: EventLog,
     traces: TraceLog,
     current_step: u64,
+    stop_state: RuntimeStopState,
 }
 
 impl CoreRuntime {
@@ -83,6 +99,7 @@ impl CoreRuntime {
             events: EventLog::default(),
             traces: TraceLog::default(),
             current_step: 0,
+            stop_state: RuntimeStopState::Running,
         })
     }
 
@@ -117,6 +134,110 @@ impl CoreRuntime {
 
     pub fn current_step(&self) -> u64 {
         self.current_step
+    }
+
+    pub fn stop_state(&self) -> RuntimeStopState {
+        self.stop_state
+    }
+
+    pub fn begin_drain(&mut self) -> RuntimeResult<RuntimeStopState> {
+        match self.stop_state {
+            RuntimeStopState::Running => {
+                self.stop_state = RuntimeStopState::Draining;
+                self.events.record(
+                    RuntimeEventKind::Lifecycle,
+                    "runtime.drain_started",
+                    None,
+                    BTreeMap::new(),
+                    None,
+                );
+                Ok(self.stop_state)
+            }
+            RuntimeStopState::Draining => Ok(self.stop_state),
+            RuntimeStopState::Aborted => Err(crate::runtime_failure(
+                ERR_RUNTIME_ABORTED,
+                "runtime.lifecycle",
+                "runtime.drain.aborted",
+            )),
+        }
+    }
+
+    pub fn abort(&mut self, reason: impl Into<String>) -> RuntimeResult<usize> {
+        if self.stop_state == RuntimeStopState::Aborted {
+            return Ok(0);
+        }
+        let reason = reason.into();
+        self.stop_state = RuntimeStopState::Aborted;
+        let mut failure =
+            crate::runtime_error(ERR_RUNTIME_ABORTED, "runtime.lifecycle", "runtime.abort");
+        failure
+            .evidence
+            .insert("reason".into(), ScalarValue::String(reason.clone()));
+        let aborted = self.tasks.abort_all(self.current_step, failure.clone());
+        for task_id in &aborted {
+            self.record_task_terminal_event(task_id, "task.cancelled", Some(failure.clone()));
+        }
+        self.events.record(
+            RuntimeEventKind::Lifecycle,
+            "runtime.aborted",
+            None,
+            BTreeMap::from([
+                ("reason".into(), ScalarValue::String(reason)),
+                (
+                    "cancelled_tasks".into(),
+                    ScalarValue::Int(aborted.len() as i64),
+                ),
+            ]),
+            Some(failure),
+        );
+        Ok(aborted.len())
+    }
+
+    pub fn is_drained(&self) -> bool {
+        let statistics = self.tasks.statistics();
+        self.stop_state == RuntimeStopState::Draining
+            && statistics.ready == 0
+            && statistics.running == 0
+            && statistics.waiting == 0
+            && statistics.blocked == 0
+    }
+
+    pub fn configure_event_capacity(&mut self, capacity: usize) {
+        self.events.set_capacity(capacity);
+    }
+
+    pub fn statistics(&self) -> RuntimeStatistics {
+        RuntimeStatistics {
+            tasks: self.tasks.statistics(),
+            retained_events: self.events.retained(),
+            dropped_events: self.events.dropped(),
+        }
+    }
+
+    pub(crate) fn ensure_accepting_external_tasks(&self) -> RuntimeResult<()> {
+        if self.stop_state == RuntimeStopState::Running {
+            return Ok(());
+        }
+        Err(crate::runtime_failure(
+            match self.stop_state {
+                RuntimeStopState::Aborted => ERR_RUNTIME_ABORTED,
+                RuntimeStopState::Draining => ERR_RUNTIME_NOT_ACCEPTING,
+                RuntimeStopState::Running => unreachable!(),
+            },
+            "runtime.lifecycle",
+            "runtime.submit",
+        ))
+    }
+
+    pub(crate) fn ensure_not_aborted(&self) -> RuntimeResult<()> {
+        if self.stop_state != RuntimeStopState::Aborted {
+            return Ok(());
+        }
+        Err(crate::runtime_failure(
+            ERR_RUNTIME_ABORTED,
+            "runtime.lifecycle",
+            "runtime.execute.aborted",
+        ))
     }
 
     #[cfg(test)]
@@ -243,7 +364,8 @@ impl CoreRuntime {
                 self.task_status(&task_await.parent_task_id),
                 Some(TaskStatus::Waiting | TaskStatus::Blocked)
             ) {
-                self.tasks.wake(&task_await.parent_task_id)?;
+                self.tasks
+                    .wake(&task_await.parent_task_id, self.current_step)?;
                 self.events.record(
                     RuntimeEventKind::Task,
                     "task.wake",

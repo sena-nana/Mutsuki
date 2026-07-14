@@ -86,6 +86,12 @@ bash scripts/check-distributed-boundary.sh
   tick deadline 保持确定性取消语义；host-only wall-clock deadline、取消宽限和
   worker health timeout 可把卡死 native worker 隔离并补 replacement worker。迟到
   completion 必须 drain / dispose，不能把旧结果或旧 runner 重新放回 Core。
+- 每次 claim 的 attempt generation 必须单调递增；Cancel、retry、reload、timeout 和 Abort
+  之后，旧 TaskLease completion 必须原子拒绝。
+- Drain 拒绝新的外部 submit 但允许已接收 task 完成；Abort 取消所有非 terminal task 并
+  使 runtime 不可恢复。事件 outlet 必须有界、非阻塞且可关闭，正确性不得依赖消费者。
+- runtime 累计统计只在 actor-owned 状态迁移上做常数成本更新；禁止为基础统计引入采样
+  线程、逐 tick 事件、P95 或网络概念。
 - 普通 runner 禁止直接副作用。
 - StateStore 只能通过 `core.commit` task 修改。
 - EventLog 只能通过 kernel event append 或 runtime 事件记录修改。

@@ -104,7 +104,10 @@ pub(crate) fn core_actor_loop(
                 let _ =
                     schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
             }
-            CoreActorMsg::Shutdown => break,
+            CoreActorMsg::Shutdown => {
+                let _ = core.abort("host.shutdown");
+                break;
+            }
         }
     }
 }
@@ -185,6 +188,30 @@ fn handle_command(
                     .push(task.invocation_id);
             }
             Ok((HostRuntimeReply::TaskCancelled(handle), false))
+        }
+        HostRuntimeCommand::BeginDrain => {
+            Ok((HostRuntimeReply::DrainStarted(core.begin_drain()?), false))
+        }
+        HostRuntimeCommand::Abort { reason } => {
+            let running_invocations: BTreeSet<_> = running_batches_by_task
+                .values()
+                .map(|task| (task.runner_id.clone(), task.invocation_id.clone()))
+                .collect();
+            for (runner_id, invocation_id) in running_invocations {
+                mark_cancel_requested(&invocation_id, running_batches_by_task);
+                pending_cancels
+                    .entry(runner_id)
+                    .or_default()
+                    .push(invocation_id);
+            }
+            let cancelled_tasks = core.abort(reason)?;
+            Ok((HostRuntimeReply::RuntimeAborted { cancelled_tasks }, false))
+        }
+        HostRuntimeCommand::StopState => {
+            Ok((HostRuntimeReply::StopState(core.stop_state()), false))
+        }
+        HostRuntimeCommand::Statistics => {
+            Ok((HostRuntimeReply::Statistics(core.statistics()), false))
         }
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
@@ -271,6 +298,7 @@ fn task_snapshot(record: &TaskRecord) -> HostTaskSnapshot {
         claimed_by: record.claimed_by.clone(),
         owner_runner: record.owner_runner.clone(),
         lease_id: record.task.lease_id.clone(),
+        attempt_generation: record.attempt_generation,
         trace_id: record.task.trace_id.clone(),
         correlation_id: record.task.correlation_id.clone(),
         input_refs: record.task.input_refs.clone(),

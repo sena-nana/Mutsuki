@@ -28,6 +28,7 @@ impl CoreRuntime {
         &mut self,
         executor: &mut impl RunnerExecutor,
     ) -> RuntimeResult<RunnerLoopReport> {
+        self.ensure_not_aborted()?;
         self.current_step += 1;
         self.reclaim_expired_task_leases();
         self.wake_due_tasks();
@@ -71,6 +72,7 @@ impl CoreRuntime {
         ) -> RuntimeResult<ScheduleDecision>,
         lease_expires_at: Option<u64>,
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
+        self.ensure_not_aborted()?;
         self.current_step += 1;
         self.reclaim_expired_task_leases();
         self.wake_due_tasks();

@@ -98,6 +98,12 @@ descriptor；字符串 task id 只保留为 TaskPool 和 host actor 内部事实
 `TaskPool` 是 ready task backlog / 调度索引，不是 Runner inbox。没有 runner 时，
 Task 仍然可以保持 Ready 并积压。Runner 不长期拥有 Task。
 
+每次 claim 都创建唯一的本地 attempt：TaskPool 单调递增 `attempt_generation` 并将其
+编码进既有 TaskLease id。Cancel、retry、lease expiry、reload 和 Abort 都通过 active
+lease fencing 拒绝迟到结果，不增加 distributed/global lease 概念。单 Host 的
+Cancel/Drain/Abort、非阻塞事件和统计契约见
+[local-task-lifecycle.md](local-task-lifecycle.md)。
+
 Core 保留单 Task 状态：
 
 ```text
@@ -200,7 +206,7 @@ SDK 同时提供 Host / Plugin 扩展基础抽象，但这些抽象只服务于 
 - `TaskSubmitter` 和 `ResourcePlanGateway` 只执行现有 `Task`、`TaskHandle`、`TaskOutcome`
   与 resource plan 协议；builtin/ABI 等部署差异仍停留在 host backend。
 - `HostRuntime` trait 是 SDK-facing host control-plane facade，可暴露 reload、
-  task snapshot、event 和 trace 查询；reload 的 prepared transaction 由具体 host
+  task snapshot、event、trace、Drain/Abort 和统计查询；reload 的 prepared transaction 由具体 host
   通过关联类型承载，SDK 不反向依赖 host crate，也不新增 contracts wire shape。
 
 这些 SDK trait 不新增 contracts wire shape，也不把 Host shell 或 SDK 本身变成运行时插件。
@@ -218,6 +224,10 @@ timeout 不改变 `RunnerContext` wire shape；它们由 actor 监督 running in
 native worker 超时后会被隔离，pool 补充 replacement worker，迟到 completion 进入
 drain：host 只投递 cancel / dispose，不再复用旧 runner 或提交旧结果。单连接同步 JSONL
 step 的独立 management channel 和进程级强制终止仍属于 sidecar supervision 后续扩展。
+
+Drain 只拒绝新的外部 submit，已经接收的 task 继续完成；Abort 取消所有非 terminal task
+并永久使旧 lease 失效。生命周期事件进入有界 drop-new EventLog，容量满或设为零只影响
+观察，不影响任务状态迁移。统计由 actor-owned 状态迁移常数成本累积，不启动采样线程。
 
 外部 Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side
 adapter 只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回

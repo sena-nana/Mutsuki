@@ -87,7 +87,7 @@ fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
     assert_eq!(pool.get("task-1").unwrap().task.ready_at_step, Some(8));
     assert!(pool.get("task-1").unwrap().task.lease_id.is_none());
 
-    pool.wake("task-1").unwrap();
+    pool.wake("task-1", 1).unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
     let lease = pool.claim_ready_for_executor(&descriptor, "executor-1", 8, 0, 1)[0]
         .0
@@ -95,7 +95,7 @@ fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
 
     pool.block(&lease, 8).unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Blocked);
-    pool.wake("task-1").unwrap();
+    pool.wake("task-1", 8).unwrap();
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::Ready);
 }
 
@@ -132,7 +132,7 @@ fn woken_continuation_can_only_be_reclaimed_by_owner_runner() {
         .0
         .clone();
     pool.wait(&lease, 1, None).unwrap();
-    pool.wake("task-1").unwrap();
+    pool.wake("task-1", 2).unwrap();
 
     assert!(
         pool.claim_ready_for_executor(&alternate, "executor-2", 2, 0, 1)
@@ -260,6 +260,7 @@ fn task_pool_core_terminal_states_release_lease_and_owner() {
     pool.expire_by_core(
         "task-1",
         crate::runtime_error(ERR_TASK_EXPIRED, "test", "task.expire"),
+        1,
     )
     .unwrap();
 
@@ -270,7 +271,7 @@ fn task_pool_core_terminal_states_release_lease_and_owner() {
     assert!(record.owner_runner.is_none());
     assert!(record.task.lease_id.is_none());
     assert!(pool.complete(&lease, 1).is_err());
-    assert!(pool.cancel_by_core("task-1").is_err());
+    assert!(pool.cancel_by_core("task-1", 1).is_err());
 }
 
 #[test]
@@ -282,11 +283,12 @@ fn task_pool_dead_letter_is_terminal() {
     pool.dead_letter_by_core(
         "task-1",
         crate::runtime_error(ERR_TASK_DEAD_LETTER, "test", "task.dead_letter"),
+        0,
     )
     .unwrap();
 
     assert_eq!(pool.get("task-1").unwrap().status, TaskStatus::DeadLetter);
-    assert!(pool.wake("task-1").is_err());
+    assert!(pool.wake("task-1", 0).is_err());
 }
 
 #[test]

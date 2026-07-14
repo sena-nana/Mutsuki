@@ -458,7 +458,7 @@ fn runner_trace_records_plugin_generation_and_contract_facts() {
     );
     assert_eq!(
         span.attributes.get("task_lease_ids"),
-        Some(&ScalarValue::String("task-lease-1-trace-task".into()))
+        Some(&ScalarValue::String("task-lease-1-trace-task-1".into()))
     );
     assert_eq!(
         span.attributes.get("correlation_id"),

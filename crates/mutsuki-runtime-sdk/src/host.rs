@@ -10,7 +10,9 @@ use mutsuki_runtime_contracts::{
     ScalarValue, SchedulerPolicyDescriptor, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus,
     TraceSpan, WorkflowDescriptor,
 };
-use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{
+    ReloadDecision, RuntimeFailure, RuntimeResult, RuntimeStatistics, RuntimeStopState,
+};
 use serde_json::Value;
 
 use crate::{ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient, RuntimeClientRef};
@@ -553,6 +555,7 @@ pub struct HostTaskSnapshot {
     pub claimed_by: Option<String>,
     pub owner_runner: Option<String>,
     pub lease_id: Option<String>,
+    pub attempt_generation: u64,
     pub trace_id: Option<String>,
     pub correlation_id: Option<String>,
     pub input_refs: Vec<String>,
@@ -592,6 +595,14 @@ pub trait HostRuntime {
         prepared: Self::PreparedReload,
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision>;
+
+    fn begin_drain(&self) -> RuntimeResult<RuntimeStopState>;
+
+    fn abort(&self, reason: &str) -> RuntimeResult<usize>;
+
+    fn stop_state(&self) -> RuntimeResult<RuntimeStopState>;
+
+    fn statistics(&self) -> RuntimeResult<RuntimeStatistics>;
 
     fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>>;
 

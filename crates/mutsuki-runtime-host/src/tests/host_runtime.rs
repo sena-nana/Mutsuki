@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{
-    Runner, RunnerContext, RuntimeFailure, RuntimeResult, ScheduleDecision,
+    Runner, RunnerContext, RuntimeFailure, RuntimeResult, RuntimeStopState, ScheduleDecision,
 };
 use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
@@ -307,6 +307,65 @@ fn events_after_returns_incremental_runtime_events() {
         event.kind == RuntimeEventKind::Task
             && event.subject_id.as_deref() == Some("event-task-next")
     }));
+}
+
+#[test]
+fn host_runtime_exposes_drain_abort_and_statistics_without_changing_task_api() {
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "drain-accepted",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+
+    assert_eq!(runtime.begin_drain().unwrap(), RuntimeStopState::Draining);
+    let rejected = runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "drain-rejected",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap_err();
+    assert_eq!(rejected.error().code, ERR_RUNTIME_NOT_ACCEPTING);
+    runtime
+        .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+        .unwrap();
+    assert_eq!(
+        runtime.task_status("drain-accepted"),
+        Some(TaskStatus::Completed)
+    );
+    let statistics = runtime.statistics().unwrap();
+    assert_eq!(statistics.tasks.completed, 1);
+    assert_eq!(statistics.tasks.attempts_started, 1);
+
+    let aborted = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    aborted
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "abort-ready",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap();
+    assert_eq!(aborted.abort("test abort").unwrap(), 1);
+    assert_eq!(aborted.stop_state().unwrap(), RuntimeStopState::Aborted);
+    assert_eq!(
+        aborted.task_status("abort-ready"),
+        Some(TaskStatus::Cancelled)
+    );
+    let error = aborted
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "abort-rejected",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap_err();
+    assert_eq!(error.error().code, ERR_RUNTIME_ABORTED);
 }
 
 #[test]

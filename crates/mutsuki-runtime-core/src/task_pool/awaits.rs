@@ -22,11 +22,18 @@ pub(super) fn wait_on_task(
         validate_task_await_child(parent_record, child_record, &task_await)?;
     }
     let ready_at_step = ready_step_for_wait(&task_await);
-    let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
-    record.status = mutsuki_runtime_contracts::TaskStatus::Waiting;
-    record.task.ready_at_step = ready_at_step;
-    record.task.continuation_ref = Some(task_await.continuation.continuation.ref_id.clone());
-    transitions::release_record_lease(record);
+    {
+        let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
+        record.status = mutsuki_runtime_contracts::TaskStatus::Waiting;
+        record.task.ready_at_step = ready_at_step;
+        record.task.continuation_ref = Some(task_await.continuation.continuation.ref_id.clone());
+        transitions::release_record_lease(record);
+    }
+    task_pool.statistics.record_status_transition(
+        Some(&mutsuki_runtime_contracts::TaskStatus::Running),
+        Some(&mutsuki_runtime_contracts::TaskStatus::Waiting),
+    );
+    transitions::record_attempt_finished(task_pool, lease, current_step);
     task_pool
         .waits_by_child
         .entry(task_await.child.task_id.clone())

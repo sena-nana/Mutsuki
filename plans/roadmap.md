@@ -63,6 +63,12 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - Rust core 覆盖：
   - `TaskPool` 统一保存 ready/running/completed/failed/cancelled task，并保留
     created/waiting/blocked/expired/dead_letter 结构化状态。
+  - 每次 claim 递增本地 attempt generation 并生成唯一 TaskLease id；retry、reload、
+    timeout、Cancel 和 Abort 后的 stale completion 都会被 active lease fencing 拒绝。
+  - `CoreRuntime` / `HostRuntime` 已区分 Cancel、Drain 和 Abort；Drain 停止外部接收但允许
+    已接收任务完成，Abort 取消非 terminal task 并使旧 attempt 失效。
+  - EventLog 是可配置容量的非阻塞 drop-new outlet，容量为零可关闭；生命周期事件和
+    actor-owned 常数成本累计统计不参与任务正确性。
   - task 调度使用 `TaskLease`，一个 ready task 一次只会被一个 runner/executor
     lease 执行；`RunnerContext` 记录 executor id、task lease id、invocation id、
     cancel token 和 tick deadline。
@@ -243,7 +249,8 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - 扩展 RuntimeBootstrapper resolver 的版本约束、权限审计和 capability provider 选择。
 - 增加长期 sidecar supervision、独立 management channel / 强制隔离恢复和 effect compensation。
 - 为 provider RPC 和 effect gateway 引入更完整的长期 supervision 与 compensation。
-- 引入更完整的 executor supervision、TaskLease 过期回收和 stale executor commit fencing。
+- 在既有本地 attempt generation、TaskLease 过期回收和 stale executor commit fencing 上
+  扩展更完整的 executor supervision。
 - 扩展跨进程 runner / sidecar 的独立 management channel、强制终止和补偿语义；当前
   HostRuntime 已覆盖 native worker health、wall-clock deadline、隔离 replacement 和
   迟到 completion drain。
