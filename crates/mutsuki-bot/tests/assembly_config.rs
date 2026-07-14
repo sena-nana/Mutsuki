@@ -75,6 +75,95 @@ client_secret_key = "MISSING_TEMPLATE_QQ_SECRET"
     assert!(error.to_string().contains("MISSING_TEMPLATE_QQ_SECRET"));
 }
 
+#[tokio::test]
+async fn workshop_fails_startup_without_explicit_media_provider() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            r#"
+[[plugins.configured]]
+id = "mutsuki.bot.bilibili.workshop"
+
+[plugins.configured.config]
+media_provider_id = "missing.media.provider"
+max_media_bytes = 8388608
+"#,
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing provider must fail startup");
+    assert!(error.to_string().contains("missing.media.provider"));
+}
+
+#[tokio::test]
+async fn mihuashi_fails_startup_without_browser_protocol() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            r#"
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.bot.mihuashi"
+
+[plugins.configured.config]
+media_provider_id = "mutsuki.std.resource.memory"
+max_media_bytes = 8388608
+"#,
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing browser protocol must fail startup");
+    assert!(error.to_string().contains("mutsuki.browser.snapshot"));
+}
+
+#[tokio::test]
+async fn chromium_factory_rejects_missing_artifact_during_assembly() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            r#"
+[[plugins.configured]]
+id = "mutsuki.std.io.browser.chromium"
+
+[plugins.configured.config]
+executable = "/definitely/missing/chromium"
+domain_allowlist = ["mihuashi.com"]
+timeout_ms = 10000
+max_dom_bytes = 2097152
+"#,
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing Chromium artifact must fail startup");
+    assert!(error.to_string().contains("Chromium executable"));
+}
+
 #[test]
 fn committed_template_exposes_only_product_configuration() {
     let root = tempdir().unwrap();

@@ -8,6 +8,7 @@ license.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
+mutsuki-std-plugins.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
