@@ -5,6 +5,9 @@ use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
 use mutsuki_std_plugins::configured_std_plugin_catalog;
 
+mod distribution;
+pub use distribution::*;
+
 pub fn repository_local_config_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()

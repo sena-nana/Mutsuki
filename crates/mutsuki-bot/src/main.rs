@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use mutsuki_bot::{assemble_service, repository_local_config_path};
+use mutsuki_bot::{assemble_service, load_distribution_plan, repository_local_config_path};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -10,6 +10,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::args_os().nth(1),
         std::env::var_os("MUTSUKI_CONFIG"),
     );
+    // Validate the external deployment contract before starting the local
+    // ServiceRuntime. The template never starts or supervises the sidecar.
+    let _distribution = load_distribution_plan(&config_path)?;
     let service = ServiceConfig::load(ConfigOverrides {
         config_file: Some(config_path),
         ..Default::default()

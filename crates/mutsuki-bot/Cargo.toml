@@ -5,11 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-runtime-contracts.workspace = true
+mutsuki-distributed-contracts.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-std-plugins.workspace = true
+serde.workspace = true
 tokio.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 mutsuki-service-control.workspace = true
@@ -21,4 +25,3 @@ mutsuki-service-plugin-loader.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-toml.workspace = true

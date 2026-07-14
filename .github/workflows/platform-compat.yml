@@ -21,9 +21,9 @@ jobs:
       - name: Install Rust
         run: |
           rustup set profile minimal
-          rustup toolchain install stable --component rustfmt
+          rustup toolchain install stable --component rustfmt --component clippy
       - run: cargo metadata --locked --format-version 1
       - run: cargo fmt --check
-      - run: cargo check --locked
-      - run: cargo test --locked
-
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked

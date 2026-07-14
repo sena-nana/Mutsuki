@@ -20,6 +20,31 @@ cargo run -p mutsuki-bot
 cargo run -p mutsuki-bot -- path/to/product.toml
 ```
 
+## 可选 DistributedHost
+
+提交的产品配置显式使用 `[distribution] mode = "disabled"`。此模式不会启动或监管
+DistributedHost，不打开分布式网络，不产生分布式遥测或副本任务；本地 ServiceRuntime 的行为
+与未接入分布式时一致。
+
+需要分布式时，由部署系统单独安装和监管 `mutsuki-distributed-host`，产品配置只引用一个相对
+部署文件：
+
+```toml
+[distribution]
+mode = "clustered"
+deployment = "../deploy/distribution/controller-worker.toml"
+```
+
+仓库提供单机、单控制端+Worker、3 投票节点+Worker 三种机器中立拓扑以及任务策略 catalog。
+模板在启动本地 Runtime 前验证固定 revision、Secret key 引用、拓扑、认证加密通道、CPU/内存/
+显存/网络/并发/checkpoint 预算和任务策略；它不会替部署系统解析制品或 Secret 值。Sidecar
+不可用时，Fast 任务只按显式策略回退 LocalOnly，Durable/Critical 必须拒绝，不能伪装成可靠
+接收。控制通道与直接数据通道独立，大型数据不经过 Leader。
+
+部署、健康状态、故障演练和诊断见
+[docs/distributed-deployment.md](docs/distributed-deployment.md)；跨阶段总验收矩阵见
+[docs/distributed-acceptance.md](docs/distributed-acceptance.md)。
+
 提交的 `config/template.toml` 是零插件的中立产品。零插件 Runtime 可以启动和停止，但没有
 平台连接或业务行为。最终产品从已经链接或安装的 owner 插件中选择能力：
 
@@ -60,7 +85,7 @@ BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"repl
 ```
 
 完整配置、scope 和错误模型见
-[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/MutsukiBotPlugins/blob/f93d2dbf82ac6f401dab6a3ac6bc75aaae3de933/docs/bilibili-open-platform.md)。
+[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/MutsukiBotPlugins/blob/0feead21eab479d2944225648f62002cd216af79/docs/bilibili-open-platform.md)。
 
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
 Provider），并让 QQ 的 `media_provider_id` 与业务插件一致。米画师还需显式选择
@@ -109,8 +134,9 @@ cargo test -p mutsuki-bot --test qqbot_real_smoke -- --ignored --nocapture
 ```powershell
 cargo metadata --locked
 cargo fmt --check
-cargo check --locked
-cargo test --locked
+cargo check --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 跨仓库职责见 [docs/repository-boundaries.md](docs/repository-boundaries.md)。

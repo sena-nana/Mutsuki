@@ -1,0 +1,40 @@
+schema_version = 1
+policy_catalog = "task-policies.toml"
+
+[external_service]
+artifact = "mutsuki-distributed-host"
+revision = "76f3745fe3c4387035fe6b0a3031f9dfa861f8df"
+local_host_control_endpoint = "servicehost://local/control"
+control_secret_key = "MUTSUKI_DISTRIBUTED_CONTROL_KEY"
+identity_secret_key = "MUTSUKI_DISTRIBUTED_IDENTITY_KEY"
+
+[topology]
+kind = "single_node"
+
+[[topology.nodes]]
+id = "node-a"
+roles = ["voter", "worker"]
+
+[channels.control]
+endpoint = "tls://127.0.0.1:4601"
+authenticated = true
+encrypted = true
+
+[channels.data]
+endpoint = "quic://127.0.0.1:4701"
+authenticated = true
+encrypted = true
+direct_worker_transfer = true
+leader_proxy = false
+
+[budgets]
+cpu_units = 2
+memory_bytes = 1073741824
+vram_bytes = 0
+network_bytes_per_second = 16777216
+transfer_concurrency = 2
+checkpoint_bytes_per_second = 4194304
+
+[observability]
+local_service_health = "servicehost://local/health"
+cluster_health_endpoint = "tls://127.0.0.1:4601/health"

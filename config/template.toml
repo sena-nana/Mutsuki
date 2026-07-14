@@ -9,6 +9,11 @@ instance_id = "mutsuki-bot"
 [security]
 secret_file = "local.secret.toml"
 
+# Distribution is an external deployment choice. Disabled means this product
+# starts no DistributedHost process, network listener, telemetry or replication.
+[distribution]
+mode = "disabled"
+
 # Native owner factories are selected with [[plugins.configured]].
 # External plugin artifacts are discovered from ServiceHost plugin directories.
 # This template intentionally selects no platform, router, command, Agent,
