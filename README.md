@@ -57,6 +57,13 @@ health、Resume 和 graceful shutdown，不包含命令或回复：
 cargo test -p mutsuki-bot --test qqbot_config_e2e
 ```
 
+macOS/Linux 还会启动真实 `mutsuki-bot` 产品进程，通过 Unix socket 验证 health、控制面
+shutdown、Gateway Identify/Resume、WebSocket clean close 和 socket 清理：
+
+```powershell
+cargo test -p mutsuki-bot --test unix_product_smoke
+```
+
 真实账号 smoke 只验证鉴权、Gateway 连接和 health：
 
 ```powershell
