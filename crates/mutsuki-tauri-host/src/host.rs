@@ -36,6 +36,16 @@ pub struct MutsukiTauriHost {
     active_protocols: BTreeSet<String>,
 }
 
+pub(crate) struct HostComponents {
+    pub runtime: HostRuntime,
+    pub resources: Arc<TauriResourceStore>,
+    pub events: Arc<mutsuki_tauri_bridge::EventHub>,
+    pub health: Arc<HostHealthState>,
+    pub plugins: Vec<PluginSummary>,
+    pub runners: Vec<RunnerSummary>,
+    pub active_protocols: BTreeSet<String>,
+}
+
 #[derive(Debug, Default)]
 struct TaskSupervisor {
     state: Mutex<TaskSupervisorState>,
@@ -125,14 +135,14 @@ impl TaskSupervisor {
                 state.last_runtime_event_sequence.max(event.sequence);
             let event = redact_runtime_event(event);
             health.record_runtime_event_error(&event);
-            if let Some(task_id) = task_event_id(&event) {
-                if state.active.contains_key(&task_id) {
-                    state
-                        .events_by_task
-                        .entry(task_id)
-                        .or_default()
-                        .push(event.clone());
-                }
+            if let Some(task_id) = task_event_id(&event)
+                && state.active.contains_key(&task_id)
+            {
+                state
+                    .events_by_task
+                    .entry(task_id)
+                    .or_default()
+                    .push(event.clone());
             }
             let _ = events.emit(frontend_event_for_runtime_event(event));
         }
@@ -200,16 +210,16 @@ impl TaskSupervisor {
 }
 
 impl MutsukiTauriHost {
-    pub(crate) fn new(
-        config: MutsukiTauriConfig,
-        runtime: HostRuntime,
-        resources: Arc<TauriResourceStore>,
-        events: Arc<mutsuki_tauri_bridge::EventHub>,
-        health: Arc<HostHealthState>,
-        plugins: Vec<PluginSummary>,
-        runners: Vec<RunnerSummary>,
-        active_protocols: BTreeSet<String>,
-    ) -> Self {
+    pub(crate) fn new(config: MutsukiTauriConfig, components: HostComponents) -> Self {
+        let HostComponents {
+            runtime,
+            resources,
+            events,
+            health,
+            plugins,
+            runners,
+            active_protocols,
+        } = components;
         health.record_summary_failures(&plugins, &runners);
         Self {
             config,

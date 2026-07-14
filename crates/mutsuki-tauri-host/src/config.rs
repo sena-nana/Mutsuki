@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostMode {
+    #[default]
     Embedded,
     ConnectService,
-}
-
-impl Default for HostMode {
-    fn default() -> Self {
-        Self::Embedded
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

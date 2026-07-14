@@ -1,7 +1,7 @@
 use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
-use crate::host::MutsukiTauriHost;
+use crate::host::{HostComponents, MutsukiTauriHost};
 use crate::plugin_runner::{
     loaded_builtin_plugin_summary, loaded_builtin_runner_summary, scan_plugin_runners,
 };
@@ -147,13 +147,15 @@ impl MutsukiTauriHostBuilder {
         )?;
         Ok(MutsukiTauriHost::new(
             self.config,
-            runtime,
-            resource_store,
-            events,
-            health,
-            loaded.plugins,
-            loaded.runners,
-            active_protocols,
+            HostComponents {
+                runtime,
+                resources: resource_store,
+                events,
+                health,
+                plugins: loaded.plugins,
+                runners: loaded.runners,
+                active_protocols,
+            },
         ))
     }
 }
