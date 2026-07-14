@@ -18,7 +18,7 @@ use crate::constants::{
     ROUTE_SAGA, ROUTE_SNAPSHOT, ROUTE_STREAM, ROUTE_WRITE, SNAPSHOT_KIND_ID,
 };
 use crate::descriptor::{
-    ensure_descriptor_current, ensure_descriptor_self_consistent, ensure_provider, resource_ref,
+    ResourceSpec, ensure_descriptor_current, ensure_descriptor_self_consistent, ensure_provider,
     shared_memory_access,
 };
 use crate::error::{detailed_failure, runtime_failure, unsupported};
@@ -65,9 +65,14 @@ impl SharedMemoryResourceProvider {
             .state
             .lock()
             .expect("shared-memory provider mutex poisoned");
-        let (descriptor, mapping) = self.create_mapping_resource_locked(
-            &mut state, kind_id, semantic, schema, 1, bytes, true,
-        )?;
+        let spec = ResourceSpec {
+            kind_id,
+            semantic,
+            schema,
+            version: 1,
+            readonly: true,
+        };
+        let (descriptor, mapping) = self.create_mapping_resource_locked(&mut state, spec, bytes)?;
         state.resources.insert(
             descriptor.ref_id.clone(),
             SharedMemoryResourceEntry {
@@ -81,27 +86,14 @@ impl SharedMemoryResourceProvider {
     fn create_mapping_resource_locked(
         &self,
         state: &mut SharedMemoryResourceState,
-        kind_id: &str,
-        semantic: ResourceSemantic,
-        schema: &str,
-        version: u64,
+        spec: ResourceSpec<'_>,
         bytes: Vec<u8>,
-        readonly: bool,
     ) -> RuntimeResult<(ResourceRef, OwnedMapping)> {
         state.next_slot += 1;
         let ref_id = format!("shared-memory-resource-{}", state.next_slot);
         let mapping_name = mapping_name();
         let mapping = create_mapping(&mapping_name, &bytes)?;
-        let descriptor = resource_ref(
-            &ref_id,
-            kind_id,
-            semantic,
-            schema,
-            version,
-            &mapping_name,
-            bytes.len() as u64,
-            readonly,
-        );
+        let descriptor = spec.resource_ref(&ref_id, &mapping_name, bytes.len() as u64);
         Ok((descriptor, mapping))
     }
 
@@ -218,15 +210,15 @@ impl ResourcePlanGateway for SharedMemoryResourceProvider {
         }
 
         let new_version = plan.resource.version + 1;
-        let (mut descriptor, mapping) = self.create_mapping_resource_locked(
-            &mut state,
-            &plan.resource.resource_id.kind_id,
-            ResourceSemantic::CowVersionedState,
-            &plan.resource.schema,
-            new_version,
-            bytes,
-            false,
-        )?;
+        let spec = ResourceSpec {
+            kind_id: &plan.resource.resource_id.kind_id,
+            semantic: ResourceSemantic::CowVersionedState,
+            schema: &plan.resource.schema,
+            version: new_version,
+            readonly: false,
+        };
+        let (mut descriptor, mapping) =
+            self.create_mapping_resource_locked(&mut state, spec, bytes)?;
         descriptor.ref_id = plan.resource.ref_id.clone();
         descriptor.resource_id.slot_id = plan.resource.resource_id.slot_id.clone();
         state.resources.insert(

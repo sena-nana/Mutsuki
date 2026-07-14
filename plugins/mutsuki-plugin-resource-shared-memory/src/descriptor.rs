@@ -37,45 +37,46 @@ pub(crate) fn resource_type(
     }
 }
 
-pub(crate) fn resource_ref(
-    ref_id: &str,
-    kind_id: &str,
-    semantic: ResourceSemantic,
-    schema: &str,
-    version: u64,
-    mapping_name: &str,
-    len: u64,
-    readonly: bool,
-) -> ResourceRef {
-    ResourceRef {
-        ref_id: ref_id.into(),
-        resource_id: ResourceId {
-            kind_id: kind_id.into(),
-            slot_id: ref_id.into(),
+pub(crate) struct ResourceSpec<'a> {
+    pub kind_id: &'a str,
+    pub semantic: ResourceSemantic,
+    pub schema: &'a str,
+    pub version: u64,
+    pub readonly: bool,
+}
+
+impl ResourceSpec<'_> {
+    pub fn resource_ref(self, ref_id: &str, mapping_name: &str, len: u64) -> ResourceRef {
+        ResourceRef {
+            ref_id: ref_id.into(),
+            resource_id: ResourceId {
+                kind_id: self.kind_id.into(),
+                slot_id: ref_id.into(),
+                generation: 1,
+                version: self.version,
+            },
+            semantic: self.semantic,
+            provider_id: PROVIDER_ID.into(),
+            resource_kind: self.kind_id.into(),
+            schema: self.schema.into(),
+            version: self.version,
             generation: 1,
-            version,
-        },
-        semantic,
-        provider_id: PROVIDER_ID.into(),
-        resource_kind: kind_id.into(),
-        schema: schema.into(),
-        version,
-        generation: 1,
-        access: ResourceAccess::SharedMemory {
-            name: mapping_name.into(),
-            offset: 0,
-            len,
-            readonly,
-        },
-        size_hint: Some(len),
-        content_hash: None,
-        lifetime: ResourceLifetime::Persistent,
-        lease: None,
-        seal_state: if readonly {
-            ResourceSealState::Sealed
-        } else {
-            ResourceSealState::Writable
-        },
+            access: ResourceAccess::SharedMemory {
+                name: mapping_name.into(),
+                offset: 0,
+                len,
+                readonly: self.readonly,
+            },
+            size_hint: Some(len),
+            content_hash: None,
+            lifetime: ResourceLifetime::Persistent,
+            lease: None,
+            seal_state: if self.readonly {
+                ResourceSealState::Sealed
+            } else {
+                ResourceSealState::Writable
+            },
+        }
     }
 }
 
