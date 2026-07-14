@@ -111,6 +111,27 @@ pub(super) fn host_with_echo_runner() -> RuntimeBootstrapper {
     host
 }
 
+pub(super) fn host_with_portable_plugin_artifact() -> RuntimeBootstrapper {
+    let mut runner_descriptor = descriptor("portable.echo.runner", "portable.echo");
+    runner_descriptor.plugin_id = "plugin-portable-fixture".into();
+    let manifest = runner_manifest_with_artifact(
+        "plugin-portable-fixture",
+        PluginArtifact {
+            artifact_type: ArtifactType::Native,
+            path: "plugin-portable-fixture".into(),
+            sha256: "sha256:same-plugin-artifact".into(),
+        },
+        vec![runner_descriptor.clone()],
+    );
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(manifest);
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx: RunnerContext, tasks| Ok(RunnerResult::completed(tasks.task_id)),
+    )));
+    host
+}
+
 pub(super) fn test_resource_ref(
     ref_id: &str,
     kind_id: &str,

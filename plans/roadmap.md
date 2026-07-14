@@ -264,3 +264,6 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - 不把业务对象、产品协议或应用 wire shape 写入 Rust core。
 - 不让普通 runner 直接修改 StateStore/EventLog 或执行外部副作用。
 - 不跨 ABI/进程传 Python object、Rust pointer、callable、socket、SDK client 或真实 handle。
+- 不把节点、集群、Leader/Follower、quorum、全局租约、跨机 transport、远程资源位置或
+  trust 语义写入 Core、通用 contracts、SDK 或普通 Host；完整规则见
+  [distributed-zero-intrusion-boundary.md](distributed-zero-intrusion-boundary.md)。

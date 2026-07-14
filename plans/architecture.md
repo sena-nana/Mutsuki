@@ -42,6 +42,11 @@ RuntimeProfile + PluginManifest
 - 外部 Python runner kit 镜像 contracts，提供 Python runner backend 和 stdio runner
   server；Rust crates 不依赖 Python。
 
+分布式部署的零侵入依赖方向、禁止类型、Worker 本地化和旧插件 `LocalOnly` 默认行为由
+[distributed-zero-intrusion-boundary.md](distributed-zero-intrusion-boundary.md) 冻结。
+`MutsukiDistributedHost` 只能位于普通 Host Runtime 外层，Core、contracts、SDK 与普通
+Host 不得反向依赖集群、共识、跨机 transport 或节点信任实现。
+
 ## 2. Protocol
 
 `Protocol` 只表示数据契约：

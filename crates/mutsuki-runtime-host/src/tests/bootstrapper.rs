@@ -10,8 +10,8 @@ use serde_json::json;
 use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
 
 use super::helpers::{
-    abi_plugin_fixture, descriptor, host_with_echo_runner, runtime_profile,
-    runtime_profile_with_deployment,
+    abi_plugin_fixture, descriptor, host_with_echo_runner, host_with_portable_plugin_artifact,
+    runtime_profile, runtime_profile_with_deployment,
 };
 
 #[test]
@@ -59,6 +59,38 @@ fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
     };
     assert_eq!(report.completed_tasks, 1);
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Completed));
+}
+
+#[test]
+fn same_plugin_artifact_runs_in_local_and_worker_adapter_hosts() {
+    fn run_through_ordinary_host(task_id: &str) -> TaskStatus {
+        let mut profile = runtime_profile_with_deployment(
+            "plugin-portable-fixture",
+            PluginDeploymentKind::Builtin,
+        );
+        profile.profile_id = format!("ordinary-host-{task_id}");
+        let runtime = host_with_portable_plugin_artifact()
+            .into_host_runtime(profile)
+            .unwrap();
+
+        runtime
+            .dispatch(crate::HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                task_id,
+                "portable.echo",
+                json!({"input": "same-artifact"}),
+            ))))
+            .unwrap();
+        runtime
+            .dispatch(crate::HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+            .unwrap();
+        runtime.task_status(task_id).unwrap()
+    }
+
+    let local_status = run_through_ordinary_host("local-task");
+    let worker_adapter_status = run_through_ordinary_host("worker-adapter-task");
+
+    assert_eq!(local_status, TaskStatus::Completed);
+    assert_eq!(worker_adapter_status, TaskStatus::Completed);
 }
 
 #[test]

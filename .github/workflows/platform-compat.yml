@@ -26,5 +26,6 @@ jobs:
           rustup toolchain install stable --component rustfmt
       - run: cargo metadata --locked --format-version 1
       - run: cargo fmt --check
+      - run: bash scripts/check-distributed-boundary.sh
       - run: cargo check --locked
       - run: cargo test --locked
