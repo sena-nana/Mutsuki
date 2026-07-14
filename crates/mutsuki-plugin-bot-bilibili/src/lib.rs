@@ -11,19 +11,24 @@ use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap,
     BotMessage, BotTarget, MessageSegment, bot_command_binding_id,
 };
-use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, RunnerBatchCapability, RunnerContext, RunnerDescriptor,
-    RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
-    WorkBatch,
+use mutsuki_protocol_browser::{
+    BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, DomainEvent, ExecutionClass, ReadPlan, RunnerBatchCapability, RunnerContext,
+    RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
+    ScalarValue, Task, TaskOutcome, WorkBatch,
+};
+use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    HandlerBindingBuilder, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
-    RunnerDescriptorBuilder, map_work_batch_entries,
+    AsyncRunnerAdapter, AsyncRunnerContext, HandlerBindingBuilder, PluginBuilder,
+    ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder, RuntimeClientRef,
+    map_work_batch_entries,
 };
 use qrcode::QrCode;
 use reqwest::blocking::Client;
 use rusqlite::{Connection, OptionalExtension, params};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
@@ -34,6 +39,7 @@ pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
 pub const POLL_DYNAMIC: &str = "mutsuki.bot.bilibili.poll/dynamic@1";
 pub const POLL_VIDEO: &str = "mutsuki.bot.bilibili.poll/video@1";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.link/resolve@1";
+pub const RISK_CONTROL_STATUS_EVENT: &str = "mutsuki.bot.bilibili.risk_control/status@1";
 pub const MAX_MEDIA_BYTES: usize = MAX_LINK_CARD_MEDIA_BYTES;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +146,32 @@ pub struct LinkResolverConfig {
     pub account_to_binding: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BilibiliRiskControlBackend {
+    Chromium,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BilibiliRiskControlConfig {
+    pub backend: BilibiliRiskControlBackend,
+    pub timeout_ms: u64,
+    pub max_response_bytes: usize,
+}
+
+impl BilibiliRiskControlConfig {
+    fn validate(&self) -> Result<(), String> {
+        if self.timeout_ms == 0 {
+            return Err("risk_control.timeout_ms must be greater than zero".into());
+        }
+        if self.max_response_bytes == 0 {
+            return Err("risk_control.max_response_bytes must be greater than zero".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BilibiliConfig {
@@ -151,6 +183,8 @@ pub struct BilibiliConfig {
     pub subscriptions: Vec<BilibiliSubscription>,
     pub link_resolver: LinkResolverConfig,
     pub media_provider_id: String,
+    #[serde(default)]
+    pub risk_control: Option<BilibiliRiskControlConfig>,
     #[serde(default)]
     pub management: BilibiliManagementConfig,
 }
@@ -205,6 +239,9 @@ impl BilibiliConfig {
                     && self.management.self_binding_notifications.is_empty()))
         {
             return Err("enabled management requires a command and self-binding defaults".into());
+        }
+        if let Some(risk_control) = &self.risk_control {
+            risk_control.validate()?;
         }
         Ok(())
     }
@@ -701,7 +738,7 @@ impl BilibiliRunner {
         media_provider_id: impl Into<String>,
     ) -> Self {
         Self {
-            descriptor: runner_descriptor(false),
+            descriptor: runner_descriptor(false, false),
             transport,
             repository,
             resources,
@@ -718,11 +755,35 @@ impl BilibiliRunner {
         credential_store: Arc<dyn BilibiliCredentialStore>,
         config_store: Arc<dyn BilibiliConfigStore>,
     ) -> Self {
-        self.descriptor = runner_descriptor(true);
+        self.descriptor = runner_descriptor(true, false);
         self.managed_config = Some(config);
         self.credential_store = Some(credential_store);
         self.config_store = Some(config_store);
         self
+    }
+
+    pub fn into_runtime_runner(
+        mut self,
+        client: RuntimeClientRef,
+        risk_control: Option<BilibiliRiskControlConfig>,
+    ) -> Box<dyn Runner> {
+        let Some(risk_control) = risk_control else {
+            return Box::new(self);
+        };
+        let descriptor = runner_descriptor(self.managed_config.is_some(), true);
+        self.descriptor = descriptor.clone();
+        let state = Arc::new(Mutex::new(self));
+        let factory = Box::new(move |ctx: AsyncRunnerContext, task: Task| {
+            let state = state.clone();
+            let risk_control = risk_control.clone();
+            Box::pin(
+                async move { run_task_with_risk_control(ctx, task, state, risk_control).await },
+            )
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
+                >
+        });
+        Box::new(AsyncRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
     }
 
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
@@ -757,22 +818,38 @@ impl BilibiliRunner {
             .transport
             .poll(&kind, request.uid)
             .map_err(|error| bili_error(task, error))?;
+        self.finish_poll(task, request, kind, items, None)
+    }
+
+    fn finish_poll(
+        &mut self,
+        task: &Task,
+        request: PollRequest,
+        kind: BilibiliPollKind,
+        items: Vec<BilibiliItem>,
+        status: Option<DomainEvent>,
+    ) -> Result<RunnerResult, RuntimeError> {
         let key = format!("{kind:?}:{}:{}", request.uid, request.subscription_id);
         let previous = self
             .repository
             .cursor(&key)
             .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
         let Some(head) = items.first().map(|item| item.id.clone()) else {
-            return Ok(RunnerResult::completed(task.task_id.clone()));
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.events.extend(status);
+            return Ok(result);
         };
         self.repository
             .set_cursor(&key, &head)
             .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
         let Some(previous) = previous else {
-            return Ok(RunnerResult::completed(task.task_id.clone()));
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.events.extend(status);
+            return Ok(result);
         };
         let fresh = fresh_since(items, &previous);
         let mut result = RunnerResult::completed(task.task_id.clone());
+        result.events.extend(status);
         for item in fresh {
             let card = ResolvedLinkCard {
                 url: item.url,
@@ -1258,6 +1335,133 @@ impl BilibiliRunner {
     }
 }
 
+async fn run_task_with_risk_control(
+    ctx: AsyncRunnerContext,
+    task: Task,
+    state: Arc<Mutex<BilibiliRunner>>,
+    risk_control: BilibiliRiskControlConfig,
+) -> RuntimeResult<RunnerResult> {
+    if task.protocol_id != POLL_DYNAMIC {
+        return state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .run_task(&task)
+            .map_err(RuntimeFailure::new);
+    }
+
+    let request: PollRequest = decode(&task).map_err(RuntimeFailure::new)?;
+    let attempt = state
+        .lock()
+        .expect("Bilibili runner mutex")
+        .transport
+        .poll(&BilibiliPollKind::Dynamic, request.uid);
+    match attempt {
+        Ok(items) => state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .finish_poll(&task, request, BilibiliPollKind::Dynamic, items, None)
+            .map_err(RuntimeFailure::new),
+        Err(BilibiliError::RiskControl352) => {
+            run_chromium_risk_control_fallback(ctx, task, request, state, risk_control).await
+        }
+        Err(error) => Err(RuntimeFailure::new(bili_error(&task, error))),
+    }
+}
+
+async fn run_chromium_risk_control_fallback(
+    ctx: AsyncRunnerContext,
+    task: Task,
+    request: PollRequest,
+    state: Arc<Mutex<BilibiliRunner>>,
+    risk_control: BilibiliRiskControlConfig,
+) -> RuntimeResult<RunnerResult> {
+    let (resources, media_provider_id) = {
+        let runner = state.lock().expect("Bilibili runner mutex");
+        (runner.resources.clone(), runner.media_provider_id.clone())
+    };
+    let output = resources
+        .create_cow_state_resource(
+            &media_provider_id,
+            "mutsuki.browser.snapshot.output",
+            SNAPSHOT_SCHEMA,
+            Vec::new(),
+        )
+        .map_err(|error| risk_control_failure(&task, "resource.create", error.to_string()))?;
+    let snapshot_request = BrowserSnapshotRequest {
+        url: format!("https://space.bilibili.com/{}/dynamic", request.uid),
+        output_resource: output.clone(),
+        wait_mode: BrowserWaitMode::Selector,
+        selector: Some("body".into()),
+        timeout_ms: risk_control.timeout_ms,
+    };
+    let outcome = ctx
+        .call_raw(
+            SNAPSHOT,
+            serde_json::to_value(snapshot_request)
+                .map_err(|error| risk_control_failure(&task, "request.encode", error))?,
+        )
+        .await
+        .map_err(|error| risk_control_failure(&task, "snapshot.task", error.to_string()))?;
+    if !matches!(outcome, TaskOutcome::Completed { .. }) {
+        return Err(risk_control_failure(
+            &task,
+            "snapshot.outcome",
+            "Chromium snapshot task did not complete",
+        ));
+    }
+    let latest = resources
+        .open_resource_descriptor(&output.ref_id)
+        .map_err(|error| risk_control_failure(&task, "resource.open", error.to_string()))?;
+    let bytes = resources
+        .collect_read_plan(&ReadPlan {
+            plan_id: format!("bilibili.risk-control.read.{}", task.task_id),
+            resource: latest,
+            operation: "collect".into(),
+            args: Value::Null,
+        })
+        .map_err(|error| risk_control_failure(&task, "resource.read", error.to_string()))?;
+    if bytes.len() > risk_control.max_response_bytes {
+        return Err(risk_control_failure(
+            &task,
+            "response.oversized",
+            format!(
+                "Chromium response is {} bytes; maximum is {}",
+                bytes.len(),
+                risk_control.max_response_bytes
+            ),
+        ));
+    }
+    let snapshot: BrowserSnapshot = serde_json::from_slice(&bytes)
+        .map_err(|error| risk_control_failure(&task, "response.decode", error))?;
+    ensure_bilibili_domain(&snapshot.final_url)
+        .map_err(|error| risk_control_failure(&task, "redirect.denied", error))?;
+    let items = parse_dynamic_snapshot(&snapshot.html)
+        .map_err(|error| risk_control_failure(&task, "dom.parse", error))?;
+    let status = DomainEvent {
+        event_id: format!("{}:risk-control", task.task_id),
+        kind: RISK_CONTROL_STATUS_EVENT.into(),
+        payload: json!({
+            "task_id": task.task_id,
+            "uid": request.uid,
+            "risk_control_code": 352,
+            "backend": "chromium",
+            "status": "degraded",
+            "fallback": "succeeded"
+        }),
+    };
+    state
+        .lock()
+        .expect("Bilibili runner mutex")
+        .finish_poll(
+            &task,
+            request,
+            BilibiliPollKind::Dynamic,
+            items,
+            Some(status),
+        )
+        .map_err(RuntimeFailure::new)
+}
+
 impl Runner for BilibiliRunner {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
@@ -1278,9 +1482,16 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
 pub fn manifest_with_management(
     command: Option<&str>,
 ) -> mutsuki_runtime_contracts::PluginManifest {
+    manifest_with_management_and_risk_control(command, false)
+}
+
+pub fn manifest_with_management_and_risk_control(
+    command: Option<&str>,
+    risk_control_enabled: bool,
+) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestRunner {
-            descriptor: runner_descriptor(command.is_some()),
+            descriptor: runner_descriptor(command.is_some(), risk_control_enabled),
         }))
         .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "io")
         .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "io")
@@ -1299,10 +1510,14 @@ pub fn manifest_with_management(
             .build(),
         );
     }
-    builder.build().manifest
+    let mut manifest = builder.build().manifest;
+    if risk_control_enabled {
+        manifest.requires.push(format!("task_protocol:{SNAPSHOT}"));
+    }
+    manifest
 }
 
-fn runner_descriptor(management: bool) -> RunnerDescriptor {
+fn runner_descriptor(management: bool, risk_control_enabled: bool) -> RunnerDescriptor {
     let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
     for protocol in [POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE] {
         builder = builder.accepted_protocol(protocol);
@@ -1312,7 +1527,11 @@ fn runner_descriptor(management: bool) -> RunnerDescriptor {
     }
     builder
         .purity(RunnerPurity::Effectful)
-        .execution_class(ExecutionClass::Io)
+        .execution_class(if risk_control_enabled {
+            ExecutionClass::Orchestration
+        } else {
+            ExecutionClass::Io
+        })
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             side_effect: RunnerSideEffect::External,
@@ -1504,7 +1723,40 @@ fn bili_error(task: &Task, error: BilibiliError) -> RuntimeError {
     runtime
         .evidence
         .insert("detail".into(), ScalarValue::String(error.to_string()));
+    if code == "bilibili.risk_control_352" {
+        for (key, value) in [
+            ("risk_control_code", "352"),
+            ("fallback_status", "not_configured"),
+            ("degraded", "true"),
+        ] {
+            runtime
+                .evidence
+                .insert(key.into(), ScalarValue::String(value.into()));
+        }
+    }
     runtime
+}
+
+fn risk_control_failure(task: &Task, route: &str, detail: impl fmt::Display) -> RuntimeFailure {
+    let mut error = RuntimeError::new(
+        "bilibili.risk_control_fallback_failed",
+        PLUGIN_ID,
+        format!("bilibili.risk_control.{route}.{}", task.task_id),
+    );
+    for (key, value) in [
+        ("risk_control_code", "352"),
+        ("backend", "chromium"),
+        ("fallback_status", "failed"),
+        ("degraded", "true"),
+    ] {
+        error
+            .evidence
+            .insert(key.into(), ScalarValue::String(value.into()));
+    }
+    error
+        .evidence
+        .insert("detail".into(), ScalarValue::String(detail.to_string()));
+    RuntimeFailure::new(error)
 }
 
 fn ensure_bilibili_domain(value: &str) -> Result<(), BilibiliError> {
@@ -1551,6 +1803,95 @@ fn string_field(value: &Value, field: &str) -> Result<String, BilibiliError> {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| BilibiliError::InvalidResponse(field.into()))
+}
+
+fn parse_dynamic_snapshot(html: &str) -> Result<Vec<BilibiliItem>, BilibiliError> {
+    let document = Html::parse_document(html);
+    let cards = Selector::parse(".bili-dyn-list__item")
+        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+    let links = Selector::parse("a[href]")
+        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+    let images = Selector::parse("img[src]")
+        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+    let mut items = Vec::new();
+    for card in document.select(&cards) {
+        let Some((id, url)) = card.select(&links).find_map(|link| {
+            let href = link.value().attr("href")?;
+            dynamic_id_and_url(href)
+        }) else {
+            continue;
+        };
+        let title = first_card_text(
+            card,
+            &[
+                ".bili-rich-text",
+                ".bili-dyn-card-video__title",
+                ".bili-dyn-card-opus__summary",
+            ],
+        )
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "新动态".into())
+        .chars()
+        .take(80)
+        .collect();
+        let image_url = card
+            .select(&images)
+            .filter_map(|image| image.value().attr("src"))
+            .filter_map(normalize_browser_url)
+            .find(|url| ensure_bilibili_domain(url).is_ok());
+        items.push(BilibiliItem {
+            id,
+            title,
+            url,
+            image_url,
+        });
+    }
+    Ok(items)
+}
+
+fn first_card_text(card: ElementRef<'_>, selectors: &[&str]) -> Option<String> {
+    selectors.iter().find_map(|selector| {
+        let selector = Selector::parse(selector).ok()?;
+        let text = card
+            .select(&selector)
+            .next()?
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!text.is_empty()).then_some(text)
+    })
+}
+
+fn dynamic_id_and_url(value: &str) -> Option<(String, String)> {
+    let url = normalize_browser_url(value)?;
+    ensure_bilibili_domain(&url).ok()?;
+    let parsed = Url::parse(&url).ok()?;
+    let host = parsed.host_str()?;
+    let segments = parsed.path_segments()?.collect::<Vec<_>>();
+    let id = match (host, segments.as_slice()) {
+        ("t.bilibili.com", [id]) => *id,
+        ("bilibili.com" | "www.bilibili.com", ["opus", id]) => *id,
+        _ => return None,
+    };
+    id.chars()
+        .all(|character| character.is_ascii_digit())
+        .then(|| (id.to_owned(), format!("https://t.bilibili.com/{id}")))
+}
+
+fn normalize_browser_url(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.starts_with("//") {
+        Some(format!("https:{value}"))
+    } else if value.starts_with('/') {
+        Some(format!("https://www.bilibili.com{value}"))
+    } else if value.starts_with("https://") {
+        Some(value.to_owned())
+    } else {
+        None
+    }
 }
 
 fn parse_poll_items(
@@ -1689,11 +2030,12 @@ mod tests {
     use mutsuki_bot_protocol::{BotAccountRef, BotEvent, BotEventKind, BotPlatform, BotUser};
     use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
     use mutsuki_runtime_contracts::{
-        BatchEntry, BatchPayload, CommandPlan, DispatchLane, ExportPlan, OrderingRequirement,
-        PlanReceipt, ReadPlan, ResourceRef, SnapshotDescriptor, StreamPlan, WorkResourcePlan,
-        WritePlan,
+        BatchEntry, BatchPayload, CancelPolicy, CommandPlan, DispatchLane, ExportPlan,
+        OrderingRequirement, PlanReceipt, ReadPlan, ResourceAccess, ResourceId, ResourceLifetime,
+        ResourceRef, ResourceSealState, ResourceSemantic, SnapshotDescriptor, StreamPlan,
+        TaskBatch, TaskHandle, WorkResourcePlan, WritePlan,
     };
-    use mutsuki_runtime_sdk::ResourcePlanGateway;
+    use mutsuki_runtime_sdk::{ResourcePlanGateway, RuntimeClient};
 
     #[derive(Default)]
     struct FakeTransportState {
@@ -1826,6 +2168,137 @@ mod tests {
         }
     }
 
+    struct SnapshotResources {
+        bytes: Vec<u8>,
+    }
+
+    impl ResourcePlanGateway for SnapshotResources {
+        fn collect_read_plan(&self, _: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+            Ok(self.bytes.clone())
+        }
+        fn snapshot_read_plan(
+            &self,
+            _: &ReadPlan,
+            _: &str,
+            _: &str,
+        ) -> RuntimeResult<SnapshotDescriptor> {
+            unreachable!()
+        }
+        fn open_stream_plan(&self, _: &ReadPlan) -> RuntimeResult<StreamPlan> {
+            unreachable!()
+        }
+        fn execute_export_plan(&self, _: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+            unreachable!()
+        }
+        fn commit_write_plan(&self, _: &WritePlan, _: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+            unreachable!()
+        }
+        fn execute_command_plan(&self, _: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+            unreachable!()
+        }
+        fn execute_command_batch(&self, _: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+            unreachable!()
+        }
+        fn execute_saga_plan(&self, _: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+            unreachable!()
+        }
+    }
+
+    impl ResourceRegistryGateway for SnapshotResources {
+        fn open_resource_descriptor(&self, _: &str) -> RuntimeResult<ResourceRef> {
+            Ok(snapshot_resource())
+        }
+        fn create_blob_resource(&self, _: &str, _: &str, _: Vec<u8>) -> RuntimeResult<ResourceRef> {
+            unreachable!()
+        }
+        fn create_cow_state_resource(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Vec<u8>,
+        ) -> RuntimeResult<ResourceRef> {
+            Ok(snapshot_resource())
+        }
+        fn create_capability_resource(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> RuntimeResult<ResourceRef> {
+            unreachable!()
+        }
+    }
+
+    fn snapshot_resource() -> ResourceRef {
+        ResourceRef {
+            ref_id: "bilibili-risk-snapshot".into(),
+            resource_id: ResourceId {
+                kind_id: "browser.snapshot".into(),
+                slot_id: "bilibili-risk-snapshot".into(),
+                generation: 1,
+                version: 1,
+            },
+            semantic: ResourceSemantic::CowVersionedState,
+            provider_id: "memory".into(),
+            resource_kind: "browser.snapshot".into(),
+            schema: SNAPSHOT_SCHEMA.into(),
+            version: 1,
+            generation: 1,
+            access: ResourceAccess::ProviderRpc {
+                provider_id: "memory".into(),
+                method: "memory".into(),
+            },
+            size_hint: Some(0),
+            content_hash: None,
+            lifetime: ResourceLifetime::Persistent,
+            lease: None,
+            seal_state: ResourceSealState::Sealed,
+        }
+    }
+
+    struct CompletedChildClient;
+
+    impl RuntimeClient for CompletedChildClient {
+        fn submit_batch(&self, _: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+            unreachable!()
+        }
+
+        fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+            Ok(Some(TaskOutcome::Completed {
+                task_id: handle.task_id.clone(),
+                output_ref: None,
+            }))
+        }
+    }
+
+    struct RiskControlledTransport;
+
+    impl BilibiliTransport for RiskControlledTransport {
+        fn poll(
+            &mut self,
+            _: &BilibiliPollKind,
+            _: u64,
+        ) -> Result<Vec<BilibiliItem>, BilibiliError> {
+            Err(BilibiliError::RiskControl352)
+        }
+        fn resolve(&mut self, _: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+            unreachable!()
+        }
+        fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+            unreachable!()
+        }
+        fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+            unreachable!()
+        }
+    }
+
     #[test]
     fn wbi_signature_is_deterministic_with_fixed_clock() {
         let signed = sign_wbi_query(&[("mid".into(), "1".into())], "secret", 1_700_000_000);
@@ -1883,6 +2356,103 @@ mod tests {
             binding.binding_id == bot_command_binding_id("bili")
                 && binding.target_runner_hint.as_deref() == Some(RUNNER_ID)
         }));
+
+        let risk_control = manifest_with_management_and_risk_control(None, true);
+        assert!(
+            risk_control
+                .requires
+                .contains(&format!("task_protocol:{SNAPSHOT}"))
+        );
+        assert_eq!(
+            risk_control.provides.runners[0].execution_class,
+            ExecutionClass::Orchestration
+        );
+    }
+
+    #[test]
+    fn dynamic_snapshot_parser_keeps_bilibili_urls_and_normalizes_cards() {
+        let items = parse_dynamic_snapshot(
+            r#"<article class="bili-dyn-list__item">
+                <a href="https://www.bilibili.com/opus/123456">detail</a>
+                <div class="bili-rich-text">  hello   browser fallback </div>
+                <img src="//i0.hdslb.com/bfs/archive/cover.jpg">
+            </article>
+            <article class="bili-dyn-list__item">
+                <a href="https://evil.example/opus/999">denied</a>
+            </article>"#,
+        )
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "123456");
+        assert_eq!(items[0].title, "hello browser fallback");
+        assert_eq!(items[0].url, "https://t.bilibili.com/123456");
+        assert_eq!(
+            items[0].image_url.as_deref(),
+            Some("https://i0.hdslb.com/bfs/archive/cover.jpg")
+        );
+    }
+
+    #[test]
+    fn explicit_chromium_backend_awaits_snapshot_and_reports_degraded_success() {
+        let html = r#"<article class="bili-dyn-list__item">
+            <a href="https://t.bilibili.com/42">detail</a>
+            <div class="bili-rich-text">fallback item</div>
+        </article>"#;
+        let bytes = serde_json::to_vec(&BrowserSnapshot {
+            final_url: "https://space.bilibili.com/7/dynamic".into(),
+            title: "space".into(),
+            html: html.into(),
+        })
+        .unwrap();
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let runner = BilibiliRunner::new(
+            Box::new(RiskControlledTransport),
+            repository.clone(),
+            Arc::new(SnapshotResources { bytes }),
+            "memory",
+        );
+        let mut runner = runner.into_runtime_runner(
+            Arc::new(CompletedChildClient),
+            Some(BilibiliRiskControlConfig {
+                backend: BilibiliRiskControlBackend::Chromium,
+                timeout_ms: 5_000,
+                max_response_bytes: 64 * 1024,
+            }),
+        );
+        let task = Task::new(
+            "risk-control",
+            POLL_DYNAMIC,
+            serde_json::to_value(PollRequest {
+                subscription_id: "sub".into(),
+                uid: 7,
+                target: BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                outbound_binding: "qq-main".into(),
+            })
+            .unwrap(),
+        );
+        let batch = command_batch(vec![task]);
+        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
+            .with_batch("batch", 1);
+        let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        let waiting = waiting.results[0].result.as_ref().unwrap();
+        assert_eq!(waiting.tasks[0].protocol_id, SNAPSHOT);
+        assert!(waiting.task_await.is_some());
+
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        assert!(
+            completed
+                .events
+                .iter()
+                .any(|event| event.kind == RISK_CONTROL_STATUS_EVENT
+                    && event.payload["fallback"] == "succeeded")
+        );
+        assert_eq!(
+            repository.cursor("Dynamic:7:sub").unwrap().as_deref(),
+            Some("42")
+        );
     }
 
     #[test]
@@ -1973,6 +2543,7 @@ mod tests {
                 account_to_binding: BTreeMap::new(),
             },
             media_provider_id: "memory".into(),
+            risk_control: None,
             management: BilibiliManagementConfig {
                 enabled: true,
                 allow_self_binding: true,
@@ -2092,9 +2663,30 @@ mod tests {
             bili_error(&task, BilibiliError::CookieExpired).code,
             "bilibili.cookie_expired"
         );
+        let risk_control = bili_error(&task, BilibiliError::RiskControl352);
+        assert_eq!(risk_control.code, "bilibili.risk_control_352");
         assert_eq!(
-            bili_error(&task, BilibiliError::RiskControl352).code,
-            "bilibili.risk_control_352"
+            risk_control.evidence.get("fallback_status"),
+            Some(&ScalarValue::String("not_configured".into()))
+        );
+    }
+
+    #[test]
+    fn risk_control_config_rejects_unbounded_limits() {
+        let mut config = managed_config();
+        config.risk_control = Some(BilibiliRiskControlConfig {
+            backend: BilibiliRiskControlBackend::Chromium,
+            timeout_ms: 0,
+            max_response_bytes: 1024,
+        });
+        assert!(config.validate().unwrap_err().contains("timeout_ms"));
+        config.risk_control.as_mut().unwrap().timeout_ms = 1000;
+        config.risk_control.as_mut().unwrap().max_response_bytes = 0;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .contains("max_response_bytes")
         );
     }
 

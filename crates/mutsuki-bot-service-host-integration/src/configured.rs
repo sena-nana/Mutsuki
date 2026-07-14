@@ -170,11 +170,12 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         let runner_credential = credential.clone();
         let source = BilibiliPollingEventSource::new(shared_config, credential);
         let manifest_config = runner_config.snapshot();
-        let mut manifest = mutsuki_plugin_bot_bilibili::manifest_with_management(
+        let mut manifest = mutsuki_plugin_bot_bilibili::manifest_with_management_and_risk_control(
             manifest_config
                 .management
                 .enabled
                 .then_some(manifest_config.management.command.as_str()),
+            manifest_config.risk_control.is_some(),
         );
         manifest.requires.push(format!(
             "resource_strategy:{}",
@@ -182,7 +183,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         ));
         Ok(builder
             .register_builtin_plugin(manifest)
-            .register_fallible_runtime_services_runner(move |_client, resources| {
+            .register_fallible_runtime_services_runner(move |client, resources| {
                 let transport = ReqwestBilibiliTransport::new(
                     runner_credential.clone(),
                     Duration::from_secs(15),
@@ -212,7 +213,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 Ok::<
                     Box<dyn mutsuki_runtime_core::Runner>,
                     mutsuki_plugin_bot_bilibili::BilibiliError,
-                >(Box::new(runner))
+                >(runner.into_runtime_runner(client, snapshot.risk_control.clone()))
             })
             .register_event_source(Box::new(source)))
     }

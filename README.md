@@ -30,8 +30,16 @@ Bilibili runner。启用 management 后提供：Host 管理员扫码登录与凭
 `cookie_secret_key` 指向的本地 secret，订阅变更替换产品配置中 Bilibili owner 的 opaque
 config。插件 SQLite 只保存 cursor、cooldown 和未完成的 QR/绑定 challenge，不是订阅关系
 权威。management 默认关闭；启用时必须从真实产品配置文件启动并配置 Host
-`security.secret_file`。HTML 卡片截图和 Bilibili 352 浏览器回退仍不在本项范围。
-配置字段、命令和验证层级见 `docs/bilibili-management.md`。
+`security.secret_file`。
+
+Bilibili 动态 API 的 352 风控回退默认关闭。产品必须同时显式配置
+`risk_control.backend = "chromium"` 和 `mutsuki.std.io.browser.chromium`；Bilibili Runner
+仅通过通用 `mutsuki.browser.snapshot` 子任务获取 DOM，不拥有 Chromium 生命周期。
+Chromium factory 在启动阶段校验 executable，provider 与 Bilibili owner 配置分别限制
+domain、timeout、DOM 和读取响应大小。未配置 backend、浏览器任务失败、重定向越域或
+响应超限都会结构化失败；成功回退写入 `mutsuki.bot.bilibili.risk_control/status@1`
+degradation event。配置与验证层级见 `docs/bilibili-risk-control.md`；账号与订阅管理见
+`docs/bilibili-management.md`。
 
 MutsukiBotPlugins is the batch-first Bot domain plugin collection for Mutsuki. It is not a Host and it is not a Core extension.
 
