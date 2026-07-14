@@ -41,6 +41,7 @@ async fn production_binary_runs_fake_qq_over_unix_ipc_and_shuts_down_cleanly() {
             process.assert_running();
             if let Ok(health) = try_control(&service, ControlMethod::HealthCheck).await
                 && health["event_sources"] == "ok"
+                && health["components"]["mutsuki.bot.qqbot.gateway:template"]["identified"] == true
             {
                 break health;
             }

@@ -36,7 +36,9 @@ async fn external_config_runs_real_service_runtime_through_fake_qq_boundaries() 
     let health = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let health = control(&control_config, ControlMethod::HealthCheck).await;
-            if health["event_sources"] == "ok" {
+            if health["event_sources"] == "ok"
+                && health["components"]["mutsuki.bot.qqbot.gateway:template"]["identified"] == true
+            {
                 break health;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
