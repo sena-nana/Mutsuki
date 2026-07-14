@@ -30,7 +30,7 @@ pub use abi::{
     AbiGuest, AbiHostClient, AbiHostV1, AbiPluginV1, ConfiguredJsonlPluginGuest, JsonlPluginGuest,
     dispatch_host_request,
 };
-pub use backend::{ResourcePlanGateway, ResourceProviderGateway};
+pub use backend::{ResourcePlanGateway, ResourceProviderGateway, ResourceRegistryGateway};
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{
     HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,

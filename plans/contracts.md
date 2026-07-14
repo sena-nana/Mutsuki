@@ -63,6 +63,13 @@
 | `RuntimeEvent` | sequence、kind、name、subject_id、attributes、error |
 | `TraceSpan` | trace_id、span_id、parent_span_id、name、interval、attributes、status |
 
+Builtin Rust Host 通过 `HostContext` 同时公开 plan-only gateway 与 host-owned
+`ResourceRegistryGateway`。后者按显式 `provider_id` 创建 blob、COW state 或
+capability resource，并按 `ref_id` 打开 registry 中的最新 descriptor。边界只传
+descriptor 与 bytes；provider 实例和 native handle 始终由 Host 持有。未知 provider、
+stale descriptor 和未授权 surface 必须结构化失败。v1 不因此声明 ABI 或 Python
+部署形态具备等价能力。
+
 ## 3. Task 与 Runner 接口
 
 `Task.protocol_id` 是当前调度事实源。wire shape 不包含额外 task kind 兼容字段。

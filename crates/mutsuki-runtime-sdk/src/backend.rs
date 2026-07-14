@@ -21,6 +21,34 @@ pub trait ResourcePlanGateway: Send + Sync {
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>>;
 }
 
+/// Host-owned aggregate gateway for opening registered resources and creating
+/// new resources through an explicitly selected provider.
+///
+/// The gateway only crosses the SDK boundary with descriptors and bytes. The
+/// provider instance and any provider-native handle remain owned by the host.
+pub trait ResourceRegistryGateway: ResourcePlanGateway {
+    fn open_resource_descriptor(&self, ref_id: &str) -> RuntimeResult<ResourceRef>;
+    fn create_blob_resource(
+        &self,
+        provider_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef>;
+    fn create_cow_state_resource(
+        &self,
+        provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef>;
+    fn create_capability_resource(
+        &self,
+        provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<ResourceRef>;
+}
+
 pub trait ResourceProviderGateway: ResourcePlanGateway {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
     fn create_cow_state_resource(

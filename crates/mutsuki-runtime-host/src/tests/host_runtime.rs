@@ -1342,6 +1342,25 @@ fn host_runtime_sdk_context_submits_tasks_and_requests_shutdown() {
     assert!(runtime.host_context().shutdown().is_shutdown_requested());
 }
 
+#[test]
+fn host_context_resource_registry_rejects_unknown_provider() {
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+
+    let error = runtime
+        .host_context()
+        .resource_registry()
+        .create_blob_resource("missing.provider", "image.v1", vec![1, 2, 3])
+        .unwrap_err();
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().evidence.get("provider_id"),
+        Some(&ScalarValue::String("missing.provider".into()))
+    );
+}
+
 fn assert_pruned_capability<T>(result: mutsuki_runtime_core::RuntimeResult<&T>, capability: &str) {
     let error = match result {
         Ok(_) => panic!("pruned capability should be rejected"),

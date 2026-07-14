@@ -3,13 +3,14 @@ use std::sync::{Arc, mpsc};
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, SnapshotDescriptor, StreamPlan, TaskBatch,
-    TaskHandle, TaskOutcome, WritePlan,
+    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, SnapshotDescriptor, StreamPlan,
+    TaskBatch, TaskHandle, TaskOutcome, WritePlan,
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     ConfigProvider, HostContext as SdkHostContext, HostServiceRegistry, NoopEventBridge,
-    ResourcePlanGateway, ShutdownController, StaticConfigProvider, TaskSubmitter,
+    ResourcePlanGateway, ResourceRegistryGateway, ShutdownController, StaticConfigProvider,
+    TaskSubmitter,
 };
 
 use crate::actor::CoreActorMsg;
@@ -26,7 +27,8 @@ pub(crate) fn build_host_context(
 ) -> SdkHostContext {
     let command_client = Arc::new(ActorCommandClient { tx: tx.clone() });
     let task_submitter: Arc<dyn TaskSubmitter> = command_client.clone();
-    let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client;
+    let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client.clone();
+    let resource_registry: Arc<dyn ResourceRegistryGateway> = command_client;
     let shutdown = Arc::new(ActorShutdownController {
         tx,
         requested: AtomicBool::new(false),
@@ -42,6 +44,7 @@ pub(crate) fn build_host_context(
         Arc::new(NoopEventBridge),
         task_submitter,
         resource_gateway,
+        resource_registry,
         shutdown,
     )
 }
@@ -157,6 +160,65 @@ impl ResourcePlanGateway for ActorCommandClient {
         match self.dispatch(HostRuntimeCommand::ExecuteSagaPlan(Box::new(saga.clone())))? {
             HostRuntimeReply::PlanReceipts(receipts) => Ok(receipts),
             reply => Err(unexpected_reply("resource.saga", reply)),
+        }
+    }
+}
+
+impl ResourceRegistryGateway for ActorCommandClient {
+    fn open_resource_descriptor(&self, ref_id: &str) -> RuntimeResult<ResourceRef> {
+        match self.dispatch(HostRuntimeCommand::OpenResourceDescriptor(ref_id.into()))? {
+            HostRuntimeReply::ResourceDescriptor(descriptor) => Ok(descriptor),
+            reply => Err(unexpected_reply("resource.descriptor.open", reply)),
+        }
+    }
+
+    fn create_blob_resource(
+        &self,
+        provider_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        match self.dispatch(HostRuntimeCommand::CreateBlobResource {
+            provider_id: provider_id.into(),
+            schema: schema.into(),
+            bytes,
+        })? {
+            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            reply => Err(unexpected_reply("resource.blob.create", reply)),
+        }
+    }
+
+    fn create_cow_state_resource(
+        &self,
+        provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        match self.dispatch(HostRuntimeCommand::CreateCowStateResource {
+            provider_id: provider_id.into(),
+            kind_id: kind_id.into(),
+            schema: schema.into(),
+            bytes,
+        })? {
+            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            reply => Err(unexpected_reply("resource.cow.create", reply)),
+        }
+    }
+
+    fn create_capability_resource(
+        &self,
+        provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<ResourceRef> {
+        match self.dispatch(HostRuntimeCommand::CreateCapabilityResource {
+            provider_id: provider_id.into(),
+            kind_id: kind_id.into(),
+            schema: schema.into(),
+        })? {
+            HostRuntimeReply::ResourceCreated(descriptor) => Ok(descriptor),
+            reply => Err(unexpected_reply("resource.capability.create", reply)),
         }
     }
 }

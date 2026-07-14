@@ -13,7 +13,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 use serde_json::Value;
 
-use crate::{ResourcePlanGateway, RuntimeClient, RuntimeClientRef};
+use crate::{ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient, RuntimeClientRef};
 
 pub trait TaskSubmitter: Send + Sync {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>>;
@@ -441,6 +441,7 @@ pub struct HostContext {
     events: Arc<dyn EventBridge>,
     task_submitter: Arc<dyn TaskSubmitter>,
     resource_gateway: Arc<dyn ResourcePlanGateway>,
+    resource_registry: Arc<dyn ResourceRegistryGateway>,
     shutdown: Arc<dyn ShutdownController>,
 }
 
@@ -456,6 +457,7 @@ impl HostContext {
         events: Arc<dyn EventBridge>,
         task_submitter: Arc<dyn TaskSubmitter>,
         resource_gateway: Arc<dyn ResourcePlanGateway>,
+        resource_registry: Arc<dyn ResourceRegistryGateway>,
         shutdown: Arc<dyn ShutdownController>,
     ) -> Self {
         Self {
@@ -468,6 +470,7 @@ impl HostContext {
             events,
             task_submitter,
             resource_gateway,
+            resource_registry,
             shutdown,
         }
     }
@@ -514,6 +517,14 @@ impl HostContext {
 
     pub fn resource_gateway_ref(&self) -> Arc<dyn ResourcePlanGateway> {
         self.resource_gateway.clone()
+    }
+
+    pub fn resource_registry(&self) -> &dyn ResourceRegistryGateway {
+        self.resource_registry.as_ref()
+    }
+
+    pub fn resource_registry_ref(&self) -> Arc<dyn ResourceRegistryGateway> {
+        self.resource_registry.clone()
     }
 
     pub fn shutdown(&self) -> &dyn ShutdownController {
