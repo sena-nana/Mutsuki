@@ -40,22 +40,36 @@ Runner 复制到本模板。
 ## Bilibili 本地装配
 
 模板链接 StdPlugins 与 BotPlugins 的 owner catalog，但提交的 `config/template.toml` 仍保持
-零插件。Bilibili 本地配置只填写产品字段：Cookie secret key、轮询间隔/重试、订阅 UID 与
-通知类型、`BotTarget`、outbound binding、链接冷却映射以及显式 media provider ID。
-Cookie 值只写入本地 secret 文件：
+零插件。Bilibili 本地配置必须用 `backend.type` 显式选择 `web_cookie` 或
+`open_platform`，不会在两者之间静默 fallback。Web backend 的 Cookie 值只写入本地 secret
+文件：
 
 ```toml
 [secrets]
 BILIBILI_COOKIE = "SESSDATA=replace-locally"
 ```
 
+官方开放平台 backend 只复用授权账号的直播与已发布稿件轮询协议；动态、链接解析、Cookie
+扫码/管理和 Chromium 352 路径都不会被声明或替代。产品配置保存 `client_id`、授权 UID 与
+两个 Host secret key 引用，app secret 和可原子刷新的 OAuth bundle 只写入本地 secret 文件：
+
+```toml
+[secrets]
+BILIBILI_OPEN_APP_SECRET = "replace-locally"
+BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"replace-locally","expires_at":1893456000,"scopes":["LIVE_ROOM_DATA","ARC_BASE"]}'''
+```
+
+完整配置、scope 和错误模型见
+[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/MutsukiBotPlugins/blob/f93d2dbf82ac6f401dab6a3ac6bc75aaae3de933/docs/bilibili-open-platform.md)。
+
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
 Provider），并让 QQ 的 `media_provider_id` 与业务插件一致。米画师还需显式选择
 `mutsuki.std.io.browser.chromium`；其 `executable` 必须在本地配置中填写，仓库不提交任何
 机器路径。浏览器 allowlist 应仅包含实际产品需要的米画师域名。
 
-迁移版只使用原始封面/头像资源，不生成 HTML 卡片截图；扫码登录、聊天管理/自助绑定、
-暂停/预览以及 Bilibili 352 浏览器回退不在第一版范围。
+迁移版只使用原始封面/头像资源，不生成 HTML 卡片截图。Cookie 扫码登录、聊天管理/自助
+绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend
+拒绝这些 Web-only 配置。
 
 外置 ABI 包使用 Core SDK 的版本化 JSONL byte transport，并按
 `<dynamic_dir>/<plugin>/plugin.toml + DLL/SO/dylib` 安装。`artifact.path` 必须留在插件目录，

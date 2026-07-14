@@ -104,7 +104,7 @@ prefixes = ["/"]
 id = "mutsuki.bot.bilibili"
 
 [plugins.configured.config]
-cookie_secret_key = "BILIBILI_COOKIE"
+backend = {{ type = "web_cookie", cookie_secret_key = "BILIBILI_COOKIE" }}
 live_interval_ms = 60000
 dynamic_interval_ms = 60000
 video_interval_ms = 60000
@@ -211,7 +211,7 @@ id = "mutsuki.std.resource.memory"
 id = "mutsuki.bot.bilibili"
 
 [plugins.configured.config]
-cookie_secret_key = "BILIBILI_COOKIE"
+backend = {{ type = "web_cookie", cookie_secret_key = "BILIBILI_COOKIE" }}
 live_interval_ms = 60000
 dynamic_interval_ms = 60000
 video_interval_ms = 60000
@@ -263,6 +263,105 @@ max_dom_bytes = 2097152
         .err()
         .expect("missing Chromium artifact must fail startup");
     assert!(error.to_string().contains("Chromium executable"));
+}
+
+#[tokio::test]
+async fn bilibili_open_platform_rejects_web_only_dynamic_capability() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let secret_path = root.path().join("product.secret.toml");
+    std::fs::write(
+        &secret_path,
+        r#"[secrets]
+BILIBILI_OPEN_APP_SECRET = "TEST_APP_SECRET"
+BILIBILI_OPEN_OAUTH = '''{"access_token":"TEST_ACCESS_TOKEN","refresh_token":"TEST_REFRESH_TOKEN","expires_at":1893456000,"scopes":["LIVE_ROOM_DATA","ARC_BASE"]}'''
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &bilibili_open_platform_config(&secret_path, true),
+        ),
+    )
+    .unwrap();
+
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("Open Platform must reject dynamic polling instead of falling back");
+    assert!(error.to_string().contains("poll/dynamic"));
+}
+
+#[tokio::test]
+async fn bilibili_open_platform_fails_preflight_without_each_host_secret() {
+    for (secret_body, missing_key) in [
+        ("[secrets]\n", "BILIBILI_OPEN_APP_SECRET"),
+        (
+            "[secrets]\nBILIBILI_OPEN_APP_SECRET = \"TEST_APP_SECRET\"\n",
+            "BILIBILI_OPEN_OAUTH",
+        ),
+    ] {
+        let root = tempdir().unwrap();
+        let config_path = root.path().join("product.toml");
+        let secret_path = root.path().join("product.secret.toml");
+        std::fs::write(&secret_path, secret_body).unwrap();
+        std::fs::write(
+            &config_path,
+            service_toml(
+                root.path(),
+                &bilibili_open_platform_config(&secret_path, false),
+            ),
+        )
+        .unwrap();
+
+        let error = assemble_service(load(&config_path))
+            .unwrap()
+            .start()
+            .await
+            .err()
+            .expect("Open Platform must fail before runtime without every Host secret");
+        assert!(error.to_string().contains(missing_key));
+    }
+}
+
+#[tokio::test]
+async fn bilibili_open_platform_idle_runtime_starts_without_web_fallback() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let secret_path = root.path().join("product.secret.toml");
+    std::fs::write(
+        &secret_path,
+        r#"[secrets]
+BILIBILI_OPEN_APP_SECRET = "TEST_APP_SECRET"
+BILIBILI_OPEN_OAUTH = '''{"access_token":"TEST_ACCESS_TOKEN","refresh_token":"TEST_REFRESH_TOKEN","expires_at":1893456000,"scopes":["LIVE_ROOM_DATA","ARC_BASE"]}'''
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &bilibili_open_platform_config(&secret_path, false),
+        ),
+    )
+    .unwrap();
+
+    let runtime = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
+    runtime.shutdown().await;
+
+    let product = std::fs::read_to_string(&config_path).unwrap();
+    assert!(product.contains("type = \"open_platform\""));
+    assert!(!product.contains("TEST_APP_SECRET"));
+    assert!(!product.contains("TEST_ACCESS_TOKEN"));
+    assert!(!product.contains("cookie_secret_key"));
 }
 
 #[test]
@@ -328,5 +427,43 @@ panic_file = "panic.log"
 "#,
         root.to_string_lossy().replace('\\', "/"),
         configured
+    )
+}
+
+fn bilibili_open_platform_config(secret_path: &Path, dynamic: bool) -> String {
+    let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    let subscriptions = if dynamic {
+        r#"[[plugins.configured.config.subscriptions]]
+subscription_id = "invalid-dynamic"
+uid = 42
+notifications = ["dynamic"]
+target = { type = "group", group_id = "test-group" }
+outbound_binding = "qq-main"
+paused = false
+"#
+    } else {
+        "subscriptions = []"
+    };
+    format!(
+        r#"[security]
+secret_file = "{secret_path}"
+
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.bot.bilibili"
+
+[plugins.configured.config]
+backend = {{ type = "open_platform", client_id = "test-client", app_secret_key = "BILIBILI_OPEN_APP_SECRET", oauth_credential_key = "BILIBILI_OPEN_OAUTH", authorized_uid = 42 }}
+live_interval_ms = 60000
+dynamic_interval_ms = 60000
+video_interval_ms = 60000
+retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
+link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
+media_provider_id = "mutsuki.std.resource.memory"
+management = {{ enabled = false, allow_self_binding = false, command = "bili", admin_user_ids = [], self_binding_notifications = ["live", "video"], self_binding_outbound_binding = "" }}
+{subscriptions}
+"#,
     )
 }
