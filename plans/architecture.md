@@ -47,6 +47,11 @@ RuntimeProfile + PluginManifest
 `MutsukiDistributedHost` 只能位于普通 Host Runtime 外层，Core、contracts、SDK 与普通
 Host 不得反向依赖集群、共识、跨机 transport 或节点信任实现。
 
+版本化任务录制、checkpoint 和内容寻址属于独立可选 contract surface，规则见
+[portable-recovery-contracts.md](portable-recovery-contracts.md)。它们不进入默认 Core 热
+路径；外部 Host/工具把 portable task 或 checkpoint 恢复为普通本地 Task，把 portable
+resource materialize 为本地 ResourceRef。
+
 ## 2. Protocol
 
 `Protocol` 只表示数据契约：

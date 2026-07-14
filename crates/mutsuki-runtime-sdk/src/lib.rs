@@ -23,6 +23,7 @@ mod batch;
 mod descriptor;
 mod host;
 mod plugin;
+mod portability;
 mod resource;
 
 pub use abi::{
@@ -48,6 +49,7 @@ pub use plugin::{
     BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader,
     RuntimeBootstrapperResourceProvider, RuntimeBootstrapperService,
 };
+pub use portability::Checkpointable;
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
 
 pub mod contracts {
