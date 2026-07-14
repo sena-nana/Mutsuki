@@ -3,7 +3,7 @@ mod bundle;
 mod configured;
 mod event_source;
 
-pub use bilibili::BilibiliPollingEventSource;
+pub use bilibili::{BilibiliPollingCredentials, BilibiliPollingEventSource};
 pub use bundle::QqBotPluginBundle;
 pub use configured::*;
 pub use event_source::{

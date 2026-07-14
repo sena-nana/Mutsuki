@@ -23,24 +23,100 @@ struct PollingHealth {
 pub struct BilibiliPollingEventSource {
     descriptor: HostEventSourceDescriptor,
     config: SharedBilibiliConfig,
-    credential: SharedBilibiliCredential,
+    credentials: BilibiliPollingCredentials,
     health: Arc<Mutex<PollingHealth>>,
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
     stopped: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
 }
 
-impl BilibiliPollingEventSource {
-    pub fn new(config: SharedBilibiliConfig, credential: SharedBilibiliCredential) -> Self {
-        let snapshot = config.snapshot();
-        let mut descriptor =
-            HostEventSourceDescriptor::new("mutsuki.bot.bilibili.polling.source", PLUGIN_ID);
-        if !snapshot.management.enabled {
-            descriptor = descriptor.require_secret(snapshot.cookie_secret_key);
+#[derive(Clone)]
+pub enum BilibiliPollingCredentials {
+    WebCookie {
+        secret_key: String,
+        credential: SharedBilibiliCredential,
+        required: bool,
+    },
+    OpenPlatform {
+        app_secret_key: String,
+        app_secret: SharedBilibiliCredential,
+        oauth_credential_key: String,
+        oauth_credential: SharedBilibiliCredential,
+    },
+}
+
+impl BilibiliPollingCredentials {
+    fn descriptor(&self, mut descriptor: HostEventSourceDescriptor) -> HostEventSourceDescriptor {
+        match self {
+            Self::WebCookie {
+                secret_key,
+                required,
+                ..
+            } if *required => descriptor.require_secret(secret_key.clone()),
+            Self::OpenPlatform {
+                app_secret_key,
+                oauth_credential_key,
+                ..
+            } => {
+                descriptor = descriptor.require_secret(app_secret_key.clone());
+                descriptor.require_secret(oauth_credential_key.clone())
+            }
+            _ => descriptor,
         }
+    }
+
+    fn load(&self, ctx: &HostEventSourceContext) {
+        match self {
+            Self::WebCookie {
+                secret_key,
+                credential,
+                ..
+            } => match ctx.config.secret(secret_key) {
+                Some(value) => credential.set(value),
+                None => credential.clear(),
+            },
+            Self::OpenPlatform {
+                app_secret_key,
+                app_secret,
+                oauth_credential_key,
+                oauth_credential,
+            } => {
+                match ctx.config.secret(app_secret_key) {
+                    Some(value) => app_secret.set(value),
+                    None => app_secret.clear(),
+                }
+                match ctx.config.secret(oauth_credential_key) {
+                    Some(value) => oauth_credential.set(value),
+                    None => oauth_credential.clear(),
+                }
+            }
+        }
+    }
+
+    fn clear(&self) {
+        match self {
+            Self::WebCookie { credential, .. } => credential.clear(),
+            Self::OpenPlatform {
+                app_secret,
+                oauth_credential,
+                ..
+            } => {
+                app_secret.clear();
+                oauth_credential.clear();
+            }
+        }
+    }
+}
+
+impl BilibiliPollingEventSource {
+    pub fn new(config: SharedBilibiliConfig, credentials: BilibiliPollingCredentials) -> Self {
+        let descriptor = credentials.descriptor(HostEventSourceDescriptor::new(
+            "mutsuki.bot.bilibili.polling.source",
+            PLUGIN_ID,
+        ));
         Self {
             descriptor,
             config,
-            credential,
+            credentials,
             health: Arc::new(Mutex::new(PollingHealth::default())),
             stop: Arc::new(Mutex::new(None)),
             stopped: Arc::new(Mutex::new(None)),
@@ -54,22 +130,17 @@ impl HostEventSource for BilibiliPollingEventSource {
     }
 
     fn start(&mut self, ctx: HostEventSourceContext) -> HostEventSourceFuture {
-        let snapshot = self.config.snapshot();
-        if let Some(cookie) = ctx.config.secret(&snapshot.cookie_secret_key) {
-            self.credential.set(cookie);
-        } else {
-            self.credential.clear();
-        }
+        self.credentials.load(&ctx);
         let config = self.config.clone();
         let health = self.health.clone();
-        let credential = self.credential.clone();
+        let credentials = self.credentials.clone();
         let (stop_tx, stop_rx) = watch::channel(false);
         *self.stop.lock().expect("Bilibili stop mutex") = Some(stop_tx);
         let (stopped_tx, stopped_rx) = oneshot::channel();
         *self.stopped.lock().expect("Bilibili stopped mutex") = Some(stopped_rx);
         Box::pin(async move {
             let result = run_polling(config, health.clone(), ctx, stop_rx).await;
-            credential.clear();
+            credentials.clear();
             let _ = stopped_tx.send(());
             result
         })

@@ -19,7 +19,8 @@ The management contract contains only product fields:
   binding, `paused`, and optional `owner_user_id`.
 
 Enabling management requires the service to be loaded from a real product config file and requires
-Host `security.secret_file`. The product config stores only `cookie_secret_key`; the ignored secret
+Host `security.secret_file`. The product config stores only
+`backend = { type = "web_cookie", cookie_secret_key = "..." }`; the ignored secret
 file stores the value. Environment-backed secrets are intentionally read-only and cannot be
 rotated by QR login.
 

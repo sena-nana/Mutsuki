@@ -13,8 +13,17 @@ Mutsuki-native 迁移提供以下 builtin Rust 协议：
 
 `mutsuki-bot-link-parser` 是共享库而非 Host 插件，负责卡片 JSON 展开、URL 提取去重
 与冷却辅助。Bilibili 状态固定写入 ServiceHost `data_dir/bilibili/state.sqlite3`；首次
-轮询只建立 cursor，不补发历史。Cookie 只通过 `cookie_secret_key` 进入共享 credential
-boundary，WBI 请求使用运行时获取的 mixin key 和注入式签名函数。
+轮询只建立 cursor，不补发历史。产品必须显式选择 `backend.type = "web_cookie"` 或
+`backend.type = "open_platform"`。Web backend 的 Cookie 只通过
+`backend.cookie_secret_key` 进入共享 credential boundary，WBI 请求使用运行时获取的
+mixin key 和注入式签名函数。
+
+官方开放平台 backend 使用 OAuth2 access/refresh token 与 v2 HMAC-SHA256 请求签名，
+只复用被授权账号的 `poll/live` 和 `poll/video` 协议。官方开放平台没有等价动态查询、
+Cookie 扫码管理、WBI/352 或通用链接解析能力；配置这些能力会在启动前失败，不会回退到
+Web backend。OAuth credential bundle 和 app secret 使用两个 Host secret key，token
+刷新后原子轮换整个 bundle。配置、scope、错误码和 fake transport 验收见
+`docs/bilibili-open-platform.md`。
 
 图片通过显式 `media_provider_id` 创建 `ResourceRef`，单资源上限 8 MiB。QQ adapter
 从 Host registry 打开最新版 descriptor、读取并校验摘要、分块上传，随后按 segment
@@ -27,7 +36,7 @@ Bilibili runner。启用 management 后提供：Host 管理员扫码登录与凭
 内生成 PNG `ResourceRef`，Cookie 不进入消息、Task payload、manifest、日志或 trace。
 
 管理操作只通过 ServiceHost 的原子 secret/config persistence handle 落盘：扫码成功轮换
-`cookie_secret_key` 指向的本地 secret，订阅变更替换产品配置中 Bilibili owner 的 opaque
+`backend.cookie_secret_key` 指向的本地 secret，订阅变更替换产品配置中 Bilibili owner 的 opaque
 config。插件 SQLite 只保存 cursor、cooldown 和未完成的 QR/绑定 challenge，不是订阅关系
 权威。management 默认关闭；启用时必须从真实产品配置文件启动并配置 Host
 `security.secret_file`。

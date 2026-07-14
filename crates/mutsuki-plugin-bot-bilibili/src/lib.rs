@@ -33,6 +33,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
+mod open_platform;
+
+pub use open_platform::{
+    BilibiliOpenPlatformCredential, BilibiliOpenPlatformHttpClient,
+    BilibiliOpenPlatformHttpRequest, BilibiliOpenPlatformHttpResponse,
+    BilibiliOpenPlatformRequestContext, OpenPlatformHttpMethod,
+    ReqwestBilibiliOpenPlatformTransport, open_platform_signed_headers,
+};
+
 pub const PLUGIN_ID: &str = "mutsuki.bot.bilibili";
 pub const RUNNER_ID: &str = "mutsuki.bot.bilibili.runner";
 pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
@@ -160,6 +169,42 @@ pub struct BilibiliRiskControlConfig {
     pub max_response_bytes: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BilibiliBackendConfig {
+    WebCookie {
+        cookie_secret_key: String,
+    },
+    OpenPlatform {
+        client_id: String,
+        app_secret_key: String,
+        oauth_credential_key: String,
+        authorized_uid: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BilibiliBackendKind {
+    WebCookie,
+    OpenPlatform,
+}
+
+impl BilibiliBackendConfig {
+    pub fn kind(&self) -> BilibiliBackendKind {
+        match self {
+            Self::WebCookie { .. } => BilibiliBackendKind::WebCookie,
+            Self::OpenPlatform { .. } => BilibiliBackendKind::OpenPlatform,
+        }
+    }
+
+    pub fn cookie_secret_key(&self) -> Option<&str> {
+        match self {
+            Self::WebCookie { cookie_secret_key } => Some(cookie_secret_key),
+            Self::OpenPlatform { .. } => None,
+        }
+    }
+}
+
 impl BilibiliRiskControlConfig {
     fn validate(&self) -> Result<(), String> {
         if self.timeout_ms == 0 {
@@ -175,7 +220,7 @@ impl BilibiliRiskControlConfig {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BilibiliConfig {
-    pub cookie_secret_key: String,
+    pub backend: BilibiliBackendConfig,
     pub live_interval_ms: u64,
     pub dynamic_interval_ms: u64,
     pub video_interval_ms: u64,
@@ -191,8 +236,47 @@ pub struct BilibiliConfig {
 
 impl BilibiliConfig {
     pub fn validate(&self) -> Result<(), String> {
-        if self.cookie_secret_key.trim().is_empty() {
-            return Err("cookie_secret_key is required".into());
+        match &self.backend {
+            BilibiliBackendConfig::WebCookie { cookie_secret_key } => {
+                if cookie_secret_key.trim().is_empty() {
+                    return Err("backend.cookie_secret_key is required".into());
+                }
+            }
+            BilibiliBackendConfig::OpenPlatform {
+                client_id,
+                app_secret_key,
+                oauth_credential_key,
+                authorized_uid,
+            } => {
+                if client_id.trim().is_empty()
+                    || app_secret_key.trim().is_empty()
+                    || oauth_credential_key.trim().is_empty()
+                    || authorized_uid == &0
+                {
+                    return Err("open_platform backend requires client_id, app_secret_key, oauth_credential_key and authorized_uid".into());
+                }
+                if app_secret_key == oauth_credential_key {
+                    return Err("open_platform secret keys must be distinct".into());
+                }
+                if self.management.enabled || self.risk_control.is_some() {
+                    return Err("open_platform backend does not support Cookie management or Chromium risk control".into());
+                }
+                if self.link_resolver.enabled {
+                    return Err("open_platform backend does not support Web link resolution".into());
+                }
+                for subscription in &self.subscriptions {
+                    if subscription.uid != *authorized_uid {
+                        return Err("open_platform subscriptions must target authorized_uid".into());
+                    }
+                    if subscription
+                        .notifications
+                        .iter()
+                        .any(|kind| matches!(kind, BilibiliPollKind::Dynamic))
+                    {
+                        return Err("open_platform backend does not provide poll/dynamic".into());
+                    }
+                }
+            }
         }
         if self.media_provider_id.trim().is_empty() {
             return Err("media_provider_id is required".into());
@@ -296,6 +380,15 @@ impl SharedBilibiliCredential {
             .filter(|cookie| !cookie.trim().is_empty())
             .ok_or(BilibiliError::CookieExpired)
     }
+
+    fn get_named(&self, name: &str) -> Result<String, BilibiliError> {
+        self.0
+            .lock()
+            .expect("credential mutex")
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| BilibiliError::OpenPlatformCredentialUnavailable(name.into()))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -359,6 +452,31 @@ pub enum BilibiliError {
     ManagementUnavailable(String),
     #[error("Bilibili management request is forbidden")]
     Forbidden,
+    #[error("Bilibili Open Platform credential is unavailable: {0}")]
+    OpenPlatformCredentialUnavailable(String),
+    #[error("Bilibili Open Platform credential is invalid: {0}")]
+    OpenPlatformCredentialInvalid(String),
+    #[error("Bilibili Open Platform permission is unavailable: {scope} (code {code})")]
+    OpenPlatformPermissionDenied {
+        code: i64,
+        scope: String,
+        request_id: Option<String>,
+    },
+    #[error("Bilibili Open Platform OAuth credential is expired")]
+    OpenPlatformOAuthExpired { request_id: Option<String> },
+    #[error("Bilibili Open Platform signature was rejected (code {code})")]
+    OpenPlatformSignatureRejected {
+        code: i64,
+        request_id: Option<String>,
+    },
+    #[error("Bilibili Open Platform request failed with code {code}: {message}")]
+    OpenPlatformApi {
+        code: i64,
+        message: String,
+        request_id: Option<String>,
+    },
+    #[error("Bilibili Open Platform does not support capability: {0}")]
+    OpenPlatformUnsupported(String),
 }
 
 pub trait BilibiliTransport: Send {
@@ -721,6 +839,7 @@ impl SqliteBilibiliRepository {
 
 pub struct BilibiliRunner {
     descriptor: RunnerDescriptor,
+    backend_kind: BilibiliBackendKind,
     transport: Box<dyn BilibiliTransport>,
     repository: Arc<SqliteBilibiliRepository>,
     resources: Arc<dyn ResourceRegistryGateway>,
@@ -737,8 +856,25 @@ impl BilibiliRunner {
         resources: Arc<dyn ResourceRegistryGateway>,
         media_provider_id: impl Into<String>,
     ) -> Self {
+        Self::new_for_backend(
+            transport,
+            repository,
+            resources,
+            media_provider_id,
+            BilibiliBackendKind::WebCookie,
+        )
+    }
+
+    pub fn new_for_backend(
+        transport: Box<dyn BilibiliTransport>,
+        repository: Arc<SqliteBilibiliRepository>,
+        resources: Arc<dyn ResourceRegistryGateway>,
+        media_provider_id: impl Into<String>,
+        backend_kind: BilibiliBackendKind,
+    ) -> Self {
         Self {
-            descriptor: runner_descriptor(false, false),
+            descriptor: runner_descriptor(false, false, backend_kind),
+            backend_kind,
             transport,
             repository,
             resources,
@@ -755,7 +891,7 @@ impl BilibiliRunner {
         credential_store: Arc<dyn BilibiliCredentialStore>,
         config_store: Arc<dyn BilibiliConfigStore>,
     ) -> Self {
-        self.descriptor = runner_descriptor(true, false);
+        self.descriptor = runner_descriptor(true, false, self.backend_kind);
         self.managed_config = Some(config);
         self.credential_store = Some(credential_store);
         self.config_store = Some(config_store);
@@ -770,7 +906,7 @@ impl BilibiliRunner {
         let Some(risk_control) = risk_control else {
             return Box::new(self);
         };
-        let descriptor = runner_descriptor(self.managed_config.is_some(), true);
+        let descriptor = runner_descriptor(self.managed_config.is_some(), true, self.backend_kind);
         self.descriptor = descriptor.clone();
         let state = Arc::new(Mutex::new(self));
         let factory = Box::new(move |ctx: AsyncRunnerContext, task: Task| {
@@ -970,8 +1106,16 @@ impl BilibiliRunner {
                                 ),
                             )
                         })?;
+                        let cookie_secret_key = config.backend.cookie_secret_key().ok_or_else(|| {
+                            bili_error(
+                                task,
+                                BilibiliError::ManagementUnavailable(
+                                    "Cookie backend is not selected".into(),
+                                ),
+                            )
+                        })?;
                         store
-                            .rotate(&config.cookie_secret_key, credential.clone())
+                            .rotate(cookie_secret_key, credential.clone())
                             .map_err(|detail| {
                                 bili_error(task, BilibiliError::ManagementUnavailable(detail))
                             })?;
@@ -1489,14 +1633,40 @@ pub fn manifest_with_management_and_risk_control(
     command: Option<&str>,
     risk_control_enabled: bool,
 ) -> mutsuki_runtime_contracts::PluginManifest {
+    manifest_for_backend(
+        BilibiliBackendKind::WebCookie,
+        command,
+        risk_control_enabled,
+    )
+}
+
+pub fn manifest_for_config(config: &BilibiliConfig) -> mutsuki_runtime_contracts::PluginManifest {
+    manifest_for_backend(
+        config.backend.kind(),
+        config
+            .management
+            .enabled
+            .then_some(config.management.command.as_str()),
+        config.risk_control.is_some(),
+    )
+}
+
+fn manifest_for_backend(
+    backend_kind: BilibiliBackendKind,
+    command: Option<&str>,
+    risk_control_enabled: bool,
+) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestRunner {
-            descriptor: runner_descriptor(command.is_some(), risk_control_enabled),
+            descriptor: runner_descriptor(command.is_some(), risk_control_enabled, backend_kind),
         }))
         .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "io")
-        .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "io")
-        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "io")
-        .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "io");
+        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "io");
+    if backend_kind == BilibiliBackendKind::WebCookie {
+        builder = builder
+            .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "io")
+            .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "io");
+    }
     if let Some(command) = command {
         builder = builder.handler_binding(
             HandlerBindingBuilder::new(
@@ -1517,10 +1687,18 @@ pub fn manifest_with_management_and_risk_control(
     manifest
 }
 
-fn runner_descriptor(management: bool, risk_control_enabled: bool) -> RunnerDescriptor {
+fn runner_descriptor(
+    management: bool,
+    risk_control_enabled: bool,
+    backend_kind: BilibiliBackendKind,
+) -> RunnerDescriptor {
     let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
-    for protocol in [POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE] {
-        builder = builder.accepted_protocol(protocol);
+    let protocols: &[&str] = match backend_kind {
+        BilibiliBackendKind::WebCookie => &[POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE],
+        BilibiliBackendKind::OpenPlatform => &[POLL_LIVE, POLL_VIDEO],
+    };
+    for protocol in protocols {
+        builder = builder.accepted_protocol(*protocol);
     }
     if management {
         builder = builder.accepted_protocol(BOT_COMMAND_HANDLE_PROTOCOL_ID);
@@ -1539,6 +1717,16 @@ fn runner_descriptor(management: bool, risk_control_enabled: bool) -> RunnerDesc
             ..Default::default()
         })
         .metadata("domain", ScalarValue::String("bilibili".into()))
+        .metadata(
+            "backend",
+            ScalarValue::String(
+                match backend_kind {
+                    BilibiliBackendKind::WebCookie => "web_cookie",
+                    BilibiliBackendKind::OpenPlatform => "open_platform",
+                }
+                .into(),
+            ),
+        )
         .build()
 }
 
@@ -1711,18 +1899,73 @@ fn outbound_task(parent: &Task, message: BotMessage, binding: &str, index: usize
 }
 
 fn bili_error(task: &Task, error: BilibiliError) -> RuntimeError {
-    let code = match error {
+    let code = match &error {
         BilibiliError::CookieExpired => "bilibili.cookie_expired",
         BilibiliError::RateLimited => "bilibili.rate_limited",
         BilibiliError::RiskControl352 => "bilibili.risk_control_352",
         BilibiliError::Forbidden => "bilibili.management_forbidden",
         BilibiliError::ManagementUnavailable(_) => "bilibili.management_unavailable",
+        BilibiliError::OpenPlatformCredentialUnavailable(_)
+        | BilibiliError::OpenPlatformCredentialInvalid(_) => "bilibili.open_platform.credentials",
+        BilibiliError::OpenPlatformPermissionDenied { .. } => {
+            "bilibili.open_platform.permission_denied"
+        }
+        BilibiliError::OpenPlatformOAuthExpired { .. } => "bilibili.open_platform.oauth_expired",
+        BilibiliError::OpenPlatformSignatureRejected { .. } => {
+            "bilibili.open_platform.signature_rejected"
+        }
+        BilibiliError::OpenPlatformApi { .. } => "bilibili.open_platform.api_failed",
+        BilibiliError::OpenPlatformUnsupported(_) => {
+            "bilibili.open_platform.unsupported_capability"
+        }
         _ => "bilibili.request_failed",
     };
     let mut runtime = RuntimeError::new(code, PLUGIN_ID, format!("bilibili.{}", task.task_id));
     runtime
         .evidence
         .insert("detail".into(), ScalarValue::String(error.to_string()));
+    match &error {
+        BilibiliError::OpenPlatformPermissionDenied {
+            code,
+            scope,
+            request_id,
+        } => {
+            runtime.evidence.insert(
+                "open_platform_code".into(),
+                ScalarValue::String(code.to_string()),
+            );
+            runtime
+                .evidence
+                .insert("required_scope".into(), ScalarValue::String(scope.clone()));
+            if let Some(request_id) = request_id {
+                runtime
+                    .evidence
+                    .insert("request_id".into(), ScalarValue::String(request_id.clone()));
+            }
+        }
+        BilibiliError::OpenPlatformOAuthExpired {
+            request_id: Some(request_id),
+        } => {
+            runtime
+                .evidence
+                .insert("request_id".into(), ScalarValue::String(request_id.clone()));
+        }
+        BilibiliError::OpenPlatformSignatureRejected { code, request_id }
+        | BilibiliError::OpenPlatformApi {
+            code, request_id, ..
+        } => {
+            runtime.evidence.insert(
+                "open_platform_code".into(),
+                ScalarValue::String(code.to_string()),
+            );
+            if let Some(request_id) = request_id {
+                runtime
+                    .evidence
+                    .insert("request_id".into(), ScalarValue::String(request_id.clone()));
+            }
+        }
+        _ => {}
+    }
     if code == "bilibili.risk_control_352" {
         for (key, value) in [
             ("risk_control_code", "352"),
@@ -2030,10 +2273,10 @@ mod tests {
     use mutsuki_bot_protocol::{BotAccountRef, BotEvent, BotEventKind, BotPlatform, BotUser};
     use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
     use mutsuki_runtime_contracts::{
-        BatchEntry, BatchPayload, CancelPolicy, CommandPlan, DispatchLane, ExportPlan,
-        OrderingRequirement, PlanReceipt, ReadPlan, ResourceAccess, ResourceId, ResourceLifetime,
-        ResourceRef, ResourceSealState, ResourceSemantic, SnapshotDescriptor, StreamPlan,
-        TaskBatch, TaskHandle, WorkResourcePlan, WritePlan,
+        BatchEntry, BatchPayload, CommandPlan, DispatchLane, ExportPlan, OrderingRequirement,
+        PlanReceipt, ReadPlan, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
+        ResourceSealState, ResourceSemantic, SnapshotDescriptor, StreamPlan, TaskBatch, TaskHandle,
+        WorkResourcePlan, WritePlan,
     };
     use mutsuki_runtime_sdk::{ResourcePlanGateway, RuntimeClient};
 
@@ -2527,7 +2770,9 @@ mod tests {
 
     fn managed_config() -> BilibiliConfig {
         BilibiliConfig {
-            cookie_secret_key: "BILIBILI_COOKIE".into(),
+            backend: BilibiliBackendConfig::WebCookie {
+                cookie_secret_key: "BILIBILI_COOKIE".into(),
+            },
             live_interval_ms: 1_000,
             dynamic_interval_ms: 1_000,
             video_interval_ms: 1_000,
@@ -2687,6 +2932,63 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("max_response_bytes")
+        );
+    }
+
+    #[test]
+    fn open_platform_config_rejects_web_only_capabilities_and_wrong_uid() {
+        let mut config = managed_config();
+        config.backend = BilibiliBackendConfig::OpenPlatform {
+            client_id: "client".into(),
+            app_secret_key: "BILIBILI_OPEN_APP_SECRET".into(),
+            oauth_credential_key: "BILIBILI_OPEN_OAUTH".into(),
+            authorized_uid: 42,
+        };
+        assert!(config.validate().unwrap_err().contains("Cookie management"));
+        config.management = BilibiliManagementConfig::default();
+        config.subscriptions.push(BilibiliSubscription {
+            subscription_id: "dynamic".into(),
+            uid: 42,
+            notifications: vec![BilibiliPollKind::Dynamic],
+            target: BotTarget::Group {
+                group_id: "group".into(),
+            },
+            outbound_binding: "qq-main".into(),
+            paused: false,
+            owner_user_id: None,
+        });
+        assert!(config.validate().unwrap_err().contains("poll/dynamic"));
+        config.subscriptions[0].notifications = vec![BilibiliPollKind::Video];
+        config.subscriptions[0].uid = 7;
+        assert!(config.validate().unwrap_err().contains("authorized_uid"));
+        config.subscriptions[0].uid = 42;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn open_platform_manifest_advertises_only_live_and_video() {
+        let mut config = managed_config();
+        config.backend = BilibiliBackendConfig::OpenPlatform {
+            client_id: "client".into(),
+            app_secret_key: "BILIBILI_OPEN_APP_SECRET".into(),
+            oauth_credential_key: "BILIBILI_OPEN_OAUTH".into(),
+            authorized_uid: 42,
+        };
+        config.management = BilibiliManagementConfig::default();
+        let manifest = manifest_for_config(&config);
+        let protocols = manifest
+            .provides
+            .protocols
+            .iter()
+            .map(|protocol| protocol.protocol_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(protocols.contains(&POLL_LIVE));
+        assert!(protocols.contains(&POLL_VIDEO));
+        assert!(!protocols.contains(&POLL_DYNAMIC));
+        assert!(!protocols.contains(&LINK_RESOLVE));
+        assert_eq!(
+            manifest.provides.runners[0].accepted_protocol_ids,
+            vec![POLL_LIVE, POLL_VIDEO]
         );
     }
 
