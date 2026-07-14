@@ -9,6 +9,7 @@ use url::Url;
 pub const MAX_CARD_BYTES: usize = 32 * 1024;
 pub const MAX_URLS: usize = 32;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
+pub const MAX_LINK_CARD_MEDIA_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedLinkCard {

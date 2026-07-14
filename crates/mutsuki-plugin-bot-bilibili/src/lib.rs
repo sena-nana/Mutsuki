@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mutsuki_bot_link_parser::ResolvedLinkCard;
+use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotExtMap, BotMessage, BotTarget, MessageSegment,
 };
@@ -30,7 +30,7 @@ pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
 pub const POLL_DYNAMIC: &str = "mutsuki.bot.bilibili.poll/dynamic@1";
 pub const POLL_VIDEO: &str = "mutsuki.bot.bilibili.poll/video@1";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.link/resolve@1";
-pub const MAX_MEDIA_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_MEDIA_BYTES: usize = MAX_LINK_CARD_MEDIA_BYTES;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,12 +48,20 @@ impl BilibiliPollKind {
             Self::Video => POLL_VIDEO,
         }
     }
+
+    fn from_protocol_id(protocol_id: &str) -> Option<Self> {
+        match protocol_id {
+            POLL_LIVE => Some(Self::Live),
+            POLL_DYNAMIC => Some(Self::Dynamic),
+            POLL_VIDEO => Some(Self::Video),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PollRequest {
     pub uid: u64,
-    pub kind: BilibiliPollKind,
     pub target: BotTarget,
     pub outbound_binding: String,
 }
@@ -101,12 +109,6 @@ pub struct BilibiliConfig {
     pub subscriptions: Vec<BilibiliSubscription>,
     pub link_resolver: LinkResolverConfig,
     pub media_provider_id: String,
-    #[serde(default = "default_media_limit")]
-    pub max_media_bytes: usize,
-}
-
-fn default_media_limit() -> usize {
-    MAX_MEDIA_BYTES
 }
 
 impl BilibiliConfig {
@@ -116,11 +118,6 @@ impl BilibiliConfig {
         }
         if self.media_provider_id.trim().is_empty() {
             return Err("media_provider_id is required".into());
-        }
-        if self.max_media_bytes == 0 || self.max_media_bytes > MAX_MEDIA_BYTES {
-            return Err(format!(
-                "max_media_bytes must be between 1 and {MAX_MEDIA_BYTES}"
-            ));
         }
         if [
             self.live_interval_ms,
@@ -181,7 +178,6 @@ pub struct BilibiliItem {
     pub title: String,
     pub url: String,
     pub image_url: Option<String>,
-    pub live: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -217,15 +213,12 @@ pub struct ReqwestBilibiliTransport {
 }
 
 impl ReqwestBilibiliTransport {
-    pub fn new(
-        credential: SharedBilibiliCredential,
-        timeout: Duration,
-    ) -> Result<Self, BilibiliError> {
-        Ok(Self {
+    pub fn new(credential: SharedBilibiliCredential, timeout: Duration) -> Self {
+        Self {
             client: None,
             credential,
             timeout,
-        })
+        }
     }
 
     fn client(&mut self) -> Result<&Client, BilibiliError> {
@@ -433,7 +426,6 @@ pub struct BilibiliRunner {
     repository: Arc<SqliteBilibiliRepository>,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-    max_media_bytes: usize,
 }
 
 impl BilibiliRunner {
@@ -442,7 +434,6 @@ impl BilibiliRunner {
         repository: Arc<SqliteBilibiliRepository>,
         resources: Arc<dyn ResourceRegistryGateway>,
         media_provider_id: impl Into<String>,
-        max_media_bytes: usize,
     ) -> Self {
         Self {
             descriptor: runner_descriptor(),
@@ -450,7 +441,6 @@ impl BilibiliRunner {
             repository,
             resources,
             media_provider_id: media_provider_id.into(),
-            max_media_bytes,
         }
     }
 
@@ -473,17 +463,17 @@ impl BilibiliRunner {
             return Ok(outbound_result(task, message, request.outbound_binding));
         }
         let request: PollRequest = decode(task)?;
-        if request.kind.protocol_id() != task.protocol_id {
-            return Err(bili_error(
+        let kind = BilibiliPollKind::from_protocol_id(&task.protocol_id).ok_or_else(|| {
+            bili_error(
                 task,
-                BilibiliError::InvalidResponse("poll kind/protocol mismatch".into()),
-            ));
-        }
+                BilibiliError::InvalidResponse("unsupported poll protocol".into()),
+            )
+        })?;
         let items = self
             .transport
-            .poll(&request.kind, request.uid)
+            .poll(&kind, request.uid)
             .map_err(|error| bili_error(task, error))?;
-        let key = format!("{:?}:{}", request.kind, request.uid);
+        let key = format!("{kind:?}:{}", request.uid);
         let previous = self
             .repository
             .cursor(&key)
@@ -503,7 +493,7 @@ impl BilibiliRunner {
             let card = ResolvedLinkCard {
                 url: item.url,
                 title: item.title,
-                description: match request.kind {
+                description: match &kind {
                     BilibiliPollKind::Live => "直播状态更新",
                     BilibiliPollKind::Dynamic => "发布了新动态",
                     BilibiliPollKind::Video => "发布了新投稿",
@@ -532,7 +522,7 @@ impl BilibiliRunner {
         if let Some(image_url) = card.image_url {
             let bytes = self
                 .transport
-                .download(&image_url, self.max_media_bytes)
+                .download(&image_url, MAX_MEDIA_BYTES)
                 .map_err(|error| bili_error(task, error))?;
             let resource = self
                 .resources
@@ -723,7 +713,6 @@ fn parse_poll_items(
                     .get("cover")
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
-                live: Some(status),
             }])
         }
         BilibiliPollKind::Dynamic => {
@@ -748,7 +737,6 @@ fn parse_poll_items(
                         image_url: modules["major"]["archive"]["cover"]
                             .as_str()
                             .map(ToOwned::to_owned),
-                        live: None,
                     })
                 })
                 .collect())
@@ -767,7 +755,6 @@ fn parse_poll_items(
                         title: item["title"].as_str().unwrap_or("新投稿").into(),
                         url: format!("https://www.bilibili.com/video/{bvid}"),
                         image_url: item["pic"].as_str().map(|url| format!("https:{url}")),
-                        live: None,
                     })
                 })
                 .collect())
@@ -867,7 +854,6 @@ mod tests {
             title: id.into(),
             url: format!("https://www.bilibili.com/{id}"),
             image_url: None,
-            live: None,
         };
         let fresh = fresh_since(vec![item("3"), item("2"), item("1")], "1");
         assert_eq!(
@@ -902,5 +888,14 @@ mod tests {
             bili_error(&task, BilibiliError::RiskControl352).code,
             "bilibili.risk_control_352"
         );
+    }
+
+    #[test]
+    fn poll_protocol_is_the_kind_discriminator() {
+        assert_eq!(
+            BilibiliPollKind::from_protocol_id(POLL_DYNAMIC),
+            Some(BilibiliPollKind::Dynamic)
+        );
+        assert_eq!(BilibiliPollKind::from_protocol_id(LINK_RESOLVE), None);
     }
 }

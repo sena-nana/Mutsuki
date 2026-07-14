@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use mutsuki_bot_link_parser::ResolvedLinkCard;
+use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotExtMap, BotMessage, BotTarget, MessageSegment,
 };
@@ -34,12 +34,13 @@ pub trait WorkshopTransport: Send {
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String>;
 }
 
+#[derive(Default)]
 pub struct ReqwestWorkshopTransport {
     client: Option<reqwest::blocking::Client>,
 }
 impl ReqwestWorkshopTransport {
-    pub fn new() -> Result<Self, String> {
-        Ok(Self { client: None })
+    pub fn new() -> Self {
+        Self::default()
     }
     fn client(&mut self) -> Result<&reqwest::blocking::Client, String> {
         if self.client.is_none() {
@@ -100,21 +101,18 @@ pub struct WorkshopRunner {
     transport: Box<dyn WorkshopTransport>,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-    max_media_bytes: usize,
 }
 impl WorkshopRunner {
     pub fn new(
         transport: Box<dyn WorkshopTransport>,
         resources: Arc<dyn ResourceRegistryGateway>,
         media_provider_id: impl Into<String>,
-        max_media_bytes: usize,
     ) -> Self {
         Self {
             descriptor: descriptor(),
             transport,
             resources,
             media_provider_id: media_provider_id.into(),
-            max_media_bytes,
         }
     }
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
@@ -128,7 +126,7 @@ impl WorkshopRunner {
         if let Some(image_url) = card.image_url {
             let bytes = self
                 .transport
-                .download(&image_url, self.max_media_bytes)
+                .download(&image_url, MAX_LINK_CARD_MEDIA_BYTES)
                 .map_err(|error| failure(task, error))?;
             let resource = self
                 .resources

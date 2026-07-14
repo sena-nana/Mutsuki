@@ -1190,6 +1190,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-mihuashi"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",

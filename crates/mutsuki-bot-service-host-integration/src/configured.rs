@@ -139,7 +139,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 let transport = ReqwestBilibiliTransport::new(
                     runner_credential.clone(),
                     Duration::from_secs(15),
-                )?;
+                );
                 Ok::<
                     Box<dyn mutsuki_runtime_core::Runner>,
                     mutsuki_plugin_bot_bilibili::BilibiliError,
@@ -148,7 +148,6 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     runner_repository.clone(),
                     resources,
                     runner_config.media_provider_id.clone(),
-                    runner_config.max_media_bytes,
                 )))
             })
             .register_event_source(Box::new(source)))
@@ -159,21 +158,12 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
 #[serde(deny_unknown_fields)]
 struct LinkCardPluginConfig {
     media_provider_id: String,
-    #[serde(default = "default_media_limit")]
-    max_media_bytes: usize,
-}
-
-fn default_media_limit() -> usize {
-    8 * 1024 * 1024
 }
 
 impl LinkCardPluginConfig {
     fn validate(&self) -> Result<(), String> {
         if self.media_provider_id.trim().is_empty() {
             return Err("media_provider_id is required".into());
-        }
-        if self.max_media_bytes == 0 || self.max_media_bytes > default_media_limit() {
-            return Err("max_media_bytes must be between 1 and 8 MiB".into());
         }
         Ok(())
     }
@@ -201,12 +191,11 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
-                let transport = ReqwestWorkshopTransport::new()?;
+                let transport = ReqwestWorkshopTransport::new();
                 Ok::<Box<dyn mutsuki_runtime_core::Runner>, String>(Box::new(WorkshopRunner::new(
                     Box::new(transport),
                     resources,
                     config.media_provider_id.clone(),
-                    config.max_media_bytes,
                 )))
             }))
     }
@@ -241,7 +230,6 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
                     client,
                     resources,
                     config.media_provider_id.clone(),
-                    config.max_media_bytes,
                 )
             }))
     }

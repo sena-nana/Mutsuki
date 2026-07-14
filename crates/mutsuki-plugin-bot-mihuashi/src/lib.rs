@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use mutsuki_bot_link_parser::MAX_LINK_CARD_MEDIA_BYTES;
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotExtMap, BotMessage, BotTarget, MessageSegment,
 };
@@ -37,16 +38,13 @@ pub fn runner(
     client: RuntimeClientRef,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-    max_media_bytes: usize,
 ) -> Box<dyn Runner> {
     let descriptor = descriptor();
     let factory = Box::new(
         move |ctx: mutsuki_runtime_sdk::AsyncRunnerContext, task: Task| {
             let resources = resources.clone();
             let media_provider_id = media_provider_id.clone();
-            Box::pin(async move {
-                run_task(ctx, task, resources, media_provider_id, max_media_bytes).await
-            })
+            Box::pin(async move { run_task(ctx, task, resources, media_provider_id).await })
                 as std::pin::Pin<
                     Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
                 >
@@ -60,7 +58,6 @@ async fn run_task(
     task: Task,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-    max_media_bytes: usize,
 ) -> RuntimeResult<RunnerResult> {
     let request: MihuashiResolveRequest =
         serde_json::from_value(task.payload.clone()).map_err(|error| fail(&task, error))?;
@@ -107,7 +104,7 @@ async fn run_task(
             .bytes()
             .await
             .map_err(|error| fail(&task, error))?;
-        if bytes.len() > max_media_bytes {
+        if bytes.len() > MAX_LINK_CARD_MEDIA_BYTES {
             return Err(fail(&task, "Mihuashi image exceeds configured limit"));
         }
         let resource = resources.create_blob_resource(

@@ -153,7 +153,7 @@ async fn run_polling(
                         }
                         let now = Instant::now();
                         if next_due.get(&key).is_some_and(|due| *due > now) { continue; }
-                        let request = PollRequest { uid: subscription.uid, kind: kind.clone(), target: subscription.target.clone(), outbound_binding: subscription.outbound_binding.clone() };
+                        let request = PollRequest { uid: subscription.uid, target: subscription.target.clone(), outbound_binding: subscription.outbound_binding.clone() };
                         task_sequence = task_sequence.wrapping_add(1);
                         let task_id = format!("bilibili:{:?}:{}:{task_sequence}", kind, subscription.uid);
                         let task = Task::new(task_id.clone(), kind.protocol_id(), serde_json::to_value(request)?);

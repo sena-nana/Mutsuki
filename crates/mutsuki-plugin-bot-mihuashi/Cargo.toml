@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-contracts.workspace = true
