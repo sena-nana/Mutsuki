@@ -12,6 +12,8 @@ jobs:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: ""
     strategy:
       fail-fast: false
       matrix:
@@ -26,4 +28,3 @@ jobs:
       - run: cargo fmt --check
       - run: cargo check --locked
       - run: cargo test --locked
-
