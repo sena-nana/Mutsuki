@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mutsuki_plugin_bot_bilibili::{
-    BilibiliConfig, BilibiliPollKind, PLUGIN_ID, PollRequest, SharedBilibiliCredential,
+    BilibiliConfig, BilibiliPollKind, PLUGIN_ID, PollRequest, SharedBilibiliConfig,
+    SharedBilibiliCredential,
 };
 use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_service_runtime::{
@@ -21,7 +22,7 @@ struct PollingHealth {
 
 pub struct BilibiliPollingEventSource {
     descriptor: HostEventSourceDescriptor,
-    config: BilibiliConfig,
+    config: SharedBilibiliConfig,
     credential: SharedBilibiliCredential,
     health: Arc<Mutex<PollingHealth>>,
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
@@ -29,13 +30,15 @@ pub struct BilibiliPollingEventSource {
 }
 
 impl BilibiliPollingEventSource {
-    pub fn new(config: BilibiliConfig, credential: SharedBilibiliCredential) -> Self {
+    pub fn new(config: SharedBilibiliConfig, credential: SharedBilibiliCredential) -> Self {
+        let snapshot = config.snapshot();
+        let mut descriptor =
+            HostEventSourceDescriptor::new("mutsuki.bot.bilibili.polling.source", PLUGIN_ID);
+        if !snapshot.management.enabled {
+            descriptor = descriptor.require_secret(snapshot.cookie_secret_key);
+        }
         Self {
-            descriptor: HostEventSourceDescriptor::new(
-                "mutsuki.bot.bilibili.polling.source",
-                PLUGIN_ID,
-            )
-            .require_secret(config.cookie_secret_key.clone()),
+            descriptor,
             config,
             credential,
             health: Arc::new(Mutex::new(PollingHealth::default())),
@@ -51,11 +54,12 @@ impl HostEventSource for BilibiliPollingEventSource {
     }
 
     fn start(&mut self, ctx: HostEventSourceContext) -> HostEventSourceFuture {
-        let Some(cookie) = ctx.config.secret(&self.config.cookie_secret_key) else {
-            let key = self.config.cookie_secret_key.clone();
-            return Box::pin(async move { Err(format!("missing Bilibili secret {key}").into()) });
-        };
-        self.credential.set(cookie);
+        let snapshot = self.config.snapshot();
+        if let Some(cookie) = ctx.config.secret(&snapshot.cookie_secret_key) {
+            self.credential.set(cookie);
+        } else {
+            self.credential.clear();
+        }
         let config = self.config.clone();
         let health = self.health.clone();
         let credential = self.credential.clone();
@@ -102,27 +106,28 @@ impl HostEventSource for BilibiliPollingEventSource {
 }
 
 async fn run_polling(
-    config: BilibiliConfig,
+    config: SharedBilibiliConfig,
     health: Arc<Mutex<PollingHealth>>,
     ctx: HostEventSourceContext,
     mut stop: watch::Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     health.lock().expect("Bilibili health mutex").running = true;
-    let mut inflight: BTreeMap<(u64, String, String), TaskHandle> = BTreeMap::new();
-    let mut next_due: BTreeMap<(u64, String, String), Instant> = BTreeMap::new();
-    let mut failures: BTreeMap<(u64, String, String), u32> = BTreeMap::new();
+    let mut inflight: BTreeMap<(String, String), TaskHandle> = BTreeMap::new();
+    let mut next_due: BTreeMap<(String, String), Instant> = BTreeMap::new();
+    let mut failures: BTreeMap<(String, String), u32> = BTreeMap::new();
     let mut task_sequence = 0_u64;
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
     let mut host_shutdown = ctx.shutdown.clone();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                for subscription in &config.subscriptions {
+                let snapshot = config.snapshot();
+                for subscription in &snapshot.subscriptions {
+                    if subscription.paused { continue; }
                     for kind in &subscription.notifications {
                         let key = (
-                            subscription.uid,
+                            subscription.subscription_id.clone(),
                             kind.protocol_id().to_owned(),
-                            subscription.outbound_binding.clone(),
                         );
                         if let Some(handle) = inflight.get(&key).cloned() {
                             match ctx.task_submitter.task_outcome(&handle) {
@@ -138,22 +143,22 @@ async fn run_polling(
                                     inflight.remove(&key);
                                     health.lock().expect("Bilibili health mutex").last_error = Some(format!("poll task failed: {outcome:?}"));
                                     let attempts = failures.entry(key.clone()).or_default();
-                                    *attempts = attempts.saturating_add(1).min(config.retry.max_attempts);
-                                    next_due.insert(key.clone(), Instant::now() + retry_delay(&config, *attempts));
+                                    *attempts = attempts.saturating_add(1).min(snapshot.retry.max_attempts);
+                                    next_due.insert(key.clone(), Instant::now() + retry_delay(&snapshot, *attempts));
                                     continue;
                                 }
                                 Err(error) => {
                                     health.lock().expect("Bilibili health mutex").last_error = Some(error.to_string());
                                     let attempts = failures.entry(key.clone()).or_default();
-                                    *attempts = attempts.saturating_add(1).min(config.retry.max_attempts);
-                                    next_due.insert(key.clone(), Instant::now() + retry_delay(&config, *attempts));
+                                    *attempts = attempts.saturating_add(1).min(snapshot.retry.max_attempts);
+                                    next_due.insert(key.clone(), Instant::now() + retry_delay(&snapshot, *attempts));
                                     continue;
                                 }
                             }
                         }
                         let now = Instant::now();
                         if next_due.get(&key).is_some_and(|due| *due > now) { continue; }
-                        let request = PollRequest { uid: subscription.uid, target: subscription.target.clone(), outbound_binding: subscription.outbound_binding.clone() };
+                        let request = PollRequest { subscription_id: subscription.subscription_id.clone(), uid: subscription.uid, target: subscription.target.clone(), outbound_binding: subscription.outbound_binding.clone() };
                         task_sequence = task_sequence.wrapping_add(1);
                         let task_id = format!("bilibili:{:?}:{}:{task_sequence}", kind, subscription.uid);
                         let task = Task::new(task_id.clone(), kind.protocol_id(), serde_json::to_value(request)?);
@@ -162,7 +167,7 @@ async fn run_polling(
                             Ok(_) => { health.lock().expect("Bilibili health mutex").last_error = Some("poll submit returned no handle".into()); }
                             Err(error) => { health.lock().expect("Bilibili health mutex").last_error = Some(error.to_string()); }
                         }
-                        next_due.insert(key, now + interval_for(&config, kind));
+                        next_due.insert(key, now + interval_for(&snapshot, kind));
                     }
                 }
             }

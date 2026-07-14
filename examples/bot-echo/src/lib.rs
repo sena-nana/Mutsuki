@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent,
+    bot_command_binding_id,
 };
 use mutsuki_bot_sdk::MessageBuilder;
 use mutsuki_runtime_contracts::{
@@ -11,17 +12,29 @@ use mutsuki_runtime_contracts::{
     RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{HandlerBindingBuilder, PluginBuilder, map_work_batch_entries};
 use serde_json::json;
 
 pub const ECHO_PLUGIN_ID: &str = "example.bot.echo";
 pub const ECHO_RUNNER_ID: &str = "example.bot.echo.command";
 
 pub fn echo_manifest(plugin_generation: u64) -> mutsuki_runtime_contracts::PluginManifest {
-    PluginBuilder::new(ECHO_PLUGIN_ID)
-        .runner_descriptor(echo_descriptor(plugin_generation))
-        .build()
-        .manifest
+    let mut builder =
+        PluginBuilder::new(ECHO_PLUGIN_ID).runner_descriptor(echo_descriptor(plugin_generation));
+    for command in ["echo", "ping"] {
+        builder = builder.handler_binding(
+            HandlerBindingBuilder::new(
+                bot_command_binding_id(command),
+                ECHO_PLUGIN_ID,
+                BOT_COMMAND_HANDLE_PROTOCOL_ID,
+                BOT_COMMAND_HANDLE_PROTOCOL_ID,
+            )
+            .target_runner_hint(ECHO_RUNNER_ID)
+            .pool_id("orchestration")
+            .build(),
+        );
+    }
+    builder.build().manifest
 }
 
 pub fn echo_runner(plugin_generation: u64) -> Box<dyn Runner> {

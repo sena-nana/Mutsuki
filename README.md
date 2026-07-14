@@ -21,7 +21,17 @@ boundary，WBI 请求使用运行时获取的 mixin key 和注入式签名函数
 顺序发送 image/text。米画师 runner 使用 `AsyncRunnerAdapter` 调用
 `mutsuki.browser.snapshot`，不拥有 Chromium 生命周期。
 
-第一版不包含扫码登录、聊天管理/自助绑定、HTML 卡片截图或 Bilibili 352 浏览器回退。
+账号与订阅管理通过通用 `mutsuki.bot.command/handle@1` 路径进入同一个 batch-first
+Bilibili runner。启用 management 后提供：Host 管理员扫码登录与凭据轮换、签名验证码
+自助绑定、订阅列表/暂停/恢复/删除，以及不推进 cursor 的最新动态预览。二维码在 runner
+内生成 PNG `ResourceRef`，Cookie 不进入消息、Task payload、manifest、日志或 trace。
+
+管理操作只通过 ServiceHost 的原子 secret/config persistence handle 落盘：扫码成功轮换
+`cookie_secret_key` 指向的本地 secret，订阅变更替换产品配置中 Bilibili owner 的 opaque
+config。插件 SQLite 只保存 cursor、cooldown 和未完成的 QR/绑定 challenge，不是订阅关系
+权威。management 默认关闭；启用时必须从真实产品配置文件启动并配置 Host
+`security.secret_file`。HTML 卡片截图和 Bilibili 352 浏览器回退仍不在本项范围。
+配置字段、命令和验证层级见 `docs/bilibili-management.md`。
 
 MutsukiBotPlugins is the batch-first Bot domain plugin collection for Mutsuki. It is not a Host and it is not a Core extension.
 

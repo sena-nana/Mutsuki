@@ -27,10 +27,10 @@ mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.gi
 mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "90098237a0ecb60e86f07f641d65b90176a41514" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "7b9b71d1948c712c081c2d6bb501386cdb9fc69d", default-features = false }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "96b80202ea4fd860a27a65975ad0da2f62940fee" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "96b80202ea4fd860a27a65975ad0da2f62940fee" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "96b80202ea4fd860a27a65975ad0da2f62940fee" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "96b80202ea4fd860a27a65975ad0da2f62940fee", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
@@ -53,6 +53,8 @@ futures-util = "0.3"
 html-escape = "0.2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 md5 = "0.8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }

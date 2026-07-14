@@ -6,6 +6,7 @@ use mutsuki_plugin_bot_command::{
 use mutsuki_plugin_bot_event_router::{
     BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
 };
+use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
 };
@@ -14,7 +15,8 @@ use serde_json::Value;
 
 use crate::{BilibiliPollingEventSource, QqBotPluginBundle};
 use mutsuki_plugin_bot_bilibili::{
-    BilibiliConfig, BilibiliRunner, PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliTransport,
+    BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore, BilibiliRunner,
+    PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliTransport, SharedBilibiliConfig,
     SharedBilibiliCredential, SqliteBilibiliRepository,
 };
 use mutsuki_plugin_bot_bilibili_workshop::{
@@ -106,6 +108,32 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
 
 pub struct BilibiliConfiguredPlugin;
 
+struct HostBilibiliCredentialStore {
+    host: HostSecretStore,
+    shared: SharedBilibiliCredential,
+}
+
+impl BilibiliCredentialStore for HostBilibiliCredentialStore {
+    fn rotate(&self, key: &str, credential: String) -> Result<(), String> {
+        self.host
+            .rotate(key, credential.clone())
+            .map_err(|error| error.to_string())?;
+        self.shared.set(credential);
+        Ok(())
+    }
+}
+
+struct HostBilibiliConfigStore(ConfiguredPluginStore);
+
+impl BilibiliConfigStore for HostBilibiliConfigStore {
+    fn replace(&self, config: &BilibiliConfig) -> Result<(), String> {
+        let value = serde_json::to_value(config).map_err(|error| error.to_string())?;
+        self.0
+            .replace_config(BILIBILI_PLUGIN_ID, value)
+            .map_err(|error| error.to_string())
+    }
+}
+
 impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
     fn plugin_id(&self) -> &str {
         BILIBILI_PLUGIN_ID
@@ -119,19 +147,38 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         let config: BilibiliConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         config.validate()?;
+        let host_secret_store = builder.host_secret_store();
+        let configured_plugin_store = builder.configured_plugin_store();
+        if config.management.enabled && !host_secret_store.rotation_available() {
+            return Err("Bilibili management requires a Host security.secret_file".into());
+        }
+        let configured_plugin_store = if config.management.enabled {
+            Some(configured_plugin_store.ok_or_else(|| {
+                "Bilibili management requires a loaded product config file".to_string()
+            })?)
+        } else {
+            None
+        };
         let repository = Arc::new(
             SqliteBilibiliRepository::open(builder.data_dir().join("bilibili/state.sqlite3"))
                 .map_err(|error| error.to_string())?,
         );
         let credential = SharedBilibiliCredential::default();
-        let runner_config = config.clone();
+        let shared_config = SharedBilibiliConfig::new(config);
+        let runner_config = shared_config.clone();
         let runner_repository = repository.clone();
         let runner_credential = credential.clone();
-        let source = BilibiliPollingEventSource::new(config, credential);
-        let mut manifest = mutsuki_plugin_bot_bilibili::manifest();
+        let source = BilibiliPollingEventSource::new(shared_config, credential);
+        let manifest_config = runner_config.snapshot();
+        let mut manifest = mutsuki_plugin_bot_bilibili::manifest_with_management(
+            manifest_config
+                .management
+                .enabled
+                .then_some(manifest_config.management.command.as_str()),
+        );
         manifest.requires.push(format!(
             "resource_strategy:{}",
-            runner_config.media_provider_id
+            runner_config.snapshot().media_provider_id
         ));
         Ok(builder
             .register_builtin_plugin(manifest)
@@ -140,15 +187,32 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     runner_credential.clone(),
                     Duration::from_secs(15),
                 );
-                Ok::<
-                    Box<dyn mutsuki_runtime_core::Runner>,
-                    mutsuki_plugin_bot_bilibili::BilibiliError,
-                >(Box::new(BilibiliRunner::new(
+                let snapshot = runner_config.snapshot();
+                let mut runner = BilibiliRunner::new(
                     Box::new(transport),
                     runner_repository.clone(),
                     resources,
-                    runner_config.media_provider_id.clone(),
-                )))
+                    snapshot.media_provider_id.clone(),
+                );
+                if snapshot.management.enabled {
+                    let config_store = configured_plugin_store.clone().ok_or_else(|| {
+                        mutsuki_plugin_bot_bilibili::BilibiliError::ManagementUnavailable(
+                            "Host configured-plugin persistence is unavailable".into(),
+                        )
+                    })?;
+                    runner = runner.with_management(
+                        runner_config.clone(),
+                        Arc::new(HostBilibiliCredentialStore {
+                            host: host_secret_store.clone(),
+                            shared: runner_credential.clone(),
+                        }),
+                        Arc::new(HostBilibiliConfigStore(config_store)),
+                    );
+                }
+                Ok::<
+                    Box<dyn mutsuki_runtime_core::Runner>,
+                    mutsuki_plugin_bot_bilibili::BilibiliError,
+                >(Box::new(runner))
             })
             .register_event_source(Box::new(source)))
     }
@@ -284,5 +348,35 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("MISSING_CONFIGURED_QQ_SECRET"));
+    }
+
+    #[test]
+    fn configured_bilibili_management_requires_host_persistence_boundaries() {
+        let config = json!({
+            "cookie_secret_key": "BILIBILI_COOKIE",
+            "live_interval_ms": 1000,
+            "dynamic_interval_ms": 1000,
+            "video_interval_ms": 1000,
+            "retry": {"max_attempts": 3, "initial_backoff_ms": 10, "max_backoff_ms": 100},
+            "subscriptions": [],
+            "link_resolver": {"enabled": false, "cooldown_ms": 1000, "account_to_binding": {}},
+            "media_provider_id": "memory",
+            "management": {
+                "enabled": true,
+                "allow_self_binding": true,
+                "command": "bili",
+                "admin_user_ids": ["admin"],
+                "self_binding_notifications": ["dynamic"],
+                "self_binding_outbound_binding": "qq-main"
+            }
+        });
+        let error = match BilibiliConfiguredPlugin.prepare(
+            &config,
+            ServiceRuntimeBuilder::new(ServiceConfig::default()),
+        ) {
+            Ok(_) => panic!("Bilibili management unexpectedly accepted missing Host stores"),
+            Err(error) => error,
+        };
+        assert!(error.contains("security.secret_file"));
     }
 }

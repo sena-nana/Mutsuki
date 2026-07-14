@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
+    bot_command_binding_id,
 };
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
@@ -138,12 +139,13 @@ impl Runner for BotCommandRunner {
             let mut child = Task::new(
                 format!("mutsuki.bot.command.handle:{}", task.task_id),
                 BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                serde_json::to_value(command_event)
+                serde_json::to_value(&command_event)
                     .map_err(|error| failure("mutsuki.bot.command.encode", error))?,
             );
             child.registry_generation = ctx.registry_generation;
             child.trace_id = task.trace_id.clone();
             child.correlation_id = task.correlation_id.clone();
+            child.target_binding_id = Some(bot_command_binding_id(&command_event.name));
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks.push(child);
             Ok(result)
@@ -238,6 +240,14 @@ mod tests {
         assert_eq!(first_command.args, ["one"]);
         assert_eq!(third_command.name, "ping");
         assert_eq!(third_command.args, ["two"]);
+        assert_eq!(
+            first.target_binding_id.as_deref(),
+            Some("binding:mutsuki.bot.command/echo@1")
+        );
+        assert_eq!(
+            third.target_binding_id.as_deref(),
+            Some("binding:mutsuki.bot.command/ping@1")
+        );
     }
 
     #[test]
