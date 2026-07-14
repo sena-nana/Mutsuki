@@ -135,6 +135,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - 可选 `PortableTask` / `TaskCheckpoint` / `ContentId` / `PortabilityCatalog` 支持单机录制、
     流式重放、checkpoint 恢复和内容寻址；恢复仍创建普通本地 Task/ResourceRef，默认
     LocalOnly 路径不增加后台线程、哈希或持久化开销。
+  - 可选 `ExecutionPolicy` / capability requirement / variant catalog 支持单机 CPU、CUDA、
+    Metal、Vulkan 等实现的显式选择与降质报告；固定 32 项窗口、固定直方图和 EWMA 由 Host
+    显式更新，未启用时不接入 Core 热路径。
   - registry boot 后 freeze；runner descriptor 必须在 `RuntimeLoadPlan` 授权内。
   - hot reload 支持 contract surface 比较：Identical、Additive、Deprecated、
     Removed、Breaking；breaking 会阻断。
