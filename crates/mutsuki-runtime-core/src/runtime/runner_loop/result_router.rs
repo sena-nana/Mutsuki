@@ -219,9 +219,23 @@ impl CoreRuntime {
                 } else {
                     self.tasks.wait(lease, self.current_step, None)?;
                 }
+                self.events.record(
+                    RuntimeEventKind::Task,
+                    "task.progress",
+                    Some(task_id.clone()),
+                    BTreeMap::from([("status".into(), ScalarValue::String("waiting".into()))]),
+                    None,
+                );
             }
             RunnerStatus::Blocked => {
                 self.tasks.block(lease, self.current_step)?;
+                self.events.record(
+                    RuntimeEventKind::Task,
+                    "task.progress",
+                    Some(task_id.clone()),
+                    BTreeMap::from([("status".into(), ScalarValue::String("blocked".into()))]),
+                    None,
+                );
             }
             RunnerStatus::Failed => {
                 let failure = crate::runtime_error(

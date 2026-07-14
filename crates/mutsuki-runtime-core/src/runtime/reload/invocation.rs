@@ -19,9 +19,9 @@ impl CoreRuntime {
         invocation_id: &str,
     ) -> RuntimeResult<usize> {
         self.registry.cancel_runner(runner_id, invocation_id)?;
-        let returned = self
-            .tasks
-            .cancel_running_invocation(runner_id, invocation_id);
+        let returned =
+            self.tasks
+                .cancel_running_invocation(runner_id, invocation_id, self.current_step);
         self.events.record(
             RuntimeEventKind::Runner,
             "runner.cancel",

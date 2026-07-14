@@ -3,7 +3,7 @@ use mutsuki_runtime_contracts::{
     CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RuntimeEvent, SnapshotDescriptor,
     StreamPlan, Task, TaskBatch, TaskHandle, TaskOutcome, TraceSpan, WritePlan,
 };
-use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport};
+use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport, RuntimeStatistics, RuntimeStopState};
 use mutsuki_runtime_sdk::HostTaskSnapshot;
 
 use crate::PreparedRuntimeReload;
@@ -18,6 +18,12 @@ pub enum HostRuntimeCommand {
         max_ticks: usize,
     },
     CancelTask(TaskHandle),
+    BeginDrain,
+    Abort {
+        reason: String,
+    },
+    StopState,
+    Statistics,
     TaskSnapshots,
     TaskOutcome(TaskHandle),
     EventsAfter(u64),
@@ -69,6 +75,12 @@ pub enum HostRuntimeReply {
     Tick(RunnerLoopReport),
     Idle(RunnerLoopReport),
     TaskCancelled(TaskHandle),
+    DrainStarted(RuntimeStopState),
+    RuntimeAborted {
+        cancelled_tasks: usize,
+    },
+    StopState(RuntimeStopState),
+    Statistics(RuntimeStatistics),
     TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskOutcome(Option<TaskOutcome>),
     Events(Vec<RuntimeEvent>),

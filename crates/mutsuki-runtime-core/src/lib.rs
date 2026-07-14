@@ -12,7 +12,7 @@ mod trace;
 pub use error::{RuntimeFailure, RuntimeResult};
 pub(crate) use error::{runtime_error, runtime_failure};
 pub use id::{IdSource, SequentialIdSource};
-pub use logs::{EventLog, TraceLog};
+pub use logs::{DEFAULT_EVENT_CAPACITY, EventLog, TraceLog};
 pub use mutsuki_runtime_contracts::RunnerContext;
 pub use registry::{
     ContractChange, DisposeBag, HandlerBindingRegistry, PluginGenerationPhase,
@@ -22,9 +22,10 @@ pub use resource_manager::{PackedValue, ResourceManager};
 pub use runner::{CoreKernelRunner, Runner, RunnerLoopReport};
 pub use runtime::{
     CoreRuntime, DispatchBudget, InvocationPollution, LaneBudget, RunnerCompletion, RunnerDispatch,
-    RunningInvocationDisposition, ScheduleDecision, TaskResultSnapshot,
+    RunningInvocationDisposition, RuntimeStatistics, RuntimeStopState, ScheduleDecision,
+    TaskResultSnapshot,
 };
-pub use task_pool::{RunnerLoad, TaskPool, TaskRecord};
+pub use task_pool::{RunnerLoad, TaskPool, TaskPoolStatistics, TaskRecord};
 pub use trace::{TraceClosureIssue, validate_trace_closure};
 
 #[cfg(test)]

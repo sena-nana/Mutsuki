@@ -63,6 +63,28 @@ pub(super) fn build_runner_dispatch(
     let span = runtime
         .traces
         .record(trace_id, "runner.run_batch", None, SpanStatus::Ok, attrs);
+    for lease in &task_leases {
+        runtime.events.record(
+            RuntimeEventKind::Task,
+            "task.started",
+            Some(lease.task_id.clone()),
+            std::collections::BTreeMap::from([
+                (
+                    "lease_id".into(),
+                    mutsuki_runtime_contracts::ScalarValue::String(lease.lease_id.clone()),
+                ),
+                (
+                    "runner_id".into(),
+                    mutsuki_runtime_contracts::ScalarValue::String(lease.runner_id.clone()),
+                ),
+                (
+                    "registry_generation".into(),
+                    mutsuki_runtime_contracts::ScalarValue::Int(lease.registry_generation as i64),
+                ),
+            ]),
+            None,
+        );
+    }
     runtime.events.record(
         RuntimeEventKind::Trace,
         "trace.span",

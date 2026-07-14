@@ -156,6 +156,7 @@ fn route_entry_completion(
     match runtime.route_result(descriptor, lease, result) {
         Ok(count) => Ok(count),
         Err(failure) if is_stale_completion_conflict(failure.error()) => {
+            runtime.tasks.record_stale_result_rejection();
             super::failure_reporting::record_rejected_runner_result(
                 runtime,
                 lease.task_id.clone(),

@@ -23,6 +23,58 @@ pub struct TaskRecord {
     pub owner_runner: Option<RunnerId>,
     pub lease: Option<TaskLease>,
     pub failure: Option<RuntimeError>,
+    pub attempt_generation: u64,
+    pub ready_since_step: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskPoolStatistics {
+    pub ready: usize,
+    pub running: usize,
+    pub waiting: usize,
+    pub blocked: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+    pub expired: usize,
+    pub dead_letter: usize,
+    pub submitted_total: u64,
+    pub attempts_started: u64,
+    pub cumulative_queue_steps: u64,
+    pub cumulative_execution_steps: u64,
+    pub stale_results_rejected: u64,
+}
+
+impl TaskPoolStatistics {
+    pub(super) fn record_status_transition(
+        &mut self,
+        from: Option<&TaskStatus>,
+        to: Option<&TaskStatus>,
+    ) {
+        if let Some(from) = from.filter(|status| **status != TaskStatus::Created) {
+            let counter = self.status_counter_mut(from);
+            *counter = counter.saturating_sub(1);
+        }
+        if let Some(to) = to.filter(|status| **status != TaskStatus::Created) {
+            let counter = self.status_counter_mut(to);
+            *counter = counter.saturating_add(1);
+        }
+    }
+
+    fn status_counter_mut(&mut self, status: &TaskStatus) -> &mut usize {
+        match status {
+            TaskStatus::Created => unreachable!("created tasks are not stored in TaskPool"),
+            TaskStatus::Ready => &mut self.ready,
+            TaskStatus::Running => &mut self.running,
+            TaskStatus::Waiting => &mut self.waiting,
+            TaskStatus::Blocked => &mut self.blocked,
+            TaskStatus::Completed => &mut self.completed,
+            TaskStatus::Failed => &mut self.failed,
+            TaskStatus::Cancelled => &mut self.cancelled,
+            TaskStatus::Expired => &mut self.expired,
+            TaskStatus::DeadLetter => &mut self.dead_letter,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -39,10 +91,15 @@ pub struct TaskPool {
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     next_sequence: u64,
+    statistics: TaskPoolStatistics,
 }
 
 impl TaskPool {
-    pub fn enqueue(&mut self, mut task: Task) -> RuntimeResult<TaskId> {
+    pub fn enqueue(&mut self, task: Task) -> RuntimeResult<TaskId> {
+        self.enqueue_at(task, 0)
+    }
+
+    pub fn enqueue_at(&mut self, mut task: Task, current_step: u64) -> RuntimeResult<TaskId> {
         let task_id = task.task_id.clone();
         if self.tasks.contains_key(&task_id) {
             return Err(crate::runtime_failure(
@@ -64,8 +121,13 @@ impl TaskPool {
                 owner_runner: None,
                 lease: None,
                 failure: None,
+                attempt_generation: 0,
+                ready_since_step: current_step,
             },
         );
+        self.statistics.submitted_total = self.statistics.submitted_total.saturating_add(1);
+        self.statistics
+            .record_status_transition(None, Some(&TaskStatus::Ready));
         Ok(task_id)
     }
 
@@ -105,6 +167,15 @@ impl TaskPool {
             .values()
             .filter(|record| record.status == TaskStatus::Waiting)
             .count()
+    }
+
+    pub fn statistics(&self) -> TaskPoolStatistics {
+        self.statistics.clone()
+    }
+
+    pub(crate) fn record_stale_result_rejection(&mut self) {
+        self.statistics.stale_results_rejected =
+            self.statistics.stale_results_rejected.saturating_add(1);
     }
 
     pub fn running_records(&self) -> Vec<&TaskRecord> {
@@ -264,8 +335,8 @@ impl TaskPool {
         transitions::block(self, lease, current_step)
     }
 
-    pub fn wake(&mut self, task_id: &str) -> RuntimeResult<()> {
-        transitions::wake(self, task_id)
+    pub fn wake(&mut self, task_id: &str, current_step: u64) -> RuntimeResult<()> {
+        transitions::wake(self, task_id, current_step)
     }
 
     pub fn wake_due_tasks(&mut self, current_step: u64) -> Vec<(TaskId, u64)> {
@@ -276,26 +347,51 @@ impl TaskPool {
         transitions::reject_ready(self, task_id, failure)
     }
 
-    pub fn cancel_running_invocation(&mut self, runner_id: &str, invocation_id: &str) -> usize {
-        transitions::cancel_running_invocation(self, runner_id, invocation_id)
+    pub fn cancel_running_invocation(
+        &mut self,
+        runner_id: &str,
+        invocation_id: &str,
+        current_step: u64,
+    ) -> usize {
+        transitions::cancel_running_invocation(self, runner_id, invocation_id, current_step)
     }
 
     pub fn cancel_task(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
         transitions::cancel_task(self, lease, current_step)
     }
 
-    pub fn cancel_by_core(&mut self, task_id: &str) -> RuntimeResult<()> {
-        transitions::terminal_by_core(self, task_id, TaskStatus::Cancelled, None, "cancel")
+    pub fn cancel_by_core(&mut self, task_id: &str, current_step: u64) -> RuntimeResult<()> {
+        transitions::terminal_by_core(
+            self,
+            task_id,
+            TaskStatus::Cancelled,
+            None,
+            "cancel",
+            current_step,
+        )
     }
 
-    pub fn expire_by_core(&mut self, task_id: &str, failure: RuntimeError) -> RuntimeResult<()> {
-        transitions::terminal_by_core(self, task_id, TaskStatus::Expired, Some(failure), "expire")
+    pub fn expire_by_core(
+        &mut self,
+        task_id: &str,
+        failure: RuntimeError,
+        current_step: u64,
+    ) -> RuntimeResult<()> {
+        transitions::terminal_by_core(
+            self,
+            task_id,
+            TaskStatus::Expired,
+            Some(failure),
+            "expire",
+            current_step,
+        )
     }
 
     pub fn dead_letter_by_core(
         &mut self,
         task_id: &str,
         failure: RuntimeError,
+        current_step: u64,
     ) -> RuntimeResult<()> {
         transitions::terminal_by_core(
             self,
@@ -303,7 +399,12 @@ impl TaskPool {
             TaskStatus::DeadLetter,
             Some(failure),
             "dead_letter",
+            current_step,
         )
+    }
+
+    pub fn abort_all(&mut self, current_step: u64, failure: RuntimeError) -> Vec<TaskId> {
+        transitions::abort_all(self, current_step, failure)
     }
 
     pub(crate) fn ensure_active_lease(
