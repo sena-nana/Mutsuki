@@ -41,6 +41,7 @@ pub(super) fn runtime_profile() -> RuntimeProfile {
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
+        observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     }

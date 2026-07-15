@@ -117,12 +117,18 @@ pub(super) fn profile_hash(
     capability_graph: &RuntimeCapabilityGraph,
 ) -> String {
     format!(
-        "profile:{}:{:?}:{}:{}:{}",
+        "profile:{}:{:?}:{}:{}:{}:events={}:{:?}:traces={}:{:?}:scheduler_details={}:dispatch_spans={}",
         profile.profile_id,
         profile.mode,
         profile.enabled_plugins.len(),
         deployment_count,
-        capability_graph.active_capabilities.len()
+        capability_graph.active_capabilities.len(),
+        profile.observability.events.capacity,
+        profile.observability.events.overflow_policy,
+        profile.observability.traces.capacity,
+        profile.observability.traces.overflow_policy,
+        profile.observability.detailed_scheduler_decisions,
+        profile.observability.dispatch_spans,
     )
 }
 

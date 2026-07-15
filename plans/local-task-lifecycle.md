@@ -36,15 +36,20 @@ Abort，确保运行环境失效后没有迟到结果可以回写。插件只看
   `attempt_generation`、trace/correlation 等 opaque descriptor。
 - 生命周期低频事件为 `task.submitted`、`task.started`、`task.progress`、
   `task.completed`、`task.failed`、`task.cancelled`。`Continue` 不生成逐 tick progress。
-- EventLog 是有界、非阻塞、drop-new outlet。容量满时只增加 dropped counter，任务状态提交
-  不等待消费者；容量设为 `0` 可完全关闭事件保留。
+- EventLog 与 TraceLog 是有界、非阻塞 outlet；每个 outlet 显式选择 drop-new 或
+  drop-oldest，容量满时只增加 dropped counter，任务状态提交不等待消费者；容量设为 `0`
+  会释放持久容器并完全关闭保留。
+- 两类 outlet 都使用全局单调 sequence 和带 limit 的 `ObservabilityPage`；consumer 必须用
+  `next_sequence` 继续，并检查 `lost` / `truncated`，不能把 retained 容器下标当稳定 cursor。
+- scheduler decision 默认只更新累计计数。逐 decision event/span 与逐 dispatch span 必须
+  在 RuntimeProfile 或 Host override 中显式开启；关闭时不构造保存用 trace attrs。
 - 正确性、重试、停止与结果提交都不能依赖事件消费者或事件是否成功保留。
 
 ## 统计口径
 
 `RuntimeStatistics` 公开当前状态计数和 TaskPool 在 actor 内维护的累计计数：submitted、
 attempts started、queue steps、execution steps、stale results rejected；同时公开 retained / 
-dropped events。累计更新与任务状态迁移同路，常数成本且不启动采样线程。当前状态只在显式
+dropped events/traces 与 scheduler decisions。累计更新与任务状态迁移同路，常数成本且不启动采样线程。当前状态只在显式
 查询 snapshot 时汇总。
 
 本阶段不提供 P95、网络指标、采样器、后台线程或逐 tick 事件。时间口径是 deterministic

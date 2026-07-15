@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use mutsuki_runtime_contracts::{
-    ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding, RuntimeError,
-    RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus,
+    ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding,
+    ObservabilityOutletProfile, ObservabilityPage, ObservabilityProfile, RuntimeError,
+    RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
 };
 use serde_json::Value;
 
@@ -47,6 +48,9 @@ pub struct RuntimeStatistics {
     pub tasks: TaskPoolStatistics,
     pub retained_events: usize,
     pub dropped_events: u64,
+    pub retained_traces: usize,
+    pub dropped_traces: u64,
+    pub scheduler_decisions: u64,
 }
 
 struct DrainingGeneration {
@@ -67,6 +71,7 @@ pub struct CoreRuntime {
     states: StateStore,
     events: EventLog,
     traces: TraceLog,
+    scheduler_decisions: u64,
     current_step: u64,
     stop_state: RuntimeStopState,
 }
@@ -86,6 +91,8 @@ impl CoreRuntime {
         let handler_bindings = HandlerBindingRegistry::from_load_plan(&load_plan);
         let generation_states =
             reload::generation_states_for_plan(&load_plan, PluginGenerationPhase::Active);
+        let events = EventLog::with_profile(load_plan.observability.events.clone());
+        let traces = TraceLog::with_profile(load_plan.observability.traces.clone());
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
             load_plan,
@@ -96,8 +103,9 @@ impl CoreRuntime {
             tasks: TaskPool::default(),
             resources: ResourceManager::new(),
             states: StateStore::default(),
-            events: EventLog::default(),
-            traces: TraceLog::default(),
+            events,
+            traces,
+            scheduler_decisions: 0,
             current_step: 0,
             stop_state: RuntimeStopState::Running,
         })
@@ -203,7 +211,29 @@ impl CoreRuntime {
     }
 
     pub fn configure_event_capacity(&mut self, capacity: usize) {
+        self.load_plan.observability.events.capacity = capacity;
         self.events.set_capacity(capacity);
+    }
+
+    pub fn configure_observability(&mut self, profile: ObservabilityProfile) {
+        self.events.configure(profile.events.clone());
+        self.traces.configure(profile.traces.clone());
+        self.load_plan.observability = profile;
+    }
+
+    pub fn configure_event_outlet(&mut self, profile: ObservabilityOutletProfile) {
+        self.load_plan.observability.events = profile.clone();
+        self.events.configure(profile);
+    }
+
+    pub fn configure_trace_capacity(&mut self, capacity: usize) {
+        self.load_plan.observability.traces.capacity = capacity;
+        self.traces.set_capacity(capacity);
+    }
+
+    pub fn configure_trace_outlet(&mut self, profile: ObservabilityOutletProfile) {
+        self.load_plan.observability.traces = profile.clone();
+        self.traces.configure(profile);
     }
 
     pub fn statistics(&self) -> RuntimeStatistics {
@@ -211,6 +241,9 @@ impl CoreRuntime {
             tasks: self.tasks.statistics(),
             retained_events: self.events.retained(),
             dropped_events: self.events.dropped(),
+            retained_traces: self.traces.retained(),
+            dropped_traces: self.traces.dropped(),
+            scheduler_decisions: self.scheduler_decisions,
         }
     }
 
@@ -274,19 +307,16 @@ impl CoreRuntime {
         self.states.get(ref_id)
     }
 
-    pub fn events(&self) -> &[mutsuki_runtime_contracts::RuntimeEvent] {
+    pub fn events(&self) -> &VecDeque<RuntimeEvent> {
         self.events.snapshot()
     }
 
-    pub fn trace_spans(&self) -> &[mutsuki_runtime_contracts::TraceSpan] {
+    pub fn trace_spans(&self) -> &VecDeque<TraceSpan> {
         self.traces.spans()
     }
 
-    pub fn trace_spans_after(
-        &self,
-        start_index: usize,
-    ) -> Vec<&mutsuki_runtime_contracts::TraceSpan> {
-        self.traces.spans().iter().skip(start_index).collect()
+    pub fn trace_spans_after(&self, sequence: u64, limit: usize) -> ObservabilityPage<TraceSpan> {
+        self.traces.page_after(sequence, limit)
     }
 
     fn is_surface_deprecated(&self, surface_id: &str) -> bool {

@@ -1,0 +1,11 @@
+{
+  "issue": 25,
+  "command": "cargo bench -p mutsuki-runtime-core --bench observability",
+  "profile": "release",
+  "iterations": 2000000,
+  "baseline_ns_per_decision": 0.703,
+  "disabled_ns_per_decision": 3.332,
+  "enabled_ns_per_decision": 345.090,
+  "allowed_disabled_ns_per_decision": 25.703,
+  "disabled_within_budget": true
+}

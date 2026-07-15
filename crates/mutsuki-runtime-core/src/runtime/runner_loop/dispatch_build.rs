@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{RuntimeEventKind, SpanStatus, Task, TaskLease};
+use mutsuki_runtime_contracts::{RuntimeEventKind, Task, TaskLease};
 
 use crate::RunnerContext;
 
@@ -22,23 +22,35 @@ pub(super) fn build_runner_dispatch(
             .unwrap_or_default()
     );
     let invocation_id = batch_id.clone();
-    let trace_id = leased_tasks
-        .first()
-        .map(|(_, task)| dispatch_trace_id(task))
-        .unwrap_or_else(|| format!("trace-batch-{batch_id}"));
     let task_leases: Vec<_> = leased_tasks
         .iter()
         .map(|(task_lease, _)| task_lease.clone())
         .collect();
     let batch = build_work_batch(runtime.current_step, &batch_id, descriptor, &leased_tasks);
-    let mut attrs = runner_attrs(descriptor, &runtime.load_plan);
-    attrs.extend(dispatch_batch_attrs(
-        descriptor,
-        &batch,
-        &leased_tasks,
-        &task_leases,
-        &executor_id,
-    ));
+    let span =
+        if runtime.load_plan.observability.dispatch_spans && runtime.traces.will_retain_next() {
+            let trace_id = leased_tasks
+                .first()
+                .map(|(_, task)| dispatch_trace_id(task))
+                .unwrap_or_else(|| format!("trace-batch-{batch_id}"));
+            let mut attrs = runner_attrs(descriptor, &runtime.load_plan);
+            attrs.extend(dispatch_batch_attrs(
+                descriptor,
+                &batch,
+                &leased_tasks,
+                &task_leases,
+                &executor_id,
+            ));
+            runtime.traces.record(
+                trace_id,
+                "runner.run_batch",
+                None,
+                mutsuki_runtime_contracts::SpanStatus::Ok,
+                attrs,
+            )
+        } else {
+            None
+        };
     let runner = runtime
         .registry
         .take_runner(&descriptor.runner_id)
@@ -60,9 +72,6 @@ pub(super) fn build_runner_dispatch(
         invocation_id,
     )
     .with_batch(batch_id.clone(), task_leases.len());
-    let span = runtime
-        .traces
-        .record(trace_id, "runner.run_batch", None, SpanStatus::Ok, attrs);
     for lease in &task_leases {
         runtime.events.record(
             RuntimeEventKind::Task,
@@ -85,13 +94,17 @@ pub(super) fn build_runner_dispatch(
             None,
         );
     }
-    runtime.events.record(
-        RuntimeEventKind::Trace,
-        "trace.span",
-        Some(descriptor.runner_id.clone()),
-        trace_attrs(&span),
-        None,
-    );
+    if let Some(span) = span
+        && runtime.events.is_enabled()
+    {
+        runtime.events.record(
+            RuntimeEventKind::Trace,
+            "trace.span",
+            Some(descriptor.runner_id.clone()),
+            trace_attrs(&span),
+            None,
+        );
+    }
     Ok(RunnerDispatch {
         runner,
         ctx,

@@ -8,3 +8,7 @@ license.workspace = true
 mutsuki-runtime-contracts.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[[bench]]
+name = "observability"
+harness = false

@@ -4,10 +4,9 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{RuntimeEvent, TaskStatus, TraceSpan};
+use mutsuki_runtime_contracts::{ObservabilityProfile, RuntimeEvent, TaskStatus, TraceSpan};
 use mutsuki_runtime_core::{
-    CoreRuntime, DEFAULT_EVENT_CAPACITY, ReloadDecision, RuntimeResult, RuntimeStatistics,
-    RuntimeStopState,
+    CoreRuntime, ReloadDecision, RuntimeResult, RuntimeStatistics, RuntimeStopState,
 };
 use mutsuki_runtime_sdk::{
     HostContext as SdkHostContext, HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway,
@@ -34,7 +33,7 @@ pub struct HostRuntimeConfig {
     pub resource_providers: HostResourceProviders,
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
-    pub event_capacity: usize,
+    pub observability: Option<ObservabilityProfile>,
 }
 
 impl HostRuntimeConfig {
@@ -64,7 +63,7 @@ impl fmt::Debug for HostRuntimeConfig {
             )
             .field("cancel_grace_period", &self.cancel_grace_period)
             .field("worker_health_timeout", &self.worker_health_timeout)
-            .field("event_capacity", &self.event_capacity)
+            .field("observability", &self.observability)
             .finish()
     }
 }
@@ -84,7 +83,7 @@ impl Default for HostRuntimeConfig {
             resource_providers: BTreeMap::new(),
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
-            event_capacity: DEFAULT_EVENT_CAPACITY,
+            observability: None,
         }
     }
 }
@@ -105,7 +104,9 @@ impl HostRuntime {
         profile_id: String,
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
-        core.configure_event_capacity(config.event_capacity);
+        if let Some(observability) = config.observability.clone() {
+            core.configure_observability(observability);
+        }
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let actor = thread::Builder::new()
@@ -237,9 +238,13 @@ impl HostRuntime {
         }
     }
 
-    pub fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
-        match self.dispatch(HostRuntimeCommand::EventsAfter(sequence))? {
-            HostRuntimeReply::Events(events) => Ok(events),
+    pub fn events_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<RuntimeEvent>> {
+        match self.dispatch(HostRuntimeCommand::EventsAfter { sequence, limit })? {
+            HostRuntimeReply::Events(page) => Ok(page),
             reply => Err(host_failure(
                 "host.events_after",
                 format!("unexpected reply: {reply:?}"),
@@ -247,9 +252,13 @@ impl HostRuntime {
         }
     }
 
-    pub fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
-        match self.dispatch(HostRuntimeCommand::TraceSpansAfter(start_index))? {
-            HostRuntimeReply::TraceSpans { next_index, spans } => Ok((next_index, spans)),
+    pub fn trace_spans_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<TraceSpan>> {
+        match self.dispatch(HostRuntimeCommand::TraceSpansAfter { sequence, limit })? {
+            HostRuntimeReply::TraceSpans(page) => Ok(page),
             reply => Err(host_failure(
                 "host.trace_spans_after",
                 format!("unexpected reply: {reply:?}"),
@@ -302,11 +311,19 @@ impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
         HostRuntime::task_snapshots(self)
     }
 
-    fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>> {
-        HostRuntime::events_after(self, sequence)
+    fn events_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<RuntimeEvent>> {
+        HostRuntime::events_after(self, sequence, limit)
     }
 
-    fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)> {
-        HostRuntime::trace_spans_after(self, start_index)
+    fn trace_spans_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<TraceSpan>> {
+        HostRuntime::trace_spans_after(self, sequence, limit)
     }
 }

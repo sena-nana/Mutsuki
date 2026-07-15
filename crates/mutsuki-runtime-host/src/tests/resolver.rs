@@ -133,6 +133,7 @@ fn resolver_emits_declared_runtime_surfaces() {
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
+        observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     };

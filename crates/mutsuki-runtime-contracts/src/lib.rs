@@ -4,6 +4,7 @@ mod error;
 mod event;
 mod execution_policy;
 mod extension;
+mod observability;
 mod plugin;
 mod portability;
 pub mod resource;
@@ -45,6 +46,10 @@ pub use execution_policy::{
 pub use extension::{
     BridgeDescriptor, CodecDescriptor, HostExtensionDescriptor, HostExtensionKind,
     PluginBackendDescriptor, SchedulerPolicyDescriptor, WorkflowDescriptor,
+};
+pub use observability::{
+    DEFAULT_EVENT_CAPACITY, DEFAULT_TRACE_CAPACITY, ObservabilityOutletProfile,
+    ObservabilityOverflowPolicy, ObservabilityPage, ObservabilityProfile,
 };
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, ContractSurface, ContractSurfaceKind,
