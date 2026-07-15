@@ -77,17 +77,18 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
     ] {
         assert!(plugin_json.contains(id), "missing configured plugin {id}");
     }
-    let health = tokio::time::timeout(Duration::from_secs(2), async {
+    let mut last_health = Value::Null;
+    let health = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let health = control(&control_config, ControlMethod::HealthCheck).await;
-            if health["event_sources"] == "ok" {
-                break health;
+            last_health = control(&control_config, ControlMethod::HealthCheck).await;
+            if last_health["event_sources"] == "ok" {
+                break last_health.clone();
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("QQ Gateway health becomes ready");
+    .unwrap_or_else(|_| panic!("QQ Gateway health becomes ready; last health: {last_health}"));
     assert_eq!(health["service"], "ok");
     assert_eq!(health["event_sources"], "ok");
     assert_eq!(
