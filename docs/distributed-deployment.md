@@ -22,14 +22,24 @@ relative to the product config:
 [distribution]
 mode = "clustered"
 deployment = "../deploy/distribution/controller-worker.toml"
+acceptance = "fast"
+fallback = "reject"
 ```
 
-The deployment file must pin the same DistributedHost revision as the template, name only secret
-key references, explicitly name the ordinary local ServiceHost control endpoint, use authenticated
-encrypted control and data channels, set resource budgets, and keep direct data transfer off the Leader. Missing files, unknown fields, mismatched revisions,
+The schema-v2 deployment file must pin the same DistributedHost release and revision as the template,
+require `deployable` maturity and explicit feature flags, name only secret key references, and name
+both the ordinary local ServiceHost endpoint and the Link-local sidecar management endpoint. Before
+starting ServiceRuntime, the product authenticates that already-running endpoint and verifies the
+capability schema/protocol version, release, revision, aggregate maturity, feature proof and health.
+It still never starts or supervises the sidecar. Authenticated/encrypted control and data channels,
+resource budgets, and direct data transfer off the Leader remain mandatory. Missing files, unknown fields, mismatched revisions,
 invalid topology, raw-looking secret references, insecure channels and zero required budgets fail
-before the local `ServiceRuntime` starts. The external supervisor remains responsible for resolving
-the artifact and secret references and for the sidecar's own authenticated startup.
+before the local `ServiceRuntime` starts.
+
+Only `acceptance = "fast"` may opt into `fallback = "local_degraded"`. That state is reported by the
+ServiceHost `health` component as local fallback with `remote_execution = false`; the monitor retries
+an authenticated handshake and reports recovery. `durable` and `critical` always reject local fallback.
+`local_observable` also reports `remote_execution = false` and never claims remote task execution.
 
 Committed, machine-neutral examples are:
 

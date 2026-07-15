@@ -422,6 +422,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "doctest-file"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -997,6 +1003,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "interprocess"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "069323743400cb7ab06a8fe5c1ed911d36b6919ec531661d034c89083629595b"
+dependencies = [
+ "doctest-file",
+ "futures-core",
+ "libc",
+ "recvmsg",
+ "tokio",
+ "widestring",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1243,6 +1264,7 @@ dependencies = [
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-distributed-contracts",
+ "mutsuki-distributed-control-client",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
  "mutsuki-service-config",
@@ -1324,12 +1346,61 @@ dependencies = [
 [[package]]
 name = "mutsuki-distributed-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=855988d3db89e596d8eb01b58f2c2a343099af5e#855988d3db89e596d8eb01b58f2c2a343099af5e"
+source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=eb03f14cce5440b23c3a4f369841456fecffa1c3#eb03f14cce5440b23c3a4f369841456fecffa1c3"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "mutsuki-distributed-control-client"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=eb03f14cce5440b23c3a4f369841456fecffa1c3#eb03f14cce5440b23c3a4f369841456fecffa1c3"
+dependencies = [
+ "hmac",
+ "mutsuki-distributed-contracts",
+ "mutsuki-link",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
+name = "mutsuki-link"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=9d671b169b9db206ebb6d8c33ab01a544f6a22b9#9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+dependencies = [
+ "mutsuki-link-core",
+ "mutsuki-link-local",
+ "tokio",
+]
+
+[[package]]
+name = "mutsuki-link-core"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=9d671b169b9db206ebb6d8c33ab01a544f6a22b9#9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+
+[[package]]
+name = "mutsuki-link-io"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=9d671b169b9db206ebb6d8c33ab01a544f6a22b9#9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+dependencies = [
+ "mutsuki-link-core",
+ "tokio",
+]
+
+[[package]]
+name = "mutsuki-link-local"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=9d671b169b9db206ebb6d8c33ab01a544f6a22b9#9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+dependencies = [
+ "interprocess",
+ "mutsuki-link-core",
+ "mutsuki-link-io",
+ "tokio",
 ]
 
 [[package]]
@@ -2005,6 +2076,12 @@ checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
 ]
+
+[[package]]
+name = "recvmsg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
@@ -3207,6 +3284,12 @@ checksum = "48d7cd18d4acb58fb3cdfe9ea54e6cd96a4e7d4cc45c56338b236e82dad47248"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "winapi"

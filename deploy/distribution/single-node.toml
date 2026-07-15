@@ -1,10 +1,15 @@
-schema_version = 1
+schema_version = 2
+distributed_host_release = "mutsuki-distributed-host-clustered-mvp-1"
+capability_level = "deployable"
+required_features = ["local_observation", "clustered"]
 policy_catalog = "task-policies.toml"
 
 [external_service]
 artifact = "mutsuki-distributed-host"
-revision = "76f3745fe3c4387035fe6b0a3031f9dfa861f8df"
+revision = "eb03f14cce5440b23c3a4f369841456fecffa1c3"
 local_host_control_endpoint = "servicehost://local/control"
+sidecar_control_endpoint = "link-local://mutsuki-distributed-management"
+sidecar_control_client_node = "mutsuki-bot-template"
 control_secret_key = "MUTSUKI_DISTRIBUTED_CONTROL_KEY"
 identity_secret_key = "MUTSUKI_DISTRIBUTED_IDENTITY_KEY"
 
