@@ -93,7 +93,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
             preferred_batch_size=64,
             max_batch_entries=256,
             max_entry_concurrency=8,
-            max_inflight_batches=4,
+            max_inflight_batches=1,
             scalar_thread_safe=True,
             scalar_reentrant=True,
             partial_failure=True,
