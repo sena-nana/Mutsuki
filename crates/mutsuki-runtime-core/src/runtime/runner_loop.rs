@@ -1,4 +1,6 @@
-use mutsuki_runtime_contracts::{RunnerDescriptor, RuntimeEventKind, ScalarValue, Task, TaskLease};
+use mutsuki_runtime_contracts::{
+    RunnerDescriptor, RuntimeEventKind, ScalarValue, SpanStatus, Task, TaskLease,
+};
 
 use crate::RunnerLoopReport;
 use crate::RuntimeResult;
@@ -131,6 +133,13 @@ impl CoreRuntime {
         descriptor: &RunnerDescriptor,
         decision: &ScheduleDecision,
     ) {
+        self.scheduler_decisions = self.scheduler_decisions.saturating_add(1);
+        if !self.load_plan.observability.detailed_scheduler_decisions {
+            return;
+        }
+        if !self.events.is_enabled() && !self.traces.will_retain_next() {
+            return;
+        }
         let mut attrs = std::collections::BTreeMap::from([
             (
                 "scheduler_id".into(),
@@ -169,21 +178,26 @@ impl CoreRuntime {
                 ScalarValue::Int(self.current_step as i64),
             ),
         ]);
-        let span = self.traces.record(
-            format!("trace-scheduler-{}", descriptor.runner_id),
-            "scheduler.decision",
-            None,
-            mutsuki_runtime_contracts::SpanStatus::Ok,
-            attrs.clone(),
-        );
-        attrs.insert("span_id".into(), ScalarValue::String(span.span_id));
-        self.events.record(
-            RuntimeEventKind::Trace,
-            "scheduler.decision",
-            Some(descriptor.runner_id.clone()),
-            attrs,
-            None,
-        );
+        if self.traces.will_retain_next()
+            && let Some(span) = self.traces.record(
+                format!("trace-scheduler-{}", descriptor.runner_id),
+                "scheduler.decision",
+                None,
+                SpanStatus::Ok,
+                attrs.clone(),
+            )
+        {
+            attrs.insert("span_id".into(), ScalarValue::String(span.span_id));
+        }
+        if self.events.is_enabled() {
+            self.events.record(
+                RuntimeEventKind::Trace,
+                "scheduler.decision",
+                Some(descriptor.runner_id.clone()),
+                attrs,
+                None,
+            );
+        }
     }
 
     pub fn complete_runner_dispatch(

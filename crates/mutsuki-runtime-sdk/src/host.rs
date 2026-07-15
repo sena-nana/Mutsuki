@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
-    BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor,
+    BridgeDescriptor, CodecDescriptor, DomainEvent, HostExtensionDescriptor, ObservabilityPage,
     PluginBackendDescriptor, PluginManifest, RuntimeError, RuntimeEvent, RuntimeLoadPlan,
     ScalarValue, SchedulerPolicyDescriptor, Task, TaskBatch, TaskHandle, TaskOutcome, TaskStatus,
     TraceSpan, WorkflowDescriptor,
@@ -606,9 +606,17 @@ pub trait HostRuntime {
 
     fn task_snapshots(&self) -> RuntimeResult<Vec<HostTaskSnapshot>>;
 
-    fn events_after(&self, sequence: u64) -> RuntimeResult<Vec<RuntimeEvent>>;
+    fn events_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<ObservabilityPage<RuntimeEvent>>;
 
-    fn trace_spans_after(&self, start_index: usize) -> RuntimeResult<(usize, Vec<TraceSpan>)>;
+    fn trace_spans_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> RuntimeResult<ObservabilityPage<TraceSpan>>;
 }
 
 fn active_descriptors<T, D, I>(

@@ -949,6 +949,7 @@ fn capability_plan() -> RuntimeLoadPlan {
         load_order: vec!["plugin-a".into()],
         runner_bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
+        observability: mutsuki_runtime_contracts::ObservabilityProfile::default(),
         capability_graph: RuntimeCapabilityGraph {
             profile_mode: RuntimeProfileMode::LockedBuiltin,
             provided_capabilities: vec![

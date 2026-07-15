@@ -1,7 +1,7 @@
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    CommandPlan, ExportPlan, PlanReceipt, ReadPlan, ResourceRef, RuntimeEvent, SnapshotDescriptor,
-    StreamPlan, Task, TaskBatch, TaskHandle, TaskOutcome, TraceSpan, WritePlan,
+    CommandPlan, ExportPlan, ObservabilityPage, PlanReceipt, ReadPlan, ResourceRef, RuntimeEvent,
+    SnapshotDescriptor, StreamPlan, Task, TaskBatch, TaskHandle, TaskOutcome, TraceSpan, WritePlan,
 };
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport, RuntimeStatistics, RuntimeStopState};
 use mutsuki_runtime_sdk::HostTaskSnapshot;
@@ -26,8 +26,14 @@ pub enum HostRuntimeCommand {
     Statistics,
     TaskSnapshots,
     TaskOutcome(TaskHandle),
-    EventsAfter(u64),
-    TraceSpansAfter(usize),
+    EventsAfter {
+        sequence: u64,
+        limit: usize,
+    },
+    TraceSpansAfter {
+        sequence: u64,
+        limit: usize,
+    },
     OpenResourceDescriptor(String),
     CreateBlobResource {
         provider_id: String,
@@ -76,18 +82,13 @@ pub enum HostRuntimeReply {
     Idle(RunnerLoopReport),
     TaskCancelled(TaskHandle),
     DrainStarted(RuntimeStopState),
-    RuntimeAborted {
-        cancelled_tasks: usize,
-    },
+    RuntimeAborted { cancelled_tasks: usize },
     StopState(RuntimeStopState),
     Statistics(RuntimeStatistics),
     TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskOutcome(Option<TaskOutcome>),
-    Events(Vec<RuntimeEvent>),
-    TraceSpans {
-        next_index: usize,
-        spans: Vec<TraceSpan>,
-    },
+    Events(ObservabilityPage<RuntimeEvent>),
+    TraceSpans(ObservabilityPage<TraceSpan>),
     ResourceDescriptor(ResourceRef),
     ResourceCreated(ResourceRef),
     ResourceBytes(Vec<u8>),

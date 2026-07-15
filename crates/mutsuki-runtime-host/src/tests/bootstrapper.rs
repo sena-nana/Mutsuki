@@ -348,6 +348,7 @@ fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
         enabled_plugins: vec![plugin_id.into()],
         bindings: Default::default(),
         plugin_deployments: Default::default(),
+        observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
         allow_hot_reload: true,
     }

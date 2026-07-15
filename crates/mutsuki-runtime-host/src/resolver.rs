@@ -29,6 +29,7 @@ pub fn resolve_load_plan(
         load_order: profile.enabled_plugins.clone(),
         runner_bindings,
         plugin_deployments: resolved.deployments,
+        observability: profile.observability.clone(),
         capability_graph,
         contract_surfaces,
     })

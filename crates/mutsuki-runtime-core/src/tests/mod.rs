@@ -3,6 +3,7 @@ mod fixtures;
 mod handler_bindings;
 mod lease_fencing;
 mod lifecycle;
+mod observability;
 mod reload_generation;
 mod reload_surface;
 mod resource_manager;

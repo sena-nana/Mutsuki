@@ -483,6 +483,7 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
         load_order: vec!["plugin-a".into()],
         runner_bindings: Default::default(),
         plugin_deployments: [("plugin-a".into(), PluginDeploymentKind::Builtin)].into(),
+        observability: ObservabilityProfile::default(),
         capability_graph: RuntimeCapabilityGraph::default(),
         contract_surfaces: vec![
             ContractSurface {
@@ -747,6 +748,7 @@ fn error_event_and_trace_contracts_roundtrip_json() {
     );
 
     let span = TraceSpan {
+        sequence: 1,
         trace_id: "trace-1".into(),
         span_id: "span-1".into(),
         parent_span_id: None,
@@ -759,6 +761,36 @@ fn error_event_and_trace_contracts_roundtrip_json() {
     assert_eq!(
         serde_json::from_str::<TraceSpan>(&serde_json::to_string(&span).unwrap()).unwrap(),
         span
+    );
+}
+
+#[test]
+fn observability_profile_and_page_roundtrip_json() {
+    let profile = ObservabilityProfile {
+        events: ObservabilityOutletProfile::new(128, ObservabilityOverflowPolicy::DropNew),
+        traces: ObservabilityOutletProfile::new(64, ObservabilityOverflowPolicy::DropOldest),
+        detailed_scheduler_decisions: true,
+        dispatch_spans: true,
+    };
+    assert_eq!(
+        serde_json::from_str::<ObservabilityProfile>(&serde_json::to_string(&profile).unwrap())
+            .unwrap(),
+        profile
+    );
+
+    let page = ObservabilityPage {
+        items: vec!["span-4".to_string()],
+        next_sequence: 4,
+        earliest_available_sequence: Some(4),
+        latest_sequence: 5,
+        lost: 3,
+        truncated: true,
+        dropped: 3,
+    };
+    assert_eq!(
+        serde_json::from_str::<ObservabilityPage<String>>(&serde_json::to_string(&page).unwrap())
+            .unwrap(),
+        page
     );
 }
 

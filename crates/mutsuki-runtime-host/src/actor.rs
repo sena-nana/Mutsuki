@@ -220,24 +220,14 @@ fn handle_command(
             HostRuntimeReply::TaskOutcome(core.task_handle_outcome(&handle)?),
             false,
         )),
-        HostRuntimeCommand::EventsAfter(sequence) => Ok((
-            HostRuntimeReply::Events(core.events_after(sequence).into_iter().cloned().collect()),
+        HostRuntimeCommand::EventsAfter { sequence, limit } => Ok((
+            HostRuntimeReply::Events(core.events_after(sequence, limit)),
             false,
         )),
-        HostRuntimeCommand::TraceSpansAfter(start_index) => {
-            let spans = core
-                .trace_spans_after(start_index)
-                .into_iter()
-                .cloned()
-                .collect::<Vec<_>>();
-            Ok((
-                HostRuntimeReply::TraceSpans {
-                    next_index: start_index + spans.len(),
-                    spans,
-                },
-                false,
-            ))
-        }
+        HostRuntimeCommand::TraceSpansAfter { sequence, limit } => Ok((
+            HostRuntimeReply::TraceSpans(core.trace_spans_after(sequence, limit)),
+            false,
+        )),
         HostRuntimeCommand::OpenResourceDescriptor(ref_id) => Ok((
             HostRuntimeReply::ResourceDescriptor(core.open_resource(&ref_id)?),
             false,

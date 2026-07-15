@@ -92,6 +92,10 @@ bash scripts/check-distributed-boundary.sh
   使 runtime 不可恢复。事件 outlet 必须有界、非阻塞且可关闭，正确性不得依赖消费者。
 - runtime 累计统计只在 actor-owned 状态迁移上做常数成本更新；禁止为基础统计引入采样
   线程、逐 tick 事件、P95 或网络概念。
+- EventLog/TraceLog 必须使用有界容器和单调 cursor；分页读取必须带 limit 并报告 lost /
+  truncated。capacity=0 必须释放持久容器，trace 热路径必须在 attrs 构造前短路。
+- scheduler decision 默认只做标量累计；逐 decision 明细和逐 dispatch span 必须由
+  RuntimeProfile/Host 显式开启。
 - 普通 runner 禁止直接副作用。
 - StateStore 只能通过 `core.commit` task 修改。
 - EventLog 只能通过 kernel event append 或 runtime 事件记录修改。

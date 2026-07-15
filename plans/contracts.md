@@ -67,7 +67,9 @@
 | `ContractSurface` | runner/task/schema/resource/effect/stream/subscription/timer/lifecycle/permission 等热重载比较单元 |
 | `SurfaceOccupancyHandle` | stream/subscription/timer 等 lifecycle 占用 descriptor |
 | `RuntimeEvent` | sequence、kind、name、subject_id、attributes、error |
-| `TraceSpan` | trace_id、span_id、parent_span_id、name、interval、attributes、status |
+| `TraceSpan` | 单调 sequence、trace_id、span_id、parent_span_id、name、interval、attributes、status |
+| `ObservabilityProfile` | event/trace outlet 容量、drop-oldest/drop-new 策略，以及 scheduler 明细和逐 dispatch span 开关 |
+| `ObservabilityPage<T>` | cursor 分页结果，包含 next/earliest/latest sequence、lost、truncated 和累计 dropped |
 
 Builtin Rust Host 通过 `HostContext` 同时公开 plan-only gateway 与 host-owned
 `ResourceRegistryGateway`。后者按显式 `provider_id` 创建 blob、COW state 或
@@ -131,6 +133,12 @@ Core 每个 tick 可按 scheduler budget 为同一 runner claim 多个 ready tas
 必须返回对应 `CompletionBatch`，其中每个 `EntryCompletion` 必须可唯一映射到本 batch
 的 entry / task lease。缺失、重复或未知 entry 都必须在写入任何输出事实前结构化失败为
 `task.claim_conflict`，并终止对应 leased task，不能依赖 lease expiry 伪装为可重试。
+
+Event/Trace 消费以 `sequence` 表示“调用方已处理的最后一条记录”，查询只返回更大的
+sequence，并受显式 `limit` 限制。`ObservabilityPage.next_sequence` 是下一次查询应提交的
+cursor；`lost > 0` 表示该 cursor 与返回位置之间存在已淘汰或 drop-new 的记录，
+`truncated = true` 表示仍有未扫描区间。空结果也可以推进 `next_sequence` 跨过已丢失
+区间，避免消费者永久停留在不可恢复的 cursor。
 
 SDK 层可以把 task 原语包装成语言 awaitable。当前仓库内 issue #5 的 Rust 侧落点是
 Rust SDK；Python runner kit 位于独立仓库。JS/TS SDK 只作为同一

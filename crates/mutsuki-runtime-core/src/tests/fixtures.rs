@@ -134,6 +134,11 @@ pub(super) fn load_plan(
     all_runners.push(CoreKernelRunner::new(1).descriptor().clone());
     let mut plugins = vec![manifest(all_runners, handler_bindings)];
     plugins[0].provides.runners[0].plugin_id = "plugin-a".into();
+    let observability = ObservabilityProfile {
+        detailed_scheduler_decisions: true,
+        dispatch_spans: true,
+        ..ObservabilityProfile::default()
+    };
     RuntimeLoadPlan {
         lock_version: 1,
         core_api_version: "mutsuki-core-v1".into(),
@@ -144,6 +149,7 @@ pub(super) fn load_plan(
         load_order: vec!["plugin-a".into()],
         runner_bindings: BTreeMap::new(),
         plugin_deployments: [("plugin-a".into(), PluginDeploymentKind::Builtin)].into(),
+        observability,
         capability_graph: RuntimeCapabilityGraph::default(),
         contract_surfaces: vec![
             ContractSurface {

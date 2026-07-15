@@ -197,7 +197,6 @@ impl CoreRuntime {
 
     pub(crate) fn task_events(&self, task_id: &str) -> Vec<&RuntimeEvent> {
         self.events
-            .snapshot()
             .iter()
             .filter(|event| event.subject_id.as_deref() == Some(task_id))
             .collect()
@@ -207,12 +206,12 @@ impl CoreRuntime {
         self.task_events(&handle.task_id)
     }
 
-    pub fn events_after(&self, sequence: u64) -> Vec<&RuntimeEvent> {
-        self.events
-            .snapshot()
-            .iter()
-            .filter(|event| event.sequence > sequence)
-            .collect()
+    pub fn events_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> mutsuki_runtime_contracts::ObservabilityPage<RuntimeEvent> {
+        self.events.page_after(sequence, limit)
     }
 
     pub(crate) fn cancel_task_by_id(&mut self, task_id: &str) -> RuntimeResult<()> {

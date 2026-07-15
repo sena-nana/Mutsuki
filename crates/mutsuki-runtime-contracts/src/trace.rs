@@ -13,6 +13,7 @@ pub enum SpanStatus {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TraceSpan {
+    pub sequence: u64,
     pub trace_id: TraceId,
     pub span_id: SpanId,
     pub parent_span_id: Option<SpanId>,

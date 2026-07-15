@@ -7,7 +7,8 @@ use crate::extension::{
     SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use crate::{
-    BindingId, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue, SurfaceId,
+    BindingId, ObservabilityProfile, ProtocolId, ResourceTypeDescriptor, RunnerDescriptor,
+    ScalarValue, SurfaceId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +182,7 @@ pub struct RuntimeProfile {
     pub enabled_plugins: Vec<String>,
     pub bindings: BTreeMap<String, String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub observability: ObservabilityProfile,
     pub allow_dynamic_registration: bool,
     pub allow_hot_reload: bool,
 }
@@ -322,6 +324,7 @@ pub struct RuntimeLoadPlan {
     pub load_order: Vec<String>,
     pub runner_bindings: BTreeMap<String, String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub observability: ObservabilityProfile,
     pub capability_graph: RuntimeCapabilityGraph,
     pub contract_surfaces: Vec<ContractSurface>,
 }

@@ -12,8 +12,10 @@ mod trace;
 pub use error::{RuntimeFailure, RuntimeResult};
 pub(crate) use error::{runtime_error, runtime_failure};
 pub use id::{IdSource, SequentialIdSource};
-pub use logs::{DEFAULT_EVENT_CAPACITY, EventLog, TraceLog};
-pub use mutsuki_runtime_contracts::RunnerContext;
+pub use logs::{EventLog, TraceLog};
+pub use mutsuki_runtime_contracts::{
+    DEFAULT_EVENT_CAPACITY, DEFAULT_TRACE_CAPACITY, RunnerContext,
+};
 pub use registry::{
     ContractChange, DisposeBag, HandlerBindingRegistry, PluginGenerationPhase,
     PluginGenerationState, RegistrySnapshot, ReloadDecision, RunnerRegistry,

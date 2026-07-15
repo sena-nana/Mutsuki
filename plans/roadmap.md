@@ -67,8 +67,10 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     timeout、Cancel 和 Abort 后的 stale completion 都会被 active lease fencing 拒绝。
   - `CoreRuntime` / `HostRuntime` 已区分 Cancel、Drain 和 Abort；Drain 停止外部接收但允许
     已接收任务完成，Abort 取消非 terminal task 并使旧 attempt 失效。
-  - EventLog 是可配置容量的非阻塞 drop-new outlet，容量为零可关闭；生命周期事件和
-    actor-owned 常数成本累计统计不参与任务正确性。
+  - EventLog/TraceLog 是可配置容量与 drop-oldest/drop-new 策略的非阻塞 outlet，容量为零
+    释放持久容器；两者通过单调 sequence 的有界 page 报告 cursor 丢失和截断。scheduler
+    decision 默认聚合计数，逐 decision/dispatch trace 由 profile 显式开启；观察统计不参与
+    任务正确性。
   - task 调度使用 `TaskLease`，一个 ready task 一次只会被一个 runner/executor
     lease 执行；`RunnerContext` 记录 executor id、task lease id、invocation id、
     cancel token 和 tick deadline。

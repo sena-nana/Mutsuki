@@ -270,24 +270,25 @@ fn events_after_returns_incremental_runtime_events() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let events = SdkHostRuntime::events_after(&runtime, 0).unwrap();
+    let events = SdkHostRuntime::events_after(&runtime, 0, 128).unwrap();
     assert!(
         events
+            .items
             .windows(2)
             .all(|pair| pair[0].sequence < pair[1].sequence)
     );
-    assert!(events.iter().any(|event| {
+    assert!(events.items.iter().any(|event| {
         event.kind == RuntimeEventKind::Task
             && event.name == "task.enqueue"
             && event.subject_id.as_deref() == Some("event-task")
     }));
-    assert!(events.iter().any(|event| {
+    assert!(events.items.iter().any(|event| {
         event.kind == RuntimeEventKind::Task
             && event.name == "task.completed"
             && event.subject_id.as_deref() == Some("event-task")
     }));
 
-    let last_sequence = events.last().expect("runtime events exist").sequence;
+    let last_sequence = events.items.last().expect("runtime events exist").sequence;
     runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
             "event-task-next",
@@ -296,14 +297,15 @@ fn events_after_returns_incremental_runtime_events() {
         ))))
         .unwrap();
 
-    let later_events = SdkHostRuntime::events_after(&runtime, last_sequence).unwrap();
-    assert!(!later_events.is_empty());
+    let later_events = SdkHostRuntime::events_after(&runtime, last_sequence, 128).unwrap();
+    assert!(!later_events.items.is_empty());
     assert!(
         later_events
+            .items
             .iter()
             .all(|event| event.sequence > last_sequence)
     );
-    assert!(later_events.iter().any(|event| {
+    assert!(later_events.items.iter().any(|event| {
         event.kind == RuntimeEventKind::Task
             && event.subject_id.as_deref() == Some("event-task-next")
     }));
@@ -370,8 +372,10 @@ fn host_runtime_exposes_drain_abort_and_statistics_without_changing_task_api() {
 
 #[test]
 fn trace_spans_after_returns_incremental_runtime_trace_spans() {
+    let mut profile = runtime_profile();
+    profile.observability.dispatch_spans = true;
     let runtime = super::helpers::host_with_echo_runner()
-        .into_host_runtime(runtime_profile())
+        .into_host_runtime(profile)
         .unwrap();
 
     let mut first_task = Task::new("trace-task", "raw.input", json!({}));
@@ -383,15 +387,17 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let (next_index, spans) = SdkHostRuntime::trace_spans_after(&runtime, 0).unwrap();
-    assert!(!spans.is_empty());
+    let spans = SdkHostRuntime::trace_spans_after(&runtime, 0, 128).unwrap();
+    assert!(!spans.items.is_empty());
     assert!(
         spans
+            .items
             .iter()
             .any(|span| { span.name == "runner.run_batch" && span.trace_id == "trace-custom" })
     );
-    let (_, empty) = SdkHostRuntime::trace_spans_after(&runtime, next_index).unwrap();
-    assert!(empty.is_empty());
+    let next_sequence = spans.next_sequence;
+    let empty = SdkHostRuntime::trace_spans_after(&runtime, next_sequence, 128).unwrap();
+    assert!(empty.items.is_empty());
 
     let mut next_task = Task::new("trace-task-next", "raw.input", json!({}));
     next_task.trace_id = Some("trace-next".into());
@@ -402,14 +408,49 @@ fn trace_spans_after_returns_incremental_runtime_trace_spans() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    let (after_next, later_spans) =
-        SdkHostRuntime::trace_spans_after(&runtime, next_index).unwrap();
-    assert!(after_next > next_index);
+    let later_spans = SdkHostRuntime::trace_spans_after(&runtime, next_sequence, 128).unwrap();
+    assert!(later_spans.next_sequence > next_sequence);
     assert!(
         later_spans
+            .items
             .iter()
             .any(|span| { span.name == "runner.run_batch" && span.trace_id == "trace-next" })
     );
+}
+
+#[test]
+fn host_cursor_pages_report_evicted_trace_and_event_records() {
+    let mut profile = runtime_profile();
+    profile.observability.events =
+        ObservabilityOutletProfile::new(2, ObservabilityOverflowPolicy::DropOldest);
+    profile.observability.traces =
+        ObservabilityOutletProfile::new(1, ObservabilityOverflowPolicy::DropOldest);
+    profile.observability.dispatch_spans = true;
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(profile)
+        .unwrap();
+
+    for task_id in ["cursor-one", "cursor-two"] {
+        runtime
+            .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                task_id,
+                "raw.input",
+                json!({}),
+            ))))
+            .unwrap();
+        runtime
+            .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+            .unwrap();
+    }
+
+    let events = SdkHostRuntime::events_after(&runtime, 0, 16).unwrap();
+    assert!(events.cursor_lost());
+    assert!(events.lost > 0);
+    assert_eq!(events.items.len(), 2);
+    let traces = SdkHostRuntime::trace_spans_after(&runtime, 0, 16).unwrap();
+    assert!(traces.cursor_lost());
+    assert!(traces.lost > 0);
+    assert_eq!(traces.items.len(), 1);
 }
 
 #[test]
