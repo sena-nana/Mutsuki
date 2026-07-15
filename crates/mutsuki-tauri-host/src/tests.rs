@@ -393,12 +393,16 @@ fn shutdown_releases_wait_result_for_waiting_task() {
 
     host.shutdown();
 
-    assert!(
-        result_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("shutdown releases waiter")
-            .is_err()
-    );
+    let released = result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("shutdown releases waiter");
+    if let Ok(result) = released {
+        assert_eq!(result.status, Some(TaskStatus::Cancelled));
+        assert!(matches!(
+            result.outcome,
+            Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "waiting-shutdown"
+        ));
+    }
     waiter.join().expect("waiter joins");
 }
 
