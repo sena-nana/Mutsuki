@@ -133,7 +133,7 @@ fn agent_runner(
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             max_batch_entries: 32,
-            max_inflight_batches: 4,
+            max_inflight_batches: 1,
             side_effect,
             ..Default::default()
         })

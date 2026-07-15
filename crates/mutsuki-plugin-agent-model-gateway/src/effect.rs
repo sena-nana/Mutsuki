@@ -55,7 +55,7 @@ impl HttpEffectRunner {
                 .batch_capability(RunnerBatchCapability {
                     mode: RunnerMode::NativeBatch,
                     max_batch_entries: 16,
-                    max_inflight_batches: 2,
+                    max_inflight_batches: 1,
                     side_effect: RunnerSideEffect::External,
                     ..Default::default()
                 })
