@@ -288,6 +288,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "cpu-time"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9e393a7668fe1fad3075085b86c781883000b4ede868f43627b34a87c8b7ded"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1526,7 +1536,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=ad7082163a24a469afd704bd35e3ce2c9613e26e#ad7082163a24a469afd704bd35e3ce2c9613e26e"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=9d997c68e631d725add610411fe5672d5b42f660#9d997c68e631d725add610411fe5672d5b42f660"
 dependencies = [
  "serde",
  "serde_json",
@@ -1535,7 +1545,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=ad7082163a24a469afd704bd35e3ce2c9613e26e#ad7082163a24a469afd704bd35e3ce2c9613e26e"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=9d997c68e631d725add610411fe5672d5b42f660#9d997c68e631d725add610411fe5672d5b42f660"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -1545,8 +1555,9 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=ad7082163a24a469afd704bd35e3ce2c9613e26e#ad7082163a24a469afd704bd35e3ce2c9613e26e"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=9d997c68e631d725add610411fe5672d5b42f660#9d997c68e631d725add610411fe5672d5b42f660"
 dependencies = [
+ "crossbeam-channel",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -1557,7 +1568,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=ad7082163a24a469afd704bd35e3ce2c9613e26e#ad7082163a24a469afd704bd35e3ce2c9613e26e"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=9d997c68e631d725add610411fe5672d5b42f660#9d997c68e631d725add610411fe5672d5b42f660"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -1569,7 +1580,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=ad7082163a24a469afd704bd35e3ce2c9613e26e#ad7082163a24a469afd704bd35e3ce2c9613e26e"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=9d997c68e631d725add610411fe5672d5b42f660#9d997c68e631d725add610411fe5672d5b42f660"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1592,6 +1603,7 @@ dependencies = [
 name = "mutsuki-tauri-host"
 version = "0.1.0"
 dependencies = [
+ "cpu-time",
  "dirs",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",

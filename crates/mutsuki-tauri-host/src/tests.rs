@@ -2,10 +2,12 @@ use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::echo::{ECHO_PROTOCOL_ID, ECHO_RUNNER_ID, EchoRunner};
 use crate::{HostError, MutsukiTauriHost};
 use mutsuki_runtime_contracts::{
-    ArtifactType, CompletionBatch, ERR_RUNNER_NOT_FOUND, EntryCompletion, ExecutionClass,
-    LifecyclePolicy, PermissionGrant, PluginArtifact, PluginManifest, PluginProvides,
-    RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeEventKind, Task, TaskBatch, TaskOutcome,
-    WorkBatch,
+    ArtifactType, CancelPolicy, CompletionBatch, ERR_RUNNER_NOT_FOUND, EntryCompletion,
+    ExecutionClass, LifecyclePolicy, ObservabilityProfile, PermissionGrant, PluginArtifact,
+    PluginManifest, PluginProvides, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
+    ResourceSealState, ResourceSemantic, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult,
+    RunnerSideEffect, RunnerStatus, RuntimeEventKind, Task, TaskAwait, TaskBatch, TaskHandle,
+    TaskOutcome, TaskStatus, TaskStepContinuation, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
@@ -206,6 +208,201 @@ fn native_task_pump_executes_with_single_inflight_slot() {
 }
 
 #[test]
+fn waiting_tasks_are_completion_driven_without_periodic_actor_queries() {
+    const TASK_COUNT: usize = 1000;
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostWaitingScaleTest")
+        .runtime_config(HostRuntimeConfig {
+            default_runner_limits: RunnerLimits {
+                max_waiting: TASK_COUNT,
+                max_inflight: TASK_COUNT,
+                ..RunnerLimits::default()
+            },
+            ..HostRuntimeConfig::default()
+        })
+        .runner(Box::new(WaitingRunner::new(TASK_COUNT)))
+        .build()
+        .expect("host builds");
+    let handles = host
+        .submit_batch(TaskBatch {
+            batch_id: "waiting-scale".into(),
+            tick_id: None,
+            tasks: (0..TASK_COUNT)
+                .map(|index| {
+                    Task::new(
+                        format!("waiting-parent:{index:04}"),
+                        WAITING_PROTOCOL_ID,
+                        json!({}),
+                    )
+                })
+                .collect(),
+            resource_plan: None,
+        })
+        .expect("waiting batch submits");
+    assert_eq!(handles.len(), TASK_COUNT);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshots = host.task_snapshots().expect("task snapshots");
+        let waiting = snapshots
+            .iter()
+            .filter(|snapshot| {
+                snapshot.task_id.starts_with("waiting-parent:")
+                    && !snapshot.task_id.ends_with(":child")
+                    && snapshot.status == TaskStatus::Waiting
+            })
+            .count();
+        if waiting == TASK_COUNT {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let mut statuses = BTreeMap::new();
+            for snapshot in snapshots
+                .iter()
+                .filter(|snapshot| snapshot.task_id.starts_with("waiting-parent:"))
+            {
+                *statuses
+                    .entry(format!("{:?}", snapshot.status))
+                    .or_insert(0usize) += 1;
+            }
+            panic!("all parent tasks should enter Waiting: {statuses:?}");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    let settle_deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let before = loop {
+        let before = host.runtime_metrics();
+        thread::sleep(Duration::from_millis(50));
+        let after = host.runtime_metrics();
+        if before.actor_commands == after.actor_commands {
+            break after;
+        }
+        assert!(
+            std::time::Instant::now() < settle_deadline,
+            "task pump should settle after all tasks are Waiting"
+        );
+    };
+    thread::sleep(Duration::from_millis(200));
+    let after = host.runtime_metrics();
+    assert_eq!(after.actor_commands, before.actor_commands);
+    assert_eq!(after.task_status_queries, 0);
+    assert_eq!(
+        after.task_state_batch_queries,
+        before.task_state_batch_queries
+    );
+    host.shutdown();
+}
+
+#[test]
+fn terminal_notification_resolves_result_without_status_polling() {
+    let host = MutsukiTauriHost::builder()
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+    let started = std::time::Instant::now();
+
+    let result = host
+        .call(FrontendTaskRequest {
+            protocol_id: ECHO_PROTOCOL_ID.into(),
+            payload: json!({ "text": "notify" }),
+            task_id: Some("task:completion-notify".into()),
+            trace_id: None,
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .expect("completion notification resolves result");
+
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(matches!(
+        result.outcome,
+        Some(TaskOutcome::Completed { .. })
+    ));
+    let metrics = host.runtime_metrics();
+    assert_eq!(metrics.task_status_queries, 0);
+    assert!(metrics.task_state_batch_queries >= 1);
+    assert!(metrics.completion_notifications >= 1);
+}
+
+#[test]
+fn task_pump_restarts_after_all_previous_tasks_finish() {
+    let host = MutsukiTauriHost::builder()
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("host builds");
+
+    for index in 0..2 {
+        let result = host
+            .call(FrontendTaskRequest {
+                protocol_id: ECHO_PROTOCOL_ID.into(),
+                payload: json!({ "index": index }),
+                task_id: Some(format!("task:pump-restart:{index}")),
+                trace_id: None,
+                correlation_id: None,
+                idempotency_key: None,
+                input_refs: Vec::new(),
+                priority: 0,
+                context: Default::default(),
+            })
+            .expect("each sequential task completes");
+        assert!(matches!(
+            result.outcome,
+            Some(TaskOutcome::Completed { .. })
+        ));
+    }
+}
+
+#[test]
+fn shutdown_releases_wait_result_for_waiting_task() {
+    let host = Arc::new(
+        MutsukiTauriHost::builder()
+            .runner(Box::new(WaitingRunner::new(1)))
+            .build()
+            .expect("host builds"),
+    );
+    host.submit_task(Task::new(
+        "waiting-shutdown",
+        WAITING_PROTOCOL_ID,
+        json!({}),
+    ))
+    .expect("waiting task submits");
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while host
+        .task_snapshots()
+        .expect("task snapshots")
+        .iter()
+        .find(|snapshot| snapshot.task_id == "waiting-shutdown")
+        .is_none_or(|snapshot| snapshot.status != TaskStatus::Waiting)
+    {
+        assert!(std::time::Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(2));
+    }
+
+    let (result_tx, result_rx) = mpsc::channel();
+    let waiting_host = host.clone();
+    let waiter = thread::spawn(move || {
+        let result = waiting_host.task_result(mutsuki_tauri_bridge::TaskResultRequest {
+            task_id: "waiting-shutdown".into(),
+        });
+        result_tx.send(result).expect("wait result sends");
+    });
+    thread::sleep(Duration::from_millis(10));
+
+    host.shutdown();
+
+    assert!(
+        result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown releases waiter")
+            .is_err()
+    );
+    waiter.join().expect("waiter joins");
+}
+
+#[test]
 fn configured_runtime_policy_is_used() {
     let workspace = TestWorkspace::new("runtime-config");
     let decisions = Arc::new(AtomicUsize::new(0));
@@ -274,8 +471,16 @@ fn completed_results_are_consumed_when_read() {
 
 #[test]
 fn host_emits_runtime_events_and_trace_spans_for_task() {
+    let observability = ObservabilityProfile {
+        dispatch_spans: true,
+        ..ObservabilityProfile::default()
+    };
     let host = MutsukiTauriHost::builder()
         .app_name("MutsukiTauriHostObserveTest")
+        .runtime_config(HostRuntimeConfig {
+            observability: Some(observability),
+            ..HostRuntimeConfig::default()
+        })
         .runner(Box::new(EchoRunner::new()))
         .build()
         .expect("host builds");
@@ -932,6 +1137,109 @@ struct BlockingRunner {
     cancelled: Arc<Mutex<Vec<String>>>,
 }
 
+const WAITING_PROTOCOL_ID: &str = "fixture.waiting";
+
+struct WaitingRunner {
+    descriptor: RunnerDescriptor,
+}
+
+impl WaitingRunner {
+    fn new(batch_size: usize) -> Self {
+        let mut descriptor = runner_descriptor("fixture.waiting.runner", WAITING_PROTOCOL_ID);
+        descriptor.batch.mode = RunnerMode::NativeBatch;
+        descriptor.batch.preferred_batch_size = batch_size.max(1);
+        descriptor.batch.max_batch_entries = batch_size.max(1);
+        descriptor.batch.side_effect = RunnerSideEffect::None;
+        Self { descriptor }
+    }
+}
+
+impl Runner for WaitingRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let tasks = match batch.row_payload_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
+        };
+        let results = batch
+            .entries
+            .iter()
+            .map(|entry| {
+                let task = tasks
+                    .iter()
+                    .find(|task| task.task_id == entry.task_id)
+                    .expect("batch task exists");
+                let child_id = format!("{}:child", task.task_id);
+                let mut child = Task::new(&child_id, WAITING_PROTOCOL_ID, json!({}));
+                child.ready_at_step = Some(u64::MAX / 4);
+                let child_handle = TaskHandle {
+                    task_id: child_id.clone(),
+                    protocol_id: WAITING_PROTOCOL_ID.into(),
+                    target_binding_id: None,
+                    cancel_policy: CancelPolicy::Cascade,
+                    trace_id: task.trace_id.clone(),
+                    correlation_id: task.correlation_id.clone(),
+                };
+                let continuation_ref = format!("continuation:{}", task.task_id);
+                let result = RunnerResult {
+                    task_id: task.task_id.clone(),
+                    deltas: Vec::new(),
+                    events: Vec::new(),
+                    tasks: vec![child],
+                    effects: Vec::new(),
+                    values: Vec::new(),
+                    resources: Vec::new(),
+                    task_await: Some(TaskAwait {
+                        parent_task_id: task.task_id.clone(),
+                        child: child_handle,
+                        continuation: TaskStepContinuation {
+                            continuation: ResourceRef {
+                                ref_id: continuation_ref.clone(),
+                                resource_id: ResourceId {
+                                    kind_id: "continuation".into(),
+                                    slot_id: continuation_ref,
+                                    generation: 1,
+                                    version: 1,
+                                },
+                                semantic: ResourceSemantic::FrozenValue,
+                                provider_id: "fixture".into(),
+                                resource_kind: "continuation".into(),
+                                schema: "fixture.continuation.v1".into(),
+                                version: 1,
+                                generation: 1,
+                                access: ResourceAccess::Inline,
+                                size_hint: None,
+                                content_hash: None,
+                                lifetime: ResourceLifetime::BorrowedUntilTaskEnd,
+                                lease: None,
+                                seal_state: ResourceSealState::Sealed,
+                            },
+                            wake: None,
+                            reason: Some("benchmark waiting task".into()),
+                        },
+                        cancel_policy: CancelPolicy::Cascade,
+                    }),
+                    status: RunnerStatus::Waiting,
+                };
+                EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: Some(result),
+                    error: None,
+                }
+            })
+            .collect();
+        Ok(CompletionBatch::from_results(&batch, results))
+    }
+}
+
 impl Runner for BlockingRunner {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
@@ -981,9 +1289,31 @@ fn collect_events(
 ) -> Vec<mutsuki_tauri_bridge::FrontendEventEnvelope> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
-        events.push(event);
+        flatten_event_envelope(event, &mut events);
     }
     events
+}
+
+fn flatten_event_envelope(
+    envelope: mutsuki_tauri_bridge::FrontendEventEnvelope,
+    events: &mut Vec<mutsuki_tauri_bridge::FrontendEventEnvelope>,
+) {
+    match envelope.payload {
+        MutsukiFrontendEvent::Batch { events: payloads } => {
+            for payload in payloads {
+                let nested = mutsuki_tauri_bridge::FrontendEventEnvelope {
+                    sequence: envelope.sequence,
+                    channel: payload.channel().into(),
+                    payload,
+                };
+                flatten_event_envelope(nested, events);
+            }
+        }
+        payload => events.push(mutsuki_tauri_bridge::FrontendEventEnvelope {
+            payload,
+            ..envelope
+        }),
+    }
 }
 
 fn approval_response(

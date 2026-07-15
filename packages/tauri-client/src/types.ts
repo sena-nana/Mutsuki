@@ -30,6 +30,8 @@ export interface FrontendTaskResult {
   status?: string;
   outcome?: JsonValue;
   events: RuntimeEvent[];
+  events_dropped: number;
+  events_truncated: boolean;
 }
 
 export interface FrontendTaskRun {
@@ -79,6 +81,8 @@ export interface FrontendEventEnvelope<T = MutsukiFrontendEvent> {
 }
 
 export type MutsukiFrontendEvent =
+  | { type: "batch"; events: MutsukiFrontendEvent[] }
+  | { type: "observability_gap"; stream: string; lost: number; dropped: number }
   | { type: "task"; task_id: string; event: RuntimeEvent }
   | { type: "runtime"; event: RuntimeEvent }
   | { type: "trace"; span: TraceSpan }

@@ -3,11 +3,14 @@ use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
 use mutsuki_runtime_contracts::{
-    ERR_RUNNER_NOT_FOUND, RuntimeError, RuntimeEvent, RuntimeEventKind, ScalarValue, Task,
-    TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TraceSpan,
+    ERR_RUNNER_NOT_FOUND, ObservabilityPage, RuntimeError, RuntimeEvent, RuntimeEventKind,
+    ScalarValue, Task, TaskBatch, TaskHandle, TaskStatus, TraceSpan,
 };
 use mutsuki_runtime_core::RuntimeFailure;
-use mutsuki_runtime_host::{HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot};
+use mutsuki_runtime_host::{
+    HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot, HostTaskState,
+    TaskCompletionSubscription,
+};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
     FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,
@@ -46,25 +49,56 @@ pub(crate) struct HostComponents {
     pub active_protocols: BTreeSet<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TaskSupervisor {
     state: Mutex<TaskSupervisorState>,
+    observation_drain: Mutex<()>,
     changed: Condvar,
+    task_event_capacity_per_task: usize,
+    task_event_capacity_total: usize,
 }
 
 #[derive(Debug, Default)]
 struct TaskSupervisorState {
     active: BTreeMap<String, TaskHandle>,
-    events_by_task: BTreeMap<String, Vec<RuntimeEvent>>,
+    events_by_task: BTreeMap<String, TaskEventBuffer>,
+    task_event_order: VecDeque<(String, u64)>,
+    retained_task_events: usize,
     terminal_results: BTreeMap<String, Result<FrontendTaskResult, String>>,
     terminal_order: VecDeque<String>,
     last_runtime_event_sequence: u64,
-    last_trace_span_index: usize,
+    last_trace_span_sequence: u64,
     pump_running: bool,
+    pump_subscription: Option<TaskCompletionSubscription>,
+    pump_thread: Option<thread::JoinHandle<()>>,
+    shutting_down: bool,
+}
+
+#[derive(Debug, Default)]
+struct TaskEventBuffer {
+    events: VecDeque<RuntimeEvent>,
+    dropped: u64,
+    truncated: bool,
+}
+
+impl Default for TaskSupervisor {
+    fn default() -> Self {
+        Self::new(256, 4096)
+    }
 }
 
 impl TaskSupervisor {
     const MAX_RETAINED_RESULTS: usize = 256;
+
+    fn new(task_event_capacity_per_task: usize, task_event_capacity_total: usize) -> Self {
+        Self {
+            state: Mutex::new(TaskSupervisorState::default()),
+            observation_drain: Mutex::new(()),
+            changed: Condvar::new(),
+            task_event_capacity_per_task,
+            task_event_capacity_total,
+        }
+    }
 
     fn track(&self, handle: TaskHandle) {
         let mut state = self.state.lock();
@@ -72,19 +106,21 @@ impl TaskSupervisor {
         state.active.insert(task_id.clone(), handle);
         state.terminal_results.remove(&task_id);
         state.terminal_order.retain(|retained| retained != &task_id);
-        state.events_by_task.remove(&task_id);
+        Self::take_task_events(&mut state, &task_id);
     }
 
     fn handle_for(&self, task_id: &str) -> Option<TaskHandle> {
         self.state.lock().active.get(task_id).cloned()
     }
 
-    fn wait_result(&self, task_id: &str) -> HostResult<FrontendTaskResult> {
+    fn wait_result(&self, task_id: &str, consume: bool) -> HostResult<FrontendTaskResult> {
         let mut state = self.state.lock();
         loop {
-            if let Some(result) = state.terminal_results.remove(task_id) {
-                state.terminal_order.retain(|retained| retained != task_id);
-                state.events_by_task.remove(task_id);
+            if let Some(result) = state.terminal_results.get(task_id).cloned() {
+                if consume && result.is_ok() {
+                    state.terminal_results.remove(task_id);
+                    state.terminal_order.retain(|retained| retained != task_id);
+                }
                 return result.map_err(HostError::Runtime);
             }
             if !state.active.contains_key(task_id) {
@@ -98,80 +134,115 @@ impl TaskSupervisor {
 
     fn start_pump(&self) -> bool {
         let mut state = self.state.lock();
-        if state.pump_running {
+        if state.pump_running || state.shutting_down {
             return false;
         }
         state.pump_running = true;
         true
     }
 
+    fn set_pump_subscription(&self, subscription: TaskCompletionSubscription) -> bool {
+        let mut state = self.state.lock();
+        if state.shutting_down || !state.pump_running {
+            return false;
+        }
+        state.pump_subscription = Some(subscription);
+        true
+    }
+
+    fn set_pump_thread(&self, handle: thread::JoinHandle<()>) -> Option<thread::JoinHandle<()>> {
+        let mut state = self.state.lock();
+        if state.shutting_down {
+            Some(handle)
+        } else {
+            state.pump_thread.replace(handle)
+        }
+    }
+
     fn active_snapshot(&self) -> Option<Vec<TaskHandle>> {
         let mut state = self.state.lock();
-        if state.active.is_empty() {
+        if state.active.is_empty() || state.shutting_down {
             state.pump_running = false;
+            state.pump_subscription.take();
             self.changed.notify_all();
             return None;
         }
         Some(state.active.values().cloned().collect())
     }
 
-    fn observe_cursor(&self) -> (u64, usize) {
+    fn observe_cursor(&self) -> (u64, u64) {
         let state = self.state.lock();
         (
             state.last_runtime_event_sequence,
-            state.last_trace_span_index,
+            state.last_trace_span_sequence,
         )
     }
 
-    fn ingest_runtime_events(
+    fn ingest_runtime_page(
         &self,
-        core_events: Vec<RuntimeEvent>,
-        events: &mutsuki_tauri_bridge::EventHub,
+        page: ObservabilityPage<RuntimeEvent>,
         health: &HostHealthState,
-    ) {
+    ) -> Vec<MutsukiFrontendEvent> {
         let mut state = self.state.lock();
-        for event in core_events {
-            state.last_runtime_event_sequence =
-                state.last_runtime_event_sequence.max(event.sequence);
+        state.last_runtime_event_sequence = page.next_sequence;
+        let mut frontend_events = Vec::with_capacity(page.items.len() + usize::from(page.lost > 0));
+        if page.lost > 0 {
+            for task_id in state.active.keys().cloned().collect::<Vec<_>>() {
+                state.events_by_task.entry(task_id).or_default().truncated = true;
+            }
+            frontend_events.push(MutsukiFrontendEvent::ObservabilityGap {
+                stream: "runtime_event".into(),
+                lost: page.lost,
+                dropped: page.dropped,
+            });
+        }
+        for event in page.items {
             let event = redact_runtime_event(event);
             health.record_runtime_event_error(&event);
             if let Some(task_id) = task_event_id(&event)
                 && state.active.contains_key(&task_id)
             {
-                state
-                    .events_by_task
-                    .entry(task_id)
-                    .or_default()
-                    .push(event.clone());
+                self.retain_task_event(&mut state, task_id, event.clone());
             }
-            let _ = events.emit(frontend_event_for_runtime_event(event));
+            frontend_events.push(frontend_event_for_runtime_event(event));
         }
+        frontend_events
     }
 
-    fn ingest_trace_spans(
-        &self,
-        next_index: usize,
-        trace_spans: Vec<TraceSpan>,
-        events: &mutsuki_tauri_bridge::EventHub,
-    ) {
-        self.state.lock().last_trace_span_index = next_index;
-        for span in trace_spans {
-            let _ = events.emit(MutsukiFrontendEvent::Trace { span });
+    fn ingest_trace_page(&self, page: ObservabilityPage<TraceSpan>) -> Vec<MutsukiFrontendEvent> {
+        self.state.lock().last_trace_span_sequence = page.next_sequence;
+        let mut frontend_events = Vec::with_capacity(page.items.len() + usize::from(page.lost > 0));
+        if page.lost > 0 {
+            frontend_events.push(MutsukiFrontendEvent::ObservabilityGap {
+                stream: "trace".into(),
+                lost: page.lost,
+                dropped: page.dropped,
+            });
         }
+        frontend_events.extend(
+            page.items
+                .into_iter()
+                .map(|span| MutsukiFrontendEvent::Trace { span }),
+        );
+        frontend_events
     }
 
-    fn finish_tasks(&self, outcomes: Vec<(String, Option<TaskStatus>, Option<TaskOutcome>)>) {
+    fn finish_tasks(&self, states: Vec<HostTaskState>) -> bool {
         let mut state = self.state.lock();
         let mut completed = false;
-        for (task_id, status, outcome) in outcomes {
-            if outcome.is_none() {
+        for task_state in states {
+            if task_state.outcome.is_none() {
                 continue;
             }
+            let task_id = task_state.handle.task_id;
+            let task_events = Self::take_task_events(&mut state, &task_id);
             let result = FrontendTaskResult {
                 task_id: task_id.clone(),
-                status,
-                outcome,
-                events: state.events_by_task.remove(&task_id).unwrap_or_default(),
+                status: task_state.status,
+                outcome: task_state.outcome,
+                events: task_events.events.into_iter().collect(),
+                events_dropped: task_events.dropped,
+                events_truncated: task_events.truncated || task_events.dropped > 0,
             };
             state.active.remove(&task_id);
             Self::retain_terminal(&mut state, task_id, Ok(result));
@@ -180,14 +251,23 @@ impl TaskSupervisor {
         if completed {
             self.changed.notify_all();
         }
+        let has_active = !state.active.is_empty();
+        if !has_active {
+            state.pump_running = false;
+            state.pump_subscription.take();
+        }
+        has_active
     }
 
     fn fail_active(&self, message: String) {
         let mut state = self.state.lock();
         state.pump_running = false;
+        if let Some(subscription) = state.pump_subscription.take() {
+            subscription.close();
+        }
         let active = std::mem::take(&mut state.active);
         for task_id in active.into_keys() {
-            state.events_by_task.remove(&task_id);
+            Self::take_task_events(&mut state, &task_id);
             Self::retain_terminal(&mut state, task_id, Err(message.clone()));
         }
         self.changed.notify_all();
@@ -203,8 +283,111 @@ impl TaskSupervisor {
         while state.terminal_order.len() > Self::MAX_RETAINED_RESULTS {
             if let Some(evicted) = state.terminal_order.pop_front() {
                 state.terminal_results.remove(&evicted);
-                state.events_by_task.remove(&evicted);
+                Self::take_task_events(state, &evicted);
             }
+        }
+    }
+
+    fn retain_task_event(
+        &self,
+        state: &mut TaskSupervisorState,
+        task_id: String,
+        event: RuntimeEvent,
+    ) {
+        if self.task_event_capacity_per_task == 0 || self.task_event_capacity_total == 0 {
+            let buffer = state.events_by_task.entry(task_id).or_default();
+            buffer.dropped = buffer.dropped.saturating_add(1);
+            buffer.truncated = true;
+            return;
+        }
+
+        let evicted_sequence = {
+            let buffer = state.events_by_task.entry(task_id.clone()).or_default();
+            (buffer.events.len() >= self.task_event_capacity_per_task)
+                .then(|| buffer.events.pop_front())
+                .flatten()
+                .map(|evicted| {
+                    buffer.dropped = buffer.dropped.saturating_add(1);
+                    buffer.truncated = true;
+                    evicted.sequence
+                })
+        };
+        if let Some(sequence) = evicted_sequence {
+            if let Some(index) = state
+                .task_event_order
+                .iter()
+                .position(|item| item == &(task_id.clone(), sequence))
+            {
+                state.task_event_order.remove(index);
+            }
+            state.retained_task_events = state.retained_task_events.saturating_sub(1);
+        }
+
+        let sequence = event.sequence;
+        state
+            .events_by_task
+            .entry(task_id.clone())
+            .or_default()
+            .events
+            .push_back(event);
+        state.task_event_order.push_back((task_id, sequence));
+        state.retained_task_events += 1;
+
+        while state.retained_task_events > self.task_event_capacity_total {
+            let Some((evicted_task_id, evicted_sequence)) = state.task_event_order.pop_front()
+            else {
+                break;
+            };
+            let removed = state
+                .events_by_task
+                .get_mut(&evicted_task_id)
+                .and_then(|buffer| {
+                    buffer
+                        .events
+                        .iter()
+                        .position(|event| event.sequence == evicted_sequence)
+                        .map(|index| {
+                            buffer.events.remove(index);
+                            buffer.dropped = buffer.dropped.saturating_add(1);
+                            buffer.truncated = true;
+                        })
+                })
+                .is_some();
+            if removed {
+                state.retained_task_events = state.retained_task_events.saturating_sub(1);
+            }
+        }
+    }
+
+    fn take_task_events(state: &mut TaskSupervisorState, task_id: &str) -> TaskEventBuffer {
+        let buffer = state.events_by_task.remove(task_id).unwrap_or_default();
+        state.retained_task_events = state
+            .retained_task_events
+            .saturating_sub(buffer.events.len());
+        state
+            .task_event_order
+            .retain(|(retained_task_id, _)| retained_task_id != task_id);
+        buffer
+    }
+
+    fn shutdown(&self, message: &str) {
+        let (subscription, thread) = {
+            let mut state = self.state.lock();
+            state.shutting_down = true;
+            state.pump_running = false;
+            let active = std::mem::take(&mut state.active);
+            for task_id in active.into_keys() {
+                Self::take_task_events(&mut state, &task_id);
+                Self::retain_terminal(&mut state, task_id, Err(message.to_string()));
+            }
+            self.changed.notify_all();
+            (state.pump_subscription.take(), state.pump_thread.take())
+        };
+        if let Some(subscription) = subscription {
+            subscription.close();
+        }
+        if let Some(thread) = thread {
+            let _ = thread.join();
         }
     }
 }
@@ -221,12 +404,16 @@ impl MutsukiTauriHost {
             active_protocols,
         } = components;
         health.record_summary_failures(&plugins, &runners);
+        let tasks = Arc::new(TaskSupervisor::new(
+            config.task_event_capacity_per_task,
+            config.task_event_capacity_total,
+        ));
         Self {
             config,
             runtime: Arc::new(Mutex::new(runtime)),
             resources,
             events,
-            tasks: Arc::new(TaskSupervisor::default()),
+            tasks,
             approvals: ApprovalBridge::default(),
             health,
             plugins,
@@ -412,6 +599,10 @@ impl MutsukiTauriHost {
         self.runtime.lock().task_snapshots().map_err(Into::into)
     }
 
+    pub fn runtime_metrics(&self) -> mutsuki_runtime_host::HostRuntimeMetricsSnapshot {
+        self.runtime.lock().metrics()
+    }
+
     fn dispatch_submission(&self, command: HostRuntimeCommand) -> HostResult<HostRuntimeReply> {
         let submitted = self.runtime.lock().dispatch(command);
 
@@ -439,7 +630,11 @@ impl MutsukiTauriHost {
     }
 
     pub fn task_result(&self, request: TaskResultRequest) -> HostResult<FrontendTaskResult> {
-        self.tasks.wait_result(&request.task_id)
+        self.tasks.wait_result(&request.task_id, true)
+    }
+
+    pub fn peek_task_result(&self, request: TaskResultRequest) -> HostResult<FrontendTaskResult> {
+        self.tasks.wait_result(&request.task_id, false)
     }
 
     pub fn cancel_task(&self, request: TaskCancelRequest) -> HostResult<String> {
@@ -482,32 +677,58 @@ impl MutsukiTauriHost {
         if !self.tasks.start_pump() {
             return;
         }
+        let subscription = self.runtime.lock().subscribe_task_completions();
+        if !self.tasks.set_pump_subscription(subscription.clone()) {
+            subscription.close();
+            return;
+        }
 
         let runtime = self.runtime.clone();
         let events = self.events.clone();
         let tasks = self.tasks.clone();
         let health = self.health.clone();
+        let frontend_event_batch_size = self.config.frontend_event_batch_size;
         let spawn_result = thread::Builder::new()
             .name("mutsuki-tauri-task-pump".into())
-            .spawn(move || run_task_pump(runtime, events, tasks, health));
+            .spawn(move || {
+                run_task_pump(
+                    runtime,
+                    events,
+                    tasks,
+                    health,
+                    subscription,
+                    frontend_event_batch_size,
+                )
+            });
 
-        if let Err(error) = spawn_result {
-            self.tasks
-                .fail_active(format!("failed to spawn task pump: {error}"));
+        match spawn_result {
+            Ok(handle) => {
+                if let Some(handle) = self.tasks.set_pump_thread(handle) {
+                    let _ = handle.join();
+                }
+            }
+            Err(error) => self
+                .tasks
+                .fail_active(format!("failed to spawn task pump: {error}")),
         }
     }
 
     fn drain_observability(&self) -> HostResult<()> {
-        drain_observability(&self.runtime, &self.events, &self.tasks, &self.health).map_err(
-            |error| {
-                self.emit_runtime_error_log(
-                    "mutsuki_tauri_host.observe",
-                    "runtime observability drain failed",
-                    error.clone(),
-                );
-                HostError::Runtime(error)
-            },
+        drain_observability(
+            &self.runtime,
+            &self.events,
+            &self.tasks,
+            &self.health,
+            self.config.frontend_event_batch_size,
         )
+        .map_err(|error| {
+            self.emit_runtime_error_log(
+                "mutsuki_tauri_host.observe",
+                "runtime observability drain failed",
+                error.clone(),
+            );
+            HostError::Runtime(error)
+        })
     }
 
     fn emit_runtime_error_log(
@@ -641,6 +862,26 @@ impl MutsukiTauriHost {
     pub fn pending_approvals(&self) -> Vec<ApprovalRequest> {
         self.approvals.pending()
     }
+
+    pub fn shutdown(&self) {
+        let abort_error = self
+            .runtime
+            .lock()
+            .abort("tauri_host.shutdown")
+            .err()
+            .map(|error| format!("{:?}", error.error()));
+        self.tasks.shutdown(
+            abort_error
+                .as_deref()
+                .unwrap_or("MutsukiTauriHost is shutting down"),
+        );
+    }
+}
+
+impl Drop for MutsukiTauriHost {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
 }
 
 fn run_task_pump(
@@ -648,42 +889,29 @@ fn run_task_pump(
     events: Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: Arc<TaskSupervisor>,
     health: Arc<HostHealthState>,
+    completion_subscription: TaskCompletionSubscription,
+    frontend_event_batch_size: usize,
 ) {
+    let mut completion_revision = completion_subscription.revision();
     loop {
         let Some(active) = tasks.active_snapshot() else {
             return;
         };
 
-        let snapshot = {
-            let runtime = runtime.lock();
-            let tick = runtime
-                .dispatch(HostRuntimeCommand::TickOnce)
-                .map_err(|error| format!("{:?}", error.error()));
-            tick.and_then(|_| {
-                let mut outcomes = Vec::new();
-                for handle in active {
-                    let task_id = handle.task_id.clone();
-                    let status = runtime.task_status(&task_id);
-                    if status.is_none() {
-                        outcomes.push((task_id, status, None));
-                        continue;
-                    }
-                    let outcome = match runtime
-                        .dispatch(HostRuntimeCommand::TaskOutcome(handle))
-                        .map_err(|error| format!("{:?}", error.error()))?
-                    {
-                        HostRuntimeReply::TaskOutcome(outcome) => outcome,
-                        _ => return Err("unexpected task outcome reply".into()),
-                    };
-                    outcomes.push((task_id, status, outcome));
-                }
-                Ok(outcomes)
-            })
-        };
+        let snapshot = runtime
+            .lock()
+            .task_states(active)
+            .map_err(|error| format!("{:?}", error.error()));
 
         match snapshot {
-            Ok(outcomes) => {
-                if let Err(error) = drain_observability(&runtime, &events, &tasks, &health) {
+            Ok(states) => {
+                if let Err(error) = drain_observability(
+                    &runtime,
+                    &events,
+                    &tasks,
+                    &health,
+                    frontend_event_batch_size,
+                ) {
                     emit_log_record(
                         &events,
                         "error".into(),
@@ -696,7 +924,9 @@ fn run_task_pump(
                     tasks.fail_active(error);
                     return;
                 }
-                tasks.finish_tasks(outcomes);
+                if !tasks.finish_tasks(states) {
+                    return;
+                }
             }
             Err(error) => {
                 emit_log_record(
@@ -712,8 +942,11 @@ fn run_task_pump(
                 return;
             }
         }
-
-        thread::sleep(Duration::from_millis(10));
+        let Some(revision) = completion_subscription.wait_after(completion_revision) else {
+            tasks.fail_active("runtime completion subscription closed".into());
+            return;
+        };
+        completion_revision = revision;
     }
 }
 
@@ -772,21 +1005,72 @@ fn drain_observability(
     events: &Arc<mutsuki_tauri_bridge::EventHub>,
     tasks: &Arc<TaskSupervisor>,
     health: &HostHealthState,
+    frontend_event_batch_size: usize,
 ) -> Result<(), String> {
-    let (last_event_sequence, last_trace_span_index) = tasks.observe_cursor();
-    let (core_events, next_trace_index, trace_spans) = {
-        let runtime = runtime.lock();
-        let core_events = runtime
-            .events_after(last_event_sequence)
+    const PAGE_LIMIT: usize = 256;
+    let _drain = tasks.observation_drain.lock();
+    let (mut event_sequence, mut trace_sequence) = tasks.observe_cursor();
+
+    loop {
+        let page = runtime
+            .lock()
+            .events_after(event_sequence, PAGE_LIMIT)
             .map_err(|error| format!("{:?}", error.error()))?;
-        let (next_trace_index, trace_spans) = runtime
-            .trace_spans_after(last_trace_span_index)
+        let next_sequence = page.next_sequence;
+        let truncated = page.truncated;
+        emit_frontend_events(
+            events,
+            tasks.ingest_runtime_page(page, health),
+            frontend_event_batch_size,
+        );
+        if !truncated {
+            break;
+        }
+        if next_sequence <= event_sequence {
+            return Err("runtime event cursor did not advance".into());
+        }
+        event_sequence = next_sequence;
+    }
+
+    loop {
+        let page = runtime
+            .lock()
+            .trace_spans_after(trace_sequence, PAGE_LIMIT)
             .map_err(|error| format!("{:?}", error.error()))?;
-        (core_events, next_trace_index, trace_spans)
-    };
-    tasks.ingest_runtime_events(core_events, events, health);
-    tasks.ingest_trace_spans(next_trace_index, trace_spans, events);
+        let next_sequence = page.next_sequence;
+        let truncated = page.truncated;
+        emit_frontend_events(
+            events,
+            tasks.ingest_trace_page(page),
+            frontend_event_batch_size,
+        );
+        if !truncated {
+            break;
+        }
+        if next_sequence <= trace_sequence {
+            return Err("trace cursor did not advance".into());
+        }
+        trace_sequence = next_sequence;
+    }
     Ok(())
+}
+
+fn emit_frontend_events(
+    events: &mutsuki_tauri_bridge::EventHub,
+    frontend_events: Vec<MutsukiFrontendEvent>,
+    batch_size: usize,
+) {
+    let batch_size = batch_size.max(1);
+    let mut pending = frontend_events;
+    while !pending.is_empty() {
+        let tail = if pending.len() > batch_size {
+            pending.split_off(batch_size)
+        } else {
+            Vec::new()
+        };
+        let _ = events.emit_batch(pending);
+        pending = tail;
+    }
 }
 
 fn emit_log_record(
@@ -820,7 +1104,13 @@ fn current_timestamp_ms() -> i64 {
 #[cfg(test)]
 mod supervisor_tests {
     use super::TaskSupervisor;
-    use mutsuki_runtime_contracts::{CancelPolicy, TaskHandle, TaskOutcome, TaskStatus};
+    use crate::health::HostHealthState;
+    use mutsuki_runtime_contracts::{
+        CancelPolicy, ObservabilityPage, RuntimeEvent, RuntimeEventKind, TaskHandle, TaskOutcome,
+        TaskStatus,
+    };
+    use mutsuki_runtime_host::HostTaskState;
+    use std::collections::BTreeMap;
 
     #[test]
     fn unread_terminal_results_are_bounded() {
@@ -841,15 +1131,13 @@ mod supervisor_tests {
         supervisor.finish_tasks(
             handles
                 .iter()
-                .map(|handle| {
-                    (
-                        handle.task_id.clone(),
-                        Some(TaskStatus::Completed),
-                        Some(TaskOutcome::Completed {
-                            task_id: handle.task_id.clone(),
-                            output_ref: None,
-                        }),
-                    )
+                .map(|handle| HostTaskState {
+                    handle: handle.clone(),
+                    status: Some(TaskStatus::Completed),
+                    outcome: Some(TaskOutcome::Completed {
+                        task_id: handle.task_id.clone(),
+                        output_ref: None,
+                    }),
                 })
                 .collect(),
         );
@@ -860,12 +1148,12 @@ mod supervisor_tests {
 
         assert!(
             supervisor
-                .wait_result(&handles.last().expect("newest handle").task_id)
+                .wait_result(&handles.last().expect("newest handle").task_id, true)
                 .is_ok()
         );
         assert!(
             supervisor
-                .wait_result(&handles.first().expect("oldest handle").task_id)
+                .wait_result(&handles.first().expect("oldest handle").task_id, true)
                 .is_err()
         );
 
@@ -885,5 +1173,114 @@ mod supervisor_tests {
                 .terminal_results
                 .contains_key(&handles.last().expect("newest handle").task_id)
         );
+    }
+
+    #[test]
+    fn task_event_cache_enforces_per_task_and_global_limits() {
+        let supervisor = TaskSupervisor::new(2, 3);
+        let handles = ["task:event:a", "task:event:b"].map(|task_id| TaskHandle {
+            task_id: task_id.into(),
+            protocol_id: "test.events".into(),
+            target_binding_id: None,
+            cancel_policy: CancelPolicy::Cascade,
+            trace_id: None,
+            correlation_id: None,
+        });
+        for handle in &handles {
+            supervisor.track(handle.clone());
+        }
+        let items = (1..=6)
+            .map(|sequence| RuntimeEvent {
+                sequence,
+                kind: RuntimeEventKind::Task,
+                name: format!("task.event.{sequence}"),
+                subject_id: Some(handles[(sequence as usize) % 2].task_id.clone()),
+                attributes: BTreeMap::new(),
+                error: None,
+            })
+            .collect();
+        supervisor.ingest_runtime_page(
+            ObservabilityPage {
+                items,
+                next_sequence: 6,
+                earliest_available_sequence: Some(1),
+                latest_sequence: 6,
+                lost: 0,
+                truncated: false,
+                dropped: 0,
+            },
+            &HostHealthState::default(),
+        );
+        {
+            let state = supervisor.state.lock();
+            assert!(state.retained_task_events <= 3);
+            assert!(
+                state
+                    .events_by_task
+                    .values()
+                    .all(|buffer| buffer.events.len() <= 2)
+            );
+        }
+
+        supervisor.finish_tasks(
+            handles
+                .iter()
+                .map(|handle| HostTaskState {
+                    handle: handle.clone(),
+                    status: Some(TaskStatus::Completed),
+                    outcome: Some(TaskOutcome::Completed {
+                        task_id: handle.task_id.clone(),
+                        output_ref: None,
+                    }),
+                })
+                .collect(),
+        );
+        let results = handles
+            .iter()
+            .map(|handle| {
+                supervisor
+                    .wait_result(&handle.task_id, false)
+                    .expect("peek result")
+            })
+            .collect::<Vec<_>>();
+        assert!(results.iter().all(|result| result.events.len() <= 2));
+        assert!(
+            results
+                .iter()
+                .any(|result| { result.events_dropped > 0 && result.events_truncated })
+        );
+    }
+
+    #[test]
+    fn result_peek_is_repeatable_and_failed_reads_are_retained() {
+        let supervisor = TaskSupervisor::default();
+        let handle = TaskHandle {
+            task_id: "task:peek".into(),
+            protocol_id: "test.peek".into(),
+            target_binding_id: None,
+            cancel_policy: CancelPolicy::Cascade,
+            trace_id: None,
+            correlation_id: None,
+        };
+        supervisor.track(handle.clone());
+        supervisor.finish_tasks(vec![HostTaskState {
+            handle: handle.clone(),
+            status: Some(TaskStatus::Completed),
+            outcome: Some(TaskOutcome::Completed {
+                task_id: handle.task_id.clone(),
+                output_ref: None,
+            }),
+        }]);
+
+        assert!(supervisor.wait_result(&handle.task_id, false).is_ok());
+        assert!(supervisor.wait_result(&handle.task_id, false).is_ok());
+        assert!(supervisor.wait_result(&handle.task_id, true).is_ok());
+        assert!(supervisor.wait_result(&handle.task_id, true).is_err());
+
+        let failed = TaskSupervisor::default();
+        failed.track(handle.clone());
+        failed.fail_active("pump failed".into());
+        assert!(failed.wait_result(&handle.task_id, true).is_err());
+        assert!(failed.wait_result(&handle.task_id, true).is_err());
     }
 }

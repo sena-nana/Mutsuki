@@ -63,6 +63,12 @@ pub struct MutsukiTauriConfig {
     pub mode: HostMode,
     pub max_ticks_per_call: usize,
     pub event_buffer: usize,
+    #[serde(default = "default_task_event_capacity_per_task")]
+    pub task_event_capacity_per_task: usize,
+    #[serde(default = "default_task_event_capacity_total")]
+    pub task_event_capacity_total: usize,
+    #[serde(default = "default_frontend_event_batch_size")]
+    pub frontend_event_batch_size: usize,
     pub preview_ttl_secs: u64,
     pub paths: PathsConfig,
     pub security: SecurityConfig,
@@ -77,10 +83,25 @@ impl MutsukiTauriConfig {
             mode: HostMode::Embedded,
             max_ticks_per_call: 64,
             event_buffer: 1024,
+            task_event_capacity_per_task: default_task_event_capacity_per_task(),
+            task_event_capacity_total: default_task_event_capacity_total(),
+            frontend_event_batch_size: default_frontend_event_batch_size(),
             preview_ttl_secs: 300,
             paths: PathsConfig::for_app(&app_name),
             security: SecurityConfig::default(),
             app_name,
         }
     }
+}
+
+const fn default_task_event_capacity_per_task() -> usize {
+    256
+}
+
+const fn default_task_event_capacity_total() -> usize {
+    4096
+}
+
+const fn default_frontend_event_batch_size() -> usize {
+    128
 }

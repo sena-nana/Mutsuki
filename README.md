@@ -36,3 +36,15 @@ let host = MutsukiTauriHost::builder()
 
 Tauri applications normally install `tauri-plugin-mutsuki` and access the host from frontend code
 through `@mutsuki/tauri-client`.
+
+Task completion is driven by HostRuntime terminal notifications. One batch query refreshes all
+tracked handles after a notification; idle or Waiting tasks do not start a periodic poller. Runtime
+events and traces are read with bounded cursor pages, task result event retention has per-task and
+global limits, and frontend observation events are emitted in bounded batches.
+
+The task-pump benchmark covers 1, 100 and 1000 active Waiting tasks and records process CPU time,
+completion latency and actor command counts:
+
+```text
+cargo run --release -p mutsuki-tauri-host --example task_pump_benchmark -- artifacts/perf/issue2-task-pump.json
+```

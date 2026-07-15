@@ -23,7 +23,10 @@ impl MutsukiTauriHostBuilder {
     pub fn new() -> Self {
         Self {
             config: MutsukiTauriConfig::for_app("MutsukiTauriApp"),
-            runtime_config: HostRuntimeConfig::default(),
+            runtime_config: HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
             runners: Vec::new(),
         }
     }
@@ -40,7 +43,8 @@ impl MutsukiTauriHostBuilder {
         self
     }
 
-    pub fn runtime_config(mut self, runtime_config: HostRuntimeConfig) -> Self {
+    pub fn runtime_config(mut self, mut runtime_config: HostRuntimeConfig) -> Self {
+        runtime_config.event_driven = true;
         self.runtime_config = runtime_config;
         self
     }
@@ -135,6 +139,11 @@ impl MutsukiTauriHostBuilder {
             enabled_plugins: enabled_plugins.iter().cloned().collect(),
             bindings: BTreeMap::new(),
             plugin_deployments,
+            observability: self
+                .runtime_config
+                .observability
+                .clone()
+                .unwrap_or_default(),
             allow_dynamic_registration: false,
             allow_hot_reload: false,
         };

@@ -28,6 +28,7 @@ where
             mutsuki_call,
             mutsuki_start_task,
             mutsuki_task_result,
+            mutsuki_peek_task_result,
             mutsuki_cancel_task,
             mutsuki_status,
             mutsuki_plugins_list,
@@ -41,6 +42,13 @@ where
             mutsuki_approval_respond,
             mutsuki_approval_pending,
         ])
+        .on_event(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(host) = app.try_state::<Arc<MutsukiTauriHost>>()
+            {
+                host.shutdown();
+            }
+        })
         .setup(move |app, _api| {
             let builder = factory(app.app_handle())?;
             let host = Arc::new(builder.build().map_err(|error| error.to_string())?);
@@ -84,6 +92,14 @@ fn mutsuki_task_result(
     request: TaskResultRequest,
 ) -> Result<FrontendTaskResult, FrontendError> {
     host.task_result(request).map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_peek_task_result(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: TaskResultRequest,
+) -> Result<FrontendTaskResult, FrontendError> {
+    host.peek_task_result(request).map_err(FrontendError::from)
 }
 
 #[tauri::command]

@@ -47,6 +47,7 @@ export interface TaskApi {
   call<TPayload = unknown>(protocolId: string, payload?: TPayload, options?: Partial<FrontendTaskRequest<TPayload>>): Promise<FrontendTaskResult>;
   callStream<TPayload = unknown>(protocolId: string, payload?: TPayload, options?: Partial<FrontendTaskRequest<TPayload>>): Promise<TaskRun>;
   cancel(taskId: string, reason?: string): Promise<string>;
+  peekResult(taskId: string): Promise<FrontendTaskResult>;
 }
 
 export interface ResourceApi {
@@ -88,7 +89,7 @@ export interface EventApi {
 
 export function createMutsukiClient(): MutsukiClient {
   const events: EventApi = {
-    listen: (handler) => listen<FrontendEventEnvelope<MutsukiFrontendEvent>>("mutsuki://event", (event) => handler(event.payload)),
+    listen: (handler) => listenAllEvents(handler),
     tasks: (handler) => listenCategory<TaskFrontendEvent>("mutsuki://task/event", handler),
     runtime: (handler) => listenCategory<RuntimeFrontendEvent>("mutsuki://runtime/event", handler),
     trace: (handler) => listenCategory<TraceFrontendEvent>("mutsuki://trace/event", handler),
@@ -187,7 +188,13 @@ export function createMutsukiClient(): MutsukiClient {
     callStream,
     status: () => invoke<HostStatus>("mutsuki_status"),
     events,
-    tasks: { call, callStream, cancel },
+    tasks: {
+      call,
+      callStream,
+      cancel,
+      peekResult: (taskId) =>
+        invoke<FrontendTaskResult>("mutsuki_peek_task_result", { request: { task_id: taskId } }),
+    },
     resources,
     approvals,
     plugins: {
@@ -212,9 +219,9 @@ async function openTaskEvents(taskId: string): Promise<TaskEventStream> {
     const pending = waiters.splice(0);
     for (const resolve of pending) resolve();
   };
-  const unlisten = await listen<FrontendEventEnvelope<MutsukiFrontendEvent>>("mutsuki://event", (event) => {
-    if (event.payload.payload.type === "task" && event.payload.payload.task_id === taskId) {
-      queue.push(event.payload);
+  const unlisten = await listenAllEvents((envelope) => {
+    if (envelope.payload.type === "task" && envelope.payload.task_id === taskId) {
+      queue.push(envelope);
       notify();
     }
   });
@@ -265,5 +272,43 @@ function listenCategory<T extends MutsukiFrontendEvent>(
   channel: string,
   handler: (event: FrontendEventEnvelope<T>) => void,
 ): Promise<UnlistenFn> {
-  return listen<FrontendEventEnvelope<T>>(channel, (event) => handler(event.payload));
+  return listenAllEvents((event) => {
+    if (event.channel === channel) handler(event as FrontendEventEnvelope<T>);
+  });
+}
+
+async function listenAllEvents(
+  handler: (event: FrontendEventEnvelope<MutsukiFrontendEvent>) => void,
+): Promise<UnlistenFn> {
+  return listen<FrontendEventEnvelope<MutsukiFrontendEvent>>("mutsuki://event", (event) => {
+    for (const envelope of flattenEnvelope(event.payload)) handler(envelope);
+  });
+}
+
+function flattenEnvelope(
+  envelope: FrontendEventEnvelope<MutsukiFrontendEvent>,
+): FrontendEventEnvelope<MutsukiFrontendEvent>[] {
+  if (envelope.payload.type !== "batch") return [envelope];
+  return envelope.payload.events.flatMap((payload) =>
+    flattenEnvelope({
+      sequence: envelope.sequence,
+      channel: eventChannel(payload),
+      payload,
+    }),
+  );
+}
+
+function eventChannel(event: MutsukiFrontendEvent): string {
+  switch (event.type) {
+    case "batch": return "mutsuki://event/batch";
+    case "observability_gap": return "mutsuki://observe/gap";
+    case "task": return "mutsuki://task/event";
+    case "runtime": return "mutsuki://runtime/event";
+    case "trace": return "mutsuki://trace/event";
+    case "log": return "mutsuki://log/event";
+    case "resource": return "mutsuki://resource/event";
+    case "approval": return "mutsuki://approval/event";
+    case "plugin": return "mutsuki://plugin/event";
+    case "runner": return "mutsuki://runner/event";
+  }
 }

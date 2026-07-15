@@ -105,6 +105,10 @@ pub struct FrontendTaskResult {
     pub status: Option<TaskStatus>,
     pub outcome: Option<TaskOutcome>,
     pub events: Vec<RuntimeEvent>,
+    #[serde(default)]
+    pub events_dropped: u64,
+    #[serde(default)]
+    pub events_truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +284,14 @@ pub struct FrontendLogRecord {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MutsukiFrontendEvent {
+    Batch {
+        events: Vec<MutsukiFrontendEvent>,
+    },
+    ObservabilityGap {
+        stream: String,
+        lost: u64,
+        dropped: u64,
+    },
     Task {
         task_id: String,
         event: RuntimeEvent,
@@ -313,6 +325,8 @@ pub enum MutsukiFrontendEvent {
 impl MutsukiFrontendEvent {
     pub fn channel(&self) -> &'static str {
         match self {
+            Self::Batch { .. } => "mutsuki://event/batch",
+            Self::ObservabilityGap { .. } => "mutsuki://observe/gap",
             Self::Task { .. } => "mutsuki://task/event",
             Self::Runtime { .. } => "mutsuki://runtime/event",
             Self::Trace { .. } => "mutsuki://trace/event",
@@ -360,6 +374,19 @@ impl EventHub {
             .send(envelope.clone())
             .map_err(|_| BridgeError::NoEventReceiver)?;
         Ok(envelope)
+    }
+
+    pub fn emit_batch(
+        &self,
+        events: Vec<MutsukiFrontendEvent>,
+    ) -> Result<Option<FrontendEventEnvelope>, BridgeError> {
+        match events.len() {
+            0 => Ok(None),
+            1 => self
+                .emit(events.into_iter().next().expect("one event"))
+                .map(Some),
+            _ => self.emit(MutsukiFrontendEvent::Batch { events }).map(Some),
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<FrontendEventEnvelope> {
@@ -475,4 +502,30 @@ fn is_sensitive_key(key: &str) -> bool {
     ]
     .iter()
     .any(|fragment| key.contains(fragment))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventHub, MutsukiFrontendEvent};
+
+    #[test]
+    fn emit_batch_uses_one_bounded_hub_message_for_multiple_frontend_events() {
+        let hub = EventHub::new(4);
+        let mut receiver = hub.subscribe();
+        let payloads = (0..3)
+            .map(|index| MutsukiFrontendEvent::Runner {
+                runner_id: format!("runner:{index}"),
+                status: "running".into(),
+            })
+            .collect();
+
+        hub.emit_batch(payloads).expect("batch emits");
+
+        let envelope = receiver.try_recv().expect("one batch envelope");
+        assert!(matches!(
+            envelope.payload,
+            MutsukiFrontendEvent::Batch { events } if events.len() == 3
+        ));
+        assert!(receiver.try_recv().is_err());
+    }
 }
