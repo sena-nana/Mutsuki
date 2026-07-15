@@ -69,7 +69,7 @@ impl CoreRuntime {
         let mut seen = BTreeMap::new();
         for task in &batch.tasks {
             if seen.insert(task.task_id.clone(), ()).is_some()
-                || self.tasks.get(&task.task_id).is_some()
+                || self.tasks.contains_task_id(&task.task_id)
             {
                 return Err(crate::runtime_failure(
                     ERR_TASK_DUPLICATE,

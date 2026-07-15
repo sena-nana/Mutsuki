@@ -9,6 +9,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, RuntimeResult, RuntimeStatistics, RuntimeStopState,
+    TaskHistoryRetention,
 };
 use mutsuki_runtime_sdk::{
     HostContext as SdkHostContext, HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway,
@@ -38,6 +39,7 @@ pub struct HostRuntimeConfig {
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
     pub observability: Option<ObservabilityProfile>,
+    pub task_history_retention: Option<TaskHistoryRetention>,
 }
 
 impl HostRuntimeConfig {
@@ -68,6 +70,7 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("cancel_grace_period", &self.cancel_grace_period)
             .field("worker_health_timeout", &self.worker_health_timeout)
             .field("observability", &self.observability)
+            .field("task_history_retention", &self.task_history_retention)
             .finish()
     }
 }
@@ -88,6 +91,7 @@ impl Default for HostRuntimeConfig {
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
             observability: None,
+            task_history_retention: None,
         }
     }
 }
@@ -112,6 +116,7 @@ impl HostRuntime {
         if let Some(observability) = config.observability.clone() {
             core.configure_observability(observability);
         }
+        core.configure_task_history_retention(config.task_history_retention);
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let actor = thread::Builder::new()

@@ -40,6 +40,9 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Performance smoke gate
+        run: cargo bench-smoke
+
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats

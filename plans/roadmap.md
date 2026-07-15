@@ -97,6 +97,10 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - 当前明确采用单实例串行 Runner：每个 `runner_id` 同时最多一个 active batch，
     descriptor 的 `max_inflight_batches` 与 Host `max_running` 只接受 `1`；batch 内仍可按
     entry capability 和资源计划有界并行，不同 runner 可并行执行。
+  - Task terminal history 默认保持既有无限保留语义；长期 Host 可显式配置
+    `TaskHistoryRetention`，把 terminal TaskRecord 与已淘汰 task id 防重窗口分别限制为固定
+    容量。受 child wait link 保护的 terminal record 在 waiter 消费前不会淘汰；累计 submitted、
+    attempt 和 evicted 统计不因淘汰回退。
   - Waiting task 释放当前 `TaskLease`，但保留 `owner_runner`；wake 后的 continuation
     只能由原 runner reclaim，并计入 runner waiting / inflight 负载统计。
   - `HandlerBindingRegistry` 从 load plan 物化，提供 protocol 到逻辑消费者绑定的

@@ -73,6 +73,84 @@ fn task_pool_rejects_duplicate_task_id_without_overwriting_record() {
 }
 
 #[test]
+fn bounded_terminal_history_evicts_records_and_keeps_a_bounded_id_horizon() {
+    let mut pool = TaskPool::default();
+    pool.configure_history_retention(Some(TaskHistoryRetention::new(2, 3)));
+
+    for index in 0..5 {
+        let task_id = format!("task-{index}");
+        pool.enqueue(Task::new(&task_id, "sim.work", json!({})))
+            .unwrap();
+        pool.cancel_by_core(&task_id, 0).unwrap();
+    }
+
+    assert_eq!(pool.records().len(), 2);
+    assert_eq!(pool.retained_terminal_records(), 2);
+    assert_eq!(pool.evicted_task_id_count(), 3);
+    assert_eq!(pool.statistics().cancelled, 2);
+    assert_eq!(pool.statistics().submitted_total, 5);
+    assert_eq!(pool.statistics().terminal_records_evicted, 3);
+    assert_eq!(
+        pool.enqueue(Task::new("task-0", "sim.work", json!({})))
+            .unwrap_err()
+            .error()
+            .code,
+        ERR_TASK_DUPLICATE
+    );
+
+    pool.enqueue(Task::new("task-5", "sim.work", json!({})))
+        .unwrap();
+    pool.cancel_by_core("task-5", 0).unwrap();
+    pool.enqueue(Task::new("task-0", "sim.work", json!({})))
+        .unwrap();
+}
+
+#[test]
+fn terminal_child_is_retained_until_waiters_are_consumed() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    pool.configure_history_retention(Some(TaskHistoryRetention::new(0, 8)));
+    let mut parent = Task::new("parent", "sim.work", json!({}));
+    parent.trace_id = Some("trace".into());
+    let mut child = Task::new("child", "sim.work", json!({}));
+    child.trace_id = Some("trace".into());
+    pool.enqueue(parent).unwrap();
+    pool.enqueue(child).unwrap();
+    let parent_lease = pool
+        .claim_ready_for_executor(&descriptor, "executor", 1, 0, 1)
+        .remove(0)
+        .0;
+    let child_handle = TaskHandle {
+        task_id: "child".into(),
+        protocol_id: "sim.work".into(),
+        target_binding_id: None,
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: Some("trace".into()),
+        correlation_id: None,
+    };
+    pool.wait_on_task(
+        &parent_lease,
+        1,
+        TaskAwait {
+            parent_task_id: "parent".into(),
+            child: child_handle,
+            continuation: task_pool_test_continuation("continuation"),
+            cancel_policy: CancelPolicy::Cascade,
+        },
+    )
+    .unwrap();
+    let child_lease = pool
+        .claim_ready_for_executor(&descriptor, "executor", 1, 0, 1)
+        .remove(0)
+        .0;
+
+    pool.complete(&child_lease, 1).unwrap();
+    assert!(pool.get("child").is_some());
+    assert_eq!(pool.take_waits_for_child("child").len(), 1);
+    assert!(pool.get("child").is_none());
+}
+
+#[test]
 fn task_pool_wait_block_and_wake_are_single_task_state_changes() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let mut pool = TaskPool::default();

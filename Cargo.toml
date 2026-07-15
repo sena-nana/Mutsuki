@@ -5,6 +5,7 @@ members = [
     "crates/mutsuki-runtime-host",
     "crates/mutsuki-runtime-sdk",
     "crates/mutsuki-runtime-sdk-macros",
+    "crates/mutsuki-runtime-benchmarks",
 ]
 resolver = "2"
 

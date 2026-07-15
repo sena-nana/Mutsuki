@@ -6,6 +6,7 @@ use std::time::Duration;
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{
     Runner, RunnerContext, RuntimeFailure, RuntimeResult, RuntimeStopState, ScheduleDecision,
+    TaskHistoryRetention,
 };
 use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
@@ -1460,6 +1461,48 @@ fn host_context_resource_registry_rejects_unknown_provider() {
     assert_eq!(
         error.error().evidence.get("provider_id"),
         Some(&ScalarValue::String("missing.provider".into()))
+    );
+}
+
+#[test]
+fn host_runtime_applies_bounded_terminal_history_policy() {
+    let config = HostRuntimeConfig {
+        task_history_retention: Some(TaskHistoryRetention::new(2, 4)),
+        ..HostRuntimeConfig::default()
+    };
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+    let tasks = (0..3)
+        .map(|index| Task::new(format!("history-{index}"), "raw.input", json!({})))
+        .collect();
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitBatch(Box::new(TaskBatch {
+            batch_id: "bounded-history".into(),
+            tick_id: None,
+            tasks,
+            resource_plan: None,
+        })))
+        .unwrap();
+    for _ in 0..10 {
+        runtime
+            .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 8 })
+            .unwrap();
+        if runtime.task_status("history-2") == Some(TaskStatus::Completed) {
+            break;
+        }
+    }
+
+    let snapshots = runtime.task_snapshots().unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(runtime.task_status("history-0"), None);
+    assert_eq!(
+        runtime.task_status("history-1"),
+        Some(TaskStatus::Completed)
+    );
+    assert_eq!(
+        runtime.task_status("history-2"),
+        Some(TaskStatus::Completed)
     );
 }
 

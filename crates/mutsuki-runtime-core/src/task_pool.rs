@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId, RuntimeError, SurfaceOccupancy,
@@ -17,6 +17,21 @@ mod transitions;
 use indexes::TaskIndexes;
 
 pub const TASK_LEASE_TTL_STEPS: u64 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskHistoryRetention {
+    pub max_terminal_records: usize,
+    pub max_evicted_task_ids: usize,
+}
+
+impl TaskHistoryRetention {
+    pub const fn new(max_terminal_records: usize, max_evicted_task_ids: usize) -> Self {
+        Self {
+            max_terminal_records,
+            max_evicted_task_ids,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskRecord {
@@ -46,6 +61,7 @@ pub struct TaskPoolStatistics {
     pub cumulative_queue_steps: u64,
     pub cumulative_execution_steps: u64,
     pub stale_results_rejected: u64,
+    pub terminal_records_evicted: u64,
 }
 
 impl TaskPoolStatistics {
@@ -95,6 +111,10 @@ pub struct TaskPool {
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     indexes: TaskIndexes,
     payload_wire_bytes: HashMap<TaskId, usize>,
+    terminal_order: VecDeque<TaskId>,
+    evicted_task_ids: HashSet<TaskId>,
+    evicted_task_order: VecDeque<TaskId>,
+    history_retention: Option<TaskHistoryRetention>,
     next_sequence: u64,
     statistics: TaskPoolStatistics,
 }
@@ -106,7 +126,7 @@ impl TaskPool {
 
     pub fn enqueue_at(&mut self, mut task: Task, current_step: u64) -> RuntimeResult<TaskId> {
         let task_id = task.task_id.clone();
-        if self.tasks.contains_key(&task_id) {
+        if self.tasks.contains_key(&task_id) || self.evicted_task_ids.contains(&task_id) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_DUPLICATE,
                 "runtime.task_pool",
@@ -152,10 +172,65 @@ impl TaskPool {
         self.tasks.get(task_id)
     }
 
+    pub(crate) fn contains_task_id(&self, task_id: &str) -> bool {
+        self.tasks.contains_key(task_id) || self.evicted_task_ids.contains(task_id)
+    }
+
     pub fn records(&self) -> Vec<&TaskRecord> {
         let mut records: Vec<&TaskRecord> = self.tasks.values().collect();
         records.sort_by_key(|record| record.task.created_sequence);
         records
+    }
+
+    pub fn configure_history_retention(&mut self, retention: Option<TaskHistoryRetention>) {
+        let was_enabled = self.history_retention.is_some();
+        self.history_retention = retention;
+        self.terminal_order.clear();
+        if let Some(retention) = retention {
+            if !was_enabled {
+                self.evicted_task_ids.clear();
+                self.evicted_task_order.clear();
+            }
+            let mut terminal = self
+                .tasks
+                .values()
+                .filter(|record| transitions::is_terminal_status(&record.status))
+                .map(|record| (record.task.created_sequence, record.task.task_id.clone()))
+                .collect::<Vec<_>>();
+            terminal.sort_by_key(|(sequence, _)| *sequence);
+            self.terminal_order
+                .extend(terminal.into_iter().map(|(_, task_id)| task_id));
+            self.trim_evicted_task_ids(retention.max_evicted_task_ids);
+            self.evicted_task_ids
+                .shrink_to(retention.max_evicted_task_ids);
+            self.evicted_task_order
+                .shrink_to(retention.max_evicted_task_ids);
+            self.compact_terminal_history();
+        } else {
+            self.evicted_task_ids.clear();
+            self.evicted_task_order.clear();
+        }
+    }
+
+    pub fn history_retention(&self) -> Option<TaskHistoryRetention> {
+        self.history_retention
+    }
+
+    pub fn retained_terminal_records(&self) -> usize {
+        if self.history_retention.is_some() {
+            self.terminal_order.len()
+        } else {
+            let statistics = &self.statistics;
+            statistics.completed
+                + statistics.failed
+                + statistics.cancelled
+                + statistics.expired
+                + statistics.dead_letter
+        }
+    }
+
+    pub fn evicted_task_id_count(&self) -> usize {
+        self.evicted_task_ids.len()
     }
 
     #[cfg(test)]
@@ -440,7 +515,9 @@ impl TaskPool {
     }
 
     pub fn take_waits_for_child(&mut self, child_task_id: &str) -> Vec<TaskAwait> {
-        awaits::take_waits_for_child(self, child_task_id)
+        let waits = awaits::take_waits_for_child(self, child_task_id);
+        self.compact_terminal_history();
+        waits
     }
 
     pub fn rebind_ready_generation(&mut self, old_generation: u64, new_generation: u64) -> usize {
@@ -466,6 +543,61 @@ impl TaskPool {
             .get(task_id)
             .copied()
             .expect("enqueued task must have a cached payload wire size")
+    }
+
+    pub(super) fn record_terminal_task(&mut self, task_id: &str) {
+        if self.history_retention.is_some() {
+            self.terminal_order.push_back(task_id.to_string());
+            self.compact_terminal_history();
+        }
+    }
+
+    fn compact_terminal_history(&mut self) {
+        let Some(retention) = self.history_retention else {
+            return;
+        };
+        let mut protected_examined = 0;
+        while self.terminal_order.len() > retention.max_terminal_records
+            && protected_examined < self.terminal_order.len()
+        {
+            let task_id = self
+                .terminal_order
+                .pop_front()
+                .expect("terminal history length checked above");
+            if self.waits_by_child.contains_key(&task_id)
+                || self.waits_by_parent.contains_key(&task_id)
+            {
+                self.terminal_order.push_back(task_id);
+                protected_examined += 1;
+                continue;
+            }
+            protected_examined = 0;
+            let status = self
+                .tasks
+                .get(&task_id)
+                .map(|record| record.status.clone())
+                .expect("terminal history referenced a missing task record");
+            self.remove_record_indexes(&task_id);
+            self.tasks.remove(&task_id);
+            self.payload_wire_bytes.remove(&task_id);
+            self.statistics
+                .record_status_transition(Some(&status), None);
+            self.statistics.terminal_records_evicted =
+                self.statistics.terminal_records_evicted.saturating_add(1);
+            if retention.max_evicted_task_ids > 0 {
+                self.evicted_task_ids.insert(task_id.clone());
+                self.evicted_task_order.push_back(task_id);
+            }
+            self.trim_evicted_task_ids(retention.max_evicted_task_ids);
+        }
+    }
+
+    fn trim_evicted_task_ids(&mut self, capacity: usize) {
+        while self.evicted_task_order.len() > capacity {
+            if let Some(expired) = self.evicted_task_order.pop_front() {
+                self.evicted_task_ids.remove(&expired);
+            }
+        }
     }
 
     #[cfg(test)]

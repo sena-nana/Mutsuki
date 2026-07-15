@@ -65,7 +65,11 @@ cargo metadata --locked --format-version 1
 cargo fmt --check
 cargo test
 bash scripts/check-distributed-boundary.sh
+cargo bench-smoke
 ```
+
+完整性能矩阵使用 `cargo bench-full`。scheduled/release CI 保存结构化结果，并对匹配历史 case
+应用宽松相对阈值；普通 CI 的 smoke 只使用灾难性绝对上限，不把公共 runner 当微秒级稳定环境。
 
 改动外部 Python backend kit 时，在 `MutsukiPythonRunnerKit` 仓库运行其 `uv` 验证命令。
 
@@ -77,6 +81,9 @@ bash scripts/check-distributed-boundary.sh
 - TaskPool 增量索引必须能从 TaskRecord 确定性重建；所有状态迁移同步更新 ready、wake、
   expectation、lease expiry 和 runner load 索引。调度热路径不得使用 `records()` 快照、
   克隆全部候选 Task、重新排序完整候选集合或为 byte budget 重复 JSON 编码 payload。
+- Task terminal history 上限只能显式启用；默认保留既有无限 outcome 语义。启用时 terminal
+  record、payload byte cache、wait link 与防重 tombstone 必须一起保持有界，受 child wait
+  保护的 record 不得提前淘汰，累计统计不能随 record 淘汰回退。
 - Task 一次只能通过一个 TaskLease 交给一个 Runner / Executor 执行。
 - Runner 是逻辑处理器，不是物理执行单元；Executor 是物理执行槽位。
 - Rust `Runner` 必须是 `Send`；默认 host runtime 会把普通 runner 移动到 worker

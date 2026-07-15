@@ -186,7 +186,7 @@ impl CoreRuntime {
     fn ensure_output_task_ids_available(&self, pending_tasks: &[Task]) -> RuntimeResult<()> {
         let mut seen = BTreeSet::new();
         for task in pending_tasks {
-            if !seen.insert(task.task_id.clone()) || self.tasks.get(&task.task_id).is_some() {
+            if !seen.insert(task.task_id.clone()) || self.tasks.contains_task_id(&task.task_id) {
                 return Err(crate::runtime_failure(
                     ERR_TASK_DUPLICATE,
                     "runtime.result_router",

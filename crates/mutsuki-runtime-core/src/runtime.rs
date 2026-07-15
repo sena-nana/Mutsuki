@@ -14,7 +14,10 @@ use crate::registry::{
 };
 use crate::runner::Runner;
 use crate::state_store::StateStore;
-use crate::{ResourceManager, RuntimeFailure, RuntimeResult, TaskPool, TaskPoolStatistics};
+use crate::{
+    ResourceManager, RuntimeFailure, RuntimeResult, TaskHistoryRetention, TaskPool,
+    TaskPoolStatistics,
+};
 
 mod reload;
 mod resource_api;
@@ -219,6 +222,10 @@ impl CoreRuntime {
         self.events.configure(profile.events.clone());
         self.traces.configure(profile.traces.clone());
         self.load_plan.observability = profile;
+    }
+
+    pub fn configure_task_history_retention(&mut self, retention: Option<TaskHistoryRetention>) {
+        self.tasks.configure_history_retention(retention);
     }
 
     pub fn statistics(&self) -> RuntimeStatistics {

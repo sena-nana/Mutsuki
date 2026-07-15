@@ -27,7 +27,7 @@ pub use runtime::{
     RunningInvocationDisposition, RuntimeStatistics, RuntimeStopState, ScheduleDecision,
     TaskResultSnapshot,
 };
-pub use task_pool::{RunnerLoad, TaskPool, TaskPoolStatistics, TaskRecord};
+pub use task_pool::{RunnerLoad, TaskHistoryRetention, TaskPool, TaskPoolStatistics, TaskRecord};
 pub use trace::{TraceClosureIssue, validate_trace_closure};
 
 #[cfg(test)]

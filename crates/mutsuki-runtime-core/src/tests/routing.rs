@@ -785,6 +785,35 @@ fn duplicate_output_task_id_rejects_result_before_partial_routing() {
 }
 
 #[test]
+fn evicted_task_id_rejects_submit_batch_before_partial_enqueue() {
+    let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime.configure_task_history_retention(Some(TaskHistoryRetention::new(0, 4)));
+    let evicted = runtime
+        .submit_task(Task::new("evicted", "sim.work", json!({})))
+        .unwrap();
+    runtime.cancel_task_handle(&evicted).unwrap();
+    assert!(runtime.tasks().get("evicted").is_none());
+
+    let error = runtime
+        .submit_batch(TaskBatch {
+            batch_id: "contains-tombstone".into(),
+            tick_id: None,
+            tasks: vec![
+                Task::new("new-before-duplicate", "sim.work", json!({})),
+                Task::new("evicted", "sim.work", json!({})),
+            ],
+            resource_plan: None,
+        })
+        .unwrap_err();
+
+    assert_eq!(error.error().code, ERR_TASK_DUPLICATE);
+    assert!(runtime.tasks().get("new-before-duplicate").is_none());
+}
+
+#[test]
 fn runner_dispatch_unknown_result_fails_leased_task_without_retry() {
     let worker = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());

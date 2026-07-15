@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "issue": 28,
+  "captured_on": "2026-07-15",
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_parallelism": 10,
+    "rust_version": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "profile": "release"
+  },
+  "relative_threshold": {
+    "time_multiplier": 3.0,
+    "time_noise_floor_ns_per_unit": 50000,
+    "allocation_multiplier": 3.0,
+    "allocation_noise_floor_bytes_per_unit": 4096
+  },
+  "cases": [
+    {
+      "id": "scheduling/scale/tasks-100000/runners-128/ready-1/batch-32/uniform_protocols",
+      "units": 1000,
+      "ns_per_unit": 1262.125,
+      "allocations": { "allocated_bytes": 1866710 }
+    },
+    {
+      "id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+      "units": 512,
+      "ns_per_unit": 22599.609375,
+      "allocations": { "allocated_bytes": 879854 }
+    },
+    {
+      "id": "batch_resource/plan/entries-256/no_resources",
+      "units": 256,
+      "ns_per_unit": 2228.02734375,
+      "allocations": { "allocated_bytes": 2221868 }
+    },
+    {
+      "id": "batch_resource/completion/entries-256/no_resources",
+      "units": 256,
+      "ns_per_unit": 8199.54296875,
+      "allocations": { "allocated_bytes": 5352267 }
+    },
+    {
+      "id": "host/submit-batch/entries-256",
+      "units": 256,
+      "ns_per_unit": 1007.48828125,
+      "allocations": { "allocated_bytes": 1198035 }
+    },
+    {
+      "id": "host/actor-command-round-trip/statistics",
+      "units": 10000,
+      "ns_per_unit": 3929.5,
+      "allocations": { "allocated_bytes": 448980977 }
+    }
+  ]
+}

@@ -20,6 +20,7 @@ pub(super) fn complete(
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Completed));
     record_attempt_finished(task_pool, lease, current_step);
+    task_pool.record_terminal_task(&lease.task_id);
     Ok(())
 }
 
@@ -38,6 +39,7 @@ pub(super) fn fail(
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Failed));
     record_attempt_finished(task_pool, lease, current_step);
+    task_pool.record_terminal_task(&lease.task_id);
     Ok(())
 }
 
@@ -165,6 +167,7 @@ pub(super) fn reject_ready(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Ready), Some(&TaskStatus::Failed));
+    task_pool.record_terminal_task(task_id);
     Ok(())
 }
 
@@ -226,6 +229,7 @@ pub(super) fn cancel_task(
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Cancelled));
     record_attempt_finished(task_pool, lease, current_step);
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, &lease.task_id);
+    task_pool.record_terminal_task(&lease.task_id);
     Ok(())
 }
 
@@ -257,6 +261,7 @@ pub(super) fn terminal_by_core(
         record_attempt_finished(task_pool, &lease, current_step);
     }
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
+    task_pool.record_terminal_task(task_id);
     Ok(())
 }
 
@@ -333,6 +338,7 @@ pub(super) fn abort_all(
     aborted.sort();
     for task_id in &aborted {
         crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
+        task_pool.record_terminal_task(task_id);
     }
     aborted
 }

@@ -1,0 +1,67 @@
+name: Performance
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-benchmark:
+    name: Full benchmark and release gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore previous benchmark history
+        id: benchmark-history
+        uses: actions/cache/restore@v4
+        with:
+          path: .benchmark-history/previous.json
+          key: performance-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: |
+            performance-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Select comparison baseline
+        run: |
+          mkdir -p .benchmark-history target/mutsuki-benchmarks
+          if [ ! -f .benchmark-history/previous.json ]; then
+            cp artifacts/perf/issue28-baseline.json .benchmark-history/previous.json
+          fi
+
+      - name: Run full benchmark and gates
+        run: >-
+          cargo run --release --package mutsuki-runtime-benchmarks --
+          full
+          --gate release
+          --baseline .benchmark-history/previous.json
+          --output target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
+
+      - name: Preserve current result for the next comparison
+        run: >-
+          cp target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
+          .benchmark-history/previous.json
+
+      - name: Save benchmark history
+        uses: actions/cache/save@v4
+        with:
+          path: .benchmark-history/previous.json
+          key: performance-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+
+      - name: Upload structured benchmark result
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue28-performance-${{ github.run_id }}
+          path: target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
+          retention-days: 90
