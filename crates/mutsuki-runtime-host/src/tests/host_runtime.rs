@@ -831,6 +831,54 @@ fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
 }
 
 #[test]
+fn completion_subscription_survives_reload_and_wakes_for_new_generation() {
+    let mut runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let completions = runtime.subscribe_task_completions();
+    let observed_revision = completions.revision();
+    let echo_descriptor = descriptor("echo.runner", "raw.input");
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest("plugin-a", vec![echo_descriptor.clone()]));
+    reload_host.register_runner(Box::new(NativeRunner::new(
+        echo_descriptor,
+        |_ctx, task| Ok(RunnerResult::completed(task.task_id)),
+    )));
+
+    let prepared = reload_host.prepare_reload(runtime_profile(), 2).unwrap();
+    SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+    let handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "post-reload-completion",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("unexpected submit reply: {reply:?}"),
+    };
+
+    let revision = completions
+        .wait_after(observed_revision)
+        .expect("pre-reload subscription wakes for post-reload terminal task");
+    assert!(revision > observed_revision);
+    let states = runtime.task_states(vec![handle]).unwrap();
+    assert_eq!(states[0].status, Some(TaskStatus::Completed));
+    assert!(matches!(
+        states[0].outcome,
+        Some(TaskOutcome::Completed { ref task_id, .. })
+            if task_id == "post-reload-completion"
+    ));
+}
+
+#[test]
 fn host_runtime_reload_waits_for_in_flight_worker_before_swap() {
     let runner_descriptor =
         descriptor_with_class("reload.runner", "reload.work", ExecutionClass::Blocking);
