@@ -26,7 +26,10 @@ pub use protocol::{
     MAX_PAYLOAD_BYTES, Opcode, ProtocolHello, ProtocolHelloAck, SCHEMA_REVISION, WireCodecError,
     WireLimits, WireProtocolVersion, WireRequest,
 };
-pub use schema::{generated_schema_json, generated_schema_value};
+pub use schema::{
+    generated_fixtures_json, generated_fixtures_value, generated_schema_json,
+    generated_schema_value,
+};
 
 #[cfg(test)]
 mod tests;

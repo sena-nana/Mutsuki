@@ -16,6 +16,10 @@ fn published_opcodes_are_unique_and_schema_is_generated_from_registry() {
     let checked_in: Value =
         serde_json::from_str(include_str!("../schema/runtime-wire-v1.json")).unwrap();
     assert_eq!(checked_in, generated_schema_value());
+
+    let fixtures: Value =
+        serde_json::from_str(include_str!("../schema/runtime-wire-fixtures-v1.json")).unwrap();
+    assert_eq!(fixtures, generated_fixtures_value());
 }
 
 #[test]
