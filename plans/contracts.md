@@ -2,6 +2,11 @@
 
 根级 Rust contracts 是当前协议事实源。外部 Python runner kit 必须镜像这些 wire shape。
 
+Runtime 的封闭跨进程操作由 `mutsuki-runtime-wire` 作为单一 wire registry：稳定
+`Opcode`、request/response 类型关联、协议版本、codec、frame 上限和 checked-in IDL
+artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task、Runner、Resource
+等 DTO 语义；wire crate 不拥有调度或资源生命周期。
+
 ## 1. 协议总则
 
 - 所有协议对象必须可 serde JSON roundtrip。
@@ -95,6 +100,17 @@ runner.run_batch({ runner_id, ctx, batch }) -> CompletionBatch
 runner.cancel({ runner_id, invocation_id })
 runner.dispose({ runner_id })
 ```
+
+这些可读 method 仅是 typed JSONL debug codec 对稳定 Opcode 的生成映射；Host、SDK 和
+语言 Kit 调用层不得传入裸 method 或任意 params。每个连接必须先执行
+`plugin.initialize`，确认 protocol major、codec id、schema revision 和协商上限。正式
+binary codec 使用 4-byte big-endian length prefix、24-byte 显式 header 和 typed
+MessagePack payload；header 字段不得依赖 Rust 内存布局。JSONL 与 binary 必须共享同一
+request 类型、semantic fixtures 和兼容策略。
+
+JSONL 行、binary frame、payload、pending request 与管理保留容量均有硬上限。大于 wire
+inline limit 的资源 bytes 必须改用 `ResourceRef`、stream 或 shared descriptor，不能拆成
+JSON/MessagePack 数组内联。
 
 Host / SDK 的 task submit 面同样以 batch 为标准入口：
 

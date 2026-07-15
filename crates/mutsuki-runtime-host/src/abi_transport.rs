@@ -7,25 +7,16 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use mutsuki_runtime_wire::{
+    CancelRunnerRequest, CollectReadPlanRequest, CommandBatchRequest, CommandPlanRequest,
+    CommitWritePlanRequest, CreateBlobRequest, CreateCapabilityRequest, CreateCowStateRequest,
+    DisposeRunnerRequest, ExportPlanRequest, OpenStreamPlanRequest, RunBatchRequest,
+    SagaPlanRequest, SnapshotReadPlanRequest, WireRequest,
+};
 
-pub trait JsonRequestTransport: Send + Sync {
-    fn request(&self, method: &str, params: Value) -> RuntimeResult<Value>;
-
-    fn request_as<T: DeserializeOwned>(&self, method: &str, params: Value) -> RuntimeResult<T>
-    where
-        Self: Sized,
-    {
-        let value = self.request(method, params)?;
-        serde_json::from_value(value).map_err(|error| {
-            mutsuki_runtime_core::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
-                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-                "abi.transport",
-                format!("abi.decode:{error}"),
-            ))
-        })
-    }
+/// Transport-independent typed Runtime Wire request surface.
+pub trait TypedRequestTransport: Send + Sync {
+    fn request<R: WireRequest>(&self, request: &R) -> RuntimeResult<R::Response>;
 }
 
 pub struct TransportJsonlRunner<T> {
@@ -42,7 +33,7 @@ impl<T> TransportJsonlRunner<T> {
     }
 }
 
-impl<T: JsonRequestTransport> Runner for TransportJsonlRunner<T> {
+impl<T: TypedRequestTransport> Runner for TransportJsonlRunner<T> {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }
@@ -66,26 +57,24 @@ impl<T: JsonRequestTransport> Runner for TransportJsonlRunner<T> {
                 ),
             ));
         }
-        self.transport.request_as(
-            "runner.run_batch",
-            json!({ "runner_id": self.descriptor.runner_id, "ctx": ctx, "batch": batch }),
-        )
+        self.transport.request(&RunBatchRequest {
+            runner_id: self.descriptor.runner_id.clone(),
+            ctx,
+            batch,
+        })
     }
 
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
-        self.transport.request(
-            "runner.cancel",
-            json!({ "runner_id": self.descriptor.runner_id, "invocation_id": invocation_id }),
-        )?;
-        Ok(())
+        self.transport.request(&CancelRunnerRequest {
+            runner_id: self.descriptor.runner_id.clone(),
+            invocation_id: invocation_id.into(),
+        })
     }
 
     fn dispose(&mut self) -> RuntimeResult<()> {
-        self.transport.request(
-            "runner.dispose",
-            json!({ "runner_id": self.descriptor.runner_id }),
-        )?;
-        Ok(())
+        self.transport.request(&DisposeRunnerRequest {
+            runner_id: self.descriptor.runner_id.clone(),
+        })
     }
 }
 
@@ -101,19 +90,14 @@ impl<T> TransportResourceProvider<T> {
             transport,
         }
     }
-
-    fn params(&self, mut value: Value) -> Value {
-        value["provider_id"] = Value::String(self.provider_id.clone());
-        value
-    }
 }
 
-impl<T: JsonRequestTransport> ResourcePlanGateway for TransportResourceProvider<T> {
+impl<T: TypedRequestTransport> ResourcePlanGateway for TransportResourceProvider<T> {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        self.transport.request_as(
-            "resource.read.collect",
-            self.params(json!({ "plan": plan })),
-        )
+        self.transport.request(&CollectReadPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+        })
     }
 
     fn snapshot_read_plan(
@@ -122,53 +106,65 @@ impl<T: JsonRequestTransport> ResourcePlanGateway for TransportResourceProvider<
         kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<SnapshotDescriptor> {
-        self.transport.request_as(
-            "resource.read.snapshot",
-            self.params(json!({ "plan": plan, "kind_id": kind_id, "schema": schema })),
-        )
+        self.transport.request(&SnapshotReadPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+            kind_id: kind_id.into(),
+            schema: schema.into(),
+        })
     }
 
     fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        self.transport
-            .request_as("resource.stream.open", self.params(json!({ "plan": plan })))
+        self.transport.request(&OpenStreamPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+        })
     }
 
     fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.transport
-            .request_as("resource.export", self.params(json!({ "plan": plan })))
+        self.transport.request(&ExportPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+        })
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        self.transport.request_as(
-            "resource.write.commit",
-            self.params(json!({ "plan": plan, "bytes": bytes })),
-        )
+        self.transport.request(&CommitWritePlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+            bytes,
+        })
     }
 
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.transport
-            .request_as("resource.command", self.params(json!({ "plan": plan })))
+        self.transport.request(&CommandPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            plan: plan.clone(),
+        })
     }
 
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.transport.request_as(
-            "resource.command_batch",
-            self.params(json!({ "batch": batch })),
-        )
+        self.transport.request(&CommandBatchRequest {
+            provider_id: Some(self.provider_id.clone()),
+            batch: batch.clone(),
+        })
     }
 
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.transport
-            .request_as("resource.saga", self.params(json!({ "saga": saga })))
+        self.transport.request(&SagaPlanRequest {
+            provider_id: Some(self.provider_id.clone()),
+            saga: saga.clone(),
+        })
     }
 }
 
-impl<T: JsonRequestTransport> ResourceProviderGateway for TransportResourceProvider<T> {
+impl<T: TypedRequestTransport> ResourceProviderGateway for TransportResourceProvider<T> {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
-        self.transport.request_as(
-            "resource.create_blob",
-            self.params(json!({ "schema": schema, "bytes": bytes })),
-        )
+        self.transport.request(&CreateBlobRequest {
+            provider_id: Some(self.provider_id.clone()),
+            schema: schema.into(),
+            bytes,
+        })
     }
 
     fn create_cow_state_resource(
@@ -177,10 +173,12 @@ impl<T: JsonRequestTransport> ResourceProviderGateway for TransportResourceProvi
         schema: &str,
         bytes: Vec<u8>,
     ) -> RuntimeResult<ResourceRef> {
-        self.transport.request_as(
-            "resource.create_cow_state",
-            self.params(json!({ "kind_id": kind_id, "schema": schema, "bytes": bytes })),
-        )
+        self.transport.request(&CreateCowStateRequest {
+            provider_id: Some(self.provider_id.clone()),
+            kind_id: kind_id.into(),
+            schema: schema.into(),
+            bytes,
+        })
     }
 
     fn create_capability_resource(
@@ -188,9 +186,10 @@ impl<T: JsonRequestTransport> ResourceProviderGateway for TransportResourceProvi
         kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<ResourceRef> {
-        self.transport.request_as(
-            "resource.create_capability",
-            self.params(json!({ "kind_id": kind_id, "schema": schema })),
-        )
+        self.transport.request(&CreateCapabilityRequest {
+            provider_id: Some(self.provider_id.clone()),
+            kind_id: kind_id.into(),
+            schema: schema.into(),
+        })
     }
 }

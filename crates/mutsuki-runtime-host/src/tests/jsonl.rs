@@ -3,6 +3,10 @@ use std::io::Cursor;
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{Runner, RunnerContext};
+use mutsuki_runtime_wire::{
+    DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck, encode_jsonl_response,
+};
+use serde::Serialize;
 use serde_json::json;
 
 use crate::JsonlRunner;
@@ -26,8 +30,8 @@ fn jsonl_runner_uses_runner_run_batch_method_surface() {
         }],
         metadata: Vec::new(),
     };
-    let response = format!("{}\n", json!({"id":"req-1","ok":true,"result": result}));
-    let reader = Cursor::new(response.into_bytes());
+    let response = typed_responses(&[(Opcode::RunnerRunBatch, &result)]);
+    let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
     let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
 
@@ -119,11 +123,8 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
 #[test]
 fn jsonl_runner_cancel_and_dispose_use_management_methods() {
     let runner_descriptor = descriptor("jsonl.runner", "raw.input");
-    let response = concat!(
-        "{\"id\":\"req-1\",\"ok\":true,\"result\":null}\n",
-        "{\"id\":\"req-2\",\"ok\":true,\"result\":null}\n"
-    );
-    let reader = Cursor::new(response.as_bytes());
+    let response = typed_responses(&[(Opcode::RunnerCancel, &()), (Opcode::RunnerDispose, &())]);
+    let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
     let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
 
@@ -168,14 +169,27 @@ fn jsonl_runner_uses_resource_plan_method_surface() {
         new_version: None,
         output: json!({"ok": true}),
     };
-    let response = format!(
-        "{}\n{}\n{}\n{}\n",
-        json!({"id": "req-1", "ok": true, "result": receipt.clone()}),
-        json!({"id": "req-2", "ok": true, "result": receipt.clone()}),
-        json!({"id": "req-3", "ok": true, "result": [receipt.clone()]}),
-        json!({"id": "req-4", "ok": true, "result": [receipt]}),
-    );
-    let reader = Cursor::new(response.into_bytes());
+    let receipt_batch = vec![receipt.clone()];
+    let receipt_saga = vec![receipt.clone()];
+    let response = typed_response_bytes(&[
+        (
+            Opcode::ResourceExport,
+            serde_json::to_value(&receipt).unwrap(),
+        ),
+        (
+            Opcode::ResourceCommand,
+            serde_json::to_value(&receipt).unwrap(),
+        ),
+        (
+            Opcode::ResourceCommandBatch,
+            serde_json::to_value(&receipt_batch).unwrap(),
+        ),
+        (
+            Opcode::ResourceSaga,
+            serde_json::to_value(&receipt_saga).unwrap(),
+        ),
+    ]);
+    let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
     let runner = JsonlRunner::new(runner_descriptor, reader, writer);
 
@@ -217,4 +231,28 @@ fn jsonl_runner_uses_resource_plan_method_surface() {
     assert!(request.contains("\"method\":\"resource.command_batch\""));
     assert!(request.contains("\"method\":\"resource.saga\""));
     assert!(request.contains("\"target\":\"inline_utf8\""));
+}
+
+fn typed_responses<T: Serialize>(responses: &[(Opcode, &T)]) -> Vec<u8> {
+    typed_response_bytes(
+        &responses
+            .iter()
+            .map(|(opcode, value)| (*opcode, serde_json::to_value(value).unwrap()))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn typed_response_bytes(responses: &[(Opcode, serde_json::Value)]) -> Vec<u8> {
+    let hello = ProtocolHello::debug_jsonl();
+    let ack: ProtocolHelloAck =
+        serde_json::from_value(serde_json::to_value(hello).unwrap()).unwrap();
+    let mut encoded =
+        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+    for (index, (opcode, value)) in responses.iter().enumerate() {
+        encoded.extend(
+            encode_jsonl_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
+                .unwrap(),
+        );
+    }
+    encoded
 }

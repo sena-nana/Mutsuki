@@ -5,6 +5,7 @@ members = [
     "crates/mutsuki-runtime-host",
     "crates/mutsuki-runtime-sdk",
     "crates/mutsuki-runtime-sdk-macros",
+    "crates/mutsuki-runtime-wire",
     "crates/mutsuki-runtime-benchmarks",
 ]
 resolver = "2"
@@ -19,6 +20,8 @@ csv = "1.4"
 libc = "0.2"
 mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
+mutsuki-runtime-wire = { path = "crates/mutsuki-runtime-wire" }
+rmp-serde = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

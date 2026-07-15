@@ -2,6 +2,9 @@ use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
+use mutsuki_runtime_wire::{
+    DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck, encode_jsonl_response,
+};
 use serde_json::json;
 
 use crate::{AbiTaskClient, LocalTaskClient, TaskClient};
@@ -49,16 +52,18 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
         task_id: abi_task.task_id.clone(),
         reason: Some("test.cancel".into()),
     };
-    let response = format!(
-        "{}\n{}\n{}\n",
-        json!({"id": "req-1", "ok": true, "result": [abi_handle]}),
-        json!({"id": "req-2", "ok": true, "result": null}),
-        json!({"id": "req-3", "ok": true, "result": abi_outcome}),
-    );
-    let abi = AbiTaskClient::new(
-        Cursor::new(response.into_bytes()),
-        Cursor::new(Vec::<u8>::new()),
-    );
+    let response = typed_response_bytes(&[
+        (
+            Opcode::TaskSubmitBatch,
+            serde_json::to_value([abi_handle]).unwrap(),
+        ),
+        (Opcode::TaskCancel, serde_json::Value::Null),
+        (
+            Opcode::TaskOutcome,
+            serde_json::to_value(abi_outcome).unwrap(),
+        ),
+    ]);
+    let abi = AbiTaskClient::new(Cursor::new(response), Cursor::new(Vec::<u8>::new()));
 
     let submitted = abi.submit_one(abi_task).unwrap();
     abi.cancel_task(&submitted).unwrap();
@@ -108,16 +113,15 @@ fn task_clients_implement_sdk_task_submitter_boundary() {
         trace_id: None,
         correlation_id: None,
     };
-    let response = format!(
-        "{}\n{}\n{}\n",
-        json!({"id": "req-1", "ok": true, "result": [abi_handle]}),
-        json!({"id": "req-2", "ok": true, "result": null}),
-        json!({"id": "req-3", "ok": true, "result": null}),
-    );
-    let abi = AbiTaskClient::new(
-        Cursor::new(response.into_bytes()),
-        Cursor::new(Vec::<u8>::new()),
-    );
+    let response = typed_response_bytes(&[
+        (
+            Opcode::TaskSubmitBatch,
+            serde_json::to_value([abi_handle]).unwrap(),
+        ),
+        (Opcode::TaskCancel, serde_json::Value::Null),
+        (Opcode::TaskOutcome, serde_json::Value::Null),
+    ]);
+    let abi = AbiTaskClient::new(Cursor::new(response), Cursor::new(Vec::<u8>::new()));
 
     let submitted = mutsuki_runtime_sdk::TaskSubmitter::submit_one(&abi, abi_task).unwrap();
     assert_eq!(submitted.task_id, "sdk-abi-task");
@@ -164,14 +168,11 @@ fn task_clients_submit_batch_across_local_and_abi_backends() {
             correlation_id: None,
         },
     ];
-    let response = format!(
-        "{}\n",
-        json!({"id": "req-1", "ok": true, "result": abi_handles}),
-    );
-    let abi = AbiTaskClient::new(
-        Cursor::new(response.into_bytes()),
-        Cursor::new(Vec::<u8>::new()),
-    );
+    let response = typed_response_bytes(&[(
+        Opcode::TaskSubmitBatch,
+        serde_json::to_value(abi_handles).unwrap(),
+    )]);
+    let abi = AbiTaskClient::new(Cursor::new(response), Cursor::new(Vec::<u8>::new()));
     let abi_batch = TaskBatchBuilder::new("abi-batch")
         .task(Task::new("abi-batch-1", "raw.input", json!({})))
         .task(Task::new("abi-batch-2", "raw.input", json!({})))
@@ -183,4 +184,19 @@ fn task_clients_submit_batch_across_local_and_abi_backends() {
     assert_eq!(submitted.len(), 2);
     assert!(request.contains("\"method\":\"task.submit_batch\""));
     assert!(request.contains("\"batch_id\":\"abi-batch\""));
+}
+
+fn typed_response_bytes(responses: &[(Opcode, serde_json::Value)]) -> Vec<u8> {
+    let hello = ProtocolHello::debug_jsonl();
+    let ack: ProtocolHelloAck =
+        serde_json::from_value(serde_json::to_value(hello).unwrap()).unwrap();
+    let mut encoded =
+        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+    for (index, (opcode, value)) in responses.iter().enumerate() {
+        encoded.extend(
+            encode_jsonl_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
+                .unwrap(),
+        );
+    }
+    encoded
 }

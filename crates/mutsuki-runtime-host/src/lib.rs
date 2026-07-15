@@ -16,7 +16,7 @@ mod runtime_context;
 mod scheduler;
 mod worker;
 
-pub use abi_transport::{JsonRequestTransport, TransportJsonlRunner, TransportResourceProvider};
+pub use abi_transport::{TransportJsonlRunner, TransportResourceProvider, TypedRequestTransport};
 pub use backend::{HostExtension, PluginBackend};
 pub use bootstrapper::{NativeRunner, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
