@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{RuntimeEventKind, Task, TaskLease};
+use mutsuki_runtime_contracts::{RuntimeEventKind, SpanStatus, Task, TaskLease};
 
 use crate::RunnerContext;
 
@@ -41,13 +41,9 @@ pub(super) fn build_runner_dispatch(
                 &task_leases,
                 &executor_id,
             ));
-            runtime.traces.record(
-                trace_id,
-                "runner.run_batch",
-                None,
-                mutsuki_runtime_contracts::SpanStatus::Ok,
-                attrs,
-            )
+            runtime
+                .traces
+                .record(trace_id, "runner.run_batch", None, SpanStatus::Ok, attrs)
         } else {
             None
         };

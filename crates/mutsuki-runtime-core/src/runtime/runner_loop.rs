@@ -1,4 +1,6 @@
-use mutsuki_runtime_contracts::{RunnerDescriptor, Task, TaskLease};
+use mutsuki_runtime_contracts::{
+    RunnerDescriptor, RuntimeEventKind, ScalarValue, SpanStatus, Task, TaskLease,
+};
 
 use crate::RunnerLoopReport;
 use crate::RuntimeResult;
@@ -141,43 +143,39 @@ impl CoreRuntime {
         let mut attrs = std::collections::BTreeMap::from([
             (
                 "scheduler_id".into(),
-                mutsuki_runtime_contracts::ScalarValue::String(decision.scheduler_id.clone()),
+                ScalarValue::String(decision.scheduler_id.clone()),
             ),
             (
                 "runner_id".into(),
-                mutsuki_runtime_contracts::ScalarValue::String(descriptor.runner_id.clone()),
+                ScalarValue::String(descriptor.runner_id.clone()),
             ),
             (
                 "requested_dispatch_limit".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(
-                    decision.requested_dispatch_limit as i64,
-                ),
+                ScalarValue::Int(decision.requested_dispatch_limit as i64),
             ),
             (
                 "effective_dispatch_limit".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(decision.dispatch_limit as i64),
+                ScalarValue::Int(decision.dispatch_limit as i64),
             ),
             (
                 "budget_max_entries".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(decision.budget.max_entries as i64),
+                ScalarValue::Int(decision.budget.max_entries as i64),
             ),
             (
                 "budget_max_batches".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(decision.budget.max_batches as i64),
+                ScalarValue::Int(decision.budget.max_batches as i64),
             ),
             (
                 "reason".into(),
-                mutsuki_runtime_contracts::ScalarValue::String(decision.reason.clone()),
+                ScalarValue::String(decision.reason.clone()),
             ),
             (
                 "registry_generation".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(
-                    self.load_plan.registry_generation as i64,
-                ),
+                ScalarValue::Int(self.load_plan.registry_generation as i64),
             ),
             (
                 "current_step".into(),
-                mutsuki_runtime_contracts::ScalarValue::Int(self.current_step as i64),
+                ScalarValue::Int(self.current_step as i64),
             ),
         ]);
         if self.traces.will_retain_next()
@@ -185,18 +183,15 @@ impl CoreRuntime {
                 format!("trace-scheduler-{}", descriptor.runner_id),
                 "scheduler.decision",
                 None,
-                mutsuki_runtime_contracts::SpanStatus::Ok,
+                SpanStatus::Ok,
                 attrs.clone(),
             )
         {
-            attrs.insert(
-                "span_id".into(),
-                mutsuki_runtime_contracts::ScalarValue::String(span.span_id),
-            );
+            attrs.insert("span_id".into(), ScalarValue::String(span.span_id));
         }
         if self.events.is_enabled() {
             self.events.record(
-                mutsuki_runtime_contracts::RuntimeEventKind::Trace,
+                RuntimeEventKind::Trace,
                 "scheduler.decision",
                 Some(descriptor.runner_id.clone()),
                 attrs,

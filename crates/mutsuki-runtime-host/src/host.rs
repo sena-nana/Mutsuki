@@ -4,7 +4,9 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{ObservabilityProfile, RuntimeEvent, TaskStatus, TraceSpan};
+use mutsuki_runtime_contracts::{
+    ObservabilityPage, ObservabilityProfile, RuntimeEvent, TaskStatus, TraceSpan,
+};
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, RuntimeResult, RuntimeStatistics, RuntimeStopState,
 };
@@ -242,7 +244,7 @@ impl HostRuntime {
         &self,
         sequence: u64,
         limit: usize,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<RuntimeEvent>> {
+    ) -> RuntimeResult<ObservabilityPage<RuntimeEvent>> {
         match self.dispatch(HostRuntimeCommand::EventsAfter { sequence, limit })? {
             HostRuntimeReply::Events(page) => Ok(page),
             reply => Err(host_failure(
@@ -256,7 +258,7 @@ impl HostRuntime {
         &self,
         sequence: u64,
         limit: usize,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<TraceSpan>> {
+    ) -> RuntimeResult<ObservabilityPage<TraceSpan>> {
         match self.dispatch(HostRuntimeCommand::TraceSpansAfter { sequence, limit })? {
             HostRuntimeReply::TraceSpans(page) => Ok(page),
             reply => Err(host_failure(
@@ -315,7 +317,7 @@ impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
         &self,
         sequence: u64,
         limit: usize,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<RuntimeEvent>> {
+    ) -> RuntimeResult<ObservabilityPage<RuntimeEvent>> {
         HostRuntime::events_after(self, sequence, limit)
     }
 
@@ -323,7 +325,7 @@ impl mutsuki_runtime_sdk::HostRuntime for HostRuntime {
         &self,
         sequence: u64,
         limit: usize,
-    ) -> RuntimeResult<mutsuki_runtime_contracts::ObservabilityPage<TraceSpan>> {
+    ) -> RuntimeResult<ObservabilityPage<TraceSpan>> {
         HostRuntime::trace_spans_after(self, sequence, limit)
     }
 }

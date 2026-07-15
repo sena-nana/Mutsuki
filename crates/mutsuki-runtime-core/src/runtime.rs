@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, VecDeque};
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding,
-    ObservabilityOutletProfile, ObservabilityPage, ObservabilityProfile, RuntimeError,
-    RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
+    ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent, RuntimeEventKind,
+    RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
 };
 use serde_json::Value;
 
@@ -219,21 +219,6 @@ impl CoreRuntime {
         self.events.configure(profile.events.clone());
         self.traces.configure(profile.traces.clone());
         self.load_plan.observability = profile;
-    }
-
-    pub fn configure_event_outlet(&mut self, profile: ObservabilityOutletProfile) {
-        self.load_plan.observability.events = profile.clone();
-        self.events.configure(profile);
-    }
-
-    pub fn configure_trace_capacity(&mut self, capacity: usize) {
-        self.load_plan.observability.traces.capacity = capacity;
-        self.traces.set_capacity(capacity);
-    }
-
-    pub fn configure_trace_outlet(&mut self, profile: ObservabilityOutletProfile) {
-        self.load_plan.observability.traces = profile.clone();
-        self.traces.configure(profile);
     }
 
     pub fn statistics(&self) -> RuntimeStatistics {

@@ -7,11 +7,157 @@ use mutsuki_runtime_contracts::{
 };
 
 #[derive(Clone, Debug)]
-pub struct EventLog {
-    events: VecDeque<RuntimeEvent>,
+struct BoundedLog<T> {
+    records: VecDeque<T>,
     next_sequence: u64,
     profile: ObservabilityOutletProfile,
     dropped: u64,
+}
+
+impl<T> BoundedLog<T> {
+    fn new(profile: ObservabilityOutletProfile) -> Self {
+        Self {
+            records: if profile.capacity == 0 {
+                VecDeque::new()
+            } else {
+                VecDeque::with_capacity(profile.capacity)
+            },
+            next_sequence: 0,
+            profile,
+            dropped: 0,
+        }
+    }
+
+    fn configure(&mut self, profile: ObservabilityOutletProfile) {
+        self.profile = profile;
+        while self.records.len() > self.profile.capacity {
+            match self.profile.overflow_policy {
+                ObservabilityOverflowPolicy::DropOldest => self.records.pop_front(),
+                ObservabilityOverflowPolicy::DropNew => self.records.pop_back(),
+            };
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        if self.profile.capacity == 0 {
+            self.records.shrink_to_fit();
+        } else {
+            self.records.shrink_to(self.profile.capacity);
+        }
+    }
+
+    fn set_capacity(&mut self, capacity: usize) {
+        self.configure(ObservabilityOutletProfile::new(
+            capacity,
+            self.profile.overflow_policy,
+        ));
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.next_sequence
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.profile.capacity > 0
+    }
+
+    fn will_retain_next(&self) -> bool {
+        self.is_enabled()
+            && (self.records.len() < self.profile.capacity
+                || self.profile.overflow_policy == ObservabilityOverflowPolicy::DropOldest)
+    }
+
+    fn make_room(&mut self) -> bool {
+        if !self.will_retain_next() {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
+        }
+        if self.records.len() == self.profile.capacity {
+            self.records.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        true
+    }
+
+    fn retain(&mut self, record: T) {
+        if !self.make_room() {
+            return;
+        }
+        self.records.push_back(record);
+    }
+
+    fn record_with(&mut self, build: impl FnOnce(u64) -> T) -> Option<T>
+    where
+        T: Clone,
+    {
+        let sequence = self.next_sequence();
+        if !self.will_retain_next() {
+            self.dropped = self.dropped.saturating_add(1);
+            return None;
+        }
+        let record = build(sequence);
+        self.retain(record.clone());
+        Some(record)
+    }
+
+    fn page_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+        item_sequence: impl Fn(&T) -> u64,
+    ) -> ObservabilityPage<T>
+    where
+        T: Clone,
+    {
+        let earliest_available_sequence = self.records.front().map(&item_sequence);
+        let items: Vec<_> = self
+            .records
+            .iter()
+            .filter(|item| item_sequence(item) > sequence)
+            .take(limit)
+            .cloned()
+            .collect();
+        let next_sequence = if limit == 0 {
+            sequence
+        } else {
+            items
+                .last()
+                .map(&item_sequence)
+                .unwrap_or_else(|| sequence.max(self.next_sequence))
+        };
+        let lost = if limit == 0 {
+            0
+        } else {
+            next_sequence
+                .saturating_sub(sequence)
+                .saturating_sub(items.len() as u64)
+        };
+        ObservabilityPage {
+            items,
+            next_sequence,
+            earliest_available_sequence,
+            latest_sequence: self.next_sequence,
+            lost,
+            truncated: self.next_sequence > next_sequence,
+            dropped: self.dropped,
+        }
+    }
+
+    fn retained(&self) -> usize {
+        self.records.len()
+    }
+
+    fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    fn allocated_capacity(&self) -> usize {
+        self.records.capacity()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EventLog {
+    inner: BoundedLog<RuntimeEvent>,
 }
 
 impl Default for EventLog {
@@ -24,32 +170,26 @@ impl Default for EventLog {
 }
 
 impl EventLog {
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self::with_profile(ObservabilityOutletProfile::new(
-            capacity,
-            ObservabilityOverflowPolicy::DropNew,
-        ))
-    }
-
     pub fn with_profile(profile: ObservabilityOutletProfile) -> Self {
         Self {
-            events: bounded_queue(profile.capacity),
-            next_sequence: 0,
-            profile,
-            dropped: 0,
+            inner: BoundedLog::new(profile),
         }
     }
 
     pub fn configure(&mut self, profile: ObservabilityOutletProfile) {
-        self.profile = profile;
-        trim_to_profile(&mut self.events, &self.profile, &mut self.dropped);
+        self.inner.configure(profile);
     }
 
     pub fn set_capacity(&mut self, capacity: usize) {
-        self.configure(ObservabilityOutletProfile::new(
-            capacity,
-            self.profile.overflow_policy,
-        ));
+        self.inner.set_capacity(capacity);
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &RuntimeEvent> {
+        self.inner.records.iter()
     }
 
     pub fn record(
@@ -60,70 +200,43 @@ impl EventLog {
         attributes: BTreeMap<String, ScalarValue>,
         error: Option<RuntimeError>,
     ) -> RuntimeEvent {
-        self.next_sequence = self.next_sequence.saturating_add(1);
         let event = RuntimeEvent {
-            sequence: self.next_sequence,
+            sequence: self.inner.next_sequence(),
             kind,
             name: name.into(),
             subject_id,
             attributes,
             error,
         };
-        retain_bounded(
-            &mut self.events,
-            event.clone(),
-            &self.profile,
-            &mut self.dropped,
-        );
+        self.inner.retain(event.clone());
         event
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.profile.capacity > 0
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &RuntimeEvent> {
-        self.events.iter()
-    }
-
     pub fn snapshot(&self) -> &VecDeque<RuntimeEvent> {
-        &self.events
+        &self.inner.records
     }
 
     pub fn page_after(&self, sequence: u64, limit: usize) -> ObservabilityPage<RuntimeEvent> {
-        page_after(
-            &self.events,
-            sequence,
-            limit,
-            self.next_sequence,
-            self.dropped,
-            |event| event.sequence,
-        )
+        self.inner
+            .page_after(sequence, limit, |event| event.sequence)
     }
 
     pub fn drain(&mut self) -> Vec<RuntimeEvent> {
-        self.events.drain(..).collect()
+        self.inner.records.drain(..).collect()
     }
 
     pub fn retained(&self) -> usize {
-        self.events.len()
+        self.inner.retained()
     }
 
     pub fn dropped(&self) -> u64 {
-        self.dropped
-    }
-
-    pub fn allocated_capacity(&self) -> usize {
-        self.events.capacity()
+        self.inner.dropped()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct TraceLog {
-    spans: VecDeque<TraceSpan>,
-    next_sequence: u64,
-    profile: ObservabilityOutletProfile,
-    dropped: u64,
+    inner: BoundedLog<TraceSpan>,
 }
 
 impl Default for TraceLog {
@@ -145,33 +258,20 @@ impl TraceLog {
 
     pub fn with_profile(profile: ObservabilityOutletProfile) -> Self {
         Self {
-            spans: bounded_queue(profile.capacity),
-            next_sequence: 0,
-            profile,
-            dropped: 0,
+            inner: BoundedLog::new(profile),
         }
     }
 
     pub fn configure(&mut self, profile: ObservabilityOutletProfile) {
-        self.profile = profile;
-        trim_to_profile(&mut self.spans, &self.profile, &mut self.dropped);
+        self.inner.configure(profile);
     }
 
     pub fn set_capacity(&mut self, capacity: usize) {
-        self.configure(ObservabilityOutletProfile::new(
-            capacity,
-            self.profile.overflow_policy,
-        ));
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.profile.capacity > 0
+        self.inner.set_capacity(capacity);
     }
 
     pub fn will_retain_next(&self) -> bool {
-        self.is_enabled()
-            && (self.spans.len() < self.profile.capacity
-                || self.profile.overflow_policy == ObservabilityOverflowPolicy::DropOldest)
+        self.inner.will_retain_next()
     }
 
     pub fn record(
@@ -196,147 +296,27 @@ impl TraceLog {
     }
 
     pub fn record_with(&mut self, build: impl FnOnce(u64) -> TraceSpan) -> Option<TraceSpan> {
-        self.next_sequence = self.next_sequence.saturating_add(1);
-        if !self.will_retain_next() {
-            self.dropped = self.dropped.saturating_add(1);
-            return None;
-        }
-        let span = build(self.next_sequence);
-        retain_bounded(
-            &mut self.spans,
-            span.clone(),
-            &self.profile,
-            &mut self.dropped,
-        );
-        Some(span)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &TraceSpan> {
-        self.spans.iter()
+        self.inner.record_with(build)
     }
 
     pub fn spans(&self) -> &VecDeque<TraceSpan> {
-        &self.spans
+        &self.inner.records
     }
 
     pub fn page_after(&self, sequence: u64, limit: usize) -> ObservabilityPage<TraceSpan> {
-        page_after(
-            &self.spans,
-            sequence,
-            limit,
-            self.next_sequence,
-            self.dropped,
-            |span| span.sequence,
-        )
+        self.inner.page_after(sequence, limit, |span| span.sequence)
     }
 
     pub fn retained(&self) -> usize {
-        self.spans.len()
+        self.inner.retained()
     }
 
     pub fn dropped(&self) -> u64 {
-        self.dropped
+        self.inner.dropped()
     }
 
     pub fn allocated_capacity(&self) -> usize {
-        self.spans.capacity()
-    }
-}
-
-fn bounded_queue<T>(capacity: usize) -> VecDeque<T> {
-    if capacity == 0 {
-        VecDeque::new()
-    } else {
-        VecDeque::with_capacity(capacity)
-    }
-}
-
-fn retain_bounded<T>(
-    records: &mut VecDeque<T>,
-    record: T,
-    profile: &ObservabilityOutletProfile,
-    dropped: &mut u64,
-) {
-    if profile.capacity == 0 {
-        *dropped = dropped.saturating_add(1);
-        return;
-    }
-    if records.len() < profile.capacity {
-        records.push_back(record);
-        return;
-    }
-    *dropped = dropped.saturating_add(1);
-    if profile.overflow_policy == ObservabilityOverflowPolicy::DropOldest {
-        records.pop_front();
-        records.push_back(record);
-    }
-}
-
-fn trim_to_profile<T>(
-    records: &mut VecDeque<T>,
-    profile: &ObservabilityOutletProfile,
-    dropped: &mut u64,
-) {
-    while records.len() > profile.capacity {
-        match profile.overflow_policy {
-            ObservabilityOverflowPolicy::DropOldest => {
-                records.pop_front();
-            }
-            ObservabilityOverflowPolicy::DropNew => {
-                records.pop_back();
-            }
-        }
-        *dropped = dropped.saturating_add(1);
-    }
-    if profile.capacity == 0 {
-        records.shrink_to_fit();
-    } else {
-        records.shrink_to(profile.capacity);
-    }
-}
-
-fn page_after<T: Clone>(
-    records: &VecDeque<T>,
-    sequence: u64,
-    limit: usize,
-    latest_sequence: u64,
-    dropped: u64,
-    item_sequence: impl Fn(&T) -> u64,
-) -> ObservabilityPage<T> {
-    let earliest_available_sequence = records.front().map(&item_sequence);
-    if limit == 0 {
-        return ObservabilityPage {
-            items: Vec::new(),
-            next_sequence: sequence,
-            earliest_available_sequence,
-            latest_sequence,
-            lost: 0,
-            truncated: latest_sequence > sequence,
-            dropped,
-        };
-    }
-    let items: Vec<_> = records
-        .iter()
-        .filter(|item| item_sequence(item) > sequence)
-        .take(limit)
-        .cloned()
-        .collect();
-    let next_sequence = items
-        .last()
-        .map(&item_sequence)
-        .unwrap_or_else(|| sequence.max(latest_sequence));
-    let observed = items.len() as u64;
-    let lost = next_sequence
-        .saturating_sub(sequence)
-        .saturating_sub(observed);
-    ObservabilityPage {
-        items,
-        next_sequence,
-        earliest_available_sequence,
-        latest_sequence,
-        lost,
-        truncated: latest_sequence > next_sequence,
-        dropped,
+        self.inner.allocated_capacity()
     }
 }
 
@@ -427,7 +407,10 @@ mod tests {
             ObservabilityOverflowPolicy::DropOldest,
         ));
         assert_eq!(
-            log.iter().map(|span| span.sequence).collect::<Vec<_>>(),
+            log.spans()
+                .iter()
+                .map(|span| span.sequence)
+                .collect::<Vec<_>>(),
             vec![3, 4]
         );
         assert_eq!(log.dropped(), 2);
