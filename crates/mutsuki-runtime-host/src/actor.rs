@@ -46,39 +46,78 @@ struct RunningBatch {
     worker_started_at: Option<Instant>,
 }
 
-struct DriverClock {
-    tick_interval: Duration,
-    logical_target: Option<u64>,
-    logical_deadline: Option<Instant>,
+#[derive(Default)]
+struct DriverState {
+    scheduled_tick: Option<(u64, Instant)>,
     timed_wakeups: u64,
 }
 
-impl DriverClock {
-    fn new(tick_interval: Duration) -> Self {
-        Self {
-            tick_interval,
-            logical_target: None,
-            logical_deadline: None,
-            timed_wakeups: 0,
-        }
-    }
-
-    fn refresh_logical_deadline(&mut self, target: Option<u64>, current_step: u64) {
-        if target == self.logical_target {
+impl DriverState {
+    fn refresh_scheduled_tick(
+        &mut self,
+        target_step: Option<u64>,
+        current_step: u64,
+        tick_interval: Duration,
+    ) {
+        if target_step == self.scheduled_tick.map(|(target_step, _)| target_step) {
             return;
         }
-        self.logical_target = target;
-        self.logical_deadline = target.and_then(|target_step| {
+        self.scheduled_tick = target_step.and_then(|target_step| {
             let remaining_steps = target_step.saturating_sub(current_step);
-            Instant::now().checked_add(self.duration_for_steps(remaining_steps)?)
+            let total_nanos = tick_interval
+                .as_nanos()
+                .checked_mul(remaining_steps as u128)?;
+            let duration = Duration::new(
+                u64::try_from(total_nanos / 1_000_000_000).ok()?,
+                (total_nanos % 1_000_000_000) as u32,
+            );
+            Some((target_step, Instant::now().checked_add(duration)?))
         });
     }
 
-    fn duration_for_steps(&self, steps: u64) -> Option<Duration> {
-        let total_nanos = self.tick_interval.as_nanos().checked_mul(steps as u128)?;
-        let seconds = total_nanos / 1_000_000_000;
-        let nanos = (total_nanos % 1_000_000_000) as u32;
-        Some(Duration::new(u64::try_from(seconds).ok()?, nanos))
+    fn next_wake_deadline(
+        &self,
+        config: &HostRuntimeConfig,
+        running_batches_by_task: &BTreeMap<String, RunningBatch>,
+    ) -> Option<Instant> {
+        if !config.event_driven {
+            return None;
+        }
+        self.scheduled_tick
+            .map(|(_, deadline)| deadline)
+            .into_iter()
+            .chain(running_batches_by_task.values().flat_map(|task| {
+                [
+                    task.wall_clock_deadline_at,
+                    task.cancel_requested_at.and_then(|instant| {
+                        config
+                            .cancel_grace_period
+                            .and_then(|grace| instant.checked_add(grace))
+                    }),
+                    task.worker_started_at.and_then(|instant| {
+                        config
+                            .worker_health_timeout
+                            .and_then(|timeout| instant.checked_add(timeout))
+                    }),
+                ]
+                .into_iter()
+                .flatten()
+            }))
+            .min()
+    }
+
+    fn snapshot(
+        &self,
+        core: &CoreRuntime,
+        config: &HostRuntimeConfig,
+        running_batches_by_task: &BTreeMap<String, RunningBatch>,
+    ) -> HostRuntimeDriveState {
+        HostRuntimeDriveState {
+            current_step: core.current_step(),
+            next_required_tick: next_required_tick(core, running_batches_by_task),
+            next_wake_deadline: self.next_wake_deadline(config, running_batches_by_task),
+            timed_wakeups: self.timed_wakeups,
+        }
     }
 }
 
@@ -98,51 +137,6 @@ fn next_required_tick(
         .min()
 }
 
-fn next_wake_deadline(
-    config: &HostRuntimeConfig,
-    running_batches_by_task: &BTreeMap<String, RunningBatch>,
-    driver: &DriverClock,
-) -> Option<Instant> {
-    if !config.event_driven {
-        return None;
-    }
-    driver
-        .logical_deadline
-        .into_iter()
-        .chain(running_batches_by_task.values().flat_map(|task| {
-            [
-                task.wall_clock_deadline_at,
-                task.cancel_requested_at.and_then(|instant| {
-                    config
-                        .cancel_grace_period
-                        .and_then(|grace| instant.checked_add(grace))
-                }),
-                task.worker_started_at.and_then(|instant| {
-                    config
-                        .worker_health_timeout
-                        .and_then(|timeout| instant.checked_add(timeout))
-                }),
-            ]
-            .into_iter()
-            .flatten()
-        }))
-        .min()
-}
-
-fn drive_state(
-    core: &CoreRuntime,
-    config: &HostRuntimeConfig,
-    running_batches_by_task: &BTreeMap<String, RunningBatch>,
-    driver: &DriverClock,
-) -> HostRuntimeDriveState {
-    HostRuntimeDriveState {
-        current_step: core.current_step(),
-        next_required_tick: next_required_tick(core, running_batches_by_task),
-        next_wake_deadline: next_wake_deadline(config, running_batches_by_task, driver),
-        timed_wakeups: driver.timed_wakeups,
-    }
-}
-
 pub(crate) fn core_actor_loop(
     mut core: CoreRuntime,
     config: HostRuntimeConfig,
@@ -156,13 +150,15 @@ pub(crate) fn core_actor_loop(
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut running_batches_by_task: BTreeMap<String, RunningBatch> = BTreeMap::new();
     let mut draining_invocations: BTreeMap<String, String> = BTreeMap::new();
-    let mut driver = DriverClock::new(config.tick_interval);
+    let mut driver = DriverState::default();
     loop {
-        driver.refresh_logical_deadline(
+        driver.refresh_scheduled_tick(
             next_required_tick(&core, &running_batches_by_task),
             core.current_step(),
+            config.tick_interval,
         );
-        let wait = next_wake_deadline(&config, &running_batches_by_task, &driver)
+        let wait = driver
+            .next_wake_deadline(&config, &running_batches_by_task)
             .map(|deadline| deadline.saturating_duration_since(Instant::now()));
         let received = match wait {
             Some(wait) => rx.recv_timeout(wait),
@@ -172,10 +168,8 @@ pub(crate) fn core_actor_loop(
             Ok(msg) => msg,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 driver.timed_wakeups = driver.timed_wakeups.saturating_add(1);
-                if let Some(target_step) = driver.logical_target
-                    && driver
-                        .logical_deadline
-                        .is_some_and(|deadline| deadline <= Instant::now())
+                if let Some((target_step, deadline)) = driver.scheduled_tick
+                    && deadline <= Instant::now()
                     && schedule_ready_at(
                         target_step,
                         &mut core,
@@ -262,7 +256,7 @@ fn handle_command(
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
-    driver: &DriverClock,
+    driver: &DriverState,
 ) -> RuntimeResult<(HostRuntimeReply, bool)> {
     match command {
         HostRuntimeCommand::SubmitTask(task) => {
@@ -363,12 +357,7 @@ fn handle_command(
             Ok((HostRuntimeReply::Statistics(core.statistics()), false))
         }
         HostRuntimeCommand::DriveState => Ok((
-            HostRuntimeReply::DriveState(drive_state(
-                core,
-                config,
-                running_batches_by_task,
-                driver,
-            )),
+            HostRuntimeReply::DriveState(driver.snapshot(core, config, running_batches_by_task)),
             false,
         )),
         HostRuntimeCommand::TaskSnapshots => {
@@ -634,7 +623,7 @@ fn drain_worker_completions(
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
-    driver: &DriverClock,
+    driver: &DriverState,
     aggregate: &mut RunnerLoopReport,
     max_messages: usize,
 ) -> bool {
