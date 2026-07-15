@@ -315,7 +315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -977,7 +977,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=155081019b1aa186e4105d297dd7dfc5d9740711#155081019b1aa186e4105d297dd7dfc5d9740711"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=158f87f491abe091e01ea265aeeaacf77e2eb8a5#158f87f491abe091e01ea265aeeaacf77e2eb8a5"
 dependencies = [
  "serde",
  "serde_json",
@@ -986,7 +986,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=155081019b1aa186e4105d297dd7dfc5d9740711#155081019b1aa186e4105d297dd7dfc5d9740711"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=158f87f491abe091e01ea265aeeaacf77e2eb8a5#158f87f491abe091e01ea265aeeaacf77e2eb8a5"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=155081019b1aa186e4105d297dd7dfc5d9740711#155081019b1aa186e4105d297dd7dfc5d9740711"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=158f87f491abe091e01ea265aeeaacf77e2eb8a5#158f87f491abe091e01ea265aeeaacf77e2eb8a5"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -1008,7 +1008,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=155081019b1aa186e4105d297dd7dfc5d9740711#155081019b1aa186e4105d297dd7dfc5d9740711"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=158f87f491abe091e01ea265aeeaacf77e2eb8a5#158f87f491abe091e01ea265aeeaacf77e2eb8a5"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -1020,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=155081019b1aa186e4105d297dd7dfc5d9740711#155081019b1aa186e4105d297dd7dfc5d9740711"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=158f87f491abe091e01ea265aeeaacf77e2eb8a5#158f87f491abe091e01ea265aeeaacf77e2eb8a5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1030,7 +1030,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "dirs",
  "serde",
@@ -1042,7 +1042,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
@@ -1054,7 +1054,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -1067,7 +1067,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -1078,7 +1078,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1090,7 +1090,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -1103,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ae3463f5a795cf772af53536807c27d743306edb#ae3463f5a795cf772af53536807c27d743306edb"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=8afd431f9c0a69ae1b6fa5c255066f0172a2b42d#8afd431f9c0a69ae1b6fa5c255066f0172a2b42d"
 dependencies = [
  "anyhow",
  "futures",
@@ -1404,7 +1404,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1649,7 +1649,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
