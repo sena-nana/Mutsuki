@@ -2510,6 +2510,7 @@ mod tests {
         fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
             Ok(Some(TaskOutcome::Completed {
                 task_id: handle.task_id.clone(),
+                output: None,
                 output_ref: None,
             }))
         }

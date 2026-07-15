@@ -515,6 +515,7 @@ mod tests {
             handle.task_id.clone(),
             TaskOutcome::Completed {
                 task_id: handle.task_id.clone(),
+                output: None,
                 output_ref: Some("message-result".into()),
             },
         );
@@ -523,6 +524,7 @@ mod tests {
             context.task_outcome(&handle).unwrap(),
             Some(TaskOutcome::Completed {
                 task_id: handle.task_id,
+                output: None,
                 output_ref: Some("message-result".into()),
             })
         );
