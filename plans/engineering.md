@@ -94,8 +94,10 @@ cargo bench-smoke
   不占用 inflight。Host `pool_queue_limit` 仅约束物理 worker dispatch 队列。
 - HostRuntime cancel 先更新 Core task 状态，再通过 `Runner.cancel` 管理面投递。
   tick deadline 保持确定性取消语义；host-only wall-clock deadline、取消宽限和
-  worker health timeout 可把卡死 native worker 隔离并补 replacement worker。迟到
-  completion 必须 drain / dispose，不能把旧结果或旧 runner 重新放回 Core。
+  worker health timeout 可把卡死 native worker 隔离，但原线程退出前禁止补 replacement，
+  达到隔离上限必须 degraded / 拒绝新 dispatch。process runner 可通过独立 termination
+  handle kill 并重建；迟到 native completion 必须 drain / dispose，不能把旧结果或旧 runner
+  重新放回 Core。
 - 常驻 Host 应启用 event-driven driver；idle 时不得用固定 interval 调用 Tick。下一逻辑
   step 必须来自 TaskPool 增量索引与 running invocation deadline，timer 到期允许直接推进到
   目标 step。显式 tick 模式只用于 deterministic test、replay 和受控 embedding。

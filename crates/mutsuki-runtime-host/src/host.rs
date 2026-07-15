@@ -38,6 +38,8 @@ pub struct HostRuntimeConfig {
     pub worker_threads: usize,
     pub blocking_threads: usize,
     pub pool_queue_limit: usize,
+    pub pool_max_inflight_bytes: usize,
+    pub max_isolated_workers: usize,
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
@@ -68,6 +70,8 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("worker_threads", &self.worker_threads)
             .field("blocking_threads", &self.blocking_threads)
             .field("pool_queue_limit", &self.pool_queue_limit)
+            .field("pool_max_inflight_bytes", &self.pool_max_inflight_bytes)
+            .field("max_isolated_workers", &self.max_isolated_workers)
             .field("default_runner_limits", &self.default_runner_limits)
             .field("runner_limits", &self.runner_limits)
             .field("scheduler_policy", &self.scheduler_policy)
@@ -94,6 +98,8 @@ impl Default for HostRuntimeConfig {
                 .max(1),
             blocking_threads: 2,
             pool_queue_limit: 1024,
+            pool_max_inflight_bytes: 64 * 1024 * 1024,
+            max_isolated_workers: 2,
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
@@ -269,6 +275,16 @@ impl HostRuntime {
             HostRuntimeReply::DriveState(state) => Ok(state),
             reply => Err(host_failure(
                 "host.drive_state",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn worker_pools(&self) -> RuntimeResult<Vec<crate::WorkerPoolSnapshot>> {
+        match self.dispatch(HostRuntimeCommand::WorkerPools)? {
+            HostRuntimeReply::WorkerPools(pools) => Ok(pools),
+            reply => Err(host_failure(
+                "host.worker_pools",
                 format!("unexpected reply: {reply:?}"),
             )),
         }

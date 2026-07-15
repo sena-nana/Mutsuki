@@ -41,25 +41,17 @@ impl SchedulerPolicy for CapacityAssertingScheduler {
             ));
         }
         assert_eq!(input.host_capacity.preferred_batch_size, 16);
-        if input.host_capacity.queued_batches == 0 {
-            return Ok(ScheduleDecision::new(
-                "test.capacity",
-                0,
-                "test.capacity.no-ready",
-            ));
-        }
+        assert_eq!(input.host_capacity.queued_batches, 0);
         assert_eq!(input.host_capacity.running_batches, 0);
-        assert_eq!(input.host_capacity.max_running_batches, 1);
+        assert!(input.host_capacity.max_running_batches > 0);
         assert_eq!(input.host_capacity.running_entries, 0);
-        assert_eq!(
-            input.host_capacity.queued_entries,
-            input.host_capacity.queued_batches
-        );
-        assert!(input.host_capacity.saturation > 0.0);
+        assert_eq!(input.host_capacity.queued_entries, 0);
+        assert_eq!(input.host_capacity.saturation, 0.0);
         assert_eq!(input.host_capacity.max_entry_concurrency, 1);
+        assert!(input.host_capacity.max_inflight_bytes > 0);
         Ok(ScheduleDecision::new(
             "test.capacity",
-            input.host_capacity.preferred_batch_size,
+            input.hard_capacity,
             "test.capacity",
         ))
     }

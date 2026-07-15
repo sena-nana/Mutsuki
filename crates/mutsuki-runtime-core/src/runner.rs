@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, RunnerContext, RunnerDescriptor,
@@ -6,6 +8,32 @@ use mutsuki_runtime_contracts::{
 };
 
 use crate::RuntimeResult;
+
+pub trait RunnerTerminationHandle: Send + Sync + fmt::Debug {
+    /// Terminates the deployment boundary that is currently executing a runner invocation.
+    ///
+    /// Implementations must only return success after a real termination signal has been
+    /// delivered to a boundary that can be killed independently from the Host process.
+    fn terminate(&self) -> RuntimeResult<()>;
+}
+
+#[derive(Clone)]
+pub enum RunnerIsolation {
+    /// In-process native code can only observe cooperative cancellation. Rust threads cannot be
+    /// forcefully terminated without compromising the Host process.
+    Cooperative,
+    /// A process or sidecar boundary can be terminated independently and recreated afterwards.
+    HardProcess(Arc<dyn RunnerTerminationHandle>),
+}
+
+impl fmt::Debug for RunnerIsolation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cooperative => formatter.write_str("Cooperative"),
+            Self::HardProcess(_) => formatter.write_str("HardProcess"),
+        }
+    }
+}
 
 pub trait Runner: Send {
     fn descriptor(&self) -> &RunnerDescriptor;
@@ -19,6 +47,23 @@ pub trait Runner: Send {
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         Ok(())
+    }
+
+    fn isolation(&self) -> RunnerIsolation {
+        RunnerIsolation::Cooperative
+    }
+
+    /// Recreates a runner after its independently terminable deployment boundary was killed.
+    /// Native runners intentionally do not implement this method.
+    fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {
+        Err(crate::runtime_failure(
+            mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+            "runtime.runner",
+            format!(
+                "runner.{}.hard_recovery_unsupported",
+                self.descriptor().runner_id
+            ),
+        ))
     }
 }
 

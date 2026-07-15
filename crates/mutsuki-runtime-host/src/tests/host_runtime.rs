@@ -1,5 +1,6 @@
 #![allow(clippy::field_reassign_with_default)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -13,7 +14,8 @@ use serde_json::json;
 
 use crate::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativeRunner,
-    RunnerLimits, RuntimeBootstrapper, ScheduleInput, SchedulerPolicy, runner_manifest,
+    ProcessRunnerSpec, RunnerLimits, RuntimeBootstrapper, ScheduleInput, SchedulerPolicy,
+    SpawnedJsonlRunner, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
@@ -353,6 +355,69 @@ fn host_actor_accepts_work_while_blocking_runner_is_stuck() {
         runtime.task_status("blocking-1"),
         Some(TaskStatus::Completed)
     );
+}
+
+#[test]
+fn bounded_worker_queue_saturates_without_losing_ready_tasks() {
+    let blocker = descriptor_with_class("a.blocker", "queue.block", ExecutionClass::Blocking);
+    let echo_b = descriptor_with_class("b.echo", "queue.echo.b", ExecutionClass::Blocking);
+    let echo_c = descriptor_with_class("c.echo", "queue.echo.c", ExecutionClass::Blocking);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![blocker.clone(), echo_b.clone(), echo_c.clone()],
+    ));
+    host.register_runner(Box::new(NativeRunner::new(blocker, move |_ctx, task| {
+        started_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        Ok(RunnerResult::completed(task.task_id))
+    })));
+    for descriptor in [echo_b, echo_c] {
+        host.register_runner(Box::new(NativeRunner::new(descriptor, |_ctx, task| {
+            Ok(RunnerResult::completed(task.task_id))
+        })));
+    }
+    let config = HostRuntimeConfig {
+        blocking_threads: 1,
+        pool_queue_limit: 1,
+        ..HostRuntimeConfig::default()
+    };
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+    for (task_id, protocol) in [
+        ("queue-block", "queue.block"),
+        ("queue-b", "queue.echo.b"),
+        ("queue-c", "queue.echo.c"),
+    ] {
+        runtime
+            .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                task_id,
+                protocol,
+                json!({}),
+            ))))
+            .unwrap();
+    }
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let blocking = runtime
+        .worker_pools()
+        .unwrap()
+        .into_iter()
+        .find(|pool| pool.pool_id == "blocking")
+        .unwrap();
+    assert!(blocking.queued_batches <= 1);
+    assert!(
+        runtime.task_status("queue-b") == Some(TaskStatus::Ready)
+            || runtime.task_status("queue-c") == Some(TaskStatus::Ready)
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_status(&mut runtime, "queue-block", TaskStatus::Completed);
+    wait_for_status(&mut runtime, "queue-b", TaskStatus::Completed);
+    wait_for_status(&mut runtime, "queue-c", TaskStatus::Completed);
 }
 
 #[test]
@@ -883,7 +948,7 @@ fn host_runtime_routes_execution_classes_to_named_worker_pools() {
         observed_thread
             .lock()
             .expect("observed thread mutex poisoned")
-            .contains("script-worker")
+            .contains("blocking-worker")
     );
 }
 
@@ -940,6 +1005,51 @@ fn host_worker_failure_marks_task_failed_and_returns_runner() {
         Some(TaskStatus::Completed)
     );
     assert_eq!(*attempts.lock().expect("attempts mutex poisoned"), 2);
+}
+
+#[test]
+fn worker_catches_runner_panic_and_keeps_pool_capacity() {
+    let runner_descriptor = descriptor("panic.runner", "panic.work");
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = attempts.clone();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        move |_ctx, task| {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("intentional runner panic");
+            }
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
+    let runtime = host.into_host_runtime(runtime_profile()).unwrap();
+
+    for task_id in ["panic-first", "panic-second"] {
+        runtime
+            .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                task_id,
+                "panic.work",
+                json!({}),
+            ))))
+            .unwrap();
+        runtime
+            .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
+            .unwrap();
+    }
+    assert_eq!(runtime.task_status("panic-first"), Some(TaskStatus::Failed));
+    assert_eq!(
+        runtime.task_status("panic-second"),
+        Some(TaskStatus::Completed)
+    );
+    let compute = runtime
+        .worker_pools()
+        .unwrap()
+        .into_iter()
+        .find(|pool| pool.pool_id == "compute")
+        .unwrap();
+    assert_eq!(compute.active_threads, compute.configured_threads);
+    assert_eq!(compute.isolated_threads, 0);
 }
 
 #[test]
@@ -1201,14 +1311,19 @@ fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
     runtime
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
-    wait_for_status(&mut runtime, "wall-echo-1", TaskStatus::Completed);
-    assert_eq!(
-        runtime.task_status("wall-echo-1"),
-        Some(TaskStatus::Completed)
-    );
+    assert_eq!(runtime.task_status("wall-echo-1"), Some(TaskStatus::Ready));
+    let pools = runtime.worker_pools().unwrap();
+    let blocking = pools
+        .iter()
+        .find(|pool| pool.pool_id == "blocking")
+        .unwrap();
+    assert_eq!(blocking.configured_threads, 1);
+    assert_eq!(blocking.isolated_threads, 1);
+    assert!(blocking.degraded);
 
     release_tx.send(()).unwrap();
     wait_for_dispose(&mut runtime, &disposed);
+    wait_for_status(&mut runtime, "wall-echo-1", TaskStatus::Completed);
     assert_eq!(
         runtime.task_status("wall-stuck-1"),
         Some(TaskStatus::Cancelled)
@@ -1294,14 +1409,14 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
     runtime
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
-    wait_for_status(&mut runtime, "cancel-echo-1", TaskStatus::Completed);
     assert_eq!(
         runtime.task_status("cancel-echo-1"),
-        Some(TaskStatus::Completed)
+        Some(TaskStatus::Ready)
     );
 
     release_tx.send(()).unwrap();
     wait_for_dispose(&mut runtime, &disposed);
+    wait_for_status(&mut runtime, "cancel-echo-1", TaskStatus::Completed);
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
         vec!["batch-1-stuck.cancel.runner-1".to_string()]
@@ -1377,19 +1492,223 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     runtime
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
-    wait_for_status(&mut runtime, "health-echo-1", TaskStatus::Completed);
     assert_eq!(
         runtime.task_status("health-echo-1"),
-        Some(TaskStatus::Completed)
+        Some(TaskStatus::Ready)
     );
 
     release_tx.send(()).unwrap();
     wait_for_dispose(&mut runtime, &disposed);
+    wait_for_status(&mut runtime, "health-echo-1", TaskStatus::Completed);
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
         vec!["batch-1-stuck.health.runner-1".to_string()]
     );
     assert!(*disposed.lock().expect("disposed mutex poisoned"));
+}
+
+#[test]
+fn one_hundred_native_hangs_do_not_create_unbounded_replacement_threads() {
+    let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let descriptors = (0..100)
+        .map(|index| {
+            descriptor_with_class(
+                &format!("native.hang.runner.{index}"),
+                &format!("native.hang.{index}"),
+                ExecutionClass::Blocking,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", descriptors.clone()));
+    for descriptor in descriptors {
+        let gate = gate.clone();
+        host.register_runner(Box::new(NativeRunner::new(
+            descriptor,
+            move |_ctx, task| {
+                let (released, wake) = &*gate;
+                let mut released = released.lock().expect("hang gate poisoned");
+                while !*released {
+                    released = wake.wait(released).expect("hang gate poisoned");
+                }
+                Ok(RunnerResult::completed(task.task_id))
+            },
+        )));
+    }
+    let config = HostRuntimeConfig {
+        blocking_threads: 2,
+        max_isolated_workers: 2,
+        pool_queue_limit: 128,
+        default_runner_limits: RunnerLimits {
+            wall_clock_deadline: Some(Duration::from_millis(30)),
+            ..RunnerLimits::default()
+        },
+        ..HostRuntimeConfig::default()
+    };
+    let runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+    for index in 0..100 {
+        runtime
+            .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+                format!("native-hang-task-{index}"),
+                format!("native.hang.{index}"),
+                json!({}),
+            ))))
+            .unwrap();
+    }
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    std::thread::sleep(Duration::from_millis(60));
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+
+    let blocking = runtime
+        .worker_pools()
+        .unwrap()
+        .into_iter()
+        .find(|pool| pool.pool_id == "blocking")
+        .unwrap();
+    assert_eq!(blocking.configured_threads, 2);
+    assert_eq!(blocking.active_threads, 2);
+    assert_eq!(blocking.isolated_threads, 2);
+    assert!(blocking.degraded);
+    assert!(blocking.queued_batches <= 98);
+
+    let (released, wake) = &*gate;
+    *released.lock().expect("hang gate poisoned") = true;
+    wake.notify_all();
+}
+
+#[test]
+fn hard_timeout_terminates_process_runner_and_recovers_capacity() {
+    let runner_descriptor =
+        descriptor_with_class("process.runner", "process.work", ExecutionClass::Script);
+    let marker = std::env::temp_dir().join(format!(
+        "mutsuki-process-runner-recovery-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    let spec = ProcessRunnerSpec {
+        command: std::env::current_exe().unwrap(),
+        args: vec![
+            "--exact".into(),
+            "tests::host_runtime::process_runner_helper".into(),
+            "--ignored".into(),
+            "--nocapture".into(),
+        ],
+        cwd: None,
+        env: std::collections::BTreeMap::from([(
+            "MUTSUKI_PROCESS_HELPER_MARKER".into(),
+            marker.to_string_lossy().into_owned(),
+        )]),
+    };
+    let runner = SpawnedJsonlRunner::spawn(runner_descriptor.clone(), &spec).unwrap();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor]));
+    host.register_runner(Box::new(runner));
+    let config = HostRuntimeConfig {
+        blocking_threads: 1,
+        max_isolated_workers: 1,
+        default_runner_limits: RunnerLimits {
+            wall_clock_deadline: Some(Duration::from_millis(50)),
+            ..RunnerLimits::default()
+        },
+        ..HostRuntimeConfig::default()
+    };
+    let mut runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "process-hang-1",
+            "process.work",
+            json!({}),
+        ))))
+        .unwrap();
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    std::thread::sleep(Duration::from_millis(80));
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    wait_for_status(&mut runtime, "process-hang-1", TaskStatus::Cancelled);
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "process-recovers-1",
+            "process.work",
+            json!({}),
+        ))))
+        .unwrap();
+    wait_for_status(&mut runtime, "process-recovers-1", TaskStatus::Completed);
+
+    let blocking = runtime
+        .worker_pools()
+        .unwrap()
+        .into_iter()
+        .find(|pool| pool.pool_id == "blocking")
+        .unwrap();
+    assert_eq!(blocking.configured_threads, 1);
+    assert_eq!(blocking.isolated_threads, 0);
+    assert!(!blocking.degraded);
+    let _ = std::fs::remove_file(marker);
+}
+
+#[test]
+#[ignore]
+fn process_runner_helper() {
+    let Ok(marker) = std::env::var("MUTSUKI_PROCESS_HELPER_MARKER") else {
+        return;
+    };
+    let first_process = !std::path::Path::new(&marker).exists();
+    if first_process {
+        std::fs::write(&marker, b"started").unwrap();
+    }
+    let stdin = std::io::stdin();
+    let mut lines = std::io::BufRead::lines(stdin.lock());
+    while let Some(Ok(line)) = lines.next() {
+        if first_process {
+            loop {
+                std::thread::sleep(Duration::from_secs(60));
+            }
+        }
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let id = request["id"].clone();
+        let result = if request["method"] == "runner.run_batch" {
+            let batch = &request["params"]["batch"];
+            let results = batch["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| {
+                    let task_id = entry["task_id"].clone();
+                    json!({
+                        "entry_id": entry["entry_id"],
+                        "task_id": task_id,
+                        "result": {
+                            "task_id": task_id,
+                            "deltas": [],
+                            "events": [],
+                            "tasks": [],
+                            "effects": [],
+                            "values": [],
+                            "resources": [],
+                            "status": "completed",
+                            "continuation_ref": null,
+                            "task_await": null
+                        },
+                        "error": null
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "batch_id": batch["batch_id"],
+                "tick_id": batch["tick_id"],
+                "results": results,
+                "metadata": []
+            })
+        } else {
+            serde_json::Value::Null
+        };
+        println!("{}", json!({"id": id, "ok": true, "result": result}));
+    }
 }
 
 #[test]

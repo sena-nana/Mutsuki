@@ -6,7 +6,7 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport, RuntimeStatistics, RuntimeStopState};
 use mutsuki_runtime_sdk::HostTaskSnapshot;
 
-use crate::{HostRuntimeDriveState, PreparedRuntimeReload};
+use crate::{HostRuntimeDriveState, PreparedRuntimeReload, WorkerPoolSnapshot};
 
 // Variant boxing is part of this public control-plane API and must not drift for a lint.
 #[allow(clippy::large_enum_variant)]
@@ -25,6 +25,7 @@ pub enum HostRuntimeCommand {
     StopState,
     Statistics,
     DriveState,
+    WorkerPools,
     TaskSnapshots,
     TaskOutcome(TaskHandle),
     EventsAfter {
@@ -87,6 +88,7 @@ pub enum HostRuntimeReply {
     StopState(RuntimeStopState),
     Statistics(RuntimeStatistics),
     DriveState(HostRuntimeDriveState),
+    WorkerPools(Vec<WorkerPoolSnapshot>),
     TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskOutcome(Option<TaskOutcome>),
     Events(ObservabilityPage<RuntimeEvent>),

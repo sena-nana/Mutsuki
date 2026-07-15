@@ -32,6 +32,7 @@ pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 pub use process::{ProcessRunnerSpec, SpawnedJsonlRunner};
 pub use resolver::resolve_load_plan;
 pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};
+pub use worker::WorkerPoolSnapshot;
 
 #[cfg(test)]
 mod tests;

@@ -234,6 +234,25 @@ impl CoreRuntime {
         completion_router::complete_runner_dispatch(self, completion)
     }
 
+    /// Returns a dispatch that could not enter a bounded Host executor queue to Ready without
+    /// losing its runner or leaving active leases behind.
+    pub fn defer_runner_dispatch(&mut self, dispatch: RunnerDispatch) -> RuntimeResult<usize> {
+        for lease in &dispatch.task_leases {
+            self.tasks.ensure_active_lease(
+                &lease.task_id,
+                lease,
+                self.current_step,
+                "host_defer",
+            )?;
+        }
+        for lease in &dispatch.task_leases {
+            self.tasks.defer_leased(lease, self.current_step)?;
+        }
+        let deferred = dispatch.task_leases.len();
+        self.registry.put_runner(dispatch.runner);
+        Ok(deferred)
+    }
+
     fn reclaim_expired_task_leases(&mut self) {
         failure_reporting::reclaim_expired_task_leases(self);
     }

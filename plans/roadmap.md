@@ -196,9 +196,12 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `RunnerContext.deadline_tick`，actor tick 发现超期 running invocation 后取消 Core
     task，并通过同一 runner management cancel 路径传播。
   - HostRuntime 支持 host-only wall-clock deadline、取消宽限和 worker health timeout。
-    超时或取消后仍不归还的 native worker 会被隔离，blocking/script pool 会补充
-    replacement worker；迟到 completion 进入 drain，只投递 management cancel /
-    dispose，不再把旧 runner 或结果放回 Core。
+    Orchestration / Io / Cpu 共享 bounded compute pool，Blocking / Script 共享 bounded
+    blocking pool；两个 pool 使用多消费者有界 channel，不再复制 execution-class CPU pool
+    或串行锁住单 receiver。HostCapacity 报告真实 pool batch / entry / byte 容量。
+  - 超时或取消后仍不归还的 native worker 只会被隔离；原线程退出前禁止补 replacement，
+    达到隔离上限后 pool degraded / 拒绝新 dispatch。process runner 可通过独立 termination
+    handle kill 子进程、解除阻塞、重建 runner，并在原 worker 退出后恢复 worker capacity。
   - Host scheduler 的 `HostCapacity` 暴露 running/queued batch 与 entry 数、saturation、
     preferred batch size、max entry concurrency 和 max inflight bytes；SchedulerPolicy
     只读这些事实并返回 dispatch budget。
@@ -275,9 +278,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - 为 provider RPC 和 effect gateway 引入更完整的长期 supervision 与 compensation。
 - 在既有本地 attempt generation、TaskLease 过期回收和 stale executor commit fencing 上
   扩展更完整的 executor supervision。
-- 扩展跨进程 runner / sidecar 的独立 management channel、强制终止和补偿语义；当前
-  HostRuntime 已覆盖 native worker health、wall-clock deadline、隔离 replacement 和
-  迟到 completion drain。
+- 扩展跨进程 runner / sidecar 的独立双工 management channel 和补偿语义；当前
+  HostRuntime 已覆盖 native cooperative isolation、process hard terminate/recover、隔离上限
+  和迟到 completion drain。
 - 当确实出现多 host 策略、QoS、deadline、资源亲和性或租户隔离需求时，再把
   scheduler provider / plugin 化纳入 load-plan 设计；即便插件化，scheduler 也只能返回
   调度决策，不能执行 task、修改 TaskPool 或绕过 Core 生命周期。

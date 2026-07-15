@@ -14,7 +14,9 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+crossbeam-channel = "0.5"
 csv = "1.4"
+libc = "0.2"
 mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
 serde = { version = "1.0", features = ["derive"] }

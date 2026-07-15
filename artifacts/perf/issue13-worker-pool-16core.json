@@ -1,0 +1,45 @@
+{
+  "schema": "mutsuki.worker-pool.issue13.v1",
+  "recorded_at": "2026-07-15T17:33:18+08:00",
+  "baseline_revision": "de7d2d4cf326fbffceb223897bbeef8aaef67bbe",
+  "command": "cargo run --release -p mutsuki-runtime-host --example worker_pool_benchmark",
+  "host": {
+    "os": "Darwin 25.5.0 arm64",
+    "physical_cores": 10,
+    "logical_cores": 10,
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "note": "The harness models a 16-logical-core Host topology; measurements ran on the available 10-core Apple Silicon host."
+  },
+  "benchmark": {
+    "modeled_logical_cores": 16,
+    "jobs_per_sample": 200000,
+    "work_iterations_per_job": 256,
+    "queue_capacity": 65536,
+    "samples": 5,
+    "selection": "median wall-clock sample",
+    "legacy": {
+      "topology": "3xcpu_plus_blocking",
+      "queue": "std_mpsc_arc_mutex_receiver",
+      "worker_threads": 52,
+      "median_elapsed_ms": 84.11025,
+      "throughput_jobs_per_second": 2377831.4771386366,
+      "voluntary_context_switches": 0,
+      "involuntary_context_switches": 17872
+    },
+    "optimized": {
+      "topology": "shared_compute_plus_bounded_blocking",
+      "queue": "crossbeam_bounded_multi_consumer",
+      "worker_threads": 20,
+      "median_elapsed_ms": 32.404541,
+      "throughput_jobs_per_second": 6171974.477280823,
+      "voluntary_context_switches": 0,
+      "involuntary_context_switches": 15738
+    },
+    "delta": {
+      "worker_thread_reduction_percent": 61.53846153846154,
+      "throughput_change_percent": 159.56315813885462,
+      "involuntary_context_switch_change_percent": -11.940465532676814,
+      "voluntary_context_switch_change_percent": null
+    }
+  }
+}

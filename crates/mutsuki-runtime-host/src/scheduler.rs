@@ -3,6 +3,8 @@ use std::time::Duration;
 use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor, RuntimeError, ScalarValue};
 use mutsuki_runtime_core::{RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision};
 
+use crate::worker::PoolCapacitySnapshot;
+
 pub const SINGLE_RUNNER_MAX_ACTIVE_BATCHES: usize = 1;
 
 #[derive(Clone, Debug)]
@@ -98,12 +100,13 @@ pub(crate) fn decide_schedule(
     registry_generation: u64,
     limits: &RunnerLimits,
     pool_slots: usize,
+    pool_capacity: PoolCapacitySnapshot,
     running_batches: usize,
     policy: &dyn SchedulerPolicy,
 ) -> RuntimeResult<ScheduleDecision> {
     let hard_capacity =
         hard_dispatch_capacity(descriptor, load, limits, pool_slots, running_batches);
-    let host_capacity = host_capacity(descriptor, load, limits, running_batches);
+    let host_capacity = host_capacity(descriptor, limits, pool_capacity);
     let input = ScheduleInput {
         runner: descriptor,
         load,
@@ -114,36 +117,38 @@ pub(crate) fn decide_schedule(
         current_step,
         registry_generation,
     };
-    let decision = policy.decide(&input)?;
-    Ok(decision.clamp_to(hard_capacity))
+    let mut decision = policy.decide(&input)?.clamp_to(hard_capacity);
+    decision.budget.max_bytes = decision.budget.max_bytes.min(
+        pool_capacity
+            .max_inflight_bytes
+            .saturating_sub(pool_capacity.inflight_bytes),
+    );
+    Ok(decision)
 }
 
 fn host_capacity(
     descriptor: &RunnerDescriptor,
-    load: &RunnerLoad,
     limits: &RunnerLimits,
-    running_batches: usize,
+    pool: PoolCapacitySnapshot,
 ) -> HostCapacity {
-    let max_inflight = limits.max_inflight.max(1);
+    let max_inflight_entries = limits.max_inflight.max(1);
     HostCapacity {
-        running_batches,
-        queued_batches: queued_batch_count(load.queued_count, descriptor.batch.max_batch_entries),
-        max_running_batches: SINGLE_RUNNER_MAX_ACTIVE_BATCHES,
-        running_entries: load.running_count,
-        queued_entries: load.queued_count,
-        saturation: (load.pending_weight as f32 / max_inflight as f32).min(1.0),
+        running_batches: pool.running_batches,
+        queued_batches: pool.queued_batches,
+        max_running_batches: pool.active_threads,
+        running_entries: pool.running_entries,
+        queued_entries: pool.queued_entries,
+        saturation: ((pool.running_entries + pool.queued_entries) as f32
+            / max_inflight_entries as f32)
+            .min(1.0),
         preferred_batch_size: descriptor.batch.preferred_batch_size.max(1),
         max_entry_concurrency: descriptor
             .batch
             .max_entry_concurrency
             .min(descriptor.batch.max_batch_entries)
             .min(limits.max_inflight.max(1)),
-        max_inflight_bytes: usize::MAX,
+        max_inflight_bytes: pool.max_inflight_bytes.saturating_sub(pool.inflight_bytes),
     }
-}
-
-fn queued_batch_count(queued_entries: usize, max_batch_entries: usize) -> usize {
-    queued_entries.div_ceil(max_batch_entries.max(1))
 }
 
 fn hard_dispatch_capacity(
@@ -269,12 +274,5 @@ mod tests {
             standard_dispatch_capacity(&load, &RunnerLimits::default(), 4, 1, 4),
             0
         );
-    }
-
-    #[test]
-    fn queued_batch_capacity_is_derived_from_entry_batch_limit() {
-        assert_eq!(queued_batch_count(0, 4), 0);
-        assert_eq!(queued_batch_count(1, 4), 1);
-        assert_eq!(queued_batch_count(5, 4), 2);
     }
 }

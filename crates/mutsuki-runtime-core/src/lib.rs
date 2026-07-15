@@ -21,7 +21,9 @@ pub use registry::{
     PluginGenerationState, RegistrySnapshot, ReloadDecision, RunnerRegistry,
 };
 pub use resource_manager::{PackedValue, ResourceManager};
-pub use runner::{CoreKernelRunner, Runner, RunnerLoopReport};
+pub use runner::{
+    CoreKernelRunner, Runner, RunnerIsolation, RunnerLoopReport, RunnerTerminationHandle,
+};
 pub use runtime::{
     CoreRuntime, DispatchBudget, InvocationPollution, LaneBudget, RunnerCompletion, RunnerDispatch,
     RunningInvocationDisposition, RuntimeStatistics, RuntimeStopState, ScheduleDecision,
