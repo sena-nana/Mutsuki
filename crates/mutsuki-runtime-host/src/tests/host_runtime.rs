@@ -18,7 +18,7 @@ use crate::{
     SpawnedJsonlRunner, runner_manifest,
 };
 
-use super::helpers::{descriptor, descriptor_with_class, runtime_profile};
+use super::helpers::{descriptor, descriptor_with_class, runtime_profile, test_resource_ref};
 
 struct BlockingObservedRunner {
     descriptor: RunnerDescriptor,
@@ -26,6 +26,11 @@ struct BlockingObservedRunner {
     release_rx: mpsc::Receiver<()>,
     cancelled: Arc<Mutex<Vec<String>>>,
     disposed: Arc<Mutex<bool>>,
+}
+
+struct ContinueObservedRunner {
+    descriptor: RunnerDescriptor,
+    cancelled: Arc<Mutex<Vec<String>>>,
 }
 
 #[derive(Debug)]
@@ -74,6 +79,33 @@ impl Runner for BlockingObservedRunner {
 
     fn dispose(&mut self) -> mutsuki_runtime_core::RuntimeResult<()> {
         *self.disposed.lock().expect("disposed mutex poisoned") = true;
+        Ok(())
+    }
+}
+
+impl Runner for ContinueObservedRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
+        std::thread::sleep(Duration::from_millis(20));
+        scalar_completion_batch(&batch, |task| {
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.status = RunnerStatus::Continue;
+            Ok(result)
+        })
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
+        self.cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .push(invocation_id.to_string());
         Ok(())
     }
 }
@@ -227,6 +259,93 @@ fn event_driven_host_dispatches_submit_and_worker_backlog_without_polling() {
     wait_for_task_status(&runtime, "event-1", TaskStatus::Completed);
     wait_for_task_status(&runtime, "event-2", TaskStatus::Completed);
     assert_eq!(runtime.drive_state().unwrap().timed_wakeups, 0);
+}
+
+#[test]
+fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
+    let parent_descriptor = descriptor("parent.runner", "parent.work");
+    let child_descriptor = descriptor("child.runner", "child.work");
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![parent_descriptor.clone(), child_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(NativeRunner::new(
+        parent_descriptor,
+        |_ctx, parent| {
+            let mut child = Task::new("cascade-child", "child.work", json!({}));
+            child.trace_id = parent.trace_id.clone();
+            child.correlation_id = parent.correlation_id.clone();
+            let child_handle = TaskHandle {
+                task_id: child.task_id.clone(),
+                protocol_id: child.protocol_id.clone(),
+                target_binding_id: None,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: child.trace_id.clone(),
+                correlation_id: child.correlation_id.clone(),
+            };
+            let mut result = RunnerResult::completed(parent.task_id.clone());
+            result.status = RunnerStatus::Waiting;
+            result.tasks.push(child);
+            result.task_await = Some(TaskAwait {
+                parent_task_id: parent.task_id.clone(),
+                child: child_handle,
+                continuation: TaskStepContinuation {
+                    continuation: test_resource_ref(
+                        "continuation:cascade-parent",
+                        "continuation",
+                        ResourceSemantic::FrozenValue,
+                    ),
+                    wake: None,
+                    reason: Some("test.await".into()),
+                },
+                cancel_policy: CancelPolicy::Cascade,
+            });
+            Ok(result)
+        },
+    )));
+    host.register_runner(Box::new(ContinueObservedRunner {
+        descriptor: child_descriptor,
+        cancelled: cancelled.clone(),
+    }));
+    let runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+    let handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "cascade-parent",
+            "parent.work",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        other => panic!("unexpected submit reply: {other:?}"),
+    };
+    wait_for_task_status(&runtime, "cascade-parent", TaskStatus::Waiting);
+    wait_for_task_status(&runtime, "cascade-child", TaskStatus::Running);
+    runtime
+        .dispatch(HostRuntimeCommand::CancelTask(handle))
+        .unwrap();
+    wait_for_task_status(&runtime, "cascade-child", TaskStatus::Cancelled);
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        if !cancelled.lock().unwrap().is_empty() {
+            return;
+        }
+        let _ = runtime.drive_state();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("cascaded child runner invocation was not cancelled");
 }
 
 #[test]

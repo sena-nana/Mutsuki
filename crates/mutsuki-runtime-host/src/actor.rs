@@ -360,14 +360,21 @@ fn handle_command(
             Ok((HostRuntimeReply::Idle(aggregate), shutdown))
         }
         HostRuntimeCommand::CancelTask(handle) => {
-            let running_batch = running_batches_by_task.get(&handle.task_id).cloned();
             core.cancel_task_handle(&handle)?;
-            if let Some(task) = running_batch {
-                mark_cancel_requested(&task.invocation_id, running_batches_by_task);
-                pending_cancels
-                    .entry(task.runner_id)
-                    .or_default()
-                    .push(task.invocation_id);
+            let cancelled_invocations = running_batches_by_task
+                .values()
+                .filter(|task| {
+                    task.cancel_requested_at.is_none()
+                        && core.task_handle_status(&task.handle) == Some(TaskStatus::Cancelled)
+                })
+                .map(|task| (task.runner_id.clone(), task.invocation_id.clone()))
+                .collect::<BTreeSet<_>>();
+            for (runner_id, invocation_id) in cancelled_invocations {
+                mark_cancel_requested(&invocation_id, running_batches_by_task);
+                let pending = pending_cancels.entry(runner_id).or_default();
+                if !pending.contains(&invocation_id) {
+                    pending.push(invocation_id);
+                }
             }
             Ok((HostRuntimeReply::TaskCancelled(handle), false))
         }
