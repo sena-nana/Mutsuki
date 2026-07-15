@@ -1,7 +1,7 @@
 # Runner Link v1
 
 当前 Python contract mirror 对齐 MutsukiCore revision
-`aa5bd7a2cf0a8ba5065392d324836dadab5d7d70`（Issue #25 observability contract）。
+`e627859f2e2422872c86b1d844b3b4e948d077d4`（Issue #25 observability contract）。
 
 Runner Link is the language-neutral protocol between Mutsuki Core and external
 runners. This repository implements the Python side of that protocol.
