@@ -1324,7 +1324,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-distributed-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=7a300d4dc2549611272e8782c92db02ff2655f6c#7a300d4dc2549611272e8782c92db02ff2655f6c"
+source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=2d8c3e61b61456d6b9082534947261eafe0f320b#2d8c3e61b61456d6b9082534947261eafe0f320b"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
