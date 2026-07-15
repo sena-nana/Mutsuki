@@ -17,7 +17,7 @@ use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState};
 use crate::resource_router;
 use crate::scheduler::decide_schedule;
-use crate::worker::{WorkerExited, WorkerPools, WorkerStarted, worker_pools};
+use crate::worker::{WorkerExited, WorkerPools, WorkerStarted};
 
 // Mailbox messages own structured Host commands; boxing would add allocation to every command.
 #[allow(clippy::large_enum_variant)]
@@ -148,12 +148,8 @@ pub(crate) fn core_actor_loop(
     mut core: CoreRuntime,
     config: HostRuntimeConfig,
     rx: mpsc::Receiver<CoreActorMsg>,
-    actor_tx: mpsc::Sender<CoreActorMsg>,
+    mut pools: WorkerPools,
 ) {
-    let mut pools = match worker_pools(&config, actor_tx) {
-        Ok(pools) => pools,
-        Err(_) => return,
-    };
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut running_batches_by_task: BTreeMap<String, RunningBatch> = BTreeMap::new();
     let mut draining_invocations: BTreeMap<String, DrainingInvocation> = BTreeMap::new();

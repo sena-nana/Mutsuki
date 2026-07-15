@@ -24,6 +24,7 @@ use crate::runtime_context::build_host_context;
 use crate::scheduler::{
     DefaultScheduler, RunnerLimits, SchedulerPolicy, validate_single_instance_limits,
 };
+use crate::worker::worker_pools;
 
 pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGateway>>;
 
@@ -141,9 +142,10 @@ impl HostRuntime {
         core.configure_task_history_retention(config.task_history_retention);
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
+        let pools = worker_pools(&config, actor_tx)?;
         let actor = thread::Builder::new()
             .name("mutsuki-core-actor".into())
-            .spawn(move || core_actor_loop(core, config, rx, actor_tx))
+            .spawn(move || core_actor_loop(core, config, rx, pools))
             .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
         let capabilities = Arc::new(capabilities);
         let context = build_host_context(

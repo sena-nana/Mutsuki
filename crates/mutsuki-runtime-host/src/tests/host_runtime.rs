@@ -134,6 +134,35 @@ fn wait_for_task_status(runtime: &HostRuntime, task_id: &str, expected: TaskStat
 }
 
 #[test]
+fn host_start_rejects_invalid_worker_pool_capacity_before_returning() {
+    let mut invalid_configs = Vec::new();
+    let mutations: [fn(&mut HostRuntimeConfig); 5] = [
+        |config: &mut HostRuntimeConfig| config.worker_threads = 0,
+        |config: &mut HostRuntimeConfig| config.blocking_threads = 0,
+        |config: &mut HostRuntimeConfig| config.pool_queue_limit = 0,
+        |config: &mut HostRuntimeConfig| config.pool_max_inflight_bytes = 0,
+        |config: &mut HostRuntimeConfig| config.max_isolated_workers = 0,
+    ];
+    for mutate in mutations {
+        let mut config = HostRuntimeConfig::default();
+        mutate(&mut config);
+        invalid_configs.push(config);
+    }
+
+    for config in invalid_configs {
+        let mut profile = runtime_profile();
+        profile.enabled_plugins.clear();
+        let failure =
+            match RuntimeBootstrapper::new().into_host_runtime_with_config(profile, config) {
+                Ok(_) => panic!("invalid worker pool capacity unexpectedly started the host"),
+                Err(failure) => failure,
+            };
+        assert_eq!(failure.error().code, ERR_RUNTIME_HOST_FAILED);
+        assert_eq!(failure.error().route, "host.worker.config");
+    }
+}
+
+#[test]
 fn event_driven_host_sleeps_without_tasks_or_deadlines() {
     let runner_descriptor = descriptor("idle.runner", "idle.work");
     let mut host = RuntimeBootstrapper::new();

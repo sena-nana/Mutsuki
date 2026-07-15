@@ -119,10 +119,16 @@ impl WorkerPool {
         max_isolated_threads: usize,
         actor_tx: mpsc::Sender<CoreActorMsg>,
     ) -> RuntimeResult<Self> {
-        if threads == 0 || queue_capacity == 0 || max_inflight_bytes == 0 {
+        if threads == 0
+            || queue_capacity == 0
+            || max_inflight_bytes == 0
+            || max_isolated_threads == 0
+        {
             return Err(host_failure(
                 "host.worker.config",
-                format!("pool {pool_id} requires non-zero threads, queue capacity and byte budget"),
+                format!(
+                    "pool {pool_id} requires non-zero threads, queue capacity, byte budget and isolation capacity"
+                ),
             ));
         }
         let (sender, receiver) = bounded(queue_capacity);
@@ -133,7 +139,7 @@ impl WorkerPool {
             receiver,
             queue_capacity,
             max_inflight_bytes,
-            max_isolated_threads: max_isolated_threads.max(1).min(threads),
+            max_isolated_threads: max_isolated_threads.min(threads),
             configured_threads: threads,
             actor_tx,
             next_worker_id: Arc::new(AtomicUsize::new(0)),
