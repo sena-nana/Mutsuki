@@ -65,7 +65,7 @@ struct QueuedDispatch {
 
 pub(crate) struct WorkerDispatchError {
     pub failure: RuntimeFailure,
-    pub dispatch: RunnerDispatch,
+    pub dispatch: Box<RunnerDispatch>,
     pub retryable: bool,
 }
 
@@ -189,7 +189,7 @@ impl WorkerPool {
                     "host.worker.saturated",
                     format!("pool {} has no dispatch capacity", self.pool_id),
                 ),
-                dispatch,
+                dispatch: Box::new(dispatch),
                 retryable: true,
             });
         }
@@ -199,7 +199,7 @@ impl WorkerPool {
             Err(error) => {
                 return Err(WorkerDispatchError {
                     failure: host_failure("host.worker.payload", error.to_string()),
-                    dispatch,
+                    dispatch: Box::new(dispatch),
                     retryable: false,
                 });
             }
@@ -213,7 +213,7 @@ impl WorkerPool {
                         self.max_inflight_bytes
                     ),
                 ),
-                dispatch,
+                dispatch: Box::new(dispatch),
                 retryable: false,
             });
         }
@@ -224,7 +224,7 @@ impl WorkerPool {
         ) {
             return Err(WorkerDispatchError {
                 failure,
-                dispatch,
+                dispatch: Box::new(dispatch),
                 retryable: true,
             });
         }
@@ -255,7 +255,7 @@ impl WorkerPool {
                 };
                 Err(WorkerDispatchError {
                     failure: host_failure("host.worker.dispatch", detail),
-                    dispatch: queued.dispatch,
+                    dispatch: Box::new(queued.dispatch),
                     retryable: true,
                 })
             }

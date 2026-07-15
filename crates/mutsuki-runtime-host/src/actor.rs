@@ -17,7 +17,7 @@ use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState};
 use crate::resource_router;
 use crate::scheduler::decide_schedule;
-use crate::worker::{WorkerExited, WorkerPools, WorkerStarted};
+use crate::worker::{WorkerDispatchError, WorkerExited, WorkerPools, WorkerStarted};
 
 // Mailbox messages own structured Host commands; boxing would add allocation to every command.
 #[allow(clippy::large_enum_variant)]
@@ -1053,19 +1053,25 @@ fn schedule_ready_at(
             ));
         };
         if let Err(error) = pool.send(dispatch) {
-            if error.retryable {
+            let WorkerDispatchError {
+                failure,
+                dispatch,
+                retryable,
+            } = error;
+            let dispatch = *dispatch;
+            if retryable {
                 deferred_entries =
-                    deferred_entries.saturating_add(core.defer_runner_dispatch(error.dispatch)?);
+                    deferred_entries.saturating_add(core.defer_runner_dispatch(dispatch)?);
             } else {
-                let batch_id = error.dispatch.batch.batch_id.clone();
-                let expected_entries = error.dispatch.batch.entries.clone();
+                let batch_id = dispatch.batch.batch_id.clone();
+                let expected_entries = dispatch.batch.entries.clone();
                 rejected_entries = rejected_entries.saturating_add(
                     core.complete_runner_dispatch(RunnerCompletion {
-                        runner: error.dispatch.runner,
-                        task_leases: error.dispatch.task_leases,
+                        runner: dispatch.runner,
+                        task_leases: dispatch.task_leases,
                         batch_id,
                         expected_entries,
-                        result: Err(error.failure),
+                        result: Err(failure),
                     })?
                     .completed_tasks,
                 );
