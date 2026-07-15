@@ -207,13 +207,25 @@ class TaskHandle:
 class TaskOutcome:
     status: TaskStatus
     task_id: str
+    output: JsonValue = None
     output_ref: str | None = None
     error: RuntimeError | None = None
     reason: str | None = None
 
     @classmethod
-    def completed(cls, task_id: str, output_ref: str | None = None) -> Self:
-        return cls(status=TaskStatus.COMPLETED, task_id=task_id, output_ref=output_ref)
+    def completed(
+        cls,
+        task_id: str,
+        output_ref: str | None = None,
+        *,
+        output: JsonValue = None,
+    ) -> Self:
+        return cls(
+            status=TaskStatus.COMPLETED,
+            task_id=task_id,
+            output=output,
+            output_ref=output_ref,
+        )
 
     @classmethod
     def failed(cls, task_id: str, error: RuntimeError) -> Self:
@@ -232,6 +244,7 @@ class TaskOutcome:
             return cls.completed(
                 task_id,
                 optional_str(field_value(raw, "output_ref"), "output_ref"),
+                output=as_json_value(raw.get("output")),
             )
         if status == TaskStatus.FAILED:
             return cls.failed(
@@ -249,6 +262,7 @@ class TaskOutcome:
             return {
                 "status": self.status.value,
                 "task_id": self.task_id,
+                "output": self.output,
                 "output_ref": self.output_ref,
             }
         if self.status == TaskStatus.FAILED:

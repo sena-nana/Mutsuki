@@ -190,6 +190,7 @@ def test_runner_result_roundtrips_value_and_resource_refs() -> None:
     )
     result = RunnerResult(
         task_id="task-1",
+        output={"answer": 42},
         values=(value_ref,),
         resources=(resource_ref,),
     )
@@ -207,7 +208,10 @@ def test_task_handle_outcome_and_await_roundtrip() -> None:
         correlation_id="corr-1",
     )
     assert_json_roundtrip(TaskHandle, handle)
-    assert_json_roundtrip(TaskOutcome, TaskOutcome.completed("child-1", "value:child"))
+    assert_json_roundtrip(
+        TaskOutcome,
+        TaskOutcome.completed("child-1", "value:child", output={"answer": 42}),
+    )
 
     continuation = TaskStepContinuation(
         continuation=ResourceRef(

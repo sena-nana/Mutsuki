@@ -1,7 +1,7 @@
 # Runner Link v1
 
 当前 Python contract mirror 对齐 MutsukiCore revision
-`9fb8bb6d711afedd15b6e6c091331c0f3fd1d0cb`（Issue #27 single-instance runner contract）。
+`d1cdac5f2241363ac876ea493a1e52fd1742b31f`（inline task output contract）。
 
 Runner Link is the language-neutral protocol between Mutsuki Core and external
 runners. This repository implements the Python side of that protocol.
@@ -38,6 +38,8 @@ sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
 - Wire ABI is batch-first: `runner.run_batch({ runner_id, ctx, batch }) ->
   CompletionBatch`. Scalar `run_one` exists only as adapter sugar.
 - `ctx.call` must lower to a child `Task` / `TaskAwait` flow handled by Core.
+- `RunnerResult.output` mirrors the small inline terminal result read from
+  `TaskOutcome.completed.output`; large results remain provider-owned through `output_ref`.
 - Resource access must use `ResourceRef`, `ValueRef`, plans, leases, and
   structured generation checks.
 - Unsupported Python awaitables must fail as `runner.awaitable_unsupported`.

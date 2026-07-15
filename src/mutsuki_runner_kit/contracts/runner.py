@@ -7,10 +7,12 @@ from typing import Self
 
 from mutsuki_runner_kit.contracts.codec import (
     JsonDict,
+    JsonValue,
     ScalarValue,
     as_bool,
     as_int,
     as_json_dict,
+    as_json_value,
     as_mapping,
     as_scalar_dict,
     as_str,
@@ -282,6 +284,7 @@ class RunnerContext:
 @dataclass(frozen=True)
 class RunnerResult:
     task_id: str
+    output: JsonValue = None
     deltas: tuple[StateDelta, ...] = ()
     events: tuple[DomainEvent, ...] = ()
     tasks: tuple[Task, ...] = ()
@@ -301,6 +304,7 @@ class RunnerResult:
         task_await = field_value(raw, "task_await")
         return cls(
             task_id=as_str(field_value(raw, "task_id"), "task_id"),
+            output=as_json_value(raw.get("output")),
             deltas=tuple_from_json(raw, "deltas", StateDelta),
             events=tuple_from_json(raw, "events", DomainEvent),
             tasks=tuple_from_json(raw, "tasks", Task),
