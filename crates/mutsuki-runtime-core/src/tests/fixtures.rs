@@ -284,6 +284,7 @@ impl Runner for ContinuingRunner {
         scalar_batch_result(&batch, |task| {
             Ok(RunnerResult {
                 task_id: task.task_id.clone(),
+                output: None,
                 deltas: Vec::new(),
                 events: Vec::new(),
                 tasks: Vec::new(),

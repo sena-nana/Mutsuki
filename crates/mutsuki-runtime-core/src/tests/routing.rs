@@ -109,6 +109,32 @@ fn pure_runner_explicitly_enqueues_derived_tasks() {
 }
 
 #[test]
+fn completed_task_exposes_atomic_inline_output_through_task_outcome() {
+    let worker = runner_descriptor("worker", "sim.output", RunnerPurity::Pure);
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.output = Some(json!({"answer": 42}));
+        result
+    }));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    let handle = runtime
+        .submit_task(Task::new("output-1", "sim.output", json!({})))
+        .unwrap();
+
+    runtime.tick_once().unwrap();
+
+    assert_eq!(
+        runtime.task_handle_outcome(&handle).unwrap(),
+        Some(TaskOutcome::Completed {
+            task_id: "output-1".into(),
+            output: Some(json!({"answer": 42})),
+            output_ref: None,
+        })
+    );
+}
+
+#[test]
 fn pure_runner_outputs_are_routed_to_commit_and_effect_tasks() {
     let worker = runner_descriptor("worker", "sim.behavior.evaluate", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
@@ -1120,6 +1146,7 @@ fn continue_result_rejects_outputs_before_partial_routing() {
     let plan = load_plan(vec![worker.clone()], Vec::new());
     let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
         let mut result = runner_result_with_status(task, RunnerStatus::Continue);
+        result.output = Some(json!({"must_not": "commit"}));
         result
             .tasks
             .push(Task::new("child-continue", "child.work", json!({})));
@@ -1387,6 +1414,7 @@ fn await_child_result_with_policy(
 fn runner_result_with_status(task: &Task, status: RunnerStatus) -> RunnerResult {
     RunnerResult {
         task_id: task.task_id.clone(),
+        output: None,
         deltas: Vec::new(),
         events: Vec::new(),
         tasks: Vec::new(),

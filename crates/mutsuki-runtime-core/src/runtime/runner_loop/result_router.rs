@@ -29,6 +29,7 @@ impl CoreRuntime {
     ) -> RuntimeResult<usize> {
         let RunnerResult {
             task_id,
+            output,
             deltas,
             events,
             tasks,
@@ -41,8 +42,16 @@ impl CoreRuntime {
         self.tasks
             .ensure_active_lease(&task_id, lease, self.current_step, "route")?;
         self.validate_waiting_result(&task_id, &status, task_await.as_ref(), &tasks)?;
-        validate_continue_outputs(
-            &task_id, &status, &deltas, &events, &tasks, &effects, &values, &resources,
+        validate_status_outputs(
+            &task_id,
+            &status,
+            output.as_ref(),
+            &deltas,
+            &events,
+            &tasks,
+            &effects,
+            &values,
+            &resources,
         )?;
         self.route_result_outputs(
             runner,
@@ -56,7 +65,7 @@ impl CoreRuntime {
                 resources,
             },
         )?;
-        self.commit_result_status(runner, lease, task_id, status, task_await)
+        self.commit_result_status(runner, lease, task_id, status, task_await, output)
     }
 
     fn validate_waiting_result(
@@ -204,10 +213,12 @@ impl CoreRuntime {
         task_id: String,
         status: RunnerStatus,
         task_await: Option<TaskAwait>,
+        output: Option<serde_json::Value>,
     ) -> RuntimeResult<usize> {
         match status {
             RunnerStatus::Completed => {
-                self.tasks.complete(lease, self.current_step)?;
+                self.tasks
+                    .complete_with_output(lease, self.current_step, output)?;
                 self.record_task_terminal_event(&task_id, "task.completed", None);
                 self.wake_tasks_waiting_on(&task_id)?;
                 return Ok(1);
@@ -297,9 +308,10 @@ fn pending_output_tasks(
 
 // The explicit output slices mirror RunnerResult and keep validation allocation-free.
 #[allow(clippy::too_many_arguments)]
-fn validate_continue_outputs(
+fn validate_status_outputs(
     task_id: &str,
     status: &RunnerStatus,
+    output: Option<&serde_json::Value>,
     deltas: &[StateDelta],
     events: &[DomainEvent],
     tasks: &[Task],
@@ -307,10 +319,18 @@ fn validate_continue_outputs(
     values: &[ValueRef],
     resources: &[ResourceRef],
 ) -> RuntimeResult<()> {
+    if output.is_some() && !matches!(status, RunnerStatus::Completed) {
+        return Err(crate::runtime_failure(
+            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+            "runtime.result_router",
+            format!("task.status.output.{task_id}"),
+        ));
+    }
     if !matches!(status, RunnerStatus::Continue) {
         return Ok(());
     }
-    if deltas.is_empty()
+    if output.is_none()
+        && deltas.is_empty()
         && events.is_empty()
         && tasks.is_empty()
         && effects.is_empty()

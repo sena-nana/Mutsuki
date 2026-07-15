@@ -811,6 +811,7 @@ fn task_handle_outcome_and_await_contracts_roundtrip_json() {
 
     let outcome = TaskOutcome::Completed {
         task_id: "child-1".into(),
+        output: Some(serde_json::json!({"answer": 42})),
         output_ref: Some("value:child".into()),
     };
     assert_eq!(

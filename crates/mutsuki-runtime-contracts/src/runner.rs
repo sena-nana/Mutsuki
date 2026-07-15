@@ -276,6 +276,10 @@ pub struct EffectRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunnerResult {
     pub task_id: TaskId,
+    /// Small serializable business result retained with the terminal task.
+    /// Large results remain provider-owned and are referenced by `Task::output_ref`.
+    #[serde(default)]
+    pub output: Option<Value>,
     pub deltas: Vec<StateDelta>,
     pub events: Vec<DomainEvent>,
     pub tasks: Vec<Task>,
@@ -290,6 +294,7 @@ impl RunnerResult {
     pub fn completed(task_id: impl Into<String>) -> Self {
         Self {
             task_id: task_id.into(),
+            output: None,
             deltas: Vec::new(),
             events: Vec::new(),
             tasks: Vec::new(),

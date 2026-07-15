@@ -157,6 +157,7 @@ fn task_handle_future_polls_until_outcome() {
             "task-1".into(),
             TaskOutcome::Completed {
                 task_id: "task-1".into(),
+                output: None,
                 output_ref: Some("value:1".into()),
             },
         );
@@ -216,6 +217,7 @@ fn async_runner_adapter_suspends_and_resumes_call() {
             "parent-1:call:1".into(),
             TaskOutcome::Completed {
                 task_id: "parent-1:call:1".into(),
+                output: None,
                 output_ref: None,
             },
         );
@@ -275,6 +277,7 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
             "parent-1:call:1".into(),
             TaskOutcome::Completed {
                 task_id: "parent-1:call:1".into(),
+                output: None,
                 output_ref: None,
             },
         );
@@ -780,6 +783,7 @@ fn task_submitter_adapter_preserves_task_handle_and_outcome_contract() {
             "task-1".into(),
             TaskOutcome::Completed {
                 task_id: "task-1".into(),
+                output: None,
                 output_ref: Some("value:1".into()),
             },
         )])),

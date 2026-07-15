@@ -116,6 +116,8 @@ pub struct TaskHandle {
 pub enum TaskOutcome {
     Completed {
         task_id: TaskId,
+        #[serde(default)]
+        output: Option<Value>,
         output_ref: Option<RefId>,
     },
     Failed {

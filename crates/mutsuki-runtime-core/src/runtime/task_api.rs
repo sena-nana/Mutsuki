@@ -142,6 +142,7 @@ impl CoreRuntime {
         self.tasks.get(task_id).map(|record| TaskResultSnapshot {
             task_id: record.task.task_id.clone(),
             status: record.status.clone(),
+            output: record.output.clone(),
             output_ref: record.task.output_ref.clone(),
             continuation_ref: record.task.continuation_ref.clone(),
             failure: record.failure.clone(),
@@ -163,6 +164,7 @@ impl CoreRuntime {
         Ok(match record.status {
             TaskStatus::Completed => Some(TaskOutcome::Completed {
                 task_id: record.task.task_id.clone(),
+                output: record.output.clone(),
                 output_ref: record.task.output_ref.clone(),
             }),
             TaskStatus::Failed => Some(TaskOutcome::Failed {

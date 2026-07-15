@@ -85,6 +85,9 @@ cargo bench-smoke
   record、payload byte cache、wait link 与防重 tombstone 必须一起保持有界，受 child wait
   保护的 record 不得提前淘汰，累计统计不能随 record 淘汰回退。
 - Task 一次只能通过一个 TaskLease 交给一个 Runner / Executor 执行。
+- 小型 task 业务结果通过 `RunnerResult.output` 原子提交并由 terminal
+  `TaskOutcome::Completed.output` 读取；大结果使用 provider-owned `output_ref`。生命周期
+  Completed 不能替代业务结果，Continue 不得携带 output。
 - Runner 是逻辑处理器，不是物理执行单元；Executor 是物理执行槽位。
 - Rust `Runner` 必须是 `Send`；默认 host runtime 会把普通 runner 移动到 worker
   线程执行，CoreActor 不能直接执行插件 handler。

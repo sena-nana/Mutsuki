@@ -33,6 +33,7 @@ pub use scheduler::{DispatchBudget, LaneBudget, ScheduleDecision};
 pub struct TaskResultSnapshot {
     pub task_id: String,
     pub status: mutsuki_runtime_contracts::TaskStatus,
+    pub output: Option<Value>,
     pub output_ref: Option<String>,
     pub continuation_ref: Option<String>,
     pub failure: Option<RuntimeError>,

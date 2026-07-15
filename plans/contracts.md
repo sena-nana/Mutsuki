@@ -29,7 +29,7 @@
 | `WorkResourcePlan` | WorkSet 派发前生成的资源读写计划、version check、parallel/serial entry group、parallelism limit 和冲突 entry 描述 |
 | `TaskHandle` | SDK-facing task descriptor，包含 task id、protocol、target binding、取消策略和 trace/correlation |
 | `TaskAwait` | 当前 task 等待一个 child task 的 continuation registration |
-| `TaskOutcome` | SDK 读取的 terminal task 结果映射 |
+| `TaskOutcome` | SDK 读取的 terminal task 结果映射；Completed 可携带小型 inline output 或 provider-owned output_ref |
 | `CancelPolicy` | SDK await 取消策略，当前默认支持 Cascade，Detach / Shield 为协议预留 |
 | `TaskStatus` | created、ready、running、waiting、blocked、completed、failed、cancelled、expired、dead_letter |
 | `ProtocolDescriptor` | protocol_id、schema、codec、version、compatibility 等纯数据契约 |
@@ -37,7 +37,7 @@
 | `RunnerDescriptor` | runner_id、plugin_id、generation、accepted_protocol_ids、purity、execution_class、schema、batch/payload/resource/ordering/control capability、metadata |
 | `ExecutionClass` | host 执行池分类：Control、Orchestration、Io、Cpu、Blocking、Script |
 | `RunnerPurity` | Pure、Committer、Effectful |
-| `RunnerResult` | task_id、deltas、events、tasks、effects、values、resources、status |
+| `RunnerResult` | task_id、可选小型 output、deltas、events、tasks、effects、values、resources、status |
 | `StateDelta` | target_ref、expected_version、patch、conflict_policy |
 | `EffectRequest` | effect_id、kind、payload、preconditions、idempotency_key |
 | `ValueRef` | 小型结构化共享值 descriptor |

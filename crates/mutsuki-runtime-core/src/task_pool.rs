@@ -4,6 +4,7 @@ use mutsuki_runtime_contracts::{
     ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId, RuntimeError, SurfaceOccupancy,
     Task, TaskAwait, TaskId, TaskLease, TaskStatus,
 };
+use serde_json::Value;
 
 use crate::DispatchBudget;
 use crate::RuntimeResult;
@@ -36,6 +37,7 @@ impl TaskHistoryRetention {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskRecord {
     pub task: Task,
+    pub output: Option<Value>,
     pub status: TaskStatus,
     pub claimed_by: Option<String>,
     pub owner_runner: Option<RunnerId>,
@@ -150,6 +152,7 @@ impl TaskPool {
             task_id.clone(),
             TaskRecord {
                 task,
+                output: None,
                 status: TaskStatus::Ready,
                 claimed_by: None,
                 owner_runner: None,
@@ -365,7 +368,16 @@ impl TaskPool {
     }
 
     pub fn complete(&mut self, lease: &TaskLease, current_step: u64) -> RuntimeResult<()> {
-        transitions::complete(self, lease, current_step)
+        self.complete_with_output(lease, current_step, None)
+    }
+
+    pub(crate) fn complete_with_output(
+        &mut self,
+        lease: &TaskLease,
+        current_step: u64,
+        output: Option<Value>,
+    ) -> RuntimeResult<()> {
+        transitions::complete(self, lease, current_step, output)
     }
 
     pub fn fail(

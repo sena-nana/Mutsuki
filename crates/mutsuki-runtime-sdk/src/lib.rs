@@ -653,6 +653,7 @@ impl AsyncRunnerAdapter {
                 {
                     Ok(RunnerResult {
                         task_id,
+                        output: None,
                         deltas: Vec::new(),
                         events: Vec::new(),
                         tasks: pending.task.into_iter().collect(),
@@ -665,6 +666,7 @@ impl AsyncRunnerAdapter {
                 } else {
                     Ok(RunnerResult {
                         task_id,
+                        output: None,
                         deltas: Vec::new(),
                         events: Vec::new(),
                         tasks: Vec::new(),

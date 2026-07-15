@@ -3,6 +3,7 @@ use mutsuki_runtime_contracts::{
 };
 
 use crate::{RuntimeFailure, RuntimeResult};
+use serde_json::Value;
 
 use super::{TaskPool, TaskRecord};
 
@@ -10,9 +11,11 @@ pub(super) fn complete(
     task_pool: &mut TaskPool,
     lease: &TaskLease,
     current_step: u64,
+    output: Option<Value>,
 ) -> RuntimeResult<()> {
-    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+    task_pool.mutate_record_indexed(&lease.task_id, move |record| {
         validate_record_lease(record, lease, current_step, "complete")?;
+        record.output = output;
         mark_terminal_record(record, TaskStatus::Completed, None);
         Ok(())
     })?;

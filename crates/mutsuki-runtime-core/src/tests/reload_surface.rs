@@ -466,6 +466,7 @@ fn await_child_result(parent: &Task, child: Task) -> RunnerResult {
     };
     RunnerResult {
         task_id: parent.task_id.clone(),
+        output: None,
         deltas: Vec::new(),
         events: Vec::new(),
         tasks: vec![child],
