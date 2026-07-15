@@ -30,9 +30,9 @@ license = "MIT"
 mutsuki-agent-protocol = { path = "crates/mutsuki-agent-protocol" }
 mutsuki-agent-sdk = { path = "crates/mutsuki-agent-sdk" }
 mutsuki-agent-macros = { path = "crates/mutsuki-agent-macros" }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "f5baa01daa2a07b8e962144a9e6b3f64ba5229d9" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "f5baa01daa2a07b8e962144a9e6b3f64ba5229d9" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "f5baa01daa2a07b8e962144a9e6b3f64ba5229d9" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "36f123a677050b4715b9d3053532245f082ca4ab" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "36f123a677050b4715b9d3053532245f082ca4ab" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "36f123a677050b4715b9d3053532245f082ca4ab" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
