@@ -1,7 +1,8 @@
 # Model Gateway
 
 `mutsuki.agent.model/generate@1` 与 `.../stream@1` 是 provider-neutral orchestration
-协议。默认 deterministic mock provider 用于离线 conformance。真实 HTTP provider 由
+协议。生产 gateway 默认不注册任何 Provider，缺失显式注入时 fail loud；deterministic
+mock provider 只由 `mutsuki-agent-testkit` 提供。真实 HTTP provider 由
 `effect.mutsuki.agent.model/http@1` runner 执行，支持异步取消、硬超时、错误映射和
 有限重试。消费端通过 `HttpModelProviderOptions` 显式构造 provider，并在构造时注入
 credential；AgentKit 不读取环境变量、配置文件或 Secret backend。

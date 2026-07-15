@@ -64,12 +64,66 @@ pub fn result_event(
         ))
     })?;
     let mut result = RunnerResult::completed(task_id.clone());
+    result.output = Some(payload.clone());
     result.events.push(DomainEvent {
         event_id: format!("{task_id}:result"),
         kind: event_kind.into(),
         payload,
     });
     Ok(result)
+}
+
+pub fn completed_output<T>(
+    source: &'static str,
+    parent_task_id: &str,
+    outcome: mutsuki_runtime_sdk::contracts::TaskOutcome,
+) -> RuntimeResult<T>
+where
+    T: DeserializeOwned,
+{
+    match outcome {
+        mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output).map_err(|error| {
+            runtime_failure(
+                source,
+                parent_task_id,
+                AgentError::new("agent.result_invalid", error.to_string()),
+            )
+        }),
+        mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
+            output: None,
+            output_ref: Some(output_ref),
+            ..
+        } => Err(runtime_failure(
+            source,
+            parent_task_id,
+            AgentError::new(
+                "agent.result_resource_reader_required",
+                format!("task result `{output_ref}` requires a resource reader"),
+            ),
+        )),
+        mutsuki_runtime_sdk::contracts::TaskOutcome::Completed { .. } => Err(runtime_failure(
+            source,
+            parent_task_id,
+            AgentError::new(
+                "agent.result_missing",
+                "completed task did not return a business result",
+            ),
+        )),
+        mutsuki_runtime_sdk::contracts::TaskOutcome::Failed { error, .. } => {
+            Err(mutsuki_runtime_sdk::RuntimeFailure::new(error))
+        }
+        other => Err(runtime_failure(
+            source,
+            parent_task_id,
+            AgentError::new(
+                "agent.child_failed",
+                format!("child task did not produce a result: {other:?}"),
+            ),
+        )),
+    }
 }
 
 pub fn failed_result(task_id: impl Into<String>, error: AgentError) -> RunnerResult {
@@ -156,4 +210,39 @@ fn agent_runner(
             batch_cancel: true,
             timeout_granularity: TimeoutGranularity::Entry,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn result_event_exposes_the_same_typed_output_as_the_domain_event() {
+        let result = result_event(
+            "task-1",
+            "agent.test.result",
+            serde_json::json!({"answer": 42}),
+        )
+        .unwrap();
+
+        assert_eq!(result.output, Some(serde_json::json!({"answer": 42})));
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].payload, result.output.clone().unwrap());
+    }
+
+    #[test]
+    fn completed_output_rejects_lifecycle_only_completion() {
+        let error = completed_output::<serde_json::Value>(
+            "agent.test",
+            "parent-1",
+            mutsuki_runtime_sdk::contracts::TaskOutcome::Completed {
+                task_id: "child-1".into(),
+                output: None,
+                output_ref: None,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.error().code, "agent.result_missing");
+    }
 }

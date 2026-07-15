@@ -1,8 +1,8 @@
 use mutsuki_agent_protocol::*;
 use mutsuki_agent_sdk::{
     AgentModelGenerateProtocol, AgentModelHttpEffectProtocol, AgentModelPollProtocol,
-    AgentModelStreamProtocol, orchestration_runner, result_event, runtime_failure, task_payload,
-    unsupported_protocol,
+    AgentModelStreamProtocol, completed_output, orchestration_runner, result_event,
+    runtime_failure, task_payload, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
@@ -48,6 +48,9 @@ async fn run_task(
     match task.protocol_id.as_str() {
         AGENT_MODEL_GENERATE_PROTOCOL => {
             let request: AgentModelGenerateRequest = task_payload(PLUGIN_ID, &task)?;
+            let callback_protocol = request.result_protocol_id.clone();
+            let callback_context = request.result_context.clone();
+            let session_id = request.session_id.clone();
             if gateway
                 .provider_execution(&request)
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?
@@ -58,11 +61,23 @@ async fn run_task(
                         request,
                     ))
                     .await?;
-                return effect_dispatch_result(&task, outcome);
+                let generated: AgentModelGenerateResult =
+                    completed_output(PLUGIN_ID, &task.task_id, outcome)?;
+                let mut result = result_event(
+                    task.task_id.clone(),
+                    "mutsuki.agent.model.generated",
+                    generated.clone(),
+                )?;
+                append_callback(
+                    &task,
+                    &mut result,
+                    callback_protocol,
+                    callback_context,
+                    session_id,
+                    generated,
+                )?;
+                return Ok(result);
             }
-            let callback_protocol = request.result_protocol_id.clone();
-            let callback_context = request.result_context.clone();
-            let session_id = request.session_id.clone();
             let generated = gateway
                 .generate_async(request)
                 .await
@@ -94,7 +109,11 @@ async fn run_task(
                         request,
                     ))
                     .await?;
-                return effect_dispatch_result(&task, outcome);
+                return effect_dispatch_result::<AgentModelStreamResult>(
+                    &task,
+                    outcome,
+                    "mutsuki.agent.model.stream_opened",
+                );
             }
             let streamed = gateway
                 .stream_async(request)
@@ -106,29 +125,16 @@ async fn run_task(
     }
 }
 
-fn effect_dispatch_result(
+fn effect_dispatch_result<T>(
     task: &Task,
     outcome: mutsuki_runtime_sdk::contracts::TaskOutcome,
-) -> RuntimeResult<RunnerResult> {
-    if matches!(
-        outcome,
-        mutsuki_runtime_sdk::contracts::TaskOutcome::Completed { .. }
-    ) {
-        result_event(
-            task.task_id.clone(),
-            "mutsuki.agent.model.effect_completed",
-            serde_json::json!({"outcome": outcome}),
-        )
-    } else {
-        Err(runtime_failure(
-            PLUGIN_ID,
-            &task.task_id,
-            AgentError::new(
-                "agent.model.effect_failed",
-                format!("model effect did not complete: {outcome:?}"),
-            ),
-        ))
-    }
+    event_kind: &'static str,
+) -> RuntimeResult<RunnerResult>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let output: T = completed_output(PLUGIN_ID, &task.task_id, outcome)?;
+    result_event(task.task_id.clone(), event_kind, output)
 }
 
 pub(crate) fn append_callback(

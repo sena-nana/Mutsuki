@@ -18,8 +18,10 @@ pub fn echo_tool_descriptor() -> AgentToolDescriptor {
 
 pub fn execute_echo_tool(request: AgentToolExecuteRequest) -> AgentToolExecuteResult {
     AgentToolExecuteResult {
+        call_id: request.call_id,
         name: request.name,
-        output: request.input,
+        output: Some(request.input),
+        output_ref: None,
         approved: true,
     }
 }

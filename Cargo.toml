@@ -15,7 +15,6 @@ members = [
 ]
 resolver = "2"
 exclude = [
-    "examples/simple-chat-agent",
     "examples/rust-agent-tool",
     "examples/rust-model-provider",
     "templates/rust-agent-tool",
@@ -31,9 +30,9 @@ license = "MIT"
 mutsuki-agent-protocol = { path = "crates/mutsuki-agent-protocol" }
 mutsuki-agent-sdk = { path = "crates/mutsuki-agent-sdk" }
 mutsuki-agent-macros = { path = "crates/mutsuki-agent-macros" }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "9fb8bb6d711afedd15b6e6c091331c0f3fd1d0cb" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "9fb8bb6d711afedd15b6e6c091331c0f3fd1d0cb" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "9fb8bb6d711afedd15b6e6c091331c0f3fd1d0cb" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "d1cdac5f2241363ac876ea493a1e52fd1742b31f" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "d1cdac5f2241363ac876ea493a1e52fd1742b31f" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "d1cdac5f2241363ac876ea493a1e52fd1742b31f" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"

@@ -15,7 +15,6 @@ macro_rules! protocol_marker {
 }
 
 protocol_marker!(AgentRunProtocol, AGENT_RUN_PROTOCOL);
-protocol_marker!(AgentLoopStepProtocol, AGENT_LOOP_STEP_PROTOCOL);
 protocol_marker!(AgentContextBuildProtocol, AGENT_CONTEXT_BUILD_PROTOCOL);
 protocol_marker!(AgentToolListProtocol, AGENT_TOOL_LIST_PROTOCOL);
 protocol_marker!(AgentToolExecuteProtocol, AGENT_TOOL_EXECUTE_PROTOCOL);

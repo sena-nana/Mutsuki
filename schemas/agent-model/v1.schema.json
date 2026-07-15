@@ -13,6 +13,22 @@
     "result_protocol_id": { "type": ["string", "null"] },
     "result_context": true,
     "session_id": { "type": ["string", "null"] },
-    "output_resource": { "type": ["object", "null"] }
+    "output_resource": { "type": ["object", "null"] },
+    "stop_reason": { "enum": ["stop", "tool_calls", "length", "content_filter", "other"] },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["call_id", "name", "input"],
+        "properties": {
+          "call_id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "input": true
+        },
+        "additionalProperties": false
+      }
+    },
+    "cost_microunits": { "type": "integer", "minimum": 0 },
+    "stream": { "type": "object" }
   }
 }

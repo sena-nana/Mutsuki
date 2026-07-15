@@ -1,4 +1,4 @@
 profile_id = "my.agent.profile"
-default_model = "mock"
+default_model = "replace-with-configured-provider-model"
 max_steps = 8
 tools = []

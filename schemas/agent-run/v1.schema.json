@@ -8,10 +8,20 @@
     "messages": { "type": "array", "items": { "$ref": "../agent-message/v1.schema.json" } },
     "session_id": { "type": ["string", "null"] },
     "max_steps": { "type": "integer", "minimum": 0, "default": 8 },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_total_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "max_cost_microunits": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "stream": { "type": "boolean", "default": false },
     "model": { "type": ["string", "null"] },
     "metadata": true,
     "result_protocol_id": { "type": ["string", "null"] },
-    "result_context": true
+    "result_context": true,
+    "cost_microunits": { "type": "integer", "minimum": 0 },
+    "output_resource": { "type": ["object", "null"] }
   }
 }

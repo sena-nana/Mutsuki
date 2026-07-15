@@ -230,11 +230,11 @@ fn run_blocking(
         AgentModelHttpEffectRequest::Generate(request) => gateway
             .generate_effect(request)
             .map(EffectValue::Generated)
-            .map_err(|error| standalone_error(error)),
+            .map_err(standalone_error),
         AgentModelHttpEffectRequest::Stream(request) => gateway
             .stream_effect(request)
             .map(EffectValue::Streamed)
-            .map_err(|error| standalone_error(error)),
+            .map_err(standalone_error),
     }
 }
 

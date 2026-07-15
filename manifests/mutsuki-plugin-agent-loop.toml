@@ -4,5 +4,4 @@ api_version = "mutsuki-plugin-v1"
 
 provides = [
   "mutsuki.agent/run@1",
-  "mutsuki.agent.loop/step@1",
 ]

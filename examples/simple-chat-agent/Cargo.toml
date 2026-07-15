@@ -1,8 +1,0 @@
-[package]
-name = "simple-chat-agent"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-mutsuki-agent-protocol = { path = "../../crates/mutsuki-agent-protocol" }
-mutsuki-plugin-agent-loop = { path = "../../crates/mutsuki-plugin-agent-loop" }

@@ -7,7 +7,6 @@
 | 草案 | 稳定 id |
 | --- | --- |
 | plan | `mutsuki.agent/run@1` |
-| step | `mutsuki.agent.loop/step@1` |
 | tool.call | `mutsuki.agent.tool/execute@1` |
 | memory.query / write | `mutsuki.agent.memory/query@1` · `.../write@1` |
 | llm.complete / stream | `mutsuki.agent.model/generate@1` · `.../stream@1` |

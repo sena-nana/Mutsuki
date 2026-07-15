@@ -25,7 +25,6 @@ pub use tool::*;
 pub use usage::*;
 
 pub const AGENT_RUN_PROTOCOL: &str = "mutsuki.agent/run@1";
-pub const AGENT_LOOP_STEP_PROTOCOL: &str = "mutsuki.agent.loop/step@1";
 pub const AGENT_CONTEXT_BUILD_PROTOCOL: &str = "mutsuki.agent.context/build@1";
 pub const AGENT_TOOL_LIST_PROTOCOL: &str = "mutsuki.agent.tool/list@1";
 pub const AGENT_TOOL_EXECUTE_PROTOCOL: &str = "mutsuki.agent.tool/execute@1";

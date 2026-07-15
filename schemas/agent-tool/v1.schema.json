@@ -13,6 +13,11 @@
       "enum": ["none", "workspace_read", "workspace_write", "external_read", "external_write"]
     },
     "requires_approval": { "type": "boolean" },
-    "permissions": { "type": "array", "items": { "type": "string" } }
+    "permissions": { "type": "array", "items": { "type": "string" } },
+    "call_id": { "type": ["string", "null"] },
+    "input": true,
+    "output": true,
+    "output_ref": { "type": ["string", "null"] },
+    "approved": { "type": "boolean" }
   }
 }

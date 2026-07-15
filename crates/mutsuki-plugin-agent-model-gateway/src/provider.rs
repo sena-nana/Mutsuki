@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_agent_protocol::{
     AgentError, AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult,
-    AgentModelStreamRequest, AgentModelStreamResult, AgentResult, AgentRole, AgentUsage,
+    AgentModelStopReason, AgentModelStreamRequest, AgentModelStreamResult, AgentResult, AgentRole,
+    AgentToolCall, AgentUsage,
 };
 use mutsuki_agent_sdk::stream_resource_ref;
 
@@ -46,14 +47,12 @@ pub struct ModelGateway {
 
 impl Default for ModelGateway {
     fn default() -> Self {
-        let gateway = Self {
-            default_provider: "mock".into(),
+        Self {
+            default_provider: String::new(),
             providers: Arc::new(Mutex::new(BTreeMap::new())),
             next_stream: Arc::new(AtomicU64::new(0)),
             streams: Arc::new(Mutex::new(BTreeMap::new())),
-        };
-        gateway.register(Arc::new(MockModelProvider::default()));
-        gateway
+        }
     }
 }
 
@@ -87,9 +86,13 @@ impl ModelGateway {
         self.streams
             .lock()
             .expect("model stream mutex poisoned")
-            .insert(slot.clone(), generated.message.content);
+            .insert(slot.clone(), generated.message.content.clone());
         Ok(AgentModelStreamResult {
             stream: stream_resource_ref(PLUGIN_ID, slot),
+            stop_reason: generated.stop_reason,
+            tool_calls: generated.tool_calls,
+            usage: generated.usage,
+            cost_microunits: generated.cost_microunits,
         })
     }
 
@@ -143,9 +146,13 @@ impl ModelGateway {
         self.streams
             .lock()
             .expect("model stream mutex poisoned")
-            .insert(slot.clone(), generated.message.content);
+            .insert(slot.clone(), generated.message.content.clone());
         Ok(AgentModelStreamResult {
             stream: stream_resource_ref(PLUGIN_ID, slot),
+            stop_reason: generated.stop_reason,
+            tool_calls: generated.tool_calls,
+            usage: generated.usage,
+            cost_microunits: generated.cost_microunits,
         })
     }
 
@@ -224,9 +231,13 @@ impl ModelGateway {
         self.streams
             .lock()
             .expect("model stream mutex poisoned")
-            .insert(slot.clone(), generated.message.content);
+            .insert(slot.clone(), generated.message.content.clone());
         AgentModelStreamResult {
             stream: stream_resource_ref(PLUGIN_ID, slot),
+            stop_reason: generated.stop_reason,
+            tool_calls: generated.tool_calls,
+            usage: generated.usage,
+            cost_microunits: generated.cost_microunits,
         }
     }
 }
@@ -236,53 +247,6 @@ pub struct ModelGatewayHealth {
     pub default_provider: String,
     pub ready: bool,
     pub providers: Vec<String>,
-}
-
-#[derive(Default)]
-pub struct MockModelProvider;
-
-impl ModelProvider for MockModelProvider {
-    fn provider_id(&self) -> &str {
-        "mock"
-    }
-
-    fn generate(
-        &self,
-        request: AgentModelGenerateRequest,
-    ) -> AgentResult<AgentModelGenerateResult> {
-        let last_user = request
-            .messages
-            .iter()
-            .rev()
-            .find(|message| message.role == AgentRole::User)
-            .map(|message| message.content.as_str())
-            .unwrap_or("");
-        let content = if last_user.is_empty() {
-            "No user message provided.".to_string()
-        } else {
-            format!("Echo: {last_user}")
-        };
-        Ok(AgentModelGenerateResult {
-            message: AgentMessage::assistant(content),
-            usage: AgentUsage {
-                input_tokens: request
-                    .messages
-                    .iter()
-                    .map(|message| message.content.len() as u64)
-                    .sum(),
-                output_tokens: last_user.len() as u64 + 6,
-                total_tokens: request
-                    .messages
-                    .iter()
-                    .map(|message| message.content.len() as u64)
-                    .sum::<u64>()
-                    + last_user.len() as u64
-                    + 6,
-            },
-            raw: None,
-            output_resource: None,
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -429,15 +393,7 @@ impl HttpModelProvider {
         };
         serde_json::json!({
             "model": model,
-            "messages": request.messages.iter().map(|message| serde_json::json!({
-                "role": match message.role {
-                    AgentRole::System => "system",
-                    AgentRole::User => "user",
-                    AgentRole::Assistant => "assistant",
-                    AgentRole::Tool => "tool",
-                },
-                "content": message.content,
-            })).collect::<Vec<_>>(),
+            "messages": request.messages.iter().map(http_message_payload).collect::<Vec<_>>(),
             "stream": false,
             "temperature": request.temperature,
             "max_output_tokens": request.max_output_tokens,
@@ -505,6 +461,64 @@ impl HttpModelProvider {
     }
 }
 
+fn http_message_payload(message: &AgentMessage) -> serde_json::Value {
+    let role = match message.role {
+        AgentRole::System => "system",
+        AgentRole::User => "user",
+        AgentRole::Assistant => "assistant",
+        AgentRole::Tool => "tool",
+    };
+    let mut payload = serde_json::Map::from_iter([
+        ("role".into(), serde_json::Value::String(role.into())),
+        (
+            "content".into(),
+            serde_json::Value::String(message.content.clone()),
+        ),
+    ]);
+    if let Some(name) = &message.name {
+        payload.insert("name".into(), serde_json::Value::String(name.clone()));
+    }
+    if message.role == AgentRole::Assistant
+        && let Some(tool_calls) = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("tool_calls"))
+            .and_then(|calls| serde_json::from_value::<Vec<AgentToolCall>>(calls.clone()).ok())
+    {
+        payload.insert(
+            "tool_calls".into(),
+            serde_json::Value::Array(
+                tool_calls
+                    .into_iter()
+                    .map(|call| {
+                        serde_json::json!({
+                            "id": call.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": call.input.to_string(),
+                            }
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    if message.role == AgentRole::Tool
+        && let Some(call_id) = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("call_id"))
+            .and_then(serde_json::Value::as_str)
+    {
+        payload.insert(
+            "tool_call_id".into(),
+            serde_json::Value::String(call_id.into()),
+        );
+    }
+    serde_json::Value::Object(payload)
+}
+
 impl ModelProvider for HttpModelProvider {
     fn provider_id(&self) -> &str {
         &self.options.provider_id
@@ -549,12 +563,72 @@ fn parse_http_result(body: serde_json::Value) -> AgentResult<AgentModelGenerateR
     let content = body
         .pointer("/choices/0/message/content")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            AgentError::new(
-                "agent.model.invalid_response",
-                "response is missing choices[0].message.content",
-            )
-        })?;
+        .unwrap_or_default();
+    let tool_calls = body
+        .pointer("/choices/0/message/tool_calls")
+        .and_then(serde_json::Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|call| {
+                    let call_id = call
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            AgentError::new(
+                                "agent.model.invalid_response",
+                                "tool call is missing id",
+                            )
+                        })?;
+                    let name = call
+                        .pointer("/function/name")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            AgentError::new(
+                                "agent.model.invalid_response",
+                                "tool call is missing function.name",
+                            )
+                        })?;
+                    let arguments = call
+                        .pointer("/function/arguments")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let input = match arguments {
+                        serde_json::Value::String(arguments) => serde_json::from_str(&arguments)
+                            .map_err(|error| {
+                                AgentError::new(
+                                    "agent.model.invalid_response",
+                                    format!("tool call arguments are invalid JSON: {error}"),
+                                )
+                            })?,
+                        value => value,
+                    };
+                    Ok(AgentToolCall {
+                        call_id: call_id.into(),
+                        name: name.into(),
+                        input,
+                    })
+                })
+                .collect::<AgentResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if content.is_empty() && tool_calls.is_empty() {
+        return Err(AgentError::new(
+            "agent.model.invalid_response",
+            "response contains neither message content nor tool calls",
+        ));
+    }
+    let stop_reason = match body
+        .pointer("/choices/0/finish_reason")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some("tool_calls") => AgentModelStopReason::ToolCalls,
+        Some("length") => AgentModelStopReason::Length,
+        Some("content_filter") => AgentModelStopReason::ContentFilter,
+        Some("stop") | None => AgentModelStopReason::Stop,
+        Some(_) => AgentModelStopReason::Other,
+    };
     let usage = AgentUsage {
         input_tokens: body
             .pointer("/usage/prompt_tokens")
@@ -571,7 +645,10 @@ fn parse_http_result(body: serde_json::Value) -> AgentResult<AgentModelGenerateR
     };
     Ok(AgentModelGenerateResult {
         message: AgentMessage::assistant(content),
+        stop_reason,
+        tool_calls,
         usage,
+        cost_microunits: 0,
         raw: None,
         output_resource: None,
     })
@@ -584,6 +661,46 @@ mod http_tests {
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+
+    #[test]
+    fn production_gateway_has_no_implicit_provider() {
+        let gateway = ModelGateway::default();
+        let health = gateway.health_snapshot();
+        assert!(!health.ready);
+        assert!(health.providers.is_empty());
+    }
+
+    #[test]
+    fn http_result_preserves_typed_tool_call_and_usage() {
+        let result = parse_http_result(serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"value\":\"ping\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7}
+        }))
+        .unwrap();
+
+        assert_eq!(result.stop_reason, AgentModelStopReason::ToolCalls);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].call_id, "call-1");
+        assert_eq!(result.tool_calls[0].name, "echo");
+        assert_eq!(
+            result.tool_calls[0].input,
+            serde_json::json!({"value": "ping"})
+        );
+        assert_eq!(result.usage.total_tokens, 7);
+    }
 
     #[test]
     fn inline_gateway_rejects_http_effect_provider_without_network_io() {
@@ -783,8 +900,7 @@ mod http_tests {
             let _ = stream.read(&mut request).unwrap();
             write!(
                 stream,
-                "HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                "{}"
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
             )
             .unwrap();
         });

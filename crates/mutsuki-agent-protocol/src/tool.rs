@@ -61,6 +61,8 @@ pub struct AgentToolListResult {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentToolExecuteRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     pub name: String,
     #[serde(default)]
     pub input: Value,
@@ -70,9 +72,21 @@ pub struct AgentToolExecuteRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentToolExecuteResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
     pub name: String,
-    #[serde(default)]
-    pub output: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<String>,
     #[serde(default)]
     pub approved: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentToolCall {
+    pub call_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub input: Value,
 }
