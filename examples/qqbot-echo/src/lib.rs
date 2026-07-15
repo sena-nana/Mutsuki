@@ -139,6 +139,7 @@ pub fn build_bootstrapper(
         ],
         bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
+        observability: Default::default(),
         allow_dynamic_registration: false,
         allow_hot_reload: false,
     };
@@ -364,6 +365,7 @@ mod tests {
             ],
             bindings: BTreeMap::new(),
             plugin_deployments: BTreeMap::new(),
+            observability: Default::default(),
             allow_dynamic_registration: false,
             allow_hot_reload: false,
         };
