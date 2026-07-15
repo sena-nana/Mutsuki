@@ -29,6 +29,7 @@ from mutsuki_runner_kit.contracts.extension import (
     SchedulerPolicyDescriptor,
     WorkflowDescriptor,
 )
+from mutsuki_runner_kit.contracts.observability import ObservabilityProfile
 from mutsuki_runner_kit.contracts.resource import ResourceTypeDescriptor
 from mutsuki_runner_kit.contracts.runner import RunnerDescriptor
 from mutsuki_runner_kit.contracts.surface import ContractSurface
@@ -253,6 +254,7 @@ class RuntimeProfile:
     enabled_plugins: tuple[str, ...]
     bindings: dict[str, str]
     plugin_deployments: dict[str, PluginDeploymentKind]
+    observability: ObservabilityProfile
     allow_dynamic_registration: bool
     allow_hot_reload: bool
 
@@ -266,6 +268,9 @@ class RuntimeProfile:
             bindings=as_str_dict(raw, "bindings"),
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"
+            ),
+            observability=ObservabilityProfile.from_json_dict(
+                as_mapping(field_value(raw, "observability"), "observability")
             ),
             allow_dynamic_registration=as_bool(
                 field_value(raw, "allow_dynamic_registration"), "allow_dynamic_registration"
@@ -389,6 +394,7 @@ class RuntimeLoadPlan:
     load_order: tuple[str, ...]
     runner_bindings: dict[str, str]
     plugin_deployments: dict[str, PluginDeploymentKind]
+    observability: ObservabilityProfile
     capability_graph: RuntimeCapabilityGraph
     contract_surfaces: tuple[ContractSurface, ...]
 
@@ -408,6 +414,9 @@ class RuntimeLoadPlan:
             runner_bindings=as_str_dict(raw, "runner_bindings"),
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"
+            ),
+            observability=ObservabilityProfile.from_json_dict(
+                as_mapping(field_value(raw, "observability"), "observability")
             ),
             capability_graph=RuntimeCapabilityGraph.from_json_dict(
                 as_mapping(field_value(raw, "capability_graph"), "capability_graph")

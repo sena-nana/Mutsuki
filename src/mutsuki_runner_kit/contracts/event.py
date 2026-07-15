@@ -81,6 +81,7 @@ class RuntimeEvent:
 
 @dataclass(frozen=True)
 class TraceSpan:
+    sequence: int
     trace_id: str
     span_id: str
     parent_span_id: str | None
@@ -96,6 +97,7 @@ class TraceSpan:
         start = field_value(raw, "start")
         end = field_value(raw, "end")
         return cls(
+            sequence=as_int(field_value(raw, "sequence"), "sequence"),
             trace_id=as_str(field_value(raw, "trace_id"), "trace_id"),
             span_id=as_str(field_value(raw, "span_id"), "span_id"),
             parent_span_id=optional_str(field_value(raw, "parent_span_id"), "parent_span_id"),

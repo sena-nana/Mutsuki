@@ -10,6 +10,11 @@ from mutsuki_runner_kit.contracts.extension import (
     SchedulerPolicyDescriptor,
     WorkflowDescriptor,
 )
+from mutsuki_runner_kit.contracts.observability import (
+    ObservabilityOutletProfile,
+    ObservabilityOverflowPolicy,
+    ObservabilityProfile,
+)
 from mutsuki_runner_kit.contracts.plugin import (
     ArtifactType,
     CapabilityProviderSelection,
@@ -45,6 +50,18 @@ from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 
 def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> None:
+    observability = ObservabilityProfile(
+        events=ObservabilityOutletProfile(
+            capacity=4096,
+            overflow_policy=ObservabilityOverflowPolicy.DROP_NEW,
+        ),
+        traces=ObservabilityOutletProfile(
+            capacity=4096,
+            overflow_policy=ObservabilityOverflowPolicy.DROP_OLDEST,
+        ),
+        detailed_scheduler_decisions=False,
+        dispatch_spans=False,
+    )
     descriptor = RunnerDescriptor(
         runner_id="runner-a",
         plugin_id="plugin-a",
@@ -187,6 +204,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         load_order=("plugin-a",),
         runner_bindings={"raw.input": "runner-a"},
         plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
+        observability=observability,
         capability_graph=RuntimeCapabilityGraph(
             profile_mode=RuntimeProfileMode.FULL_DEV,
             provided_capabilities=(
@@ -354,6 +372,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             enabled_plugins=("plugin-a",),
             bindings={"raw.input": "plugin-a"},
             plugin_deployments={"plugin-a": PluginDeploymentKind.PYTHON},
+            observability=observability,
             allow_dynamic_registration=False,
             allow_hot_reload=True,
         ),
