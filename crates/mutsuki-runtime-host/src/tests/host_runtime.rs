@@ -219,6 +219,7 @@ fn event_driven_host_arms_one_shot_timer_for_future_ready_step() {
         .unwrap();
     let mut task = Task::new("timer-1", "timer.work", json!({}));
     task.ready_at_step = Some(8);
+    std::thread::sleep(Duration::from_millis(50));
     let submitted_at = Instant::now();
 
     runtime
@@ -228,6 +229,8 @@ fn event_driven_host_arms_one_shot_timer_for_future_ready_step() {
     assert_eq!(armed.current_step, 1);
     assert_eq!(armed.next_required_tick, Some(8));
     assert!(armed.next_wake_deadline.is_some());
+    std::thread::sleep(Duration::from_millis(10));
+    assert_eq!(runtime.task_status("timer-1"), Some(TaskStatus::Ready));
 
     wait_for_task_status(&runtime, "timer-1", TaskStatus::Completed);
     assert!(submitted_at.elapsed() < Duration::from_millis(150));

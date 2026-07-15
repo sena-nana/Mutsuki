@@ -47,26 +47,38 @@ struct RunningBatch {
 }
 
 struct DriverClock {
-    origin: Instant,
     tick_interval: Duration,
+    logical_target: Option<u64>,
+    logical_deadline: Option<Instant>,
     timed_wakeups: u64,
 }
 
 impl DriverClock {
     fn new(tick_interval: Duration) -> Self {
         Self {
-            origin: Instant::now(),
             tick_interval,
+            logical_target: None,
+            logical_deadline: None,
             timed_wakeups: 0,
         }
     }
 
-    fn deadline_for_step(&self, step: u64) -> Option<Instant> {
-        let total_nanos = self.tick_interval.as_nanos().checked_mul(step as u128)?;
+    fn refresh_logical_deadline(&mut self, target: Option<u64>, current_step: u64) {
+        if target == self.logical_target {
+            return;
+        }
+        self.logical_target = target;
+        self.logical_deadline = target.and_then(|target_step| {
+            let remaining_steps = target_step.saturating_sub(current_step);
+            Instant::now().checked_add(self.duration_for_steps(remaining_steps)?)
+        });
+    }
+
+    fn duration_for_steps(&self, steps: u64) -> Option<Duration> {
+        let total_nanos = self.tick_interval.as_nanos().checked_mul(steps as u128)?;
         let seconds = total_nanos / 1_000_000_000;
         let nanos = (total_nanos % 1_000_000_000) as u32;
-        let duration = Duration::new(u64::try_from(seconds).ok()?, nanos);
-        self.origin.checked_add(duration)
+        Some(Duration::new(u64::try_from(seconds).ok()?, nanos))
     }
 }
 
@@ -87,7 +99,6 @@ fn next_required_tick(
 }
 
 fn next_wake_deadline(
-    core: &CoreRuntime,
     config: &HostRuntimeConfig,
     running_batches_by_task: &BTreeMap<String, RunningBatch>,
     driver: &DriverClock,
@@ -95,9 +106,8 @@ fn next_wake_deadline(
     if !config.event_driven {
         return None;
     }
-    let logical = next_required_tick(core, running_batches_by_task)
-        .and_then(|step| driver.deadline_for_step(step));
-    logical
+    driver
+        .logical_deadline
         .into_iter()
         .chain(running_batches_by_task.values().flat_map(|task| {
             [
@@ -128,7 +138,7 @@ fn drive_state(
     HostRuntimeDriveState {
         current_step: core.current_step(),
         next_required_tick: next_required_tick(core, running_batches_by_task),
-        next_wake_deadline: next_wake_deadline(core, config, running_batches_by_task, driver),
+        next_wake_deadline: next_wake_deadline(config, running_batches_by_task, driver),
         timed_wakeups: driver.timed_wakeups,
     }
 }
@@ -148,7 +158,11 @@ pub(crate) fn core_actor_loop(
     let mut draining_invocations: BTreeMap<String, String> = BTreeMap::new();
     let mut driver = DriverClock::new(config.tick_interval);
     loop {
-        let wait = next_wake_deadline(&core, &config, &running_batches_by_task, &driver)
+        driver.refresh_logical_deadline(
+            next_required_tick(&core, &running_batches_by_task),
+            core.current_step(),
+        );
+        let wait = next_wake_deadline(&config, &running_batches_by_task, &driver)
             .map(|deadline| deadline.saturating_duration_since(Instant::now()));
         let received = match wait {
             Some(wait) => rx.recv_timeout(wait),
@@ -158,9 +172,9 @@ pub(crate) fn core_actor_loop(
             Ok(msg) => msg,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 driver.timed_wakeups = driver.timed_wakeups.saturating_add(1);
-                if let Some(target_step) = next_required_tick(&core, &running_batches_by_task)
+                if let Some(target_step) = driver.logical_target
                     && driver
-                        .deadline_for_step(target_step)
+                        .logical_deadline
                         .is_some_and(|deadline| deadline <= Instant::now())
                     && schedule_ready_at(
                         target_step,
