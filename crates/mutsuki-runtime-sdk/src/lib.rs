@@ -578,6 +578,10 @@ impl Runner for AsyncRunnerAdapter {
     fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
         if let Some(task_id) = self.invocation_tasks.get(invocation_id).cloned() {
             self.remove_invocation_by_task(&task_id);
+        } else if self.invocations.contains_key(invocation_id) {
+            // Hosts may address an idle async invocation by task id after the
+            // worker has returned the adapter to Core between polls.
+            self.remove_invocation_by_task(invocation_id);
         }
         Ok(())
     }

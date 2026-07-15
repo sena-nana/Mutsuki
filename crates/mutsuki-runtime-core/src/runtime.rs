@@ -302,6 +302,16 @@ impl CoreRuntime {
             .declare_capability(runner_id, protocol_ids, capacity)
     }
 
+    /// Delivers cooperative cancellation to a runner currently held by Core.
+    pub fn cancel_runner_invocation(
+        &mut self,
+        runner_id: &str,
+        invocation_or_task_id: &str,
+    ) -> RuntimeResult<()> {
+        self.registry
+            .cancel_runner(runner_id, invocation_or_task_id)
+    }
+
     pub fn state_value(&self, ref_id: &str) -> Option<&(u64, Value)> {
         self.states.get(ref_id)
     }

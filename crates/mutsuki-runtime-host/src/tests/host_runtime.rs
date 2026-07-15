@@ -1,6 +1,6 @@
 #![allow(clippy::field_reassign_with_default)]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -9,7 +9,9 @@ use mutsuki_runtime_core::{
     Runner, RunnerContext, RuntimeFailure, RuntimeResult, RuntimeStopState, ScheduleDecision,
     TaskHistoryRetention,
 };
-use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
+use mutsuki_runtime_sdk::{
+    AsyncRunnerAdapter, HostRuntime as SdkHostRuntime, RuntimeClient, RuntimeClientRef,
+};
 use serde_json::json;
 
 use crate::{
@@ -28,9 +30,24 @@ struct BlockingObservedRunner {
     disposed: Arc<Mutex<bool>>,
 }
 
-struct ContinueObservedRunner {
-    descriptor: RunnerDescriptor,
-    cancelled: Arc<Mutex<Vec<String>>>,
+struct NoopRuntimeClient;
+
+impl RuntimeClient for NoopRuntimeClient {
+    fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+        Ok(Vec::new())
+    }
+
+    fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+        Ok(None)
+    }
+}
+
+struct PendingDrop(Arc<AtomicBool>);
+
+impl Drop for PendingDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
 }
 
 #[derive(Debug)]
@@ -79,33 +96,6 @@ impl Runner for BlockingObservedRunner {
 
     fn dispose(&mut self) -> mutsuki_runtime_core::RuntimeResult<()> {
         *self.disposed.lock().expect("disposed mutex poisoned") = true;
-        Ok(())
-    }
-}
-
-impl Runner for ContinueObservedRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
-        std::thread::sleep(Duration::from_millis(20));
-        scalar_completion_batch(&batch, |task| {
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.status = RunnerStatus::Continue;
-            Ok(result)
-        })
-    }
-
-    fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
-        self.cancelled
-            .lock()
-            .expect("cancelled mutex poisoned")
-            .push(invocation_id.to_string());
         Ok(())
     }
 }
@@ -265,7 +255,8 @@ fn event_driven_host_dispatches_submit_and_worker_backlog_without_polling() {
 fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
     let parent_descriptor = descriptor("parent.runner", "parent.work");
     let child_descriptor = descriptor("child.runner", "child.work");
-    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let child_started = Arc::new(AtomicBool::new(false));
+    let child_dropped = Arc::new(AtomicBool::new(false));
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest(
         "plugin-a",
@@ -305,10 +296,25 @@ fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
             Ok(result)
         },
     )));
-    host.register_runner(Box::new(ContinueObservedRunner {
-        descriptor: child_descriptor,
-        cancelled: cancelled.clone(),
-    }));
+    let client: RuntimeClientRef = Arc::new(NoopRuntimeClient);
+    host.register_runner(Box::new(AsyncRunnerAdapter::new(
+        child_descriptor,
+        client,
+        Box::new({
+            let child_started = child_started.clone();
+            let child_dropped = child_dropped.clone();
+            move |_ctx, _task| {
+                let child_started = child_started.clone();
+                let child_dropped = child_dropped.clone();
+                Box::pin(async move {
+                    child_started.store(true, Ordering::SeqCst);
+                    let _drop = PendingDrop(child_dropped);
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                })
+            }
+        }),
+    )));
     let runtime = host
         .into_host_runtime_with_config(
             runtime_profile(),
@@ -331,7 +337,12 @@ fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
         other => panic!("unexpected submit reply: {other:?}"),
     };
     wait_for_task_status(&runtime, "cascade-parent", TaskStatus::Waiting);
-    wait_for_task_status(&runtime, "cascade-child", TaskStatus::Running);
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1) && !child_started.load(Ordering::SeqCst) {
+        let _ = runtime.drive_state();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(child_started.load(Ordering::SeqCst));
     runtime
         .dispatch(HostRuntimeCommand::CancelTask(handle))
         .unwrap();
@@ -339,7 +350,7 @@ fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
 
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(1) {
-        if !cancelled.lock().unwrap().is_empty() {
+        if child_dropped.load(Ordering::SeqCst) {
             return;
         }
         let _ = runtime.drive_state();

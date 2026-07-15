@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::ScalarValue;
 use mutsuki_runtime_contracts::{
@@ -12,6 +12,33 @@ use crate::{RuntimeResult, TaskPool};
 use super::{CoreRuntime, TaskResultSnapshot};
 
 impl CoreRuntime {
+    /// Returns the task and owning runner pairs affected by a cascade cancellation.
+    /// Hosts use this snapshot before terminal transitions clear runner ownership.
+    pub fn task_cancellation_targets(&self, handle: &TaskHandle) -> Vec<(String, String)> {
+        let mut pending = vec![handle.task_id.clone()];
+        let mut visited = BTreeSet::new();
+        let mut targets = Vec::new();
+        while let Some(task_id) = pending.pop() {
+            if !visited.insert(task_id.clone()) {
+                continue;
+            }
+            if let Some(record) = self.tasks.get(&task_id)
+                && let Some(runner_id) = &record.owner_runner
+            {
+                targets.push((task_id.clone(), runner_id.clone()));
+            }
+            pending.extend(
+                self.tasks
+                    .awaits_for_parent(&task_id)
+                    .into_iter()
+                    .filter(|task_await| task_await.cancel_policy == CancelPolicy::Cascade)
+                    .map(|task_await| task_await.child.task_id),
+            );
+        }
+        targets.sort();
+        targets
+    }
+
     pub(crate) fn enqueue_task(&mut self, mut task: Task) -> RuntimeResult<String> {
         self.ensure_not_aborted()?;
         if task.registry_generation == 0 {
