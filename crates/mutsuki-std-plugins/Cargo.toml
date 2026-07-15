@@ -9,6 +9,6 @@ mutsuki-plugin-io-browser-chromium = { path = "../../plugins/mutsuki-plugin-io-b
 mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "8afd431f9c0a69ae1b6fa5c255066f0172a2b42d" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "e95dd06c5f6af007814887771df7da1afa14aad7" }
 serde.workspace = true
 serde_json.workspace = true
