@@ -17,6 +17,12 @@ tokio.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+mutsuki-agent-bundle.workspace = true
+mutsuki-agent-protocol.workspace = true
+mutsuki-agent-sdk.workspace = true
+mutsuki-plugin-agent-model-gateway.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-sdk.workspace = true
 mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
