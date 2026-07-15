@@ -210,6 +210,7 @@ fn claim_ready_dispatches_applies_byte_budget_before_batch_build() {
             ))
             .unwrap();
     }
+    assert_eq!(runtime.tasks().payload_wire_bytes_for_test("schedule-1"), 6);
 
     let (report, dispatches) = runtime
         .claim_ready_dispatches(

@@ -81,52 +81,24 @@ pub(super) fn queued_count(
     visit_candidate_records(task_pool, runner, step, registry_generation, |_| true)
 }
 
-pub(super) fn runner_accepts_record(
+fn runner_accepts_indexed_task(
     runner: &RunnerDescriptor,
-    record: &TaskRecord,
+    task: &Task,
     registry_generation: u64,
 ) -> bool {
-    if let Some(owner_runner) = &record.owner_runner
-        && owner_runner != &runner.runner_id
-    {
-        return false;
-    }
-    runner_accepts(runner, &record.task, registry_generation)
-}
-
-fn runner_accepts(runner: &RunnerDescriptor, task: &Task, registry_generation: u64) -> bool {
     if registry_generation != 0
         && task.registry_generation != 0
         && task.registry_generation != registry_generation
     {
         return false;
     }
-    if let Some(hint) = &task.runner_hint
-        && hint != &runner.runner_id
-    {
-        return false;
+    match runner.purity {
+        RunnerPurity::Pure => {
+            !task.protocol_id.starts_with("effect.") && !task.protocol_id.starts_with("core.")
+        }
+        RunnerPurity::Effectful => task.protocol_id.starts_with("effect."),
+        RunnerPurity::Committer => task.protocol_id.starts_with("core."),
     }
-    if runner.purity == RunnerPurity::Pure
-        && (task.protocol_id.starts_with("effect.") || task.protocol_id.starts_with("core."))
-    {
-        return false;
-    }
-    if runner.purity == RunnerPurity::Effectful && !task.protocol_id.starts_with("effect.") {
-        return false;
-    }
-    if runner.purity == RunnerPurity::Committer && !task.protocol_id.starts_with("core.") {
-        return false;
-    }
-    if task.protocol_id.starts_with("effect.") && runner.purity != RunnerPurity::Effectful {
-        return false;
-    }
-    if task.protocol_id.starts_with("core.") && runner.purity != RunnerPurity::Committer {
-        return false;
-    }
-    runner
-        .accepted_protocol_ids
-        .iter()
-        .any(|protocol_id| protocol_id == &task.protocol_id)
 }
 
 fn select_candidate_ids(
@@ -199,7 +171,7 @@ fn visit_candidate_records(
     let mut visited = 0;
     while let Some(Reverse((key, index))) = heap.pop() {
         if let Some(record) = task_pool.tasks.get(key.task_id())
-            && runner_accepts_record(runner, record, registry_generation)
+            && runner_accepts_indexed_task(runner, &record.task, registry_generation)
         {
             visited += 1;
             if !visit(record) {

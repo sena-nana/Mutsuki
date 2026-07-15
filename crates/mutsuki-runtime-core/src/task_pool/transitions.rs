@@ -175,11 +175,11 @@ pub(super) fn cancel_running_invocation(
     current_step: u64,
 ) -> usize {
     let task_id = task_pool
-        .running_record_keys(runner_id)
+        .running_task_ids(runner_id)
         .into_iter()
         .flatten()
-        .find_map(|key| {
-            task_pool.tasks.get(key.task_id()).and_then(|record| {
+        .find_map(|task_id| {
+            task_pool.tasks.get(task_id).and_then(|record| {
                 record
                     .lease
                     .as_ref()

@@ -108,7 +108,7 @@ descriptor；字符串 task id 只保留为 TaskPool 和 host actor 内部事实
 `TaskPool` 是 ready task backlog / 调度索引，不是 Runner inbox。没有 runner 时，
 Task 仍然可以保持 Ready 并积压。Runner 不长期拥有 Task。
 
-TaskPool 内部以 TaskRecord 为权威，同时维护可重建的增量索引：protocol/hint/owner 的稳定
+TaskPool 内部以 TaskRecord 为权威，同时维护可重建的增量索引：protocol/hint/owner 复合稳定
 ready queue、Waiting/Blocked wake bucket、Running lease-expiry bucket、expected-version
 ready set 和 runner running/waiting set。正常 tick、runner load 和 claim 只访问本轮到期桶、
 相关 protocol/runner selector 队列与实际候选；完整 TaskRecord 扫描只允许出现在显式

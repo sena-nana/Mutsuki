@@ -4,14 +4,14 @@
   "profile": "release",
   "idle_iterations": 200,
   "cases": [
-    {"runner_count": 1, "task_count": 1000, "idle_tick_ns": 60.625, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 6667, "isolated_claimed": 8, "isolated_claim_ns": 37625, "populated_queued": 1000, "populated_load_ns": 128583},
-    {"runner_count": 1, "task_count": 10000, "idle_tick_ns": 38.125, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 4125, "isolated_claimed": 8, "isolated_claim_ns": 25625, "populated_queued": 10000, "populated_load_ns": 491084},
-    {"runner_count": 1, "task_count": 100000, "idle_tick_ns": 20.625, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 3084, "isolated_claimed": 8, "isolated_claim_ns": 16500, "populated_queued": 100000, "populated_load_ns": 8968083},
-    {"runner_count": 16, "task_count": 1000, "idle_tick_ns": 126.665, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 13959, "isolated_claimed": 128, "isolated_claim_ns": 162625, "populated_queued": 1000, "populated_load_ns": 45333},
-    {"runner_count": 16, "task_count": 10000, "idle_tick_ns": 132.290, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 12250, "isolated_claimed": 128, "isolated_claim_ns": 171750, "populated_queued": 10000, "populated_load_ns": 495458},
-    {"runner_count": 16, "task_count": 100000, "idle_tick_ns": 151.250, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 12000, "isolated_claimed": 128, "isolated_claim_ns": 164334, "populated_queued": 100000, "populated_load_ns": 12752708},
-    {"runner_count": 128, "task_count": 1000, "idle_tick_ns": 855.210, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 47166, "isolated_claimed": 128, "isolated_claim_ns": 179750, "populated_queued": 1000, "populated_load_ns": 64417},
-    {"runner_count": 128, "task_count": 10000, "idle_tick_ns": 903.335, "isolated_target_count": 1024, "isolated_queued": 1024, "isolated_load_ns": 77042, "isolated_claimed": 1024, "isolated_claim_ns": 1404042, "populated_queued": 10000, "populated_load_ns": 437459},
-    {"runner_count": 128, "task_count": 100000, "idle_tick_ns": 851.250, "isolated_target_count": 1024, "isolated_queued": 1024, "isolated_load_ns": 82792, "isolated_claimed": 1024, "isolated_claim_ns": 1353916, "populated_queued": 100000, "populated_load_ns": 9987500}
+    {"runner_count": 1, "task_count": 1000, "idle_tick_ns": 51.250, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 6041, "isolated_claimed": 8, "isolated_claim_ns": 42083},
+    {"runner_count": 1, "task_count": 10000, "idle_tick_ns": 42.920, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 3291, "isolated_claimed": 8, "isolated_claim_ns": 23792},
+    {"runner_count": 1, "task_count": 100000, "idle_tick_ns": 45.625, "isolated_target_count": 8, "isolated_queued": 8, "isolated_load_ns": 2459, "isolated_claimed": 8, "isolated_claim_ns": 15709},
+    {"runner_count": 16, "task_count": 1000, "idle_tick_ns": 136.460, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 9708, "isolated_claimed": 128, "isolated_claim_ns": 148750},
+    {"runner_count": 16, "task_count": 10000, "idle_tick_ns": 135.835, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 12917, "isolated_claimed": 128, "isolated_claim_ns": 145625},
+    {"runner_count": 16, "task_count": 100000, "idle_tick_ns": 135.205, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 10833, "isolated_claimed": 128, "isolated_claim_ns": 158583},
+    {"runner_count": 128, "task_count": 1000, "idle_tick_ns": 914.790, "isolated_target_count": 128, "isolated_queued": 128, "isolated_load_ns": 31875, "isolated_claimed": 128, "isolated_claim_ns": 169375},
+    {"runner_count": 128, "task_count": 10000, "idle_tick_ns": 950.000, "isolated_target_count": 1024, "isolated_queued": 1024, "isolated_load_ns": 56166, "isolated_claimed": 1024, "isolated_claim_ns": 1201333},
+    {"runner_count": 128, "task_count": 100000, "idle_tick_ns": 919.375, "isolated_target_count": 1024, "isolated_queued": 1024, "isolated_load_ns": 87167, "isolated_claimed": 1024, "isolated_claim_ns": 1493291}
   ]
 }

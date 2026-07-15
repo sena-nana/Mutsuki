@@ -243,7 +243,7 @@ runner result 将派生/返回的全部 task id；若与 TaskPool 已有 record 
 TaskRecord 仍是唯一权威记录；TaskPool 同步维护可从主记录完整重建的增量调度索引：
 
 - ready task 使用 `ready_at_step asc -> priority desc -> created_sequence asc -> task_id asc`
-  的稳定有序 key，并按 protocol、runner hint、owner runner 及其精确 dispatch 组合索引。
+  的稳定有序 key，并以 protocol、runner hint 和 owner runner 的复合 selector 索引。
 - Waiting / Blocked 的 `ready_at_step`、Running lease expiry 和带 `expected_versions` 的 Ready
   task 分别进入到期桶或专用集合；tick 只处理到期桶和声明 expectation 的 task。
 - Running / Waiting task 按 runner 维护集合，runner load 的 inflight 计数不得扫描全部 TaskRecord。

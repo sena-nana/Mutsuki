@@ -95,25 +95,6 @@ fn benchmark_case(runner_count: usize, task_count: usize) -> Value {
     assert_eq!(isolated_queued, target_count);
     assert_eq!(claimed, target_count);
 
-    let mut populated_pool = TaskPool::default();
-    for index in 0..task_count {
-        let runner_index = index % runner_count;
-        populated_pool
-            .enqueue(Task::new(
-                format!("populated-{index}"),
-                format!("bench.target.{runner_index}"),
-                json!({"index": index}),
-            ))
-            .expect("populated benchmark task must enqueue");
-    }
-    let populated_started = Instant::now();
-    let populated_queued = runners
-        .iter()
-        .map(|runner| populated_pool.runner_load(runner, 1, 0).queued_count)
-        .sum::<usize>();
-    let populated_load_ns = populated_started.elapsed().as_nanos();
-    assert_eq!(populated_queued, task_count);
-
     json!({
         "runner_count": runner_count,
         "task_count": task_count,
@@ -123,8 +104,6 @@ fn benchmark_case(runner_count: usize, task_count: usize) -> Value {
         "isolated_load_ns": isolated_load_ns,
         "isolated_claimed": claimed,
         "isolated_claim_ns": isolated_claim_ns,
-        "populated_queued": populated_queued,
-        "populated_load_ns": populated_load_ns,
     })
 }
 

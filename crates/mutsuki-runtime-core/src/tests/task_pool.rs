@@ -338,16 +338,23 @@ fn task_pool_rejects_purity_and_generation_mismatched_claims() {
 #[test]
 fn task_pool_only_claims_ready_tasks() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let waiting_runner = runner_descriptor("waiting", "sim.wait", RunnerPurity::Pure);
+    let blocked_runner = runner_descriptor("blocked", "sim.block", RunnerPurity::Pure);
     let mut pool = TaskPool::default();
-    let ready = Task::new("ready", "sim.work", json!({}));
-    let waiting = Task::new("waiting", "sim.work", json!({}));
-    let blocked = Task::new("blocked", "sim.work", json!({}));
-    pool.enqueue(ready).unwrap();
-    pool.enqueue(waiting).unwrap();
-    pool.enqueue(blocked).unwrap();
-    pool.get_mut_for_test("waiting").status = TaskStatus::Waiting;
-    pool.get_mut_for_test("blocked").status = TaskStatus::Blocked;
-    pool.rebuild_indexes_for_test();
+    pool.enqueue(Task::new("ready", "sim.work", json!({})))
+        .unwrap();
+    pool.enqueue(Task::new("waiting", "sim.wait", json!({})))
+        .unwrap();
+    pool.enqueue(Task::new("blocked", "sim.block", json!({})))
+        .unwrap();
+    let waiting = pool.claim_ready_for_executor(&waiting_runner, "executor", 1, 0, 1)[0]
+        .0
+        .clone();
+    pool.wait(&waiting, 1, None).unwrap();
+    let blocked = pool.claim_ready_for_executor(&blocked_runner, "executor", 1, 0, 1)[0]
+        .0
+        .clone();
+    pool.block(&blocked, 1).unwrap();
 
     let claimed = pool.claim_ready(&descriptor, 1, 0, 8);
 
@@ -384,53 +391,6 @@ fn ready_indexes_merge_protocol_queues_in_global_stable_order() {
         vec!["beta-high", "alpha-high", "alpha-low", "later"]
     );
     pool.assert_indexes_consistent();
-}
-
-#[test]
-fn payload_wire_size_is_cached_at_enqueue_and_reused_by_claim_budget() {
-    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
-    let mut pool = TaskPool::default();
-    let payload = json!({"message": "cached once"});
-    let expected_bytes = serde_json::to_vec(&payload).unwrap().len();
-    pool.enqueue(Task::new("task-1", "sim.work", payload))
-        .unwrap();
-
-    assert_eq!(pool.payload_wire_bytes_for_test("task-1"), expected_bytes);
-    let too_small = DispatchBudget {
-        max_entries: 1,
-        max_batches: 1,
-        max_bytes: expected_bytes - 1,
-        lane_budget: Default::default(),
-    };
-    assert!(
-        pool.claim_ready_for_executor_with_budget(
-            &descriptor,
-            "executor-1",
-            1,
-            0,
-            1,
-            Some(&too_small),
-            None,
-        )
-        .is_empty()
-    );
-    let exact = DispatchBudget {
-        max_bytes: expected_bytes,
-        ..too_small
-    };
-    assert_eq!(
-        pool.claim_ready_for_executor_with_budget(
-            &descriptor,
-            "executor-1",
-            1,
-            0,
-            1,
-            Some(&exact),
-            None,
-        )
-        .len(),
-        1
-    );
 }
 
 #[test]

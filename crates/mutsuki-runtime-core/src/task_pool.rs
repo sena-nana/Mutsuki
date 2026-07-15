@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId, RuntimeError, SurfaceOccupancy,
@@ -14,7 +14,7 @@ mod indexes;
 mod occupancy;
 mod transitions;
 
-use indexes::{ReadyDispatchKey, ReadyKey, RecordKey};
+use indexes::TaskIndexes;
 
 pub const TASK_LEASE_TTL_STEPS: u64 = 1;
 
@@ -93,15 +93,7 @@ pub struct TaskPool {
     tasks: HashMap<TaskId, TaskRecord>,
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
-    ready_by_protocol: HashMap<String, BTreeSet<ReadyKey>>,
-    ready_by_runner_hint: HashMap<RunnerId, BTreeSet<ReadyKey>>,
-    ready_by_owner_runner: HashMap<RunnerId, BTreeSet<ReadyKey>>,
-    ready_by_dispatch: HashMap<ReadyDispatchKey, BTreeSet<ReadyKey>>,
-    ready_with_expectations: BTreeSet<RecordKey>,
-    wake_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
-    running_by_runner: HashMap<RunnerId, BTreeSet<RecordKey>>,
-    waiting_by_runner: HashMap<RunnerId, BTreeSet<RecordKey>>,
-    leases_by_expiry: BTreeMap<u64, BTreeSet<TaskId>>,
+    indexes: TaskIndexes,
     payload_wire_bytes: HashMap<TaskId, usize>,
     next_sequence: u64,
     statistics: TaskPoolStatistics,
@@ -205,19 +197,25 @@ impl TaskPool {
     }
 
     pub fn running_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
-        self.running_record_keys(runner_id)
+        let mut records = self
+            .running_task_ids(runner_id)
             .into_iter()
             .flatten()
-            .filter_map(|key| self.tasks.get(key.task_id()))
-            .collect()
+            .filter_map(|task_id| self.tasks.get(task_id))
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.task.created_sequence);
+        records
     }
 
     pub fn waiting_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
-        self.waiting_record_keys(runner_id)
+        let mut records = self
+            .waiting_task_ids(runner_id)
             .into_iter()
             .flatten()
-            .filter_map(|key| self.tasks.get(key.task_id()))
-            .collect()
+            .filter_map(|task_id| self.tasks.get(task_id))
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.task.created_sequence);
+        records
     }
 
     pub fn runner_load(
