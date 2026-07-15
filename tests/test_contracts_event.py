@@ -7,6 +7,12 @@ from mutsuki_runner_kit.contracts.event import (
     SpanStatus,
     TraceSpan,
 )
+from mutsuki_runner_kit.contracts.observability import (
+    ObservabilityOutletProfile,
+    ObservabilityOverflowPolicy,
+    ObservabilityPage,
+    ObservabilityProfile,
+)
 from mutsuki_runner_kit.testing.assertions import assert_json_roundtrip
 
 
@@ -30,6 +36,7 @@ def test_error_event_and_trace_contracts_roundtrip() -> None:
     assert_json_roundtrip(RuntimeEvent, event)
 
     span = TraceSpan(
+        sequence=1,
         trace_id="trace-1",
         span_id="span-1",
         parent_span_id=None,
@@ -40,3 +47,31 @@ def test_error_event_and_trace_contracts_roundtrip() -> None:
         status=SpanStatus.OK,
     )
     assert_json_roundtrip(TraceSpan, span)
+
+
+def test_observability_profile_and_cursor_page_roundtrip() -> None:
+    profile = ObservabilityProfile(
+        events=ObservabilityOutletProfile(
+            capacity=128,
+            overflow_policy=ObservabilityOverflowPolicy.DROP_NEW,
+        ),
+        traces=ObservabilityOutletProfile(
+            capacity=64,
+            overflow_policy=ObservabilityOverflowPolicy.DROP_OLDEST,
+        ),
+        detailed_scheduler_decisions=True,
+        dispatch_spans=True,
+    )
+    assert_json_roundtrip(ObservabilityProfile, profile)
+
+    page = ObservabilityPage(
+        items=("span-4",),
+        next_sequence=4,
+        earliest_available_sequence=4,
+        latest_sequence=5,
+        lost=3,
+        truncated=True,
+        dropped=3,
+    )
+    assert_json_roundtrip(ObservabilityPage, page)
+    assert page.cursor_lost()
