@@ -20,7 +20,9 @@ use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
-use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
+use crate::scheduler::{
+    DefaultScheduler, RunnerLimits, SchedulerPolicy, validate_single_instance_limits,
+};
 
 pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGateway>>;
 
@@ -106,6 +108,7 @@ impl HostRuntime {
         profile_id: String,
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
+        validate_single_instance_limits(&config.default_runner_limits, &config.runner_limits)?;
         if let Some(observability) = config.observability.clone() {
             core.configure_observability(observability);
         }

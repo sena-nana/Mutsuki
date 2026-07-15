@@ -94,6 +94,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     Blocking、Script，host runtime 按 execution class 路由到普通或 blocking/script
     worker pool；`Control` 仅用于 core kernel 控制面。
   - `Runner` trait 要求 `Send`，native runner 可被 host worker 线程移动执行。
+  - 当前明确采用单实例串行 Runner：每个 `runner_id` 同时最多一个 active batch，
+    descriptor 的 `max_inflight_batches` 与 Host `max_running` 只接受 `1`；batch 内仍可按
+    entry capability 和资源计划有界并行，不同 runner 可并行执行。
   - Waiting task 释放当前 `TaskLease`，但保留 `owner_runner`；wake 后的 continuation
     只能由原 runner reclaim，并计入 runner waiting / inflight 负载统计。
   - `HandlerBindingRegistry` 从 load plan 物化，提供 protocol 到逻辑消费者绑定的

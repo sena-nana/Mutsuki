@@ -128,8 +128,10 @@ Core 记录 `runner.run_batch` trace span 时必须绑定本次 dispatch 的 bat
 `trace-task-<task_id>`；span attributes 必须包含 batch id、tick id、entry count、
 task lease ids、executor id、payload layout，以及存在时的 correlation id。
 
-Core 每个 tick 可按 scheduler budget 为同一 runner claim 多个 ready task，并构造
-`WorkSet -> WorkResourcePlan -> WorkBatch` 后一次交给 Runner。每个 runner completion
+Core 每个 tick 可按 scheduler budget 为同一 runner claim 多个 ready task，并构造为唯一
+active 的 `WorkSet -> WorkResourcePlan -> WorkBatch` 后一次交给 Runner。当前每个逻辑
+`runner_id` 同时最多一个 active batch；并行只发生在该 batch 的 entry 内，或不同 runner
+之间。每个 runner completion
 必须返回对应 `CompletionBatch`，其中每个 `EntryCompletion` 必须可唯一映射到本 batch
 的 entry / task lease。缺失、重复或未知 entry 都必须在写入任何输出事实前结构化失败为
 `task.claim_conflict`，并终止对应 leased task，不能依赖 lease expiry 伪装为可重试。
@@ -178,8 +180,9 @@ Batch-first 迁移约束：
 - `RunnerDescriptor.batch` 声明 preferred / max batch entries、max inflight batches、
   max entry concurrency、partial failure、preserve order、scalar thread safety /
   reentrancy 和 side-effect 能力；Core / host 仍会按 scheduler budget 和资源冲突
-  对实际 batch 入场做更严格限制。非法声明必须在 load-plan / registry materialize
-  阶段结构化失败。
+  对实际 batch 入场做更严格限制。当前单实例模型要求 `max_inflight_batches = 1`；该字段
+  不限制同一 batch 的 entry 数或 entry-level parallelism。其他值必须在 load-plan /
+  registry materialize 阶段结构化失败。
 - `RunnerDescriptor.resources` 和 `RunnerDescriptor.ordering` 只声明 runner 能力边界；
   资源计划仍由 Core dispatch 前生成，排序事实仍来自 TaskPool 和 batch entry。
 
@@ -311,12 +314,15 @@ Scheduler v1 不是公开 wire contract，也不进入 `PluginManifest` / `Runti
 - 输出包含 scheduler id、reason、requested dispatch limit 和
   `DispatchBudget { max_entries, max_batches, max_bytes, lane_budget }`。
 - host 必须将 requested limit 和 budget max_entries clamp 到 hard capacity。
+- 当前单实例模型还必须将 `DispatchBudget.max_batches` clamp 到 `0..=1`；非零 entry
+  budget 也不能声明同一 runner 存在第二个 active batch。
 - Core 继续执行 runner acceptance、TaskPool 排序、WorkBatch 构造、TaskLease 创建和状态提交。
 - Core 在 claim 时必须按 `DispatchBudget` 筛选 ready task；lane budget 只限制本 batch
   各 `DispatchLane` 可进入的 entry 数，不能改变 TaskPool 的基础排序。
 - `HostCapacity` 必须暴露 running / queued batch 与 entry 数、saturation、
-  preferred batch size、max entry concurrency 和 max inflight bytes，供 host scheduler
-  只读决策。
+  preferred batch size、max running batches、max entry concurrency 和 max inflight bytes，
+  供 host scheduler 只读决策。当前 `max running batches` 固定为 `1`，已有 active batch
+  时 hard capacity 必须为 `0`。
 - scheduler 不能执行 task、不能创建子 task、不能完成 task、不能修改 TaskPool、
   不能访问真实资源本体。
 

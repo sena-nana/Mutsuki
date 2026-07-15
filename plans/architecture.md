@@ -157,10 +157,17 @@ clamp 后的 budget，并继续通过 TaskPool 排序、lane budget 筛选、cla
 和 route_result 维护唯一事实源。scheduler 不能选择具体 task、不能调用 runner、不能
 修改 task 状态，也不能访问资源本体。
 
-HostCapacity 包含 batch 与 entry 两级 running / queued 计数、saturation、preferred
-batch size、max entry concurrency 和 max inflight bytes。Core 构造 WorkResourcePlan 时
+HostCapacity 包含 batch 与 entry 两级 running / queued 计数、单 runner 最大 active batch、
+saturation、preferred batch size、max entry concurrency 和 max inflight bytes。Core 构造 WorkResourcePlan 时
 给出 parallel_groups、serial_groups 和 parallelism_limit；Host / SDK scalar adapter 只能
 在 scheduler budget、HostCapacity、runner capability 和 resource plan 都允许时有界并行。
+
+当前执行模型明确采用单实例串行 Runner：每个逻辑 `runner_id` 同时最多一个 active
+`WorkBatch`。`RunnerDescriptor.batch.max_inflight_batches` 与 Host
+`RunnerLimits.max_running` 都必须为 `1`，更大的配置在 load-plan materialize 或 Host
+启动阶段结构化拒绝，scheduler 的 `DispatchBudget.max_batches` 也会 clamp 到 `0..=1`。
+该限制只约束 batch 之间的并行；一个 `WorkBatch` 仍可包含多个 entry，
+并按 `max_entry_concurrency` 与资源计划进行 batch 内有界并行。
 
 Host runner limit 中，`max_inflight` 只统计 Running 与 Waiting entry；Ready backlog 是
 TaskPool 中等待 claim 的供给，不占用 inflight，也不能反向阻止自身出队。Host 的
@@ -188,8 +195,9 @@ Control / Orchestration / Io / Cpu / Blocking / Script
 CoreActor 调度延迟。
 
 当前 Rust core 的 `Runner.run_batch` 使用 `WorkBatch` wire shape；单 task 只是
-`entries.len() == 1` 的 batch。host 可在同一 tick 产生多个 batch dispatch，每个
-dispatch 携带该 batch 的 entry、payload、resource plan 和 task leases。
+`entries.len() == 1` 的 batch。host 可在同一 tick 为不同 runner 产生多个 batch dispatch，
+但同一 `runner_id` 只能有一个 active dispatch。每个 dispatch 携带该 batch 的 entry、
+payload、resource plan 和 task leases。
 `RunnerDescriptor.batch.mode` 只声明实现形态：`native_batch` 可在 runner 内做原生 batch
 优化，`scalar_adapter` 表示 SDK/Host adapter 串行把每个 entry 降到作者侧 scalar 函数；
 两者对 Core 暴露的 ABI 都仍是 `run_batch`。

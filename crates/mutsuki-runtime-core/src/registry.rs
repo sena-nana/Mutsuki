@@ -323,7 +323,7 @@ fn validate_runner_batch_capabilities(runner: &RunnerDescriptor) -> RuntimeResul
     if runner.batch.preferred_batch_size == 0
         || runner.batch.max_batch_entries == 0
         || runner.batch.max_entry_concurrency == 0
-        || runner.batch.max_inflight_batches == 0
+        || runner.batch.max_inflight_batches != 1
         || runner.batch.preferred_batch_size > runner.batch.max_batch_entries
         || runner.batch.max_entry_concurrency > runner.batch.max_batch_entries
     {

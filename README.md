@@ -19,6 +19,12 @@ RuntimeProfile + PluginManifest
   -> StateStore + ResourceManager / ResourceCell + EventLog + TraceLog
 ```
 
+The current runner execution model is deliberately single-instance: one
+logical `runner_id` can have at most one active `WorkBatch`. A batch may still
+contain multiple entries and use the runner's declared batch-internal entry
+parallelism. Configurations that request multiple active batches for one
+runner are rejected during startup.
+
 ## Crates
 
 - `crates/mutsuki-runtime-contracts` - pure serializable contracts:

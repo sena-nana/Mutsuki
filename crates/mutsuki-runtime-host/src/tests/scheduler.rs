@@ -49,6 +49,7 @@ impl SchedulerPolicy for CapacityAssertingScheduler {
             ));
         }
         assert_eq!(input.host_capacity.running_batches, 0);
+        assert_eq!(input.host_capacity.max_running_batches, 1);
         assert_eq!(input.host_capacity.running_entries, 0);
         assert_eq!(
             input.host_capacity.queued_entries,
@@ -147,7 +148,7 @@ fn default_scheduler_claims_full_batch_and_drains_ready_backlog() {
     )));
     let config = crate::HostRuntimeConfig {
         default_runner_limits: crate::RunnerLimits {
-            max_running: 4,
+            max_running: 1,
             max_inflight: 4,
             ..crate::RunnerLimits::default()
         },
@@ -186,7 +187,7 @@ fn default_scheduler_claims_full_batch_and_drains_ready_backlog() {
 }
 
 #[test]
-fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
+fn single_instance_runner_keeps_second_batch_ready_until_the_first_completes() {
     let runner_descriptor = descriptor("slow.runner", "slow.work");
     let (release_tx, release_rx) = mpsc::channel::<()>();
     let mut host = RuntimeBootstrapper::new();
@@ -226,6 +227,7 @@ fn custom_scheduler_limit_is_clamped_to_runner_capacity() {
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Completed));
+    assert_eq!(runtime.task_status("slow-2"), Some(TaskStatus::Completed));
 }
 
 #[test]
@@ -306,4 +308,54 @@ fn host_runtime_rejects_non_kernel_control_runner_before_scheduling() {
     };
 
     assert_eq!(err.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
+fn host_runtime_rejects_default_multi_batch_limit_at_startup() {
+    let mut config = crate::HostRuntimeConfig::default();
+    config.default_runner_limits.max_running = 2;
+
+    let error =
+        match host_with_echo_runner().into_host_runtime_with_config(runtime_profile(), config) {
+            Ok(_) => panic!("multi-batch default limit should fail at startup"),
+            Err(error) => error,
+        };
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().route,
+        "host.runner_limits.default.max_running"
+    );
+    assert_eq!(
+        error.error().evidence.get("configured_max_running"),
+        Some(&ScalarValue::Int(2))
+    );
+    assert_eq!(
+        error.error().evidence.get("supported_max_running"),
+        Some(&ScalarValue::Int(1))
+    );
+}
+
+#[test]
+fn host_runtime_rejects_runner_specific_multi_batch_limit_at_startup() {
+    let mut config = crate::HostRuntimeConfig::default();
+    config.runner_limits.insert(
+        "echo.runner".into(),
+        crate::RunnerLimits {
+            max_running: 3,
+            ..crate::RunnerLimits::default()
+        },
+    );
+
+    let error =
+        match host_with_echo_runner().into_host_runtime_with_config(runtime_profile(), config) {
+            Ok(_) => panic!("multi-batch runner limit should fail at startup"),
+            Err(error) => error,
+        };
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(
+        error.error().route,
+        "host.runner_limits.echo.runner.max_running"
+    );
 }

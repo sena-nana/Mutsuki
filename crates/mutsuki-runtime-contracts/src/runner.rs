@@ -70,6 +70,10 @@ pub struct RunnerBatchCapability {
     pub preferred_batch_size: usize,
     pub max_batch_entries: usize,
     pub max_entry_concurrency: usize,
+    /// Maximum active batches for one logical runner id.
+    ///
+    /// The current single-instance runner model only supports `1`. Batch-internal
+    /// entry parallelism remains controlled by `max_entry_concurrency`.
     pub max_inflight_batches: usize,
     pub scalar_thread_safe: bool,
     pub scalar_reentrant: bool,

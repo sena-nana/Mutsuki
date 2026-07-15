@@ -155,7 +155,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
             preferred_batch_size: 64,
             max_batch_entries: 256,
             max_entry_concurrency: 8,
-            max_inflight_batches: 4,
+            max_inflight_batches: 1,
             scalar_thread_safe: true,
             scalar_reentrant: true,
             partial_failure: true,

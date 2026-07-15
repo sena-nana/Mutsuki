@@ -27,10 +27,41 @@ impl DispatchBudget {
 
     pub fn clamp_to(mut self, hard_capacity: usize) -> Self {
         self.max_entries = self.max_entries.min(hard_capacity);
-        if self.max_entries == 0 {
-            self.max_batches = 0;
-        }
+        self.max_batches = self.max_batches.min(usize::from(self.max_entries > 0));
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dispatch_budget_clamps_to_one_active_batch() {
+        let budget = DispatchBudget {
+            max_entries: 8,
+            max_batches: 4,
+            max_bytes: usize::MAX,
+            lane_budget: BTreeMap::new(),
+        }
+        .clamp_to(8);
+
+        assert_eq!(budget.max_entries, 8);
+        assert_eq!(budget.max_batches, 1);
+    }
+
+    #[test]
+    fn empty_dispatch_budget_has_no_active_batch() {
+        let budget = DispatchBudget {
+            max_entries: 8,
+            max_batches: 4,
+            max_bytes: usize::MAX,
+            lane_budget: BTreeMap::new(),
+        }
+        .clamp_to(0);
+
+        assert_eq!(budget.max_entries, 0);
+        assert_eq!(budget.max_batches, 0);
     }
 }
 

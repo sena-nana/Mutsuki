@@ -125,6 +125,10 @@ bash scripts/check-distributed-boundary.sh
   scalar adapter 串行执行，`max_entry_concurrency = 1`、`preserve_order = true`、
   `side_effect = unknown`、`entry_cancel = false`，不能因为插件作者使用 scalar 写法而
   重新引入 single-task ABI。entry 并发声明不得超过 batch entry 上限。
+- 当前 Runner instance model 是单实例：每个逻辑 `runner_id` 同时最多一个 active batch；
+  `RunnerDescriptor.batch.max_inflight_batches` 和 Host `RunnerLimits.max_running` 必须为 `1`，
+  大于或小于 `1` 都必须在启动阶段结构化拒绝。该限制不得误伤同一 batch 的多 entry 或
+  entry-level parallelism。
 - `WorkResourcePlan` 必须在 dispatch 前给出 parallel_groups、serial_groups 和
   parallelism_limit；Host/SDK adapter 只能在资源计划、runner capability、HostCapacity
   和 scheduler budget 均允许时并行执行 scalar entries。

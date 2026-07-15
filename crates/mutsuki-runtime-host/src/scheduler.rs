@@ -1,10 +1,16 @@
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor};
-use mutsuki_runtime_core::{RunnerLoad, RuntimeResult, ScheduleDecision};
+use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor, RuntimeError, ScalarValue};
+use mutsuki_runtime_core::{RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision};
+
+pub const SINGLE_RUNNER_MAX_ACTIVE_BATCHES: usize = 1;
 
 #[derive(Clone, Debug)]
 pub struct RunnerLimits {
+    /// Maximum active batches for one logical runner id.
+    ///
+    /// The current single-instance model only accepts `1`. This does not limit
+    /// the number of entries inside that one batch.
     pub max_running: usize,
     pub max_waiting: usize,
     pub max_inflight: usize,
@@ -28,6 +34,7 @@ impl Default for RunnerLimits {
 pub struct HostCapacity {
     pub running_batches: usize,
     pub queued_batches: usize,
+    pub max_running_batches: usize,
     pub running_entries: usize,
     pub queued_entries: usize,
     pub saturation: f32,
@@ -94,7 +101,8 @@ pub(crate) fn decide_schedule(
     running_batches: usize,
     policy: &dyn SchedulerPolicy,
 ) -> RuntimeResult<ScheduleDecision> {
-    let hard_capacity = hard_dispatch_capacity(descriptor, load, limits, pool_slots);
+    let hard_capacity =
+        hard_dispatch_capacity(descriptor, load, limits, pool_slots, running_batches);
     let host_capacity = host_capacity(descriptor, load, limits, running_batches);
     let input = ScheduleInput {
         runner: descriptor,
@@ -119,7 +127,8 @@ fn host_capacity(
     let max_inflight = limits.max_inflight.max(1);
     HostCapacity {
         running_batches,
-        queued_batches: load.queued_count,
+        queued_batches: queued_batch_count(load.queued_count, descriptor.batch.max_batch_entries),
+        max_running_batches: SINGLE_RUNNER_MAX_ACTIVE_BATCHES,
         running_entries: load.running_count,
         queued_entries: load.queued_count,
         saturation: (load.pending_weight as f32 / max_inflight as f32).min(1.0),
@@ -133,11 +142,16 @@ fn host_capacity(
     }
 }
 
+fn queued_batch_count(queued_entries: usize, max_batch_entries: usize) -> usize {
+    queued_entries.div_ceil(max_batch_entries.max(1))
+}
+
 fn hard_dispatch_capacity(
     descriptor: &RunnerDescriptor,
     load: &RunnerLoad,
     limits: &RunnerLimits,
     pool_slots: usize,
+    running_batches: usize,
 ) -> usize {
     if descriptor.execution_class == ExecutionClass::Control {
         return if descriptor.runner_id == "core.kernel" {
@@ -146,23 +160,62 @@ fn hard_dispatch_capacity(
             0
         };
     }
-    standard_dispatch_capacity(load, limits, pool_slots)
+    standard_dispatch_capacity(
+        load,
+        limits,
+        pool_slots,
+        running_batches,
+        descriptor.batch.max_batch_entries,
+    )
 }
 
 fn standard_dispatch_capacity(
     load: &RunnerLoad,
     limits: &RunnerLimits,
     pool_slots: usize,
+    running_batches: usize,
+    max_batch_entries: usize,
 ) -> usize {
-    if load.waiting_count >= limits.max_waiting {
+    if pool_slots == 0
+        || running_batches >= limits.max_running
+        || load.running_count > 0
+        || load.waiting_count >= limits.max_waiting
+    {
         return 0;
     }
     let inflight = load.running_count.saturating_add(load.waiting_count);
-    limits
-        .max_running
-        .saturating_sub(load.running_count)
-        .min(limits.max_inflight.saturating_sub(inflight))
-        .min(pool_slots)
+    max_batch_entries.min(limits.max_inflight.saturating_sub(inflight))
+}
+
+pub(crate) fn validate_single_instance_limits(
+    default_limits: &RunnerLimits,
+    runner_limits: &std::collections::BTreeMap<String, RunnerLimits>,
+) -> RuntimeResult<()> {
+    validate_single_instance_limit("default", default_limits)?;
+    for (runner_id, limits) in runner_limits {
+        validate_single_instance_limit(runner_id, limits)?;
+    }
+    Ok(())
+}
+
+fn validate_single_instance_limit(scope: &str, limits: &RunnerLimits) -> RuntimeResult<()> {
+    if limits.max_running == SINGLE_RUNNER_MAX_ACTIVE_BATCHES {
+        return Ok(());
+    }
+    let mut error = RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.host",
+        format!("host.runner_limits.{scope}.max_running"),
+    );
+    error.evidence.insert(
+        "configured_max_running".into(),
+        ScalarValue::Int(limits.max_running as i64),
+    );
+    error.evidence.insert(
+        "supported_max_running".into(),
+        ScalarValue::Int(SINGLE_RUNNER_MAX_ACTIVE_BATCHES as i64),
+    );
+    Err(RuntimeFailure::new(error))
 }
 
 #[cfg(test)]
@@ -178,12 +231,12 @@ mod tests {
             pending_weight: 1_024,
         };
         let limits = RunnerLimits {
-            max_running: 4,
+            max_running: 1,
             max_inflight: 4,
             ..RunnerLimits::default()
         };
 
-        assert_eq!(standard_dispatch_capacity(&load, &limits, 1_024), 4);
+        assert_eq!(standard_dispatch_capacity(&load, &limits, 1_024, 0, 64), 4);
     }
 
     #[test]
@@ -195,11 +248,33 @@ mod tests {
             pending_weight: 3,
         };
         let limits = RunnerLimits {
-            max_running: 4,
+            max_running: 1,
             max_inflight: 2,
             ..RunnerLimits::default()
         };
 
-        assert_eq!(standard_dispatch_capacity(&load, &limits, 4), 0);
+        assert_eq!(standard_dispatch_capacity(&load, &limits, 4, 0, 4), 0);
+    }
+
+    #[test]
+    fn active_batch_exhausts_single_runner_capacity() {
+        let load = RunnerLoad {
+            running_count: 4,
+            waiting_count: 0,
+            queued_count: 4,
+            pending_weight: 8,
+        };
+
+        assert_eq!(
+            standard_dispatch_capacity(&load, &RunnerLimits::default(), 4, 1, 4),
+            0
+        );
+    }
+
+    #[test]
+    fn queued_batch_capacity_is_derived_from_entry_batch_limit() {
+        assert_eq!(queued_batch_count(0, 4), 0);
+        assert_eq!(queued_batch_count(1, 4), 1);
+        assert_eq!(queued_batch_count(5, 4), 2);
     }
 }
