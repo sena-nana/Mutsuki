@@ -11,24 +11,9 @@ pub(super) fn runner_load(
     step: u64,
     registry_generation: u64,
 ) -> RunnerLoad {
-    let running_count = task_pool
-        .running_records_for_runner(&runner.runner_id)
-        .len();
-    let waiting_count = task_pool
-        .waiting_records_for_runner(&runner.runner_id)
-        .len();
-    let queued_count = task_pool
-        .tasks
-        .values()
-        .filter(|record| {
-            record.status == TaskStatus::Ready
-                && record
-                    .task
-                    .ready_at_step
-                    .is_none_or(|ready_at| ready_at <= step)
-                && claiming::runner_accepts_record(runner, record, registry_generation)
-        })
-        .count();
+    let running_count = task_pool.running_count_for_runner(&runner.runner_id);
+    let waiting_count = task_pool.waiting_count_for_runner(&runner.runner_id);
+    let queued_count = claiming::queued_count(task_pool, runner, step, registry_generation);
     RunnerLoad {
         running_count,
         waiting_count,

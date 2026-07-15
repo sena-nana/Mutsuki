@@ -22,13 +22,14 @@ pub(super) fn wait_on_task(
         validate_task_await_child(parent_record, child_record, &task_await)?;
     }
     let ready_at_step = ready_step_for_wait(&task_await);
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        transitions::validate_record_lease(record, lease, current_step, "wait")?;
         record.status = mutsuki_runtime_contracts::TaskStatus::Waiting;
         record.task.ready_at_step = ready_at_step;
         record.task.continuation_ref = Some(task_await.continuation.continuation.ref_id.clone());
         transitions::release_record_lease(record);
-    }
+        Ok(())
+    })?;
     task_pool.statistics.record_status_transition(
         Some(&mutsuki_runtime_contracts::TaskStatus::Running),
         Some(&mutsuki_runtime_contracts::TaskStatus::Waiting),

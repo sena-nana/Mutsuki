@@ -12,3 +12,7 @@ thiserror.workspace = true
 [[bench]]
 name = "observability"
 harness = false
+
+[[bench]]
+name = "incremental_scheduling"
+harness = false

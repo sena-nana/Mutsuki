@@ -74,6 +74,10 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - task 调度使用 `TaskLease`，一个 ready task 一次只会被一个 runner/executor
     lease 执行；`RunnerContext` 记录 executor id、task lease id、invocation id、
     cancel token 和 tick deadline。
+  - TaskPool 由权威 TaskRecord 增量维护 protocol/hint/owner 稳定 ready queue、wake/lease
+    到期桶、expected-version ready set 和 runner running/waiting 集合；claim 只克隆最终入选
+    Task，payload compact JSON 字节数在 enqueue 时缓存，普通 tick 不再按 runner 扫描全表或
+    重复序列化预算。
   - `protocol_id` 是 task 调度事实源；当前 wire shape 不包含 task kind 兼容字段。
   - ready task claim 排序固定为 `ready_at_step asc -> priority desc ->
     created_sequence asc -> task_id asc`。

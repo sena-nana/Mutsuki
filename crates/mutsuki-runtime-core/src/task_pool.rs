@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId, RuntimeError, SurfaceOccupancy,
@@ -10,8 +10,11 @@ use crate::RuntimeResult;
 
 mod awaits;
 mod claiming;
+mod indexes;
 mod occupancy;
 mod transitions;
+
+use indexes::{ReadyDispatchKey, ReadyKey, RecordKey};
 
 pub const TASK_LEASE_TTL_STEPS: u64 = 1;
 
@@ -90,6 +93,16 @@ pub struct TaskPool {
     tasks: HashMap<TaskId, TaskRecord>,
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
+    ready_by_protocol: HashMap<String, BTreeSet<ReadyKey>>,
+    ready_by_runner_hint: HashMap<RunnerId, BTreeSet<ReadyKey>>,
+    ready_by_owner_runner: HashMap<RunnerId, BTreeSet<ReadyKey>>,
+    ready_by_dispatch: HashMap<ReadyDispatchKey, BTreeSet<ReadyKey>>,
+    ready_with_expectations: BTreeSet<RecordKey>,
+    wake_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
+    running_by_runner: HashMap<RunnerId, BTreeSet<RecordKey>>,
+    waiting_by_runner: HashMap<RunnerId, BTreeSet<RecordKey>>,
+    leases_by_expiry: BTreeMap<u64, BTreeSet<TaskId>>,
+    payload_wire_bytes: HashMap<TaskId, usize>,
     next_sequence: u64,
     statistics: TaskPoolStatistics,
 }
@@ -108,6 +121,15 @@ impl TaskPool {
                 format!("task.enqueue.{task_id}"),
             ));
         }
+        let payload_wire_bytes = serde_json::to_vec(&task.payload)
+            .map_err(|error| {
+                crate::runtime_failure(
+                    mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                    "runtime.task_pool",
+                    format!("task.payload.encode.{task_id}:{error}"),
+                )
+            })?
+            .len();
         self.next_sequence += 1;
         if task.created_sequence == 0 {
             task.created_sequence = self.next_sequence;
@@ -125,6 +147,9 @@ impl TaskPool {
                 ready_since_step: current_step,
             },
         );
+        self.payload_wire_bytes
+            .insert(task_id.clone(), payload_wire_bytes);
+        self.insert_record_indexes(&task_id);
         self.statistics.submitted_total = self.statistics.submitted_total.saturating_add(1);
         self.statistics
             .record_status_transition(None, Some(&TaskStatus::Ready));
@@ -149,24 +174,15 @@ impl TaskPool {
     }
 
     pub fn ready_count(&self) -> usize {
-        self.tasks
-            .values()
-            .filter(|record| record.status == TaskStatus::Ready)
-            .count()
+        self.statistics.ready
     }
 
     pub fn running_count(&self) -> usize {
-        self.tasks
-            .values()
-            .filter(|record| record.status == TaskStatus::Running)
-            .count()
+        self.statistics.running
     }
 
     pub fn waiting_count(&self) -> usize {
-        self.tasks
-            .values()
-            .filter(|record| record.status == TaskStatus::Waiting)
-            .count()
+        self.statistics.waiting
     }
 
     pub fn statistics(&self) -> TaskPoolStatistics {
@@ -189,23 +205,19 @@ impl TaskPool {
     }
 
     pub fn running_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
-        self.running_records()
+        self.running_record_keys(runner_id)
             .into_iter()
-            .filter(|record| record.claimed_by.as_deref() == Some(runner_id))
+            .flatten()
+            .filter_map(|key| self.tasks.get(key.task_id()))
             .collect()
     }
 
     pub fn waiting_records_for_runner(&self, runner_id: &str) -> Vec<&TaskRecord> {
-        let mut records: Vec<&TaskRecord> = self
-            .tasks
-            .values()
-            .filter(|record| {
-                record.status == TaskStatus::Waiting
-                    && record.owner_runner.as_deref() == Some(runner_id)
-            })
-            .collect();
-        records.sort_by_key(|record| record.task.created_sequence);
-        records
+        self.waiting_record_keys(runner_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|key| self.tasks.get(key.task_id()))
+            .collect()
     }
 
     pub fn runner_load(
@@ -441,16 +453,6 @@ impl TaskPool {
         occupancy::surface_occupancy(self)
     }
 
-    fn record_mut(&mut self, task_id: &str) -> RuntimeResult<&mut TaskRecord> {
-        self.tasks.get_mut(task_id).ok_or_else(|| {
-            crate::runtime_failure(
-                ERR_TASK_NOT_FOUND,
-                "runtime.task_pool",
-                format!("task.{task_id}"),
-            )
-        })
-    }
-
     fn record(&self, task_id: &str) -> RuntimeResult<&TaskRecord> {
         self.tasks.get(task_id).ok_or_else(|| {
             crate::runtime_failure(
@@ -461,14 +463,37 @@ impl TaskPool {
         })
     }
 
-    fn leased_record_mut(
+    fn payload_wire_bytes(&self, task_id: &str) -> usize {
+        self.payload_wire_bytes
+            .get(task_id)
+            .copied()
+            .expect("enqueued task must have a cached payload wire size")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn payload_wire_bytes_for_test(&self, task_id: &str) -> usize {
+        self.payload_wire_bytes(task_id)
+    }
+
+    fn mutate_record_indexed<R>(
         &mut self,
-        lease: &TaskLease,
-        current_step: u64,
-        action: &str,
-    ) -> RuntimeResult<&mut TaskRecord> {
-        let record = self.record_mut(&lease.task_id)?;
-        transitions::validate_record_lease(record, lease, current_step, action)?;
-        Ok(record)
+        task_id: &str,
+        mutate: impl FnOnce(&mut TaskRecord) -> RuntimeResult<R>,
+    ) -> RuntimeResult<R> {
+        if !self.tasks.contains_key(task_id) {
+            return Err(crate::runtime_failure(
+                ERR_TASK_NOT_FOUND,
+                "runtime.task_pool",
+                format!("task.{task_id}"),
+            ));
+        }
+        self.remove_record_indexes(task_id);
+        let result = mutate(
+            self.tasks
+                .get_mut(task_id)
+                .expect("task existence checked before indexed mutation"),
+        );
+        self.insert_record_indexes(task_id);
+        result
     }
 }

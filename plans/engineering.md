@@ -74,6 +74,9 @@ bash scripts/check-distributed-boundary.sh
 ## 5. 横切公约
 
 - TaskPool 是 ready task backlog / 调度索引，不是 Runner inbox。
+- TaskPool 增量索引必须能从 TaskRecord 确定性重建；所有状态迁移同步更新 ready、wake、
+  expectation、lease expiry 和 runner load 索引。调度热路径不得使用 `records()` 快照、
+  克隆全部候选 Task、重新排序完整候选集合或为 byte budget 重复 JSON 编码 payload。
 - Task 一次只能通过一个 TaskLease 交给一个 Runner / Executor 执行。
 - Runner 是逻辑处理器，不是物理执行单元；Executor 是物理执行槽位。
 - Rust `Runner` 必须是 `Send`；默认 host runtime 会把普通 runner 移动到 worker

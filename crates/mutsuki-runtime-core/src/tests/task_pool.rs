@@ -347,11 +347,322 @@ fn task_pool_only_claims_ready_tasks() {
     pool.enqueue(blocked).unwrap();
     pool.get_mut_for_test("waiting").status = TaskStatus::Waiting;
     pool.get_mut_for_test("blocked").status = TaskStatus::Blocked;
+    pool.rebuild_indexes_for_test();
 
     let claimed = pool.claim_ready(&descriptor, 1, 0, 8);
 
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].task_id, "ready");
+}
+
+#[test]
+fn ready_indexes_merge_protocol_queues_in_global_stable_order() {
+    let mut descriptor = runner_descriptor("worker", "sim.alpha", RunnerPurity::Pure);
+    descriptor.accepted_protocol_ids.push("sim.beta".into());
+    let mut pool = TaskPool::default();
+
+    let mut later = Task::new("later", "sim.alpha", json!({}));
+    later.ready_at_step = Some(2);
+    later.priority = 100;
+    let mut beta_high = Task::new("beta-high", "sim.beta", json!({}));
+    beta_high.priority = 10;
+    let mut alpha_high = Task::new("alpha-high", "sim.alpha", json!({}));
+    alpha_high.priority = 10;
+    let alpha_low = Task::new("alpha-low", "sim.alpha", json!({}));
+    pool.enqueue(later).unwrap();
+    pool.enqueue(beta_high).unwrap();
+    pool.enqueue(alpha_high).unwrap();
+    pool.enqueue(alpha_low).unwrap();
+
+    let claimed = pool.claim_ready(&descriptor, 2, 0, 8);
+
+    assert_eq!(
+        claimed
+            .iter()
+            .map(|task| task.task_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["beta-high", "alpha-high", "alpha-low", "later"]
+    );
+    pool.assert_indexes_consistent();
+}
+
+#[test]
+fn payload_wire_size_is_cached_at_enqueue_and_reused_by_claim_budget() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    let payload = json!({"message": "cached once"});
+    let expected_bytes = serde_json::to_vec(&payload).unwrap().len();
+    pool.enqueue(Task::new("task-1", "sim.work", payload))
+        .unwrap();
+
+    assert_eq!(pool.payload_wire_bytes_for_test("task-1"), expected_bytes);
+    let too_small = DispatchBudget {
+        max_entries: 1,
+        max_batches: 1,
+        max_bytes: expected_bytes - 1,
+        lane_budget: Default::default(),
+    };
+    assert!(
+        pool.claim_ready_for_executor_with_budget(
+            &descriptor,
+            "executor-1",
+            1,
+            0,
+            1,
+            Some(&too_small),
+            None,
+        )
+        .is_empty()
+    );
+    let exact = DispatchBudget {
+        max_bytes: expected_bytes,
+        ..too_small
+    };
+    assert_eq!(
+        pool.claim_ready_for_executor_with_budget(
+            &descriptor,
+            "executor-1",
+            1,
+            0,
+            1,
+            Some(&exact),
+            None,
+        )
+        .len(),
+        1
+    );
+}
+
+#[test]
+fn scheduling_indexes_exclude_unrelated_tasks_and_empty_tick_worksets() {
+    let descriptor = runner_descriptor("worker", "sim.target", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    for index in 0..10_000 {
+        pool.enqueue(Task::new(
+            format!("noise-{index}"),
+            format!("sim.noise.{}", index % 32),
+            json!({"index": index}),
+        ))
+        .unwrap();
+    }
+    pool.enqueue(Task::new("target", "sim.target", json!({})))
+        .unwrap();
+
+    assert_eq!(pool.ready_dispatch_candidate_count_for_test(&descriptor), 1);
+    let target_lease = pool.claim_ready_for_executor(&descriptor, "executor", 1, 0, 1)[0]
+        .0
+        .clone();
+    assert_eq!(target_lease.task_id, "target");
+    pool.complete(&target_lease, 1).unwrap();
+
+    let task_ids = pool
+        .records()
+        .into_iter()
+        .filter(|record| record.status == TaskStatus::Ready)
+        .map(|record| record.task.task_id.clone())
+        .collect::<Vec<_>>();
+    for task_id in task_ids {
+        pool.cancel_by_core(&task_id, 1).unwrap();
+    }
+    assert_eq!(pool.ready_count(), 0);
+    assert_eq!(pool.pending_tick_index_entries_for_test(), 0);
+    assert!(pool.wake_due_tasks(2).is_empty());
+    assert!(pool.runner_load(&descriptor, 2, 0).queued_count == 0);
+    pool.assert_indexes_consistent();
+}
+
+#[test]
+fn randomized_task_state_transitions_match_rebuilt_indexes() {
+    let runners = [
+        runner_descriptor("runner-0", "sim.0", RunnerPurity::Pure),
+        runner_descriptor("runner-1", "sim.1", RunnerPurity::Pure),
+    ];
+    let mut pool = TaskPool::default();
+    let mut seed = 0x26_u64;
+    let mut next_task = 0_u64;
+    let mut current_step = 1_u64;
+
+    for _ in 0..48 {
+        enqueue_random_task(&mut pool, &mut seed, &mut next_task, current_step);
+    }
+    pool.assert_indexes_consistent();
+
+    for iteration in 0..800 {
+        let operation = next_random(&mut seed) % 9;
+        match operation {
+            0 => enqueue_random_task(&mut pool, &mut seed, &mut next_task, current_step),
+            1 => {
+                let runner = &runners[(next_random(&mut seed) as usize) % runners.len()];
+                let _ = pool.claim_ready_for_executor_with_expiry(
+                    runner,
+                    format!("executor-{}", runner.runner_id),
+                    current_step,
+                    0,
+                    3,
+                    Some(current_step.saturating_add(2)),
+                );
+            }
+            2 => transition_random_running_task(&mut pool, &mut seed, current_step),
+            3 => {
+                if let Some(task_id) = random_task_with_status(
+                    &pool,
+                    &mut seed,
+                    &[TaskStatus::Waiting, TaskStatus::Blocked],
+                ) {
+                    pool.wake(&task_id, current_step).unwrap();
+                }
+            }
+            4 => {
+                current_step = current_step.saturating_add(1);
+                pool.wake_due_tasks(current_step);
+            }
+            5 => {
+                current_step = current_step.saturating_add(1);
+                pool.reclaim_expired_task_leases(current_step);
+            }
+            6 => {
+                if let Some(task_id) = random_non_terminal_task(&pool, &mut seed) {
+                    pool.cancel_by_core(&task_id, current_step).unwrap();
+                }
+            }
+            7 => {
+                let (old_generation, new_generation) =
+                    if iteration % 2 == 0 { (0, 1) } else { (1, 0) };
+                pool.rebind_ready_generation(old_generation, new_generation);
+            }
+            _ => {
+                if let Some(task_id) =
+                    random_task_with_status(&pool, &mut seed, &[TaskStatus::Ready])
+                {
+                    pool.reject_ready(
+                        &task_id,
+                        crate::runtime_error(ERR_STATE_CONFLICT, "test", "task.random.reject"),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        pool.assert_indexes_consistent();
+        if iteration % 97 == 0 {
+            let mut aborted = pool.clone();
+            aborted.abort_all(
+                current_step,
+                crate::runtime_error(ERR_RUNTIME_ABORTED, "test", "runtime.random.abort"),
+            );
+            aborted.assert_indexes_consistent();
+        }
+    }
+}
+
+fn enqueue_random_task(
+    pool: &mut TaskPool,
+    seed: &mut u64,
+    next_task: &mut u64,
+    current_step: u64,
+) {
+    let protocol = next_random(seed) % 2;
+    let mut task = Task::new(
+        format!("random-{next_task}"),
+        format!("sim.{protocol}"),
+        json!({"value": next_random(seed) % 10_000}),
+    );
+    *next_task = next_task.saturating_add(1);
+    task.priority = (next_random(seed) % 17) as i64 - 8;
+    if next_random(seed).is_multiple_of(4) {
+        task.ready_at_step = Some(current_step.saturating_add(next_random(seed) % 4));
+    }
+    if next_random(seed).is_multiple_of(3) {
+        task.runner_hint = Some(format!("runner-{}", next_random(seed) % 2));
+    }
+    if next_random(seed).is_multiple_of(5) {
+        task.expected_versions.push(VersionExpectation {
+            ref_id: format!("state-{}", next_random(seed) % 4),
+            expected_version: next_random(seed) % 3,
+        });
+    }
+    pool.enqueue_at(task, current_step).unwrap();
+}
+
+fn transition_random_running_task(pool: &mut TaskPool, seed: &mut u64, current_step: u64) {
+    pool.reclaim_expired_task_leases(current_step);
+    let Some(task_id) = random_task_with_status(pool, seed, &[TaskStatus::Running]) else {
+        return;
+    };
+    let lease = pool.get(&task_id).unwrap().lease.clone().unwrap();
+    match next_random(seed) % 6 {
+        0 => pool.complete(&lease, current_step).unwrap(),
+        1 => pool
+            .fail(
+                &lease,
+                current_step,
+                crate::runtime_error(ERR_RUNTIME_HOST_FAILED, "test", "task.random.fail"),
+            )
+            .unwrap(),
+        2 => pool
+            .wait(
+                &lease,
+                current_step,
+                Some(current_step.saturating_add(1 + next_random(seed) % 3)),
+            )
+            .unwrap(),
+        3 => pool.block(&lease, current_step).unwrap(),
+        4 => pool.cancel_task(&lease, current_step).unwrap(),
+        _ => {
+            assert_eq!(
+                pool.cancel_running_invocation(&lease.runner_id, &lease.lease_id, current_step),
+                1
+            );
+        }
+    }
+}
+
+fn random_non_terminal_task(pool: &TaskPool, seed: &mut u64) -> Option<String> {
+    let candidates = pool
+        .records()
+        .into_iter()
+        .filter(|record| {
+            !matches!(
+                record.status,
+                TaskStatus::Completed
+                    | TaskStatus::Failed
+                    | TaskStatus::Cancelled
+                    | TaskStatus::Expired
+                    | TaskStatus::DeadLetter
+            )
+        })
+        .map(|record| record.task.task_id.clone())
+        .collect::<Vec<_>>();
+    choose_random(candidates, seed)
+}
+
+fn random_task_with_status(
+    pool: &TaskPool,
+    seed: &mut u64,
+    statuses: &[TaskStatus],
+) -> Option<String> {
+    let candidates = pool
+        .records()
+        .into_iter()
+        .filter(|record| statuses.contains(&record.status))
+        .map(|record| record.task.task_id.clone())
+        .collect::<Vec<_>>();
+    choose_random(candidates, seed)
+}
+
+fn choose_random(candidates: Vec<String>, seed: &mut u64) -> Option<String> {
+    if candidates.is_empty() {
+        None
+    } else {
+        let index = (next_random(seed) as usize) % candidates.len();
+        candidates.into_iter().nth(index)
+    }
+}
+
+fn next_random(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *seed
 }
 
 fn task_pool_test_continuation(ref_id: &str) -> TaskStepContinuation {

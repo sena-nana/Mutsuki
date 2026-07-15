@@ -420,19 +420,17 @@ impl CoreRuntime {
     pub(crate) fn reject_stale_ready_tasks(&mut self) -> RuntimeResult<usize> {
         let stale_tasks: Vec<_> = self
             .tasks
-            .records()
+            .stale_expectation_task_ids()
             .into_iter()
-            .filter(|record| {
-                record.status == TaskStatus::Ready && !record.task.expected_versions.is_empty()
-            })
-            .filter_map(|record| {
+            .filter_map(|task_id| {
+                let record = self.tasks.get(&task_id)?;
                 self.states
                     .validate_expectations(
                         &record.task.expected_versions,
-                        format!("task.precondition.{}", record.task.task_id),
+                        format!("task.precondition.{task_id}"),
                     )
                     .err()
-                    .map(|failure| (record.task.task_id.clone(), failure.error().clone()))
+                    .map(|failure| (task_id, failure.error().clone()))
             })
             .collect();
         let mut rejected = 0;

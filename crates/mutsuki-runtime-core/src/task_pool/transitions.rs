@@ -11,10 +11,11 @@ pub(super) fn complete(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "complete")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "complete")?;
         mark_terminal_record(record, TaskStatus::Completed, None);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Completed));
@@ -28,10 +29,11 @@ pub(super) fn fail(
     current_step: u64,
     failure: RuntimeError,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "fail")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "fail")?;
         mark_terminal_record(record, TaskStatus::Failed, Some(failure));
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Failed));
@@ -45,12 +47,13 @@ pub(super) fn wait(
     current_step: u64,
     ready_at_step: Option<u64>,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "wait")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "wait")?;
         record.status = TaskStatus::Waiting;
         record.task.ready_at_step = ready_at_step;
         release_record_lease(record);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Waiting));
@@ -63,13 +66,14 @@ pub(super) fn defer_leased(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "defer")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "defer")?;
         record.status = TaskStatus::Ready;
         record.ready_since_step = current_step;
         release_record_lease(record);
         clear_record_owner(record);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
@@ -82,11 +86,12 @@ pub(super) fn block(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "block")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "block")?;
         record.status = TaskStatus::Blocked;
         release_record_lease(record);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Blocked));
@@ -99,8 +104,7 @@ pub(super) fn wake(
     task_id: &str,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let previous_status = {
-        let record = task_pool.record_mut(task_id)?;
+    let previous_status = task_pool.mutate_record_indexed(task_id, |record| {
         if !matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked) {
             return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
@@ -112,8 +116,8 @@ pub(super) fn wake(
         record.status = TaskStatus::Ready;
         record.ready_since_step = current_step;
         release_record_lease(record);
-        previous_status
-    };
+        Ok(previous_status)
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&previous_status), Some(&TaskStatus::Ready));
@@ -122,30 +126,20 @@ pub(super) fn wake(
 }
 
 pub(super) fn wake_due_tasks(task_pool: &mut TaskPool, current_step: u64) -> Vec<(String, u64)> {
-    let due_tasks: Vec<_> = task_pool
-        .tasks
-        .values()
-        .filter_map(|record| {
-            let ready_at_step = record.task.ready_at_step?;
-            if matches!(record.status, TaskStatus::Waiting | TaskStatus::Blocked)
-                && ready_at_step <= current_step
-            {
-                Some((record.task.task_id.clone(), ready_at_step))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let due_tasks = task_pool.take_due_wake_tasks(current_step);
     for (task_id, _) in &due_tasks {
-        if let Some(record) = task_pool.tasks.get_mut(task_id) {
-            let previous_status = record.status.clone();
-            record.status = TaskStatus::Ready;
-            record.ready_since_step = current_step;
-            release_record_lease(record);
-            task_pool
-                .statistics
-                .record_status_transition(Some(&previous_status), Some(&TaskStatus::Ready));
-        }
+        let previous_status = task_pool
+            .mutate_record_indexed(task_id, |record| {
+                let previous_status = record.status.clone();
+                record.status = TaskStatus::Ready;
+                record.ready_since_step = current_step;
+                release_record_lease(record);
+                Ok(previous_status)
+            })
+            .expect("wake index referenced a missing task record");
+        task_pool
+            .statistics
+            .record_status_transition(Some(&previous_status), Some(&TaskStatus::Ready));
         crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
     }
     due_tasks
@@ -156,8 +150,7 @@ pub(super) fn reject_ready(
     task_id: &str,
     failure: RuntimeError,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.record_mut(task_id)?;
+    task_pool.mutate_record_indexed(task_id, |record| {
         if record.status != TaskStatus::Ready {
             return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
@@ -167,7 +160,8 @@ pub(super) fn reject_ready(
         }
         record.status = TaskStatus::Failed;
         record.failure = Some(failure);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Ready), Some(&TaskStatus::Failed));
@@ -180,30 +174,41 @@ pub(super) fn cancel_running_invocation(
     invocation_id: &str,
     current_step: u64,
 ) -> usize {
-    let mut cancelled = 0;
-    for record in task_pool.tasks.values_mut() {
-        if record.status != TaskStatus::Running || record.claimed_by.as_deref() != Some(runner_id) {
-            continue;
-        }
-        if record
-            .lease
-            .as_ref()
-            .is_some_and(|lease| lease.lease_id == invocation_id)
-        {
-            if let Some(lease) = record.lease.clone() {
-                record_attempt_finished_value(&mut task_pool.statistics, &lease, current_step);
-            }
+    let task_id = task_pool
+        .running_record_keys(runner_id)
+        .into_iter()
+        .flatten()
+        .find_map(|key| {
+            task_pool.tasks.get(key.task_id()).and_then(|record| {
+                record
+                    .lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.lease_id == invocation_id)
+                    .then(|| record.task.task_id.clone())
+            })
+        });
+    let Some(task_id) = task_id else {
+        return 0;
+    };
+    let lease = task_pool
+        .tasks
+        .get(&task_id)
+        .and_then(|record| record.lease.clone());
+    task_pool
+        .mutate_record_indexed(&task_id, |record| {
             record.status = TaskStatus::Ready;
-            task_pool
-                .statistics
-                .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
             record.ready_since_step = current_step;
             release_record_lease(record);
-            cancelled = 1;
-            break;
-        }
+            Ok(())
+        })
+        .expect("running index referenced a missing task record");
+    if let Some(lease) = lease {
+        record_attempt_finished_value(&mut task_pool.statistics, &lease, current_step);
     }
-    cancelled
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+    1
 }
 
 pub(super) fn cancel_task(
@@ -211,10 +216,11 @@ pub(super) fn cancel_task(
     lease: &TaskLease,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    {
-        let record = task_pool.leased_record_mut(lease, current_step, "cancel")?;
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        validate_record_lease(record, lease, current_step, "cancel")?;
         mark_terminal_record(record, TaskStatus::Cancelled, None);
-    }
+        Ok(())
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Cancelled));
@@ -231,8 +237,7 @@ pub(super) fn terminal_by_core(
     action: &str,
     current_step: u64,
 ) -> RuntimeResult<()> {
-    let (active_lease, previous_status) = {
-        let record = task_pool.record_mut(task_id)?;
+    let (active_lease, previous_status) = task_pool.mutate_record_indexed(task_id, |record| {
         if is_terminal_status(&record.status) {
             return Err(crate::runtime_failure(
                 ERR_TASK_CLAIM_CONFLICT,
@@ -243,8 +248,8 @@ pub(super) fn terminal_by_core(
         let active_lease = record.lease.clone();
         let previous_status = record.status.clone();
         mark_terminal_record(record, status.clone(), failure);
-        (active_lease, previous_status)
-    };
+        Ok((active_lease, previous_status))
+    })?;
     task_pool
         .statistics
         .record_status_transition(Some(&previous_status), Some(&status));
@@ -269,25 +274,29 @@ pub(super) fn reclaim_expired_task_leases(
     task_pool: &mut TaskPool,
     current_step: u64,
 ) -> Vec<TaskLease> {
+    let task_ids = task_pool.take_expired_lease_tasks(current_step);
     let mut reclaimed = Vec::new();
-    for record in task_pool.tasks.values_mut() {
-        if record.status != TaskStatus::Running {
-            continue;
-        }
-        if record
-            .lease
+    for task_id in task_ids {
+        let lease = task_pool
+            .tasks
+            .get(&task_id)
+            .and_then(|record| record.lease.clone());
+        if lease
             .as_ref()
             .is_some_and(|lease| task_lease_expired(lease, current_step))
         {
-            if let Some(lease) = record.lease.clone() {
-                reclaimed.push(lease);
-            }
-            record.status = TaskStatus::Ready;
+            task_pool
+                .mutate_record_indexed(&task_id, |record| {
+                    record.status = TaskStatus::Ready;
+                    record.ready_since_step = current_step;
+                    release_record_lease(record);
+                    Ok(())
+                })
+                .expect("lease expiry index referenced a missing task record");
             task_pool
                 .statistics
                 .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
-            record.ready_since_step = current_step;
-            release_record_lease(record);
+            reclaimed.push(lease.expect("expired lease checked above"));
         }
     }
     for lease in &reclaimed {
@@ -317,6 +326,7 @@ pub(super) fn abort_all(
             .statistics
             .record_status_transition(Some(&previous_status), Some(&TaskStatus::Cancelled));
     }
+    task_pool.rebuild_indexes();
     for lease in &finished_leases {
         record_attempt_finished(task_pool, lease, current_step);
     }
@@ -360,6 +370,7 @@ pub(super) fn rebind_ready_generation(
             rebound += 1;
         }
     }
+    task_pool.rebuild_indexes();
     rebound
 }
 
