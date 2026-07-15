@@ -8,6 +8,13 @@ use mutsuki_runtime_sdk::HostTaskSnapshot;
 
 use crate::{HostRuntimeDriveState, PreparedRuntimeReload, WorkerPoolSnapshot};
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct HostTaskState {
+    pub handle: TaskHandle,
+    pub status: Option<mutsuki_runtime_contracts::TaskStatus>,
+    pub outcome: Option<TaskOutcome>,
+}
+
 // Variant boxing is part of this public control-plane API and must not drift for a lint.
 #[allow(clippy::large_enum_variant)]
 pub enum HostRuntimeCommand {
@@ -27,6 +34,7 @@ pub enum HostRuntimeCommand {
     DriveState,
     WorkerPools,
     TaskSnapshots,
+    TaskStatesBatch(Vec<TaskHandle>),
     TaskOutcome(TaskHandle),
     EventsAfter {
         sequence: u64,
@@ -90,6 +98,7 @@ pub enum HostRuntimeReply {
     DriveState(HostRuntimeDriveState),
     WorkerPools(Vec<WorkerPoolSnapshot>),
     TaskSnapshots(Vec<HostTaskSnapshot>),
+    TaskStatesBatch(Vec<HostTaskState>),
     TaskOutcome(Option<TaskOutcome>),
     Events(ObservabilityPage<RuntimeEvent>),
     TraceSpans(ObservabilityPage<TraceSpan>),

@@ -222,6 +222,11 @@ running invocation 的 tick/wall-clock supervision deadline 合并为一次性 t
 立即重新调度。timer 到期可以直接把 `current_step` 推进到目标 step，但仍必须执行完整的
 lease reclaim、wake、expectation、scheduler budget 和 dispatch 校验。
 
+HostRuntime completion subscription 同样是非 wire 控制面提示。它只发布单调 terminal
+revision，允许慢消费者合并通知；`TaskStatesBatch(Vec<TaskHandle>)` 才从 actor-owned
+TaskPool 读取权威 status/outcome。subscription 关闭或 actor 退出必须解除阻塞，且该机制
+不表示 Core broadcast completion、TaskGroup 或第二份结果存储。
+
 Core 的公开 task facade 以 `TaskHandle` descriptor 为入口。字符串 task id 只允许作为
 TaskPool、cascade cancel、host actor bookkeeping 等内部事实键使用，不再作为公开
 status / result / outcome / events / cancel / wake 入口。`TaskHandle` 不代表语言级

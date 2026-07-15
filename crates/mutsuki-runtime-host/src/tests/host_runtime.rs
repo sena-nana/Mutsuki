@@ -230,6 +230,63 @@ fn event_driven_host_dispatches_submit_and_worker_backlog_without_polling() {
 }
 
 #[test]
+fn completion_subscription_wakes_and_batch_state_returns_terminal_outcome() {
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let completions = runtime.subscribe_task_completions();
+    let observed_revision = completions.revision();
+    let handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "completion-notice",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("unexpected submit reply: {reply:?}"),
+    };
+
+    let revision = completions
+        .wait_after(observed_revision)
+        .expect("terminal task wakes completion subscription");
+    assert!(revision > observed_revision);
+    let states = runtime.task_states(vec![handle.clone()]).unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].handle, handle);
+    assert_eq!(states[0].status, Some(TaskStatus::Completed));
+    assert!(matches!(
+        states[0].outcome,
+        Some(TaskOutcome::Completed { ref task_id, .. }) if task_id == "completion-notice"
+    ));
+
+    let metrics = runtime.metrics();
+    assert_eq!(metrics.task_status_queries, 0);
+    assert_eq!(metrics.task_state_batch_queries, 1);
+    assert!(metrics.completion_notifications >= 1);
+}
+
+#[test]
+fn dropping_runtime_closes_completion_waiters() {
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime(runtime_profile())
+        .unwrap();
+    let completions = runtime.subscribe_task_completions();
+    let revision = completions.revision();
+
+    drop(runtime);
+
+    assert_eq!(completions.wait_after(revision), None);
+}
+
+#[test]
 fn event_driven_host_arms_one_shot_timer_for_future_ready_step() {
     let runner_descriptor = descriptor("timer.runner", "timer.work");
     let mut host = RuntimeBootstrapper::new();

@@ -101,6 +101,8 @@ cargo bench-smoke
 - 常驻 Host 应启用 event-driven driver；idle 时不得用固定 interval 调用 Tick。下一逻辑
   step 必须来自 TaskPool 增量索引与 running invocation deadline，timer 到期允许直接推进到
   目标 step。显式 tick 模式只用于 deterministic test、replay 和受控 embedding。
+- Host shell 等待 terminal task 必须使用可关闭、可合并的 completion revision 唤醒，并以
+  batch state query 回读 TaskPool 权威结果；禁止逐 task status/outcome polling 或无界通知缓存。
 - 每次 claim 的 attempt generation 必须单调递增；Cancel、retry、reload、timeout 和 Abort
   之后，旧 TaskLease completion 必须原子拒绝。
 - Drain 拒绝新的外部 submit 但允许已接收 task 完成；Abort 取消所有非 terminal task 并

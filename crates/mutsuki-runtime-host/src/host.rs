@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,7 @@ use mutsuki_runtime_sdk::{
 use crate::actor::{CoreActorMsg, core_actor_loop};
 use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
 use crate::scheduler::{
@@ -27,6 +28,172 @@ use crate::scheduler::{
 use crate::worker::worker_pools;
 
 pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGateway>>;
+
+#[derive(Debug, Default)]
+struct TaskCompletionSubscriptionState {
+    revision: u64,
+    closed: bool,
+}
+
+#[derive(Debug, Default)]
+struct TaskCompletionSubscriptionInner {
+    state: Mutex<TaskCompletionSubscriptionState>,
+    changed: Condvar,
+}
+
+#[derive(Clone, Debug)]
+pub struct TaskCompletionSubscription {
+    inner: Arc<TaskCompletionSubscriptionInner>,
+}
+
+impl TaskCompletionSubscription {
+    pub fn revision(&self) -> u64 {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .revision
+    }
+
+    pub fn wait_after(&self, revision: u64) -> Option<u64> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while !state.closed && state.revision <= revision {
+            state = self
+                .inner
+                .changed
+                .wait(state)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        (!state.closed).then_some(state.revision)
+    }
+
+    pub fn close(&self) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.closed = true;
+        self.inner.changed.notify_all();
+    }
+}
+
+#[derive(Debug)]
+struct TaskCompletionNotifier {
+    inner: Weak<TaskCompletionSubscriptionInner>,
+}
+
+impl TaskCompletionNotifier {
+    fn notify(&self, revision: u64) -> bool {
+        let Some(inner) = self.inner.upgrade() else {
+            return false;
+        };
+        let mut state = inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed {
+            return false;
+        }
+        state.revision = state.revision.max(revision);
+        inner.changed.notify_all();
+        true
+    }
+
+    fn close(&self) {
+        if let Some(inner) = self.inner.upgrade() {
+            let mut state = inner
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.closed = true;
+            inner.changed.notify_all();
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TaskCompletionHub {
+    state: Mutex<TaskCompletionHubState>,
+    notifications: AtomicU64,
+}
+
+#[derive(Debug, Default)]
+struct TaskCompletionHubState {
+    revision: u64,
+    closed: bool,
+    subscribers: Vec<TaskCompletionNotifier>,
+}
+
+impl TaskCompletionHub {
+    fn subscribe(&self) -> TaskCompletionSubscription {
+        let inner = Arc::new(TaskCompletionSubscriptionInner::default());
+        let notifier = TaskCompletionNotifier {
+            inner: Arc::downgrade(&inner),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed {
+            notifier.close();
+        } else {
+            let _ = notifier.notify(state.revision);
+            state.subscribers.push(notifier);
+        }
+        TaskCompletionSubscription { inner }
+    }
+
+    pub(crate) fn publish(&self, revision: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.closed || revision <= state.revision {
+            return;
+        }
+        state.revision = revision;
+        state
+            .subscribers
+            .retain(|subscriber| subscriber.notify(revision));
+        self.notifications.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.closed = true;
+        for subscriber in &state.subscribers {
+            subscriber.close();
+        }
+        state.subscribers.clear();
+    }
+
+    fn notifications(&self) -> u64 {
+        self.notifications.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostRuntimeMetricsSnapshot {
+    pub actor_commands: u64,
+    pub task_status_queries: u64,
+    pub task_state_batch_queries: u64,
+    pub completion_notifications: u64,
+}
+
+#[derive(Debug, Default)]
+struct HostRuntimeMetrics {
+    actor_commands: AtomicU64,
+    task_status_queries: AtomicU64,
+    task_state_batch_queries: AtomicU64,
+}
 
 #[derive(Clone)]
 pub struct HostRuntimeConfig {
@@ -118,6 +285,8 @@ pub struct HostRuntime {
     actor: Option<thread::JoinHandle<()>>,
     capabilities: Arc<HostCapabilityRegistry>,
     context: SdkHostContext,
+    completion_hub: Arc<TaskCompletionHub>,
+    metrics: Arc<HostRuntimeMetrics>,
 }
 
 impl HostRuntime {
@@ -143,9 +312,11 @@ impl HostRuntime {
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let pools = worker_pools(&config, actor_tx)?;
+        let completion_hub = Arc::new(TaskCompletionHub::default());
+        let actor_completion_hub = completion_hub.clone();
         let actor = thread::Builder::new()
             .name("mutsuki-core-actor".into())
-            .spawn(move || core_actor_loop(core, config, rx, pools))
+            .spawn(move || core_actor_loop(core, config, rx, pools, actor_completion_hub))
             .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
         let capabilities = Arc::new(capabilities);
         let context = build_host_context(
@@ -160,6 +331,8 @@ impl HostRuntime {
             actor: Some(actor),
             capabilities,
             context,
+            completion_hub,
+            metrics: Arc::new(HostRuntimeMetrics::default()),
         })
     }
 
@@ -172,6 +345,7 @@ impl HostRuntime {
     }
 
     pub fn dispatch(&self, command: HostRuntimeCommand) -> RuntimeResult<HostRuntimeReply> {
+        self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(CoreActorMsg::Command(command, reply_tx))
@@ -213,6 +387,10 @@ impl HostRuntime {
     }
 
     pub fn task_status(&self, task_id: &str) -> Option<TaskStatus> {
+        self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .task_status_queries
+            .fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(CoreActorMsg::TaskStatus(task_id.to_string(), reply_tx))
@@ -227,6 +405,38 @@ impl HostRuntime {
                 "host.task_snapshots",
                 format!("unexpected reply: {reply:?}"),
             )),
+        }
+    }
+
+    pub fn task_states(
+        &self,
+        handles: Vec<mutsuki_runtime_contracts::TaskHandle>,
+    ) -> RuntimeResult<Vec<HostTaskState>> {
+        self.metrics
+            .task_state_batch_queries
+            .fetch_add(1, Ordering::Relaxed);
+        match self.dispatch(HostRuntimeCommand::TaskStatesBatch(handles))? {
+            HostRuntimeReply::TaskStatesBatch(states) => Ok(states),
+            reply => Err(host_failure(
+                "host.task_states",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn subscribe_task_completions(&self) -> TaskCompletionSubscription {
+        self.completion_hub.subscribe()
+    }
+
+    pub fn metrics(&self) -> HostRuntimeMetricsSnapshot {
+        HostRuntimeMetricsSnapshot {
+            actor_commands: self.metrics.actor_commands.load(Ordering::Relaxed),
+            task_status_queries: self.metrics.task_status_queries.load(Ordering::Relaxed),
+            task_state_batch_queries: self
+                .metrics
+                .task_state_batch_queries
+                .load(Ordering::Relaxed),
+            completion_notifications: self.completion_hub.notifications(),
         }
     }
 
@@ -335,6 +545,7 @@ impl Drop for HostRuntime {
         if let Some(actor) = self.actor.take() {
             let _ = actor.join();
         }
+        self.completion_hub.close();
     }
 }
 

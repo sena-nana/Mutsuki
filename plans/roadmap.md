@@ -189,6 +189,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `next_required_step`，actor 只为最近 ready/wake/tick deadline 或 host wall-clock
     supervision deadline 安排一次性等待。无任务、无 deadline 时 actor 永久阻塞，不产生
     空 Tick；显式 tick 模式继续用于 deterministic test、replay 和 embedding。
+  - HostRuntime 提供可合并的 terminal completion revision subscription，以及按
+    `TaskHandle` 批量读取 status/outcome 的 actor command。subscription 只负责唤醒，
+    TaskPool 仍是结果事实源；慢消费者不会形成无界 completion 队列。
   - `HostRuntimeCommand::CancelTask` 先更新 Core task 状态；若 task 正在 worker
     内运行，CoreActor 记录 pending cancel，并在 worker 归还 runner 时通过
     `Runner.cancel(invocation_id)` 尽力投递。该路径不承诺抢占已卡死 native step。

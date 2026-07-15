@@ -12,9 +12,9 @@ use mutsuki_runtime_core::{
 use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
 use crate::PreparedRuntimeReload;
-use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
+use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 use crate::error::host_failure;
-use crate::host::{HostRuntimeConfig, HostRuntimeDriveState};
+use crate::host::{HostRuntimeConfig, HostRuntimeDriveState, TaskCompletionHub};
 use crate::resource_router;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerDispatchError, WorkerExited, WorkerPools, WorkerStarted};
@@ -149,11 +149,13 @@ pub(crate) fn core_actor_loop(
     config: HostRuntimeConfig,
     rx: mpsc::Receiver<CoreActorMsg>,
     mut pools: WorkerPools,
+    completion_hub: std::sync::Arc<TaskCompletionHub>,
 ) {
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut running_batches_by_task: BTreeMap<String, RunningBatch> = BTreeMap::new();
     let mut draining_invocations: BTreeMap<String, DrainingInvocation> = BTreeMap::new();
     let mut driver = DriverState::default();
+    let mut terminal_revision = terminal_revision(&core);
     loop {
         driver.refresh_scheduled_tick(
             next_required_tick(&core, &running_batches_by_task),
@@ -192,6 +194,7 @@ pub(crate) fn core_actor_loop(
                     &mut running_batches_by_task,
                     &mut draining_invocations,
                 );
+                publish_terminal_changes(&core, &mut terminal_revision, &completion_hub);
                 continue;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -204,31 +207,28 @@ pub(crate) fn core_actor_loop(
             &mut running_batches_by_task,
             &mut draining_invocations,
         );
-        match msg {
-            CoreActorMsg::Command(command, reply_tx) => {
-                let shutdown = send_command_reply(
-                    handle_command(
-                        command,
-                        &mut core,
-                        &config,
-                        &mut pools,
-                        &rx,
-                        &mut pending_cancels,
-                        &mut running_batches_by_task,
-                        &mut draining_invocations,
-                        &driver,
-                    ),
-                    reply_tx,
-                );
-                if shutdown {
-                    break;
-                }
-            }
+        let shutdown = match msg {
+            CoreActorMsg::Command(command, reply_tx) => send_command_reply(
+                handle_command(
+                    command,
+                    &mut core,
+                    &config,
+                    &mut pools,
+                    &rx,
+                    &mut pending_cancels,
+                    &mut running_batches_by_task,
+                    &mut draining_invocations,
+                    &driver,
+                ),
+                reply_tx,
+            ),
             CoreActorMsg::TaskStatus(task_id, reply_tx) => {
                 let _ = reply_tx.send(task_status(&core, &task_id));
+                false
             }
             CoreActorMsg::WorkerStarted(started) => {
                 mark_worker_started(started, &mut running_batches_by_task);
+                false
             }
             CoreActorMsg::WorkerCompleted(completion) => {
                 let _ = handle_worker_completion(
@@ -240,6 +240,7 @@ pub(crate) fn core_actor_loop(
                 );
                 let _ =
                     schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
+                false
             }
             CoreActorMsg::WorkerExited(exited) => {
                 if exited.isolated
@@ -247,12 +248,40 @@ pub(crate) fn core_actor_loop(
                 {
                     let _ = pool.replace_exited_worker(&exited.worker_id);
                 }
+                false
             }
             CoreActorMsg::Shutdown => {
                 let _ = core.abort("host.shutdown");
-                break;
+                true
             }
+        };
+        publish_terminal_changes(&core, &mut terminal_revision, &completion_hub);
+        if shutdown {
+            break;
         }
+    }
+    completion_hub.close();
+}
+
+fn terminal_revision(core: &CoreRuntime) -> u64 {
+    let statistics = core.tasks().statistics();
+    (statistics.completed
+        + statistics.failed
+        + statistics.cancelled
+        + statistics.expired
+        + statistics.dead_letter) as u64
+        + statistics.terminal_records_evicted
+}
+
+fn publish_terminal_changes(
+    core: &CoreRuntime,
+    previous_revision: &mut u64,
+    completion_hub: &TaskCompletionHub,
+) {
+    let revision = terminal_revision(core);
+    if revision > *previous_revision {
+        *previous_revision = revision;
+        completion_hub.publish(revision);
     }
 }
 
@@ -375,6 +404,17 @@ fn handle_command(
         }
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
+        }
+        HostRuntimeCommand::TaskStatesBatch(handles) => {
+            let mut states = Vec::with_capacity(handles.len());
+            for handle in handles {
+                states.push(HostTaskState {
+                    status: core.task_handle_status(&handle),
+                    outcome: core.task_handle_outcome(&handle)?,
+                    handle,
+                });
+            }
+            Ok((HostRuntimeReply::TaskStatesBatch(states), false))
         }
         HostRuntimeCommand::TaskOutcome(handle) => Ok((
             HostRuntimeReply::TaskOutcome(core.task_handle_outcome(&handle)?),
