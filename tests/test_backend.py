@@ -108,3 +108,25 @@ async def test_python_runner_backend_returns_independent_entry_completions() -> 
 
     assert [item.entry_id for item in completion.results] == ["task-1", "task-2"]
     assert all(item.result is not None and item.error is None for item in completion.results)
+
+
+@pytest.mark.asyncio
+async def test_pending_cancel_is_scoped_by_runner_and_bounded() -> None:
+    backend = PythonRunnerBackend(max_pending_cancels=1)
+    runner_a = CaptureContextRunner(replace(echo_descriptor(), runner_id="runner-a"))
+    runner_b = CaptureContextRunner(replace(echo_descriptor(), runner_id="runner-b"))
+    backend.register_runner(runner_a)
+    backend.register_runner(runner_b)
+
+    await backend.cancel_runner("runner-a", "shared-invocation")
+    with pytest.raises(RunnerInvokeError) as exc_info:
+        await backend.cancel_runner("runner-b", "other-invocation")
+
+    assert exc_info.value.error.code == "capability.exhausted"
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    await backend.run_batch_runner(
+        "runner-b",
+        replace(runner_context(), invocation_id="shared-invocation"),
+        single_test_batch(task),
+    )
+    assert runner_b.contexts[0].cancel_requested is False

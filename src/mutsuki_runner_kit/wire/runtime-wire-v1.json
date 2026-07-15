@@ -1,0 +1,27 @@
+{
+  "schema_revision": "mutsuki.runtime.wire/1.0.0",
+  "protocol": {"major":1,"minor":0,"compatibility":{"unknown_additive_fields":"ignore","removed_or_changed_required_fields":"major_breaking","opcode_policy":"append_only_never_reuse"}},
+  "codecs": ["mutsuki.codec.typed-jsonl.v1","mutsuki.codec.typed-msgpack.v1"],
+  "operations": [
+    {"opcode":1,"method":"plugin.initialize","management":true,"request":"InitializeRequest","response":"ProtocolHelloAck"},
+    {"opcode":4097,"method":"runner.run_batch","management":false,"request":"RunBatchRequest","response":"CompletionBatch"},
+    {"opcode":4098,"method":"runner.cancel","management":true,"request":"CancelRunnerRequest","response":"Unit"},
+    {"opcode":4099,"method":"runner.dispose","management":true,"request":"DisposeRunnerRequest","response":"Unit"},
+    {"opcode":8193,"method":"task.submit_batch","management":false,"request":"SubmitTaskBatchRequest","response":"TaskHandle[]"},
+    {"opcode":8194,"method":"task.cancel","management":false,"request":"CancelTaskRequest","response":"Unit"},
+    {"opcode":8195,"method":"task.outcome","management":false,"request":"TaskOutcomeRequest","response":"TaskOutcome?"},
+    {"opcode":12289,"method":"resource.read.collect","management":false,"request":"CollectReadPlanRequest","response":"Bytes"},
+    {"opcode":12290,"method":"resource.read.snapshot","management":false,"request":"SnapshotReadPlanRequest","response":"SnapshotDescriptor"},
+    {"opcode":12291,"method":"resource.stream.open","management":false,"request":"OpenStreamPlanRequest","response":"StreamPlan"},
+    {"opcode":12292,"method":"resource.export","management":false,"request":"ExportPlanRequest","response":"PlanReceipt"},
+    {"opcode":12293,"method":"resource.write.commit","management":false,"request":"CommitWritePlanRequest","response":"PlanReceipt"},
+    {"opcode":12294,"method":"resource.command","management":false,"request":"CommandPlanRequest","response":"PlanReceipt"},
+    {"opcode":12295,"method":"resource.command_batch","management":false,"request":"CommandBatchRequest","response":"PlanReceipt[]"},
+    {"opcode":12296,"method":"resource.saga","management":false,"request":"SagaPlanRequest","response":"PlanReceipt[]"},
+    {"opcode":12297,"method":"resource.create_blob","management":false,"request":"CreateBlobRequest","response":"ResourceRef"},
+    {"opcode":12298,"method":"resource.create_cow_state","management":false,"request":"CreateCowStateRequest","response":"ResourceRef"},
+    {"opcode":12299,"method":"resource.create_capability","management":false,"request":"CreateCapabilityRequest","response":"ResourceRef"}
+  ],
+  "resource_policy": {"large_bytes":"ResourceRef_or_stream_descriptor","inline_limit_bytes":65536},
+  "limits": {"max_frame_bytes":8388608,"max_payload_bytes":4194304,"max_jsonl_line_bytes":8388608,"max_in_flight_requests":64,"management_reserved_requests":8}
+}

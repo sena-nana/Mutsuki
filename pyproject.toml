@@ -5,6 +5,9 @@ description = "Python SDK and runner glue for the Mutsuki Runner Link protocol."
 requires-python = ">=3.13"
 license = { file = "LICENSE" }
 readme = "README.md"
+dependencies = [
+    "msgpack>=1.1,<2",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -13,7 +13,8 @@ This repository owns:
 
 - Python mirrors of the Mutsuki runtime contracts.
 - `PythonRunnerBackend` for runner registration, invocation, cancel, and dispose.
-- `StdioJsonlBridge` for the current JSONL runner bridge.
+- Concurrent typed `StdioJsonlBridge` for compatibility/debugging and
+  `StdioBinaryBridge` for length-prefixed MessagePack Runtime Wire v1.
 - descriptor-based resource clients and an explicitly injected resource request handler.
 - `FakeResourceProvider` under `testing` for conformance tests only.
 - Testing helpers for Python-owned runners.
@@ -37,3 +38,9 @@ uv run pytest
 The Rust core repository remains the source of truth for protocol evolution.
 When contracts change, update this kit only by mirroring the published wire
 shape; do not add Python-only runtime semantics.
+
+The checked-in schema and semantic fixtures are pinned to MutsukiCore
+`d605333516753a797ca7e9971d097ac3e0de0c59`. Startup rejects an incompatible
+protocol major, codec, or schema revision before runner work is dispatched.
+Performance measurements and JSONL operational limits are documented in
+`docs/performance/runtime-wire-v1.md`.
