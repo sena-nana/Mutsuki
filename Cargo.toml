@@ -8,7 +8,6 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "d9397ca7a090b7080c6b98774a8134c3a223a039" }
 mutsuki-distributed-contracts = { git = "https://github.com/sena-nana/MutsukiDistributedHost.git", rev = "76f3745fe3c4387035fe6b0a3031f9dfa861f8df" }
 mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "114f93cc0b2d6335a765ea3bd4f4445328cd4a97" }
 mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "114f93cc0b2d6335a765ea3bd4f4445328cd4a97", default-features = false }

@@ -90,8 +90,10 @@ the Leader handles bounded control descriptors only.
 
 ## Task policy semantics
 
-The catalog uses owner contract enums for mobility, recovery, latency, acceptance, retry safety,
-quality, cache and partial-result behavior. Fast is the preview/BestEffort acceptance level. Every
-policy explicitly states quality bounds, cache, partial results and fallback, so degradation is never
-silent. Confidential, restricted and credential-bearing policies require at least Managed trust;
-that decision is made by DistributedHost and is not observable through the plugin API.
+The catalog demonstrates DistributedHost-owned mobility, recovery, latency, acceptance, retry
+safety, quality, cache and partial-result choices. The template checks that the referenced catalog is
+present and non-empty; it does not duplicate those runtime semantics. Fast is the preview/BestEffort
+acceptance level. Every example explicitly states quality bounds, cache, partial results and fallback,
+so degradation is never silent. Confidential, restricted and credential-bearing policies require at
+least Managed trust; that decision is made by DistributedHost and is not observable through the
+plugin API.

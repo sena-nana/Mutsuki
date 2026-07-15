@@ -1245,7 +1245,6 @@ dependencies = [
  "mutsuki-distributed-contracts",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
- "mutsuki-runtime-contracts",
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",

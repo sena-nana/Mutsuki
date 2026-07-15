@@ -8,7 +8,7 @@ assembly boundaries and end-to-end deployment behavior without copying their imp
 | --- | --- | --- |
 | Plugin ABI, execute, Runner and ordinary Host APIs do not change. | Core phases 0-2; ServiceHost baseline | Existing ABI/config/QQ smoke suites compile unchanged against updated pins. |
 | Old and ineligible plugins remain local. | Core portability default is LocalOnly; DistributedHost placement filters | `local-hard-realtime` and explicit local fallback policy; no cluster types enter plugin catalogs. |
-| Sidecar/network failure does not stop local Core/ServiceHost. | DistributedHost external adapter boundary | Template never spawns/supervises sidecar or opens its network; unavailable decision tests reject false durability. |
+| Sidecar/network failure does not stop local Core/ServiceHost. | DistributedHost external adapter boundary | Template never spawns/supervises sidecar or opens its network; examples allow local fallback only for Fast and reject Durable/Critical fallback. |
 | Core hot paths do not run network, consensus or blocking telemetry. | Core #17-20 | Template depends on contracts only; distributed implementation is not linked into ServiceRuntime. |
 | Large data does not pass through Leader. | DistributedHost remote execution and HA tests | Every deployment requires separate data endpoint, direct Worker transfer and `leader_proxy = false`. |
 | Leader failover preserves valid grants and fences old terms. | DistributedHost HA issue tests | Failure drill and three-voter topology are documented and validated. |

@@ -37,7 +37,8 @@ deployment = "../deploy/distribution/controller-worker.toml"
 
 仓库提供单机、单控制端+Worker、3 投票节点+Worker 三种机器中立拓扑以及任务策略 catalog。
 模板在启动本地 Runtime 前验证固定 revision、Secret key 引用、拓扑、认证加密通道、CPU/内存/
-显存/网络/并发/checkpoint 预算和任务策略；它不会替部署系统解析制品或 Secret 值。Sidecar
+显存/网络/并发/checkpoint 预算以及策略文件存在；任务调度、恢复、fallback 和信任语义仍由
+DistributedHost 解析。模板不会替部署系统解析制品或 Secret 值。Sidecar
 不可用时，Fast 任务只按显式策略回退 LocalOnly，Durable/Critical 必须拒绝，不能伪装成可靠
 接收。控制通道与直接数据通道独立，大型数据不经过 Leader。
 

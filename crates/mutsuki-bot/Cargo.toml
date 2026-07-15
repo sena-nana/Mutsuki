@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-mutsuki-runtime-contracts.workspace = true
 mutsuki-distributed-contracts.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true
