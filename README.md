@@ -72,7 +72,7 @@ cargo bench-full
 cargo bench-smoke
 ```
 
-Both commands write structured JSON under `target/mutsuki-benchmarks/`. The
+Both commands write structured JSON and CSV under `target/mutsuki-benchmarks/`. The
 full command covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
 ratios, batch sizes 1/32/256, protocol/hint/continuation routing, bounded
 long-running behavior, resource planning, completion routing, and Host-facing
@@ -95,7 +95,7 @@ CPUs and Rust 1.97.0 in the release profile. It measured:
 These values are environment-specific evidence, not universal performance
 claims. The checked-in structured comparison points are in
 `artifacts/perf/issue28-baseline.json`. CI runs a broad absolute smoke gate;
-the scheduled/release workflow uploads every full JSON report and compares
+the scheduled/release workflow uploads every full JSON/CSV report and compares
 matching cases with the previous saved report using a 3x relative regression
 threshold plus explicit noise floors.
 

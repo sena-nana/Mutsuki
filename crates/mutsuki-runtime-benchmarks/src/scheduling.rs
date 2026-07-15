@@ -38,105 +38,81 @@ struct SchedulingCase {
     distribution: ProtocolDistribution,
 }
 
+impl SchedulingCase {
+    fn new(
+        axis: &'static str,
+        tasks: usize,
+        runners: usize,
+        ready_percent: usize,
+        batch_size: usize,
+        distribution: ProtocolDistribution,
+    ) -> Self {
+        Self {
+            axis,
+            tasks,
+            runners,
+            ready_percent,
+            batch_size,
+            distribution,
+        }
+    }
+}
+
 pub fn run(mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
     let mut matrix = Vec::new();
-    match mode {
-        BenchmarkMode::Full => {
-            for tasks in [1_000, 10_000, 100_000] {
-                for runners in [1, 16, 128] {
-                    matrix.push(SchedulingCase {
-                        axis: "scale",
-                        tasks,
-                        runners,
-                        ready_percent: 1,
-                        batch_size: 32,
-                        distribution: ProtocolDistribution::Uniform,
-                    });
-                }
-            }
-            for ready_percent in [0, 1, 50, 100] {
-                matrix.push(SchedulingCase {
-                    axis: "ready_ratio",
-                    tasks: 100_000,
-                    runners: 16,
-                    ready_percent,
-                    batch_size: 32,
-                    distribution: ProtocolDistribution::Uniform,
-                });
-            }
-            for batch_size in [1, 32, 256] {
-                matrix.push(SchedulingCase {
-                    axis: "batch_size",
-                    tasks: 100_000,
-                    runners: 16,
-                    ready_percent: 100,
-                    batch_size,
-                    distribution: ProtocolDistribution::Uniform,
-                });
-            }
-            for distribution in [
-                ProtocolDistribution::Single,
-                ProtocolDistribution::Uniform,
-                ProtocolDistribution::RunnerHint,
-                ProtocolDistribution::OwnerContinuation,
-            ] {
-                matrix.push(SchedulingCase {
-                    axis: "protocol_distribution",
-                    tasks: 100_000,
-                    runners: 16,
-                    ready_percent: 100,
-                    batch_size: 32,
-                    distribution,
-                });
-            }
-        }
-        BenchmarkMode::Smoke => {
-            for (tasks, runners) in [(1_000, 1), (10_000, 16), (100_000, 128)] {
-                matrix.push(SchedulingCase {
-                    axis: "scale",
-                    tasks,
-                    runners,
-                    ready_percent: 1,
-                    batch_size: 32,
-                    distribution: ProtocolDistribution::Uniform,
-                });
-            }
-            for ready_percent in [0, 100] {
-                matrix.push(SchedulingCase {
-                    axis: "ready_ratio",
-                    tasks: 10_000,
-                    runners: 16,
-                    ready_percent,
-                    batch_size: 32,
-                    distribution: ProtocolDistribution::Uniform,
-                });
-            }
-            for batch_size in [1, 256] {
-                matrix.push(SchedulingCase {
-                    axis: "batch_size",
-                    tasks: 10_000,
-                    runners: 16,
-                    ready_percent: 100,
-                    batch_size,
-                    distribution: ProtocolDistribution::Uniform,
-                });
-            }
-            for distribution in [
-                ProtocolDistribution::Single,
-                ProtocolDistribution::Uniform,
-                ProtocolDistribution::RunnerHint,
-                ProtocolDistribution::OwnerContinuation,
-            ] {
-                matrix.push(SchedulingCase {
-                    axis: "protocol_distribution",
-                    tasks: 10_000,
-                    runners: 16,
-                    ready_percent: 100,
-                    batch_size: 32,
-                    distribution,
-                });
-            }
-        }
+    let scale = mode.select(
+        vec![(1_000, 1), (10_000, 16), (100_000, 128)],
+        [1_000, 10_000, 100_000]
+            .into_iter()
+            .flat_map(|tasks| [1, 16, 128].map(|runners| (tasks, runners)))
+            .collect(),
+    );
+    matrix.extend(scale.into_iter().map(|(tasks, runners)| {
+        SchedulingCase::new(
+            "scale",
+            tasks,
+            runners,
+            1,
+            32,
+            ProtocolDistribution::Uniform,
+        )
+    }));
+
+    let tasks = mode.select(10_000, 100_000);
+    for &ready_percent in mode.select(&[0, 100][..], &[0, 1, 50, 100][..]) {
+        matrix.push(SchedulingCase::new(
+            "ready_ratio",
+            tasks,
+            16,
+            ready_percent,
+            32,
+            ProtocolDistribution::Uniform,
+        ));
+    }
+    for &batch_size in mode.select(&[1, 256][..], &[1, 32, 256][..]) {
+        matrix.push(SchedulingCase::new(
+            "batch_size",
+            tasks,
+            16,
+            100,
+            batch_size,
+            ProtocolDistribution::Uniform,
+        ));
+    }
+    for distribution in [
+        ProtocolDistribution::Single,
+        ProtocolDistribution::Uniform,
+        ProtocolDistribution::RunnerHint,
+        ProtocolDistribution::OwnerContinuation,
+    ] {
+        matrix.push(SchedulingCase::new(
+            "protocol_distribution",
+            tasks,
+            16,
+            100,
+            32,
+            distribution,
+        ));
     }
     matrix.into_iter().map(run_case).collect()
 }

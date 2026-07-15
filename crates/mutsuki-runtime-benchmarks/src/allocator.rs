@@ -47,18 +47,7 @@ impl TrackingAllocator {
         self.allocations.fetch_add(1, Ordering::Relaxed);
         self.allocated_bytes.fetch_add(size, Ordering::Relaxed);
         let current = self.current_bytes.fetch_add(size, Ordering::Relaxed) + size;
-        let mut peak = self.peak_bytes.load(Ordering::Relaxed);
-        while current > peak {
-            match self.peak_bytes.compare_exchange_weak(
-                peak,
-                current,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(observed) => peak = observed,
-            }
-        }
+        self.peak_bytes.fetch_max(current, Ordering::Relaxed);
     }
 
     fn record_deallocation(&self, size: usize) {

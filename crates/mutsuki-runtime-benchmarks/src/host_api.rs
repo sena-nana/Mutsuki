@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ObservabilityOutletProfile, ObservabilityOverflowPolicy, ObservabilityProfile, Task, TaskBatch,
-    TaskHandle,
+    ObservabilityOutletProfile, ObservabilityOverflowPolicy, ObservabilityPage,
+    ObservabilityProfile, Task, TaskBatch, TaskHandle,
 };
-use mutsuki_runtime_core::TaskHistoryRetention;
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, RunnerLimits,
 };
@@ -133,10 +132,7 @@ fn batch_round_trip(entries: usize) -> Result<Vec<CaseResult>, String> {
 }
 
 fn actor_round_trip(mode: BenchmarkMode) -> Result<CaseResult, String> {
-    let iterations = match mode {
-        BenchmarkMode::Smoke => 1_000,
-        BenchmarkMode::Full => 10_000,
-    };
+    let iterations = mode.select(1_000, 10_000);
     let runtime = host_runtime(1)?;
     let measurement = ALLOCATOR.measurement();
     for _ in 0..iterations {
@@ -184,7 +180,6 @@ fn host_runtime(max_batch_entries: usize) -> Result<HostRuntime, String> {
             wall_clock_deadline: None,
         },
         observability: Some(observability.clone()),
-        task_history_retention: Some(TaskHistoryRetention::new(1_024, 2_048)),
         ..HostRuntimeConfig::default()
     };
     echo_bootstrapper(descriptor)
@@ -216,33 +211,30 @@ fn wait_for_outcomes(runtime: &HostRuntime, handles: &[TaskHandle]) -> Result<()
 }
 
 fn page_events(runtime: &HostRuntime) -> Result<(u64, u64, u64), String> {
-    let mut cursor = 0;
-    let mut items = 0;
-    let mut pages = 0;
-    let mut lost = 0;
-    loop {
-        let page = runtime
+    paginate(|cursor| {
+        runtime
             .events_after(cursor, 32)
-            .map_err(|error| error.to_string())?;
-        items += page.items.len() as u64;
-        pages += 1;
-        lost += page.lost;
-        cursor = page.next_sequence;
-        if !page.truncated {
-            return Ok((items, pages, lost));
-        }
-    }
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn page_traces(runtime: &HostRuntime) -> Result<(u64, u64, u64), String> {
+    paginate(|cursor| {
+        runtime
+            .trace_spans_after(cursor, 32)
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn paginate<T>(
+    mut page_after: impl FnMut(u64) -> Result<ObservabilityPage<T>, String>,
+) -> Result<(u64, u64, u64), String> {
     let mut cursor = 0;
     let mut items = 0;
     let mut pages = 0;
     let mut lost = 0;
     loop {
-        let page = runtime
-            .trace_spans_after(cursor, 32)
-            .map_err(|error| error.to_string())?;
+        let page = page_after(cursor)?;
         items += page.items.len() as u64;
         pages += 1;
         lost += page.lost;

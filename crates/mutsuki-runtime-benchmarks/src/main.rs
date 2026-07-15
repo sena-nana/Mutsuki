@@ -72,14 +72,15 @@ fn run() -> Result<(), String> {
         gates,
         passed,
     };
-    write_report(&options.output, &report)?;
+    let csv_output = write_report(&options.output, &report)?;
     println!(
-        "Issue #28 {} benchmark: {} cases, {} gates, result={}, report={}",
+        "Issue #28 {} benchmark: {} cases, {} gates, result={}, reports={},{}",
         report.mode,
         report.cases.len(),
         report.gates.len(),
         if report.passed { "PASS" } else { "FAIL" },
-        options.output.display()
+        options.output.display(),
+        csv_output.display()
     );
     for gate in report.gates.iter().filter(|gate| !gate.passed) {
         eprintln!(
@@ -186,14 +187,19 @@ fn read_report(path: &Path) -> Result<BaselineReport, String> {
         .map_err(|error| format!("failed to parse baseline {}: {error}", path.display()))
 }
 
-fn write_report(path: &Path, report: &BenchmarkReport) -> Result<(), String> {
+fn write_report(path: &Path, report: &BenchmarkReport) -> Result<PathBuf, String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
     let json = serde_json::to_string_pretty(report).map_err(|error| error.to_string())?;
+    let csv = report.to_csv()?;
     fs::write(path, format!("{json}\n"))
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    let csv_path = path.with_extension("csv");
+    fs::write(&csv_path, csv)
+        .map_err(|error| format!("failed to write {}: {error}", csv_path.display()))?;
+    Ok(csv_path)
 }
 
 fn evaluate_gates(
@@ -280,45 +286,26 @@ fn full_matrix_gates(cases: &[CaseResult]) -> Vec<GateResult> {
             .filter_map(|case| case.dimensions.get(key).cloned())
             .collect::<BTreeSet<_>>()
     };
-    let expected = [
-        (
-            "tasks",
-            BTreeSet::from(["1000".into(), "10000".into(), "100000".into()]),
-        ),
-        (
-            "runners",
-            BTreeSet::from(["1".into(), "16".into(), "128".into()]),
-        ),
-        (
-            "ready_percent",
-            BTreeSet::from(["0".into(), "1".into(), "50".into(), "100".into()]),
-        ),
-        (
-            "batch_size",
-            BTreeSet::from(["1".into(), "32".into(), "256".into()]),
-        ),
+    let expected: [(&str, &[&str]); 5] = [
+        ("tasks", &["1000", "10000", "100000"]),
+        ("runners", &["1", "16", "128"]),
+        ("ready_percent", &["0", "1", "50", "100"]),
+        ("batch_size", &["1", "32", "256"]),
         (
             "protocol_distribution",
-            BTreeSet::from([
-                "single_protocol".into(),
-                "uniform_protocols".into(),
-                "runner_hint".into(),
-                "owner_continuation".into(),
-            ]),
+            &[
+                "single_protocol",
+                "uniform_protocols",
+                "runner_hint",
+                "owner_continuation",
+            ],
         ),
     ];
     let mut gates = expected
         .into_iter()
         .map(|(key, expected)| {
             let actual = values(key);
-            GateResult {
-                name: format!("matrix.{key}"),
-                kind: "coverage".into(),
-                passed: expected.is_subset(&actual),
-                actual: actual.len() as f64,
-                limit: expected.len() as f64,
-                unit: "distinct-values".into(),
-            }
+            coverage_gate(format!("matrix.{key}"), &actual, expected)
         })
         .collect::<Vec<_>>();
     let lifecycle = find_case(cases, "longevity/task-lifecycle/bounded-history")
@@ -351,59 +338,67 @@ fn full_matrix_gates(cases: &[CaseResult]) -> Vec<GateResult> {
         .iter()
         .filter_map(|case| case.dimensions.get("resource_pattern").cloned())
         .collect::<BTreeSet<_>>();
-    gates.push(GateResult {
-        name: "matrix.row-payload-entries".into(),
-        kind: "coverage".into(),
-        passed: BTreeSet::from(["1".into(), "32".into(), "256".into()]).is_subset(&batch_entries),
-        actual: batch_entries.len() as f64,
-        limit: 3.0,
-        unit: "distinct-values".into(),
-    });
-    gates.push(GateResult {
-        name: "matrix.resource-patterns".into(),
-        kind: "coverage".into(),
-        passed: BTreeSet::from([
-            "no_resources".into(),
-            "shared_read".into(),
-            "write_conflict".into(),
-            "strict_order".into(),
-        ])
-        .is_subset(&resource_patterns),
-        actual: resource_patterns.len() as f64,
-        limit: 4.0,
-        unit: "distinct-values".into(),
-    });
+    gates.push(coverage_gate(
+        "matrix.row-payload-entries",
+        &batch_entries,
+        &["1", "32", "256"],
+    ));
+    gates.push(coverage_gate(
+        "matrix.resource-patterns",
+        &resource_patterns,
+        &[
+            "no_resources",
+            "shared_read",
+            "write_conflict",
+            "strict_order",
+        ],
+    ));
     let observability_states = cases
         .iter()
         .filter(|case| case.id.starts_with("longevity/observability/"))
         .filter_map(|case| case.dimensions.get("state").cloned())
         .collect::<BTreeSet<_>>();
-    gates.push(GateResult {
-        name: "matrix.observability-states".into(),
-        kind: "coverage".into(),
-        passed: BTreeSet::from(["disabled".into(), "enabled".into(), "full-capacity".into()])
-            .is_subset(&observability_states),
-        actual: observability_states.len() as f64,
-        limit: 3.0,
-        unit: "distinct-values".into(),
-    });
-    for required_id in [
-        "longevity/deadline-cancel/cycles",
-        "longevity/reload/identical-surface",
-        "host/submit-batch/entries-256",
-        "host/task-outcome-batch/entries-256",
-        "host/events-pagination/entries-256",
-        "host/traces-pagination/entries-256",
-        "host/actor-command-round-trip/statistics",
-    ] {
-        gates.push(gate_at_least(
-            format!("matrix.case.{required_id}"),
-            usize::from(find_case(cases, required_id).is_some()) as f64,
-            1.0,
-            "case",
-        ));
-    }
+    gates.push(coverage_gate(
+        "matrix.observability-states",
+        &observability_states,
+        &["disabled", "enabled", "full-capacity"],
+    ));
+    gates.extend(
+        [
+            "longevity/deadline-cancel/cycles",
+            "longevity/reload/identical-surface",
+            "host/submit-batch/entries-256",
+            "host/task-outcome-batch/entries-256",
+            "host/events-pagination/entries-256",
+            "host/traces-pagination/entries-256",
+            "host/actor-command-round-trip/statistics",
+        ]
+        .into_iter()
+        .map(|required_id| {
+            gate_at_least(
+                format!("matrix.case.{required_id}"),
+                usize::from(find_case(cases, required_id).is_some()) as f64,
+                1.0,
+                "case",
+            )
+        }),
+    );
     gates
+}
+
+fn coverage_gate(
+    name: impl Into<String>,
+    actual: &BTreeSet<String>,
+    expected: &[&str],
+) -> GateResult {
+    GateResult {
+        name: name.into(),
+        kind: "coverage".into(),
+        passed: expected.iter().all(|value| actual.contains(*value)),
+        actual: actual.len() as f64,
+        limit: expected.len() as f64,
+        unit: "distinct-values".into(),
+    }
 }
 
 fn relative_gates(cases: &[CaseResult], baseline: &BaselineReport) -> Vec<GateResult> {

@@ -26,10 +26,7 @@ pub fn run(mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
 }
 
 fn idle_tick_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
-    let iterations = match mode {
-        BenchmarkMode::Smoke => 100_000,
-        BenchmarkMode::Full => 8_640_000,
-    };
+    let iterations = mode.select(100_000, 8_640_000);
     let runner = runner_descriptor("bench.idle.runner", vec![BENCH_PROTOCOL_ID.into()], 1);
     let mut pool = TaskPool::default();
     let measurement = ALLOCATOR.measurement();
@@ -68,14 +65,8 @@ fn idle_tick_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
 }
 
 fn observability_cases(mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
-    let sustained = match mode {
-        BenchmarkMode::Smoke => 50_000,
-        BenchmarkMode::Full => 1_000_000,
-    };
-    let enabled = match mode {
-        BenchmarkMode::Smoke => 512,
-        BenchmarkMode::Full => 4_096,
-    };
+    let sustained = mode.select(50_000, 1_000_000);
+    let enabled = mode.select(512, 4_096);
     Ok(vec![
         observability_case("disabled", sustained, 0)?,
         observability_case("enabled", enabled, enabled as usize + 1)?,
@@ -146,10 +137,7 @@ fn observability_case(state: &str, iterations: u64, capacity: usize) -> Result<C
 }
 
 fn task_lifecycle_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
-    let iterations = match mode {
-        BenchmarkMode::Smoke => 20_000,
-        BenchmarkMode::Full => 1_000_000,
-    };
+    let iterations = mode.select(20_000, 1_000_000);
     let runner = runner_descriptor("bench.lifecycle.runner", vec![BENCH_PROTOCOL_ID.into()], 1);
     let mut pool = TaskPool::default();
     pool.configure_history_retention(Some(TaskHistoryRetention::new(1_024, 2_048)));
@@ -236,10 +224,7 @@ fn lifecycle_step(
 }
 
 fn deadline_cancel_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
-    let iterations = match mode {
-        BenchmarkMode::Smoke => 1_000,
-        BenchmarkMode::Full => 10_000,
-    };
+    let iterations = mode.select(1_000, 10_000);
     let runner = runner_descriptor("bench.deadline.runner", vec![BENCH_PROTOCOL_ID.into()], 1);
     let mut pool = TaskPool::default();
     pool.configure_history_retention(Some(TaskHistoryRetention::new(256, 512)));
@@ -295,10 +280,7 @@ fn deadline_cancel_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
 }
 
 fn reload_case(mode: BenchmarkMode) -> Result<CaseResult, String> {
-    let iterations = match mode {
-        BenchmarkMode::Smoke => 50,
-        BenchmarkMode::Full => 1_000,
-    };
+    let iterations = mode.select(50, 1_000);
     let descriptor = runner_descriptor("bench.reload.runner", vec![BENCH_PROTOCOL_ID.into()], 1);
     let manifest = runner_manifest(crate::fixtures::BENCH_PLUGIN_ID, vec![descriptor.clone()]);
     let profile = runtime_profile(Default::default());

@@ -3,9 +3,7 @@ use std::collections::BTreeMap;
 use mutsuki_runtime_contracts::{
     OrderingRequirement, ResourceAccessMode, ResourceRequirement, Task, TaskBatch,
 };
-use mutsuki_runtime_core::{
-    RunnerCompletion, RunnerDispatch, ScheduleDecision, TaskHistoryRetention,
-};
+use mutsuki_runtime_core::{RunnerCompletion, RunnerDispatch, ScheduleDecision};
 use serde_json::json;
 
 use crate::ALLOCATOR;
@@ -31,29 +29,16 @@ impl ResourcePattern {
     }
 }
 
-pub fn run(mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
-    let cases = match mode {
-        BenchmarkMode::Full => vec![1, 32, 256],
-        BenchmarkMode::Smoke => vec![1, 32, 256],
-    };
-    let patterns = match mode {
-        BenchmarkMode::Full => vec![
-            ResourcePattern::None,
-            ResourcePattern::SharedRead,
-            ResourcePattern::WriteConflict,
-            ResourcePattern::StrictOrder,
-        ],
-        BenchmarkMode::Smoke => vec![
-            ResourcePattern::None,
-            ResourcePattern::SharedRead,
-            ResourcePattern::WriteConflict,
-            ResourcePattern::StrictOrder,
-        ],
-    };
+pub fn run(_mode: BenchmarkMode) -> Result<Vec<CaseResult>, String> {
     let mut results = Vec::new();
-    for entries in cases {
-        for pattern in &patterns {
-            results.extend(run_case(entries, *pattern)?);
+    for entries in [1, 32, 256] {
+        for pattern in [
+            ResourcePattern::None,
+            ResourcePattern::SharedRead,
+            ResourcePattern::WriteConflict,
+            ResourcePattern::StrictOrder,
+        ] {
+            results.extend(run_case(entries, pattern)?);
         }
     }
     Ok(results)
@@ -70,7 +55,6 @@ fn run_case(entries: usize, pattern: ResourcePattern) -> Result<Vec<CaseResult>,
     let mut runtime = echo_bootstrapper(descriptor)
         .into_runtime(runtime_profile(Default::default()))
         .map_err(|error| error.to_string())?;
-    runtime.configure_task_history_retention(Some(TaskHistoryRetention::new(512, 1024)));
     let tasks = (0..entries)
         .map(|index| task_for_pattern(index, pattern))
         .collect::<Vec<_>>();

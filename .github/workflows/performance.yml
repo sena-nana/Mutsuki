@@ -63,5 +63,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: issue28-performance-${{ github.run_id }}
-          path: target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
+          path: target/mutsuki-benchmarks/issue28-${{ github.run_id }}.*
           retention-days: 90

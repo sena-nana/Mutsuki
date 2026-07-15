@@ -15,6 +15,13 @@ impl BenchmarkMode {
             Self::Full => "full",
         }
     }
+
+    pub fn select<T>(self, smoke: T, full: T) -> T {
+        match self {
+            Self::Smoke => smoke,
+            Self::Full => full,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -103,6 +110,62 @@ pub struct BenchmarkReport {
     pub cases: Vec<CaseResult>,
     pub gates: Vec<GateResult>,
     pub passed: bool,
+}
+
+#[derive(Serialize)]
+struct CsvCase<'a> {
+    schema_version: u32,
+    issue: u32,
+    mode: &'a str,
+    generated_unix_seconds: u64,
+    command: &'a str,
+    environment: &'a str,
+    case_id: &'a str,
+    category: &'a str,
+    dimensions: String,
+    iterations: u64,
+    units: u64,
+    elapsed_ns: u64,
+    ns_per_unit: f64,
+    throughput_per_second: f64,
+    allocations: String,
+    counters: String,
+    passed: bool,
+}
+
+impl BenchmarkReport {
+    pub fn to_csv(&self) -> Result<Vec<u8>, String> {
+        let mut writer = csv::Writer::from_writer(Vec::new());
+        let environment =
+            serde_json::to_string(&self.environment).map_err(|error| error.to_string())?;
+        for case in &self.cases {
+            writer
+                .serialize(CsvCase {
+                    schema_version: self.schema_version,
+                    issue: self.issue,
+                    mode: &self.mode,
+                    generated_unix_seconds: self.generated_unix_seconds,
+                    command: &self.command,
+                    environment: &environment,
+                    case_id: &case.id,
+                    category: &case.category,
+                    dimensions: serde_json::to_string(&case.dimensions)
+                        .map_err(|error| error.to_string())?,
+                    iterations: case.iterations,
+                    units: case.units,
+                    elapsed_ns: case.elapsed_ns,
+                    ns_per_unit: case.ns_per_unit,
+                    throughput_per_second: case.throughput_per_second,
+                    allocations: serde_json::to_string(&case.allocations)
+                        .map_err(|error| error.to_string())?,
+                    counters: serde_json::to_string(&case.counters)
+                        .map_err(|error| error.to_string())?,
+                    passed: self.passed,
+                })
+                .map_err(|error| error.to_string())?;
+        }
+        writer.into_inner().map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

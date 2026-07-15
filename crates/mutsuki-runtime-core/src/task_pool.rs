@@ -126,7 +126,7 @@ impl TaskPool {
 
     pub fn enqueue_at(&mut self, mut task: Task, current_step: u64) -> RuntimeResult<TaskId> {
         let task_id = task.task_id.clone();
-        if self.tasks.contains_key(&task_id) || self.evicted_task_ids.contains(&task_id) {
+        if self.contains_task_id(&task_id) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_TASK_DUPLICATE,
                 "runtime.task_pool",
@@ -183,14 +183,9 @@ impl TaskPool {
     }
 
     pub fn configure_history_retention(&mut self, retention: Option<TaskHistoryRetention>) {
-        let was_enabled = self.history_retention.is_some();
         self.history_retention = retention;
         self.terminal_order.clear();
         if let Some(retention) = retention {
-            if !was_enabled {
-                self.evicted_task_ids.clear();
-                self.evicted_task_order.clear();
-            }
             let mut terminal = self
                 .tasks
                 .values()
@@ -212,21 +207,13 @@ impl TaskPool {
         }
     }
 
-    pub fn history_retention(&self) -> Option<TaskHistoryRetention> {
-        self.history_retention
-    }
-
     pub fn retained_terminal_records(&self) -> usize {
-        if self.history_retention.is_some() {
-            self.terminal_order.len()
-        } else {
-            let statistics = &self.statistics;
-            statistics.completed
-                + statistics.failed
-                + statistics.cancelled
-                + statistics.expired
-                + statistics.dead_letter
-        }
+        let statistics = &self.statistics;
+        statistics.completed
+            + statistics.failed
+            + statistics.cancelled
+            + statistics.expired
+            + statistics.dead_letter
     }
 
     pub fn evicted_task_id_count(&self) -> usize {
@@ -584,12 +571,17 @@ impl TaskPool {
                 .record_status_transition(Some(&status), None);
             self.statistics.terminal_records_evicted =
                 self.statistics.terminal_records_evicted.saturating_add(1);
-            if retention.max_evicted_task_ids > 0 {
-                self.evicted_task_ids.insert(task_id.clone());
-                self.evicted_task_order.push_back(task_id);
-            }
-            self.trim_evicted_task_ids(retention.max_evicted_task_ids);
+            self.remember_evicted_task_id(task_id, retention.max_evicted_task_ids);
         }
+    }
+
+    fn remember_evicted_task_id(&mut self, task_id: TaskId, capacity: usize) {
+        if capacity == 0 {
+            return;
+        }
+        self.evicted_task_ids.insert(task_id.clone());
+        self.evicted_task_order.push_back(task_id);
+        self.trim_evicted_task_ids(capacity);
     }
 
     fn trim_evicted_task_ids(&mut self, capacity: usize) {
