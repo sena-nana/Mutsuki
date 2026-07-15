@@ -14,7 +14,7 @@ use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 use crate::PreparedRuntimeReload;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
-use crate::host::HostRuntimeConfig;
+use crate::host::{HostRuntimeConfig, HostRuntimeDriveState};
 use crate::resource_router;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerPool, WorkerStarted, worker_pools};
@@ -46,6 +46,93 @@ struct RunningBatch {
     worker_started_at: Option<Instant>,
 }
 
+struct DriverClock {
+    origin: Instant,
+    tick_interval: Duration,
+    timed_wakeups: u64,
+}
+
+impl DriverClock {
+    fn new(tick_interval: Duration) -> Self {
+        Self {
+            origin: Instant::now(),
+            tick_interval,
+            timed_wakeups: 0,
+        }
+    }
+
+    fn deadline_for_step(&self, step: u64) -> Option<Instant> {
+        let total_nanos = self.tick_interval.as_nanos().checked_mul(step as u128)?;
+        let seconds = total_nanos / 1_000_000_000;
+        let nanos = (total_nanos % 1_000_000_000) as u32;
+        let duration = Duration::new(u64::try_from(seconds).ok()?, nanos);
+        self.origin.checked_add(duration)
+    }
+}
+
+fn next_required_tick(
+    core: &CoreRuntime,
+    running_batches_by_task: &BTreeMap<String, RunningBatch>,
+) -> Option<u64> {
+    let current_step = core.current_step();
+    core.next_required_step()
+        .into_iter()
+        .chain(
+            running_batches_by_task
+                .values()
+                .filter_map(|task| task.deadline_tick)
+                .filter(|step| *step > current_step),
+        )
+        .min()
+}
+
+fn next_wake_deadline(
+    core: &CoreRuntime,
+    config: &HostRuntimeConfig,
+    running_batches_by_task: &BTreeMap<String, RunningBatch>,
+    driver: &DriverClock,
+) -> Option<Instant> {
+    if !config.event_driven {
+        return None;
+    }
+    let logical = next_required_tick(core, running_batches_by_task)
+        .and_then(|step| driver.deadline_for_step(step));
+    logical
+        .into_iter()
+        .chain(running_batches_by_task.values().flat_map(|task| {
+            [
+                task.wall_clock_deadline_at,
+                task.cancel_requested_at.and_then(|instant| {
+                    config
+                        .cancel_grace_period
+                        .and_then(|grace| instant.checked_add(grace))
+                }),
+                task.worker_started_at.and_then(|instant| {
+                    config
+                        .worker_health_timeout
+                        .and_then(|timeout| instant.checked_add(timeout))
+                }),
+            ]
+            .into_iter()
+            .flatten()
+        }))
+        .min()
+}
+
+fn drive_state(
+    core: &CoreRuntime,
+    config: &HostRuntimeConfig,
+    running_batches_by_task: &BTreeMap<String, RunningBatch>,
+    driver: &DriverClock,
+) -> HostRuntimeDriveState {
+    HostRuntimeDriveState {
+        current_step: core.current_step(),
+        next_required_tick: next_required_tick(core, running_batches_by_task),
+        next_wake_deadline: next_wake_deadline(core, config, running_batches_by_task, driver),
+        timed_wakeups: driver.timed_wakeups,
+    }
+}
+
 pub(crate) fn core_actor_loop(
     mut core: CoreRuntime,
     config: HostRuntimeConfig,
@@ -59,7 +146,45 @@ pub(crate) fn core_actor_loop(
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut running_batches_by_task: BTreeMap<String, RunningBatch> = BTreeMap::new();
     let mut draining_invocations: BTreeMap<String, String> = BTreeMap::new();
-    while let Ok(msg) = rx.recv() {
+    let mut driver = DriverClock::new(config.tick_interval);
+    loop {
+        let wait = next_wake_deadline(&core, &config, &running_batches_by_task, &driver)
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let received = match wait {
+            Some(wait) => rx.recv_timeout(wait),
+            None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+        };
+        let msg = match received {
+            Ok(msg) => msg,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                driver.timed_wakeups = driver.timed_wakeups.saturating_add(1);
+                if let Some(target_step) = next_required_tick(&core, &running_batches_by_task)
+                    && driver
+                        .deadline_for_step(target_step)
+                        .is_some_and(|deadline| deadline <= Instant::now())
+                    && schedule_ready_at(
+                        target_step,
+                        &mut core,
+                        &config,
+                        &mut pools,
+                        &mut running_batches_by_task,
+                    )
+                    .is_err()
+                {
+                    break;
+                }
+                supervise_running_invocations(
+                    &mut core,
+                    &config,
+                    &mut pools,
+                    &mut pending_cancels,
+                    &mut running_batches_by_task,
+                    &mut draining_invocations,
+                );
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         supervise_running_invocations(
             &mut core,
             &config,
@@ -80,6 +205,7 @@ pub(crate) fn core_actor_loop(
                         &mut pending_cancels,
                         &mut running_batches_by_task,
                         &mut draining_invocations,
+                        &driver,
                     ),
                     reply_tx,
                 );
@@ -122,14 +248,21 @@ fn handle_command(
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
+    driver: &DriverClock,
 ) -> RuntimeResult<(HostRuntimeReply, bool)> {
     match command {
         HostRuntimeCommand::SubmitTask(task) => {
             let handle = core.submit_task(*task)?;
+            if config.event_driven {
+                schedule_ready(core, config, pools, running_batches_by_task)?;
+            }
             Ok((HostRuntimeReply::TaskSubmitted(handle), false))
         }
         HostRuntimeCommand::SubmitBatch(batch) => {
             let handles = core.submit_batch(*batch)?;
+            if config.event_driven {
+                schedule_ready(core, config, pools, running_batches_by_task)?;
+            }
             Ok((HostRuntimeReply::TaskBatchSubmitted(handles), false))
         }
         HostRuntimeCommand::TickOnce => {
@@ -142,6 +275,7 @@ fn handle_command(
                 pending_cancels,
                 running_batches_by_task,
                 draining_invocations,
+                driver,
                 &mut report,
                 1,
             );
@@ -165,6 +299,7 @@ fn handle_command(
                     pending_cancels,
                     running_batches_by_task,
                     draining_invocations,
+                    driver,
                     &mut aggregate,
                     8,
                 );
@@ -213,6 +348,15 @@ fn handle_command(
         HostRuntimeCommand::Statistics => {
             Ok((HostRuntimeReply::Statistics(core.statistics()), false))
         }
+        HostRuntimeCommand::DriveState => Ok((
+            HostRuntimeReply::DriveState(drive_state(
+                core,
+                config,
+                running_batches_by_task,
+                driver,
+            )),
+            false,
+        )),
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
         }
@@ -247,6 +391,9 @@ fn handle_command(
                 running_batches_by_task,
                 draining_invocations,
             )?;
+            if config.event_driven {
+                schedule_ready(core, config, pools, running_batches_by_task)?;
+            }
             Ok((HostRuntimeReply::Reloaded(decision), false))
         }
         command @ (HostRuntimeCommand::CreateBlobResource { .. }
@@ -473,6 +620,7 @@ fn drain_worker_completions(
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, String>,
+    driver: &DriverClock,
     aggregate: &mut RunnerLoopReport,
     max_messages: usize,
 ) -> bool {
@@ -518,6 +666,7 @@ fn drain_worker_completions(
                         pending_cancels,
                         running_batches_by_task,
                         draining_invocations,
+                        driver,
                     ),
                     reply_tx,
                 ) {
@@ -765,7 +914,19 @@ fn schedule_ready(
     pools: &mut HashMap<ExecutionClass, WorkerPool>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let (report, dispatches) = core.claim_ready_dispatches(
+    let target_step = core.current_step().saturating_add(1);
+    schedule_ready_at(target_step, core, config, pools, running_batches_by_task)
+}
+
+fn schedule_ready_at(
+    target_step: u64,
+    core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
+    pools: &mut HashMap<ExecutionClass, WorkerPool>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+) -> RuntimeResult<RunnerLoopReport> {
+    let (report, dispatches) = core.claim_ready_dispatches_at_step(
+        target_step,
         |descriptor, load, current_step, registry_generation| {
             let limits = config
                 .runner_limits

@@ -25,7 +25,7 @@ pub use clients::{
     ResourcePlanProvider, TaskClient,
 };
 pub use commands::{HostRuntimeCommand, HostRuntimeReply};
-pub use host::{HostRuntime, HostRuntimeConfig};
+pub use host::{HostRuntime, HostRuntimeConfig, HostRuntimeDriveState};
 pub use jsonl::JsonlRunner;
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};

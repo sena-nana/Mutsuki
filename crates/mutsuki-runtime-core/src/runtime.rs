@@ -147,6 +147,12 @@ impl CoreRuntime {
         self.current_step
     }
 
+    /// Earliest future logical step at which task state may become schedulable without an
+    /// external event. Hosts can use this to arm one-shot timers instead of polling Core.
+    pub fn next_required_step(&self) -> Option<u64> {
+        self.tasks.next_required_step_after(self.current_step)
+    }
+
     pub fn stop_state(&self) -> RuntimeStopState {
         self.stop_state
     }

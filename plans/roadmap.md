@@ -184,6 +184,11 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - native plugin host 可启动 `HostRuntime` 控制面门面，并通过
     `HostRuntimeCommand` / `HostRuntimeReply` 预留 CoreActor 消息边界；
     `into_runtime` 保留裸 `CoreRuntime` 路径用于单线程测试、replay 和最小 host。
+  - HostRuntime 可显式启用 event-driven driver：submit、worker completion、cancel、
+    reload 和 shutdown 直接通过 actor mailbox 唤醒；TaskPool 用增量 step index 报告
+    `next_required_step`，actor 只为最近 ready/wake/tick deadline 或 host wall-clock
+    supervision deadline 安排一次性等待。无任务、无 deadline 时 actor 永久阻塞，不产生
+    空 Tick；显式 tick 模式继续用于 deterministic test、replay 和 embedding。
   - `HostRuntimeCommand::CancelTask` 先更新 Core task 状态；若 task 正在 worker
     内运行，CoreActor 记录 pending cancel，并在 worker 归还 runner 时通过
     `Runner.cancel(invocation_id)` 尽力投递。该路径不承诺抢占已卡死 native step。

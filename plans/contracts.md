@@ -215,6 +215,12 @@ replacement worker。若隔离后的 runner 迟到返回，host 只投递 `Runne
 `Runner.dispose`，不提交旧结果，也不把旧 runner 放回 Core。单连接同步 JSONL step 的
 独立 management channel 和进程级强制终止属于 host/sidecar 执行面，不进入 contracts。
 
+`next_required_step` 是 Rust Host 的非 wire 调度提示：它只汇总 TaskPool 增量索引中未来的
+ready/wake/lease step，不改变 Task、Runner 或 JSONL ABI。event-driven Host 将该 step 与
+running invocation 的 tick/wall-clock supervision deadline 合并为一次性 timer；mailbox 事件
+立即重新调度。timer 到期可以直接把 `current_step` 推进到目标 step，但仍必须执行完整的
+lease reclaim、wake、expectation、scheduler budget 和 dispatch 校验。
+
 Core 的公开 task facade 以 `TaskHandle` descriptor 为入口。字符串 task id 只允许作为
 TaskPool、cascade cancel、host actor bookkeeping 等内部事实键使用，不再作为公开
 status / result / outcome / events / cancel / wake 入口。`TaskHandle` 不代表语言级

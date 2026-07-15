@@ -96,6 +96,9 @@ cargo bench-smoke
   tick deadline 保持确定性取消语义；host-only wall-clock deadline、取消宽限和
   worker health timeout 可把卡死 native worker 隔离并补 replacement worker。迟到
   completion 必须 drain / dispose，不能把旧结果或旧 runner 重新放回 Core。
+- 常驻 Host 应启用 event-driven driver；idle 时不得用固定 interval 调用 Tick。下一逻辑
+  step 必须来自 TaskPool 增量索引与 running invocation deadline，timer 到期允许直接推进到
+  目标 step。显式 tick 模式只用于 deterministic test、replay 和受控 embedding。
 - 每次 claim 的 attempt generation 必须单调递增；Cancel、retry、reload、timeout 和 Abort
   之后，旧 TaskLease completion 必须原子拒绝。
 - Drain 拒绝新的外部 submit 但允许已接收 task 完成；Abort 取消所有非 terminal task 并

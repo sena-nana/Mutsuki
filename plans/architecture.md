@@ -256,6 +256,13 @@ native worker 超时后会被隔离，pool 补充 replacement worker，迟到 co
 drain：host 只投递 cancel / dispose，不再复用旧 runner 或提交旧结果。单连接同步 JSONL
 step 的独立 management channel 和进程级强制终止仍属于 sidecar supervision 后续扩展。
 
+HostRuntime 的 event-driven driver 复用同一 CoreActor mailbox：外部 submit 与控制命令、
+worker completion 和 shutdown 都是唤醒事件。TaskPool 维护 future-ready、waiting wake 和
+lease expiry 的 step index，并只公开最近 `next_required_step`；actor 将它与 runner tick
+deadline、wall-clock deadline、cancel grace 和 worker health deadline 合并为一个最近截止
+时间。到期时 Core 可直接前进到该逻辑 step 并执行一次完整调度校验，禁止用逐 step 空 Tick
+追赶。无截止时间时 actor 阻塞等待 mailbox，不启动采样或 polling 线程。
+
 Drain 只拒绝新的外部 submit，已经接收的 task 继续完成；Abort 取消所有非 terminal task
 并永久使旧 lease 失效。生命周期事件进入有界 drop-new EventLog，容量满或设为零只影响
 观察，不影响任务状态迁移。统计由 actor-owned 状态迁移常数成本累积，不启动采样线程。

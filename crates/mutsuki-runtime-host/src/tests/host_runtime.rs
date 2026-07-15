@@ -1,7 +1,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{
@@ -115,6 +115,185 @@ fn scalar_completion_batch(
         }
     }
     Ok(CompletionBatch::from_results(batch, results))
+}
+
+fn wait_for_task_status(runtime: &HostRuntime, task_id: &str, expected: TaskStatus) {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        if runtime.task_status(task_id) == Some(expected.clone()) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!(
+        "task {task_id} did not reach {expected:?}; current status: {:?}",
+        runtime.task_status(task_id)
+    );
+}
+
+#[test]
+fn event_driven_host_sleeps_without_tasks_or_deadlines() {
+    let runner_descriptor = descriptor("idle.runner", "idle.work");
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, task| Ok(RunnerResult::completed(task.task_id)),
+    )));
+    let runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                tick_interval: Duration::from_millis(2),
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+    let before = runtime.drive_state().unwrap();
+    std::thread::sleep(Duration::from_millis(40));
+    let after = runtime.drive_state().unwrap();
+
+    assert_eq!(before.current_step, 0);
+    assert_eq!(after.current_step, before.current_step);
+    assert_eq!(after.timed_wakeups, before.timed_wakeups);
+    assert_eq!(after.next_required_tick, None);
+    assert_eq!(after.next_wake_deadline, None);
+}
+
+#[test]
+fn event_driven_host_dispatches_submit_and_worker_backlog_without_polling() {
+    let runner_descriptor = descriptor("event.runner", "event.work");
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, task| Ok(RunnerResult::completed(task.task_id)),
+    )));
+    let runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitBatch(Box::new(TaskBatch {
+            batch_id: "event-batch".into(),
+            tick_id: None,
+            tasks: vec![
+                Task::new("event-1", "event.work", json!({})),
+                Task::new("event-2", "event.work", json!({})),
+            ],
+            resource_plan: None,
+        })))
+        .unwrap();
+
+    wait_for_task_status(&runtime, "event-1", TaskStatus::Completed);
+    wait_for_task_status(&runtime, "event-2", TaskStatus::Completed);
+    assert_eq!(runtime.drive_state().unwrap().timed_wakeups, 0);
+}
+
+#[test]
+fn event_driven_host_arms_one_shot_timer_for_future_ready_step() {
+    let runner_descriptor = descriptor("timer.runner", "timer.work");
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        |_ctx, task| Ok(RunnerResult::completed(task.task_id)),
+    )));
+    let runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                tick_interval: Duration::from_millis(5),
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let mut task = Task::new("timer-1", "timer.work", json!({}));
+    task.ready_at_step = Some(8);
+    let submitted_at = Instant::now();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(task)))
+        .unwrap();
+    let armed = runtime.drive_state().unwrap();
+    assert_eq!(armed.current_step, 1);
+    assert_eq!(armed.next_required_tick, Some(8));
+    assert!(armed.next_wake_deadline.is_some());
+
+    wait_for_task_status(&runtime, "timer-1", TaskStatus::Completed);
+    assert!(submitted_at.elapsed() < Duration::from_millis(150));
+    let completed = runtime.drive_state().unwrap();
+    assert_eq!(completed.timed_wakeups, 1);
+    assert_eq!(completed.next_required_tick, None);
+}
+
+#[test]
+fn event_driven_host_enforces_tick_deadline_without_periodic_polling() {
+    let runner_descriptor = descriptor_with_class(
+        "timer.deadline.runner",
+        "timer.deadline",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let disposed = Arc::new(Mutex::new(false));
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: runner_descriptor,
+        started_tx,
+        release_rx,
+        cancelled: cancelled.clone(),
+        disposed,
+    }));
+    let runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                tick_interval: Duration::from_millis(5),
+                default_runner_limits: RunnerLimits {
+                    deadline_ticks: Some(2),
+                    ..RunnerLimits::default()
+                },
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let submitted_at = Instant::now();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "timer-deadline-1",
+            "timer.deadline",
+            json!({}),
+        ))))
+        .unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    wait_for_task_status(&runtime, "timer-deadline-1", TaskStatus::Cancelled);
+    assert!(submitted_at.elapsed() < Duration::from_millis(150));
+
+    release_tx.send(()).unwrap();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1)
+        && cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .is_empty()
+    {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(cancelled.lock().unwrap().len(), 1);
 }
 
 #[test]

@@ -31,6 +31,26 @@ fn task_pool_claims_ready_tasks_in_deterministic_order() {
 }
 
 #[test]
+fn task_pool_reports_earliest_indexed_future_step_without_scanning_records() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    let mut later = Task::new("later", "sim.work", json!({}));
+    later.ready_at_step = Some(12);
+    let mut earlier = Task::new("earlier", "sim.work", json!({}));
+    earlier.ready_at_step = Some(7);
+    pool.enqueue(later).unwrap();
+    pool.enqueue(earlier).unwrap();
+
+    assert_eq!(pool.next_required_step_after(0), Some(7));
+    assert_eq!(pool.next_required_step_after(7), Some(12));
+
+    let claimed = pool.claim_ready_for_executor(&descriptor, "executor", 7, 0, 1);
+    pool.complete(&claimed[0].0, 7).unwrap();
+    assert_eq!(pool.next_required_step_after(7), Some(12));
+    pool.assert_indexes_consistent();
+}
+
+#[test]
 fn task_pool_claims_single_task_with_executor_lease() {
     let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
     let mut pool = TaskPool::default();

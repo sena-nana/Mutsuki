@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
     ObservabilityPage, ObservabilityProfile, RuntimeEvent, TaskStatus, TraceSpan,
@@ -29,6 +29,12 @@ pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGatewa
 
 #[derive(Clone)]
 pub struct HostRuntimeConfig {
+    /// Enables mailbox- and deadline-driven scheduling. Disabled preserves the explicit-tick
+    /// embedding mode used by deterministic tests and replay hosts.
+    pub event_driven: bool,
+    /// Wall-clock duration represented by one logical Core step when a deadline requires time
+    /// to advance. An idle runtime does not arm this timer.
+    pub tick_interval: Duration,
     pub worker_threads: usize,
     pub blocking_threads: usize,
     pub pool_queue_limit: usize,
@@ -57,6 +63,8 @@ impl fmt::Debug for HostRuntimeConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("HostRuntimeConfig")
+            .field("event_driven", &self.event_driven)
+            .field("tick_interval", &self.tick_interval)
             .field("worker_threads", &self.worker_threads)
             .field("blocking_threads", &self.blocking_threads)
             .field("pool_queue_limit", &self.pool_queue_limit)
@@ -78,6 +86,8 @@ impl fmt::Debug for HostRuntimeConfig {
 impl Default for HostRuntimeConfig {
     fn default() -> Self {
         Self {
+            event_driven: false,
+            tick_interval: Duration::from_millis(10),
             worker_threads: std::thread::available_parallelism()
                 .map(usize::from)
                 .unwrap_or(2)
@@ -113,6 +123,12 @@ impl HostRuntime {
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
         validate_single_instance_limits(&config.default_runner_limits, &config.runner_limits)?;
+        if config.tick_interval.is_zero() {
+            return Err(host_failure(
+                "host.driver.tick_interval",
+                "tick_interval must be greater than zero",
+            ));
+        }
         if let Some(observability) = config.observability.clone() {
             core.configure_observability(observability);
         }
@@ -248,6 +264,16 @@ impl HostRuntime {
         }
     }
 
+    pub fn drive_state(&self) -> RuntimeResult<HostRuntimeDriveState> {
+        match self.dispatch(HostRuntimeCommand::DriveState)? {
+            HostRuntimeReply::DriveState(state) => Ok(state),
+            reply => Err(host_failure(
+                "host.drive_state",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
     pub fn events_after(
         &self,
         sequence: u64,
@@ -275,6 +301,14 @@ impl HostRuntime {
             )),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRuntimeDriveState {
+    pub current_step: u64,
+    pub next_required_tick: Option<u64>,
+    pub next_wake_deadline: Option<Instant>,
+    pub timed_wakeups: u64,
 }
 
 impl Drop for HostRuntime {

@@ -33,6 +33,7 @@ impl ReadyKey {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct TaskIndexes {
     ready_by_protocol: HashMap<String, HashMap<ReadySelector, BTreeSet<ReadyKey>>>,
+    ready_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
     ready_with_expectations: BTreeSet<TaskId>,
     wake_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
     running_by_runner: HashMap<String, BTreeSet<TaskId>>,
@@ -169,6 +170,19 @@ impl TaskPool {
             .collect()
     }
 
+    /// Returns the earliest future logical step at which indexed task state can change.
+    /// Already-due ready tasks are excluded because their originating event drives dispatch.
+    pub fn next_required_step_after(&self, current_step: u64) -> Option<u64> {
+        [
+            next_bucket_after(&self.indexes.ready_by_step, current_step),
+            next_bucket_after(&self.indexes.wake_by_step, current_step),
+            next_bucket_after(&self.indexes.leases_by_expiry, current_step),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
     fn update_snapshot(&mut self, snapshot: &IndexSnapshot, present: bool) {
         match snapshot.status {
             TaskStatus::Ready => {
@@ -182,6 +196,14 @@ impl TaskPool {
                 if snapshot.has_expectations {
                     set_value(
                         &mut self.indexes.ready_with_expectations,
+                        &snapshot.task_id,
+                        present,
+                    );
+                }
+                if let Some(step) = snapshot.ready_at_step {
+                    set_bucket(
+                        &mut self.indexes.ready_by_step,
+                        step,
                         &snapshot.task_id,
                         present,
                     );
@@ -275,6 +297,16 @@ impl TaskPool {
                 .map(BTreeSet::len)
                 .sum::<usize>()
     }
+}
+
+fn next_bucket_after(buckets: &BTreeMap<u64, BTreeSet<TaskId>>, current_step: u64) -> Option<u64> {
+    buckets
+        .range((
+            std::ops::Bound::Excluded(current_step),
+            std::ops::Bound::Unbounded,
+        ))
+        .next()
+        .map(|(step, _)| *step)
 }
 
 fn set_ready(

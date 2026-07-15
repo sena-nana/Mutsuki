@@ -66,6 +66,26 @@ impl CoreRuntime {
 
     pub fn claim_ready_dispatches(
         &mut self,
+        decide_schedule: impl FnMut(
+            &RunnerDescriptor,
+            &RunnerLoad,
+            u64,
+            u64,
+        ) -> RuntimeResult<ScheduleDecision>,
+        lease_expires_at: Option<u64>,
+    ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
+        let next_step = self.current_step.saturating_add(1);
+        self.claim_ready_dispatches_at_step(next_step, decide_schedule, lease_expires_at)
+    }
+
+    /// Advances directly to a future logical step and performs one scheduling pass.
+    ///
+    /// This preserves the same due-task, lease and scheduler checks as `claim_ready_dispatches`
+    /// while allowing a Host to sleep until the nearest indexed deadline instead of issuing an
+    /// empty tick for every skipped step.
+    pub fn claim_ready_dispatches_at_step(
+        &mut self,
+        target_step: u64,
         mut decide_schedule: impl FnMut(
             &RunnerDescriptor,
             &RunnerLoad,
@@ -75,7 +95,14 @@ impl CoreRuntime {
         lease_expires_at: Option<u64>,
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
         self.ensure_not_aborted()?;
-        self.current_step += 1;
+        if target_step <= self.current_step {
+            return Err(crate::runtime_failure(
+                "runtime.tick.invalid",
+                "runtime.runner_loop",
+                format!("runtime.step.{target_step}.after.{}", self.current_step),
+            ));
+        }
+        self.current_step = target_step;
         self.reclaim_expired_task_leases();
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
