@@ -388,6 +388,42 @@ async def test_management_capacity_remains_available_when_work_is_saturated() ->
 
 
 @pytest.mark.asyncio
+async def test_duplicate_inflight_request_id_is_rejected_without_losing_active_work() -> None:
+    backend = PythonRunnerBackend()
+    runner = BlockingCancelRunner(echo_descriptor())
+    backend.register_runner(runner)
+    bridge = StdioJsonlBridge(backend)
+    await initialize(bridge)
+    task = replace(Task.new("task-1", "raw.input"), lease_id="task-lease-test")
+    run = encode_jsonl_request(
+        2,
+        Opcode.RUNNER_RUN_BATCH,
+        {
+            "runner_id": "echo.runner",
+            "ctx": to_json_dict(runner_context()),
+            "batch": to_json_dict(single_test_batch(task)),
+        },
+    )
+    cancel = encode_jsonl_request(
+        3,
+        Opcode.RUNNER_CANCEL,
+        {"runner_id": "echo.runner", "invocation_id": "invocation:test"},
+    )
+    output = io.StringIO()
+
+    await asyncio.wait_for(
+        bridge.serve(io.StringIO((run + run + cancel).decode()), output), timeout=1
+    )
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    duplicate = next(response for response in responses if response["ok"] is False)
+
+    assert duplicate["request_id"] == 2
+    assert duplicate["error"]["route"] == "wire.request_id_duplicate"
+    assert any(response["request_id"] == 2 and response["ok"] is True for response in responses)
+    assert any(response["request_id"] == 3 and response["ok"] is True for response in responses)
+
+
+@pytest.mark.asyncio
 async def test_protocol_stdout_is_not_polluted_by_runner_prints() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(PrintingRunner(echo_descriptor()))

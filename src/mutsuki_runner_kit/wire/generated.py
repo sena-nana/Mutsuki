@@ -6,7 +6,7 @@ this generated registry against the checked-in Core artifact.
 
 from enum import IntEnum
 
-CORE_WIRE_REVISION = "1bf03b6d98b615b043ffc9f7b2236a9a96bb186f"
+CORE_WIRE_REVISION = "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab"
 
 
 class Opcode(IntEnum):

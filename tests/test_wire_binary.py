@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import io
+import json
 import struct
 from dataclasses import replace
+from importlib.resources import files
 from typing import cast
 
 import pytest
 
-from mutsuki_runner_kit.contracts.codec import to_json_dict
+from mutsuki_runner_kit.contracts.codec import JsonValue, to_json_dict
 from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.testing.batches import runner_context, single_test_batch
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
 from mutsuki_runner_kit.transport.stdio_binary import StdioBinaryBridge
 from mutsuki_runner_kit.wire.binary import (
+    binary_request_payload,
     binary_response_payload,
     decode_binary_request,
     encode_binary_request,
+    encode_binary_response,
 )
 from mutsuki_runner_kit.wire.generated import Opcode
 from mutsuki_runner_kit.wire.protocol import (
@@ -39,6 +43,31 @@ def test_binary_codec_uses_fixed_header_and_typed_messagepack() -> None:
     assert decoded.opcode is Opcode.PLUGIN_INITIALIZE
     assert decoded.request == InitializeRequest(hello)
     assert len(encoded) > 28
+
+
+def test_rust_binary_golden_vectors_cover_every_opcode_in_python() -> None:
+    artifact = json.loads(
+        files("mutsuki_runner_kit.wire")
+        .joinpath("runtime-wire-binary-golden-v1.json")
+        .read_text(encoding="utf-8")
+    )
+    operations = cast(list[dict[str, object]], artifact["operations"])
+
+    assert {Opcode(cast(int, item["opcode"])) for item in operations} == set(Opcode)
+    for item in operations:
+        request = bytes.fromhex(cast(str, item["request_frame_hex"]))
+        request_id, opcode, payload = binary_request_payload(request)
+        assert request_id == item["request_id"]
+        assert int(opcode) == item["opcode"]
+        assert encode_binary_request(request_id, opcode, payload) == request
+
+        response = bytes.fromhex(cast(str, item["response_frame_hex"]))
+        response_id, response_opcode, is_error, result = binary_response_payload(response)
+        assert (response_id, response_opcode, is_error) == (request_id, opcode, False)
+        assert (
+            encode_binary_response(request_id, opcode, result=cast(JsonValue, result))
+            == response
+        )
 
 
 def test_binary_codec_rejects_oversized_prefix_before_reading_payload() -> None:

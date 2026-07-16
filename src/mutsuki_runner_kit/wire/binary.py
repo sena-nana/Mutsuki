@@ -57,6 +57,13 @@ def encode_binary_request(
 def decode_binary_request(
     encoded: bytes, limits: WireLimits = DEFAULT_WIRE_LIMITS
 ) -> BinaryRequestFrame:
+    request_id, opcode, unpacked = binary_request_payload(encoded, limits)
+    return BinaryRequestFrame(request_id, opcode, decode_request(opcode, unpacked))
+
+
+def binary_request_payload(
+    encoded: bytes, limits: WireLimits = DEFAULT_WIRE_LIMITS
+) -> tuple[int, Opcode, Mapping[str, object]]:
     request_id, opcode, flags, payload = _decode_frame(encoded, limits)
     if flags & FLAG_REQUEST == 0 or flags & FLAG_RESPONSE:
         raise WireProtocolFailure("wire.flags_invalid", f"invalid request flags {flags:#06x}")
@@ -64,7 +71,7 @@ def decode_binary_request(
     if not isinstance(unpacked, Mapping):
         raise TypeError("MessagePack request payload expects mapping")
     _validate_value(unpacked, limits)
-    return BinaryRequestFrame(request_id, opcode, decode_request(opcode, unpacked))
+    return request_id, opcode, unpacked
 
 
 def encode_binary_response(
