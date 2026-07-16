@@ -22,16 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Opcode::PluginInitialize => {
                 let hello: ProtocolHello =
                     serde_json::from_value(request.payload["hello"].clone())?;
-                let ack = ProtocolHelloAck {
-                    protocol: hello.protocol,
-                    codec_id: hello.codec_id,
-                    schema_revision: hello.schema_revision,
-                    max_frame_bytes: hello.max_frame_bytes,
-                    max_payload_bytes: hello.max_payload_bytes,
-                    max_in_flight_requests: hello.max_in_flight_requests,
-                    management_channel: hello.management_channel,
-                    feature_flags: hello.feature_flags,
-                };
+                let ack = ProtocolHelloAck::accept(&hello, None);
                 encode_jsonl_response(request.request_id, opcode, Ok(&ack), DEFAULT_WIRE_LIMITS)?
             }
             Opcode::RunnerRunBatch if fail => {
