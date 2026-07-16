@@ -59,6 +59,38 @@ def add_baseline_gates(report: dict[str, Any], baseline: Mapping[str, Any]) -> d
     return report
 
 
+def add_binary_size_gates(report: dict[str, Any]) -> dict[str, Any]:
+    cases = {
+        (case["codec"], case["batch_size"], case["payload_bytes_per_entry"]): case
+        for case in _case_sequence(report.get("codec_results"))
+    }
+    gates = list(_mapping_sequence(report.get("gates", []), "gates"))
+    scenarios = {
+        (batch_size, payload_bytes)
+        for _, batch_size, payload_bytes in cases
+    }
+    for batch_size, payload_bytes in sorted(scenarios):
+        jsonl = cases[("typed_jsonl", batch_size, payload_bytes)]
+        binary = cases[("typed_msgpack", batch_size, payload_bytes)]
+        actual = _number(binary["frame_bytes"], "binary frame_bytes")
+        baseline = _number(jsonl["frame_bytes"], "JSONL frame_bytes")
+        gates.append(
+            {
+                "name": (
+                    f"p2.python.binary.batch-{batch_size}.payload-{payload_bytes}.frame_bytes"
+                ),
+                "kind": "optimization",
+                "actual": actual,
+                "baseline": baseline,
+                "limit": baseline - 1,
+                "passed": actual < baseline,
+            }
+        )
+    report["gates"] = gates
+    report["passed"] = all(bool(gate["passed"]) for gate in gates)
+    return report
+
+
 def write_report(report: Mapping[str, Any], output: Path | None) -> None:
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if output is None:
@@ -92,6 +124,12 @@ def _case_sequence(value: object) -> list[Mapping[str, Any]]:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
         raise TypeError("codec_results expects sequence")
     return [_mapping(case, "codec result") for case in value]
+
+
+def _mapping_sequence(value: object, name: str) -> list[Mapping[str, Any]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        raise TypeError(f"{name} expects sequence")
+    return [_mapping(item, name) for item in value]
 
 
 def _case_key(case: Mapping[str, Any]) -> tuple[object, object, object]:

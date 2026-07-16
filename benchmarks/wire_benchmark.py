@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import cast
 
 import msgpack
-from wire_report import add_baseline_gates, load_report, repository_state, write_report
+from wire_report import (
+    add_baseline_gates,
+    add_binary_size_gates,
+    load_report,
+    repository_state,
+    write_report,
+)
 
 from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.resource import (
@@ -262,6 +268,7 @@ def main() -> None:
     }
     if args.baseline is not None:
         add_baseline_gates(report, load_report(args.baseline))
+    add_binary_size_gates(report)
     write_report(report, args.output)
     if report.get("passed") is False:
         raise SystemExit("runtime wire performance gates failed")
