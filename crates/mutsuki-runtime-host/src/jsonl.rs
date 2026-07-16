@@ -155,6 +155,7 @@ where
         let result = self
             .request_without_handshake(&InitializeRequest {
                 hello: hello.clone(),
+                config: None,
             })
             .and_then(|ack| {
                 ack.validate_for(&hello)

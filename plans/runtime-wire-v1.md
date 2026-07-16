@@ -11,7 +11,8 @@ mutsuki-runtime-contracts DTO
 
 ## 单一真源
 
-- schema revision：`mutsuki.runtime.wire/1.0.0`。
+- schema revision：`mutsuki.runtime.wire/1.1.0`；1.1 将 owner-defined plugin config 与
+  可选 plugin surface 纳入统一 `plugin.initialize` typed request/response。
 - checked-in artifact：`crates/mutsuki-runtime-wire/schema/runtime-wire-v1.json`。
 - 已发布 Opcode 只能追加且不得复用；method 名只由 Opcode registry 映射。
 - request 类型通过 `WireRequest::Response` 在类型层绑定 response。
@@ -38,9 +39,11 @@ payload: typed MessagePack map
 
 ## 初始化与限制
 
-任何业务请求之前先用 `plugin.initialize` 协商 protocol、codec、schema revision、feature
-flags、frame/payload/in-flight 上限和 management 能力。不兼容 major、codec 或 schema
-立即结构化失败。
+任何业务请求之前先用 `InitializeRequest { hello, config? }` 协商 protocol、codec、schema
+revision、feature flags、frame/payload/in-flight 上限和 management 能力。ABI guest 在同一
+`ProtocolHelloAck` 的可选 plugin surface 中返回 manifest 与 resource provider ids；process
+runner 不返回该 surface。不兼容 major、codec、schema、必需 feature、management 能力或
+扩大的限制立即结构化失败。
 
 默认上限：8 MiB frame/JSONL line、4 MiB payload、64 in-flight，其中 8 个槽只供
 management。资源 bytes 的 inline 上限为 64 KiB；更大内容必须通过 `ResourceRef`、stream

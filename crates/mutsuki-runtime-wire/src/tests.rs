@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::io::Cursor;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::*;
 
@@ -52,6 +52,43 @@ fn typed_jsonl_response_preserves_request_and_response_type_pairing() {
     let encoded =
         encode_jsonl_response(9, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
     decode_jsonl_response::<CancelRunnerRequest>(&encoded, 9, DEFAULT_WIRE_LIMITS).unwrap();
+}
+
+#[test]
+fn dynamic_typed_jsonl_rejects_unknown_opcode_and_payload_shape() {
+    let request = CancelRunnerRequest {
+        runner_id: "runner-a".into(),
+        invocation_id: "inv-1".into(),
+    };
+    let encoded = encode_jsonl_request(5, &request, DEFAULT_WIRE_LIMITS).unwrap();
+    let mut envelope: Value = serde_json::from_slice(&encoded).unwrap();
+    envelope["opcode"] = Value::from(0x7fff_u64);
+    let error =
+        decode_jsonl_any_request(&serde_json::to_vec(&envelope).unwrap(), DEFAULT_WIRE_LIMITS)
+            .unwrap_err();
+    assert!(matches!(error, WireCodecError::UnknownOpcode(0x7fff)));
+
+    envelope["opcode"] = Value::from(Opcode::RunnerCancel as u16);
+    envelope["method"] = Value::from(Opcode::RunnerCancel.method());
+    envelope["payload"] = json!({"runner_id": "runner-a"});
+    envelope["payload_len"] =
+        Value::from(serde_json::to_vec(&envelope["payload"]).unwrap().len() as u64);
+    let error =
+        decode_jsonl_any_request(&serde_json::to_vec(&envelope).unwrap(), DEFAULT_WIRE_LIMITS)
+            .unwrap_err();
+    assert!(matches!(error, WireCodecError::Decode(_)));
+}
+
+#[test]
+fn initialization_negotiates_limits_and_rejects_missing_management_support() {
+    let hello = ProtocolHello::debug_jsonl();
+    let ack = hello.accept(DEBUG_JSONL_CODEC_ID, None).unwrap();
+    ack.validate_for(&hello).unwrap();
+
+    let mut incompatible = hello.clone();
+    incompatible.management_channel = false;
+    let error = incompatible.accept(DEBUG_JSONL_CODEC_ID, None).unwrap_err();
+    assert_eq!(error, WireCodecError::ManagementChannelRequired);
 }
 
 #[test]

@@ -1,8 +1,10 @@
 use mutsuki_runtime_contracts::RuntimeError;
 use serde::Serialize;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
-use crate::{Opcode, WireCodecError, WireLimits, WireProtocolVersion, WireRequest};
+use crate::operations::decode_any_wire_request;
+use crate::{AnyWireRequest, Opcode, WireCodecError, WireLimits, WireProtocolVersion, WireRequest};
 
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
 pub struct JsonlRequestEnvelope {
@@ -25,6 +27,22 @@ pub struct JsonlResponseEnvelope {
     pub error: Option<RuntimeError>,
 }
 
+#[derive(Serialize, serde::Deserialize)]
+struct RawJsonlRequestEnvelope {
+    request_id: u64,
+    protocol: WireProtocolVersion,
+    opcode: u16,
+    method: String,
+    payload_len: u32,
+    payload: Box<RawValue>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedWireRequest {
+    pub request_id: u64,
+    pub request: AnyWireRequest,
+}
+
 pub fn encode_jsonl_request<R: WireRequest>(
     request_id: u64,
     request: &R,
@@ -34,17 +52,18 @@ pub fn encode_jsonl_request<R: WireRequest>(
         return Err(WireCodecError::InvalidRequestId);
     }
     request.validate(limits)?;
-    let payload =
-        serde_json::to_value(request).map_err(|error| WireCodecError::Encode(error.to_string()))?;
-    let payload_len = encoded_json_len(&payload)?;
+    let payload = serde_json::to_string(request)
+        .map_err(|error| WireCodecError::Encode(error.to_string()))?;
+    let payload_len = payload.len();
     validate_payload_len(payload_len, limits)?;
-    let envelope = JsonlRequestEnvelope {
+    let envelope = RawJsonlRequestEnvelope {
         request_id,
         protocol: WireProtocolVersion::CURRENT,
         opcode: R::OPCODE as u16,
         method: R::OPCODE.method().into(),
         payload_len: payload_len as u32,
-        payload,
+        payload: RawValue::from_string(payload)
+            .map_err(|error| WireCodecError::Encode(error.to_string()))?,
     };
     let mut encoded =
         serde_json::to_vec(&envelope).map_err(|error| WireCodecError::Encode(error.to_string()))?;
@@ -68,23 +87,53 @@ where
             limit: limits.max_jsonl_line_bytes,
         });
     }
-    let envelope: JsonlRequestEnvelope =
+    let envelope: RawJsonlRequestEnvelope =
         serde_json::from_slice(line).map_err(|error| WireCodecError::Decode(error.to_string()))?;
-    validate_envelope(
+    validate_raw_request_envelope(
         envelope.request_id,
         envelope.protocol,
         envelope.opcode,
         Some(&envelope.method),
         envelope.payload_len,
-        &envelope.payload,
+        envelope.payload.get(),
         limits,
     )?;
     if envelope.opcode != R::OPCODE as u16 {
         return Err(WireCodecError::UnknownOpcode(envelope.opcode));
     }
-    let request = serde_json::from_value(envelope.payload)
+    let request = serde_json::from_str(envelope.payload.get())
         .map_err(|error| WireCodecError::Decode(error.to_string()))?;
     Ok((envelope.request_id, request))
+}
+
+pub fn decode_jsonl_any_request(
+    line: &[u8],
+    limits: WireLimits,
+) -> Result<DecodedWireRequest, WireCodecError> {
+    if line.len() > limits.max_jsonl_line_bytes {
+        return Err(WireCodecError::FrameOversized {
+            actual: line.len(),
+            limit: limits.max_jsonl_line_bytes,
+        });
+    }
+    let envelope: RawJsonlRequestEnvelope =
+        serde_json::from_slice(line).map_err(|error| WireCodecError::Decode(error.to_string()))?;
+    validate_raw_request_envelope(
+        envelope.request_id,
+        envelope.protocol,
+        envelope.opcode,
+        Some(&envelope.method),
+        envelope.payload_len,
+        envelope.payload.get(),
+        limits,
+    )?;
+    let opcode = Opcode::from_u16(envelope.opcode)?;
+    let request = decode_any_wire_request!(opcode, decode_json_raw, envelope.payload.as_ref());
+    request.validate(limits)?;
+    Ok(DecodedWireRequest {
+        request_id: envelope.request_id,
+        request,
+    })
 }
 
 pub fn encode_jsonl_response<T: Serialize>(
@@ -238,13 +287,13 @@ fn encode_response_envelope(
     Ok(encoded)
 }
 
-fn validate_envelope(
+fn validate_raw_request_envelope(
     request_id: u64,
     protocol: WireProtocolVersion,
     opcode: u16,
     method: Option<&str>,
     payload_len: u32,
-    payload: &Value,
+    payload: &str,
     limits: WireLimits,
 ) -> Result<(), WireCodecError> {
     if request_id == 0 {
@@ -261,7 +310,14 @@ fn validate_envelope(
             actual: method.into(),
         });
     }
-    validate_declared_payload(payload_len, payload, limits)
+    validate_payload_len(payload.len(), limits)?;
+    if payload_len as usize != payload.len() {
+        return Err(WireCodecError::PayloadLengthMismatch {
+            declared: payload_len as usize,
+            actual: payload.len(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_declared_payload(
@@ -294,6 +350,10 @@ fn encoded_json_len(value: &Value) -> Result<usize, WireCodecError> {
     serde_json::to_vec(value)
         .map(|encoded| encoded.len())
         .map_err(|error| WireCodecError::Encode(error.to_string()))
+}
+
+fn decode_json_raw<T: serde::de::DeserializeOwned>(value: &RawValue) -> Result<T, WireCodecError> {
+    serde_json::from_str(value.get()).map_err(|error| WireCodecError::Decode(error.to_string()))
 }
 
 fn wire_runtime_error(error: WireCodecError) -> RuntimeError {

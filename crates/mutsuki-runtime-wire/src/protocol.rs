@@ -2,9 +2,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use mutsuki_runtime_contracts::PluginManifest;
+
 pub const DEBUG_JSONL_CODEC_ID: &str = "mutsuki.codec.typed-jsonl.v1";
 pub const BINARY_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
-pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.0.0";
+pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.1.0";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_JSONL_LINE_BYTES: usize = 8 * 1024 * 1024;
@@ -19,7 +21,7 @@ pub struct WireProtocolVersion {
 }
 
 impl WireProtocolVersion {
-    pub const CURRENT: Self = Self { major: 1, minor: 0 };
+    pub const CURRENT: Self = Self { major: 1, minor: 1 };
 
     pub fn ensure_compatible(self) -> Result<(), WireCodecError> {
         if self.major != Self::CURRENT.major {
@@ -187,9 +189,47 @@ impl ProtocolHello {
             ],
         }
     }
+
+    pub fn accept(
+        &self,
+        expected_codec: &str,
+        plugin: Option<InitializedPlugin>,
+    ) -> Result<ProtocolHelloAck, WireCodecError> {
+        self.protocol.ensure_compatible()?;
+        if self.codec_id != expected_codec {
+            return Err(WireCodecError::CodecMismatch {
+                expected: expected_codec.into(),
+                actual: self.codec_id.clone(),
+            });
+        }
+        if self.schema_revision != SCHEMA_REVISION {
+            return Err(WireCodecError::SchemaMismatch {
+                expected: SCHEMA_REVISION.into(),
+                actual: self.schema_revision.clone(),
+            });
+        }
+        if self.max_frame_bytes == 0
+            || self.max_payload_bytes == 0
+            || self.max_in_flight_requests == 0
+        {
+            return Err(WireCodecError::LimitMismatch);
+        }
+        let required = ProtocolHello::for_codec(expected_codec);
+        if required.management_channel && !self.management_channel {
+            return Err(WireCodecError::ManagementChannelRequired);
+        }
+        if let Some(missing) = required
+            .feature_flags
+            .iter()
+            .find(|required| !self.feature_flags.contains(required))
+        {
+            return Err(WireCodecError::FeatureMissing(missing.clone()));
+        }
+        Ok(ProtocolHelloAck::accept(self, plugin))
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProtocolHelloAck {
     pub protocol: WireProtocolVersion,
     pub codec_id: String,
@@ -199,9 +239,33 @@ pub struct ProtocolHelloAck {
     pub max_in_flight_requests: u32,
     pub management_channel: bool,
     pub feature_flags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<InitializedPlugin>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InitializedPlugin {
+    pub manifest: PluginManifest,
+    pub resource_provider_ids: Vec<String>,
 }
 
 impl ProtocolHelloAck {
+    pub fn accept(hello: &ProtocolHello, plugin: Option<InitializedPlugin>) -> Self {
+        Self {
+            protocol: WireProtocolVersion::CURRENT,
+            codec_id: hello.codec_id.clone(),
+            schema_revision: hello.schema_revision.clone(),
+            max_frame_bytes: hello.max_frame_bytes.min(MAX_FRAME_BYTES as u32),
+            max_payload_bytes: hello.max_payload_bytes.min(MAX_PAYLOAD_BYTES as u32),
+            max_in_flight_requests: hello
+                .max_in_flight_requests
+                .min(MAX_IN_FLIGHT_REQUESTS as u32),
+            management_channel: hello.management_channel,
+            feature_flags: hello.feature_flags.clone(),
+            plugin,
+        }
+    }
+
     pub fn validate_for(&self, hello: &ProtocolHello) -> Result<(), WireCodecError> {
         self.protocol.ensure_compatible()?;
         if self.codec_id != hello.codec_id {
@@ -215,6 +279,25 @@ impl ProtocolHelloAck {
                 expected: hello.schema_revision.clone(),
                 actual: self.schema_revision.clone(),
             });
+        }
+        if self.max_frame_bytes == 0
+            || self.max_frame_bytes > hello.max_frame_bytes
+            || self.max_payload_bytes == 0
+            || self.max_payload_bytes > hello.max_payload_bytes
+            || self.max_in_flight_requests == 0
+            || self.max_in_flight_requests > hello.max_in_flight_requests
+        {
+            return Err(WireCodecError::LimitMismatch);
+        }
+        if hello.management_channel && !self.management_channel {
+            return Err(WireCodecError::ManagementChannelRequired);
+        }
+        if let Some(missing) = hello
+            .feature_flags
+            .iter()
+            .find(|required| !self.feature_flags.contains(required))
+        {
+            return Err(WireCodecError::FeatureMissing(missing.clone()));
         }
         Ok(())
     }
@@ -231,6 +314,12 @@ pub enum WireCodecError {
     CodecMismatch { expected: String, actual: String },
     #[error("wire schema mismatch: expected {expected}, got {actual}")]
     SchemaMismatch { expected: String, actual: String },
+    #[error("wire peer returned invalid or expanded negotiated limits")]
+    LimitMismatch,
+    #[error("wire management channel support is required")]
+    ManagementChannelRequired,
+    #[error("wire peer is missing required feature {0}")]
+    FeatureMissing(String),
     #[error("unknown wire opcode {0:#06x}")]
     UnknownOpcode(u16),
     #[error("unknown wire method {0}")]

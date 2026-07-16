@@ -8,8 +8,9 @@ use mutsuki_runtime_contracts::{
 };
 
 use crate::{
-    BINARY_CODEC_ID, CancelRunnerRequest, DEBUG_JSONL_CODEC_ID, DisposeRunnerRequest, Opcode,
-    ProtocolHello, RunBatchRequest, SCHEMA_REVISION, SubmitTaskBatchRequest, WireProtocolVersion,
+    BINARY_CODEC_ID, CancelRunnerRequest, DEBUG_JSONL_CODEC_ID, DisposeRunnerRequest,
+    InitializeRequest, Opcode, ProtocolHello, ProtocolHelloAck, RunBatchRequest, SCHEMA_REVISION,
+    SubmitTaskBatchRequest, WireProtocolVersion,
 };
 
 pub fn generated_schema_value() -> Value {
@@ -157,8 +158,17 @@ pub fn generated_fixtures_value() -> Value {
         "fixture",
         "fixture.route",
     );
+    let hello = ProtocolHello::debug_jsonl();
     let fixtures = vec![
-        fixture("ProtocolHello", &ProtocolHello::debug_jsonl()),
+        fixture("ProtocolHello", &hello),
+        fixture(
+            "InitializeRequest",
+            &InitializeRequest {
+                hello: hello.clone(),
+                config: Some(json!({"mode": "fixture"})),
+            },
+        ),
+        fixture("ProtocolHelloAck", &ProtocolHelloAck::accept(&hello, None)),
         fixture(
             "RunBatchRequest",
             &RunBatchRequest {

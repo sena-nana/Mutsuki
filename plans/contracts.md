@@ -102,8 +102,10 @@ runner.dispose({ runner_id })
 ```
 
 这些可读 method 仅是 typed JSONL debug codec 对稳定 Opcode 的生成映射；Host、SDK 和
-语言 Kit 调用层不得传入裸 method 或任意 params。每个连接必须先执行
-`plugin.initialize`，确认 protocol major、codec id、schema revision 和协商上限。正式
+语言 Kit 调用层不得传入裸 method 或任意 params。每个连接必须先执行 typed
+`InitializeRequest { hello, config? }`；owner-defined config 只存在于该开放控制面字段，
+ABI guest 的 manifest/provider surface 只存在于 `ProtocolHelloAck.plugin`。初始化确认
+protocol major、codec id、schema revision、feature、management 能力和协商上限。正式
 binary codec 使用 4-byte big-endian length prefix、24-byte 显式 header 和 typed
 MessagePack payload；header 字段不得依赖 Rust 内存布局。JSONL 与 binary 必须共享同一
 request 类型、semantic fixtures 和兼容策略。
