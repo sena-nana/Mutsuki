@@ -13,21 +13,25 @@ use mutsuki_runtime_wire::{
     SnapshotReadPlanRequest, SubmitTaskBatchRequest, TaskOutcomeRequest,
 };
 
-use crate::jsonl::JsonlBridge;
+use crate::JsonlTransport;
 
 pub struct AbiTaskClient<R, W> {
-    bridge: JsonlBridge<R, W>,
+    transport: JsonlTransport<R, W>,
 }
 
-impl<R, W> AbiTaskClient<R, W> {
+impl<R, W> AbiTaskClient<R, W>
+where
+    R: BufRead + Send + 'static,
+    W: Write + Send + 'static,
+{
     pub fn new(reader: R, writer: W) -> Self {
         Self {
-            bridge: JsonlBridge::new(reader, writer),
+            transport: JsonlTransport::new(reader, writer),
         }
     }
 
     pub fn into_inner(self) -> (R, W) {
-        self.bridge.into_inner()
+        self.transport.into_inner()
     }
 }
 
@@ -37,35 +41,39 @@ where
     W: Write + Send + 'static,
 {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        self.bridge.request(&SubmitTaskBatchRequest { batch })
+        self.transport.request(&SubmitTaskBatchRequest { batch })
     }
 
     fn cancel_task(&self, handle: &TaskHandle) -> RuntimeResult<()> {
-        self.bridge.request(&CancelTaskRequest {
+        self.transport.request(&CancelTaskRequest {
             handle: handle.clone(),
         })
     }
 
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        self.bridge.request(&TaskOutcomeRequest {
+        self.transport.request(&TaskOutcomeRequest {
             handle: handle.clone(),
         })
     }
 }
 
 pub struct AbiResourceClient<R, W> {
-    bridge: JsonlBridge<R, W>,
+    transport: JsonlTransport<R, W>,
 }
 
-impl<R, W> AbiResourceClient<R, W> {
+impl<R, W> AbiResourceClient<R, W>
+where
+    R: BufRead + Send + 'static,
+    W: Write + Send + 'static,
+{
     pub fn new(reader: R, writer: W) -> Self {
         Self {
-            bridge: JsonlBridge::new(reader, writer),
+            transport: JsonlTransport::new(reader, writer),
         }
     }
 
     pub fn into_inner(self) -> (R, W) {
-        self.bridge.into_inner()
+        self.transport.into_inner()
     }
 }
 
@@ -75,7 +83,7 @@ where
     W: Write + Send + 'static,
 {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
-        self.bridge.request(&CollectReadPlanRequest {
+        self.transport.request(&CollectReadPlanRequest {
             provider_id: None,
             plan: plan.clone(),
         })
@@ -87,7 +95,7 @@ where
         kind_id: &str,
         schema: &str,
     ) -> RuntimeResult<SnapshotDescriptor> {
-        self.bridge.request(&SnapshotReadPlanRequest {
+        self.transport.request(&SnapshotReadPlanRequest {
             provider_id: None,
             plan: plan.clone(),
             kind_id: kind_id.into(),
@@ -96,21 +104,21 @@ where
     }
 
     fn open_stream_plan(&self, plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
-        self.bridge.request(&OpenStreamPlanRequest {
+        self.transport.request(&OpenStreamPlanRequest {
             provider_id: None,
             plan: plan.clone(),
         })
     }
 
     fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
-        self.bridge.request(&ExportPlanRequest {
+        self.transport.request(&ExportPlanRequest {
             provider_id: None,
             plan: plan.clone(),
         })
     }
 
     fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
-        self.bridge.request(&CommitWritePlanRequest {
+        self.transport.request(&CommitWritePlanRequest {
             provider_id: None,
             plan: plan.clone(),
             bytes,
@@ -118,21 +126,21 @@ where
     }
 
     fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
-        self.bridge.request(&CommandPlanRequest {
+        self.transport.request(&CommandPlanRequest {
             provider_id: None,
             plan: plan.clone(),
         })
     }
 
     fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.bridge.request(&CommandBatchRequest {
+        self.transport.request(&CommandBatchRequest {
             provider_id: None,
             batch: batch.clone(),
         })
     }
 
     fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
-        self.bridge.request(&SagaPlanRequest {
+        self.transport.request(&SagaPlanRequest {
             provider_id: None,
             saga: saga.clone(),
         })

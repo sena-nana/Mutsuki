@@ -8,7 +8,8 @@ use std::thread;
 
 use mutsuki_runtime_contracts::{CompletionBatch, RunnerDescriptor, WorkBatch};
 use mutsuki_runtime_core::{
-    Runner, RunnerContext, RunnerIsolation, RunnerTerminationHandle, RuntimeResult,
+    Runner, RunnerContext, RunnerIsolation, RunnerManagementHandle, RunnerTerminationHandle,
+    RuntimeResult,
 };
 
 use crate::JsonlRunner;
@@ -222,6 +223,12 @@ impl Runner for SpawnedJsonlRunner {
 
     fn isolation(&self) -> RunnerIsolation {
         RunnerIsolation::HardProcess(self.control.clone())
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        self.inner
+            .as_ref()
+            .and_then(|runner| runner.management_handle())
     }
 
     fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {

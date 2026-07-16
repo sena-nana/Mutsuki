@@ -1,3 +1,5 @@
+mod cancellation;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -7,7 +9,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerIsolation, RunnerLoopReport,
-    RuntimeResult, TaskRecord,
+    RunnerManagementHandle, RuntimeResult, TaskRecord,
 };
 use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
@@ -15,9 +17,12 @@ use crate::PreparedRuntimeReload;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState, TaskCompletionHub};
+use crate::management::ManagementExecutor;
 use crate::resource_router;
 use crate::scheduler::decide_schedule;
 use crate::worker::{WorkerDispatchError, WorkerExited, WorkerPools, WorkerStarted};
+
+use self::cancellation::{queue_management_retry, request_running_cancel};
 
 // Mailbox messages own structured Host commands; boxing would add allocation to every command.
 #[allow(clippy::large_enum_variant)]
@@ -30,6 +35,10 @@ pub(crate) enum CoreActorMsg {
     WorkerStarted(WorkerStarted),
     WorkerCompleted(RunnerCompletion),
     WorkerExited(WorkerExited),
+    ManagementFailed {
+        runner_id: String,
+        invocation_id: String,
+    },
     Shutdown,
 }
 
@@ -46,6 +55,7 @@ struct RunningBatch {
     worker_id: Option<String>,
     worker_started_at: Option<Instant>,
     isolation: RunnerIsolation,
+    management: Option<std::sync::Arc<dyn RunnerManagementHandle>>,
 }
 
 struct DrainingInvocation {
@@ -149,6 +159,7 @@ pub(crate) fn core_actor_loop(
     config: HostRuntimeConfig,
     rx: mpsc::Receiver<CoreActorMsg>,
     mut pools: WorkerPools,
+    management: ManagementExecutor,
     completion_hub: std::sync::Arc<TaskCompletionHub>,
 ) {
     let mut pending_cancels: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -190,6 +201,7 @@ pub(crate) fn core_actor_loop(
                     &mut core,
                     &config,
                     &mut pools,
+                    &management,
                     &mut pending_cancels,
                     &mut running_batches_by_task,
                     &mut draining_invocations,
@@ -203,6 +215,7 @@ pub(crate) fn core_actor_loop(
             &mut core,
             &config,
             &mut pools,
+            &management,
             &mut pending_cancels,
             &mut running_batches_by_task,
             &mut draining_invocations,
@@ -214,6 +227,7 @@ pub(crate) fn core_actor_loop(
                     &mut core,
                     &config,
                     &mut pools,
+                    &management,
                     &rx,
                     &mut pending_cancels,
                     &mut running_batches_by_task,
@@ -248,6 +262,18 @@ pub(crate) fn core_actor_loop(
                 {
                     let _ = pool.replace_exited_worker(&exited.worker_id);
                 }
+                false
+            }
+            CoreActorMsg::ManagementFailed {
+                runner_id,
+                invocation_id,
+            } => {
+                queue_management_retry(
+                    runner_id,
+                    invocation_id,
+                    &running_batches_by_task,
+                    &mut pending_cancels,
+                );
                 false
             }
             CoreActorMsg::Shutdown => {
@@ -291,6 +317,7 @@ fn handle_command(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
+    management: &ManagementExecutor,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -318,6 +345,7 @@ fn handle_command(
                 core,
                 config,
                 pools,
+                management,
                 rx,
                 pending_cancels,
                 running_batches_by_task,
@@ -342,6 +370,7 @@ fn handle_command(
                     core,
                     config,
                     pools,
+                    management,
                     rx,
                     pending_cancels,
                     running_batches_by_task,
@@ -369,14 +398,18 @@ fn handle_command(
                 if core.cancel_runner_invocation(&runner_id, &task_id).is_ok() {
                     continue;
                 }
-                let pending = pending_cancels.entry(runner_id).or_default();
                 if let Some(invocation_id) = running_invocation {
-                    mark_cancel_requested(&invocation_id, running_batches_by_task);
-                    if !pending.contains(&invocation_id) {
-                        pending.push(invocation_id);
+                    request_running_cancel(
+                        &invocation_id,
+                        management,
+                        running_batches_by_task,
+                        pending_cancels,
+                    );
+                } else {
+                    let pending = pending_cancels.entry(runner_id).or_default();
+                    if !pending.contains(&task_id) {
+                        pending.push(task_id);
                     }
-                } else if !pending.contains(&task_id) {
-                    pending.push(task_id);
                 }
             }
             Ok((HostRuntimeReply::TaskCancelled(handle), false))
@@ -387,14 +420,15 @@ fn handle_command(
         HostRuntimeCommand::Abort { reason } => {
             let running_invocations: BTreeSet<_> = running_batches_by_task
                 .values()
-                .map(|task| (task.runner_id.clone(), task.invocation_id.clone()))
+                .map(|task| task.invocation_id.clone())
                 .collect();
-            for (runner_id, invocation_id) in running_invocations {
-                mark_cancel_requested(&invocation_id, running_batches_by_task);
-                pending_cancels
-                    .entry(runner_id)
-                    .or_default()
-                    .push(invocation_id);
+            for invocation_id in running_invocations {
+                request_running_cancel(
+                    &invocation_id,
+                    management,
+                    running_batches_by_task,
+                    pending_cancels,
+                );
             }
             let cancelled_tasks = core.abort(reason)?;
             Ok((HostRuntimeReply::RuntimeAborted { cancelled_tasks }, false))
@@ -452,6 +486,7 @@ fn handle_command(
                 core,
                 config,
                 pools,
+                management,
                 rx,
                 pending_cancels,
                 running_batches_by_task,
@@ -526,6 +561,7 @@ fn reload_runtime(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
+    management: &ManagementExecutor,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -535,6 +571,7 @@ fn reload_runtime(
         core,
         config,
         pools,
+        management,
         rx,
         pending_cancels,
         running_batches_by_task,
@@ -554,6 +591,7 @@ fn drain_for_reload(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
+    management: &ManagementExecutor,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -566,6 +604,7 @@ fn drain_for_reload(
             core,
             config,
             pools,
+            management,
             pending_cancels,
             running_batches_by_task,
             draining_invocations,
@@ -606,6 +645,15 @@ fn drain_for_reload(
                     pool.replace_exited_worker(&exited.worker_id)?;
                 }
             }
+            Ok(CoreActorMsg::ManagementFailed {
+                runner_id,
+                invocation_id,
+            }) => queue_management_retry(
+                runner_id,
+                invocation_id,
+                running_batches_by_task,
+                pending_cancels,
+            ),
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
                 let _ = reply_tx.send(task_status(core, &task_id));
             }
@@ -668,6 +716,10 @@ impl Runner for DisposeOnDropRunner {
         self.inner.isolation()
     }
 
+    fn management_handle(&self) -> Option<std::sync::Arc<dyn RunnerManagementHandle>> {
+        self.inner.management_handle()
+    }
+
     fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {
         self.inner.recover_after_hard_termination()
     }
@@ -697,6 +749,7 @@ fn drain_worker_completions(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
+    management: &ManagementExecutor,
     rx: &mpsc::Receiver<CoreActorMsg>,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -710,6 +763,7 @@ fn drain_worker_completions(
             core,
             config,
             pools,
+            management,
             pending_cancels,
             running_batches_by_task,
             draining_invocations,
@@ -740,6 +794,15 @@ fn drain_worker_completions(
                     let _ = pool.replace_exited_worker(&exited.worker_id);
                 }
             }
+            Ok(CoreActorMsg::ManagementFailed {
+                runner_id,
+                invocation_id,
+            }) => queue_management_retry(
+                runner_id,
+                invocation_id,
+                running_batches_by_task,
+                pending_cancels,
+            ),
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
                 let _ = reply_tx.send(task_status(core, &task_id));
             }
@@ -750,6 +813,7 @@ fn drain_worker_completions(
                         core,
                         config,
                         pools,
+                        management,
                         rx,
                         pending_cancels,
                         running_batches_by_task,
@@ -832,11 +896,12 @@ fn supervise_running_invocations(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
+    management: &ManagementExecutor,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) {
-    cancel_expired_tick_deadlines(core, pending_cancels, running_batches_by_task);
+    cancel_expired_tick_deadlines(core, management, pending_cancels, running_batches_by_task);
     let now = Instant::now();
     let expired: Vec<_> = running_batches_by_task
         .values()
@@ -870,6 +935,7 @@ fn supervise_running_invocations(
 
 fn cancel_expired_tick_deadlines(
     core: &mut CoreRuntime,
+    management: &ManagementExecutor,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) {
@@ -883,16 +949,19 @@ fn cancel_expired_tick_deadlines(
         .map(|(task_id, _task)| task_id.clone())
         .collect();
     for task_id in expired {
-        let Some(task) = running_batches_by_task.remove(&task_id) else {
+        let Some(task) = running_batches_by_task.get(&task_id).cloned() else {
             continue;
         };
         if task_status(core, &task_id) == Some(TaskStatus::Running) {
             let _ = core.cancel_task_handle(&task.handle);
-            pending_cancels
-                .entry(task.runner_id)
-                .or_default()
-                .push(task.invocation_id);
+            request_running_cancel(
+                &task.invocation_id,
+                management,
+                running_batches_by_task,
+                pending_cancels,
+            );
         }
+        running_batches_by_task.remove(&task_id);
     }
 }
 
@@ -975,17 +1044,6 @@ fn mark_worker_started(
     }
 }
 
-fn mark_cancel_requested(
-    invocation_id: &str,
-    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
-) {
-    let now = Instant::now();
-    for task in running_batches_by_task.values_mut() {
-        if task.invocation_id == invocation_id {
-            task.cancel_requested_at = Some(now);
-        }
-    }
-}
 fn remove_running_batch_entries(
     completion: &RunnerCompletion,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -1088,6 +1146,7 @@ fn schedule_ready_at(
         let invocation_id = dispatch.ctx.invocation_id.clone();
         let batch_id = dispatch.ctx.batch_id.clone();
         let isolation = dispatch.runner.isolation();
+        let management = dispatch.runner.management_handle();
         let deadline_tick = dispatch.ctx.deadline_tick;
         let wall_clock_deadline_at = limits
             .wall_clock_deadline
@@ -1151,6 +1210,7 @@ fn schedule_ready_at(
                     worker_id: None,
                     worker_started_at: None,
                     isolation: isolation.clone(),
+                    management: management.clone(),
                 },
             );
         }
@@ -1185,6 +1245,7 @@ mod tests {
             worker_id: None,
             worker_started_at: None,
             isolation: RunnerIsolation::Cooperative,
+            management: None,
         }
     }
 

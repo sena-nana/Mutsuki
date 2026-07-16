@@ -17,6 +17,12 @@ pub trait RunnerTerminationHandle: Send + Sync + fmt::Debug {
     fn terminate(&self) -> RuntimeResult<()>;
 }
 
+pub trait RunnerManagementHandle: Send + Sync + fmt::Debug {
+    fn cancel(&self, invocation_id: &str) -> RuntimeResult<()>;
+
+    fn dispose(&self) -> RuntimeResult<()>;
+}
+
 #[derive(Clone)]
 pub enum RunnerIsolation {
     /// In-process native code can only observe cooperative cancellation. Rust threads cannot be
@@ -51,6 +57,10 @@ pub trait Runner: Send {
 
     fn isolation(&self) -> RunnerIsolation {
         RunnerIsolation::Cooperative
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        None
     }
 
     /// Recreates a runner after its independently terminable deployment boundary was killed.

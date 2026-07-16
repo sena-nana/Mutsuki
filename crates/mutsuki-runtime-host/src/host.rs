@@ -205,6 +205,8 @@ pub struct HostRuntimeConfig {
     pub tick_interval: Duration,
     pub worker_threads: usize,
     pub blocking_threads: usize,
+    pub management_threads: usize,
+    pub management_queue_limit: usize,
     pub pool_queue_limit: usize,
     pub pool_max_inflight_bytes: usize,
     pub max_isolated_workers: usize,
@@ -237,6 +239,8 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("tick_interval", &self.tick_interval)
             .field("worker_threads", &self.worker_threads)
             .field("blocking_threads", &self.blocking_threads)
+            .field("management_threads", &self.management_threads)
+            .field("management_queue_limit", &self.management_queue_limit)
             .field("pool_queue_limit", &self.pool_queue_limit)
             .field("pool_max_inflight_bytes", &self.pool_max_inflight_bytes)
             .field("max_isolated_workers", &self.max_isolated_workers)
@@ -265,6 +269,8 @@ impl Default for HostRuntimeConfig {
                 .unwrap_or(2)
                 .max(1),
             blocking_threads: 2,
+            management_threads: 1,
+            management_queue_limit: 256,
             pool_queue_limit: 1024,
             pool_max_inflight_bytes: 64 * 1024 * 1024,
             max_isolated_workers: 2,
@@ -312,11 +318,18 @@ impl HostRuntime {
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
         let pools = worker_pools(&config, actor_tx)?;
+        let management = crate::management::ManagementExecutor::new(
+            config.management_threads,
+            config.management_queue_limit,
+            tx.clone(),
+        )?;
         let completion_hub = Arc::new(TaskCompletionHub::default());
         let actor_completion_hub = completion_hub.clone();
         let actor = thread::Builder::new()
             .name("mutsuki-core-actor".into())
-            .spawn(move || core_actor_loop(core, config, rx, pools, actor_completion_hub))
+            .spawn(move || {
+                core_actor_loop(core, config, rx, pools, management, actor_completion_hub)
+            })
             .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
         let capabilities = Arc::new(capabilities);
         let context = build_host_context(

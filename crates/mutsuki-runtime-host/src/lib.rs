@@ -8,7 +8,9 @@ mod commands;
 mod error;
 mod host;
 mod jsonl;
+mod management;
 mod manifest;
+mod multiplexer;
 mod process;
 mod resolver;
 mod resource_router;
@@ -29,7 +31,7 @@ pub use host::{
     HostRuntime, HostRuntimeConfig, HostRuntimeDriveState, HostRuntimeMetricsSnapshot,
     TaskCompletionSubscription,
 };
-pub use jsonl::JsonlRunner;
+pub use jsonl::{JsonlRunner, JsonlTransport};
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 pub use process::{ProcessRunnerSpec, SpawnedJsonlRunner};

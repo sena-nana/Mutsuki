@@ -92,6 +92,26 @@ fn initialization_negotiates_limits_and_rejects_missing_management_support() {
 }
 
 #[test]
+fn custom_limits_are_advertised_and_invalid_reservations_are_rejected() {
+    let limits = WireLimits {
+        max_in_flight_requests: 12,
+        management_reserved_requests: 2,
+        ..DEFAULT_WIRE_LIMITS
+    };
+    let hello = ProtocolHello::debug_jsonl_with_limits(limits).unwrap();
+    assert_eq!(hello.max_in_flight_requests, 12);
+    let ack = hello.accept(DEBUG_JSONL_CODEC_ID, None).unwrap();
+    ack.validate_for(&hello).unwrap();
+
+    let invalid = WireLimits {
+        max_in_flight_requests: 2,
+        management_reserved_requests: 2,
+        ..DEFAULT_WIRE_LIMITS
+    };
+    assert_eq!(invalid.validate(), Err(WireCodecError::LimitMismatch));
+}
+
+#[test]
 fn binary_frame_is_length_prefixed_typed_messagepack() {
     let request = DisposeRunnerRequest {
         runner_id: "runner-a".into(),

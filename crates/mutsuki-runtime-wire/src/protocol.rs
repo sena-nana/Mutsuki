@@ -44,6 +44,24 @@ pub struct WireLimits {
     pub management_reserved_requests: usize,
 }
 
+impl WireLimits {
+    pub fn validate(self) -> Result<(), WireCodecError> {
+        if self.max_frame_bytes == 0
+            || self.max_payload_bytes == 0
+            || self.max_jsonl_line_bytes == 0
+            || self.max_inline_resource_bytes == 0
+            || self.max_payload_bytes > self.max_frame_bytes
+            || self.max_inline_resource_bytes > self.max_payload_bytes
+            || self.max_in_flight_requests < 2
+            || self.management_reserved_requests == 0
+            || self.management_reserved_requests >= self.max_in_flight_requests
+        {
+            return Err(WireCodecError::LimitMismatch);
+        }
+        Ok(())
+    }
+}
+
 pub const DEFAULT_WIRE_LIMITS: WireLimits = WireLimits {
     max_frame_bytes: MAX_FRAME_BYTES,
     max_payload_bytes: MAX_PAYLOAD_BYTES,
@@ -166,21 +184,26 @@ pub struct ProtocolHello {
 
 impl ProtocolHello {
     pub fn debug_jsonl() -> Self {
-        Self::for_codec(DEBUG_JSONL_CODEC_ID)
+        Self::for_codec(DEBUG_JSONL_CODEC_ID, DEFAULT_WIRE_LIMITS)
     }
 
     pub fn binary() -> Self {
-        Self::for_codec(BINARY_CODEC_ID)
+        Self::for_codec(BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS)
     }
 
-    fn for_codec(codec_id: &str) -> Self {
+    pub fn debug_jsonl_with_limits(limits: WireLimits) -> Result<Self, WireCodecError> {
+        limits.validate()?;
+        Ok(Self::for_codec(DEBUG_JSONL_CODEC_ID, limits))
+    }
+
+    fn for_codec(codec_id: &str, limits: WireLimits) -> Self {
         Self {
             protocol: WireProtocolVersion::CURRENT,
             codec_id: codec_id.into(),
             schema_revision: SCHEMA_REVISION.into(),
-            max_frame_bytes: MAX_FRAME_BYTES as u32,
-            max_payload_bytes: MAX_PAYLOAD_BYTES as u32,
-            max_in_flight_requests: MAX_IN_FLIGHT_REQUESTS as u32,
+            max_frame_bytes: limits.max_frame_bytes.min(u32::MAX as usize) as u32,
+            max_payload_bytes: limits.max_payload_bytes.min(u32::MAX as usize) as u32,
+            max_in_flight_requests: limits.max_in_flight_requests.min(u32::MAX as usize) as u32,
             management_channel: true,
             feature_flags: vec![
                 "typed_requests".into(),
@@ -214,7 +237,7 @@ impl ProtocolHello {
         {
             return Err(WireCodecError::LimitMismatch);
         }
-        let required = ProtocolHello::for_codec(expected_codec);
+        let required = ProtocolHello::for_codec(expected_codec, DEFAULT_WIRE_LIMITS);
         if required.management_channel && !self.management_channel {
             return Err(WireCodecError::ManagementChannelRequired);
         }

@@ -158,12 +158,14 @@ fn wait_for_task_status(runtime: &HostRuntime, task_id: &str, expected: TaskStat
 #[test]
 fn host_start_rejects_invalid_worker_pool_capacity_before_returning() {
     let mut invalid_configs = Vec::new();
-    let mutations: [fn(&mut HostRuntimeConfig); 5] = [
+    let mutations: [fn(&mut HostRuntimeConfig); 7] = [
         |config: &mut HostRuntimeConfig| config.worker_threads = 0,
         |config: &mut HostRuntimeConfig| config.blocking_threads = 0,
         |config: &mut HostRuntimeConfig| config.pool_queue_limit = 0,
         |config: &mut HostRuntimeConfig| config.pool_max_inflight_bytes = 0,
         |config: &mut HostRuntimeConfig| config.max_isolated_workers = 0,
+        |config: &mut HostRuntimeConfig| config.management_threads = 0,
+        |config: &mut HostRuntimeConfig| config.management_queue_limit = 0,
     ];
     for mutate in mutations {
         let mut config = HostRuntimeConfig::default();
