@@ -94,9 +94,9 @@ fn concurrent_case(
         (BenchmarkMode::Smoke, 1) => 10,
         (BenchmarkMode::Smoke, 16) => 4,
         (BenchmarkMode::Smoke, _) => 2,
-        (BenchmarkMode::Full, 1) => 100,
-        (BenchmarkMode::Full, 16) => 40,
-        (BenchmarkMode::Full, _) => 15,
+        (BenchmarkMode::Full, 1) => 5_000,
+        (BenchmarkMode::Full, 16) => 313,
+        (BenchmarkMode::Full, _) => 90,
     };
     let (reader, writer, server) = spawn(ServerMode::Concurrent {
         group_size: concurrency,
