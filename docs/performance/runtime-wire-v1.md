@@ -1,5 +1,19 @@
 # Runtime Wire v1 性能基线
 
+## Epic #30 P1 / schema 1.2
+
+P1 镜像对应 MutsukiCore `180d47ea92747065a885aacfbcfd351d20d2170a`。连接先完成
+Hello/Ack，再按协商后的总并发数和管理预留数开放业务请求；JSONL 与 MessagePack 使用同一
+连接状态。阶段基准命令：
+
+```text
+uv run python benchmarks/run_p1.py full \
+  --output artifacts/perf/issue30-p1-python-wire.json
+```
+
+报告约束取消 p95/max、1 到 16 并发吞吐提升、56 并发不塌陷，以及峰值内存按并发请求摊销
+不超过单请求两倍。性能产物记录 Python/Core revision 与 dirty 状态。
+
 ## Epic #30 P0 / schema 1.1
 
 P0 镜像对应 MutsukiCore `94f84aca8ebb88b14d0067930557563e7f5d9cf3`、schema

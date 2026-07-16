@@ -9,7 +9,7 @@ from mutsuki_runner_kit.wire.schema import RUNTIME_WIRE_SCHEMA
 
 DEBUG_JSONL_CODEC_ID = "mutsuki.codec.typed-jsonl.v1"
 BINARY_CODEC_ID = "mutsuki.codec.typed-msgpack.v1"
-SCHEMA_REVISION = "mutsuki.runtime.wire/1.1.0"
+SCHEMA_REVISION = "mutsuki.runtime.wire/1.2.0"
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,39 @@ class WireLimits:
     max_inline_resource_bytes: int
     max_in_flight_requests: int
     management_reserved_requests: int
+
+    def validate(self) -> None:
+        if (
+            self.max_frame_bytes <= 0
+            or self.max_payload_bytes <= 0
+            or self.max_jsonl_line_bytes <= 0
+            or self.max_inline_resource_bytes <= 0
+            or self.max_payload_bytes > self.max_frame_bytes
+            or self.max_inline_resource_bytes > self.max_payload_bytes
+            or self.max_in_flight_requests < 2
+            or self.management_reserved_requests <= 0
+            or self.management_reserved_requests >= self.max_in_flight_requests
+        ):
+            raise WireProtocolFailure("wire.limit_mismatch", "wire limits are invalid")
+
+    def negotiated(
+        self,
+        *,
+        max_frame_bytes: int,
+        max_payload_bytes: int,
+        max_in_flight_requests: int,
+        management_reserved_requests: int,
+    ) -> WireLimits:
+        limits = WireLimits(
+            max_frame_bytes=max_frame_bytes,
+            max_payload_bytes=max_payload_bytes,
+            max_jsonl_line_bytes=self.max_jsonl_line_bytes,
+            max_inline_resource_bytes=self.max_inline_resource_bytes,
+            max_in_flight_requests=max_in_flight_requests,
+            management_reserved_requests=management_reserved_requests,
+        )
+        limits.validate()
+        return limits
 
 
 _limits = RUNTIME_WIRE_SCHEMA["limits"]
@@ -53,7 +86,7 @@ class WireProtocolVersion:
 
     @classmethod
     def current(cls) -> Self:
-        return cls(major=1, minor=1)
+        return cls(major=1, minor=2)
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object]) -> Self:
@@ -81,18 +114,21 @@ class ProtocolHello:
     max_frame_bytes: int
     max_payload_bytes: int
     max_in_flight_requests: int
+    management_reserved_requests: int
     management_channel: bool
     feature_flags: tuple[str, ...]
 
     @classmethod
-    def for_codec(cls, codec_id: str) -> Self:
+    def for_codec(cls, codec_id: str, limits: WireLimits = DEFAULT_WIRE_LIMITS) -> Self:
+        limits.validate()
         return cls(
             protocol=WireProtocolVersion.current(),
             codec_id=codec_id,
             schema_revision=SCHEMA_REVISION,
-            max_frame_bytes=DEFAULT_WIRE_LIMITS.max_frame_bytes,
-            max_payload_bytes=DEFAULT_WIRE_LIMITS.max_payload_bytes,
-            max_in_flight_requests=DEFAULT_WIRE_LIMITS.max_in_flight_requests,
+            max_frame_bytes=limits.max_frame_bytes,
+            max_payload_bytes=limits.max_payload_bytes,
+            max_in_flight_requests=limits.max_in_flight_requests,
+            management_reserved_requests=limits.management_reserved_requests,
             management_channel=True,
             feature_flags=(
                 "typed_requests",
@@ -112,17 +148,15 @@ class ProtocolHello:
         return cls(
             protocol=WireProtocolVersion.from_mapping(protocol),
             codec_id=as_str(field_value(raw, "codec_id"), "codec_id"),
-            schema_revision=as_str(
-                field_value(raw, "schema_revision"), "schema_revision"
-            ),
-            max_frame_bytes=as_int(
-                field_value(raw, "max_frame_bytes"), "max_frame_bytes"
-            ),
-            max_payload_bytes=as_int(
-                field_value(raw, "max_payload_bytes"), "max_payload_bytes"
-            ),
+            schema_revision=as_str(field_value(raw, "schema_revision"), "schema_revision"),
+            max_frame_bytes=as_int(field_value(raw, "max_frame_bytes"), "max_frame_bytes"),
+            max_payload_bytes=as_int(field_value(raw, "max_payload_bytes"), "max_payload_bytes"),
             max_in_flight_requests=as_int(
                 field_value(raw, "max_in_flight_requests"), "max_in_flight_requests"
+            ),
+            management_reserved_requests=as_int(
+                field_value(raw, "management_reserved_requests"),
+                "management_reserved_requests",
             ),
             management_channel=as_bool(
                 field_value(raw, "management_channel"), "management_channel"
@@ -138,6 +172,7 @@ class ProtocolHello:
             "max_frame_bytes": self.max_frame_bytes,
             "max_payload_bytes": self.max_payload_bytes,
             "max_in_flight_requests": self.max_in_flight_requests,
+            "management_reserved_requests": self.management_reserved_requests,
             "management_channel": self.management_channel,
             "feature_flags": list(self.feature_flags),
         }

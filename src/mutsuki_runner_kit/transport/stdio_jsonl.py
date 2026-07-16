@@ -29,6 +29,7 @@ from mutsuki_runner_kit.wire.protocol import (
     WireLimits,
     WireProtocolFailure,
 )
+from mutsuki_runner_kit.wire.requests import InitializeRequest
 
 
 class StdioJsonlBridge:
@@ -43,8 +44,9 @@ class StdioJsonlBridge:
     ) -> None:
         if shutdown_timeout <= 0:
             raise ValueError("shutdown_timeout must be positive")
+        limits.validate()
         self._dispatcher = RunnerRequestDispatcher(
-            runner_backend, resource_handler, DEBUG_JSONL_CODEC_ID
+            runner_backend, resource_handler, DEBUG_JSONL_CODEC_ID, limits
         )
         self._limits = limits
         self._diagnostics = diagnostics if diagnostics is not None else sys.stderr
@@ -58,6 +60,8 @@ class StdioJsonlBridge:
                 raise TypeError("request expects mapping")
             frame = decode_jsonl_request(request, self._limits)
             result = await self._dispatcher.dispatch(frame.request)
+            if isinstance(frame.request, InitializeRequest):
+                self._limits = self._dispatcher.limits
             return response_dict(
                 encode_jsonl_response(
                     frame.request_id, frame.opcode, result=result, limits=self._limits
@@ -117,16 +121,16 @@ class StdioJsonlBridge:
                     writer_lock,
                 )
                 continue
-            task = asyncio.create_task(
-                self._dispatch_and_write(frame, output_stream, writer_lock)
-            )
+            if isinstance(frame.request, InitializeRequest):
+                await self._dispatch_and_write(frame, output_stream, writer_lock)
+                self._limits = self._dispatcher.limits
+                continue
+            task = asyncio.create_task(self._dispatch_and_write(frame, output_stream, writer_lock))
             tasks.add(task)
             task.add_done_callback(tasks.discard)
         if tasks:
             pending_snapshot = list(tasks)
-            _, pending = await asyncio.wait(
-                pending_snapshot, timeout=self._shutdown_timeout
-            )
+            _, pending = await asyncio.wait(pending_snapshot, timeout=self._shutdown_timeout)
             if pending:
                 self._diagnostics.write(
                     f"wire.shutdown_timeout: cancelling {len(pending)} pending requests\n"
@@ -147,8 +151,7 @@ class StdioJsonlBridge:
                 "wire.pending_exhausted", "maximum in-flight requests reached"
             )
         work_capacity = (
-            self._limits.max_in_flight_requests
-            - self._limits.management_reserved_requests
+            self._limits.max_in_flight_requests - self._limits.management_reserved_requests
         )
         if not management and self._active_non_management >= work_capacity:
             return WireProtocolFailure(
@@ -206,6 +209,10 @@ class StdioJsonlBridge:
         self._active_ids.discard(frame.request_id)
         if frame.opcode not in MANAGEMENT_OPCODES:
             self._active_non_management -= 1
+
+    @property
+    def limits(self) -> WireLimits:
+        return self._limits
 
 
 def run_stdio_bridge(

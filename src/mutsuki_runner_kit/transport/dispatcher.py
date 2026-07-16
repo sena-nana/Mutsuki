@@ -13,7 +13,7 @@ from mutsuki_runner_kit.contracts.resource import (
 )
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.wire.handshake import ProtocolHelloAck
-from mutsuki_runner_kit.wire.protocol import WireProtocolFailure
+from mutsuki_runner_kit.wire.protocol import WireLimits, WireProtocolFailure
 from mutsuki_runner_kit.wire.requests import (
     CancelRunnerRequest,
     CommandBatchRequest,
@@ -43,17 +43,30 @@ class RunnerRequestDispatcher:
         runner_backend: PythonRunnerBackend,
         resource_handler: ResourceRequestHandler | None,
         codec_id: str,
+        limits: WireLimits,
     ) -> None:
         self._runner_backend = runner_backend
         self._resource_handler = resource_handler
         self._codec_id = codec_id
+        self._limits = limits
         self._negotiated = False
         self._negotiation_lock = asyncio.Lock()
 
     async def dispatch(self, request: RunnerWireRequest) -> JsonValue:
         if isinstance(request, InitializeRequest):
             async with self._negotiation_lock:
-                ack = ProtocolHelloAck.negotiate(request.hello, self._codec_id)
+                if self._negotiated:
+                    raise WireProtocolFailure(
+                        "wire.already_initialized",
+                        "plugin.initialize may only occur once per connection",
+                    )
+                ack = ProtocolHelloAck.negotiate(request.hello, self._codec_id, limits=self._limits)
+                self._limits = self._limits.negotiated(
+                    max_frame_bytes=ack.max_frame_bytes,
+                    max_payload_bytes=ack.max_payload_bytes,
+                    max_in_flight_requests=ack.max_in_flight_requests,
+                    management_reserved_requests=ack.management_reserved_requests,
+                )
                 self._negotiated = True
                 return _json_value(ack.to_dict())
         if not self._negotiated:
@@ -67,9 +80,7 @@ class RunnerRequestDispatcher:
             )
             return to_json_dict(completion)
         if isinstance(request, CancelRunnerRequest):
-            await self._runner_backend.cancel_runner(
-                request.runner_id, request.invocation_id
-            )
+            await self._runner_backend.cancel_runner(request.runner_id, request.invocation_id)
             return None
         if isinstance(request, DisposeRunnerRequest):
             await self._runner_backend.dispose_runner(request.runner_id)
@@ -89,14 +100,16 @@ class RunnerRequestDispatcher:
                 await asyncio.to_thread(resources.execute_command_plan, request.plan)
             )
         if isinstance(request, CommandBatchRequest):
-            receipts = await asyncio.to_thread(
-                resources.execute_command_batch, request.batch
-            )
+            receipts = await asyncio.to_thread(resources.execute_command_batch, request.batch)
             return [to_json_dict(receipt) for receipt in receipts]
         if isinstance(request, SagaPlanRequest):
             receipts = await asyncio.to_thread(resources.execute_saga_plan, request.saga)
             return [to_json_dict(receipt) for receipt in receipts]
         assert_never(request)
+
+    @property
+    def limits(self) -> WireLimits:
+        return self._limits
 
 
 def _json_value(value: object) -> JsonValue:

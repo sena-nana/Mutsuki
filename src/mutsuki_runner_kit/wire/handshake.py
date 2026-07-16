@@ -10,6 +10,7 @@ from mutsuki_runner_kit.wire.protocol import (
     DEFAULT_WIRE_LIMITS,
     SCHEMA_REVISION,
     ProtocolHello,
+    WireLimits,
     WireProtocolFailure,
     WireProtocolVersion,
 )
@@ -25,7 +26,9 @@ class ProtocolHelloAck(ProtocolHello):
         hello: ProtocolHello,
         expected_codec: str,
         plugin: InitializedPlugin | None = None,
+        limits: WireLimits = DEFAULT_WIRE_LIMITS,
     ) -> Self:
+        limits.validate()
         hello.protocol.ensure_compatible()
         if hello.codec_id != expected_codec:
             raise WireProtocolFailure(
@@ -40,7 +43,6 @@ class ProtocolHelloAck(ProtocolHello):
         _validate_offered_limits(hello)
         required = ProtocolHello.for_codec(expected_codec)
         _validate_required_features(required, hello)
-        limits = DEFAULT_WIRE_LIMITS
         return cls(
             protocol=WireProtocolVersion.current(),
             codec_id=expected_codec,
@@ -48,6 +50,11 @@ class ProtocolHelloAck(ProtocolHello):
             max_frame_bytes=min(hello.max_frame_bytes, limits.max_frame_bytes),
             max_payload_bytes=min(hello.max_payload_bytes, limits.max_payload_bytes),
             max_in_flight_requests=min(hello.max_in_flight_requests, limits.max_in_flight_requests),
+            management_reserved_requests=min(
+                hello.management_reserved_requests,
+                limits.management_reserved_requests,
+                hello.max_in_flight_requests - 1,
+            ),
             management_channel=hello.management_channel,
             feature_flags=hello.feature_flags,
             plugin=plugin,
@@ -82,6 +89,9 @@ class ProtocolHelloAck(ProtocolHello):
             or self.max_payload_bytes > hello.max_payload_bytes
             or self.max_in_flight_requests <= 0
             or self.max_in_flight_requests > hello.max_in_flight_requests
+            or self.management_reserved_requests <= 0
+            or self.management_reserved_requests > hello.management_reserved_requests
+            or self.management_reserved_requests >= self.max_in_flight_requests
         ):
             raise WireProtocolFailure(
                 "wire.limit_mismatch",
@@ -129,6 +139,8 @@ def _validate_offered_limits(hello: ProtocolHello) -> None:
         hello.max_frame_bytes <= 0
         or hello.max_payload_bytes <= 0
         or hello.max_in_flight_requests <= 0
+        or hello.management_reserved_requests <= 0
+        or hello.management_reserved_requests >= hello.max_in_flight_requests
     ):
         raise WireProtocolFailure("wire.limit_mismatch", "wire limits must be greater than zero")
 
