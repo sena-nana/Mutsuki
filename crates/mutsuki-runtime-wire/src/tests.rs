@@ -100,6 +100,7 @@ fn custom_limits_are_advertised_and_invalid_reservations_are_rejected() {
     };
     let hello = ProtocolHello::debug_jsonl_with_limits(limits).unwrap();
     assert_eq!(hello.max_in_flight_requests, 12);
+    assert_eq!(hello.management_reserved_requests, 2);
     let ack = hello.accept(DEBUG_JSONL_CODEC_ID, None).unwrap();
     ack.validate_for(&hello).unwrap();
 

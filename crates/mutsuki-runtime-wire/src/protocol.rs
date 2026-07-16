@@ -6,7 +6,7 @@ use mutsuki_runtime_contracts::PluginManifest;
 
 pub const DEBUG_JSONL_CODEC_ID: &str = "mutsuki.codec.typed-jsonl.v1";
 pub const BINARY_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
-pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.1.0";
+pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.2.0";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_JSONL_LINE_BYTES: usize = 8 * 1024 * 1024;
@@ -21,7 +21,7 @@ pub struct WireProtocolVersion {
 }
 
 impl WireProtocolVersion {
-    pub const CURRENT: Self = Self { major: 1, minor: 1 };
+    pub const CURRENT: Self = Self { major: 1, minor: 2 };
 
     pub fn ensure_compatible(self) -> Result<(), WireCodecError> {
         if self.major != Self::CURRENT.major {
@@ -178,6 +178,7 @@ pub struct ProtocolHello {
     pub max_frame_bytes: u32,
     pub max_payload_bytes: u32,
     pub max_in_flight_requests: u32,
+    pub management_reserved_requests: u32,
     pub management_channel: bool,
     pub feature_flags: Vec<String>,
 }
@@ -204,6 +205,8 @@ impl ProtocolHello {
             max_frame_bytes: limits.max_frame_bytes.min(u32::MAX as usize) as u32,
             max_payload_bytes: limits.max_payload_bytes.min(u32::MAX as usize) as u32,
             max_in_flight_requests: limits.max_in_flight_requests.min(u32::MAX as usize) as u32,
+            management_reserved_requests: limits.management_reserved_requests.min(u32::MAX as usize)
+                as u32,
             management_channel: true,
             feature_flags: vec![
                 "typed_requests".into(),
@@ -234,6 +237,8 @@ impl ProtocolHello {
         if self.max_frame_bytes == 0
             || self.max_payload_bytes == 0
             || self.max_in_flight_requests == 0
+            || self.management_reserved_requests == 0
+            || self.management_reserved_requests >= self.max_in_flight_requests
         {
             return Err(WireCodecError::LimitMismatch);
         }
@@ -260,6 +265,7 @@ pub struct ProtocolHelloAck {
     pub max_frame_bytes: u32,
     pub max_payload_bytes: u32,
     pub max_in_flight_requests: u32,
+    pub management_reserved_requests: u32,
     pub management_channel: bool,
     pub feature_flags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,6 +289,10 @@ impl ProtocolHelloAck {
             max_in_flight_requests: hello
                 .max_in_flight_requests
                 .min(MAX_IN_FLIGHT_REQUESTS as u32),
+            management_reserved_requests: hello
+                .management_reserved_requests
+                .min(MANAGEMENT_RESERVED_REQUESTS as u32)
+                .min(hello.max_in_flight_requests.saturating_sub(1)),
             management_channel: hello.management_channel,
             feature_flags: hello.feature_flags.clone(),
             plugin,
@@ -309,6 +319,9 @@ impl ProtocolHelloAck {
             || self.max_payload_bytes > hello.max_payload_bytes
             || self.max_in_flight_requests == 0
             || self.max_in_flight_requests > hello.max_in_flight_requests
+            || self.management_reserved_requests == 0
+            || self.management_reserved_requests > hello.management_reserved_requests
+            || self.management_reserved_requests >= self.max_in_flight_requests
         {
             return Err(WireCodecError::LimitMismatch);
         }

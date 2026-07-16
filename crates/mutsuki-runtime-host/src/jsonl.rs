@@ -191,9 +191,7 @@ where
                     max_frame_bytes: ack.max_frame_bytes as usize,
                     max_payload_bytes: ack.max_payload_bytes as usize,
                     max_in_flight_requests: ack.max_in_flight_requests as usize,
-                    management_reserved_requests: limits
-                        .management_reserved_requests
-                        .min((ack.max_in_flight_requests as usize).saturating_sub(1)),
+                    management_reserved_requests: ack.management_reserved_requests as usize,
                     ..limits
                 };
                 self.set_limits(negotiated)
