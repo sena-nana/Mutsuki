@@ -160,12 +160,10 @@ where
                 ack.validate_for(&hello)
                     .map_err(|error| protocol_error(&error.to_string()))
             });
-        *handshake = Some(
-            result
-                .as_ref()
-                .map(|()| ())
-                .map_err(|error| error.error().clone()),
-        );
+        *handshake = Some(match &result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(error.error().clone()),
+        });
         result
     }
 

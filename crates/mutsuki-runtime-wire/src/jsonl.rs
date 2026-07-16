@@ -58,12 +58,9 @@ pub fn encode_jsonl_request<R: WireRequest>(
     Ok(encoded)
 }
 
-pub fn decode_jsonl_request<R: WireRequest>(
-    line: &[u8],
-    limits: WireLimits,
-) -> Result<(u64, R), WireCodecError>
+pub fn decode_jsonl_request<R>(line: &[u8], limits: WireLimits) -> Result<(u64, R), WireCodecError>
 where
-    R: serde::de::DeserializeOwned,
+    R: WireRequest + serde::de::DeserializeOwned,
 {
     if line.len() > limits.max_jsonl_line_bytes {
         return Err(WireCodecError::FrameOversized {
@@ -132,6 +129,10 @@ pub fn encode_jsonl_response<T: Serialize>(
     )
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "the public wire API returns the structured RuntimeError contract unchanged"
+)]
 pub fn decode_jsonl_response<R: WireRequest>(
     line: &[u8],
     expected_request_id: u64,

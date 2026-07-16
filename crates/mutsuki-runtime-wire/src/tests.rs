@@ -51,9 +51,7 @@ fn typed_jsonl_accepts_additive_fields_and_rejects_breaking_major_at_decode() {
 fn typed_jsonl_response_preserves_request_and_response_type_pairing() {
     let encoded =
         encode_jsonl_response(9, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
-    let decoded =
-        decode_jsonl_response::<CancelRunnerRequest>(&encoded, 9, DEFAULT_WIRE_LIMITS).unwrap();
-    assert_eq!(decoded, ());
+    decode_jsonl_response::<CancelRunnerRequest>(&encoded, 9, DEFAULT_WIRE_LIMITS).unwrap();
 }
 
 #[test]
