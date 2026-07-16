@@ -1,0 +1,542 @@
+{
+  "baseline": {
+    "core_revision": "1bf03b6d98b615b043ffc9f7b2236a9a96bb186f",
+    "schema_revision": "mutsuki.runtime.wire/1.2.0"
+  },
+  "cancel_latency": {
+    "iterations": 30,
+    "max_ms": 3.184334,
+    "p50_ms": 0.1678955,
+    "p95_ms": 0.249583
+  },
+  "codec_results": [
+    {
+      "batch_size": 1,
+      "codec": "typed_jsonl",
+      "decode_mib_s": 10.477824865263708,
+      "decode_peak_bytes": 41240,
+      "decode_us_p50": 238.104,
+      "encode_mib_s": 15.254917019342185,
+      "encode_peak_bytes": 30201,
+      "encode_us_p50": 163.5415,
+      "frame_bytes": 2616,
+      "iterations": 100,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 32,
+      "codec": "typed_jsonl",
+      "decode_mib_s": 14.886001387009157,
+      "decode_peak_bytes": 316251,
+      "decode_us_p50": 3914.062,
+      "encode_mib_s": 26.18100739750642,
+      "encode_peak_bytes": 252542,
+      "encode_us_p50": 2225.458,
+      "frame_bytes": 61095,
+      "iterations": 30,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 256,
+      "codec": "typed_jsonl",
+      "decode_mib_s": 15.339481641982232,
+      "decode_peak_bytes": 2443310,
+      "decode_us_p50": 30192.5835,
+      "encode_mib_s": 27.55540223087145,
+      "encode_peak_bytes": 1945850,
+      "encode_us_p50": 16807.542,
+      "frame_bytes": 485636,
+      "iterations": 8,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 1,
+      "codec": "typed_jsonl",
+      "decode_mib_s": 175.5326500800468,
+      "decode_peak_bytes": 300322,
+      "decode_us_p50": 364.7085,
+      "encode_mib_s": 183.53198211566027,
+      "encode_peak_bytes": 292214,
+      "encode_us_p50": 348.8125,
+      "frame_bytes": 67128,
+      "iterations": 30,
+      "payload_bytes_per_entry": 65536
+    },
+    {
+      "batch_size": 1,
+      "codec": "typed_jsonl",
+      "decode_mib_s": 407.2148232241912,
+      "decode_peak_bytes": 4472995,
+      "decode_us_p50": 2459.437,
+      "encode_mib_s": 310.9624353359681,
+      "encode_peak_bytes": 4465281,
+      "encode_us_p50": 3220.708,
+      "frame_bytes": 1050169,
+      "iterations": 8,
+      "payload_bytes_per_entry": 1048576
+    },
+    {
+      "batch_size": 1,
+      "codec": "typed_msgpack",
+      "decode_mib_s": 3.7660242043794003,
+      "decode_peak_bytes": 36292,
+      "decode_us_p50": 561.6665,
+      "encode_mib_s": 7.283503636291542,
+      "encode_peak_bytes": 286450,
+      "encode_us_p50": 290.4165,
+      "frame_bytes": 2218,
+      "iterations": 100,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 32,
+      "codec": "typed_msgpack",
+      "decode_mib_s": 4.924282429778852,
+      "decode_peak_bytes": 240986,
+      "decode_us_p50": 10655.208,
+      "encode_mib_s": 9.5354216403792,
+      "encode_peak_bytes": 383546,
+      "encode_us_p50": 5502.5625,
+      "frame_bytes": 55018,
+      "iterations": 30,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 256,
+      "codec": "typed_msgpack",
+      "decode_mib_s": 4.9938352602865015,
+      "decode_peak_bytes": 1860490,
+      "decode_us_p50": 83699.9995,
+      "encode_mib_s": 9.615698812945164,
+      "encode_peak_bytes": 1406658,
+      "encode_us_p50": 43468.9165,
+      "frame_bytes": 438288,
+      "iterations": 8,
+      "payload_bytes_per_entry": 1024
+    },
+    {
+      "batch_size": 1,
+      "codec": "typed_msgpack",
+      "decode_mib_s": 108.88040116753102,
+      "decode_peak_bytes": 218784,
+      "decode_us_p50": 584.5,
+      "encode_mib_s": 210.41099682244632,
+      "encode_peak_bytes": 406974,
+      "encode_us_p50": 302.4585,
+      "frame_bytes": 66732,
+      "iterations": 30,
+      "payload_bytes_per_entry": 65536
+    },
+    {
+      "batch_size": 1,
+      "codec": "typed_msgpack",
+      "decode_mib_s": 1562.8060597176916,
+      "decode_peak_bytes": 3159808,
+      "decode_us_p50": 640.6045,
+      "encode_mib_s": 2869.966888164187,
+      "encode_peak_bytes": 4201680,
+      "encode_us_p50": 348.8335,
+      "frame_bytes": 1049772,
+      "iterations": 8,
+      "payload_bytes_per_entry": 1048576
+    }
+  ],
+  "core_revision": "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab",
+  "gates": [
+    {
+      "actual": 163.5415,
+      "baseline": 146.6255,
+      "kind": "non_regression",
+      "limit": 219.93824999999998,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 238.104,
+      "baseline": 215.271,
+      "kind": "non_regression",
+      "limit": 322.9065,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 30201.0,
+      "baseline": 30201.0,
+      "kind": "non_regression",
+      "limit": 45301.5,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 41240.0,
+      "baseline": 41240.0,
+      "kind": "non_regression",
+      "limit": 61860.0,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 2225.458,
+      "baseline": 2099.646,
+      "kind": "non_regression",
+      "limit": 3149.469,
+      "name": "p0.python.typed_jsonl.batch-32.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 3914.062,
+      "baseline": 3622.937,
+      "kind": "non_regression",
+      "limit": 5434.4055,
+      "name": "p0.python.typed_jsonl.batch-32.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 252542.0,
+      "baseline": 252542.0,
+      "kind": "non_regression",
+      "limit": 378813.0,
+      "name": "p0.python.typed_jsonl.batch-32.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 316251.0,
+      "baseline": 316251.0,
+      "kind": "non_regression",
+      "limit": 474376.5,
+      "name": "p0.python.typed_jsonl.batch-32.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 16807.542,
+      "baseline": 15977.917,
+      "kind": "non_regression",
+      "limit": 23966.8755,
+      "name": "p0.python.typed_jsonl.batch-256.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 30192.5835,
+      "baseline": 28250.9785,
+      "kind": "non_regression",
+      "limit": 42376.46775,
+      "name": "p0.python.typed_jsonl.batch-256.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 1945850.0,
+      "baseline": 1945854.0,
+      "kind": "non_regression",
+      "limit": 2918781.0,
+      "name": "p0.python.typed_jsonl.batch-256.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 2443310.0,
+      "baseline": 2443314.0,
+      "kind": "non_regression",
+      "limit": 3664971.0,
+      "name": "p0.python.typed_jsonl.batch-256.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 348.8125,
+      "baseline": 324.688,
+      "kind": "non_regression",
+      "limit": 487.032,
+      "name": "p0.python.typed_jsonl.batch-1.payload-65536.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 364.7085,
+      "baseline": 342.8545,
+      "kind": "non_regression",
+      "limit": 514.28175,
+      "name": "p0.python.typed_jsonl.batch-1.payload-65536.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 292214.0,
+      "baseline": 292214.0,
+      "kind": "non_regression",
+      "limit": 438321.0,
+      "name": "p0.python.typed_jsonl.batch-1.payload-65536.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 300322.0,
+      "baseline": 300322.0,
+      "kind": "non_regression",
+      "limit": 450483.0,
+      "name": "p0.python.typed_jsonl.batch-1.payload-65536.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 3220.708,
+      "baseline": 3112.4165,
+      "kind": "non_regression",
+      "limit": 4668.62475,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1048576.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 2459.437,
+      "baseline": 2508.896,
+      "kind": "non_regression",
+      "limit": 3763.344,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1048576.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 4465281.0,
+      "baseline": 4465281.0,
+      "kind": "non_regression",
+      "limit": 6697921.5,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1048576.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 4472995.0,
+      "baseline": 4472995.0,
+      "kind": "non_regression",
+      "limit": 6709492.5,
+      "name": "p0.python.typed_jsonl.batch-1.payload-1048576.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 290.4165,
+      "baseline": 273.5835,
+      "kind": "non_regression",
+      "limit": 410.37525000000005,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 561.6665,
+      "baseline": 515.291,
+      "kind": "non_regression",
+      "limit": 772.9365,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 286450.0,
+      "baseline": 286450.0,
+      "kind": "non_regression",
+      "limit": 429675.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 36292.0,
+      "baseline": 37220.0,
+      "kind": "non_regression",
+      "limit": 55830.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 5502.5625,
+      "baseline": 5218.8545,
+      "kind": "non_regression",
+      "limit": 7828.28175,
+      "name": "p0.python.typed_msgpack.batch-32.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 10655.208,
+      "baseline": 9795.8755,
+      "kind": "non_regression",
+      "limit": 14693.81325,
+      "name": "p0.python.typed_msgpack.batch-32.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 383546.0,
+      "baseline": 383546.0,
+      "kind": "non_regression",
+      "limit": 575319.0,
+      "name": "p0.python.typed_msgpack.batch-32.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 240986.0,
+      "baseline": 288458.0,
+      "kind": "non_regression",
+      "limit": 432687.0,
+      "name": "p0.python.typed_msgpack.batch-32.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 43468.9165,
+      "baseline": 40607.25,
+      "kind": "non_regression",
+      "limit": 60910.875,
+      "name": "p0.python.typed_msgpack.batch-256.payload-1024.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 83699.9995,
+      "baseline": 77385.75,
+      "kind": "non_regression",
+      "limit": 116078.625,
+      "name": "p0.python.typed_msgpack.batch-256.payload-1024.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 1406658.0,
+      "baseline": 1406658.0,
+      "kind": "non_regression",
+      "limit": 2109987.0,
+      "name": "p0.python.typed_msgpack.batch-256.payload-1024.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 1860490.0,
+      "baseline": 2240970.0,
+      "kind": "non_regression",
+      "limit": 3361455.0,
+      "name": "p0.python.typed_msgpack.batch-256.payload-1024.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 302.4585,
+      "baseline": 281.1875,
+      "kind": "non_regression",
+      "limit": 421.78125,
+      "name": "p0.python.typed_msgpack.batch-1.payload-65536.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 584.5,
+      "baseline": 519.354,
+      "kind": "non_regression",
+      "limit": 779.0310000000001,
+      "name": "p0.python.typed_msgpack.batch-1.payload-65536.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 406974.0,
+      "baseline": 406974.0,
+      "kind": "non_regression",
+      "limit": 610461.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-65536.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 218784.0,
+      "baseline": 219712.0,
+      "kind": "non_regression",
+      "limit": 329568.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-65536.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 348.8335,
+      "baseline": 329.291,
+      "kind": "non_regression",
+      "limit": 493.9365,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1048576.encode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 640.6045,
+      "baseline": 584.0,
+      "kind": "non_regression",
+      "limit": 876.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1048576.decode_us_p50",
+      "passed": true
+    },
+    {
+      "actual": 4201680.0,
+      "baseline": 4201680.0,
+      "kind": "non_regression",
+      "limit": 6302520.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1048576.encode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 3159808.0,
+      "baseline": 3160736.0,
+      "kind": "non_regression",
+      "limit": 4741104.0,
+      "name": "p0.python.typed_msgpack.batch-1.payload-1048576.decode_peak_bytes",
+      "passed": true
+    },
+    {
+      "actual": 0.249583,
+      "baseline": 0.241917,
+      "kind": "management_latency",
+      "limit": 2.0,
+      "name": "p0.python.cancel.p95_ms",
+      "passed": true
+    },
+    {
+      "actual": 2218.0,
+      "baseline": 2616.0,
+      "kind": "optimization",
+      "limit": 2615.0,
+      "name": "p2.python.binary.batch-1.payload-1024.frame_bytes",
+      "passed": true
+    },
+    {
+      "actual": 66732.0,
+      "baseline": 67128.0,
+      "kind": "optimization",
+      "limit": 67127.0,
+      "name": "p2.python.binary.batch-1.payload-65536.frame_bytes",
+      "passed": true
+    },
+    {
+      "actual": 1049772.0,
+      "baseline": 1050169.0,
+      "kind": "optimization",
+      "limit": 1050168.0,
+      "name": "p2.python.binary.batch-1.payload-1048576.frame_bytes",
+      "passed": true
+    },
+    {
+      "actual": 55018.0,
+      "baseline": 61095.0,
+      "kind": "optimization",
+      "limit": 61094.0,
+      "name": "p2.python.binary.batch-32.payload-1024.frame_bytes",
+      "passed": true
+    },
+    {
+      "actual": 438288.0,
+      "baseline": 485636.0,
+      "kind": "optimization",
+      "limit": 485635.0,
+      "name": "p2.python.binary.batch-256.payload-1024.frame_bytes",
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "platform": "darwin",
+  "process_startup": {
+    "iterations": 20,
+    "max_ms": 16.923958,
+    "p50_ms": 15.038729,
+    "p95_ms": 15.863916
+  },
+  "python": "3.14.3 (main, Feb  3 2026, 15:32:20) [Clang 17.0.0 (clang-1700.6.3.2)]",
+  "repository": {
+    "dirty": false,
+    "revision": "79c59d520e23540d0e60a8ef588fe18fbfdf2cea"
+  },
+  "resource_descriptor": {
+    "json_copy_ratio": 0.00042057037353515625,
+    "json_descriptor_bytes": 441,
+    "msgpack_copy_ratio": 0.00034332275390625,
+    "msgpack_descriptor_bytes": 360,
+    "referenced_resource_bytes": 1048576
+  },
+  "runner_reuse": {
+    "iterations": 100,
+    "max_ms": 0.04,
+    "p50_ms": 0.009875,
+    "p95_ms": 0.012667
+  },
+  "schema_revision": "mutsuki.runtime.wire/1.2.0"
+}
