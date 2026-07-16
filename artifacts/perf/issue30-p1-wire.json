@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "issue": 32,
+  "mode": "full",
+  "generated_unix_seconds": 1784214074,
+  "command": "target/release/runtime_wire_p1 full --output artifacts/perf/issue30-p1-wire.json",
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_parallelism": 10,
+    "rust_version": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "commit": "d7391978379e30548d4c40d9830f76c2f9e77034",
+    "dirty": false,
+    "profile": "release"
+  },
+  "cases": [
+    {
+      "id": "wire/p1/jsonl/cancel-during-run_batch",
+      "category": "wire_p1",
+      "dimensions": {
+        "in_flight": "2",
+        "operation": "cancel",
+        "phase": "p1"
+      },
+      "iterations": 100,
+      "units": 100,
+      "elapsed_ns": 12470500,
+      "ns_per_unit": 124705.0,
+      "throughput_per_second": 8018.924662202799,
+      "allocations": {
+        "allocations": 26440,
+        "deallocations": 26436,
+        "allocated_bytes": 4260633,
+        "deallocated_bytes": 4258921,
+        "retained_bytes_delta": 1712,
+        "peak_bytes_delta": 18382
+      },
+      "counters": {
+        "max_ns": 50291,
+        "p50_ns": 28416,
+        "p95_ns": 40541
+      }
+    },
+    {
+      "id": "wire/p1/jsonl/concurrent/in-flight-1",
+      "category": "wire_p1",
+      "dimensions": {
+        "in_flight": "1",
+        "operation": "run_batch",
+        "phase": "p1",
+        "response_order": "reverse"
+      },
+      "iterations": 100,
+      "units": 100,
+      "elapsed_ns": 9613256,
+      "ns_per_unit": 96132.56,
+      "throughput_per_second": 10402.302820189123,
+      "allocations": {
+        "allocations": 24448,
+        "deallocations": 24445,
+        "allocated_bytes": 3959756,
+        "deallocated_bytes": 3958844,
+        "retained_bytes_delta": 912,
+        "peak_bytes_delta": 23100
+      },
+      "counters": {}
+    },
+    {
+      "id": "wire/p1/jsonl/concurrent/in-flight-16",
+      "category": "wire_p1",
+      "dimensions": {
+        "in_flight": "16",
+        "operation": "run_batch",
+        "phase": "p1",
+        "response_order": "reverse"
+      },
+      "iterations": 40,
+      "units": 640,
+      "elapsed_ns": 31338663,
+      "ns_per_unit": 48966.6609375,
+      "throughput_per_second": 20422.05820969452,
+      "allocations": {
+        "allocations": 153921,
+        "deallocations": 153918,
+        "allocated_bytes": 25342792,
+        "deallocated_bytes": 25340632,
+        "retained_bytes_delta": 2160,
+        "peak_bytes_delta": 169158
+      },
+      "counters": {}
+    },
+    {
+      "id": "wire/p1/jsonl/concurrent/in-flight-56",
+      "category": "wire_p1",
+      "dimensions": {
+        "in_flight": "56",
+        "operation": "run_batch",
+        "phase": "p1",
+        "response_order": "reverse"
+      },
+      "iterations": 15,
+      "units": 840,
+      "elapsed_ns": 34578294,
+      "ns_per_unit": 41164.635714285716,
+      "throughput_per_second": 24292.696452867225,
+      "allocations": {
+        "allocations": 200971,
+        "deallocations": 200968,
+        "allocated_bytes": 33165816,
+        "deallocated_bytes": 33158664,
+        "retained_bytes_delta": 7152,
+        "peak_bytes_delta": 563202
+      },
+      "counters": {}
+    }
+  ],
+  "gates": [
+    {
+      "name": "p1.cancel.p95",
+      "kind": "management_latency",
+      "passed": true,
+      "actual": 40541.0,
+      "limit": 5000000.0,
+      "unit": "ns"
+    },
+    {
+      "name": "p1.cancel.max",
+      "kind": "management_latency",
+      "passed": true,
+      "actual": 50291.0,
+      "limit": 20000000.0,
+      "unit": "ns"
+    },
+    {
+      "name": "p1.concurrent-16.throughput-scaling",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 20422.05820969452,
+      "limit": 12482.763384226948,
+      "unit": "requests/s_min"
+    },
+    {
+      "name": "p1.concurrent-56.throughput-non-collapse",
+      "kind": "non_regression",
+      "passed": true,
+      "actual": 24292.696452867225,
+      "limit": 15316.543657270891,
+      "unit": "requests/s_min"
+    },
+    {
+      "name": "p1.concurrent-56.allocated-bytes-per-request",
+      "kind": "bounded_resource",
+      "passed": true,
+      "actual": 39483.114285714284,
+      "limit": 79195.12,
+      "unit": "bytes/request"
+    }
+  ],
+  "passed": true
+}
