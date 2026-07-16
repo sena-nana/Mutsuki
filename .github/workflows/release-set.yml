@@ -1,0 +1,66 @@
+name: release-set
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  product:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88
+      - name: Validate manifest behavior
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Reject divergent pins and Core sources
+        run: python3 scripts/release_set.py validate --root .
+      - name: Build and test active product
+        run: |
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo fmt --check
+          cargo check --locked
+          cargo test --locked
+      - name: Run zero-plugin product smoke
+        run: cargo test --locked --test unix_product_smoke
+
+  cross-repository:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Materialize exact release revisions
+        run: python3 scripts/release_set.py materialize --workspace-root "$RUNNER_TEMP/mutsuki-release"
+      - name: Verify Rust repositories
+        working-directory: ${{ runner.temp }}/mutsuki-release
+        run: |
+          set -euo pipefail
+          for repository in MutsukiCore MutsukiServiceHost MutsukiLink MutsukiStdPlugins MutsukiAgentKit MutsukiBotPlugins MutsukiDistributedHost MutsukiTauriHost; do
+            cargo fmt --manifest-path "$repository/Cargo.toml" --check
+            cargo check --manifest-path "$repository/Cargo.toml" --locked
+            cargo test --manifest-path "$repository/Cargo.toml" --locked
+          done
+      - name: Verify Python Runner conformance
+        working-directory: ${{ runner.temp }}/mutsuki-release/MutsukiPythonRunnerKit
+        run: |
+          uv sync --locked
+          uv run ruff check src tests
+          uv run pyright src tests
+          uv run pytest
+      - name: Generate downstream report
+        run: python3 scripts/release_set.py report --workspace-root "$RUNNER_TEMP/mutsuki-release" --output release-set-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-set-report
+          path: release-set-report.json

@@ -1,0 +1,75 @@
+schema_version = 1
+release = "mutsuki-0.1-alpha-1"
+status = "active"
+contracts_api = "0.1.0"
+runtime_wire_schema = "mutsuki.runtime.wire/1.0.0"
+rust_msrv = "1.88"
+python_min = "3.13"
+supported_deployments = ["service", "desktop", "python-runner", "distributed-disabled", "distributed-local-observable"]
+unsupported_deployments = ["distributed-clustered-production"]
+
+[[repositories]]
+id = "core"
+url = "https://github.com/sena-nana/MutsukiCore.git"
+revision = "d605333516753a797ca7e9971d097ac3e0de0c59"
+kind = "rust"
+
+[[repositories]]
+id = "service_host"
+url = "https://github.com/sena-nana/MutsukiServiceHost.git"
+revision = "a48a5248289e91d517c5b3e84e56221a3f71a690"
+kind = "rust"
+
+[[repositories]]
+id = "link"
+url = "https://github.com/sena-nana/MutsukiLink.git"
+revision = "9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+kind = "rust"
+
+[[repositories]]
+id = "std_plugins"
+url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
+revision = "fd7e5bc20aa0d3546decf9e777a88a06121d37f6"
+kind = "rust"
+
+[[repositories]]
+id = "agent_kit"
+url = "https://github.com/sena-nana/MutsukiAgentKit.git"
+revision = "8393cf801896126aebdc5f86cd060302e4a0e72c"
+kind = "rust"
+
+[[repositories]]
+id = "bot_plugins"
+url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
+revision = "137e7474fb9ac16e0648a917caddff851151d832"
+kind = "rust"
+
+[[repositories]]
+id = "distributed_host"
+url = "https://github.com/sena-nana/MutsukiDistributedHost.git"
+revision = "d418f750a3039cf0c0a6667c15f95d7bd396c309"
+kind = "rust"
+
+[[repositories]]
+id = "tauri_host"
+url = "https://github.com/sena-nana/MutsukiTauriHost.git"
+revision = "0c19c113288de11220c36470019d86bed4494fc9"
+kind = "rust"
+
+[[repositories]]
+id = "python_runner_kit"
+url = "https://github.com/sena-nana/MutsukiPythonRunnerKit.git"
+revision = "d4ad12fb0a0a584391421568f32c037750a93ea6"
+kind = "python"
+
+[capabilities]
+core_runtime = "active"
+service_host = "active"
+standard_plugins = "active"
+bot = "active"
+agent = "active"
+desktop = "active"
+python_runner = "active"
+distributed_local_observable = "active"
+distributed_clustered = "candidate"
+distributed_production = "unsupported"
