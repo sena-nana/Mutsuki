@@ -46,6 +46,8 @@ jobs:
         run: python3 scripts/release_set.py materialize --workspace-root "$RUNNER_TEMP/mutsuki-release"
       - name: Verify Rust repositories
         working-directory: ${{ runner.temp }}/mutsuki-release
+        env:
+          RUSTC_WRAPPER: ""
         run: |
           set -euo pipefail
           for repository in MutsukiCore MutsukiServiceHost MutsukiLink MutsukiStdPlugins MutsukiAgentKit MutsukiBotPlugins MutsukiDistributedHost MutsukiTauriHost; do
