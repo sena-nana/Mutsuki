@@ -14,8 +14,8 @@ from mutsuki_runner_kit.wire.protocol import (
 __all__ = [
     "BINARY_CODEC_ID",
     "DEBUG_JSONL_CODEC_ID",
-    "InitializedPlugin",
     "SCHEMA_REVISION",
+    "InitializedPlugin",
     "Opcode",
     "ProtocolHello",
     "ProtocolHelloAck",
