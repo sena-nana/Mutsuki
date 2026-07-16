@@ -22,7 +22,7 @@ pub(super) fn run(
     mode: BenchmarkMode,
     allocator: &TrackingAllocator,
 ) -> Result<Vec<CaseResult>, String> {
-    let iterations = mode.select(1_000, 20_000);
+    let iterations = mode.select(100_000, 2_000_000);
     let request = DisposeRunnerRequest {
         runner_id: "benchmark.runner".into(),
     };
