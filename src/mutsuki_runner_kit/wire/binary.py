@@ -10,6 +10,11 @@ import msgpack
 from mutsuki_runner_kit.contracts.codec import JsonValue, to_json_dict
 from mutsuki_runner_kit.contracts.errors import RuntimeError
 from mutsuki_runner_kit.wire.generated import MANAGEMENT_OPCODES, Opcode
+from mutsuki_runner_kit.wire.msgpack_structure import (
+    MAX_MSGPACK_CONTAINER_ITEMS,
+    MAX_MSGPACK_NESTING_DEPTH,
+    validate_messagepack_structure,
+)
 from mutsuki_runner_kit.wire.protocol import (
     DEFAULT_WIRE_LIMITS,
     WireLimits,
@@ -43,7 +48,7 @@ def encode_binary_request(
     payload: Mapping[str, object],
     limits: WireLimits = DEFAULT_WIRE_LIMITS,
 ) -> bytes:
-    _validate_no_large_inline_bytes(payload, limits)
+    _validate_value(payload, limits)
     packed = cast(bytes, msgpack.packb(dict(payload), use_bin_type=True))
     flags = FLAG_REQUEST | (FLAG_MANAGEMENT if opcode in MANAGEMENT_OPCODES else 0)
     return _encode_frame(request_id, opcode, flags, packed, limits)
@@ -58,7 +63,7 @@ def decode_binary_request(
     unpacked = _unpack(payload, limits)
     if not isinstance(unpacked, Mapping):
         raise TypeError("MessagePack request payload expects mapping")
-    _validate_no_large_inline_bytes(unpacked, limits)
+    _validate_value(unpacked, limits)
     return BinaryRequestFrame(request_id, opcode, decode_request(opcode, unpacked))
 
 
@@ -70,6 +75,7 @@ def encode_binary_response(
     limits: WireLimits = DEFAULT_WIRE_LIMITS,
 ) -> bytes:
     payload: object = to_json_dict(error) if error is not None else result
+    _validate_value(payload, limits)
     packed = cast(bytes, msgpack.packb(payload, use_bin_type=True))
     flags = FLAG_RESPONSE | (FLAG_ERROR if error is not None else 0)
     return _encode_frame(request_id, opcode, flags, packed, limits)
@@ -151,6 +157,12 @@ def _decode_frame(
     WireProtocolVersion(major, minor).ensure_compatible()
     if flags & ~KNOWN_FLAGS:
         raise WireProtocolFailure("wire.flags_invalid", f"unknown flags {flags:#06x}")
+    if bool(flags & FLAG_REQUEST) == bool(flags & FLAG_RESPONSE):
+        raise WireProtocolFailure(
+            "wire.flags_invalid", "exactly one of request/response is required"
+        )
+    if flags & FLAG_ERROR and not flags & FLAG_RESPONSE:
+        raise WireProtocolFailure("wire.flags_invalid", "error flag requires response")
     if request_id <= 0:
         raise WireProtocolFailure("wire.request_id_invalid", "request_id must be positive")
     try:
@@ -174,6 +186,7 @@ def _decode_frame(
 
 
 def _unpack(payload: bytes, limits: WireLimits) -> object:
+    validate_messagepack_structure(payload)
     try:
         return msgpack.unpackb(
             payload,
@@ -181,8 +194,8 @@ def _unpack(payload: bytes, limits: WireLimits) -> object:
             strict_map_key=True,
             max_str_len=limits.max_payload_bytes,
             max_bin_len=limits.max_inline_resource_bytes,
-            max_array_len=100_000,
-            max_map_len=100_000,
+            max_array_len=MAX_MSGPACK_CONTAINER_ITEMS,
+            max_map_len=MAX_MSGPACK_CONTAINER_ITEMS,
             max_ext_len=0,
         )
     except (ValueError, msgpack.UnpackException) as exc:
@@ -214,7 +227,11 @@ def _read_exact(stream: BinaryIO, length: int) -> bytes:
     return bytes(chunks)
 
 
-def _validate_no_large_inline_bytes(value: object, limits: WireLimits) -> None:
+def _validate_value(value: object, limits: WireLimits, depth: int = 0) -> None:
+    if depth > MAX_MSGPACK_NESTING_DEPTH:
+        raise WireProtocolFailure(
+            "wire.msgpack_depth", "MessagePack nesting depth exceeded"
+        )
     if isinstance(value, bytes | bytearray | memoryview):
         if len(value) > limits.max_inline_resource_bytes:
             raise WireProtocolFailure(
@@ -223,9 +240,19 @@ def _validate_no_large_inline_bytes(value: object, limits: WireLimits) -> None:
             )
         return
     if isinstance(value, Mapping):
+        if len(value) > MAX_MSGPACK_CONTAINER_ITEMS:
+            raise WireProtocolFailure(
+                "wire.msgpack_container_limit",
+                f"mapping {len(value)} > {MAX_MSGPACK_CONTAINER_ITEMS}",
+            )
         for item in value.values():
-            _validate_no_large_inline_bytes(item, limits)
+            _validate_value(item, limits, depth + 1)
         return
     if isinstance(value, list | tuple):
+        if len(value) > MAX_MSGPACK_CONTAINER_ITEMS:
+            raise WireProtocolFailure(
+                "wire.msgpack_container_limit",
+                f"sequence {len(value)} > {MAX_MSGPACK_CONTAINER_ITEMS}",
+            )
         for item in value:
-            _validate_no_large_inline_bytes(item, limits)
+            _validate_value(item, limits, depth + 1)

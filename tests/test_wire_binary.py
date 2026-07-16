@@ -73,6 +73,37 @@ def test_binary_codec_rejects_malformed_messagepack_with_bounded_error() -> None
         decode_binary_request(bytes(encoded))
 
 
+@pytest.mark.parametrize(
+    ("payload", "route"),
+    [
+        (b"\xdd\xff\xff\xff\xff", "wire.msgpack_container_limit"),
+        (b"\x91" * 65 + b"\xc0", "wire.msgpack_depth"),
+        (b"\x80\xc0", "wire.msgpack_trailing"),
+    ],
+)
+def test_binary_codec_preflights_messagepack_structure(
+    payload: bytes, route: str
+) -> None:
+    encoded = encode_binary_request(
+        2, Opcode.RUNNER_DISPOSE, {"runner_id": "echo.runner"}
+    )
+
+    with pytest.raises(WireProtocolFailure, match=route.replace(".", r"\.")):
+        decode_binary_request(_replace_payload(encoded, payload))
+
+
+def test_binary_codec_rejects_conflicting_request_response_flags() -> None:
+    encoded = bytearray(
+        encode_binary_request(
+            2, Opcode.RUNNER_DISPOSE, {"runner_id": "echo.runner"}
+        )
+    )
+    struct.pack_into(">H", encoded, 14, 0x0003)
+
+    with pytest.raises(WireProtocolFailure, match=r"wire\.flags_invalid"):
+        decode_binary_request(bytes(encoded))
+
+
 @pytest.mark.asyncio
 async def test_binary_bridge_negotiates_before_dispatch_and_reuses_semantics() -> None:
     backend = PythonRunnerBackend()
@@ -158,3 +189,11 @@ def _frames(encoded: bytes) -> list[bytes]:
         frames.append(encoded[offset:end])
         offset = end
     return frames
+
+
+def _replace_payload(encoded: bytes, payload: bytes) -> bytes:
+    frame = bytearray(encoded[:28])
+    struct.pack_into(">I", frame, 0, 24 + len(payload))
+    struct.pack_into(">I", frame, 24, len(payload))
+    frame.extend(payload)
+    return bytes(frame)
