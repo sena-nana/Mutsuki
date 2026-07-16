@@ -19,12 +19,12 @@ pub trait TypedRequestTransport: Send + Sync {
     fn request<R: WireRequest>(&self, request: &R) -> RuntimeResult<R::Response>;
 }
 
-pub struct TransportJsonlRunner<T> {
+pub struct TransportRunner<T> {
     descriptor: RunnerDescriptor,
     transport: Arc<T>,
 }
 
-impl<T> TransportJsonlRunner<T> {
+impl<T> TransportRunner<T> {
     pub fn new(descriptor: RunnerDescriptor, transport: Arc<T>) -> Self {
         Self {
             descriptor,
@@ -33,7 +33,7 @@ impl<T> TransportJsonlRunner<T> {
     }
 }
 
-impl<T: TypedRequestTransport> Runner for TransportJsonlRunner<T> {
+impl<T: TypedRequestTransport> Runner for TransportRunner<T> {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }
@@ -77,6 +77,9 @@ impl<T: TypedRequestTransport> Runner for TransportJsonlRunner<T> {
         })
     }
 }
+
+/// Source-compatible JSONL v1 name retained for the documented ABI retirement window.
+pub type TransportJsonlRunner<T> = TransportRunner<T>;
 
 pub struct TransportResourceProvider<T> {
     provider_id: String,

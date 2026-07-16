@@ -11,13 +11,14 @@ mod protocol;
 mod schema;
 
 pub use binary::{
-    BINARY_HEADER_LEN, BINARY_LENGTH_PREFIX_LEN, BinaryFrame, WireFlags, WireHeader,
-    decode_binary_frame, decode_binary_payload, encode_binary_request, encode_binary_response,
-    read_binary_frame,
+    BINARY_HEADER_LEN, BINARY_LENGTH_PREFIX_LEN, BinaryFrame, MAX_MSGPACK_CONTAINER_ITEMS,
+    MAX_MSGPACK_NESTING_DEPTH, WireFlags, WireHeader, decode_binary_any_request,
+    decode_binary_frame, decode_binary_payload, decode_binary_request, decode_binary_response,
+    encode_binary_request, encode_binary_response, read_binary_frame, read_binary_frame_bytes,
 };
 pub use jsonl::{
-    DecodedWireRequest, JsonlRequestEnvelope, JsonlResponseEnvelope, decode_jsonl_any_request,
-    decode_jsonl_request, decode_jsonl_response, encode_jsonl_request, encode_jsonl_response,
+    JsonlRequestEnvelope, JsonlResponseEnvelope, decode_jsonl_any_request, decode_jsonl_request,
+    decode_jsonl_response, encode_jsonl_request, encode_jsonl_response,
 };
 pub use operations::*;
 pub use protocol::{

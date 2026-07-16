@@ -151,3 +151,73 @@ fn large_resource_bytes_must_use_resource_ref_or_stream() {
         WireCodecError::InlineResourceOversized { .. }
     ));
 }
+
+#[test]
+fn jsonl_and_binary_share_the_run_batch_golden_fixture() {
+    let fixtures = generated_fixtures_value();
+    let value = fixtures["fixtures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fixture| fixture["type"] == "RunBatchRequest")
+        .unwrap()["value"]
+        .clone();
+    let request: RunBatchRequest = serde_json::from_value(value).unwrap();
+
+    let jsonl = encode_jsonl_request(41, &request, DEFAULT_WIRE_LIMITS).unwrap();
+    let binary = encode_binary_request(41, &request, DEFAULT_WIRE_LIMITS).unwrap();
+
+    assert_eq!(
+        decode_jsonl_request::<RunBatchRequest>(&jsonl, DEFAULT_WIRE_LIMITS)
+            .unwrap()
+            .1,
+        request
+    );
+    assert_eq!(
+        decode_binary_request::<RunBatchRequest>(&binary, DEFAULT_WIRE_LIMITS)
+            .unwrap()
+            .1,
+        request
+    );
+}
+
+#[test]
+fn messagepack_nesting_is_hard_bounded() {
+    let mut config = Value::Null;
+    for _ in 0..=MAX_MSGPACK_NESTING_DEPTH {
+        config = json!({"nested": config});
+    }
+    let request = InitializeRequest {
+        hello: ProtocolHello::binary(),
+        config: Some(config),
+    };
+
+    let error = encode_binary_request(9, &request, DEFAULT_WIRE_LIMITS).unwrap_err();
+
+    assert!(matches!(error, WireCodecError::Encode(detail) if detail.contains("depth")));
+}
+
+#[test]
+fn messagepack_container_count_and_trailing_bytes_are_rejected_before_serde() {
+    let frame = |payload: Vec<u8>| BinaryFrame {
+        header: WireHeader {
+            protocol: WireProtocolVersion::CURRENT,
+            opcode: Opcode::PluginInitialize,
+            flags: WireFlags::REQUEST,
+            request_id: 1,
+            payload_len: payload.len() as u32,
+        },
+        payload,
+    };
+    let oversized_array = frame(vec![0xdd, 0xff, 0xff, 0xff, 0xff]);
+    let trailing = frame(vec![0xc0, 0xc0]);
+
+    assert!(matches!(
+        decode_binary_payload::<Value>(&oversized_array),
+        Err(WireCodecError::Decode(detail)) if detail.contains("container item limit")
+    ));
+    assert!(matches!(
+        decode_binary_payload::<Value>(&trailing),
+        Err(WireCodecError::Decode(detail)) if detail.contains("trailing bytes")
+    ));
+}

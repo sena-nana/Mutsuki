@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{LoadedPlugin, ResourceProviderGateway};
 
-use super::error::{abi_failure, encode_result};
+use super::error::{abi_failure, encode_binary_result, encode_result};
 use super::types::AbiGuest;
 
 pub struct JsonlPluginGuest {
@@ -19,6 +19,44 @@ pub struct JsonlPluginGuest {
     runners: BTreeMap<String, Box<dyn Runner>>,
     providers: BTreeMap<String, Arc<dyn ResourceProviderGateway>>,
     initialized: bool,
+}
+
+pub(super) trait GuestResponseCodec {
+    const CODEC_ID: &'static str;
+
+    fn encode<T: serde::Serialize>(
+        request_id: u64,
+        opcode: Opcode,
+        result: RuntimeResult<T>,
+    ) -> Vec<u8>;
+}
+
+pub(super) struct JsonlGuestCodec;
+
+impl GuestResponseCodec for JsonlGuestCodec {
+    const CODEC_ID: &'static str = DEBUG_JSONL_CODEC_ID;
+
+    fn encode<T: serde::Serialize>(
+        request_id: u64,
+        opcode: Opcode,
+        result: RuntimeResult<T>,
+    ) -> Vec<u8> {
+        encode_result(request_id, opcode, result)
+    }
+}
+
+pub(super) struct BinaryGuestCodec;
+
+impl GuestResponseCodec for BinaryGuestCodec {
+    const CODEC_ID: &'static str = mutsuki_runtime_wire::BINARY_CODEC_ID;
+
+    fn encode<T: serde::Serialize>(
+        request_id: u64,
+        opcode: Opcode,
+        result: RuntimeResult<T>,
+    ) -> Vec<u8> {
+        encode_binary_result(request_id, opcode, result)
+    }
 }
 
 impl JsonlPluginGuest {
@@ -53,7 +91,10 @@ impl JsonlPluginGuest {
         })
     }
 
-    fn initialize(&mut self, hello: ProtocolHello) -> RuntimeResult<ProtocolHelloAck> {
+    pub(super) fn initialize<C: GuestResponseCodec>(
+        &mut self,
+        hello: ProtocolHello,
+    ) -> RuntimeResult<ProtocolHelloAck> {
         if self.initialized {
             return Err(abi_failure(
                 "abi.already_initialized",
@@ -65,23 +106,23 @@ impl JsonlPluginGuest {
             resource_provider_ids: self.providers.keys().cloned().collect(),
         };
         let ack = hello
-            .accept(DEBUG_JSONL_CODEC_ID, Some(plugin))
+            .accept(C::CODEC_ID, Some(plugin))
             .map_err(|error| abi_failure("abi.handshake", error.to_string()))?;
         self.initialized = true;
         Ok(ack)
     }
 
-    fn handle(&mut self, decoded: DecodedWireRequest) -> Vec<u8> {
+    pub(super) fn handle<C: GuestResponseCodec>(&mut self, decoded: DecodedWireRequest) -> Vec<u8> {
         let request_id = decoded.request_id;
         if let AnyWireRequest::Initialize(request) = decoded.request {
-            return encode_result(
+            return C::encode(
                 request_id,
                 Opcode::PluginInitialize,
-                self.initialize(request.hello),
+                self.initialize::<C>(request.hello),
             );
         }
         if !self.initialized {
-            return encode_result::<()>(
+            return C::encode::<()>(
                 request_id,
                 decoded.request.opcode(),
                 Err(abi_failure(
@@ -90,28 +131,32 @@ impl JsonlPluginGuest {
                 )),
             );
         }
-        self.dispatch(request_id, decoded.request)
+        self.dispatch::<C>(request_id, decoded.request)
     }
 
-    fn dispatch(&mut self, request_id: u64, request: AnyWireRequest) -> Vec<u8> {
+    fn dispatch<C: GuestResponseCodec>(
+        &mut self,
+        request_id: u64,
+        request: AnyWireRequest,
+    ) -> Vec<u8> {
         match request {
             AnyWireRequest::RunBatch(request) => {
                 let result = self
                     .runner(&request.runner_id)
                     .and_then(|runner| runner.run_batch(request.ctx, request.batch));
-                encode_result(request_id, Opcode::RunnerRunBatch, result)
+                C::encode(request_id, Opcode::RunnerRunBatch, result)
             }
             AnyWireRequest::CancelRunner(request) => {
                 let result = self
                     .runner(&request.runner_id)
                     .and_then(|runner| runner.cancel(&request.invocation_id));
-                encode_result(request_id, Opcode::RunnerCancel, result)
+                C::encode(request_id, Opcode::RunnerCancel, result)
             }
             AnyWireRequest::DisposeRunner(request) => {
                 let result = self
                     .runner(&request.runner_id)
                     .and_then(|runner| runner.dispose());
-                encode_result(request_id, Opcode::RunnerDispose, result)
+                C::encode(request_id, Opcode::RunnerDispose, result)
             }
             AnyWireRequest::CreateBlob(request) => {
                 let result = self
@@ -119,7 +164,7 @@ impl JsonlPluginGuest {
                     .and_then(|provider| {
                         provider.create_blob_resource(&request.schema, request.bytes)
                     });
-                encode_result(request_id, Opcode::ResourceCreateBlob, result)
+                C::encode(request_id, Opcode::ResourceCreateBlob, result)
             }
             AnyWireRequest::CreateCowState(request) => {
                 let result = self
@@ -131,7 +176,7 @@ impl JsonlPluginGuest {
                             request.bytes,
                         )
                     });
-                encode_result(request_id, Opcode::ResourceCreateCowState, result)
+                C::encode(request_id, Opcode::ResourceCreateCowState, result)
             }
             AnyWireRequest::CreateCapability(request) => {
                 let result = self
@@ -139,13 +184,13 @@ impl JsonlPluginGuest {
                     .and_then(|provider| {
                         provider.create_capability_resource(&request.kind_id, &request.schema)
                     });
-                encode_result(request_id, Opcode::ResourceCreateCapability, result)
+                C::encode(request_id, Opcode::ResourceCreateCapability, result)
             }
             AnyWireRequest::CollectReadPlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.collect_read_plan(&request.plan));
-                encode_result(request_id, Opcode::ResourceReadCollect, result)
+                C::encode(request_id, Opcode::ResourceReadCollect, result)
             }
             AnyWireRequest::SnapshotReadPlan(request) => {
                 let result = self
@@ -157,45 +202,45 @@ impl JsonlPluginGuest {
                             &request.schema,
                         )
                     });
-                encode_result(request_id, Opcode::ResourceReadSnapshot, result)
+                C::encode(request_id, Opcode::ResourceReadSnapshot, result)
             }
             AnyWireRequest::OpenStreamPlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.open_stream_plan(&request.plan));
-                encode_result(request_id, Opcode::ResourceStreamOpen, result)
+                C::encode(request_id, Opcode::ResourceStreamOpen, result)
             }
             AnyWireRequest::ExportPlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.execute_export_plan(&request.plan));
-                encode_result(request_id, Opcode::ResourceExport, result)
+                C::encode(request_id, Opcode::ResourceExport, result)
             }
             AnyWireRequest::CommitWritePlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.commit_write_plan(&request.plan, request.bytes));
-                encode_result(request_id, Opcode::ResourceWriteCommit, result)
+                C::encode(request_id, Opcode::ResourceWriteCommit, result)
             }
             AnyWireRequest::CommandPlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.execute_command_plan(&request.plan));
-                encode_result(request_id, Opcode::ResourceCommand, result)
+                C::encode(request_id, Opcode::ResourceCommand, result)
             }
             AnyWireRequest::CommandBatch(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.execute_command_batch(&request.batch));
-                encode_result(request_id, Opcode::ResourceCommandBatch, result)
+                C::encode(request_id, Opcode::ResourceCommandBatch, result)
             }
             AnyWireRequest::SagaPlan(request) => {
                 let result = self
                     .provider(request.provider_id.as_deref())
                     .and_then(|provider| provider.execute_saga_plan(&request.saga));
-                encode_result(request_id, Opcode::ResourceSaga, result)
+                C::encode(request_id, Opcode::ResourceSaga, result)
             }
-            unsupported => encode_result::<()>(
+            unsupported => C::encode::<()>(
                 request_id,
                 unsupported.opcode(),
                 Err(abi_failure(
@@ -230,7 +275,7 @@ impl JsonlPluginGuest {
 impl AbiGuest for JsonlPluginGuest {
     fn request(&mut self, request: &[u8]) -> Vec<u8> {
         match decode_jsonl_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
-            Ok(decoded) => self.handle(decoded),
+            Ok(decoded) => self.handle::<JsonlGuestCodec>(decoded),
             Err(error) => serde_json::to_vec(&RuntimeError::new(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 "abi.guest",
@@ -241,7 +286,7 @@ impl AbiGuest for JsonlPluginGuest {
     }
 }
 
-type ConfiguredPluginFactory =
+pub(super) type ConfiguredPluginFactory =
     Box<dyn FnOnce(Value) -> RuntimeResult<LoadedPlugin> + Send + 'static>;
 
 pub struct ConfiguredJsonlPluginGuest {
@@ -275,7 +320,7 @@ impl AbiGuest for ConfiguredJsonlPluginGuest {
                 }
             };
         if let Some(plugin) = self.plugin.as_mut() {
-            return plugin.handle(decoded);
+            return plugin.handle::<JsonlGuestCodec>(decoded);
         }
         let request_id = decoded.request_id;
         let AnyWireRequest::Initialize(request) = decoded.request else {
@@ -307,7 +352,7 @@ impl AbiGuest for ConfiguredJsonlPluginGuest {
             .and_then(|factory| factory(config))
             .and_then(JsonlPluginGuest::new)
             .and_then(|mut plugin| {
-                let ack = plugin.initialize(request.hello)?;
+                let ack = plugin.initialize::<JsonlGuestCodec>(request.hello)?;
                 self.plugin = Some(plugin);
                 Ok(ack)
             });

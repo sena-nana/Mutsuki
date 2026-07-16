@@ -1,6 +1,7 @@
 mod abi_transport;
 mod actor;
 mod backend;
+mod binary;
 mod bootstrapper;
 mod capabilities;
 mod clients;
@@ -18,8 +19,11 @@ mod runtime_context;
 mod scheduler;
 mod worker;
 
-pub use abi_transport::{TransportJsonlRunner, TransportResourceProvider, TypedRequestTransport};
+pub use abi_transport::{
+    TransportJsonlRunner, TransportResourceProvider, TransportRunner, TypedRequestTransport,
+};
 pub use backend::{HostExtension, PluginBackend};
+pub use binary::{BinaryRunner, BinaryTransport};
 pub use bootstrapper::{NativeRunner, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{

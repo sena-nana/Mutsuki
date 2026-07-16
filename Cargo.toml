@@ -9,6 +9,7 @@ members = [
     "crates/mutsuki-runtime-benchmarks",
 ]
 resolver = "2"
+exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"

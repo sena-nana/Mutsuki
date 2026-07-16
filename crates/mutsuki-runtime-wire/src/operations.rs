@@ -160,6 +160,12 @@ pub enum AnyWireRequest {
     CreateCapability(CreateCapabilityRequest),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedWireRequest {
+    pub request_id: u64,
+    pub request: AnyWireRequest,
+}
+
 impl AnyWireRequest {
     pub const fn opcode(&self) -> Opcode {
         match self {

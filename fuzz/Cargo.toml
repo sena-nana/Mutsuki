@@ -1,0 +1,20 @@
+[package]
+name = "mutsuki-runtime-wire-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mutsuki-runtime-wire = { path = "../crates/mutsuki-runtime-wire" }
+serde_json = "1.0"
+
+[[bin]]
+name = "runtime_wire_binary"
+path = "fuzz_targets/runtime_wire_binary.rs"
+test = false
+doc = false
+bench = false

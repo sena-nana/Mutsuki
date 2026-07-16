@@ -10,6 +10,7 @@ csv.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-host = { path = "../mutsuki-runtime-host" }
+mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 mutsuki-runtime-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true

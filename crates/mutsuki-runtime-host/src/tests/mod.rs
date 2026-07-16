@@ -1,3 +1,4 @@
+mod binary;
 mod bootstrapper;
 mod helpers;
 mod host_runtime;

@@ -192,6 +192,11 @@ impl ProtocolHello {
         Self::for_codec(BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS)
     }
 
+    pub fn binary_with_limits(limits: WireLimits) -> Result<Self, WireCodecError> {
+        limits.validate()?;
+        Ok(Self::for_codec(BINARY_CODEC_ID, limits))
+    }
+
     pub fn debug_jsonl_with_limits(limits: WireLimits) -> Result<Self, WireCodecError> {
         limits.validate()?;
         Ok(Self::for_codec(DEBUG_JSONL_CODEC_ID, limits))
@@ -378,6 +383,8 @@ pub enum WireCodecError {
     InvalidFlags(u16),
     #[error("wire request id must be non-zero")]
     InvalidRequestId,
+    #[error("wire response does not match the typed request")]
+    ResponseMismatch,
     #[error("wire payload length mismatch: declared {declared}, actual {actual}")]
     PayloadLengthMismatch { declared: usize, actual: usize },
     #[error("large resource bytes must use ResourceRef: {actual} > {limit}")]

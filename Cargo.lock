@@ -70,6 +70,7 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",
+ "mutsuki-runtime-sdk",
  "mutsuki-runtime-wire",
  "serde",
  "serde_json",

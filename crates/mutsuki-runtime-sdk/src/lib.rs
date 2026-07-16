@@ -27,9 +27,11 @@ mod portability;
 mod resource;
 
 pub use abi::{
-    ABI_BRIDGE_ID, ABI_CODEC_ID, ABI_ENTRY_SYMBOL, ABI_TRANSPORT_VERSION, AbiBuffer, AbiCallResult,
-    AbiGuest, AbiHostClient, AbiHostV1, AbiPluginV1, ConfiguredJsonlPluginGuest, JsonlPluginGuest,
-    dispatch_host_request,
+    ABI_BRIDGE_ID, ABI_CODEC_ID, ABI_ENTRY_SYMBOL, ABI_TRANSPORT_VERSION, ABI_V2_BRIDGE_ID,
+    ABI_V2_CODEC_ID, ABI_V2_ENTRY_SYMBOL, ABI_V2_TRANSPORT_VERSION, AbiBuffer, AbiCallResult,
+    AbiGuest, AbiHostClient, AbiHostClientV2, AbiHostV1, AbiHostV2, AbiPluginV1, AbiPluginV2,
+    BinaryPluginGuest, ConfiguredBinaryPluginGuest, ConfiguredJsonlPluginGuest, JsonlPluginGuest,
+    dispatch_binary_host_request, dispatch_host_request,
 };
 pub use backend::{ResourcePlanGateway, ResourceProviderGateway, ResourceRegistryGateway};
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};

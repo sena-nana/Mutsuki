@@ -323,9 +323,9 @@ impl PluginBuilder {
                 task_client_protocol: "mutsuki.task.v1".into(),
                 resource_client_protocol: "mutsuki.resource-plan.v1".into(),
                 codec_id: (deployment == PluginDeploymentKind::Abi)
-                    .then(|| crate::abi::ABI_CODEC_ID.into()),
+                    .then(|| crate::abi::ABI_V2_CODEC_ID.into()),
                 bridge_id: (deployment == PluginDeploymentKind::Abi)
-                    .then(|| crate::abi::ABI_BRIDGE_ID.into()),
+                    .then(|| crate::abi::ABI_V2_BRIDGE_ID.into()),
             });
         }
         if deployment == PluginDeploymentKind::Abi {
@@ -333,12 +333,12 @@ impl PluginBuilder {
                 .provides
                 .codecs
                 .iter()
-                .any(|codec| codec.codec_id == crate::abi::ABI_CODEC_ID)
+                .any(|codec| codec.codec_id == crate::abi::ABI_V2_CODEC_ID)
             {
                 self.provides.codecs.push(CodecDescriptor {
-                    codec_id: crate::abi::ABI_CODEC_ID.into(),
-                    media_type: "application/x-ndjson".into(),
-                    version: crate::abi::ABI_TRANSPORT_VERSION.to_string(),
+                    codec_id: crate::abi::ABI_V2_CODEC_ID.into(),
+                    media_type: "application/msgpack".into(),
+                    version: crate::abi::ABI_V2_TRANSPORT_VERSION.to_string(),
                     connection_scoped: true,
                 });
             }
@@ -346,12 +346,12 @@ impl PluginBuilder {
                 .provides
                 .bridges
                 .iter()
-                .any(|bridge| bridge.bridge_id == crate::abi::ABI_BRIDGE_ID)
+                .any(|bridge| bridge.bridge_id == crate::abi::ABI_V2_BRIDGE_ID)
             {
                 self.provides.bridges.push(BridgeDescriptor {
-                    bridge_id: crate::abi::ABI_BRIDGE_ID.into(),
+                    bridge_id: crate::abi::ABI_V2_BRIDGE_ID.into(),
                     deployment_kind: PluginDeploymentKind::Abi,
-                    codec_ids: vec![crate::abi::ABI_CODEC_ID.into()],
+                    codec_ids: vec![crate::abi::ABI_V2_CODEC_ID.into()],
                     drain_policy: "drain_and_swap".into(),
                 });
             }

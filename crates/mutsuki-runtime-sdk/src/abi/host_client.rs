@@ -13,7 +13,7 @@ use mutsuki_runtime_wire::{
 use crate::{ResourcePlanGateway, TaskSubmitter};
 
 use super::error::{abi_failure, wire_failure};
-use super::types::AbiHostV1;
+use super::types::{AbiHostV1, consume_call_result};
 
 #[derive(Clone, Copy)]
 pub struct AbiHostClient {
@@ -37,11 +37,9 @@ impl AbiHostClient {
             encode_jsonl_request(request_id, value, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
                 .map_err(wire_failure)?;
         let response = unsafe { callback(self.host.context, bytes.as_ptr(), bytes.len()) };
-        let response_bytes = unsafe { response.payload.as_slice() }.to_vec();
-        if let Some(release) = self.host.release {
-            unsafe { release(response.payload) };
-        }
-        if response.status != 0 {
+        let (ok, response_bytes) =
+            consume_call_result(response, self.host.release, "abi.v1.host_callback_contract")?;
+        if !ok {
             return Err(abi_failure(
                 "abi.host_callback_failed",
                 String::from_utf8_lossy(&response_bytes),

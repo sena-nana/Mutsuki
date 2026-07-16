@@ -156,6 +156,16 @@ where
     }
 }
 
+impl<R, W> crate::TypedRequestTransport for JsonlTransport<R, W>
+where
+    R: BufRead + Send + 'static,
+    W: Write + Send + 'static,
+{
+    fn request<T: WireRequest>(&self, request: &T) -> RuntimeResult<T::Response> {
+        JsonlTransport::request(self, request)
+    }
+}
+
 impl<R, W> JsonlBridge<R, W>
 where
     R: BufRead + Send + 'static,

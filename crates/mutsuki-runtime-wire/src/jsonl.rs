@@ -4,7 +4,9 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 
 use crate::operations::decode_any_wire_request;
-use crate::{AnyWireRequest, Opcode, WireCodecError, WireLimits, WireProtocolVersion, WireRequest};
+use crate::{
+    DecodedWireRequest, Opcode, WireCodecError, WireLimits, WireProtocolVersion, WireRequest,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
 pub struct JsonlRequestEnvelope {
@@ -35,12 +37,6 @@ struct RawJsonlRequestEnvelope {
     method: String,
     payload_len: u32,
     payload: Box<RawValue>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DecodedWireRequest {
-    pub request_id: u64,
-    pub request: AnyWireRequest,
 }
 
 pub fn encode_jsonl_request<R: WireRequest>(
