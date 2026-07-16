@@ -230,6 +230,7 @@ fn waiting_result(task: &Task) -> RunnerResult {
     let continuation_ref = format!("continuation:{}", task.task_id);
     RunnerResult {
         task_id: task.task_id.clone(),
+        output: None,
         deltas: Vec::new(),
         events: Vec::new(),
         tasks: vec![child],

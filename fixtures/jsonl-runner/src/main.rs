@@ -1,5 +1,10 @@
 use std::io::{self, BufRead, Write};
 
+use mutsuki_runtime_contracts::RuntimeError;
+use mutsuki_runtime_wire::{
+    DEFAULT_WIRE_LIMITS, JsonlRequestEnvelope, Opcode, ProtocolHello, ProtocolHelloAck,
+    encode_jsonl_response,
+};
 use serde_json::{Value, json};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,14 +16,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if line.trim().is_empty() {
             continue;
         }
-        let request: Value = serde_json::from_str(&line)?;
-        let id = request["id"].clone();
-        let method = request["method"].as_str().unwrap_or_default();
-        let response = match method {
-            "runner.run_batch" if fail => json!({
-                "id": id,
-                "ok": false,
-                "error": {
+        let request: JsonlRequestEnvelope = serde_json::from_str(&line)?;
+        let opcode = Opcode::from_u16(request.opcode)?;
+        let response = match opcode {
+            Opcode::PluginInitialize => {
+                let hello: ProtocolHello =
+                    serde_json::from_value(request.payload["hello"].clone())?;
+                let ack = ProtocolHelloAck {
+                    protocol: hello.protocol,
+                    codec_id: hello.codec_id,
+                    schema_revision: hello.schema_revision,
+                    max_frame_bytes: hello.max_frame_bytes,
+                    max_payload_bytes: hello.max_payload_bytes,
+                    max_in_flight_requests: hello.max_in_flight_requests,
+                    management_channel: hello.management_channel,
+                    feature_flags: hello.feature_flags,
+                };
+                encode_jsonl_response(request.request_id, opcode, Ok(&ack), DEFAULT_WIRE_LIMITS)?
+            }
+            Opcode::RunnerRunBatch if fail => {
+                let error: RuntimeError = serde_json::from_value(json!({
                     "code": "fixture.runner_failed",
                     "source": "fixture.runner",
                     "route": "runner.run_batch",
@@ -29,11 +46,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "plugin_id": "fixture.failing_process",
                         "runner_id": "fixture.failing_process.runner"
                     }
-                }
-            }),
-            "runner.run_batch" => {
+                }))?;
+                encode_jsonl_response::<Value>(
+                    request.request_id,
+                    opcode,
+                    Err(&error),
+                    DEFAULT_WIRE_LIMITS,
+                )?
+            }
+            Opcode::RunnerRunBatch => {
                 eprintln!("runner stderr token=secret-token");
-                let batch = &request["params"]["batch"];
+                let batch = &request.payload["batch"];
                 let results = batch["entries"]
                     .as_array()
                     .into_iter()
@@ -44,6 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "task_id": entry["task_id"],
                             "result": {
                                 "task_id": entry["task_id"],
+                                "output": null,
                                 "deltas": [],
                                 "events": [],
                                 "tasks": [],
@@ -57,39 +81,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         })
                     })
                     .collect::<Vec<_>>();
-                json!({
-                    "id": id,
-                    "ok": true,
-                    "result": {
-                        "batch_id": batch["batch_id"],
-                        "tick_id": batch["tick_id"],
-                        "results": results,
-                        "metadata": []
-                    }
-                })
+                let completion = json!({
+                    "batch_id": batch["batch_id"],
+                    "tick_id": batch["tick_id"],
+                    "results": results,
+                    "metadata": []
+                });
+                encode_jsonl_response(
+                    request.request_id,
+                    opcode,
+                    Ok(&completion),
+                    DEFAULT_WIRE_LIMITS,
+                )?
             }
-            "runner.cancel" => json!({ "id": id, "ok": true, "result": null }),
-            "runner.dispose" => {
-                let response = json!({ "id": id, "ok": true, "result": null });
-                writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
+            Opcode::RunnerCancel => {
+                encode_jsonl_response(request.request_id, opcode, Ok(&()), DEFAULT_WIRE_LIMITS)?
+            }
+            Opcode::RunnerDispose => {
+                let response = encode_jsonl_response(
+                    request.request_id,
+                    opcode,
+                    Ok(&()),
+                    DEFAULT_WIRE_LIMITS,
+                )?;
+                stdout.write_all(&response)?;
                 stdout.flush()?;
                 break;
             }
-            _ => json!({
-                "id": id,
-                "ok": false,
-                "error": {
+            _ => {
+                let error: RuntimeError = serde_json::from_value(json!({
                     "code": "test.unsupported",
                     "source": "test",
-                    "route": method,
+                    "route": request.method,
                     "lost_capability": null,
                     "recovery": null,
                     "cause": null,
                     "evidence": {}
-                }
-            }),
+                }))?;
+                encode_jsonl_response::<Value>(
+                    request.request_id,
+                    opcode,
+                    Err(&error),
+                    DEFAULT_WIRE_LIMITS,
+                )?
+            }
         };
-        writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
+        stdout.write_all(&response)?;
         stdout.flush()?;
     }
     Ok(())

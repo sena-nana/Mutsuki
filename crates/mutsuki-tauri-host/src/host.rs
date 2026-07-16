@@ -1136,6 +1136,7 @@ mod supervisor_tests {
                     status: Some(TaskStatus::Completed),
                     outcome: Some(TaskOutcome::Completed {
                         task_id: handle.task_id.clone(),
+                        output: None,
                         output_ref: None,
                     }),
                 })
@@ -1230,6 +1231,7 @@ mod supervisor_tests {
                     status: Some(TaskStatus::Completed),
                     outcome: Some(TaskOutcome::Completed {
                         task_id: handle.task_id.clone(),
+                        output: None,
                         output_ref: None,
                     }),
                 })
@@ -1268,6 +1270,7 @@ mod supervisor_tests {
             status: Some(TaskStatus::Completed),
             outcome: Some(TaskOutcome::Completed {
                 task_id: handle.task_id.clone(),
+                output: None,
                 output_ref: None,
             }),
         }]);

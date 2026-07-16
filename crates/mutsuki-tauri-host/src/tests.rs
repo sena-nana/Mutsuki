@@ -1194,6 +1194,7 @@ impl Runner for WaitingRunner {
                 let continuation_ref = format!("continuation:{}", task.task_id);
                 let result = RunnerResult {
                     task_id: task.task_id.clone(),
+                    output: None,
                     deltas: Vec::new(),
                     events: Vec::new(),
                     tasks: vec![child],
