@@ -6,3 +6,4 @@
 /.mutsuki-qqbot/
 /.env
 *.secret.toml
+__pycache__/
