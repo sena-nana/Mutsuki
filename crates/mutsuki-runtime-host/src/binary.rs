@@ -10,9 +10,10 @@ use mutsuki_runtime_core::{
 };
 use mutsuki_runtime_wire::{
     CancelRunnerRequest, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, InitializeRequest,
-    ProtocolHello, RunBatchRequest, WireLimits, WireRequest, decode_binary_response,
-    encode_binary_request,
+    ProtocolHello, ProtocolHelloAck, RunBatchRequest, WireLimits, WireRequest,
+    decode_binary_response, encode_binary_request,
 };
+use serde_json::Value;
 
 use self::frame::BinaryFrameCodec;
 use crate::multiplexer::{RequestMultiplexer, transport_failure};
@@ -25,7 +26,7 @@ pub struct BinaryTransport<R, W> {
 
 struct BinaryBridge<R, W> {
     multiplexer: RequestMultiplexer<R, W>,
-    handshake: Mutex<Option<Result<(), RuntimeError>>>,
+    handshake: Mutex<Option<Result<ProtocolHelloAck, RuntimeError>>>,
     limits: Mutex<WireLimits>,
 }
 
@@ -85,6 +86,10 @@ where
         self.bridge.request(request)
     }
 
+    pub fn initialize(&self, config: Option<Value>) -> RuntimeResult<ProtocolHelloAck> {
+        self.bridge.initialize(config)
+    }
+
     pub fn into_inner(self) -> (R, W) {
         match Arc::try_unwrap(self.bridge) {
             Ok(bridge) => bridge.multiplexer.into_inner(),
@@ -109,9 +114,12 @@ where
     W: Write + Send + 'static,
 {
     fn request<T: WireRequest>(&self, request: &T) -> RuntimeResult<T::Response> {
-        if T::OPCODE != mutsuki_runtime_wire::Opcode::PluginInitialize {
-            self.ensure_initialized()?;
+        if T::OPCODE == mutsuki_runtime_wire::Opcode::PluginInitialize {
+            return Err(transport_failure(
+                "use BinaryTransport::initialize to establish handshake state",
+            ));
         }
+        self.ensure_initialized()?;
         self.request_without_handshake(request)
     }
 
@@ -121,15 +129,39 @@ where
             .lock()
             .map_err(|_| transport_failure("handshake lock poisoned"))?;
         if let Some(result) = handshake.as_ref() {
-            return result.clone().map_err(RuntimeFailure::new);
+            return result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|error| RuntimeFailure::new(error.clone()));
         }
+        self.initialize_locked(&mut handshake, None).map(|_| ())
+    }
+
+    fn initialize(&self, config: Option<Value>) -> RuntimeResult<ProtocolHelloAck> {
+        let mut handshake = self
+            .handshake
+            .lock()
+            .map_err(|_| transport_failure("handshake lock poisoned"))?;
+        if handshake.is_some() {
+            return Err(transport_failure(
+                "binary transport handshake is already initialized",
+            ));
+        }
+        self.initialize_locked(&mut handshake, config)
+    }
+
+    fn initialize_locked(
+        &self,
+        handshake: &mut Option<Result<ProtocolHelloAck, RuntimeError>>,
+        config: Option<Value>,
+    ) -> RuntimeResult<ProtocolHelloAck> {
         let limits = self.current_limits()?;
         let hello = ProtocolHello::binary_with_limits(limits)
             .map_err(|error| transport_failure(&error.to_string()))?;
         let result = self
             .request_without_handshake(&InitializeRequest {
                 hello: hello.clone(),
-                config: None,
+                config,
             })
             .and_then(|ack| {
                 ack.validate_for(&hello)
@@ -140,7 +172,8 @@ where
                     max_in_flight_requests: ack.max_in_flight_requests as usize,
                     management_reserved_requests: ack.management_reserved_requests as usize,
                     ..limits
-                })
+                })?;
+                Ok(ack)
             });
         if let Err(error) = &result {
             self.multiplexer.fail(error.error().clone());
@@ -148,7 +181,7 @@ where
         *handshake = Some(
             result
                 .as_ref()
-                .map(|_| ())
+                .cloned()
                 .map_err(|error| error.error().clone()),
         );
         result
