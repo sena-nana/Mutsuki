@@ -1,6 +1,6 @@
 # Mutsuki Release Set
 
-`releases/mutsuki-0.1-alpha-1.toml` 是当前唯一 active release set，也是 Mutsuki
+`releases/mutsuki-0.1-alpha-2.toml` 是当前唯一 active release set，也是 Mutsuki
 组合 revision、Runtime Wire schema、语言版本、部署支持范围和 capability maturity 的机器可读
 事实源。产品配置、账号和 secret 不属于 release manifest。
 
@@ -40,3 +40,11 @@ active 验证范围。
 `report` 检查每个 revision 在本地 Git 对象中存在、下游 manifest 使用 release set pin，并核对 Python
 Runtime Wire mirror 的 Core revision/schema。`materialize` 可在空目录从远端精确重建同一组合，避免依赖兄弟
 仓库工作树状态。
+
+## 当前升级记录
+
+`mutsuki-0.1-alpha-2` 仅将 DistributedHost 从 `d418f750` 升级到 `99c0e848`，纳入单 Controller
+Clustered MVP 的断线、脉冲、取消安全和内容落盘修复；Core、Link、ServiceHost、插件、桌面与 Python
+revision 均保持不变。该升级不改变外部配置 schema 或 capability maturity：distributed disabled 与
+local-observable 继续 active，clustered 继续 candidate，clustered production 继续 unsupported。
+`mutsuki-0.1-alpha-1` 已转为 unsupported，不再作为产品 pin。

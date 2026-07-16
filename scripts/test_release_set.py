@@ -11,7 +11,7 @@ class ReleaseSetTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(__file__).resolve().parents[1]
         self.release = release_set.load_release(
-            self.root / "releases/mutsuki-0.1-alpha-1.toml"
+            release_set.discover_active(self.root / "releases")
         )
 
     def test_active_manifest_and_product_lock_are_coherent(self) -> None:
@@ -49,6 +49,16 @@ class ReleaseSetTests(unittest.TestCase):
             changed = release_set.sync_workspace(self.release, workspace, update_locks=False)
             self.assertIn(manifest.parent, changed)
             self.assertIn(service.revision, manifest.read_text(encoding="utf-8"))
+
+    def test_deployment_revision_drift_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            deployments = Path(directory)
+            (deployments / "stale.toml").write_text(
+                '[external_service]\nrevision = "0000000000000000000000000000000000000000"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(release_set.ReleaseSetError):
+                release_set.validate_deployment_pins(self.release, deployments)
 
 
 if __name__ == "__main__":

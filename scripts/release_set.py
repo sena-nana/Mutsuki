@@ -132,11 +132,29 @@ def validate_lock_core(release: ReleaseSet, lockfile: Path) -> None:
         )
 
 
+def validate_deployment_pins(release: ReleaseSet, deployments_dir: Path) -> None:
+    expected = release.by_id["distributed_host"].revision
+    for deployment in sorted(deployments_dir.glob("*.toml")):
+        try:
+            document = tomllib.loads(deployment.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise ReleaseSetError(f"cannot read deployment {deployment}: {error}") from error
+        external_service = document.get("external_service")
+        if not isinstance(external_service, dict):
+            continue
+        revision = external_service.get("revision")
+        if revision != expected:
+            raise ReleaseSetError(
+                f"{deployment} pins distributed_host at {revision}, expected {expected}"
+            )
+
+
 def validate_active_set(release: ReleaseSet, root: Path) -> None:
     if release.status == "active" and discover_active(release.path.parent) != release.path:
         raise ReleaseSetError(f"{release.path} is not the unique active release")
     validate_manifest_pins(release, root / "Cargo.toml")
     validate_lock_core(release, root / "Cargo.lock")
+    validate_deployment_pins(release, root / "deploy/distribution")
 
 
 def repository_path(workspace_root: Path, repository: Repository) -> Path:
