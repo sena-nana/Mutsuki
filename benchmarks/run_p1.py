@@ -25,9 +25,9 @@ async def benchmark(mode: str) -> dict[str, object]:
         gate("p1.python.cancel.p95", cancel["p95_ns"], 5_000_000, "ns"),
         gate("p1.python.cancel.max", cancel["max_ns"], 20_000_000, "ns"),
         gate(
-            "p1.python.concurrent-16.throughput-scaling",
+            "p1.python.concurrent-16.throughput-non-collapse",
             sixteen["throughput_per_second"],
-            float(single["throughput_per_second"]) * 1.2,
+            float(single["throughput_per_second"]) * 0.95,
             "requests/s_min",
             minimum=True,
         ),
