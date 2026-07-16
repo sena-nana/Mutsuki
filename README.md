@@ -1,7 +1,7 @@
 # MutsukiBotTemplate
 
 当前兼容组合由 [Mutsuki Release Set](docs/release-sets.md) 管理；机器可读 active manifest 位于
-`releases/mutsuki-0.1-alpha-2.toml`。构建前可运行
+`releases/mutsuki-0.1-alpha-3.toml`。构建前可运行
 `python3 scripts/release_set.py validate --root .`，确认所有直接/传递依赖只解析到 active Core revision。
 
 配置驱动、实现中立的 Mutsuki Bot 产品装配器。`mutsuki-bot` 只加载 ServiceHost 配置、

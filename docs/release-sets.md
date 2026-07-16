@@ -1,6 +1,6 @@
 # Mutsuki Release Set
 
-`releases/mutsuki-0.1-alpha-2.toml` 是当前唯一 active release set，也是 Mutsuki
+`releases/mutsuki-0.1-alpha-3.toml` 是当前唯一 active release set，也是 Mutsuki
 组合 revision、Runtime Wire schema、语言版本、部署支持范围和 capability maturity 的机器可读
 事实源。产品配置、账号和 secret 不属于 release manifest。
 
@@ -23,7 +23,6 @@ active 验证范围。
 3. 在 BotTemplate 更新直接 pins，运行 `cargo update`，再执行：
 
    ```text
-   python3 -m unittest discover -s scripts -p 'test_*.py'
    python3 scripts/release_set.py --manifest <candidate> validate --root .
    python3 scripts/release_set.py --manifest <candidate> report --workspace-root .. --output target/release-set-report.json
    cargo metadata --locked
@@ -34,14 +33,31 @@ active 验证范围。
 
 4. CI 从 manifest 的远端 SHA 创建 clean checkout，重复 Rust、Python 与产品 smoke。报告 artifact 中每个
    repository 都必须为 `ok: true`，BotTemplate 的 Cargo metadata 只能出现 manifest 指定的一个 Core source。
-5. 将旧 active 改为 `unsupported`，candidate 改为 `active`，提交升级说明。任何缺失 revision、schema
-   不一致、多个 Core source 或失败 smoke 都阻止激活。
+5. 将旧 active 改为 `unsupported`，candidate 改为 `active`，再运行默认 active 校验和脚本测试：
+
+   ```text
+   python3 -m unittest discover -s scripts -p 'test_*.py'
+   python3 scripts/release_set.py validate --root .
+   ```
+
+   提交升级说明。任何缺失 revision、schema 不一致、多个 Core source 或失败 smoke 都阻止激活。
 
 `report` 检查每个 revision 在本地 Git 对象中存在、下游 manifest 使用 release set pin，并核对 Python
 Runtime Wire mirror 的 Core revision/schema。`materialize` 可在空目录从远端精确重建同一组合，避免依赖兄弟
 仓库工作树状态。
 
 ## 当前升级记录
+
+`mutsuki-0.1-alpha-3` 完成 Epic #30 Runtime Wire 升级：统一 18 个 typed opcode，加入请求多路复用、
+取消与重复/迟到响应失败语义，并以固定帧头 MessagePack 和 native ABI v2 作为生产默认。ServiceHost
+按 manifest 精确选择 ABI，动态库加载移出异步执行器；Python kit 使用同一组跨语言 golden vectors。
+JSONL 在 Core 记录的迁移窗口内保留为诊断和兼容格式，旧 JSON RPC 不再用于新调用方。
+
+升级顺序为 Core、ServiceHost、StdPlugins，再到 BotPlugins 与其余消费者，最后更新本模板。四阶段
+Rust 性能门槛分别 16/16、5/5、11/11、3/3 通过，Python 46/46 通过；远端 materialize 的九个
+repository revision 全部一致。部署 maturity 不变：distributed disabled 与 local-observable 继续
+active，clustered 继续 candidate，clustered production 继续 unsupported。`mutsuki-0.1-alpha-2`
+已转为 unsupported。
 
 `mutsuki-0.1-alpha-2` 仅将 DistributedHost 从 `d418f750` 升级到 `99c0e848`，纳入单 Controller
 Clustered MVP 的断线、脉冲、取消安全和内容落盘修复；Core、Link、ServiceHost、插件、桌面与 Python
