@@ -69,9 +69,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.13.0"
+version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "block-buffer"
@@ -977,7 +977,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=36f123a677050b4715b9d3053532245f082ca4ab#36f123a677050b4715b9d3053532245f082ca4ab"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
 dependencies = [
  "serde",
  "serde_json",
@@ -986,7 +986,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=36f123a677050b4715b9d3053532245f082ca4ab#36f123a677050b4715b9d3053532245f082ca4ab"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -996,12 +996,13 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=36f123a677050b4715b9d3053532245f082ca4ab#36f123a677050b4715b9d3053532245f082ca4ab"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
 dependencies = [
  "crossbeam-channel",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
+ "mutsuki-runtime-wire",
  "serde",
  "serde_json",
 ]
@@ -1009,7 +1010,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=36f123a677050b4715b9d3053532245f082ca4ab#36f123a677050b4715b9d3053532245f082ca4ab"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -1021,7 +1022,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=36f123a677050b4715b9d3053532245f082ca4ab#36f123a677050b4715b9d3053532245f082ca4ab"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1029,9 +1030,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-runtime-wire"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d605333516753a797ca7e9971d097ac3e0de0c59#d605333516753a797ca7e9971d097ac3e0de0c59"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "dirs",
  "serde",
@@ -1043,7 +1056,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
@@ -1055,7 +1068,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -1068,7 +1081,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -1079,7 +1092,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1091,7 +1104,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -1104,7 +1117,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a5b763ac1cad026b66f0b8d526cc8dd58ee74409#a5b763ac1cad026b66f0b8d526cc8dd58ee74409"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=a48a5248289e91d517c5b3e84e56221a3f71a690#a48a5248289e91d517c5b3e84e56221a3f71a690"
 dependencies = [
  "anyhow",
  "futures",
@@ -1113,6 +1126,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
+ "mutsuki-runtime-wire",
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",
@@ -1166,6 +1180,15 @@ name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "once_cell"
@@ -1340,9 +1363,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1352,9 +1375,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.15"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db"
+checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -1382,12 +1405,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rusqlite"
 version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
 dependencies = [
- "bitflags 2.13.0",
+ "bitflags 2.13.1",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
@@ -1401,7 +1443,7 @@ version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
 dependencies = [
- "bitflags 2.13.0",
+ "bitflags 2.13.1",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -1557,9 +1599,9 @@ dependencies = [
 
 [[package]]
 name = "simd-adler32"
-version = "0.3.9"
+version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
+checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
 
 [[package]]
 name = "slab"
@@ -1620,9 +1662,9 @@ checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
 
 [[package]]
 name = "syn"
-version = "2.0.118"
+version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
+checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2015,9 +2057,9 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "8.0.4"
+version = "8.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48d7cd18d4acb58fb3cdfe9ea54e6cd96a4e7d4cc45c56338b236e82dad47248"
+checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
 dependencies = [
  "libc",
 ]
@@ -2320,6 +2362,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
