@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "issue": 30,
+  "mode": "full",
+  "generated_unix_seconds": 1784220768,
+  "command": "target/release/runtime_wire_p3 full --output target/mutsuki-benchmarks/issue30-final-p3.json",
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_parallelism": 10,
+    "rust_version": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "commit": "f56489ba9fa41bee9742fcb8474a46fcb41f19b8",
+    "dirty": false,
+    "profile": "release"
+  },
+  "cases": [
+    {
+      "id": "wire/p3/binary/reject/malformed-messagepack",
+      "category": "wire_p3_rejection",
+      "dimensions": {
+        "codec": "binary",
+        "failure": "malformed-messagepack",
+        "phase": "p3"
+      },
+      "iterations": 100000,
+      "units": 100000,
+      "elapsed_ns": 41634000,
+      "ns_per_unit": 416.34,
+      "throughput_per_second": 2401883.076331844,
+      "allocations": {
+        "allocations": 600000,
+        "deallocations": 600000,
+        "allocated_bytes": 43900000,
+        "deallocated_bytes": 43900000,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 288
+      },
+      "counters": {
+        "input_bytes": 56,
+        "rejected": 100000
+      }
+    },
+    {
+      "id": "wire/p3/binary/reject/truncated-frame",
+      "category": "wire_p3_rejection",
+      "dimensions": {
+        "codec": "binary",
+        "failure": "truncated-frame",
+        "phase": "p3"
+      },
+      "iterations": 100000,
+      "units": 100000,
+      "elapsed_ns": 891333,
+      "ns_per_unit": 8.91333,
+      "throughput_per_second": 112191515.40445602,
+      "allocations": {
+        "allocations": 0,
+        "deallocations": 0,
+        "allocated_bytes": 0,
+        "deallocated_bytes": 0,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 0
+      },
+      "counters": {
+        "input_bytes": 55,
+        "rejected": 100000
+      }
+    },
+    {
+      "id": "wire/p3/binary/reject/oversized-prefix",
+      "category": "wire_p3_rejection",
+      "dimensions": {
+        "codec": "binary",
+        "failure": "oversized-prefix",
+        "phase": "p3"
+      },
+      "iterations": 100000,
+      "units": 100000,
+      "elapsed_ns": 299959,
+      "ns_per_unit": 2.99959,
+      "throughput_per_second": 333378895.1156658,
+      "allocations": {
+        "allocations": 0,
+        "deallocations": 0,
+        "allocated_bytes": 0,
+        "deallocated_bytes": 0,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 0
+      },
+      "counters": {
+        "input_bytes": 4,
+        "rejected": 100000
+      }
+    }
+  ],
+  "gates": [
+    {
+      "name": "p3.wire.p3.binary.reject.malformed-messagepack.bounded-latency",
+      "kind": "bounded_rejection",
+      "passed": true,
+      "actual": 416.34,
+      "limit": 50000.0,
+      "unit": "ns/frame"
+    },
+    {
+      "name": "p3.wire.p3.binary.reject.truncated-frame.bounded-latency",
+      "kind": "bounded_rejection",
+      "passed": true,
+      "actual": 8.91333,
+      "limit": 50000.0,
+      "unit": "ns/frame"
+    },
+    {
+      "name": "p3.wire.p3.binary.reject.oversized-prefix.bounded-latency",
+      "kind": "bounded_rejection",
+      "passed": true,
+      "actual": 2.99959,
+      "limit": 50000.0,
+      "unit": "ns/frame"
+    }
+  ],
+  "passed": true
+}
