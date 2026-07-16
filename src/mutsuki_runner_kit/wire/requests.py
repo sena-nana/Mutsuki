@@ -4,7 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from mutsuki_runner_kit.contracts.batch import WorkBatch
-from mutsuki_runner_kit.contracts.codec import as_str, field_value, from_json_dict
+from mutsuki_runner_kit.contracts.codec import (
+    JsonValue,
+    as_json_value,
+    as_str,
+    field_value,
+    from_json_dict,
+)
 from mutsuki_runner_kit.contracts.resource import (
     CommandBatch,
     CommandPlan,
@@ -19,6 +25,7 @@ from mutsuki_runner_kit.wire.protocol import ProtocolHello, WireProtocolFailure
 @dataclass(frozen=True)
 class InitializeRequest:
     hello: ProtocolHello
+    config: JsonValue = None
 
 
 @dataclass(frozen=True)
@@ -78,7 +85,8 @@ RunnerWireRequest = (
 def decode_request(opcode: Opcode, payload: Mapping[str, object]) -> RunnerWireRequest:
     if opcode is Opcode.PLUGIN_INITIALIZE:
         return InitializeRequest(
-            ProtocolHello.from_mapping(_mapping_field(payload, "hello"))
+            hello=ProtocolHello.from_mapping(_mapping_field(payload, "hello")),
+            config=as_json_value(payload.get("config")),
         )
     if opcode is Opcode.RUNNER_RUN_BATCH:
         return RunBatchRequest(
@@ -130,4 +138,3 @@ def _mapping_field(payload: Mapping[str, object], name: str) -> Mapping[str, obj
 
 def _optional_str(value: object, name: str) -> str | None:
     return None if value is None else as_str(value, name)
-

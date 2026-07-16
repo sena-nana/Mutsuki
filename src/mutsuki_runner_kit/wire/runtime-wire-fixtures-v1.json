@@ -1,14 +1,298 @@
 {
-  "schema_revision":"mutsuki.runtime.wire/1.0.0",
-  "fixtures":[
-    {"type":"ProtocolHello","value":{"codec_id":"mutsuki.codec.typed-jsonl.v1","feature_flags":["typed_requests","out_of_order_responses","resource_ref_required_for_large_bytes"],"management_channel":true,"max_frame_bytes":8388608,"max_in_flight_requests":64,"max_payload_bytes":4194304,"protocol":{"major":1,"minor":0},"schema_revision":"mutsuki.runtime.wire/1.0.0"}},
-    {"type":"RunBatchRequest","value":{"runner_id":"fixture.runner","ctx":{"registry_generation":7,"current_step":11,"tick_id":"tick-11","batch_id":"batch-wire-1","executor_id":"executor:fixture","task_lease_ids":["lease-wire-1"],"entry_count":1,"invocation_id":"invocation-wire-1","cancel_token":"invocation-wire-1","deadline_tick":20,"cancel_requested":false},"batch":{"batch_id":"batch-wire-1","tick_id":"tick-11","batch_key":"fixture.runner","entries":[{"entry_id":"entry-wire-1","task_id":"task-wire-1","trace_id":"trace-wire-1","parent_id":null,"payload_index":0,"resource_requirement_indices":[],"cancel_index":0,"deadline_tick":20,"priority":0,"lane":"normal","ordering":{"type":"none"}}],"payload":{"layout":"row","payload":{"rows":[{"task_id":"task-wire-1","protocol_id":"mutsuki.fixture.echo","priority":0,"ready_at_step":null,"payload":{"message":"hello"},"input_refs":[],"output_ref":null,"continuation_ref":null,"target_binding_id":null,"lease_id":"lease-wire-1","trace_id":"trace-wire-1","expected_versions":[],"correlation_id":"corr-wire-1","idempotency_key":null,"runner_hint":null,"registry_generation":7,"required_surfaces":[],"dispatch_lane":"normal","ordering":{"type":"none"},"resource_requirements":[],"created_sequence":0}]}},"resource_plan":{"read_views":[],"write_locks":[],"parallel_groups":[],"serial_groups":[],"parallelism_limit":1,"version_checks":[],"deferred_writes":[],"conflict_entries":[]},"task_leases":[{"lease_id":"lease-wire-1","task_id":"task-wire-1","runner_id":"fixture.runner","executor_id":"executor:fixture","registry_generation":7,"acquired_at_step":11,"expires_at_step":21}]}}},
-    {"type":"CompletionBatch","value":{"batch_id":"batch-wire-1","tick_id":"tick-11","results":[{"entry_id":"entry-wire-1","task_id":"task-wire-1","result":{"task_id":"task-wire-1","output":null,"deltas":[],"events":[],"tasks":[],"effects":[],"values":[],"resources":[],"status":"completed","task_await":null},"error":null}],"metadata":[]}},
-    {"type":"CancelRunnerRequest","value":{"runner_id":"fixture.runner","invocation_id":"invocation-wire-1"}},
-    {"type":"DisposeRunnerRequest","value":{"runner_id":"fixture.runner"}},
-    {"type":"SubmitTaskBatchRequest","value":{"batch":{"batch_id":"submit-wire-1","tick_id":null,"tasks":[{"task_id":"task-wire-1","protocol_id":"mutsuki.fixture.echo","priority":0,"ready_at_step":null,"payload":{"message":"hello"},"input_refs":[],"output_ref":null,"continuation_ref":null,"target_binding_id":null,"lease_id":"lease-wire-1","trace_id":"trace-wire-1","expected_versions":[],"correlation_id":"corr-wire-1","idempotency_key":null,"runner_hint":null,"registry_generation":7,"required_surfaces":[],"dispatch_lane":"normal","ordering":{"type":"none"},"resource_requirements":[],"created_sequence":0}],"resource_plan":null}}},
-    {"type":"TaskHandle","value":{"task_id":"task-wire-1","protocol_id":"mutsuki.fixture.echo","target_binding_id":null,"cancel_policy":"cascade","trace_id":"trace-wire-1","correlation_id":"corr-wire-1"}},
-    {"type":"ResourceRef","value":{"ref_id":"resource-wire-1","resource_id":{"kind_id":"fixture.bytes","slot_id":"slot-wire-1","generation":7,"version":3},"semantic":"frozen_value","provider_id":"fixture.provider","resource_kind":"fixture.bytes","schema":"fixture.bytes.v1","version":3,"generation":7,"access":{"type":"blob","store_id":"fixture.store","key":"blob-wire-1"},"size_hint":1048576,"content_hash":"sha256:fixture","lifetime":"persistent","lease":null,"seal_state":"sealed"}},
-    {"type":"RuntimeError","value":{"code":"runtime.host_failed","source":"fixture","route":"fixture.route","lost_capability":null,"recovery":null,"cause":null,"evidence":{}}}
-  ]
+  "fixtures": [
+    {
+      "type": "ProtocolHello",
+      "value": {
+        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "feature_flags": [
+          "typed_requests",
+          "out_of_order_responses",
+          "resource_ref_required_for_large_bytes"
+        ],
+        "management_channel": true,
+        "max_frame_bytes": 8388608,
+        "max_in_flight_requests": 64,
+        "max_payload_bytes": 4194304,
+        "protocol": {
+          "major": 1,
+          "minor": 1
+        },
+        "schema_revision": "mutsuki.runtime.wire/1.1.0"
+      }
+    },
+    {
+      "type": "InitializeRequest",
+      "value": {
+        "config": {
+          "mode": "fixture"
+        },
+        "hello": {
+          "codec_id": "mutsuki.codec.typed-jsonl.v1",
+          "feature_flags": [
+            "typed_requests",
+            "out_of_order_responses",
+            "resource_ref_required_for_large_bytes"
+          ],
+          "management_channel": true,
+          "max_frame_bytes": 8388608,
+          "max_in_flight_requests": 64,
+          "max_payload_bytes": 4194304,
+          "protocol": {
+            "major": 1,
+            "minor": 1
+          },
+          "schema_revision": "mutsuki.runtime.wire/1.1.0"
+        }
+      }
+    },
+    {
+      "type": "ProtocolHelloAck",
+      "value": {
+        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "feature_flags": [
+          "typed_requests",
+          "out_of_order_responses",
+          "resource_ref_required_for_large_bytes"
+        ],
+        "management_channel": true,
+        "max_frame_bytes": 8388608,
+        "max_in_flight_requests": 64,
+        "max_payload_bytes": 4194304,
+        "protocol": {
+          "major": 1,
+          "minor": 1
+        },
+        "schema_revision": "mutsuki.runtime.wire/1.1.0"
+      }
+    },
+    {
+      "type": "RunBatchRequest",
+      "value": {
+        "batch": {
+          "batch_id": "batch-wire-1",
+          "batch_key": "fixture.runner",
+          "entries": [
+            {
+              "cancel_index": 0,
+              "deadline_tick": 20,
+              "entry_id": "entry-wire-1",
+              "lane": "normal",
+              "ordering": {
+                "type": "none"
+              },
+              "parent_id": null,
+              "payload_index": 0,
+              "priority": 0,
+              "resource_requirement_indices": [],
+              "task_id": "task-wire-1",
+              "trace_id": "trace-wire-1"
+            }
+          ],
+          "payload": {
+            "layout": "row",
+            "payload": {
+              "rows": [
+                {
+                  "continuation_ref": null,
+                  "correlation_id": "corr-wire-1",
+                  "created_sequence": 0,
+                  "dispatch_lane": "normal",
+                  "expected_versions": [],
+                  "idempotency_key": null,
+                  "input_refs": [],
+                  "lease_id": "lease-wire-1",
+                  "ordering": {
+                    "type": "none"
+                  },
+                  "output_ref": null,
+                  "payload": {
+                    "message": "hello"
+                  },
+                  "priority": 0,
+                  "protocol_id": "mutsuki.fixture.echo",
+                  "ready_at_step": null,
+                  "registry_generation": 7,
+                  "required_surfaces": [],
+                  "resource_requirements": [],
+                  "runner_hint": null,
+                  "target_binding_id": null,
+                  "task_id": "task-wire-1",
+                  "trace_id": "trace-wire-1"
+                }
+              ]
+            }
+          },
+          "resource_plan": {
+            "conflict_entries": [],
+            "deferred_writes": [],
+            "parallel_groups": [],
+            "parallelism_limit": 1,
+            "read_views": [],
+            "serial_groups": [],
+            "version_checks": [],
+            "write_locks": []
+          },
+          "task_leases": [
+            {
+              "acquired_at_step": 11,
+              "executor_id": "executor:fixture",
+              "expires_at_step": 21,
+              "lease_id": "lease-wire-1",
+              "registry_generation": 7,
+              "runner_id": "fixture.runner",
+              "task_id": "task-wire-1"
+            }
+          ],
+          "tick_id": "tick-11"
+        },
+        "ctx": {
+          "batch_id": "batch-wire-1",
+          "cancel_requested": false,
+          "cancel_token": "invocation-wire-1",
+          "current_step": 11,
+          "deadline_tick": 20,
+          "entry_count": 1,
+          "executor_id": "executor:fixture",
+          "invocation_id": "invocation-wire-1",
+          "registry_generation": 7,
+          "task_lease_ids": [
+            "lease-wire-1"
+          ],
+          "tick_id": "tick-11"
+        },
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "CompletionBatch",
+      "value": {
+        "batch_id": "batch-wire-1",
+        "metadata": [],
+        "results": [
+          {
+            "entry_id": "entry-wire-1",
+            "error": null,
+            "result": {
+              "deltas": [],
+              "effects": [],
+              "events": [],
+              "output": null,
+              "resources": [],
+              "status": "completed",
+              "task_await": null,
+              "task_id": "task-wire-1",
+              "tasks": [],
+              "values": []
+            },
+            "task_id": "task-wire-1"
+          }
+        ],
+        "tick_id": "tick-11"
+      }
+    },
+    {
+      "type": "CancelRunnerRequest",
+      "value": {
+        "invocation_id": "invocation-wire-1",
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "DisposeRunnerRequest",
+      "value": {
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "SubmitTaskBatchRequest",
+      "value": {
+        "batch": {
+          "batch_id": "submit-wire-1",
+          "resource_plan": null,
+          "tasks": [
+            {
+              "continuation_ref": null,
+              "correlation_id": "corr-wire-1",
+              "created_sequence": 0,
+              "dispatch_lane": "normal",
+              "expected_versions": [],
+              "idempotency_key": null,
+              "input_refs": [],
+              "lease_id": "lease-wire-1",
+              "ordering": {
+                "type": "none"
+              },
+              "output_ref": null,
+              "payload": {
+                "message": "hello"
+              },
+              "priority": 0,
+              "protocol_id": "mutsuki.fixture.echo",
+              "ready_at_step": null,
+              "registry_generation": 7,
+              "required_surfaces": [],
+              "resource_requirements": [],
+              "runner_hint": null,
+              "target_binding_id": null,
+              "task_id": "task-wire-1",
+              "trace_id": "trace-wire-1"
+            }
+          ],
+          "tick_id": null
+        }
+      }
+    },
+    {
+      "type": "TaskHandle",
+      "value": {
+        "cancel_policy": "cascade",
+        "correlation_id": "corr-wire-1",
+        "protocol_id": "mutsuki.fixture.echo",
+        "target_binding_id": null,
+        "task_id": "task-wire-1",
+        "trace_id": "trace-wire-1"
+      }
+    },
+    {
+      "type": "ResourceRef",
+      "value": {
+        "access": {
+          "key": "blob-wire-1",
+          "store_id": "fixture.store",
+          "type": "blob"
+        },
+        "content_hash": "sha256:fixture",
+        "generation": 7,
+        "lease": null,
+        "lifetime": "persistent",
+        "provider_id": "fixture.provider",
+        "ref_id": "resource-wire-1",
+        "resource_id": {
+          "generation": 7,
+          "kind_id": "fixture.bytes",
+          "slot_id": "slot-wire-1",
+          "version": 3
+        },
+        "resource_kind": "fixture.bytes",
+        "schema": "fixture.bytes.v1",
+        "seal_state": "sealed",
+        "semantic": "frozen_value",
+        "size_hint": 1048576,
+        "version": 3
+      }
+    },
+    {
+      "type": "RuntimeError",
+      "value": {
+        "cause": null,
+        "code": "runtime.host_failed",
+        "evidence": {},
+        "lost_capability": null,
+        "recovery": null,
+        "route": "fixture.route",
+        "source": "fixture"
+      }
+    }
+  ],
+  "schema_revision": "mutsuki.runtime.wire/1.1.0"
 }

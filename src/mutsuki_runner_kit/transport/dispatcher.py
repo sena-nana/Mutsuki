@@ -12,7 +12,8 @@ from mutsuki_runner_kit.contracts.resource import (
     SagaPlan,
 )
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
-from mutsuki_runner_kit.wire.protocol import ProtocolHelloAck, WireProtocolFailure
+from mutsuki_runner_kit.wire.handshake import ProtocolHelloAck
+from mutsuki_runner_kit.wire.protocol import WireProtocolFailure
 from mutsuki_runner_kit.wire.requests import (
     CancelRunnerRequest,
     CommandBatchRequest,

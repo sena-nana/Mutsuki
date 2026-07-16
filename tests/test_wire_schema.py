@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from importlib.resources import files
 from typing import cast
 
+import pytest
+
 from mutsuki_runner_kit.contracts.batch import CompletionBatch, TaskBatch
 from mutsuki_runner_kit.contracts.codec import JsonDict, JsonValue, from_json_dict, to_json_dict
 from mutsuki_runner_kit.contracts.errors import RuntimeError
@@ -16,15 +18,18 @@ from mutsuki_runner_kit.wire.generated import (
     OPCODE_METHODS,
     Opcode,
 )
+from mutsuki_runner_kit.wire.handshake import ProtocolHelloAck
 from mutsuki_runner_kit.wire.protocol import (
     BINARY_CODEC_ID,
     DEBUG_JSONL_CODEC_ID,
     SCHEMA_REVISION,
     ProtocolHello,
+    WireProtocolFailure,
 )
 from mutsuki_runner_kit.wire.requests import (
     CancelRunnerRequest,
     DisposeRunnerRequest,
+    InitializeRequest,
     RunBatchRequest,
     decode_request,
 )
@@ -59,6 +64,16 @@ def test_all_rust_generated_active_release_fixtures_roundtrip_in_python() -> Non
 
     hello = ProtocolHello.from_mapping(_mapping(fixtures["ProtocolHello"]))
     assert hello.to_dict() == fixtures["ProtocolHello"]
+
+    initialize_value = _mapping(fixtures["InitializeRequest"])
+    initialize = decode_request(Opcode.PLUGIN_INITIALIZE, initialize_value)
+    assert isinstance(initialize, InitializeRequest)
+    assert initialize.hello == hello
+    assert initialize.config == initialize_value["config"]
+
+    ack = ProtocolHelloAck.from_mapping(_mapping(fixtures["ProtocolHelloAck"]))
+    ack.validate_for(hello)
+    assert ack.to_dict() == fixtures["ProtocolHelloAck"]
 
     run_value = _mapping(fixtures["RunBatchRequest"])
     run = decode_request(Opcode.RUNNER_RUN_BATCH, run_value)
@@ -106,6 +121,22 @@ def test_additive_payload_fields_do_not_break_typed_request_decode() -> None:
     )
 
     assert request == CancelRunnerRequest("runner-a", "inv-1")
+
+
+def test_handshake_rejects_missing_management_support_and_expanded_limits() -> None:
+    hello = ProtocolHello.for_codec(DEBUG_JSONL_CODEC_ID)
+    without_management = ProtocolHello(
+        **{**hello.__dict__, "management_channel": False}
+    )
+    with pytest.raises(WireProtocolFailure, match="management channel"):
+        ProtocolHelloAck.negotiate(without_management, DEBUG_JSONL_CODEC_ID)
+
+    ack = ProtocolHelloAck.negotiate(hello, DEBUG_JSONL_CODEC_ID)
+    expanded = ProtocolHelloAck(
+        **{**ack.__dict__, "max_payload_bytes": hello.max_payload_bytes + 1}
+    )
+    with pytest.raises(WireProtocolFailure, match="expanded negotiated limits"):
+        expanded.validate_for(hello)
 
 
 def _mapping(value: object) -> Mapping[str, object] | JsonDict:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
+import gc
 import io
 import json
 import statistics
@@ -9,8 +11,11 @@ import sys
 import time
 import tracemalloc
 from dataclasses import replace
+from pathlib import Path
+from typing import cast
 
 import msgpack
+from wire_report import add_baseline_gates, load_report, repository_state, write_report
 
 from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.resource import (
@@ -72,31 +77,43 @@ def benchmark_codec(
     encoder = encode_jsonl_request if codec == "typed_jsonl" else encode_binary_request
     decoder = decode_jsonl_request if codec == "typed_jsonl" else decode_binary_request
 
+    encoded = encoder(1, Opcode.RUNNER_RUN_BATCH, payload)
+    decoder(encoded)
+    gc.collect()
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
     tracemalloc.start()
-    started = time.perf_counter_ns()
-    encoded = b""
-    for request_id in range(1, iterations + 1):
-        encoded = encoder(request_id, Opcode.RUNNER_RUN_BATCH, payload)
-    encode_ns = time.perf_counter_ns() - started
-    _, encode_peak = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
-    started = time.perf_counter_ns()
-    for _ in range(iterations):
-        decoder(encoded)
-    decode_ns = time.perf_counter_ns() - started
-    _, decode_peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    total_mb = len(encoded) * iterations / (1024 * 1024)
+    try:
+        encode_samples_ns: list[int] = []
+        for request_id in range(1, iterations + 1):
+            started = time.perf_counter_ns()
+            encoded = encoder(request_id, Opcode.RUNNER_RUN_BATCH, payload)
+            encode_samples_ns.append(time.perf_counter_ns() - started)
+        _, encode_peak = tracemalloc.get_traced_memory()
+        tracemalloc.reset_peak()
+        decode_samples_ns: list[int] = []
+        for _ in range(iterations):
+            started = time.perf_counter_ns()
+            decoder(encoded)
+            decode_samples_ns.append(time.perf_counter_ns() - started)
+        _, decode_peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+        if gc_was_enabled:
+            gc.enable()
+    encode_p50_ns = statistics.median(encode_samples_ns)
+    decode_p50_ns = statistics.median(decode_samples_ns)
+    frame_mib = len(encoded) / (1024 * 1024)
     return {
         "codec": codec,
         "batch_size": batch_size,
         "payload_bytes_per_entry": payload_bytes,
         "iterations": iterations,
         "frame_bytes": len(encoded),
-        "encode_us_p50": encode_ns / iterations / 1_000,
-        "decode_us_p50": decode_ns / iterations / 1_000,
-        "encode_mib_s": total_mb / (encode_ns / 1_000_000_000),
-        "decode_mib_s": total_mb / (decode_ns / 1_000_000_000),
+        "encode_us_p50": encode_p50_ns / 1_000,
+        "decode_us_p50": decode_p50_ns / 1_000,
+        "encode_mib_s": frame_mib / (encode_p50_ns / 1_000_000_000),
+        "decode_mib_s": frame_mib / (decode_p50_ns / 1_000_000_000),
         "encode_peak_bytes": encode_peak,
         "decode_peak_bytes": decode_peak,
     }
@@ -118,13 +135,9 @@ async def benchmark_cancel(iterations: int) -> dict[str, float | int]:
                 )
             )
         )
-        task = replace(
-            Task.new(f"cancel-task-{index}", "raw.input"), lease_id="lease-cancel"
-        )
+        task = replace(Task.new(f"cancel-task-{index}", "raw.input"), lease_id="lease-cancel")
         batch = multi_entry_batch((task,), lease_ids=("lease-cancel",))
-        ctx = runner_context(
-            lease_ids=("lease-cancel",), batch_id=batch.batch_id
-        )
+        ctx = runner_context(lease_ids=("lease-cancel",), batch_id=batch.batch_id)
         run = encode_jsonl_request(
             2,
             Opcode.RUNNER_RUN_BATCH,
@@ -156,9 +169,7 @@ async def benchmark_runner_reuse(iterations: int) -> dict[str, float | int]:
     samples_ms: list[float] = []
     for index in range(iterations):
         lease_id = f"reuse-lease-{index}"
-        task = replace(
-            Task.new(f"reuse-task-{index}", "raw.input"), lease_id=lease_id
-        )
+        task = replace(Task.new(f"reuse-task-{index}", "raw.input"), lease_id=lease_id)
         batch = multi_entry_batch((task,), lease_ids=(lease_id,))
         ctx = runner_context(lease_ids=(lease_id,), batch_id=batch.batch_id)
         started = time.perf_counter_ns()
@@ -210,7 +221,7 @@ def resource_descriptor_measurement() -> dict[str, int | float]:
     )
     descriptor = to_json_dict(resource)
     json_bytes = len(json.dumps(descriptor, separators=(",", ":")).encode())
-    msgpack_bytes = len(msgpack.packb(descriptor, use_bin_type=True))
+    msgpack_bytes = len(cast(bytes, msgpack.packb(descriptor, use_bin_type=True)))
     return {
         "referenced_resource_bytes": 1024 * 1024,
         "json_descriptor_bytes": json_bytes,
@@ -221,6 +232,10 @@ def resource_descriptor_measurement() -> dict[str, int | float]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
     cases: list[tuple[int, int, int]] = [
         (1, 1024, 100),
         (32, 1024, 30),
@@ -233,19 +248,23 @@ def main() -> None:
         for codec in ("typed_jsonl", "typed_msgpack")
         for batch, payload, iterations in cases
     ]
-    report = {
+    report: dict[str, object] = {
         "schema_revision": SCHEMA_REVISION,
         "core_revision": CORE_WIRE_REVISION,
         "python": sys.version,
         "platform": sys.platform,
+        "repository": repository_state(),
         "codec_results": codec_results,
         "cancel_latency": asyncio.run(benchmark_cancel(30)),
         "process_startup": benchmark_startup(20),
         "runner_reuse": asyncio.run(benchmark_runner_reuse(100)),
         "resource_descriptor": resource_descriptor_measurement(),
     }
-    sys.stdout.write(json.dumps(report, indent=2, sort_keys=True))
-    sys.stdout.write("\n")
+    if args.baseline is not None:
+        add_baseline_gates(report, load_report(args.baseline))
+    write_report(report, args.output)
+    if report.get("passed") is False:
+        raise SystemExit("runtime wire performance gates failed")
 
 
 if __name__ == "__main__":

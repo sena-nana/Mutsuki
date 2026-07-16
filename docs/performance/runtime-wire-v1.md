@@ -1,5 +1,24 @@
 # Runtime Wire v1 性能基线
 
+## Epic #30 P0 / schema 1.1
+
+P0 镜像对应 MutsukiCore `94f84aca8ebb88b14d0067930557563e7f5d9cf3`、schema
+`mutsuki.runtime.wire/1.1.0`。基准先预热 codec，并在逐次采样窗口暂停 GC 后取中位数；同机
+控制组来自本仓库上一已推送 revision 与 schema 1.0。命令：
+
+```text
+uv run python benchmarks/run_p0.py \
+  --baseline-ref d4ad12fb0a0a584391421568f32c037750a93ea6 \
+  --output artifacts/perf/issue30-p0-python-wire.json
+```
+
+原始结果记录 10 个 codec 场景和 41 个门禁。门禁逐项约束 encode/decode p50 与 peak
+allocation 不超过同机控制组的 1.5 倍，cancel p95 不超过 2 ms；最终结果必须为
+`passed=true`。控制组通过同一基准脚本和上一已推送 revision 的独立导出运行，避免把历史机器
+快照的调度噪声误判为代码退化。
+
+## schema 1.0 历史基线
+
 基线对应 MutsukiCore `d605333516753a797ca7e9971d097ac3e0de0c59`、schema
 `mutsuki.runtime.wire/1.0.0`。测试机为 macOS / Python 3.14.3；命令：
 

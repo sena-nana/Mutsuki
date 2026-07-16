@@ -9,7 +9,7 @@ from mutsuki_runner_kit.wire.schema import RUNTIME_WIRE_SCHEMA
 
 DEBUG_JSONL_CODEC_ID = "mutsuki.codec.typed-jsonl.v1"
 BINARY_CODEC_ID = "mutsuki.codec.typed-msgpack.v1"
-SCHEMA_REVISION = "mutsuki.runtime.wire/1.0.0"
+SCHEMA_REVISION = "mutsuki.runtime.wire/1.1.0"
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class WireProtocolVersion:
 
     @classmethod
     def current(cls) -> Self:
-        return cls(major=1, minor=0)
+        return cls(major=1, minor=1)
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, object]) -> Self:
@@ -141,40 +141,6 @@ class ProtocolHello:
             "management_channel": self.management_channel,
             "feature_flags": list(self.feature_flags),
         }
-
-
-@dataclass(frozen=True)
-class ProtocolHelloAck(ProtocolHello):
-    @classmethod
-    def negotiate(cls, hello: ProtocolHello, expected_codec: str) -> Self:
-        hello.protocol.ensure_compatible()
-        if hello.codec_id != expected_codec:
-            raise WireProtocolFailure(
-                "wire.codec_mismatch",
-                f"expected {expected_codec}, got {hello.codec_id}",
-            )
-        if hello.schema_revision != SCHEMA_REVISION:
-            raise WireProtocolFailure(
-                "wire.schema_mismatch",
-                f"expected {SCHEMA_REVISION}, got {hello.schema_revision}",
-            )
-        limits = DEFAULT_WIRE_LIMITS
-        return cls(
-            protocol=WireProtocolVersion.current(),
-            codec_id=expected_codec,
-            schema_revision=SCHEMA_REVISION,
-            max_frame_bytes=min(hello.max_frame_bytes, limits.max_frame_bytes),
-            max_payload_bytes=min(hello.max_payload_bytes, limits.max_payload_bytes),
-            max_in_flight_requests=min(
-                hello.max_in_flight_requests, limits.max_in_flight_requests
-            ),
-            management_channel=True,
-            feature_flags=tuple(
-                flag
-                for flag in ProtocolHello.for_codec(expected_codec).feature_flags
-                if flag in hello.feature_flags
-            ),
-        )
 
 
 class WireProtocolFailure(ValueError):
