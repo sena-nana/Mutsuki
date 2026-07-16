@@ -1,0 +1,641 @@
+{
+  "schema_version": 1,
+  "issue": 33,
+  "mode": "full",
+  "generated_unix_seconds": 1784216955,
+  "command": "target/release/runtime_wire_p2 full --output artifacts/perf/issue30-p2-wire.json",
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu_parallelism": 10,
+    "rust_version": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "commit": "b203ea2a1e17ddf239cee5a8b9d2b0028f3f707c",
+    "dirty": false,
+    "profile": "release"
+  },
+  "cases": [
+    {
+      "id": "wire/p2/jsonl/encode/entries-1",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "encode",
+        "entries": "1",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 1000,
+      "units": 1000,
+      "elapsed_ns": 5824958,
+      "ns_per_unit": 5824.958,
+      "throughput_per_second": 171675.05757123054,
+      "allocations": {
+        "allocations": 11000,
+        "deallocations": 11000,
+        "allocated_bytes": 10840000,
+        "deallocated_bytes": 10840000,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 5026
+      },
+      "counters": {
+        "frame_bytes": 1712
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/decode/entries-1",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "decode",
+        "entries": "1",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 1000,
+      "units": 1000,
+      "elapsed_ns": 10563792,
+      "ns_per_unit": 10563.792,
+      "throughput_per_second": 94662.9770824719,
+      "allocations": {
+        "allocations": 59000,
+        "deallocations": 59000,
+        "allocated_bytes": 8209000,
+        "deallocated_bytes": 8209000,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 8201
+      },
+      "counters": {
+        "frame_bytes": 1712
+      }
+    },
+    {
+      "id": "wire/p2/binary/encode/entries-1",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "encode",
+        "entries": "1",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 1000,
+      "units": 1000,
+      "elapsed_ns": 2866834,
+      "ns_per_unit": 2866.834,
+      "throughput_per_second": 348816.8481328183,
+      "allocations": {
+        "allocations": 10000,
+        "deallocations": 10000,
+        "allocated_bytes": 5406000,
+        "deallocated_bytes": 5406000,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 3366
+      },
+      "counters": {
+        "frame_bytes": 1318
+      }
+    },
+    {
+      "id": "wire/p2/binary/decode/entries-1",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "decode",
+        "entries": "1",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 1000,
+      "units": 1000,
+      "elapsed_ns": 7497333,
+      "ns_per_unit": 7497.333,
+      "throughput_per_second": 133380.76353284562,
+      "allocations": {
+        "allocations": 59000,
+        "deallocations": 59000,
+        "allocated_bytes": 6901000,
+        "deallocated_bytes": 6901000,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 6709
+      },
+      "counters": {
+        "frame_bytes": 1318
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/encode/entries-16",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "encode",
+        "entries": "16",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 300,
+      "units": 4800,
+      "elapsed_ns": 10441667,
+      "ns_per_unit": 2175.3472916666665,
+      "throughput_per_second": 459696.71317807777,
+      "allocations": {
+        "allocations": 4200,
+        "deallocations": 4200,
+        "allocated_bytes": 28912500,
+        "deallocated_bytes": 28912500,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 47673
+      },
+      "counters": {
+        "frame_bytes": 15928
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/decode/entries-16",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "decode",
+        "entries": "16",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 300,
+      "units": 4800,
+      "elapsed_ns": 16419125,
+      "ns_per_unit": 3420.6510416666665,
+      "throughput_per_second": 292342.0096990552,
+      "allocations": {
+        "allocations": 209100,
+        "deallocations": 209100,
+        "allocated_bytes": 29110200,
+        "deallocated_bytes": 29110200,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 92322
+      },
+      "counters": {
+        "frame_bytes": 15928
+      }
+    },
+    {
+      "id": "wire/p2/binary/encode/entries-16",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "encode",
+        "entries": "16",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 300,
+      "units": 4800,
+      "elapsed_ns": 3583750,
+      "ns_per_unit": 746.6145833333334,
+      "throughput_per_second": 1339379.1419602372,
+      "allocations": {
+        "allocations": 3900,
+        "deallocations": 3900,
+        "allocated_bytes": 13676400,
+        "deallocated_bytes": 13676400,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 29212
+      },
+      "counters": {
+        "frame_bytes": 12828
+      }
+    },
+    {
+      "id": "wire/p2/binary/decode/entries-16",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "decode",
+        "entries": "16",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 300,
+      "units": 4800,
+      "elapsed_ns": 13808000,
+      "ns_per_unit": 2876.6666666666665,
+      "throughput_per_second": 347624.56546929316,
+      "allocations": {
+        "allocations": 211200,
+        "deallocations": 211200,
+        "allocated_bytes": 27135900,
+        "deallocated_bytes": 27135900,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 89301
+      },
+      "counters": {
+        "frame_bytes": 12828
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/encode/entries-256",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "encode",
+        "entries": "256",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 30,
+      "units": 7680,
+      "elapsed_ns": 9842666,
+      "ns_per_unit": 1281.5971354166666,
+      "throughput_per_second": 780276.4007231374,
+      "allocations": {
+        "allocations": 540,
+        "deallocations": 540,
+        "allocated_bytes": 45251940,
+        "deallocated_bytes": 45251940,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 738050
+      },
+      "counters": {
+        "frame_bytes": 246054
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/decode/entries-256",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "decode",
+        "entries": "256",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 30,
+      "units": 7680,
+      "elapsed_ns": 18908083,
+      "ns_per_unit": 2461.9899739583334,
+      "throughput_per_second": 406175.4964794686,
+      "allocations": {
+        "allocations": 323790,
+        "deallocations": 323790,
+        "allocated_bytes": 46819530,
+        "deallocated_bytes": 46819530,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 1461859
+      },
+      "counters": {
+        "frame_bytes": 246054
+      }
+    },
+    {
+      "id": "wire/p2/binary/encode/entries-256",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "encode",
+        "entries": "256",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 30,
+      "units": 7680,
+      "elapsed_ns": 3943417,
+      "ns_per_unit": 513.4657552083333,
+      "throughput_per_second": 1947549.549033237,
+      "allocations": {
+        "allocations": 510,
+        "deallocations": 510,
+        "allocated_bytes": 21704940,
+        "deallocated_bytes": 21704940,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 461362
+      },
+      "counters": {
+        "frame_bytes": 199218
+      }
+    },
+    {
+      "id": "wire/p2/binary/decode/entries-256",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "decode",
+        "entries": "256",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 30,
+      "units": 7680,
+      "elapsed_ns": 17258209,
+      "ns_per_unit": 2247.162630208333,
+      "throughput_per_second": 445005.62022397574,
+      "allocations": {
+        "allocations": 330720,
+        "deallocations": 330720,
+        "allocated_bytes": 42948450,
+        "deallocated_bytes": 42948450,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 1415103
+      },
+      "counters": {
+        "frame_bytes": 199218
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/encode/entries-4096",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "encode",
+        "entries": "4096",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 3,
+      "units": 12288,
+      "elapsed_ns": 16126333,
+      "ns_per_unit": 1312.3643391927083,
+      "throughput_per_second": 761983.5209901718,
+      "allocations": {
+        "allocations": 66,
+        "deallocations": 66,
+        "allocated_bytes": 72781503,
+        "deallocated_bytes": 72781503,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 11903887
+      },
+      "counters": {
+        "frame_bytes": 3968000
+      }
+    },
+    {
+      "id": "wire/p2/jsonl/decode/entries-4096",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "jsonl",
+        "direction": "decode",
+        "entries": "4096",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 3,
+      "units": 12288,
+      "elapsed_ns": 29465375,
+      "ns_per_unit": 2397.8983561197915,
+      "throughput_per_second": 417031.8551859598,
+      "allocations": {
+        "allocations": 516267,
+        "deallocations": 516267,
+        "allocated_bytes": 75148644,
+        "deallocated_bytes": 75148644,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 23445476
+      },
+      "counters": {
+        "frame_bytes": 3968000
+      }
+    },
+    {
+      "id": "wire/p2/binary/encode/entries-4096",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "encode",
+        "entries": "4096",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 3,
+      "units": 12288,
+      "elapsed_ns": 6600292,
+      "ns_per_unit": 537.1331380208334,
+      "throughput_per_second": 1861735.8141124665,
+      "allocations": {
+        "allocations": 63,
+        "deallocations": 63,
+        "allocated_bytes": 34837110,
+        "deallocated_bytes": 34837110,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 7418074
+      },
+      "counters": {
+        "frame_bytes": 3223770
+      }
+    },
+    {
+      "id": "wire/p2/binary/decode/entries-4096",
+      "category": "wire_p2_codec",
+      "dimensions": {
+        "codec": "binary",
+        "direction": "decode",
+        "entries": "4096",
+        "phase": "p2",
+        "surface": "codec"
+      },
+      "iterations": 3,
+      "units": 12288,
+      "elapsed_ns": 27812458,
+      "ns_per_unit": 2263.3836263020835,
+      "throughput_per_second": 441816.3975294812,
+      "allocations": {
+        "allocations": 528432,
+        "deallocations": 528432,
+        "allocated_bytes": 68890797,
+        "deallocated_bytes": 68890797,
+        "retained_bytes_delta": 0,
+        "peak_bytes_delta": 22701327
+      },
+      "counters": {
+        "frame_bytes": 3223770
+      }
+    },
+    {
+      "id": "wire/p2/stdio/jsonl",
+      "category": "wire_p2_stdio",
+      "dimensions": {
+        "codec": "jsonl",
+        "in_flight": "16",
+        "phase": "p2",
+        "response_order": "reverse",
+        "surface": "stdio"
+      },
+      "iterations": 30,
+      "units": 480,
+      "elapsed_ns": 14759376,
+      "ns_per_unit": 30748.7,
+      "throughput_per_second": 32521.70010439466,
+      "allocations": {
+        "allocations": 115524,
+        "deallocations": 115503,
+        "allocated_bytes": 19020484,
+        "deallocated_bytes": 19014852,
+        "retained_bytes_delta": 5632,
+        "peak_bytes_delta": 173519
+      },
+      "counters": {}
+    },
+    {
+      "id": "wire/p2/stdio/binary",
+      "category": "wire_p2_stdio",
+      "dimensions": {
+        "codec": "binary",
+        "in_flight": "16",
+        "phase": "p2",
+        "response_order": "reverse",
+        "surface": "stdio"
+      },
+      "iterations": 30,
+      "units": 480,
+      "elapsed_ns": 9855581,
+      "ns_per_unit": 20532.460416666665,
+      "throughput_per_second": 48703.3691874685,
+      "allocations": {
+        "allocations": 77794,
+        "deallocations": 77783,
+        "allocated_bytes": 11828507,
+        "deallocated_bytes": 11823823,
+        "retained_bytes_delta": 4684,
+        "peak_bytes_delta": 142540
+      },
+      "counters": {}
+    },
+    {
+      "id": "wire/p2/native_abi/jsonl",
+      "category": "wire_p2_native_abi",
+      "dimensions": {
+        "codec": "jsonl",
+        "phase": "p2",
+        "surface": "native_abi"
+      },
+      "iterations": 20000,
+      "units": 20000,
+      "elapsed_ns": 441291,
+      "ns_per_unit": 22.06455,
+      "throughput_per_second": 45321567.85431835,
+      "allocations": {
+        "allocations": 20001,
+        "deallocations": 20000,
+        "allocated_bytes": 3000064,
+        "deallocated_bytes": 3000000,
+        "retained_bytes_delta": 64,
+        "peak_bytes_delta": 214
+      },
+      "counters": {
+        "frame_bytes": 150
+      }
+    },
+    {
+      "id": "wire/p2/native_abi/binary",
+      "category": "wire_p2_native_abi",
+      "dimensions": {
+        "codec": "binary",
+        "phase": "p2",
+        "surface": "native_abi"
+      },
+      "iterations": 20000,
+      "units": 20000,
+      "elapsed_ns": 526292,
+      "ns_per_unit": 26.3146,
+      "throughput_per_second": 38001717.67763903,
+      "allocations": {
+        "allocations": 20001,
+        "deallocations": 20000,
+        "allocated_bytes": 1120064,
+        "deallocated_bytes": 1120000,
+        "retained_bytes_delta": 64,
+        "peak_bytes_delta": 120
+      },
+      "counters": {
+        "frame_bytes": 56
+      }
+    }
+  ],
+  "gates": [
+    {
+      "name": "p2.binary.encode.entries-16.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 746.6145833333334,
+      "limit": 3263.0209374999995,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.binary.entries-16.frame-bytes",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 12828.0,
+      "limit": 15927.0,
+      "unit": "bytes"
+    },
+    {
+      "name": "p2.binary.decode.entries-16.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 2876.6666666666665,
+      "limit": 5130.9765625,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.binary.encode.entries-256.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 513.4657552083333,
+      "limit": 1922.3957031249997,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.binary.entries-256.frame-bytes",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 199218.0,
+      "limit": 246053.0,
+      "unit": "bytes"
+    },
+    {
+      "name": "p2.binary.decode.entries-256.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 2247.162630208333,
+      "limit": 3692.9849609375,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.binary.encode.entries-4096.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 537.1331380208334,
+      "limit": 1968.5465087890625,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.binary.entries-4096.frame-bytes",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 3223770.0,
+      "limit": 3967999.0,
+      "unit": "bytes"
+    },
+    {
+      "name": "p2.binary.decode.entries-4096.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 2263.3836263020835,
+      "limit": 3596.8475341796875,
+      "unit": "ns/entry"
+    },
+    {
+      "name": "p2.stdio.binary.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 20532.460416666665,
+      "limit": 38435.875,
+      "unit": "ns/request"
+    },
+    {
+      "name": "p2.native_abi.binary.latency",
+      "kind": "optimization",
+      "passed": true,
+      "actual": 26.3146,
+      "limit": 27.5806875,
+      "unit": "ns/request"
+    }
+  ],
+  "passed": true
+}
