@@ -12,7 +12,9 @@ use mutsuki_runtime_contracts::{
     WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_sdk::{AbiHostClient, LoadedPlugin, PluginBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{
+    AbiHostClient, AbiHostClientV2, LoadedPlugin, PluginBuilder, map_work_batch_entries,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -67,7 +69,15 @@ fn command_plugin(
         .build()
 }
 
-fn create_abi_plugin(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
+fn create_abi_plugin_v1(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
+    create_configured_abi_plugin(config)
+}
+
+fn create_abi_plugin_v2(_host: AbiHostClientV2, config: Value) -> RuntimeResult<LoadedPlugin> {
+    create_configured_abi_plugin(config)
+}
+
+fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
     let config: BotCommandConfig = serde_json::from_value(config)
         .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
     config
@@ -206,7 +216,8 @@ fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeEr
     runtime_error
 }
 
-mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v1!(create_abi_plugin);
+mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v1!(create_abi_plugin_v1);
+mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v2!(create_abi_plugin_v2);
 
 #[cfg(test)]
 mod tests {
