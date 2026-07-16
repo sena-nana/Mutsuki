@@ -9,8 +9,14 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 shared_memory = "0.12.4"
 
 [[bin]]
 name = "mutsuki-shared-memory-child"
 path = "src/bin/mutsuki-shared-memory-child.rs"
+
+[[bench]]
+name = "shared_memory_paths"
+harness = false

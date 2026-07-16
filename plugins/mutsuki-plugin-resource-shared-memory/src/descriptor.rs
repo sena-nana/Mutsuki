@@ -41,18 +41,25 @@ pub(crate) struct ResourceSpec<'a> {
     pub kind_id: &'a str,
     pub semantic: ResourceSemantic,
     pub schema: &'a str,
+    pub generation: u64,
     pub version: u64,
-    pub readonly: bool,
+    pub sealed: bool,
 }
 
 impl ResourceSpec<'_> {
-    pub fn resource_ref(self, ref_id: &str, mapping_name: &str, len: u64) -> ResourceRef {
+    pub fn resource_ref(
+        self,
+        ref_id: &str,
+        slot_id: &str,
+        mapping_name: &str,
+        len: u64,
+    ) -> ResourceRef {
         ResourceRef {
             ref_id: ref_id.into(),
             resource_id: ResourceId {
                 kind_id: self.kind_id.into(),
-                slot_id: ref_id.into(),
-                generation: 1,
+                slot_id: slot_id.into(),
+                generation: self.generation,
                 version: self.version,
             },
             semantic: self.semantic,
@@ -60,18 +67,21 @@ impl ResourceSpec<'_> {
             resource_kind: self.kind_id.into(),
             schema: self.schema.into(),
             version: self.version,
-            generation: 1,
+            generation: self.generation,
             access: ResourceAccess::SharedMemory {
                 name: mapping_name.into(),
                 offset: 0,
                 len,
-                readonly: self.readonly,
+                // Every published mapping is an immutable generation. Logical COW state remains
+                // writable through `WritePlan`, which creates a new generation rather than exposing
+                // mutable shared bytes.
+                readonly: true,
             },
             size_hint: Some(len),
             content_hash: None,
             lifetime: ResourceLifetime::Persistent,
             lease: None,
-            seal_state: if self.readonly {
+            seal_state: if self.sealed {
                 ResourceSealState::Sealed
             } else {
                 ResourceSealState::Writable

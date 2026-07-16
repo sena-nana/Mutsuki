@@ -22,12 +22,12 @@ fn plugin_builder() -> PluginBuilder {
             BLOB_KIND_ID,
             ResourceSemantic::FrozenValue,
             "mutsuki.resource.shared_memory.blob.v1",
-            &["collect", "get", "snapshot", "export"],
+            &["collect", "get", "mapped_view", "snapshot", "export"],
         ))
         .resource_type_descriptor(resource_type(
             SNAPSHOT_KIND_ID,
             ResourceSemantic::VersionedSnapshot,
             "mutsuki.resource.shared_memory.snapshot.v1",
-            &["collect", "get", "export"],
+            &["collect", "get", "mapped_view", "export"],
         ))
 }
