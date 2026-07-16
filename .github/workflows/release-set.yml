@@ -42,6 +42,17 @@ jobs:
         with:
           python-version: '3.13'
           enable-cache: false
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
       - name: Materialize exact release revisions
         run: python3 scripts/release_set.py materialize --workspace-root "$RUNNER_TEMP/mutsuki-release"
       - name: Verify Rust repositories
