@@ -1,5 +1,8 @@
 use serde_json::{Value, json};
 
+mod golden;
+pub use golden::{generated_binary_golden_json, generated_binary_golden_value};
+
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CancelPolicy, CompletionBatch, DispatchLane, EntryCompletion,
     OrderingRequirement, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,

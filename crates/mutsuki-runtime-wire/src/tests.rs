@@ -182,6 +182,43 @@ fn jsonl_and_binary_share_the_run_batch_golden_fixture() {
 }
 
 #[test]
+fn binary_golden_vectors_cover_every_opcode_request_and_response() {
+    let checked_in: Value =
+        serde_json::from_str(include_str!("../schema/runtime-wire-binary-golden-v1.json")).unwrap();
+    assert_eq!(checked_in, generated_binary_golden_value());
+
+    let operations = checked_in["operations"].as_array().unwrap();
+    let covered = operations
+        .iter()
+        .map(|operation| operation["opcode"].as_u64().unwrap() as u16)
+        .collect::<BTreeSet<_>>();
+    let expected = Opcode::ALL
+        .into_iter()
+        .map(|opcode| opcode as u16)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(covered, expected);
+
+    for operation in operations {
+        let opcode = Opcode::from_u16(operation["opcode"].as_u64().unwrap() as u16).unwrap();
+        let request_id = operation["request_id"].as_u64().unwrap();
+        let request_bytes = decode_hex(operation["request_frame_hex"].as_str().unwrap());
+        let decoded = decode_binary_any_request(&request_bytes, DEFAULT_WIRE_LIMITS).unwrap();
+        assert_eq!(decoded.request_id, request_id);
+        assert_eq!(decoded.request.opcode(), opcode);
+        let request_frame = decode_binary_frame(&request_bytes, DEFAULT_WIRE_LIMITS).unwrap();
+        decode_binary_payload::<Value>(&request_frame).unwrap();
+
+        let response_bytes = decode_hex(operation["response_frame_hex"].as_str().unwrap());
+        let response_frame = decode_binary_frame(&response_bytes, DEFAULT_WIRE_LIMITS).unwrap();
+        assert_eq!(response_frame.header.request_id, request_id);
+        assert_eq!(response_frame.header.opcode, opcode);
+        assert!(response_frame.header.flags.contains(WireFlags::RESPONSE));
+        decode_binary_payload::<Value>(&response_frame).unwrap();
+        assert_typed_response(opcode, &response_bytes, request_id);
+    }
+}
+
+#[test]
 fn messagepack_nesting_is_hard_bounded() {
     let mut config = Value::Null;
     for _ in 0..=MAX_MSGPACK_NESTING_DEPTH {
@@ -220,4 +257,43 @@ fn messagepack_container_count_and_trailing_bytes_are_rejected_before_serde() {
         decode_binary_payload::<Value>(&trailing),
         Err(WireCodecError::Decode(detail)) if detail.contains("trailing bytes")
     ));
+}
+
+fn decode_hex(encoded: &str) -> Vec<u8> {
+    encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).unwrap();
+            u8::from_str_radix(text, 16).unwrap()
+        })
+        .collect()
+}
+
+fn assert_typed_response(opcode: Opcode, bytes: &[u8], request_id: u64) {
+    macro_rules! decode {
+        ($request:ty) => {
+            decode_binary_response::<$request>(bytes, request_id, DEFAULT_WIRE_LIMITS).unwrap()
+        };
+    }
+    match opcode {
+        Opcode::PluginInitialize => drop(decode!(InitializeRequest)),
+        Opcode::RunnerRunBatch => drop(decode!(RunBatchRequest)),
+        Opcode::RunnerCancel => decode!(CancelRunnerRequest),
+        Opcode::RunnerDispose => decode!(DisposeRunnerRequest),
+        Opcode::TaskSubmitBatch => drop(decode!(SubmitTaskBatchRequest)),
+        Opcode::TaskCancel => decode!(CancelTaskRequest),
+        Opcode::TaskOutcome => drop(decode!(TaskOutcomeRequest)),
+        Opcode::ResourceReadCollect => drop(decode!(CollectReadPlanRequest)),
+        Opcode::ResourceReadSnapshot => drop(decode!(SnapshotReadPlanRequest)),
+        Opcode::ResourceStreamOpen => drop(decode!(OpenStreamPlanRequest)),
+        Opcode::ResourceExport => drop(decode!(ExportPlanRequest)),
+        Opcode::ResourceWriteCommit => drop(decode!(CommitWritePlanRequest)),
+        Opcode::ResourceCommand => drop(decode!(CommandPlanRequest)),
+        Opcode::ResourceCommandBatch => drop(decode!(CommandBatchRequest)),
+        Opcode::ResourceSaga => drop(decode!(SagaPlanRequest)),
+        Opcode::ResourceCreateBlob => drop(decode!(CreateBlobRequest)),
+        Opcode::ResourceCreateCowState => drop(decode!(CreateCowStateRequest)),
+        Opcode::ResourceCreateCapability => drop(decode!(CreateCapabilityRequest)),
+    }
 }

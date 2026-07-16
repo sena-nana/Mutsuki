@@ -35,6 +35,24 @@ pub fn encode_binary_request<R: WireRequest>(
     encode_frame(R::OPCODE, flags, request_id, payload, limits)
 }
 
+pub(crate) fn encode_binary_request_value<T: Serialize>(
+    request_id: u64,
+    opcode: Opcode,
+    request: &T,
+    limits: WireLimits,
+) -> Result<Vec<u8>, WireCodecError> {
+    if request_id == 0 {
+        return Err(WireCodecError::InvalidRequestId);
+    }
+    let payload = encode_messagepack(request)?;
+    let flags = if opcode.is_management() {
+        WireFlags::REQUEST | WireFlags::MANAGEMENT
+    } else {
+        WireFlags::REQUEST
+    };
+    encode_frame(opcode, flags, request_id, payload, limits)
+}
+
 pub fn encode_binary_response<T: Serialize>(
     request_id: u64,
     opcode: Opcode,

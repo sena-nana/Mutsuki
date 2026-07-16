@@ -29,8 +29,8 @@ pub use protocol::{
     WireRequest,
 };
 pub use schema::{
-    generated_fixtures_json, generated_fixtures_value, generated_schema_json,
-    generated_schema_value,
+    generated_binary_golden_json, generated_binary_golden_value, generated_fixtures_json,
+    generated_fixtures_value, generated_schema_json, generated_schema_value,
 };
 
 #[cfg(test)]

@@ -101,6 +101,38 @@ fn cancel_and_dispose_survive_work_saturation_and_out_of_order_response() {
     assert_eq!(run_thread.join().unwrap().unwrap(), completion);
 }
 
+#[test]
+fn duplicate_or_late_response_fails_the_connection_and_pending_request() {
+    let hello = ProtocolHello::debug_jsonl();
+    let ack = hello
+        .accept(mutsuki_runtime_wire::DEBUG_JSONL_CODEC_ID, None)
+        .unwrap();
+    let mut responses =
+        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+    let dispose =
+        encode_jsonl_response(2, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
+    responses.extend_from_slice(&dispose);
+    responses.extend_from_slice(&dispose);
+    let bridge = JsonlTransport::with_limits(
+        Cursor::new(responses),
+        Vec::new(),
+        DEFAULT_WIRE_LIMITS,
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    let request = DisposeRunnerRequest {
+        runner_id: "jsonl.runner".into(),
+    };
+
+    bridge.request(&request).unwrap();
+    let error = bridge.request(&request).unwrap_err();
+
+    assert!(error.error().evidence.values().any(|value| {
+        matches!(value, mutsuki_runtime_contracts::ScalarValue::String(reason) if reason.contains("duplicate or late"))
+    }));
+    assert!(bridge.request(&request).is_err());
+}
+
 fn run_request() -> RunBatchRequest {
     let mut task = Task::new("task-1", "raw.input", json!({}));
     task.lease_id = Some("lease-1".into());
