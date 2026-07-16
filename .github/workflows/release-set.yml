@@ -49,9 +49,11 @@ jobs:
         run: |
           set -euo pipefail
           for repository in MutsukiCore MutsukiServiceHost MutsukiLink MutsukiStdPlugins MutsukiAgentKit MutsukiBotPlugins MutsukiDistributedHost MutsukiTauriHost; do
-            cargo fmt --manifest-path "$repository/Cargo.toml" --check
-            cargo check --manifest-path "$repository/Cargo.toml" --locked
-            cargo test --manifest-path "$repository/Cargo.toml" --locked
+            pushd "$repository"
+            cargo fmt --check
+            cargo check --locked
+            cargo test --locked
+            popd
           done
       - name: Verify Python Runner conformance
         working-directory: ${{ runner.temp }}/mutsuki-release/MutsukiPythonRunnerKit
