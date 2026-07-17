@@ -12,6 +12,9 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
+pub mod benchmark;
+pub use benchmark::*;
+
 #[derive(Clone, Debug, Default)]
 pub struct FakeQqSnapshot {
     pub sends: Vec<Value>,

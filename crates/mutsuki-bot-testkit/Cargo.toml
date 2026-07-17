@@ -6,8 +6,8 @@ license.workspace = true
 
 [dependencies]
 futures-util.workspace = true
+mutsuki-bot-protocol.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
 tokio-tungstenite.workspace = true
-

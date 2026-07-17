@@ -1126,6 +1126,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "bot-echo",
+ "libc",
+ "mutsuki-bot-link-parser",
+ "mutsuki-bot-protocol",
+ "mutsuki-bot-service-host-integration",
+ "mutsuki-bot-testkit",
+ "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-command",
+ "mutsuki-plugin-bot-event-router",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "mutsuki-service-config",
+ "mutsuki-service-runtime",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "mutsuki-bot-link-parser"
 version = "0.1.0"
 dependencies = [
@@ -1189,6 +1215,7 @@ name = "mutsuki-bot-testkit"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "mutsuki-bot-protocol",
  "mutsuki-plugin-bot-adapter-qqbot",
  "serde_json",
  "tokio",

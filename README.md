@@ -120,3 +120,23 @@ QQBot, HTTP, WebSocket, or ServiceHost dependency.
 ## Boundary Rule
 
 Business bot plugins should depend on `mutsuki.bot.*` protocols. They should not call QQBot APIs directly. QQBot-specific escape hatches must use `mutsuki.bot.qqbot.*` protocols and remain adapter-specific.
+
+## Performance model
+
+`mutsuki-bot-benchmarks` and `scripts/run-performance-model.py` implement the versioned Bot owner
+workload for MutsukiBotPlugins #10 and MutsukiCore #35. The suite uses only deterministic fixtures
+and loopback HTTP/WebSocket servers. It covers event bursts, 4/16-adapter fairness, command
+hit/miss, link parsing, handler wait/resume, rate limiting, reconnect/resume, duplicate suppression,
+an established idle WebSocket window, and bounded long-run retention.
+
+Run a local reference report with:
+
+```text
+python scripts/run-performance-model.py \
+  --mode reference \
+  --process-runs 3 \
+  --output artifacts/performance/issue10-reference.json
+```
+
+The raw samples, unified report, anomaly analysis, workload boundary, and revision-lock procedure
+are documented in `docs/performance-model-issue10.md`.
