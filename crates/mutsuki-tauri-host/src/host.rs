@@ -14,8 +14,9 @@ use mutsuki_runtime_host::{
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
     FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,
-    MutsukiFrontendEvent, PluginSummary, PreviewHandle, ResourceBytes, ResourceText, RunnerSummary,
-    RuntimeHealth, TaskCancelRequest, TaskResultRequest, redact_log_record, redact_runtime_event,
+    MutsukiFrontendEvent, PluginSummary, PreviewHandle, ResourceBytes, ResourceChunk, ResourceText,
+    RunnerSummary, RuntimeHealth, TaskCancelRequest, TaskResultRequest, redact_log_record,
+    redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
 use parking_lot::{Condvar, Mutex};
@@ -25,6 +26,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+pub const MAX_RESOURCE_INVOKE_BYTES: usize = 64 * 1024;
 
 pub struct MutsukiTauriHost {
     config: MutsukiTauriConfig,
@@ -599,6 +602,28 @@ impl MutsukiTauriHost {
         self.runtime.lock().task_snapshots().map_err(Into::into)
     }
 
+    pub fn events_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> HostResult<ObservabilityPage<RuntimeEvent>> {
+        self.runtime
+            .lock()
+            .events_after(sequence, limit)
+            .map_err(Into::into)
+    }
+
+    pub fn trace_spans_after(
+        &self,
+        sequence: u64,
+        limit: usize,
+    ) -> HostResult<ObservabilityPage<TraceSpan>> {
+        self.runtime
+            .lock()
+            .trace_spans_after(sequence, limit)
+            .map_err(Into::into)
+    }
+
     pub fn runtime_metrics(&self) -> mutsuki_runtime_host::HostRuntimeMetricsSnapshot {
         self.runtime.lock().metrics()
     }
@@ -767,6 +792,7 @@ impl MutsukiTauriHost {
 
     pub async fn read_resource_bytes(&self, ref_id: &str) -> HostResult<ResourceBytes> {
         let resource = self.resources.descriptor(ref_id)?;
+        ensure_bounded_resource_payload(resource.size_hint.unwrap_or(0) as usize)?;
         let bytes = self.resources.read_bytes(ref_id).await?;
         Ok(ResourceBytes {
             media_type: None,
@@ -775,7 +801,28 @@ impl MutsukiTauriHost {
         })
     }
 
+    pub async fn read_resource_chunk(
+        &self,
+        ref_id: &str,
+        offset: u64,
+        length: usize,
+    ) -> HostResult<ResourceChunk> {
+        ensure_bounded_resource_payload(length)?;
+        let resource = self.resources.descriptor(ref_id)?;
+        let total_bytes = resource.size_hint.unwrap_or(0);
+        let bytes = self.resources.read_chunk(ref_id, offset, length).await?;
+        Ok(ResourceChunk {
+            resource,
+            offset,
+            eof: offset.saturating_add(bytes.len() as u64) >= total_bytes,
+            total_bytes,
+            bytes,
+        })
+    }
+
     pub async fn read_resource_text(&self, ref_id: &str) -> HostResult<ResourceText> {
+        let resource = self.resources.descriptor(ref_id)?;
+        ensure_bounded_resource_payload(resource.size_hint.unwrap_or(0) as usize)?;
         Ok(ResourceText {
             ref_id: ref_id.into(),
             text: self.resources.read_text(ref_id).await?,
@@ -787,6 +834,7 @@ impl MutsukiTauriHost {
         ref_id: &str,
         bytes: Vec<u8>,
     ) -> HostResult<mutsuki_runtime_contracts::ResourceRef> {
+        ensure_bounded_resource_payload(bytes.len())?;
         let resource = self.resources.write_bytes(ref_id, bytes).await?;
         let _ = self.events.emit(MutsukiFrontendEvent::Resource {
             ref_id: ref_id.into(),
@@ -812,6 +860,11 @@ impl MutsukiTauriHost {
         Ok(self
             .resources
             .create_preview_handle(ref_id, Duration::from_secs(self.config.preview_ttl_secs))?)
+    }
+
+    pub fn release_preview_handle(&self, token: &str) -> HostResult<()> {
+        self.resources.revoke_preview_token(token)?;
+        Ok(())
     }
 
     pub fn request_approval(
@@ -954,6 +1007,19 @@ fn task_event_id(event: &RuntimeEvent) -> Option<String> {
     (event.kind == RuntimeEventKind::Task)
         .then(|| event.subject_id.clone())
         .flatten()
+}
+
+fn ensure_bounded_resource_payload(actual: usize) -> HostResult<()> {
+    if actual > MAX_RESOURCE_INVOKE_BYTES {
+        return Err(
+            mutsuki_tauri_resource::ResourceBridgeError::PayloadTooLarge {
+                actual,
+                limit: MAX_RESOURCE_INVOKE_BYTES,
+            }
+            .into(),
+        );
+    }
+    Ok(())
 }
 
 fn frontend_event_for_runtime_event(event: RuntimeEvent) -> MutsukiFrontendEvent {

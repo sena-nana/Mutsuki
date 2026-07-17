@@ -3,6 +3,7 @@ members = [
     "crates/mutsuki-tauri-bridge",
     "crates/mutsuki-tauri-resource",
     "crates/mutsuki-tauri-host",
+    "crates/mutsuki-tauri-benchmarks",
     "crates/tauri-plugin-mutsuki",
     "fixtures/jsonl-runner",
 ]

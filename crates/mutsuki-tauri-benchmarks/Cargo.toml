@@ -1,0 +1,18 @@
+[package]
+name = "mutsuki-tauri-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+cpu-time.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-tauri-bridge.workspace = true
+mutsuki-tauri-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile = "3.10"
+tokio.workspace = true

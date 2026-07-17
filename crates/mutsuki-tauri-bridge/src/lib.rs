@@ -136,6 +136,15 @@ pub struct ResourceBytes {
     pub media_type: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResourceChunk {
+    pub resource: ResourceRef,
+    pub offset: u64,
+    pub total_bytes: u64,
+    pub bytes: Vec<u8>,
+    pub eof: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceText {
     pub ref_id: String,

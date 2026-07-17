@@ -12,7 +12,7 @@ pub use approval::{ApprovalBridge, PendingApproval};
 pub use builder::MutsukiTauriHostBuilder;
 pub use config::{HostMode, MutsukiTauriConfig, PathsConfig, SecurityConfig};
 pub use error::{HostError, HostResult};
-pub use host::MutsukiTauriHost;
+pub use host::{MAX_RESOURCE_INVOKE_BYTES, MutsukiTauriHost};
 
 #[cfg(test)]
 mod tests;

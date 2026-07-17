@@ -14,7 +14,7 @@ import type {
   PluginFrontendEvent,
   PluginSummary,
   PreviewHandle,
-  ResourceBytes,
+  ResourceChunk,
   ResourceRef,
   ResourceText,
   RunnerFrontendEvent,
@@ -58,6 +58,7 @@ export interface ResourceApi {
   exportToFile(ref: string | ResourceRef, target: string): Promise<void>;
   createObjectUrl(ref: string | ResourceRef): Promise<string>;
   createPreview(ref: string | ResourceRef): Promise<PreviewHandle>;
+  releasePreview(handle: PreviewHandle): Promise<void>;
 }
 
 export interface ApprovalApi {
@@ -153,8 +154,18 @@ export function createMutsukiClient(): MutsukiClient {
   const resources: ResourceApi = {
     importFile: (path) => invoke<ResourceRef>("mutsuki_resource_import_file", { path }),
     readBytes: async (ref) => {
-      const response = await invoke<ResourceBytes>("mutsuki_resource_read_bytes", { refId: refId(ref) });
-      return new Uint8Array(response.bytes);
+      const chunks: number[] = [];
+      let offset = 0;
+      for (;;) {
+        const response = await invoke<ResourceChunk>("mutsuki_resource_read_chunk", {
+          refId: refId(ref),
+          offset,
+          length: 64 * 1024,
+        });
+        chunks.push(...response.bytes);
+        offset += response.bytes.length;
+        if (response.eof) return new Uint8Array(chunks);
+      }
     },
     readText: async (ref) => {
       const response = await invoke<ResourceText>("mutsuki_resource_read_text", { refId: refId(ref) });
@@ -163,10 +174,10 @@ export function createMutsukiClient(): MutsukiClient {
     writeBytes: (ref, bytes) => invoke<ResourceRef>("mutsuki_resource_write_bytes", { refId: refId(ref), bytes: Array.from(bytes) }),
     exportToFile: (ref, target) => invoke<void>("mutsuki_resource_export_file", { refId: refId(ref), target }),
     createPreview: (ref) => invoke<PreviewHandle>("mutsuki_resource_preview", { refId: refId(ref) }),
+    releasePreview: (handle) => invoke<void>("mutsuki_resource_preview_release", { token: handle.token }),
     createObjectUrl: async (ref) => {
-      const bytes = await resources.readBytes(ref);
-      const blob = new Blob([bytes]);
-      return URL.createObjectURL(blob);
+      const preview = await resources.createPreview(ref);
+      return preview.url;
     },
   };
 

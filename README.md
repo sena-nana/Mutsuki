@@ -42,9 +42,19 @@ tracked handles after a notification; idle or Waiting tasks do not start a perio
 events and traces are read with bounded cursor pages, task result event retention has per-task and
 global limits, and frontend observation events are emitted in bounded batches.
 
-The task-pump benchmark covers 1, 100 and 1000 active Waiting tasks and records process CPU time,
-completion latency and actor command counts:
+Large resources use bounded 64 KiB invoke chunks. Preview/object URLs are backed by the registered
+`mutsuki-resource` protocol and can be explicitly released; a 1 MiB or 64 MiB body is never embedded
+in command/event JSON.
+
+The unified benchmark covers 1, 100 and 1000 active Waiting tasks, executable command/event
+serialization, bounded frontend retention and 1 MiB/64 MiB ResourceRef paths:
 
 ```text
-cargo run --release -p mutsuki-tauri-host --example task_pump_benchmark -- artifacts/perf/issue2-task-pump.json
+python3 crates/mutsuki-tauri-benchmarks/scripts/run-reference.py \
+  --mode reference --output target/mutsuki-benchmarks/tauri-reference.json
 ```
+
+The bridge fixture includes the embedded Rust Host and the JSON serialization/bookkeeping used by
+the Tauri adapter. It does not instantiate a real OS WebView, so its results are not presented as a
+full WebView roundtrip. Fixed reference-machine runs may add that outer boundary without mixing it
+with UI rendering performance. See `docs/performance-model-v1.md`.

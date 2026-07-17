@@ -19,6 +19,7 @@ export type {
   PluginSummary,
   PreviewHandle,
   ResourceBytes,
+  ResourceChunk,
   ResourceRef,
   ResourceText,
   RunnerFrontendEvent,

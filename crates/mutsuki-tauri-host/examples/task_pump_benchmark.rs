@@ -30,6 +30,7 @@ struct BenchmarkReport {
 #[derive(Serialize)]
 struct ScenarioReport {
     active_tasks: usize,
+    host_startup_ms: f64,
     setup_latency_ms: f64,
     idle_wall_ms: f64,
     idle_cpu_ms: f64,
@@ -38,6 +39,9 @@ struct ScenarioReport {
     idle_task_state_batch_queries: u64,
     completion_latency_ms: f64,
     completion_actor_commands: u64,
+    completion_burst_latency_ms: f64,
+    shutdown_latency_ms: f64,
+    rss_after_waiting_bytes: u64,
 }
 
 fn main() {
@@ -66,6 +70,7 @@ fn main() {
 
 fn run_scenario(active_tasks: usize) -> ScenarioReport {
     let workspace = BenchmarkWorkspace::new(active_tasks);
+    let host_started = Instant::now();
     let host = MutsukiTauriHost::builder()
         .config(workspace.config.clone())
         .runtime_config(HostRuntimeConfig {
@@ -79,6 +84,7 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
         .runner(Box::new(WaitingRunner::new(active_tasks)))
         .build()
         .expect("benchmark host builds");
+    let host_startup_ms = host_started.elapsed().as_secs_f64() * 1000.0;
     let setup_started = Instant::now();
     let handles = host
         .submit_batch(TaskBatch {
@@ -107,6 +113,7 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
     let idle_wall_ms = wall_started.elapsed().as_secs_f64() * 1000.0;
     let idle_cpu_ms = cpu_started.elapsed().as_secs_f64() * 1000.0;
     let metrics_after_idle = host.runtime_metrics();
+    let rss_after_waiting_bytes = current_rss_bytes();
 
     let completion_started = Instant::now();
     host.cancel_task_handle(handles[0].clone())
@@ -117,10 +124,23 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
     .expect("cancelled task result resolves");
     let completion_latency_ms = completion_started.elapsed().as_secs_f64() * 1000.0;
     let metrics_after_completion = host.runtime_metrics();
+    let burst_started = Instant::now();
+    for handle in handles.iter().skip(1) {
+        host.cancel_task_handle(handle.clone())
+            .expect("benchmark burst task cancels");
+        host.task_result(mutsuki_tauri_bridge::TaskResultRequest {
+            task_id: handle.task_id.clone(),
+        })
+        .expect("cancelled burst result resolves");
+    }
+    let completion_burst_latency_ms = burst_started.elapsed().as_secs_f64() * 1000.0;
+    let shutdown_started = Instant::now();
     host.shutdown();
+    let shutdown_latency_ms = shutdown_started.elapsed().as_secs_f64() * 1000.0;
 
     ScenarioReport {
         active_tasks,
+        host_startup_ms,
         setup_latency_ms,
         idle_wall_ms,
         idle_cpu_ms,
@@ -137,7 +157,34 @@ fn run_scenario(active_tasks: usize) -> ScenarioReport {
         completion_actor_commands: metrics_after_completion
             .actor_commands
             .saturating_sub(metrics_after_idle.actor_commands),
+        completion_burst_latency_ms,
+        shutdown_latency_ms,
+        rss_after_waiting_bytes,
     }
+}
+
+fn current_rss_bytes() -> u64 {
+    if cfg!(windows) {
+        return std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!("(Get-Process -Id {}).WorkingSet64", std::process::id()),
+            ])
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+    }
+    std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+        * 1024
 }
 
 fn wait_for_waiting(host: &MutsukiTauriHost, expected: usize) {

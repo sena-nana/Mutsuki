@@ -1549,6 +1549,55 @@ async fn resource_store_round_trips_written_bytes() {
 }
 
 #[tokio::test]
+async fn large_resources_use_bounded_chunks_and_revocable_preview_handles() {
+    let host = MutsukiTauriHost::builder()
+        .app_name("MutsukiTauriHostLargeResourceTest")
+        .build()
+        .expect("host builds");
+    let bytes = vec![0x5a; 1024 * 1024];
+    let resource = host
+        .resource_store()
+        .create_blob(
+            "application/octet-stream",
+            bytes.clone(),
+            Some("application/octet-stream".into()),
+        )
+        .await
+        .expect("resource created");
+
+    assert!(host.read_resource_bytes(&resource.ref_id).await.is_err());
+    let first = host
+        .read_resource_chunk(&resource.ref_id, 0, crate::MAX_RESOURCE_INVOKE_BYTES)
+        .await
+        .expect("first chunk");
+    assert_eq!(first.bytes, bytes[..crate::MAX_RESOURCE_INVOKE_BYTES]);
+    assert!(!first.eof);
+    assert_eq!(first.total_bytes, bytes.len() as u64);
+    assert!(
+        host.read_resource_chunk(&resource.ref_id, 0, crate::MAX_RESOURCE_INVOKE_BYTES + 1)
+            .await
+            .is_err()
+    );
+
+    let preview = host
+        .create_preview_handle(&resource.ref_id)
+        .expect("preview handle");
+    let (preview_bytes, media_type) = host
+        .resource_store()
+        .read_preview_token(&preview.token)
+        .expect("preview token resolves");
+    assert_eq!(preview_bytes, bytes);
+    assert_eq!(media_type.as_deref(), Some("application/octet-stream"));
+    host.release_preview_handle(&preview.token)
+        .expect("preview released");
+    assert!(
+        host.resource_store()
+            .read_preview_token(&preview.token)
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn host_resource_provider_id_matches_registered_gateway() {
     let host = MutsukiTauriHost::builder()
         .app_name("MutsukiTauriHostProviderIdTest")

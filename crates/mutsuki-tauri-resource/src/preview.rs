@@ -58,4 +58,12 @@ impl TauriPreviewStore {
             .map(|preview| preview.ref_id.clone())
             .ok_or_else(|| ResourceBridgeError::InvalidToken(token.to_string()))
     }
+
+    pub fn revoke_preview_token(&self, token: &str) -> Result<(), ResourceBridgeError> {
+        self.inner
+            .write()
+            .remove(token)
+            .map(|_| ())
+            .ok_or_else(|| ResourceBridgeError::InvalidToken(token.to_string()))
+    }
 }

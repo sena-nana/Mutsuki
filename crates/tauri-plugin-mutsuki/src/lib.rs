@@ -2,7 +2,7 @@ use mutsuki_runtime_contracts::ResourceRef;
 use mutsuki_tauri_bridge::{
     ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
     FrontendTaskResult, FrontendTaskRun, HostStatus, PluginSummary, PreviewHandle, ResourceBytes,
-    ResourceText, RunnerSummary, TaskCancelRequest, TaskResultRequest,
+    ResourceChunk, ResourceText, RunnerSummary, TaskCancelRequest, TaskResultRequest,
 };
 use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder};
 use std::sync::Arc;
@@ -35,13 +35,18 @@ where
             mutsuki_runners_list,
             mutsuki_resource_import_file,
             mutsuki_resource_read_bytes,
+            mutsuki_resource_read_chunk,
             mutsuki_resource_read_text,
             mutsuki_resource_write_bytes,
             mutsuki_resource_export_file,
             mutsuki_resource_preview,
+            mutsuki_resource_preview_release,
             mutsuki_approval_respond,
             mutsuki_approval_pending,
         ])
+        .register_uri_scheme_protocol("mutsuki-resource", |context, request| {
+            preview_response(context.app_handle(), request.uri())
+        })
         .on_event(|app, event| {
             if matches!(event, tauri::RunEvent::Exit)
                 && let Some(host) = app.try_state::<Arc<MutsukiTauriHost>>()
@@ -144,6 +149,18 @@ async fn mutsuki_resource_read_bytes(
 }
 
 #[tauri::command]
+async fn mutsuki_resource_read_chunk(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    ref_id: String,
+    offset: u64,
+    length: usize,
+) -> Result<ResourceChunk, FrontendError> {
+    host.read_resource_chunk(&ref_id, offset, length)
+        .await
+        .map_err(FrontendError::from)
+}
+
+#[tauri::command]
 async fn mutsuki_resource_read_text(
     host: State<'_, Arc<MutsukiTauriHost>>,
     ref_id: String,
@@ -182,6 +199,50 @@ fn mutsuki_resource_preview(
 ) -> Result<PreviewHandle, FrontendError> {
     host.create_preview_handle(&ref_id)
         .map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_resource_preview_release(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    token: String,
+) -> Result<(), FrontendError> {
+    host.release_preview_handle(&token)
+        .map_err(FrontendError::from)
+}
+
+fn preview_response<R: Runtime>(
+    app: &AppHandle<R>,
+    uri: &tauri::http::Uri,
+) -> tauri::http::Response<Vec<u8>> {
+    let token = uri
+        .host()
+        .filter(|host| *host != "localhost" && !host.ends_with(".localhost"))
+        .or_else(|| uri.path().trim_matches('/').split('/').next())
+        .unwrap_or_default();
+    let Some(host) = app.try_state::<Arc<MutsukiTauriHost>>() else {
+        return preview_error(tauri::http::StatusCode::SERVICE_UNAVAILABLE);
+    };
+    match host.resource_store().read_preview_token(token) {
+        Ok((bytes, media_type)) => tauri::http::Response::builder()
+            .status(tauri::http::StatusCode::OK)
+            .header(
+                tauri::http::header::CONTENT_TYPE,
+                media_type.unwrap_or_else(|| "application/octet-stream".into()),
+            )
+            .header(tauri::http::header::CACHE_CONTROL, "no-store")
+            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(bytes)
+            .expect("valid preview response"),
+        Err(_) => preview_error(tauri::http::StatusCode::NOT_FOUND),
+    }
+}
+
+fn preview_error(status: tauri::http::StatusCode) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(status)
+        .header(tauri::http::header::CACHE_CONTROL, "no-store")
+        .body(Vec::new())
+        .expect("valid preview error response")
 }
 
 #[tauri::command]

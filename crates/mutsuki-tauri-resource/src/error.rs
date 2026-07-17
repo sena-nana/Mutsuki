@@ -9,6 +9,10 @@ pub enum ResourceBridgeError {
     NotUtf8(String),
     #[error("resource token not found or expired: {0}")]
     InvalidToken(String),
+    #[error("resource bridge payload exceeds the {limit} byte limit: {actual} bytes")]
+    PayloadTooLarge { actual: usize, limit: usize },
+    #[error("resource range starts past end of resource: offset {offset}, length {length}")]
+    InvalidRange { offset: u64, length: u64 },
     #[error("io error: {0}")]
     Io(String),
 }

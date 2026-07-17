@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -97,6 +98,44 @@ impl TauriResourceProvider {
         tokio::fs::read(path)
             .await
             .map_err(|error| ResourceBridgeError::Io(error.to_string()))
+    }
+
+    pub async fn read_chunk(
+        &self,
+        ref_id: &str,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, ResourceBridgeError> {
+        let entry = self.entry(ref_id)?;
+        let total = entry.descriptor.size_hint.unwrap_or(0);
+        if offset > total {
+            return Err(ResourceBridgeError::InvalidRange {
+                offset,
+                length: total,
+            });
+        }
+        tokio::task::spawn_blocking(move || {
+            let mut file = std::fs::File::open(&entry.path)
+                .map_err(|error| ResourceBridgeError::Io(error.to_string()))?;
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|error| ResourceBridgeError::Io(error.to_string()))?;
+            let mut bytes = vec![0; length.min(total.saturating_sub(offset) as usize)];
+            file.read_exact(&mut bytes)
+                .map_err(|error| ResourceBridgeError::Io(error.to_string()))?;
+            Ok(bytes)
+        })
+        .await
+        .map_err(|error| ResourceBridgeError::Io(error.to_string()))?
+    }
+
+    pub fn read_preview(
+        &self,
+        ref_id: &str,
+    ) -> Result<(Vec<u8>, Option<String>), ResourceBridgeError> {
+        let entry = self.entry(ref_id)?;
+        let bytes = std::fs::read(&entry.path)
+            .map_err(|error| ResourceBridgeError::Io(error.to_string()))?;
+        Ok((bytes, entry.media_type))
     }
 
     pub async fn read_text(&self, ref_id: &str) -> Result<String, ResourceBridgeError> {

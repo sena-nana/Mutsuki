@@ -122,6 +122,14 @@ export interface ResourceBytes {
   media_type?: string | null;
 }
 
+export interface ResourceChunk {
+  resource: ResourceRef;
+  offset: number;
+  total_bytes: number;
+  bytes: number[];
+  eof: boolean;
+}
+
 export interface ResourceText {
   ref_id: string;
   text: string;

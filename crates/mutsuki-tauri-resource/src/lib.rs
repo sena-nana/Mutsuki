@@ -60,6 +60,15 @@ impl TauriResourceStore {
         self.provider.read_bytes(ref_id).await
     }
 
+    pub async fn read_chunk(
+        &self,
+        ref_id: &str,
+        offset: u64,
+        length: usize,
+    ) -> Result<Vec<u8>, ResourceBridgeError> {
+        self.provider.read_chunk(ref_id, offset, length).await
+    }
+
     pub async fn read_text(&self, ref_id: &str) -> Result<String, ResourceBridgeError> {
         self.provider.read_text(ref_id).await
     }
@@ -96,5 +105,17 @@ impl TauriResourceStore {
 
     pub fn resolve_preview_token(&self, token: &str) -> Result<String, ResourceBridgeError> {
         self.preview.resolve_preview_token(token)
+    }
+
+    pub fn read_preview_token(
+        &self,
+        token: &str,
+    ) -> Result<(Vec<u8>, Option<String>), ResourceBridgeError> {
+        let ref_id = self.preview.resolve_preview_token(token)?;
+        self.provider.read_preview(&ref_id)
+    }
+
+    pub fn revoke_preview_token(&self, token: &str) -> Result<(), ResourceBridgeError> {
+        self.preview.revoke_preview_token(token)
     }
 }
