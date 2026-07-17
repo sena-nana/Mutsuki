@@ -1,4 +1,4 @@
-name: Performance
+name: Public performance smoke
 
 on:
   schedule:
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  full-benchmark:
-    name: Full benchmark and release gates
+  full-smoke:
+    name: Full correctness and catastrophic-regression matrix
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -24,44 +24,56 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Restore previous benchmark history
-        id: benchmark-history
-        uses: actions/cache/restore@v4
-        with:
-          path: .benchmark-history/previous.json
-          key: performance-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
-          restore-keys: |
-            performance-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Select comparison baseline
-        run: |
-          mkdir -p .benchmark-history target/mutsuki-benchmarks
-          if [ ! -f .benchmark-history/previous.json ]; then
-            cp artifacts/perf/issue28-baseline.json .benchmark-history/previous.json
-          fi
-
-      - name: Run full benchmark and gates
+      - name: Run full public-runner smoke
         run: >-
           cargo run --release --package mutsuki-runtime-benchmarks --
           full
-          --gate release
-          --baseline .benchmark-history/previous.json
-          --output target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
+          --lane time
+          --warmup 1
+          --samples 3
+          --gate smoke
+          --output target/mutsuki-benchmarks/core-public-ci-${{ github.run_id }}.json
 
-      - name: Preserve current result for the next comparison
-        run: >-
-          cp target/mutsuki-benchmarks/issue28-${{ github.run_id }}.json
-          .benchmark-history/previous.json
-
-      - name: Save benchmark history
-        uses: actions/cache/save@v4
-        with:
-          path: .benchmark-history/previous.json
-          key: performance-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
-
-      - name: Upload structured benchmark result
+      - name: Upload structured smoke result
         uses: actions/upload-artifact@v4
         with:
-          name: issue28-performance-${{ github.run_id }}
-          path: target/mutsuki-benchmarks/issue28-${{ github.run_id }}.*
+          name: core-public-performance-smoke-${{ github.run_id }}
+          path: target/mutsuki-benchmarks/core-public-ci-${{ github.run_id }}.json
           retention-days: 90
+
+      - name: Explain evidence boundary
+        run: >-
+          echo "Public runner results are smoke evidence only and cannot approve or replace a release baseline."
+
+  fixed-reference:
+    name: Fixed reference (${{ matrix.name }})
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            labels: [self-hosted, mutsuki-reference, macOS, ARM64]
+          - name: windows-x64
+            labels: [self-hosted, mutsuki-reference, Windows, X64]
+    runs-on: ${{ matrix.labels }}
+    timeout-minutes: 360
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Run owner reference
+        run: >-
+          python scripts/run-core-reference.py
+          --mode full
+          --output artifacts/perf/reference-${{ matrix.name }}/report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-reference-${{ matrix.name }}-${{ github.run_id }}
+          path: artifacts/perf/reference-${{ matrix.name }}/
+          retention-days: 90
+          if-no-files-found: error

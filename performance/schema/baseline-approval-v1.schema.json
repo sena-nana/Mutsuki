@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mutsuki.dev/schema/performance/baseline-approval-v1.schema.json",
+  "title": "Mutsuki Baseline Approval v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "report_sha256", "revision_lock_hash", "environment_id",
+    "approved_by", "approved_at", "reason"
+  ],
+  "properties": {
+    "schema_version": {"const": "mutsuki.performance.baseline-approval/v1"},
+    "report_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "revision_lock_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "environment_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "approved_by": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "reason": {"type": "string", "minLength": 1}
+  }
+}
+

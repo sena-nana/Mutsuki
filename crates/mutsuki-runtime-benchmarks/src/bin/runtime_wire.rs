@@ -1,11 +1,15 @@
 #[allow(dead_code)]
 #[path = "../allocator.rs"]
 mod allocator;
+#[path = "../environment.rs"]
+mod environment;
 #[allow(dead_code)]
 #[path = "../report.rs"]
 mod report;
 #[path = "../wire/mod.rs"]
 mod wire;
+#[path = "../wire_report.rs"]
+mod wire_report;
 
 use std::process::ExitCode;
 

@@ -55,6 +55,12 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 
 ## 已完成基线
 
+- Core benchmark v2 已把系统 allocator 的 headline time lane 与原子计数 allocator 的
+  allocation lane 分成独立进程；统一报告输出稳定 Core case ID、warmup/sample/process-run、
+  median/p95/p99/MAD、CPU/RSS、完整环境指纹和 owner repository revision snapshot。公共 CI
+  只执行灾难 smoke，固定机器 reference 由各 owner 仓库保存并通过显式 approval 管理
+  baseline，不自动接受最近一次结果；Core 只拥有跨仓库通用 schema 和只读验收器。
+
 - Rust contracts 覆盖 `Task`、`TaskStatus`、`ProtocolDescriptor`、`HandlerBinding`、
   `TaskLease`、`RunnerDescriptor`、`RunnerPurity`、`RunnerResult`、`StateDelta`、
   `EffectRequest`、`ResourceRef`、`ValueRef`、`ResourceCellRef`、`ResourceLease`、

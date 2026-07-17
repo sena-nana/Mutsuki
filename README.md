@@ -64,20 +64,29 @@ repository.
 
 ## Performance baseline
 
-Issue #28 provides one command for the complete benchmark matrix and one for
-the disaster-regression smoke gate:
+Core benchmark v2 separates headline timing from allocator instrumentation and
+uses the Mutsuki Performance Model v1 report envelope:
 
 ```powershell
-cargo bench-full
 cargo bench-smoke
+cargo bench-full
+cargo bench-reference
 ```
 
-Both commands write structured JSON and CSV under `target/mutsuki-benchmarks/`. The
-full command covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
+`cargo bench-smoke` is the public-CI catastrophic-regression gate. `cargo bench-full`
+runs stable in-process sampling with the system allocator. `cargo bench-reference`
+runs warmup plus multiple samples across independent time-lane processes, then runs
+the tracking allocator in a separate process and writes a merged report and anomaly
+analysis under `target/mutsuki-benchmarks/`. The retained owner-local Epic #35 run is
+under `artifacts/perf/issue35-macos-arm64-provisional/`.
+
+The full matrix covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
 ratios, batch sizes 1/32/256, protocol/hint/continuation routing, bounded
 long-running behavior, resource planning, completion routing, and Host-facing
-actor APIs. The harness records machine and Rust information, commit, profile,
-elapsed time, throughput, allocator counts/bytes, and retained/peak deltas.
+actor APIs. Reports include median/p95/p99/MAD/min/max, CPU time, allocation,
+peak RSS, context switches, complete environment fingerprints, revision/dirty state,
+sampling counts and correctness counters. Fixture construction is outside each
+headline measurement window.
 
 The 2026-07-15 local baseline was captured on macOS aarch64 with 10 logical
 CPUs and Rust 1.97.0 in the release profile. It measured:
@@ -92,12 +101,15 @@ CPUs and Rust 1.97.0 in the release profile. It measured:
 | Host actor statistics round trip | 3.93 us/command |
 | 1m task lifecycle retained growth in the second half | 0 bytes |
 
-These values are environment-specific evidence, not universal performance
-claims. The checked-in structured comparison points are in
-`artifacts/perf/issue28-baseline.json`. CI runs a broad absolute smoke gate;
-the scheduled/release workflow uploads every full JSON/CSV report and compares
-matching cases with the previous saved report using a 3x relative regression
-threshold plus explicit noise floors.
+These historical values are environment-specific evidence, not universal performance
+claims. `artifacts/perf/issue28-baseline.json` remains a legacy Issue #28 record and is
+not an approved v1 baseline. Public CI only runs broad absolute smoke gates. A release
+baseline requires a separate `mutsuki.performance.baseline-approval/v1` record whose
+SHA-256, repository-revision snapshot and environment fingerprint match the report; caches and the
+latest run can never update it automatically. The detailed boundary and anomaly rules
+are documented in [Core benchmark v2](docs/core-performance-model-v1.md), the shared contracts in
+[performance/README.md](performance/README.md), and the full cross-owner audit in
+[Epic #35 acceptance](docs/issue35-acceptance.md).
 
 ## Reading Order
 

@@ -7,44 +7,26 @@ mod server;
 
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::allocator::TrackingAllocator;
-use crate::report::{BenchmarkMode, BenchmarkReport, Environment, GateResult};
+use crate::report::{BenchmarkMode, GateResult};
 
 pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
     let (mode, output, command) = options()?;
     let cases = cases::run(mode, allocator)?;
     let gates = performance_gates(&cases);
-    let passed = gates.iter().all(|gate| gate.passed);
-    let report = BenchmarkReport {
-        schema_version: 1,
-        issue: 32,
-        mode: mode.as_str().into(),
-        generated_unix_seconds: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_secs(),
+    let report = crate::wire_report::write(
+        "mutsuki-core-wire-p1/v2",
+        "runtime-wire-p1/v1",
+        mode,
         command,
-        environment: environment(),
+        &output,
         cases,
         gates,
-        passed,
-    };
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::write(
-        &output,
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-        ),
-    )
-    .map_err(|error| error.to_string())?;
+        "Runtime Wire JSONL concurrency and management diagnostic with tracking allocator; not headline latency",
+    )?;
+    let passed = report.correctness.passed;
     println!(
         "Epic #30 P1 wire benchmark: {} cases, {} gates, result={}, report={}",
         report.cases.len(),
@@ -57,7 +39,7 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
             .gates
             .iter()
             .filter(|gate| !gate.passed)
-            .map(|gate| gate.name.clone())
+            .map(|gate| gate.gate_id.clone())
             .collect::<Vec<_>>()
             .join(", ")
     })
@@ -79,7 +61,7 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
         concurrent_56.allocations.allocated_bytes as f64 / concurrent_56.units as f64;
     vec![
         GateResult {
-            name: "p1.cancel.p95".into(),
+            gate_id: "p1.cancel.p95".into(),
             kind: "management_latency".into(),
             passed: cancel_p95 <= 5_000_000.0,
             actual: cancel_p95,
@@ -87,7 +69,7 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
             unit: "ns".into(),
         },
         GateResult {
-            name: "p1.cancel.max".into(),
+            gate_id: "p1.cancel.max".into(),
             kind: "management_latency".into(),
             passed: cancel_max <= 20_000_000.0,
             actual: cancel_max,
@@ -95,7 +77,7 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
             unit: "ns".into(),
         },
         GateResult {
-            name: "p1.concurrent-16.throughput-scaling".into(),
+            gate_id: "p1.concurrent-16.throughput-scaling".into(),
             kind: "optimization".into(),
             passed: concurrent_16.throughput_per_second >= single.throughput_per_second * 1.2,
             actual: concurrent_16.throughput_per_second,
@@ -103,7 +85,7 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
             unit: "requests/s_min".into(),
         },
         GateResult {
-            name: "p1.concurrent-56.throughput-non-collapse".into(),
+            gate_id: "p1.concurrent-56.throughput-non-collapse".into(),
             kind: "non_regression".into(),
             passed: concurrent_56.throughput_per_second
                 >= concurrent_16.throughput_per_second * 0.75,
@@ -112,7 +94,7 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
             unit: "requests/s_min".into(),
         },
         GateResult {
-            name: "p1.concurrent-56.allocated-bytes-per-request".into(),
+            gate_id: "p1.concurrent-56.allocated-bytes-per-request".into(),
             kind: "bounded_resource".into(),
             passed: concurrent_56_alloc <= single_alloc * 2.0,
             actual: concurrent_56_alloc,
@@ -146,33 +128,4 @@ fn options() -> Result<(BenchmarkMode, PathBuf, String), String> {
         index += 1;
     }
     Ok((mode, output, args.join(" ")))
-}
-
-fn environment() -> Environment {
-    Environment {
-        os: env::consts::OS.into(),
-        arch: env::consts::ARCH.into(),
-        cpu_parallelism: std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1),
-        rust_version: command_output("rustc", &["--version"]),
-        commit: command_output("git", &["rev-parse", "HEAD"]),
-        dirty: !command_output("git", &["status", "--porcelain"]).is_empty(),
-        profile: if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        }
-        .into(),
-    }
-}
-
-fn command_output(program: &str, args: &[&str]) -> String {
-    Command::new(program)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_else(|| "unavailable".into())
 }

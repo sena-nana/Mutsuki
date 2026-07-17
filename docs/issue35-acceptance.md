@@ -1,0 +1,140 @@
+# MutsukiCore Epic #35 acceptance evidence
+
+This document is the requirement-by-requirement audit for Epic #35 and its nine owner issues. The
+Epic remains open while any row marked pending lacks authoritative evidence.
+
+## Ownership decision
+
+On 2026-07-17 the user explicitly rejected a separate remote `MutsukiBenchmarks` repository and
+required every performance test to live in the repository that owns the measured boundary. The
+accepted replacement preserves the technical requirements without a tenth repository:
+
+- MutsukiCore owns the versioned report/workload/approval contracts and a read-only Epic validator;
+- ServiceHost owns builtin, ABI and Rust-process deployment fixtures and the canonical executable
+  six-fixture manifest;
+- PythonRunnerKit mirrors the manifest and owns Python JSONL/binary measurements;
+- TauriHost, Link, DistributedHost, StdPlugins, AgentKit and BotPlugins own their own workloads;
+- every owner retains reports, anomaly analysis, approvals and reference history in its own
+  `artifacts/performance/` directory (`artifacts/perf/` in Core);
+- the Epic validator accepts report paths but never launches or owns another repository's test.
+
+There is no central revision-lock file. The original versioned lock requirement is implemented as
+`repository-snapshot-v1`, scoped to one owner and its actual dependencies. Report v1's
+`revision_lock_hash` remains a compatibility field and is the canonical SHA-256 of that owner
+report's `repository_revisions` map.
+
+## Owner issue evidence
+
+| Issue | Owner evidence | Local verification | Status |
+| --- | --- | --- | --- |
+| MutsukiCore#34 | Core v2 time/allocation lanes, stable case IDs, unified report, explicit approval gate, preserved 100k/24h/1m gates | 129 reference cases; 271 tests passed, 1 ignored | Pass locally |
+| MutsukiServiceHost#15 | builtin/ABI/Rust process deployments, canonical six-fixture manifest, lifecycle and IPC cases | 16 reference cases; 56 tests passed | Pass locally |
+| MutsukiTauriHost#4 | task pump, executable bridge, 1 MiB/64 MiB ResourceRef streaming and release cases | 36 reference cases; 31 tests passed | Pass locally |
+| MutsukiLink#21 | aligned local/TCP/QUIC dimensions, control/backpressure/mux/latest-only/reconnect cases | 53 reference cases; 100 tests passed | Pass locally |
+| MutsukiDistributedHost#22 | real Controller/Worker/ServiceHost processes, placement, registry, content localization and fault stages | 242 reference cases; 68 tests passed | Pass locally |
+| MutsukiPythonRunnerKit#4 | six fixtures across JSONL/binary, codec/pipe/process layers, 1/16/56 inflight and 1/32/256 batches | 92 reference cases; 81 tests passed; Pyright 0 errors | Pass locally |
+| MutsukiStdPlugins#5 | deterministic workflow/resource/fs/http/sqlite workloads with no public network | 18 reference cases; 35 tests passed, 1 ignored | Pass locally |
+| MutsukiAgentKit#4 | deterministic fake model/tool for single/tool/parallel/session/wait/cancel/failure paths | 27 reference cases; 16 tests passed | Pass locally |
+| MutsukiBotPlugins#10 | fake platform burst/multi-adapter/wait/rate-limit/reconnect/dedup/idle paths | 15 reference cases; 75 tests passed | Pass locally |
+
+Every owner report validates as `mutsuki.performance.report/v1`, records the owner and actual
+dependencies, environment fingerprint and measurement boundary, and passes correctness gates.
+
+## Epic-level acceptance
+
+| Epic #35 requirement | Evidence | Status |
+| --- | --- | --- |
+| Performance tests have an authoritative home | Nine owner repositories contain their own benchmark code, workflow and artifacts; no central repository is required | Pass locally |
+| Version report/workload/repository-snapshot/approval contracts | Four schemas and seven Core contract tests under `performance/` | Pass locally |
+| Parse every owner report | `scripts/performance/validate_issue35_reports.py` validates 9 reports and 628 cases | Pass locally |
+| Same Runner fixture across five deployments | ServiceHost manifest plus builtin, ABI, Rust process, Python JSONL and Python binary hashes are exact | Pass locally |
+| Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently in their owner repositories | Pass locally |
+| Fixed macOS ARM64 reference history | Every owner workflow targets `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Pending clean fixed-runner history |
+| Fixed Windows x64 reference history | Every owner workflow targets `[self-hosted,mutsuki-reference,Windows,X64]` | Pending real runner and retained run |
+| Baseline update requires explicit approval | Core tooling validates exact report bytes, revision snapshot and environment; no workflow auto-promotes output | Pass locally |
+| Localize an end-to-end regression by layer | Reports retain independent client/Host/Core/Runner/Link/Distributed boundaries | Pass locally |
+| Label every performance claim | All reports contain environment fingerprints and explicit measurement boundaries | Pass locally |
+
+## Owner-local macOS ARM64 baseline
+
+The physical Apple M4 AC run is retained under these owner paths:
+
+- Core: `artifacts/perf/issue35-macos-arm64-provisional/`
+- ServiceHost: `artifacts/performance/issue15-macos-arm64-provisional/`
+- TauriHost: `artifacts/performance/issue4-macos-arm64-provisional/`
+- Link: `artifacts/performance/issue21-macos-arm64-provisional/`
+- DistributedHost: `artifacts/performance/issue22-macos-arm64-provisional/`
+- PythonRunnerKit: `artifacts/performance/issue4-macos-arm64-provisional/`
+- StdPlugins: `artifacts/performance/issue5-macos-arm64-provisional/`
+- AgentKit: `artifacts/performance/issue4-macos-arm64-provisional/`
+- BotPlugins: `artifacts/performance/issue10-macos-arm64-provisional/`
+
+Together they contain 628 cases with zero correctness failures. Current anomaly classifications are
+six `environmental-noise` suites and three `case-specific-noise` suites, with 161 noisy cases. No
+regression claim is made without an approved clean same-environment baseline.
+
+Repeatable observations:
+
+- Distributed registry median throughput is about 55k mutations/s for Fast 10k, 83 mutations/s for
+  Durable and 63 mutations/s for Critical. Durable/Critical are stable real fsync/replication costs,
+  not a harness correctness failure; they remain a framework/storage hotspot candidate.
+- 1 GiB cold content localization is about 417 MB/s at concurrency 1, 1.62 GB/s at concurrency 4
+  and 1.36 GB/s at concurrency 16. The concurrency-16 drop is repeatable saturation and a
+  framework/storage hotspot candidate, not a proven regression.
+- ServiceHost startup medians are about 289 ms for ABI, 1.85 ms for builtin and 1.83 ms for the Rust
+  process fixture. ABI staging/dynamic loading dominates by design.
+- Bot loopback WebSocket idle CPU has medians of 12.37 ms in the retained earlier run, 18.26 ms in
+  the owner-local run and 17.94 ms in an immediate independent repeat for a one-second window.
+  Allocations remain 715-718, output hashes are identical and all correctness counters are zero.
+  The two latest runs reproduce the higher cost, but high MAD and the earlier lower run make this a
+  case-specific measurement/environment sensitivity and possible idle-runtime hotspot. It is not a
+  test implementation correctness error and is not yet a framework regression.
+
+## Harness errors found and corrected
+
+1. The registry reference matrix originally crossed every large scale with every fsync mode and
+   produced a multi-hour redundant workload. The corrected matrix covers 10k in all modes and
+   100k/1m in Fast mode.
+2. Content samples retained every 1 GiB destination until process exit and exhausted local disk.
+   Each sample now removes its destination outside the timed window and asserts cleanup.
+3. Content and registry throughput used a generic `units/s`; reports now use `bytes/s` and
+   `mutations/s`.
+4. Core and Distributed reports retained absolute local paths; command/output metadata now uses
+   portable markers or sibling directory names.
+5. Extending the ServiceHost ABI fixture initially removed its legacy echo protocol. The fixture now
+   preserves that contract while adding six benchmark protocols; the real cdylib and workspace tests
+   pass.
+
+## Windows evidence boundary
+
+The installed `x86_64-pc-windows-msvc` target cross-checks Core, ServiceHost, TauriHost and
+DistributedHost successfully. Link, StdPlugins, AgentKit and BotPlugins reach native dependencies
+and stop because macOS lacks Windows SDK/MSVC headers (`ring`, `libsqlite3-sys`, `aws-lc-sys`,
+including `assert.h`/`windows.h`). These are cross-toolchain limitations, not source failures. Only
+the fixed Windows x64 owner workflows can prove Windows compilation, execution and measurements.
+
+## Local aggregate validation
+
+Run from MutsukiCore after every owner has produced its own report:
+
+```text
+python scripts/performance/validate_issue35_reports.py \
+  --fixture-manifest ../MutsukiServiceHost/fixtures/performance/runner-fixtures-v1.json \
+  --report core=artifacts/perf/issue35-macos-arm64-provisional/report.json \
+  --report service-host=../MutsukiServiceHost/artifacts/performance/issue15-macos-arm64-provisional/report.json \
+  --report tauri-host=../MutsukiTauriHost/artifacts/performance/issue4-macos-arm64-provisional/report.json \
+  --report link=../MutsukiLink/artifacts/performance/issue21-macos-arm64-provisional/report.json \
+  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/issue22-macos-arm64-provisional/report.json \
+  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
+  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/issue5-macos-arm64-provisional/report.json \
+  --report agent-kit=../MutsukiAgentKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
+  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/issue10-macos-arm64-provisional/report.json
+```
+
+## Required closure sequence
+
+1. Review, commit and push each owner repository after user confirmation.
+2. Run the owner workflows on fixed macOS ARM64 and Windows x64 machines and retain their artifacts.
+3. Create exact-byte approvals for clean reports inside each owner repository.
+4. Run the Core validator with `--require-clean`, compare same-machine history and re-audit every row.
+5. Close child issues and Epic #35 only after every pending row is complete.

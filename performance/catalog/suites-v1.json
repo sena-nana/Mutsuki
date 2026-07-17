@@ -1,0 +1,78 @@
+{
+  "schema_version": "mutsuki.performance.suite-catalog/v1",
+  "catalog_version": "mutsuki-performance-model/v1",
+  "suites": [
+    {
+      "suite_id": "core",
+      "repository": "MutsukiCore",
+      "layer": "Core",
+      "runner": "core",
+      "suite_version": "mutsuki-core/v2",
+      "minimum_cases": 129
+    },
+    {
+      "suite_id": "service-host",
+      "repository": "MutsukiServiceHost",
+      "layer": "Host/Runner",
+      "runner": "service-host",
+      "suite_version": "service-host-performance/v1",
+      "minimum_cases": 16
+    },
+    {
+      "suite_id": "tauri-host",
+      "repository": "MutsukiTauriHost",
+      "layer": "client/bridge",
+      "runner": "tauri-host",
+      "suite_version": "tauri-host-performance/v1",
+      "minimum_cases": 36
+    },
+    {
+      "suite_id": "link",
+      "repository": "MutsukiLink",
+      "layer": "Link",
+      "runner": "link",
+      "suite_version": "link-performance/v1",
+      "minimum_cases": 53
+    },
+    {
+      "suite_id": "distributed-host",
+      "repository": "MutsukiDistributedHost",
+      "layer": "Distributed",
+      "runner": "distributed-host",
+      "suite_version": "mutsuki-distributed-host-issue22-v1",
+      "minimum_cases": 242
+    },
+    {
+      "suite_id": "python-runner-kit",
+      "repository": "MutsukiPythonRunnerKit",
+      "layer": "Runner",
+      "runner": "python-runner-kit",
+      "suite_version": "mutsuki-python-runner-kit-issue4-v1",
+      "minimum_cases": 92
+    },
+    {
+      "suite_id": "std-plugins",
+      "repository": "MutsukiStdPlugins",
+      "layer": "workload/Runner",
+      "runner": "std-plugins",
+      "suite_version": "mutsuki-std-plugins-issue5-v1",
+      "minimum_cases": 18
+    },
+    {
+      "suite_id": "agent-kit",
+      "repository": "MutsukiAgentKit",
+      "layer": "workload/client",
+      "runner": "agent-kit",
+      "suite_version": "mutsuki-agent-kit-issue4-v1",
+      "minimum_cases": 27
+    },
+    {
+      "suite_id": "bot-plugins",
+      "repository": "MutsukiBotPlugins",
+      "layer": "workload/client",
+      "runner": "bot-plugins",
+      "suite_version": "mutsuki-bot-plugins-issue10-v1",
+      "minimum_cases": 15
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mutsuki.dev/schema/performance/repository-snapshot-v1.schema.json",
+  "title": "Mutsuki Owner Repository Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "snapshot_version",
+    "owner_repository",
+    "snapshot_hash",
+    "repositories"
+  ],
+  "properties": {
+    "schema_version": {"const": "mutsuki.performance.repository-snapshot/v1"},
+    "snapshot_version": {"type": "string", "minLength": 1},
+    "owner_repository": {"type": "string", "minLength": 1},
+    "snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "repositories": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["revision", "dirty"],
+        "properties": {
+          "revision": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+          "dirty": {"type": "boolean"},
+          "remote": {"type": "string"}
+        }
+      }
+    }
+  }
+}

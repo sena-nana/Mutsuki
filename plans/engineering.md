@@ -68,8 +68,14 @@ bash scripts/check-distributed-boundary.sh
 cargo bench-smoke
 ```
 
-完整性能矩阵使用 `cargo bench-full`。scheduled/release CI 保存结构化结果，并对匹配历史 case
-应用宽松相对阈值；普通 CI 的 smoke 只使用灾难性绝对上限，不把公共 runner 当微秒级稳定环境。
+完整进程内矩阵使用 `cargo bench-full`；固定物理机器 reference 使用
+`cargo bench-reference`。reference 命令必须把 system-allocator time lane 与
+tracking-allocator allocation lane 放在不同进程，执行 warmup、多样本和多独立进程轮次，
+输出 Mutsuki Performance Model v1 的 median/p95/p99/MAD/min/max、CPU/RSS、owner repository
+revision snapshot、环境指纹和 correctness counters。公共 CI 的 smoke 只使用灾难性绝对上限，不把公共 runner
+当微秒级稳定环境，也不通过 cache 或“最近一次结果”自动更新 baseline。release baseline
+必须有显式 approval 文件且匹配 report SHA-256、repository revision snapshot hash 和
+environment id。
 
 改动外部 Python backend kit 时，在 `MutsukiPythonRunnerKit` 仓库运行其 `uv` 验证命令。
 

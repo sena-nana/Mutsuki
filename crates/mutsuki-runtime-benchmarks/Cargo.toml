@@ -4,9 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
+default-run = "mutsuki-runtime-benchmarks"
+
+[features]
+default = []
+allocation-tracking = []
 
 [dependencies]
 csv.workspace = true
+libc.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-host = { path = "../mutsuki-runtime-host" }
@@ -14,3 +20,4 @@ mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 mutsuki-runtime-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true

@@ -14,3 +14,4 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+/artifacts/perf/issue35-macos-arm64-provisional/

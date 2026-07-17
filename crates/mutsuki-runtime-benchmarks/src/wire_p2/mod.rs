@@ -10,13 +10,10 @@ mod transport;
 
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::allocator::TrackingAllocator;
-use crate::report::{BenchmarkMode, BenchmarkReport, CaseResult, Environment, GateResult};
+use crate::report::{BenchmarkMode, CaseResult, GateResult};
 
 pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
     let (mode, output, command) = options()?;
@@ -24,32 +21,17 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
     cases.extend(transport::run(mode, allocator)?);
     cases.extend(abi::run(mode, allocator)?);
     let gates = gates(&cases);
-    let passed = gates.iter().all(|gate| gate.passed);
-    let report = BenchmarkReport {
-        schema_version: 1,
-        issue: 33,
-        mode: mode.as_str().into(),
-        generated_unix_seconds: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_secs(),
+    let report = crate::wire_report::write(
+        "mutsuki-core-wire-p2/v2",
+        "runtime-wire-p2/v1",
+        mode,
         command,
-        environment: environment(),
+        &output,
         cases,
         gates,
-        passed,
-    };
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::write(
-        &output,
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
-        ),
-    )
-    .map_err(|error| error.to_string())?;
+        "Runtime Wire binary/JSONL transport and ABI diagnostic with tracking allocator; not headline latency",
+    )?;
+    let passed = report.correctness.passed;
     println!(
         "Epic #30 P2 benchmark: {} cases, {} gates, result={}, report={}",
         report.cases.len(),
@@ -62,7 +44,7 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
             .gates
             .iter()
             .filter(|gate| !gate.passed)
-            .map(|gate| gate.name.clone())
+            .map(|gate| gate.gate_id.clone())
             .collect::<Vec<_>>()
             .join(", ")
     })
@@ -109,7 +91,7 @@ fn gates(cases: &[CaseResult]) -> Vec<GateResult> {
 
 fn gate(name: String, actual: f64, limit: f64, unit: &str) -> GateResult {
     GateResult {
-        name,
+        gate_id: name,
         kind: "optimization".into(),
         passed: actual <= limit,
         actual,
@@ -138,33 +120,4 @@ fn options() -> Result<(BenchmarkMode, PathBuf, String), String> {
         return Err(format!("unknown arguments: {}", args[2..].join(" ")));
     }
     Ok((mode, output, args.join(" ")))
-}
-
-fn environment() -> Environment {
-    Environment {
-        os: env::consts::OS.into(),
-        arch: env::consts::ARCH.into(),
-        cpu_parallelism: std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(1),
-        rust_version: command_output("rustc", &["--version"]),
-        commit: command_output("git", &["rev-parse", "HEAD"]),
-        dirty: !command_output("git", &["status", "--porcelain"]).is_empty(),
-        profile: if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        }
-        .into(),
-    }
-}
-
-fn command_output(program: &str, args: &[&str]) -> String {
-    Command::new(program)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_else(|| "unavailable".into())
 }

@@ -1,0 +1,31 @@
+{
+  "schema_version": "mutsuki.performance.case-catalog/v1",
+  "suite_version": "mutsuki-performance-model/v1",
+  "cases": [
+    "idle-runtime",
+    "control-latency",
+    "small-batch",
+    "sparse-ready",
+    "full-ready",
+    "resource-plan",
+    "waiting-set",
+    "runner-deployment",
+    "large-resource-ref",
+    "link-control-under-load",
+    "distributed-dispatch",
+    "distributed-failure"
+  ],
+  "dimensions": {
+    "tasks": [1000, 10000, 100000],
+    "runners": [1, 16, 128],
+    "batch": [1, 32, 256],
+    "ready_percent": [0, 1, 50, 100],
+    "business_inflight": [1, 16, 56],
+    "payload_bytes": [256, 4096, 65536],
+    "stress_payload_bytes": [1048576],
+    "resource": ["none", "shared-read", "write-conflict", "strict-order"],
+    "observability": ["off", "enabled", "saturated"],
+    "deployment": ["builtin", "abi", "rust-process", "python-jsonl", "python-binary"]
+  }
+}
+

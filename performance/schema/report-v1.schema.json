@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mutsuki.dev/schema/performance/report-v1.schema.json",
+  "title": "Mutsuki Performance Report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_version",
+    "workload_version",
+    "report_id",
+    "generated_at",
+    "revision_lock_hash",
+    "repository_revisions",
+    "environment_id",
+    "environment",
+    "feature_set",
+    "deployment",
+    "measurement_boundary",
+    "sampling",
+    "cases",
+    "correctness"
+  ],
+  "properties": {
+    "schema_version": {"const": "mutsuki.performance.report/v1"},
+    "suite_version": {"type": "string", "minLength": 1},
+    "workload_version": {"type": "string", "minLength": 1},
+    "report_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "revision_lock_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "repository_revisions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/repositoryRevision"}
+    },
+    "environment_id": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "feature_set": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "deployment": {"type": "string", "minLength": 1},
+    "measurement_boundary": {"type": "string", "minLength": 1},
+    "sampling": {"$ref": "#/$defs/sampling"},
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/case"}
+    },
+    "correctness": {"$ref": "#/$defs/correctness"},
+    "gates": {"type": "array", "items": {"$ref": "#/$defs/gate"}},
+    "metadata": {"type": "object"}
+  },
+  "$defs": {
+    "repositoryRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "dirty"],
+      "properties": {
+        "revision": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+        "dirty": {"type": "boolean"},
+        "remote": {"type": "string"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_model", "cpu_topology", "ram_bytes", "os", "kernel", "architecture",
+        "target_triple", "toolchains", "release_profile", "power_mode", "virtualization",
+        "runner_configuration"
+      ],
+      "properties": {
+        "cpu_model": {"type": "string", "minLength": 1},
+        "cpu_topology": {"type": "string", "minLength": 1},
+        "ram_bytes": {"type": "integer", "minimum": 1},
+        "os": {"type": "string", "minLength": 1},
+        "kernel": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "target_triple": {"type": "string", "minLength": 1},
+        "toolchains": {"type": "object", "additionalProperties": {"type": "string"}},
+        "release_profile": {
+          "type": "object",
+          "required": ["name", "lto", "codegen_units"],
+          "properties": {
+            "name": {"type": "string"},
+            "lto": {"type": ["string", "boolean"]},
+            "codegen_units": {"type": "integer", "minimum": 1}
+          }
+        },
+        "power_mode": {"type": "string", "minLength": 1},
+        "virtualization": {"type": "string", "minLength": 1},
+        "runner_configuration": {"type": "object"},
+        "network": {"type": "object"},
+        "webview": {"type": "object"}
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warmup_iterations", "samples_per_process", "process_runs"],
+      "properties": {
+        "warmup_iterations": {"type": "integer", "minimum": 0},
+        "samples_per_process": {"type": "integer", "minimum": 1},
+        "process_runs": {"type": "integer", "minimum": 1}
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["median", "p95", "p99", "mad", "min", "max", "unit"],
+      "properties": {
+        "median": {"type": "number", "minimum": 0},
+        "p95": {"type": "number", "minimum": 0},
+        "p99": {"type": "number", "minimum": 0},
+        "mad": {"type": "number", "minimum": 0},
+        "min": {"type": "number", "minimum": 0},
+        "max": {"type": "number", "minimum": 0},
+        "unit": {"type": "string", "minLength": 1},
+        "sample_count": {"type": "integer", "minimum": 1}
+        ,"samples": {"type": "array", "minItems": 1, "items": {"type": "number", "minimum": 0}}
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "measurement_mode", "dimensions", "metrics", "correctness"],
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+        "measurement_mode": {"enum": ["time", "allocation", "diagnostic", "system"]},
+        "dimensions": {"type": "object"},
+        "metrics": {
+          "type": "object",
+          "properties": {
+            "latency_ns": {"$ref": "#/$defs/distribution"},
+            "throughput_per_second": {"$ref": "#/$defs/distribution"},
+            "cpu_time_ns": {"$ref": "#/$defs/distribution"},
+            "allocations": {"type": "number", "minimum": 0},
+            "allocated_bytes": {"type": "number", "minimum": 0},
+            "peak_rss_bytes": {"type": "number", "minimum": 0},
+            "retained_rss_bytes": {"type": "number"},
+            "context_switches": {"type": "number", "minimum": 0},
+            "disk_bytes": {"type": "number", "minimum": 0},
+            "network_bytes": {"type": "number", "minimum": 0},
+            "ipc_bytes": {"type": "number", "minimum": 0}
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "number"},
+              {"$ref": "#/$defs/distribution"}
+            ]
+          }
+        },
+        "correctness": {"$ref": "#/$defs/correctness"},
+        "stage_breakdown": {"type": "object", "additionalProperties": {"type": "number"}}
+      }
+    },
+    "correctness": {
+      "type": "object",
+      "required": ["passed", "counters"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "output_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "counters": {"type": "object", "additionalProperties": {"type": "integer"}}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["gate_id", "passed", "actual", "limit", "unit"],
+      "properties": {
+        "gate_id": {"type": "string"},
+        "passed": {"type": "boolean"},
+        "actual": {"type": "number"},
+        "limit": {"type": "number"},
+        "unit": {"type": "string"}
+      }
+    }
+  }
+}

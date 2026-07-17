@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mutsuki.dev/schema/performance/workload-v1.schema.json",
+  "title": "Mutsuki Deterministic Workload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "workload_version", "seed", "fixtures"],
+  "properties": {
+    "schema_version": {"const": "mutsuki.performance.workload/v1"},
+    "workload_version": {"type": "string", "minLength": 1},
+    "seed": {"type": "integer", "minimum": 0},
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_id", "behavior", "input", "expected_output_hash", "dimensions"],
+        "properties": {
+          "fixture_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+          "behavior": {"type": "string", "minLength": 1},
+          "input": {},
+          "expected_output_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "dimensions": {"type": "object"},
+          "fault": {"type": "object"}
+        }
+      }
+    }
+  }
+}
+
