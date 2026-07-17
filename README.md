@@ -44,3 +44,13 @@ The checked-in schema and semantic fixtures are pinned to MutsukiCore
 protocol major, codec, or schema revision before runner work is dispatched.
 Performance measurements and JSONL operational limits are documented in
 `docs/performance/runtime-wire-v1.md`.
+
+The unified Python Runner performance entrypoint is:
+
+```text
+uv run python benchmarks/performance_model.py --mode smoke --output artifacts/perf/python.json
+```
+
+ServiceHost and external orchestrators start `benchmarks/fixture_process.py` with either
+`--codec python-jsonl` or `--codec python-binary`. These are real stdio processes; codec-only,
+in-memory, real-pipe and external ServiceHost results remain separate measurement boundaries.

@@ -15,6 +15,7 @@ env/
 # Build outputs
 build/
 dist/
+/target/
 *.egg-info/
 
 # Local env
@@ -24,3 +25,4 @@ dist/
 
 # Codex/codegraph local index
 .codegraph/
+/artifacts/performance/issue4-macos-arm64-provisional/
