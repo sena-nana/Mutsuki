@@ -4,3 +4,7 @@ node_modules/
 /.turbo/
 *.log
 /artifacts/performance/issue4-macos-arm64-provisional/
+
+# Python cache
+__pycache__/
+*.pyc
