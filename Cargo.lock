@@ -1142,6 +1142,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-std-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-plugin-config-permission",
+ "mutsuki-plugin-db-sqlite",
+ "mutsuki-plugin-dev-mock",
+ "mutsuki-plugin-io-fs",
+ "mutsuki-plugin-io-http-client",
+ "mutsuki-plugin-observe-log",
+ "mutsuki-plugin-resource-memory",
+ "mutsuki-plugin-resource-shared-memory",
+ "mutsuki-plugin-workflow-broadcast",
+ "mutsuki-plugin-workflow-linear",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "mutsuki-std-plugins"
 version = "0.1.0"
 dependencies = [

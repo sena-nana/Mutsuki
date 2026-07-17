@@ -47,3 +47,20 @@ cargo check
 cargo test
 cargo bench -p mutsuki-plugin-resource-shared-memory --bench shared_memory_paths
 ```
+
+## Performance Model v1
+
+Issue #5 的标准插件基准只测量真实 plugin handler/provider 边界：workflow、memory/COW、
+shared-memory descriptor/open/read/release、临时 SQLite、临时文件树、loopback HTTP、
+observe、permission 与 dev mock。HTTP 基准明确禁止公网请求。
+
+```powershell
+python scripts/run-performance-model.py --mode smoke --output artifacts/performance/issue5-smoke.json
+python scripts/run-performance-model.py --mode reference --process-runs 3 --output artifacts/performance/issue5-reference.json
+```
+
+输出遵守 `mutsuki.performance.report/v1`，包含固定 workload/seed、owner repository
+revision snapshot、稳定
+output hash、p50/p95/p99/MAD、throughput、CPU/RSS、allocation、disk/network bytes 与
+correctness counters。完整边界、异常判定与跨仓库使用方式见
+[`docs/performance-model-issue5.md`](docs/performance-model-issue5.md)。

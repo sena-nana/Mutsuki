@@ -1,0 +1,18 @@
+{
+  "schema_version": "mutsuki.performance.std-workloads/v1",
+  "seed": 1297435713,
+  "network_policy": "loopback-only",
+  "cases": [
+    {"case_id": "std.workflow.linear", "scales": [1, 8, 64]},
+    {"case_id": "std.workflow.broadcast", "scales": [1, 8, 64]},
+    {"case_id": "std.resource.memory.read", "bytes": [1048576, 67108864]},
+    {"case_id": "std.resource.memory.cow", "bytes": [1048576, 67108864]},
+    {"case_id": "std.resource.shared-memory", "operations": ["descriptor", "open", "read", "release"]},
+    {"case_id": "std.db.sqlite.query", "seed_rows": 64},
+    {"case_id": "std.io.fs.read", "files": 8},
+    {"case_id": "std.io.http-client", "server": "loopback-deterministic"},
+    {"case_id": "std.observe.log", "events": 64},
+    {"case_id": "std.config.permission", "matrix": "fixed-allow-deny"},
+    {"case_id": "std.dev.mock", "provider": "benchmark-fake"}
+  ]
+}
