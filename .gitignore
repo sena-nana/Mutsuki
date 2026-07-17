@@ -1,2 +1,6 @@
 /target/
 /artifacts/performance/
+
+# Python cache
+__pycache__/
+*.pyc
