@@ -1,0 +1,22 @@
+[package]
+name = "mutsuki-agent-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+mutsuki-agent-protocol.workspace = true
+mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
+mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
+mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
+mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
+mutsuki-plugin-agent-model-gateway = { path = "../mutsuki-plugin-agent-model-gateway" }
+mutsuki-plugin-agent-session = { path = "../mutsuki-plugin-agent-session" }
+mutsuki-plugin-agent-tool-router = { path = "../mutsuki-plugin-agent-tool-router" }
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

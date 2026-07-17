@@ -12,6 +12,7 @@ members = [
     "crates/mutsuki-plugin-agent-prompt",
     "crates/mutsuki-agent-testkit",
     "crates/mutsuki-agent-bundle",
+    "crates/mutsuki-agent-benchmarks",
 ]
 resolver = "2"
 exclude = [
@@ -41,6 +42,7 @@ tokio = { version = "1", features = ["time", "macros", "rt-multi-thread"] }
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "parsing"] }
+sha2 = "0.10"
 
 [profile.dev]
 debug = "line-tables-only"

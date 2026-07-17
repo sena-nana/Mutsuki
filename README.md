@@ -70,3 +70,18 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 
 这些 plugin crate 保留独立 manifest、runner 与可选装配边界；它们不是第二套 runtime，产品
 可只注册实际选择的能力。
+
+## Performance Model v1
+
+Issue #4 的确定性 Agent workload 使用 `mutsuki-agent-testkit` 中版本化的 fake model/tool，
+固定 seed 且禁止网络。smoke 只运行 0 μs 档；reference 运行 0 μs、1 ms、10 ms，并将
+simulated model/tool time 与 AgentKit orchestration、Core/Host overhead 分开报告。
+
+```text
+python scripts/run-performance-model.py --mode smoke --output artifacts/performance/issue4-smoke.json
+python scripts/run-performance-model.py --mode reference --process-runs 3 --output artifacts/performance/issue4-reference.json
+```
+
+覆盖 single-turn、tool-once、chain-8、真实 batched parallel-8、session-100、三档 context、
+memory route、wait/resume、cancel 与 failure/retry。详见
+[`docs/performance-model-issue4.md`](docs/performance-model-issue4.md)。
