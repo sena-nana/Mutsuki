@@ -315,7 +315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "dirs",
  "serde",
@@ -1057,7 +1057,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -1082,7 +1082,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -1093,7 +1093,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1105,7 +1105,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -1118,7 +1118,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=dab7f6ea165721dcbdb557a416eb1d51617ad109#dab7f6ea165721dcbdb557a416eb1d51617ad109"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4#764b03ec41c9e6c02dfdfd00dd222ec5d77e13b4"
 dependencies = [
  "anyhow",
  "futures",
@@ -1471,7 +1471,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1716,7 +1716,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
