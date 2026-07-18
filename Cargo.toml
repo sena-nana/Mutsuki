@@ -43,7 +43,7 @@ mutsuki-bot-link-parser = { path = "crates/mutsuki-bot-link-parser" }
 mutsuki-plugin-bot-bilibili = { path = "crates/mutsuki-plugin-bot-bilibili" }
 mutsuki-plugin-bot-bilibili-workshop = { path = "crates/mutsuki-plugin-bot-bilibili-workshop" }
 mutsuki-plugin-bot-mihuashi = { path = "crates/mutsuki-plugin-bot-mihuashi" }
-mutsuki-protocol-browser = { git = "https://github.com/sena-nana/MutsukiStdPlugins.git", rev = "c37c97a2c1f13a3ac0c2362f2b66f053260da85a" }
+mutsuki-protocol-browser = { git = "https://github.com/sena-nana/MutsukiStdPlugins.git", rev = "05102c8c7c26a06cb30efda90325be9527f78617" }
 bot-echo = { path = "examples/bot-echo" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

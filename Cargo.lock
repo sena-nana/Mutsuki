@@ -1335,7 +1335,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-protocol-browser"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=c37c97a2c1f13a3ac0c2362f2b66f053260da85a#c37c97a2c1f13a3ac0c2362f2b66f053260da85a"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=05102c8c7c26a06cb30efda90325be9527f78617#05102c8c7c26a06cb30efda90325be9527f78617"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
