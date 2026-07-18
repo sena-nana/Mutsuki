@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::bounded;
+use crossbeam_channel::{TrySendError, bounded};
 use serde_json::{Value, json};
 
 const BLOCKING_THREADS: usize = 4;
@@ -14,6 +14,7 @@ const QUEUE_CAPACITY: usize = 65_536;
 
 #[derive(Clone, Copy, Default)]
 struct Usage {
+    total: Option<i64>,
     voluntary: Option<i64>,
     involuntary: Option<i64>,
 }
@@ -41,6 +42,8 @@ fn main() {
     let (legacy, optimized) = interleaved_samples(legacy_threads, optimized_threads);
     let legacy_elapsed = summarize_durations(&legacy);
     let optimized_elapsed = summarize_durations(&optimized);
+    let legacy_total = summarize_usage(&legacy, |usage| usage.total);
+    let optimized_total = summarize_usage(&optimized, |usage| usage.total);
     let legacy_voluntary = summarize_usage(&legacy, |usage| usage.voluntary);
     let optimized_voluntary = summarize_usage(&optimized, |usage| usage.voluntary);
     let legacy_involuntary = summarize_usage(&legacy, |usage| usage.involuntary);
@@ -51,7 +54,7 @@ fn main() {
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
-            "schema": "mutsuki.worker-pool.issue13.v2",
+            "schema": "mutsuki.worker-pool.issue13.v3",
             "host": {
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
@@ -72,6 +75,7 @@ fn main() {
                 &legacy,
                 legacy_elapsed,
                 legacy_throughput,
+                legacy_total,
                 legacy_voluntary,
                 legacy_involuntary,
             ),
@@ -82,6 +86,7 @@ fn main() {
                 &optimized,
                 optimized_elapsed,
                 optimized_throughput,
+                optimized_total,
                 optimized_voluntary,
                 optimized_involuntary,
             ),
@@ -92,6 +97,8 @@ fn main() {
                     percent_change(legacy_elapsed.median, optimized_elapsed.median),
                 "throughput_change_percent":
                     percent_change(legacy_throughput, optimized_throughput),
+                "total_context_switch_change_percent":
+                    percent_change_optional(legacy_total, optimized_total),
                 "voluntary_context_switch_change_percent":
                     percent_change_optional(legacy_voluntary, optimized_voluntary),
                 "involuntary_context_switch_change_percent":
@@ -142,6 +149,7 @@ fn result_json(
     samples: &[Sample],
     elapsed: Summary,
     throughput: f64,
+    total: Option<Summary>,
     voluntary: Option<Summary>,
     involuntary: Option<Summary>,
 ) -> Value {
@@ -156,9 +164,13 @@ fn result_json(
             .collect::<Vec<_>>(),
         "throughput_jobs_per_second": throughput,
         "context_switches": {
-            "available": voluntary.is_some() && involuntary.is_some(),
+            "available": total.is_some(),
+            "total": total.map(summary_json),
+            "total_samples": usage_samples(samples, |usage| usage.total),
             "voluntary": voluntary.map(summary_json),
+            "voluntary_samples": usage_samples(samples, |usage| usage.voluntary),
             "involuntary": involuntary.map(summary_json),
+            "involuntary_samples": usage_samples(samples, |usage| usage.involuntary),
         },
     })
 }
@@ -191,6 +203,10 @@ fn summarize_usage(samples: &[Sample], field: impl Fn(Usage) -> Option<i64>) -> 
     Some(summarize(values))
 }
 
+fn usage_samples(samples: &[Sample], field: impl Fn(Usage) -> Option<i64>) -> Option<Vec<i64>> {
+    samples.iter().map(|sample| field(sample.usage)).collect()
+}
+
 fn summarize(mut values: Vec<f64>) -> Summary {
     assert!(!values.is_empty(), "benchmark summary requires samples");
     values.sort_by(f64::total_cmp);
@@ -219,12 +235,16 @@ fn run_legacy(threads: usize) -> Sample {
     let before = usage();
     let started = Instant::now();
     let completed = Arc::new(AtomicUsize::new(0));
+    let finished = Arc::new(Barrier::new(threads + 1));
+    let release = Arc::new(Barrier::new(threads + 1));
     let (sender, receiver) = mpsc::channel::<usize>();
     let receiver = Arc::new(Mutex::new(receiver));
     let handles = (0..threads)
         .map(|_| {
             let receiver = receiver.clone();
             let completed = completed.clone();
+            let finished = finished.clone();
+            let release = release.clone();
             thread::spawn(move || {
                 loop {
                     let job = receiver.lock().expect("legacy receiver poisoned").recv();
@@ -234,6 +254,8 @@ fn run_legacy(threads: usize) -> Sample {
                     do_work(job.expect("checked above"));
                     completed.fetch_add(1, Ordering::Relaxed);
                 }
+                finished.wait();
+                release.wait();
             })
         })
         .collect::<Vec<_>>();
@@ -241,13 +263,17 @@ fn run_legacy(threads: usize) -> Sample {
         sender.send(job).expect("legacy queue disconnected");
     }
     drop(sender);
+    finished.wait();
+    let elapsed = started.elapsed();
+    let after = usage();
+    release.wait();
     for handle in handles {
         handle.join().expect("legacy worker panicked");
     }
     assert_eq!(completed.load(Ordering::Relaxed), JOBS);
     Sample {
-        elapsed: started.elapsed(),
-        usage: usage_delta(before, usage()),
+        elapsed,
+        usage: usage_delta(before, after),
     }
 }
 
@@ -255,30 +281,50 @@ fn run_bounded(threads: usize) -> Sample {
     let before = usage();
     let started = Instant::now();
     let completed = Arc::new(AtomicUsize::new(0));
+    let finished = Arc::new(Barrier::new(threads + 1));
+    let release = Arc::new(Barrier::new(threads + 1));
     let (sender, receiver) = bounded::<usize>(QUEUE_CAPACITY);
     let handles = (0..threads)
         .map(|_| {
             let receiver = receiver.clone();
             let completed = completed.clone();
+            let finished = finished.clone();
+            let release = release.clone();
             thread::spawn(move || {
                 while let Ok(job) = receiver.recv() {
                     do_work(job);
                     completed.fetch_add(1, Ordering::Relaxed);
                 }
+                finished.wait();
+                release.wait();
             })
         })
         .collect::<Vec<_>>();
     for job in 0..JOBS {
-        sender.send(job).expect("bounded queue disconnected");
+        let mut pending = job;
+        loop {
+            match sender.try_send(pending) {
+                Ok(()) => break,
+                Err(TrySendError::Full(job)) => {
+                    pending = job;
+                    std::hint::spin_loop();
+                }
+                Err(TrySendError::Disconnected(_)) => panic!("bounded queue disconnected"),
+            }
+        }
     }
     drop(sender);
+    finished.wait();
+    let elapsed = started.elapsed();
+    let after = usage();
+    release.wait();
     for handle in handles {
         handle.join().expect("bounded worker panicked");
     }
     assert_eq!(completed.load(Ordering::Relaxed), JOBS);
     Sample {
-        elapsed: started.elapsed(),
-        usage: usage_delta(before, usage()),
+        elapsed,
+        usage: usage_delta(before, after),
     }
 }
 
@@ -303,6 +349,10 @@ fn do_work(job: usize) {
 
 fn usage_delta(before: Usage, after: Usage) -> Usage {
     Usage {
+        total: after
+            .total
+            .zip(before.total)
+            .map(|(after, before)| after - before),
         voluntary: after
             .voluntary
             .zip(before.voluntary)
@@ -323,19 +373,97 @@ fn usage() -> Usage {
     // SAFETY: status == 0 guarantees the structure was initialized.
     let value = unsafe { value.assume_init() };
     Usage {
+        total: Some(value.ru_nvcsw + value.ru_nivcsw),
         voluntary: Some(value.ru_nvcsw),
         involuntary: Some(value.ru_nivcsw),
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn usage() -> Usage {
+    Usage {
+        total: Some(windows_context_switches()),
+        ..Usage::default()
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn usage() -> Usage {
     Usage::default()
 }
 
+#[cfg(windows)]
+fn windows_context_switches() -> i64 {
+    use std::mem::{size_of, size_of_val};
+    use std::slice;
+
+    use windows_sys::Wdk::System::SystemInformation::{
+        NtQuerySystemInformation, SystemProcessInformation,
+    };
+    use windows_sys::Win32::System::WindowsProgramming::{
+        SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION,
+    };
+
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xc000_0004_u32 as i32;
+    let mut byte_capacity = 64 * 1024_u32;
+    let process_id = std::process::id() as usize;
+
+    loop {
+        let words = (byte_capacity as usize).div_ceil(size_of::<usize>());
+        let mut buffer = vec![0_usize; words];
+        let mut required = 0_u32;
+        // SAFETY: the word buffer is aligned for every parsed system structure, its byte size is
+        // supplied exactly, and the kernel reports how much space is required on mismatch.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessInformation,
+                buffer.as_mut_ptr().cast(),
+                size_of_val(buffer.as_slice()) as u32,
+                &mut required,
+            )
+        };
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            byte_capacity = required.max(byte_capacity.saturating_mul(2));
+            continue;
+        }
+        assert!(status >= 0, "NtQuerySystemInformation failed: {status:#x}");
+
+        let base = buffer.as_ptr().cast::<u8>();
+        let mut offset = 0_usize;
+        loop {
+            // SAFETY: each offset is supplied by the kernel and the buffer is suitably aligned.
+            let process = unsafe { &*base.add(offset).cast::<SYSTEM_PROCESS_INFORMATION>() };
+            if process.UniqueProcessId as usize == process_id {
+                // SYSTEM_PROCESS_INFORMATION is immediately followed by NumberOfThreads entries.
+                // SAFETY: the kernel populated this record and its declared thread count.
+                let threads = unsafe {
+                    slice::from_raw_parts(
+                        (process as *const SYSTEM_PROCESS_INFORMATION)
+                            .add(1)
+                            .cast::<SYSTEM_THREAD_INFORMATION>(),
+                        process.NumberOfThreads as usize,
+                    )
+                };
+                let total = threads
+                    .iter()
+                    // windows-sys exposes the SYSTEM_THREAD_INFORMATION ContextSwitches ABI slot
+                    // as Reserved3.
+                    .map(|thread| i64::from(thread.Reserved3))
+                    .sum();
+                return total;
+            }
+            assert_ne!(
+                process.NextEntryOffset, 0,
+                "current process missing from system snapshot"
+            );
+            offset += process.NextEntryOffset as usize;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{percent_change, summarize};
+    use super::{Usage, percent_change, summarize, usage_delta};
 
     #[test]
     fn summary_retains_distribution_and_mad() {
@@ -352,5 +480,29 @@ mod tests {
     fn percent_change_rejects_zero_baseline() {
         assert_eq!(percent_change(10.0, 15.0), Some(50.0));
         assert_eq!(percent_change(0.0, 15.0), None);
+    }
+
+    #[test]
+    fn usage_delta_tracks_total_and_split_context_switches() {
+        let before = Usage {
+            total: Some(10),
+            voluntary: Some(3),
+            involuntary: Some(7),
+        };
+        let after = Usage {
+            total: Some(14),
+            voluntary: Some(5),
+            involuntary: Some(9),
+        };
+        let delta = usage_delta(before, after);
+        assert_eq!(delta.total, Some(4));
+        assert_eq!(delta.voluntary, Some(2));
+        assert_eq!(delta.involuntary, Some(2));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_usage_exposes_total_context_switches() {
+        assert!(super::usage().total.is_some());
     }
 }
