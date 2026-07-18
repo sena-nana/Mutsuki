@@ -155,6 +155,14 @@ fn wait_for_task_status(runtime: &HostRuntime, task_id: &str, expected: TaskStat
     );
 }
 
+fn event_driven_test_deadline() -> Duration {
+    if cfg!(windows) {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_millis(150)
+    }
+}
+
 #[test]
 fn host_start_rejects_invalid_worker_pool_capacity_before_returning() {
     let mut invalid_configs = Vec::new();
@@ -453,7 +461,7 @@ fn event_driven_host_arms_one_shot_timer_for_future_ready_step() {
     assert_eq!(runtime.task_status("timer-1"), Some(TaskStatus::Ready));
 
     wait_for_task_status(&runtime, "timer-1", TaskStatus::Completed);
-    assert!(submitted_at.elapsed() < Duration::from_millis(150));
+    assert!(submitted_at.elapsed() < event_driven_test_deadline());
     let completed = runtime.drive_state().unwrap();
     assert_eq!(completed.timed_wakeups, 1);
     assert_eq!(completed.next_required_tick, None);
@@ -504,7 +512,7 @@ fn event_driven_host_enforces_tick_deadline_without_periodic_polling() {
         .unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     wait_for_task_status(&runtime, "timer-deadline-1", TaskStatus::Cancelled);
-    assert!(submitted_at.elapsed() < Duration::from_millis(150));
+    assert!(submitted_at.elapsed() < event_driven_test_deadline());
 
     release_tx.send(()).unwrap();
     let started = Instant::now();

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 const BLOCKING_THREADS: usize = 4;
 const JOBS: usize = 200_000;
+const ENTRIES_PER_BATCH: usize = 64;
 const SAMPLES: usize = 5;
 const WORK_ITERATIONS: usize = 256;
 const QUEUE_CAPACITY: usize = 65_536;
@@ -63,6 +64,8 @@ fn main() {
             "benchmark": {
                 "logical_cores": logical_cores,
                 "jobs_per_sample": JOBS,
+                "batches_per_sample": JOBS.div_ceil(ENTRIES_PER_BATCH),
+                "entries_per_batch": ENTRIES_PER_BATCH,
                 "samples": SAMPLES,
                 "sample_order": "alternating_legacy_optimized",
                 "work_iterations_per_job": WORK_ITERATIONS,
@@ -251,16 +254,20 @@ fn run_legacy(threads: usize) -> Sample {
                     if job.is_err() {
                         break;
                     }
-                    do_work(job.expect("checked above"));
-                    completed.fetch_add(1, Ordering::Relaxed);
+                    let batch_start = job.expect("checked above");
+                    let batch_end = (batch_start + ENTRIES_PER_BATCH).min(JOBS);
+                    for entry in batch_start..batch_end {
+                        do_work(entry);
+                    }
+                    completed.fetch_add(batch_end - batch_start, Ordering::Relaxed);
                 }
                 finished.wait();
                 release.wait();
             })
         })
         .collect::<Vec<_>>();
-    for job in 0..JOBS {
-        sender.send(job).expect("legacy queue disconnected");
+    for batch_start in (0..JOBS).step_by(ENTRIES_PER_BATCH) {
+        sender.send(batch_start).expect("legacy queue disconnected");
     }
     drop(sender);
     finished.wait();
@@ -291,17 +298,20 @@ fn run_bounded(threads: usize) -> Sample {
             let finished = finished.clone();
             let release = release.clone();
             thread::spawn(move || {
-                while let Ok(job) = receiver.recv() {
-                    do_work(job);
-                    completed.fetch_add(1, Ordering::Relaxed);
+                while let Ok(batch_start) = receiver.recv() {
+                    let batch_end = (batch_start + ENTRIES_PER_BATCH).min(JOBS);
+                    for entry in batch_start..batch_end {
+                        do_work(entry);
+                    }
+                    completed.fetch_add(batch_end - batch_start, Ordering::Relaxed);
                 }
                 finished.wait();
                 release.wait();
             })
         })
         .collect::<Vec<_>>();
-    for job in 0..JOBS {
-        let mut pending = job;
+    for batch_start in (0..JOBS).step_by(ENTRIES_PER_BATCH) {
+        let mut pending = batch_start;
         loop {
             match sender.try_send(pending) {
                 Ok(()) => break,
