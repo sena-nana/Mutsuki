@@ -289,11 +289,7 @@ fn parse_options() -> Result<Options, String> {
         index += 1;
     }
     if measurement_mode == MeasurementMode::Allocation
-        && output
-            == PathBuf::from(format!(
-                "target/mutsuki-benchmarks/core-{}-time.json",
-                mode.as_str()
-            ))
+        && output == format!("target/mutsuki-benchmarks/core-{}-time.json", mode.as_str())
     {
         output = PathBuf::from(format!(
             "target/mutsuki-benchmarks/core-{}-allocation.json",

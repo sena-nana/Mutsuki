@@ -35,7 +35,7 @@ jobs:
         run: bash scripts/check-distributed-boundary.sh
 
       - name: Test
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace
 
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings

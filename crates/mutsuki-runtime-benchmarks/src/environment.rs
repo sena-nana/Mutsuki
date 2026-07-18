@@ -68,17 +68,19 @@ pub fn revision_lock_hash(revisions: &BTreeMap<String, RepositoryRevision>) -> S
 pub fn generated_at() -> String {
     #[cfg(target_os = "windows")]
     {
-        return command_output(
+        command_output(
             "powershell",
             &[
                 "-NoProfile",
                 "-Command",
                 "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')",
             ],
-        );
+        )
     }
     #[cfg(not(target_os = "windows"))]
-    command_output("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+    {
+        command_output("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+    }
 }
 
 pub fn command_output(program: &str, args: &[&str]) -> String {
