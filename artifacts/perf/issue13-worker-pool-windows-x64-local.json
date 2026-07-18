@@ -1,0 +1,125 @@
+{
+  "schema": "mutsuki.worker-pool.issue13.local-baseline.v1",
+  "recorded_at": "2026-07-18T13:30:05Z",
+  "baseline_revision": "8bc7a7f2b5ef43bc07bcb9500c67823d017b490b",
+  "command": "target/release/examples/worker_pool_benchmark.exe --logical-cores 16",
+  "host": {
+    "os": "Microsoft Windows 11 Pro Insider Preview 10.0.26300 x86_64",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "physical_cores": 8,
+    "logical_cores": 16,
+    "memory_kib": 67010548,
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "target": "x86_64-pc-windows-msvc"
+  },
+  "benchmark": {
+    "process_runs": 5,
+    "samples_per_process": 5,
+    "jobs_per_sample": 200000,
+    "work_iterations_per_job": 256,
+    "queue_capacity": 65536,
+    "sample_order": "alternating_legacy_optimized",
+    "context_switches": "unavailable_on_windows_getrusage_path"
+  },
+  "aggregate": {
+    "legacy_median_elapsed_ms": {
+      "median": 51.882,
+      "mad": 1.0807000000000002,
+      "min": 50.5921,
+      "max": 52.9627
+    },
+    "optimized_median_elapsed_ms": {
+      "median": 20.1944,
+      "mad": 0.18500000000000227,
+      "min": 20.0094,
+      "max": 20.6198
+    },
+    "paired_throughput_change_percent": {
+      "median": 156.91280751099313,
+      "mad": 4.0711430932694554,
+      "min": 146.32877137508603,
+      "max": 162.34391492243043
+    },
+    "worker_thread_reduction_percent": 61.53846153846154,
+    "legacy_worker_threads": 52,
+    "optimized_worker_threads": 20,
+    "classification": "no-obvious-anomaly"
+  },
+  "runs": [
+    {
+      "legacy": {
+        "median_elapsed_ms": 50.7925,
+        "mad_elapsed_ms": 0.20749999999999602,
+        "throughput_jobs_per_second": 3937589.211005562,
+        "elapsed_ms_samples": [50.585, 51.036199999999994, 50.967400000000005, 50.7925, 49.7778]
+      },
+      "optimized": {
+        "median_elapsed_ms": 20.6198,
+        "mad_elapsed_ms": 0.08000000000000185,
+        "throughput_jobs_per_second": 9699415.125267945,
+        "elapsed_ms_samples": [21.471400000000003, 20.438399999999998, 20.6198, 20.6874, 20.5398]
+      },
+      "throughput_change_percent": 146.32877137508603
+    },
+    {
+      "legacy": {
+        "median_elapsed_ms": 50.5921,
+        "mad_elapsed_ms": 0.051700000000003854,
+        "throughput_jobs_per_second": 3953186.3670414947,
+        "elapsed_ms_samples": [50.5404, 50.5921, 50.5873, 51.6021, 50.7443]
+      },
+      "optimized": {
+        "median_elapsed_ms": 20.0094,
+        "mad_elapsed_ms": 0.09799999999999898,
+        "throughput_jobs_per_second": 9995302.207962258,
+        "elapsed_ms_samples": [19.9114, 19.9788, 20.8581, 20.2319, 20.0094]
+      },
+      "throughput_change_percent": 152.84166441772368
+    },
+    {
+      "legacy": {
+        "median_elapsed_ms": 52.9627,
+        "mad_elapsed_ms": 0.19660000000000366,
+        "throughput_jobs_per_second": 3776242.5253999513,
+        "elapsed_ms_samples": [52.343199999999996, 53.1396, 53.1593, 52.9627, 51.6367]
+      },
+      "optimized": {
+        "median_elapsed_ms": 20.5348,
+        "mad_elapsed_ms": 0.5624000000000002,
+        "throughput_jobs_per_second": 9739564.057112804,
+        "elapsed_ms_samples": [20.5348, 19.762600000000003, 19.6403, 20.5354, 21.0972]
+      },
+      "throughput_change_percent": 157.91680464382415
+    },
+    {
+      "legacy": {
+        "median_elapsed_ms": 52.692299999999996,
+        "mad_elapsed_ms": 0.8255999999999943,
+        "throughput_jobs_per_second": 3795620.992061459,
+        "elapsed_ms_samples": [53.97, 51.8667, 50.4963, 52.692299999999996, 52.7469]
+      },
+      "optimized": {
+        "median_elapsed_ms": 20.0852,
+        "mad_elapsed_ms": 0.25,
+        "throughput_jobs_per_second": 9957580.706191624,
+        "elapsed_ms_samples": [19.932499999999997, 19.8352, 20.7576, 20.6965, 20.0852]
+      },
+      "throughput_change_percent": 162.34391492243043
+    },
+    {
+      "legacy": {
+        "median_elapsed_ms": 51.882,
+        "mad_elapsed_ms": 1.192300000000003,
+        "throughput_jobs_per_second": 3854901.5072664893,
+        "elapsed_ms_samples": [51.882, 53.0743, 51.6252, 50.6679, 55.5249]
+      },
+      "optimized": {
+        "median_elapsed_ms": 20.1944,
+        "mad_elapsed_ms": 0.3603000000000023,
+        "throughput_jobs_per_second": 9903735.689101929,
+        "elapsed_ms_samples": [20.8965, 19.917399999999997, 20.1944, 21.898600000000002, 19.8341]
+      },
+      "throughput_change_percent": 156.91280751099313
+    }
+  ]
+}
