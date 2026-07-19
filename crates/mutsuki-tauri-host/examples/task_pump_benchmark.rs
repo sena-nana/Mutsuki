@@ -1,9 +1,10 @@
 use cpu_time::ProcessTime;
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CompletionBatch, EntryCompletion, ExecutionClass, ResourceAccess, ResourceId,
-    ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic, RunnerDescriptor,
-    RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskAwait,
-    TaskBatch, TaskHandle, TaskStatus, TaskStepContinuation, WorkBatch,
+    CancelPolicy, CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, ResourceAccess,
+    ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
+    RunnerConcurrency, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
+    RunnerStatus, Task, TaskAwait, TaskBatch, TaskHandle, TaskStatus, TaskStepContinuation,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{HostRuntimeConfig, RunnerLimits};
@@ -336,6 +337,8 @@ fn runner_descriptor() -> RunnerDescriptor {
         accepted_protocol_ids: vec![PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Io,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
         batch: Default::default(),

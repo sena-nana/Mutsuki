@@ -3,11 +3,11 @@ use crate::echo::{ECHO_PROTOCOL_ID, ECHO_RUNNER_ID, EchoRunner};
 use crate::{HostError, MutsukiTauriHost};
 use mutsuki_runtime_contracts::{
     ArtifactType, CancelPolicy, CompletionBatch, ERR_RUNNER_NOT_FOUND, EntryCompletion,
-    ExecutionClass, LifecyclePolicy, ObservabilityProfile, PermissionGrant, PluginArtifact,
-    PluginManifest, PluginProvides, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
-    ResourceSealState, ResourceSemantic, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult,
-    RunnerSideEffect, RunnerStatus, RuntimeEventKind, Task, TaskAwait, TaskBatch, TaskHandle,
-    TaskOutcome, TaskStatus, TaskStepContinuation, WorkBatch,
+    ExecutionClass, InvocationMode, LifecyclePolicy, ObservabilityProfile, PermissionGrant,
+    PluginArtifact, PluginManifest, PluginProvides, ResourceAccess, ResourceId, ResourceLifetime,
+    ResourceRef, ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerDescriptor,
+    RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, RuntimeEventKind, Task,
+    TaskAwait, TaskBatch, TaskHandle, TaskOutcome, TaskStatus, TaskStepContinuation, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
@@ -1057,6 +1057,8 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
         accepted_protocol_ids: vec!["stream.blocking".into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Blocking,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
         batch: Default::default(),
@@ -1443,6 +1445,8 @@ fn runner_descriptor(runner_id: &str, protocol_id: &str) -> RunnerDescriptor {
         accepted_protocol_ids: vec![protocol_id.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Io,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
         batch: Default::default(),

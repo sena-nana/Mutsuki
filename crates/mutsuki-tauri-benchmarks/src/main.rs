@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use mutsuki_runtime_contracts::{
-    CompletionBatch, EntryCompletion, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
-    Task, TaskBatch, WorkBatch,
+    CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerConcurrency,
+    RunnerDescriptor, RunnerPurity, RunnerResult, Task, TaskBatch, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_tauri_bridge::{FrontendTaskRequest, FrontendTaskResult, TaskResultRequest};
@@ -318,6 +318,8 @@ impl EchoRunner {
                 accepted_protocol_ids: vec![PROTOCOL_ID.into()],
                 purity: RunnerPurity::Pure,
                 execution_class: ExecutionClass::Cpu,
+                invocation_mode: InvocationMode::SyncExclusive,
+                concurrency: RunnerConcurrency::Exclusive,
                 input_schema: json!({}),
                 output_schema: json!({}),
                 batch: Default::default(),

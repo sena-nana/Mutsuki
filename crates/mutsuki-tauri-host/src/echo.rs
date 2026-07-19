@@ -1,6 +1,6 @@
 use mutsuki_runtime_contracts::{
-    CompletionBatch, EntryCompletion, ExecutionClass, RunnerDescriptor, RunnerPurity, RunnerResult,
-    Task, WorkBatch,
+    CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerConcurrency,
+    RunnerDescriptor, RunnerPurity, RunnerResult, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use serde_json::json;
@@ -99,6 +99,8 @@ pub fn echo_descriptor() -> RunnerDescriptor {
         accepted_protocol_ids: vec![ECHO_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Io,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({ "type": "object" }),
         output_schema: json!({ "type": "object" }),
         batch: Default::default(),
