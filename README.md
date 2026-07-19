@@ -27,7 +27,7 @@ Web backend。OAuth credential bundle 和 app secret 使用两个 Host secret ke
 
 图片通过显式 `media_provider_id` 创建 `ResourceRef`，单资源上限 8 MiB。QQ adapter
 从 Host registry 打开最新版 descriptor、读取并校验摘要、分块上传，随后按 segment
-顺序发送 image/text。米画师 runner 使用 `AsyncRunnerAdapter` 调用
+顺序发送 image/text。米画师 runner 使用 `TaskAwaitRunnerAdapter` 调用
 `mutsuki.browser.snapshot`，不拥有 Chromium 生命周期。
 
 账号与订阅管理通过通用 `mutsuki.bot.command/handle@1` 路径进入同一个 batch-first

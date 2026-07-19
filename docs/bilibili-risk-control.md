@@ -43,7 +43,7 @@ backend、fallback_status、degraded、risk_control_code 与 detail。
 验证层级：
 
 - 单元/Runner 测试使用 352 transport、browser child task outcome 与 snapshot resource
-  fake，保留 AsyncRunnerAdapter、TaskAwait、ResourceRef 和 ResultRouter 输入路径。
+  fake，保留 TaskAwaitRunnerAdapter、TaskAwait、ResourceRef 和 ResultRouter 输入路径。
 - 产品装配测试验证漏选 browser protocol 和缺失 Chromium artifact 会在启动阶段失败。
 - 真实 Chromium smoke 需要本地 `CHROMIUM_EXECUTABLE` 与网络，不属于默认 CI；未执行时
   不得把 fake 测试称为真实 smoke。
