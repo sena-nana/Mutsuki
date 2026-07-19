@@ -1,0 +1,4748 @@
+{
+  "schema_version": "mutsuki.performance.report/v1",
+  "suite_version": "mutsuki-core/v2",
+  "workload_version": "mutsuki-core-kernel/v1",
+  "report_id": "core-full-time-20260719T154412Z",
+  "generated_at": "2026-07-19T15:44:12Z",
+  "revision_lock_hash": "acd567720314b8ce1e3a80de5ccf8305eb38414397be971cac33f3466d810eeb",
+  "repository_revisions": {
+    "MutsukiCore": {
+      "revision": "bac014b354f08b8220b7df0dfccc14e555eb8597",
+      "dirty": false,
+      "remote": "https://github.com/sena-nana/MutsukiCore.git"
+    }
+  },
+  "environment_id": "e4b5f6828cb5b7764d318cdbceb8fed6a6b7c86e1c22099b62b3e6184cd46a07",
+  "environment": {
+    "cpu_model": "AMD Ryzen 7 5800X 8-Core Processor",
+    "cpu_topology": "logical=16",
+    "ram_bytes": 68618801152,
+    "os": "windows unavailable",
+    "kernel": "unavailable",
+    "architecture": "x86_64",
+    "target_triple": "x86_64-pc-windows-msvc",
+    "toolchains": {
+      "node": "v26.5.0",
+      "python": "unavailable",
+      "rust": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+    },
+    "release_profile": {
+      "name": "release",
+      "lto": "thin",
+      "codegen_units": 1
+    },
+    "power_mode": "high-performance",
+    "virtualization": "bare-metal-hypervisor-absent",
+    "runner_configuration": {
+      "runner_instance_model": "single-active-batch"
+    }
+  },
+  "feature_set": [],
+  "deployment": "builtin",
+  "measurement_boundary": "Core runtime kernel and Host-facing component time; system allocator; no ABI/process/network",
+  "sampling": {
+    "warmup_iterations": 1,
+    "samples_per_process": 5,
+    "process_runs": 1
+  },
+  "cases": [
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "1000",
+        "units": "10"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5660.0,
+          "p95": 5770.0,
+          "p99": 5770.0,
+          "mad": 110.0,
+          "min": 2910.0,
+          "max": 5770.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2910.0,
+            4820.0,
+            5660.0,
+            5680.0,
+            5770.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 176678.44522968197,
+          "p95": 343642.6116838488,
+          "p99": 343642.6116838488,
+          "mad": 3368.21992638908,
+          "min": 173310.2253032929,
+          "max": 343642.6116838488,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            173310.2253032929,
+            176056.338028169,
+            176678.44522968197,
+            207468.8796680498,
+            343642.6116838488
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "1000",
+        "units": "16"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5331.25,
+          "p95": 7512.5,
+          "p99": 7512.5,
+          "mad": 525.0,
+          "min": 3143.75,
+          "max": 7512.5,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3143.75,
+            5068.75,
+            5331.25,
+            5856.25,
+            7512.5
+          ]
+        },
+        "throughput_per_second": {
+          "median": 187573.27080890973,
+          "p95": 318091.4512922465,
+          "p99": 318091.4512922465,
+          "mad": 16815.533348931087,
+          "min": 133111.4808652246,
+          "max": 318091.4512922465,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            133111.4808652246,
+            170757.73745997864,
+            187573.27080890973,
+            197287.29963008632,
+            318091.4512922465
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "1000",
+        "units": "128"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2203.90625,
+          "p95": 2689.84375,
+          "p99": 2689.84375,
+          "mad": 153.90625,
+          "min": 2050.0,
+          "max": 2689.84375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2050.0,
+            2141.40625,
+            2203.90625,
+            2368.75,
+            2689.84375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 453739.8085785183,
+          "p95": 487804.8780487805,
+          "p99": 487804.8780487805,
+          "mad": 31576.220188016945,
+          "min": 371768.80627359863,
+          "max": 487804.8780487805,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            371768.80627359863,
+            422163.58839050133,
+            453739.8085785183,
+            466982.8529733674,
+            487804.8780487805
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "10000",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4062.5,
+          "p95": 4962.5,
+          "p99": 4962.5,
+          "mad": 603.125,
+          "min": 2946.875,
+          "max": 4962.5,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2946.875,
+            3562.5,
+            4062.5,
+            4665.625,
+            4962.5
+          ]
+        },
+        "throughput_per_second": {
+          "median": 246153.84615384616,
+          "p95": 339342.5238600212,
+          "p99": 339342.5238600212,
+          "mad": 34547.90823211873,
+          "min": 201511.33501259447,
+          "max": 339342.5238600212,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            201511.33501259447,
+            214333.5565974548,
+            246153.84615384616,
+            280701.7543859649,
+            339342.5238600212
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 32,
+          "eligible": 100,
+          "expected_claimed": 32,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "10000",
+        "units": "100"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4094.0,
+          "p95": 6616.0,
+          "p99": 6616.0,
+          "mad": 187.0,
+          "min": 3907.0,
+          "max": 6616.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3907.0,
+            3961.0,
+            4094.0,
+            4606.0,
+            6616.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 244259.8925256473,
+          "p95": 255950.8574353724,
+          "p99": 255950.8574353724,
+          "mad": 11690.964909725095,
+          "min": 151148.73035066505,
+          "max": 255950.8574353724,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            151148.73035066505,
+            217108.11984368216,
+            244259.8925256473,
+            252461.49962130774,
+            255950.8574353724
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 100,
+          "eligible": 100,
+          "expected_claimed": 100,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "10000",
+        "units": "128"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4825.0,
+          "p95": 5611.71875,
+          "p99": 5611.71875,
+          "mad": 544.53125,
+          "min": 3851.5625,
+          "max": 5611.71875,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3851.5625,
+            4497.65625,
+            4825.0,
+            5369.53125,
+            5611.71875
+          ]
+        },
+        "throughput_per_second": {
+          "median": 207253.8860103627,
+          "p95": 259634.88843813387,
+          "p99": 259634.88843813387,
+          "mad": 21017.89008427513,
+          "min": 178198.5242934707,
+          "max": 259634.88843813387,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            178198.5242934707,
+            186235.99592608758,
+            207253.8860103627,
+            222338.0232760118,
+            259634.88843813387
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 100,
+          "eligible": 100,
+          "expected_claimed": 100,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "100000",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4343.75,
+          "p95": 7034.375,
+          "p99": 7034.375,
+          "mad": 881.25,
+          "min": 3390.625,
+          "max": 7034.375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3390.625,
+            3462.5,
+            4343.75,
+            4796.875,
+            7034.375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 230215.8273381295,
+          "p95": 294930.87557603687,
+          "p99": 294930.87557603687,
+          "mad": 58592.83692179833,
+          "min": 142159.04042647712,
+          "max": 294930.87557603687,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            142159.04042647712,
+            208469.05537459283,
+            230215.8273381295,
+            288808.6642599278,
+            294930.87557603687
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 32,
+          "eligible": 1000,
+          "expected_claimed": 32,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3315.234375,
+          "p95": 4094.3359375,
+          "p99": 4094.3359375,
+          "mad": 598.4375,
+          "min": 2451.3671875,
+          "max": 4094.3359375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2451.3671875,
+            3112.6953125,
+            3315.234375,
+            3913.671875,
+            4094.3359375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 301637.7989866855,
+          "p95": 407935.62265954906,
+          "p99": 407935.62265954906,
+          "mad": 46123.27657925963,
+          "min": 244239.8511663407,
+          "max": 407935.62265954906,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            244239.8511663407,
+            255514.5224074259,
+            301637.7989866855,
+            321264.9808621447,
+            407935.62265954906
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 1000,
+          "expected_claimed": 512,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "100000",
+        "units": "1000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3682.8,
+          "p95": 4139.0,
+          "p99": 4139.0,
+          "mad": 456.1999999999998,
+          "min": 3079.9,
+          "max": 4139.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3079.9,
+            3183.8,
+            3682.8,
+            3804.2,
+            4139.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 271532.52959704574,
+          "p95": 324685.8664242345,
+          "p99": 324685.8664242345,
+          "mad": 29928.277362206398,
+          "min": 241604.25223483934,
+          "max": 324685.8664242345,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            241604.25223483934,
+            262867.3571315914,
+            271532.52959704574,
+            314090.0810352409,
+            324685.8664242345
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 1000,
+          "eligible": 1000,
+          "expected_claimed": 1000,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-0/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "0",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "16"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2412.5,
+          "p95": 3393.75,
+          "p99": 3393.75,
+          "mad": 175.0,
+          "min": 2125.0,
+          "max": 3393.75,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2125.0,
+            2381.25,
+            2412.5,
+            2587.5,
+            3393.75
+          ]
+        },
+        "throughput_per_second": {
+          "median": 414507.7720207254,
+          "p95": 470588.23529411765,
+          "p99": 470588.23529411765,
+          "mad": 28034.34206903458,
+          "min": 294659.30018416204,
+          "max": 470588.23529411765,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            294659.30018416204,
+            386473.42995169084,
+            414507.7720207254,
+            419947.50656167977,
+            470588.23529411765
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 0,
+          "eligible": 0,
+          "expected_claimed": 0,
+          "queued_observations": 0,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3794.3359375,
+          "p95": 4086.328125,
+          "p99": 4086.328125,
+          "mad": 105.46875,
+          "min": 2809.765625,
+          "max": 4086.328125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2809.765625,
+            3760.15625,
+            3794.3359375,
+            3899.8046875,
+            4086.328125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 263550.72836773563,
+          "p95": 355901.5709717781,
+          "p99": 355901.5709717781,
+          "mad": 7127.6302558510215,
+          "min": 244718.47815696397,
+          "max": 355901.5709717781,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            244718.47815696397,
+            256423.0981118846,
+            263550.72836773563,
+            265946.3951797216,
+            355901.5709717781
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 1000,
+          "expected_claimed": 512,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-50/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "50",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3708.984375,
+          "p95": 4121.2890625,
+          "p99": 4121.2890625,
+          "mad": 3.7109375,
+          "min": 3673.6328125,
+          "max": 4121.2890625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3673.6328125,
+            3706.4453125,
+            3708.984375,
+            3712.6953125,
+            4121.2890625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 269615.5871511322,
+          "p95": 272210.1121803392,
+          "p99": 272210.1121803392,
+          "mad": 269.48793497140286,
+          "min": 242642.52879010473,
+          "max": 272210.1121803392,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            242642.52879010473,
+            269346.0992161608,
+            269615.5871511322,
+            269800.2845549876,
+            272210.1121803392
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 50000,
+          "expected_claimed": 512,
+          "queued_observations": 50000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3618.359375,
+          "p95": 3983.0078125,
+          "p99": 3983.0078125,
+          "mad": 191.2109375,
+          "min": 2946.2890625,
+          "max": 3983.0078125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2946.2890625,
+            3559.9609375,
+            3618.359375,
+            3809.5703125,
+            3983.0078125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 276368.34718773613,
+          "p95": 339410.0099436526,
+          "p99": 339410.0099436526,
+          "mad": 13871.551494324172,
+          "min": 251066.5424410337,
+          "max": 339410.0099436526,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            251066.5424410337,
+            262496.79569341196,
+            276368.34718773613,
+            280901.9586327975,
+            339410.0099436526
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "1",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-1/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "16"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 6287.5,
+          "p95": 8200.0,
+          "p99": 8200.0,
+          "mad": 718.75,
+          "min": 5568.75,
+          "max": 8200.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            5568.75,
+            5806.25,
+            6287.5,
+            7875.0,
+            8200.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 159045.72564612326,
+          "p95": 179573.51290684624,
+          "p99": 179573.51290684624,
+          "mad": 20527.78726072298,
+          "min": 121951.21951219512,
+          "max": 179573.51290684624,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            121951.21951219512,
+            126984.12698412698,
+            159045.72564612326,
+            172228.20236813778,
+            179573.51290684624
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 16,
+          "eligible": 100000,
+          "expected_claimed": 16,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2594.3359375,
+          "p95": 3102.5390625,
+          "p99": 3102.5390625,
+          "mad": 117.1875,
+          "min": 2477.1484375,
+          "max": 3102.5390625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2477.1484375,
+            2489.84375,
+            2594.3359375,
+            2825.78125,
+            3102.5390625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 385455.0929759843,
+          "p95": 403689.9787116613,
+          "p99": 403689.9787116613,
+          "mad": 18234.885735676973,
+          "min": 322316.65092854894,
+          "max": 403689.9787116613,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            322316.65092854894,
+            353884.4346143213,
+            385455.0929759843,
+            401631.62849074363,
+            403689.9787116613
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "256",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-256/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "4096"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3188.18359375,
+          "p95": 4029.638671875,
+          "p99": 4029.638671875,
+          "mad": 64.6728515625,
+          "min": 3123.5107421875,
+          "max": 4029.638671875,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3123.5107421875,
+            3178.5888671875,
+            3188.18359375,
+            3625.3662109375,
+            4029.638671875
+          ]
+        },
+        "throughput_per_second": {
+          "median": 313658.22280760866,
+          "p95": 320152.5727104323,
+          "p99": 320152.5727104323,
+          "mad": 6494.349902823626,
+          "min": 248161.20784712883,
+          "max": 320152.5727104323,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            248161.20784712883,
+            275834.203171824,
+            313658.22280760866,
+            314605.0155535927,
+            320152.5727104323
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 4096,
+          "eligible": 100000,
+          "expected_claimed": 4096,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/single_protocol",
+        "protocol_distribution": "single_protocol",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2916.6015625,
+          "p95": 4868.75,
+          "p99": 4868.75,
+          "mad": 674.0234375,
+          "min": 2242.578125,
+          "max": 4868.75,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2242.578125,
+            2733.7890625,
+            2916.6015625,
+            3862.5,
+            4868.75
+          ]
+        },
+        "throughput_per_second": {
+          "median": 342864.79608919844,
+          "p95": 445915.3457585786,
+          "p99": 445915.3457585786,
+          "mad": 83965.11971379392,
+          "min": 205391.52759948652,
+          "max": 445915.3457585786,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            205391.52759948652,
+            258899.67637540452,
+            342864.79608919844,
+            365792.66985782667,
+            445915.3457585786
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 1600000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3071.09375,
+          "p95": 4320.703125,
+          "p99": 4320.703125,
+          "mad": 390.4296875,
+          "min": 2591.40625,
+          "max": 4320.703125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2591.40625,
+            2680.6640625,
+            3071.09375,
+            3303.125,
+            4320.703125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 325616.8913762401,
+          "p95": 385890.8652396744,
+          "p99": 385890.8652396744,
+          "mad": 47425.002977129654,
+          "min": 231443.81159027212,
+          "max": 385890.8652396744,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            231443.81159027212,
+            302743.61400189216,
+            325616.8913762401,
+            373041.8943533698,
+            385890.8652396744
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/runner_hint",
+        "protocol_distribution": "runner_hint",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4116.9921875,
+          "p95": 4330.46875,
+          "p99": 4330.46875,
+          "mad": 76.5625,
+          "min": 2779.4921875,
+          "max": 4330.46875,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2779.4921875,
+            4069.7265625,
+            4116.9921875,
+            4193.5546875,
+            4330.46875
+          ]
+        },
+        "throughput_per_second": {
+          "median": 242895.77304426205,
+          "p95": 359777.9495467641,
+          "p99": 359777.9495467641,
+          "mad": 4434.592847717868,
+          "min": 230921.88345661195,
+          "max": 359777.9495467641,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            230921.88345661195,
+            238461.18019654418,
+            242895.77304426205,
+            245716.75385132217,
+            359777.9495467641
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.wait-wake",
+      "measurement_mode": "time",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/owner_continuation",
+        "protocol_distribution": "owner_continuation",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3437.890625,
+          "p95": 4630.078125,
+          "p99": 4630.078125,
+          "mad": 9.5703125,
+          "min": 3428.3203125,
+          "max": 4630.078125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3428.3203125,
+            3437.6953125,
+            3437.890625,
+            3890.0390625,
+            4630.078125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 290876.0368139984,
+          "p95": 291688.0305360907,
+          "p99": 291688.0305360907,
+          "mad": 811.993722092302,
+          "min": 215979.07702691303,
+          "max": 291688.0305360907,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            215979.07702691303,
+            257066.82733343376,
+            290876.0368139984,
+            290892.5629225612,
+            291688.0305360907
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.idle-runtime",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "longevity",
+        "equivalent_hours": "24",
+        "iterations": "8640000",
+        "legacy_case_id": "longevity/idle-tick/24h-equivalent",
+        "tick_interval_ms": "10",
+        "units": "8640000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 105.45353009259259,
+          "p95": 108.30331018518518,
+          "p99": 108.30331018518518,
+          "mad": 1.4444444444444429,
+          "min": 88.96309027777778,
+          "max": 108.30331018518518,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            88.96309027777778,
+            104.00908564814814,
+            105.45353009259259,
+            106.57018518518518,
+            108.30331018518518
+          ]
+        },
+        "throughput_per_second": {
+          "median": 9482849.925668286,
+          "p95": 11240616.719558712,
+          "p99": 11240616.719558712,
+          "mad": 131694.74385121465,
+          "min": 9233328.125337299,
+          "max": 11240616.719558712,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            9233328.125337299,
+            9383487.49476523,
+            9482849.925668286,
+            9614544.6695195,
+            11240616.719558712
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "ready": 0,
+          "retained_records": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "capacity": "0",
+        "category": "longevity",
+        "iterations": "1000000",
+        "legacy_case_id": "longevity/observability/disabled",
+        "state": "disabled",
+        "units": "1000000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 9.19,
+          "p95": 10.6829,
+          "p99": 10.6829,
+          "mad": 1.4929000000000006,
+          "min": 5.9592,
+          "max": 10.6829,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            5.9592,
+            6.9188,
+            9.19,
+            10.0479,
+            10.6829
+          ]
+        },
+        "throughput_per_second": {
+          "median": 108813928.1828074,
+          "p95": 167807759.4307961,
+          "p99": 167807759.4307961,
+          "mad": 15206387.159302548,
+          "min": 93607541.02350485,
+          "max": 167807759.4307961,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            93607541.02350485,
+            99523283.47216831,
+            108813928.1828074,
+            144533734.17355612,
+            167807759.4307961
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 0,
+          "dropped_events": 1000000,
+          "dropped_traces": 1000000,
+          "retained_events": 0,
+          "retained_traces": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "capacity": "4097",
+        "category": "longevity",
+        "iterations": "4096",
+        "legacy_case_id": "longevity/observability/enabled",
+        "state": "enabled",
+        "units": "4096"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 450.341796875,
+          "p95": 584.3994140625,
+          "p99": 584.3994140625,
+          "mad": 25.5126953125,
+          "min": 341.2353515625,
+          "max": 584.3994140625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            341.2353515625,
+            424.8291015625,
+            450.341796875,
+            455.078125,
+            584.3994140625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 2220535.6174780442,
+          "p95": 2930528.725763755,
+          "p99": 2930528.725763755,
+          "mad": 133352.09012496704,
+          "min": 1711158.4576179136,
+          "max": 2930528.725763755,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            1711158.4576179136,
+            2197424.892703863,
+            2220535.6174780442,
+            2353887.7076030113,
+            2930528.725763755
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 4097,
+          "dropped_events": 0,
+          "dropped_traces": 0,
+          "retained_events": 4096,
+          "retained_traces": 4096
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "capacity": "64",
+        "category": "longevity",
+        "iterations": "1000000",
+        "legacy_case_id": "longevity/observability/full-capacity",
+        "state": "full-capacity",
+        "units": "1000000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 600.2705,
+          "p95": 642.7969,
+          "p99": 642.7969,
+          "mad": 35.53200000000004,
+          "min": 510.2032,
+          "max": 642.7969,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            510.2032,
+            600.1123,
+            600.2705,
+            635.8025,
+            642.7969
+          ]
+        },
+        "throughput_per_second": {
+          "median": 1665915.6163762836,
+          "p95": 1960003.3868858526,
+          "p99": 1960003.3868858526,
+          "mad": 93100.15874596592,
+          "min": 1555701.3420568767,
+          "max": 1960003.3868858526,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            1555701.3420568767,
+            1572815.4576303177,
+            1665915.6163762836,
+            1666354.7805968982,
+            1960003.3868858526
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 64,
+          "dropped_events": 999936,
+          "dropped_traces": 999936,
+          "retained_events": 64,
+          "retained_traces": 64
+        }
+      }
+    },
+    {
+      "case_id": "core.task-lifecycle",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "longevity",
+        "evicted_id_capacity": "2048",
+        "iterations": "995904",
+        "legacy_case_id": "longevity/task-lifecycle/bounded-history",
+        "terminal_record_capacity": "1024",
+        "units": "4979520"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2439.362287931367,
+          "p95": 2916.3313933873146,
+          "p99": 2916.3313933873146,
+          "mad": 49.04794036373005,
+          "min": 2161.5552101407366,
+          "max": 2916.3313933873146,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2161.5552101407366,
+            2390.314347567637,
+            2439.362287931367,
+            2482.623766949425,
+            2916.3313933873146
+          ]
+        },
+        "throughput_per_second": {
+          "median": 409943.20726669184,
+          "p95": 462629.8672865687,
+          "p99": 462629.8672865687,
+          "mad": 8411.809937464306,
+          "min": 342896.55910417694,
+          "max": 462629.8672865687,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            342896.55910417694,
+            402799.65628008574,
+            409943.20726669184,
+            418355.01720415615,
+            462629.8672865687
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "evicted_task_ids": 2048,
+          "lifecycle_count": 1000000,
+          "retained_terminal_records": 1024,
+          "second_half_retained_growth_bytes": 0,
+          "terminal_records_evicted": 998976
+        }
+      }
+    },
+    {
+      "case_id": "core.deadline-cancel",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "longevity",
+        "iterations": "10000",
+        "legacy_case_id": "longevity/deadline-cancel/cycles",
+        "units": "10000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 7789.33,
+          "p95": 8754.17,
+          "p99": 8754.17,
+          "mad": 964.8400000000001,
+          "min": 5930.06,
+          "max": 8754.17,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            5930.06,
+            6767.94,
+            7789.33,
+            8420.78,
+            8754.17
+          ]
+        },
+        "throughput_per_second": {
+          "median": 128380.7464826885,
+          "p95": 168632.35785135394,
+          "p99": 168632.35785135394,
+          "mad": 14149.471558852194,
+          "min": 114231.2749238363,
+          "max": 168632.35785135394,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            114231.2749238363,
+            118753.84465572074,
+            128380.7464826885,
+            147755.44700455383,
+            168632.35785135394
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "cancelled_retained": 256,
+          "deadline_rejections": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.reload",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "longevity",
+        "iterations": "1000",
+        "legacy_case_id": "longevity/reload/identical-surface",
+        "units": "1000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 22817.5,
+          "p95": 24190.5,
+          "p99": 24190.5,
+          "mad": 1146.5,
+          "min": 20459.8,
+          "max": 24190.5,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            20459.8,
+            21671.0,
+            22817.5,
+            23814.3,
+            24190.5
+          ]
+        },
+        "throughput_per_second": {
+          "median": 43826.01073737263,
+          "p95": 48876.33310198536,
+          "p99": 48876.33310198536,
+          "mad": 2318.6064930274442,
+          "min": 41338.54198962403,
+          "max": 48876.33310198536,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            41338.54198962403,
+            41991.57648975615,
+            43826.01073737263,
+            46144.61723040007,
+            48876.33310198536
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "draining_generations": 0,
+          "final_generation": 1001
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 27200.0,
+          "p95": 29200.0,
+          "p99": 29200.0,
+          "mad": 1900.0,
+          "min": 25200.0,
+          "max": 29200.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            25200.0,
+            26100.0,
+            27200.0,
+            29100.0,
+            29200.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 36764.705882352944,
+          "p95": 39682.53968253968,
+          "p99": 39682.53968253968,
+          "mad": 2400.4447139680633,
+          "min": 34246.57534246575,
+          "max": 39682.53968253968,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            34246.57534246575,
+            34364.26116838488,
+            36764.705882352944,
+            38314.17624521073,
+            39682.53968253968
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 13400.0,
+          "p95": 14100.0,
+          "p99": 14100.0,
+          "mad": 400.0,
+          "min": 12200.0,
+          "max": 14100.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            12200.0,
+            13000.0,
+            13400.0,
+            13800.0,
+            14100.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 74626.86567164179,
+          "p95": 81967.2131147541,
+          "p99": 81967.2131147541,
+          "mad": 2296.211251435132,
+          "min": 70921.98581560283,
+          "max": 81967.2131147541,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            70921.98581560283,
+            72463.76811594203,
+            74626.86567164179,
+            76923.07692307692,
+            81967.2131147541
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 15400.0,
+          "p95": 17000.0,
+          "p99": 17000.0,
+          "mad": 600.0,
+          "min": 10000.0,
+          "max": 17000.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            10000.0,
+            14800.0,
+            15400.0,
+            15500.0,
+            17000.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 64935.06493506493,
+          "p95": 100000.0,
+          "p99": 100000.0,
+          "mad": 2632.502632502641,
+          "min": 58823.529411764706,
+          "max": 100000.0,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            58823.529411764706,
+            64516.12903225807,
+            64935.06493506493,
+            67567.56756756757,
+            100000.0
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 1,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 6000.0,
+          "p95": 6500.0,
+          "p99": 6500.0,
+          "mad": 300.0,
+          "min": 3900.0,
+          "max": 6500.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3900.0,
+            5800.0,
+            6000.0,
+            6300.0,
+            6500.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 166666.66666666666,
+          "p95": 256410.2564102564,
+          "p99": 256410.2564102564,
+          "mad": 7936.507936507929,
+          "min": 153846.15384615384,
+          "max": 256410.2564102564,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            153846.15384615384,
+            158730.15873015873,
+            166666.66666666666,
+            172413.7931034483,
+            256410.2564102564
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 13500.0,
+          "p95": 15800.0,
+          "p99": 15800.0,
+          "mad": 900.0,
+          "min": 8200.0,
+          "max": 15800.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            8200.0,
+            13500.0,
+            13500.0,
+            14400.0,
+            15800.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 74074.07407407407,
+          "p95": 121951.21951219512,
+          "p99": 121951.21951219512,
+          "mad": 4629.629629629635,
+          "min": 63291.13924050633,
+          "max": 121951.21951219512,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            63291.13924050633,
+            69444.44444444444,
+            74074.07407407407,
+            74074.07407407407,
+            121951.21951219512
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5100.0,
+          "p95": 6200.0,
+          "p99": 6200.0,
+          "mad": 700.0,
+          "min": 3100.0,
+          "max": 6200.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3100.0,
+            5000.0,
+            5100.0,
+            5800.0,
+            6200.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 196078.431372549,
+          "p95": 322580.6451612903,
+          "p99": 322580.6451612903,
+          "mad": 23664.638269100717,
+          "min": 161290.32258064515,
+          "max": 322580.6451612903,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            161290.32258064515,
+            172413.7931034483,
+            196078.431372549,
+            200000.0,
+            322580.6451612903
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 12200.0,
+          "p95": 14600.0,
+          "p99": 14600.0,
+          "mad": 1000.0,
+          "min": 7600.0,
+          "max": 14600.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            7600.0,
+            11600.0,
+            12200.0,
+            13200.0,
+            14600.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 81967.2131147541,
+          "p95": 131578.94736842104,
+          "p99": 131578.94736842104,
+          "mad": 6209.637357178333,
+          "min": 68493.1506849315,
+          "max": 131578.94736842104,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            68493.1506849315,
+            75757.57575757576,
+            81967.2131147541,
+            86206.89655172414,
+            131578.94736842104
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 1,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4900.0,
+          "p95": 5900.0,
+          "p99": 5900.0,
+          "mad": 400.0,
+          "min": 3200.0,
+          "max": 5900.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3200.0,
+            4900.0,
+            4900.0,
+            5300.0,
+            5900.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 204081.6326530612,
+          "p95": 312500.0,
+          "p99": 312500.0,
+          "mad": 15402.387370042357,
+          "min": 169491.5254237288,
+          "max": 312500.0,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            169491.5254237288,
+            188679.24528301886,
+            204081.6326530612,
+            204081.6326530612,
+            312500.0
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4450.0,
+          "p95": 4828.125,
+          "p99": 4828.125,
+          "mad": 34.375,
+          "min": 4365.625,
+          "max": 4828.125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4365.625,
+            4415.625,
+            4450.0,
+            4475.0,
+            4828.125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 224719.1011235955,
+          "p95": 229062.2763063708,
+          "p99": 229062.2763063708,
+          "mad": 1749.4055996882962,
+          "min": 207119.74110032362,
+          "max": 229062.2763063708,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            207119.74110032362,
+            223463.687150838,
+            224719.1011235955,
+            226468.5067232838,
+            229062.2763063708
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 1,
+          "parallelism_limit": 32,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3925.0,
+          "p95": 8953.125,
+          "p99": 8953.125,
+          "mad": 1378.125,
+          "min": 2546.875,
+          "max": 8953.125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2546.875,
+            2550.0,
+            3925.0,
+            6978.125,
+            8953.125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 254777.07006369426,
+          "p95": 392638.03680981597,
+          "p99": 392638.03680981597,
+          "mad": 137379.79268140375,
+          "min": 111692.84467713787,
+          "max": 392638.03680981597,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            111692.84467713787,
+            143304.9708911778,
+            254777.07006369426,
+            392156.862745098,
+            392638.03680981597
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4312.5,
+          "p95": 5340.625,
+          "p99": 5340.625,
+          "mad": 65.625,
+          "min": 2859.375,
+          "max": 5340.625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2859.375,
+            4246.875,
+            4312.5,
+            4346.875,
+            5340.625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 231884.0579710145,
+          "p95": 349726.77595628414,
+          "p99": 349726.77595628414,
+          "mad": 3583.197363790503,
+          "min": 187244.00234055004,
+          "max": 349726.77595628414,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            187244.00234055004,
+            230050.32350826744,
+            231884.0579710145,
+            235467.255334805,
+            349726.77595628414
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 1,
+          "parallelism_limit": 32,
+          "read_views": 1,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2396.875,
+          "p95": 3931.25,
+          "p99": 3931.25,
+          "mad": 946.875,
+          "min": 1450.0,
+          "max": 3931.25,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            1450.0,
+            2353.125,
+            2396.875,
+            3671.875,
+            3931.25
+          ]
+        },
+        "throughput_per_second": {
+          "median": 417209.9087353325,
+          "p95": 689655.1724137932,
+          "p99": 689655.1724137932,
+          "mad": 144869.48320341762,
+          "min": 254372.01907790144,
+          "max": 689655.1724137932,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            254372.01907790144,
+            272340.42553191487,
+            417209.9087353325,
+            424966.7994687915,
+            689655.1724137932
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4221.875,
+          "p95": 5190.625,
+          "p99": 5190.625,
+          "mad": 228.125,
+          "min": 3153.125,
+          "max": 5190.625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3153.125,
+            4178.125,
+            4221.875,
+            4450.0,
+            5190.625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 236861.58401184308,
+          "p95": 317145.68880079285,
+          "p99": 317145.68880079285,
+          "mad": 12142.482888247585,
+          "min": 192655.0270921132,
+          "max": 317145.68880079285,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            192655.0270921132,
+            224719.1011235955,
+            236861.58401184308,
+            239341.8100224383,
+            317145.68880079285
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 31,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 6700.0,
+          "p95": 7600.0,
+          "p99": 7600.0,
+          "mad": 900.0,
+          "min": 3900.0,
+          "max": 7600.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3900.0,
+            5400.0,
+            6700.0,
+            6800.0,
+            7600.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 149253.73134328358,
+          "p95": 256410.2564102564,
+          "p99": 256410.2564102564,
+          "mad": 17674.78397486254,
+          "min": 131578.94736842104,
+          "max": 256410.2564102564,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            131578.94736842104,
+            147058.82352941178,
+            149253.73134328358,
+            185185.1851851852,
+            256410.2564102564
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4134.375,
+          "p95": 4631.25,
+          "p99": 4631.25,
+          "mad": 337.5,
+          "min": 2512.5,
+          "max": 4631.25,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2512.5,
+            3796.875,
+            4134.375,
+            4178.125,
+            4631.25
+          ]
+        },
+        "throughput_per_second": {
+          "median": 241874.5275888133,
+          "p95": 398009.9502487562,
+          "p99": 398009.9502487562,
+          "mad": 21499.958007894544,
+          "min": 215924.42645074223,
+          "max": 398009.9502487562,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            215924.42645074223,
+            239341.8100224383,
+            241874.5275888133,
+            263374.48559670785,
+            398009.9502487562
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 32,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2562.5,
+          "p95": 2818.75,
+          "p99": 2818.75,
+          "mad": 256.25,
+          "min": 1412.5,
+          "max": 2818.75,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            1412.5,
+            2303.125,
+            2562.5,
+            2715.625,
+            2818.75
+          ]
+        },
+        "throughput_per_second": {
+          "median": 390243.9024390244,
+          "p95": 707964.6017699115,
+          "p99": 707964.6017699115,
+          "mad": 35476.71840354771,
+          "min": 354767.1840354767,
+          "max": 707964.6017699115,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            354767.1840354767,
+            368239.35558112775,
+            390243.9024390244,
+            434192.67299864313,
+            707964.6017699115
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4965.625,
+          "p95": 5239.0625,
+          "p99": 5239.0625,
+          "mad": 273.4375,
+          "min": 4471.484375,
+          "max": 5239.0625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4471.484375,
+            4481.640625,
+            4965.625,
+            5239.0625,
+            5239.0625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 201384.5185651353,
+          "p95": 223639.38149733553,
+          "p99": 223639.38149733553,
+          "mad": 10510.674246614595,
+          "min": 190873.8443185207,
+          "max": 223639.38149733553,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            190873.8443185207,
+            190873.8443185207,
+            201384.5185651353,
+            223132.57212586072,
+            223639.38149733553
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 1,
+          "parallelism_limit": 256,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2896.484375,
+          "p95": 3872.65625,
+          "p99": 3872.65625,
+          "mad": 321.875,
+          "min": 2319.53125,
+          "max": 3872.65625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2319.53125,
+            2574.609375,
+            2896.484375,
+            3164.0625,
+            3872.65625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 345246.1227242077,
+          "p95": 431121.58976086223,
+          "p99": 431121.58976086223,
+          "mad": 43162.313021506125,
+          "min": 258220.6980028243,
+          "max": 431121.58976086223,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            258220.6980028243,
+            316049.3827160494,
+            345246.1227242077,
+            388408.4357457138,
+            431121.58976086223
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4609.375,
+          "p95": 15952.34375,
+          "p99": 15952.34375,
+          "mad": 667.1875,
+          "min": 3942.1875,
+          "max": 15952.34375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            3942.1875,
+            4584.765625,
+            4609.375,
+            5448.828125,
+            15952.34375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 216949.15254237287,
+          "p95": 253666.2703131193,
+          "p99": 253666.2703131193,
+          "mad": 33423.45177529281,
+          "min": 62686.71335520838,
+          "max": 253666.2703131193,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            62686.71335520838,
+            183525.70076708007,
+            216949.15254237287,
+            218113.65766379825,
+            253666.2703131193
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 1,
+          "parallelism_limit": 256,
+          "read_views": 1,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2312.5,
+          "p95": 4922.265625,
+          "p99": 4922.265625,
+          "mad": 351.5625,
+          "min": 1876.5625,
+          "max": 4922.265625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            1876.5625,
+            1960.9375,
+            2312.5,
+            2555.859375,
+            4922.265625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 432432.4324324324,
+          "p95": 532889.2589508743,
+          "p99": 532889.2589508743,
+          "mad": 77527.72693011735,
+          "min": 203158.4794857551,
+          "max": 532889.2589508743,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            203158.4794857551,
+            391257.8327984105,
+            432432.4324324324,
+            509960.1593625498,
+            532889.2589508743
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4640.234375,
+          "p95": 6352.734375,
+          "p99": 6352.734375,
+          "mad": 748.046875,
+          "min": 2938.671875,
+          "max": 6352.734375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2938.671875,
+            3892.1875,
+            4640.234375,
+            4919.921875,
+            6352.734375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 215506.35575385133,
+          "p95": 340289.77801409015,
+          "p99": 340289.77801409015,
+          "mad": 41418.573993238184,
+          "min": 157412.53151325093,
+          "max": 340289.77801409015,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            157412.53151325093,
+            203255.26002381896,
+            215506.35575385133,
+            256924.9297470895,
+            340289.77801409015
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 255,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 9200.0,
+          "p95": 16600.0,
+          "p99": 16600.0,
+          "mad": 2600.0,
+          "min": 5800.0,
+          "max": 16600.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            5800.0,
+            7200.0,
+            9200.0,
+            11800.0,
+            16600.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 108695.65217391304,
+          "p95": 172413.7931034483,
+          "p99": 172413.7931034483,
+          "mad": 30193.236714975836,
+          "min": 60240.96385542169,
+          "max": 172413.7931034483,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            60240.96385542169,
+            84745.7627118644,
+            108695.65217391304,
+            138888.88888888888,
+            172413.7931034483
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2750.390625,
+          "p95": 4602.734375,
+          "p99": 4602.734375,
+          "mad": 155.859375,
+          "min": 2594.53125,
+          "max": 4602.734375,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2594.53125,
+            2664.84375,
+            2750.390625,
+            4387.109375,
+            4602.734375
+          ]
+        },
+        "throughput_per_second": {
+          "median": 363584.7180798182,
+          "p95": 385426.07648298703,
+          "p99": 385426.07648298703,
+          "mad": 21841.35840316885,
+          "min": 217262.157345328,
+          "max": 385426.07648298703,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            217262.157345328,
+            227940.5217701006,
+            363584.7180798182,
+            375256.52301377896,
+            385426.07648298703
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 256,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 1725.78125,
+          "p95": 2667.96875,
+          "p99": 2667.96875,
+          "mad": 259.765625,
+          "min": 1466.015625,
+          "max": 2667.96875,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            1466.015625,
+            1576.5625,
+            1725.78125,
+            2642.578125,
+            2667.96875
+          ]
+        },
+        "throughput_per_second": {
+          "median": 579447.7138976912,
+          "p95": 682120.9698907541,
+          "p99": 682120.9698907541,
+          "mad": 102673.25599306286,
+          "min": 374816.9838945827,
+          "max": 682120.9698907541,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            374816.9838945827,
+            378418.32963784185,
+            579447.7138976912,
+            634291.3776015857,
+            682120.9698907541
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "batch_size": "1",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-1",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 25900.0,
+          "p95": 30400.0,
+          "p99": 30400.0,
+          "mad": 4500.0,
+          "min": 15500.0,
+          "max": 30400.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            15500.0,
+            15800.0,
+            25900.0,
+            27700.0,
+            30400.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 38610.03861003861,
+          "p95": 64516.12903225807,
+          "p99": 64516.12903225807,
+          "mad": 5715.30176793335,
+          "min": 32894.73684210526,
+          "max": 64516.12903225807,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            32894.73684210526,
+            36101.08303249098,
+            38610.03861003861,
+            63291.13924050633,
+            64516.12903225807
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 1,
+          "completed": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "batch_size": "16",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-16",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "16"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 7306.25,
+          "p95": 9006.25,
+          "p99": 9006.25,
+          "mad": 1700.0,
+          "min": 4456.25,
+          "max": 9006.25,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4456.25,
+            4631.25,
+            7306.25,
+            8768.75,
+            9006.25
+          ]
+        },
+        "throughput_per_second": {
+          "median": 136869.11890504704,
+          "p95": 224403.92706872371,
+          "p99": 224403.92706872371,
+          "mad": 25835.114741271886,
+          "min": 111034.00416377516,
+          "max": 224403.92706872371,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            111034.00416377516,
+            114041.33998574484,
+            136869.11890504704,
+            215924.42645074223,
+            224403.92706872371
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 16,
+          "completed": 16
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "batch_size": "256",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-256",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 7277.34375,
+          "p95": 12978.125,
+          "p99": 12978.125,
+          "mad": 2597.265625,
+          "min": 4244.921875,
+          "max": 12978.125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4244.921875,
+            4680.078125,
+            7277.34375,
+            7933.984375,
+            12978.125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 137412.77509393453,
+          "p95": 235575.5958406184,
+          "p99": 235575.5958406184,
+          "mad": 60360.04212981221,
+          "min": 77052.73296412232,
+          "max": 235575.5958406184,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            77052.73296412232,
+            126040.07680567181,
+            137412.77509393453,
+            213671.64677405893,
+            235575.5958406184
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 256,
+          "completed": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-1",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 142300.0,
+          "p95": 219000.0,
+          "p99": 219000.0,
+          "mad": 27100.0,
+          "min": 100700.0,
+          "max": 219000.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            100700.0,
+            115200.0,
+            142300.0,
+            142400.0,
+            219000.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 7027.406886858749,
+          "p95": 9930.486593843098,
+          "p99": 9930.486593843098,
+          "mad": 1653.1486686968055,
+          "min": 4566.2100456621,
+          "max": 9930.486593843098,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            4566.2100456621,
+            7022.471910112359,
+            7027.406886858749,
+            8680.555555555555,
+            9930.486593843098
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-1",
+        "units": "1"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 23500.0,
+          "p95": 27800.0,
+          "p99": 27800.0,
+          "mad": 1000.0,
+          "min": 21000.0,
+          "max": 27800.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            21000.0,
+            22500.0,
+            23500.0,
+            23900.0,
+            27800.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 42553.1914893617,
+          "p95": 47619.04761904762,
+          "p99": 47619.04761904762,
+          "mad": 1891.2529550827458,
+          "min": 35971.22302158274,
+          "max": 47619.04761904762,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            35971.22302158274,
+            41841.00418410042,
+            42553.1914893617,
+            44444.444444444445,
+            47619.04761904762
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/events-pagination/entries-1",
+        "units": "9"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 4733.333333333333,
+          "p95": 5600.0,
+          "p99": 5600.0,
+          "mad": 544.4444444444443,
+          "min": 4011.1111111111113,
+          "max": 5600.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4011.1111111111113,
+            4411.111111111111,
+            4733.333333333333,
+            5277.777777777777,
+            5600.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 211267.60563380283,
+          "p95": 249307.47922437673,
+          "p99": 249307.47922437673,
+          "mad": 21793.921423276508,
+          "min": 178571.42857142858,
+          "max": 249307.47922437673,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            178571.42857142858,
+            189473.68421052632,
+            211267.60563380283,
+            226700.25188916878,
+            249307.47922437673
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 9,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-1",
+        "units": "5"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 6660.0,
+          "p95": 9940.0,
+          "p99": 9940.0,
+          "mad": 620.0,
+          "min": 6040.0,
+          "max": 9940.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            6040.0,
+            6600.0,
+            6660.0,
+            8660.0,
+            9940.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 150150.15015015015,
+          "p95": 165562.91390728476,
+          "p99": 165562.91390728476,
+          "mad": 15412.763757134613,
+          "min": 100603.62173038229,
+          "max": 165562.91390728476,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            100603.62173038229,
+            115473.44110854504,
+            150150.15015015015,
+            151515.15151515152,
+            165562.91390728476
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-32",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 7437.5,
+          "p95": 15690.625,
+          "p99": 15690.625,
+          "mad": 2800.0,
+          "min": 4637.5,
+          "max": 15690.625,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4637.5,
+            5446.875,
+            7437.5,
+            12040.625,
+            15690.625
+          ]
+        },
+        "throughput_per_second": {
+          "median": 134453.78151260506,
+          "p95": 215633.423180593,
+          "p99": 215633.423180593,
+          "mad": 51401.61437011868,
+          "min": 63732.32423819956,
+          "max": 215633.423180593,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            63732.32423819956,
+            83052.16714248637,
+            134453.78151260506,
+            183591.50889271373,
+            215633.423180593
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-32",
+        "units": "32"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 16259.375,
+          "p95": 30443.75,
+          "p99": 30443.75,
+          "mad": 1500.0,
+          "min": 14137.5,
+          "max": 30443.75,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            14137.5,
+            15612.5,
+            16259.375,
+            17759.375,
+            30443.75
+          ]
+        },
+        "throughput_per_second": {
+          "median": 61502.97905054776,
+          "p95": 70733.8638373121,
+          "p99": 70733.8638373121,
+          "mad": 5194.691174425992,
+          "min": 32847.464586327245,
+          "max": 70733.8638373121,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            32847.464586327245,
+            56308.287876121765,
+            61502.97905054776,
+            64051.240992794235,
+            70733.8638373121
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "5",
+        "legacy_case_id": "host/events-pagination/entries-32",
+        "units": "133"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 1153.3834586466166,
+          "p95": 1187.96992481203,
+          "p99": 1187.96992481203,
+          "mad": 34.58646616541341,
+          "min": 936.8421052631579,
+          "max": 1187.96992481203,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            936.8421052631579,
+            942.8571428571429,
+            1153.3834586466166,
+            1166.1654135338347,
+            1187.96992481203
+          ]
+        },
+        "throughput_per_second": {
+          "median": 867014.3415906128,
+          "p95": 1067415.7303370787,
+          "p99": 1067415.7303370787,
+          "mad": 25242.189691878622,
+          "min": 841772.1518987342,
+          "max": 1067415.7303370787,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            841772.1518987342,
+            857511.2830431979,
+            867014.3415906128,
+            1060606.0606060605,
+            1067415.7303370787
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 133,
+          "lost": 0,
+          "pages": 5
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-32",
+        "units": "5"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5860.0,
+          "p95": 6180.0,
+          "p99": 6180.0,
+          "mad": 320.0,
+          "min": 4880.0,
+          "max": 6180.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4880.0,
+            4980.0,
+            5860.0,
+            6180.0,
+            6180.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 170648.46416382253,
+          "p95": 204918.03278688525,
+          "p99": 204918.03278688525,
+          "mad": 8836.166429194709,
+          "min": 161812.29773462782,
+          "max": 204918.03278688525,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            161812.29773462782,
+            161812.29773462782,
+            170648.46416382253,
+            200803.2128514056,
+            204918.03278688525
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-256",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 3211.328125,
+          "p95": 3850.78125,
+          "p99": 3850.78125,
+          "mad": 110.15625,
+          "min": 2423.4375,
+          "max": 3850.78125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2423.4375,
+            3148.4375,
+            3211.328125,
+            3321.484375,
+            3850.78125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 311397.6401897579,
+          "p95": 412637.00838168926,
+          "p99": 412637.00838168926,
+          "mad": 10327.42967582168,
+          "min": 259687.56340028404,
+          "max": 412637.00838168926,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            259687.56340028404,
+            301070.21051393624,
+            311397.6401897579,
+            317617.86600496277,
+            412637.00838168926
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-256",
+        "units": "256"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 11031.25,
+          "p95": 23532.8125,
+          "p99": 23532.8125,
+          "mad": 2914.453125,
+          "min": 7134.375,
+          "max": 23532.8125,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            7134.375,
+            8430.078125,
+            11031.25,
+            13945.703125,
+            23532.8125
+          ]
+        },
+        "throughput_per_second": {
+          "median": 90651.55807365439,
+          "p95": 140166.4476565922,
+          "p99": 140166.4476565922,
+          "mad": 27971.304629649443,
+          "min": 42493.858309541196,
+          "max": 140166.4476565922,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            42493.858309541196,
+            71706.67488305649,
+            90651.55807365439,
+            118622.86270330384,
+            140166.4476565922
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "33",
+        "legacy_case_id": "host/events-pagination/entries-256",
+        "units": "1029"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 790.6705539358601,
+          "p95": 988.3381924198251,
+          "p99": 988.3381924198251,
+          "mad": 96.30709426627789,
+          "min": 693.0029154518951,
+          "max": 988.3381924198251,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            693.0029154518951,
+            726.7249757045676,
+            790.6705539358601,
+            886.977648202138,
+            988.3381924198251
+          ]
+        },
+        "throughput_per_second": {
+          "median": 1264749.262536873,
+          "p95": 1442995.372318048,
+          "p99": 1442995.372318048,
+          "mad": 137325.13631796208,
+          "min": 1011799.4100294985,
+          "max": 1442995.372318048,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            1011799.4100294985,
+            1127424.126218911,
+            1264749.262536873,
+            1376036.3733618616,
+            1442995.372318048
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 1029,
+          "lost": 0,
+          "pages": 33
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-256",
+        "units": "5"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5260.0,
+          "p95": 6900.0,
+          "p99": 6900.0,
+          "mad": 620.0,
+          "min": 4640.0,
+          "max": 6900.0,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            4640.0,
+            4680.0,
+            5260.0,
+            6500.0,
+            6900.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 190114.06844106465,
+          "p95": 215517.24137931035,
+          "p99": 215517.24137931035,
+          "mad": 25403.172938245698,
+          "min": 144927.53623188406,
+          "max": 215517.24137931035,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            144927.53623188406,
+            153846.15384615384,
+            190114.06844106465,
+            213675.2136752137,
+            215517.24137931035
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.actor-command",
+      "measurement_mode": "time",
+      "dimensions": {
+        "category": "host",
+        "iterations": "10000",
+        "legacy_case_id": "host/actor-command-round-trip/statistics",
+        "units": "10000"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 5268.15,
+          "p95": 6631.37,
+          "p99": 6631.37,
+          "mad": 1363.2200000000003,
+          "min": 2669.49,
+          "max": 6631.37,
+          "unit": "ns/unit",
+          "sample_count": 5,
+          "samples": [
+            2669.49,
+            2997.78,
+            5268.15,
+            6065.35,
+            6631.37
+          ]
+        },
+        "throughput_per_second": {
+          "median": 189819.9557719503,
+          "p95": 374603.38866225386,
+          "p99": 374603.38866225386,
+          "mad": 39021.55363181938,
+          "min": 150798.40214013093,
+          "max": 374603.38866225386,
+          "unit": "units/s",
+          "sample_count": 5,
+          "samples": [
+            150798.40214013093,
+            164870.9472660275,
+            189819.9557719503,
+            333580.18266850803,
+            374603.38866225386
+          ]
+        }
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {}
+      }
+    },
+    {
+      "case_id": "core.system.process",
+      "measurement_mode": "system",
+      "dimensions": {
+        "scope": "entire-benchmark-process-including-fixture-construction"
+      },
+      "metrics": {
+        "cpu_time_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns/process",
+          "sample_count": 1,
+          "samples": [
+            0.0
+          ]
+        },
+        "peak_rss_bytes": 0.0,
+        "context_switches": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {}
+      }
+    }
+  ],
+  "correctness": {
+    "passed": true,
+    "counters": {
+      "failed_gates": 0
+    }
+  },
+  "gates": [
+    {
+      "gate_id": "matrix.100k-task-scheduling",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 13.0,
+      "limit": 1.0,
+      "unit": "cases"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5770.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 7512.5,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 2689.84375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4962.5,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6616.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5611.71875,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 7034.375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4094.3359375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4139.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3393.75,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4086.328125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.sparse-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4121.2890625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3983.0078125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 8200.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3102.5390625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4029.638671875,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4868.75,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4320.703125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.schedule.full-ready.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4330.46875,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.wait-wake.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4630.078125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.idle-runtime.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 108.30331018518518,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 10.6829,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 584.3994140625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 642.7969,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.task-lifecycle.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 2916.3313933873146,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.deadline-cancel.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 8754.17,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.reload.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 24190.5,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.none.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 29200.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 14100.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.shared-read.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 17000.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6500.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.write-conflict.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 15800.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6200.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.strict-order.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 14600.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5900.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.none.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4828.125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 8953.125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.shared-read.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5340.625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3931.25,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.write-conflict.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5190.625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 7600.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.strict-order.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4631.25,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 2818.75,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.none.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5239.0625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3872.65625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.shared-read.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 15952.34375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4922.265625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.write-conflict.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6352.734375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 16600.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.resource-plan.strict-order.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 4602.734375,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.completion-route.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 2667.96875,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.local-builtin-dispatch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 30400.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.local-builtin-dispatch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 9006.25,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.local-builtin-dispatch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 12978.125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.submit-batch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 219000.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.task-outcome.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 27800.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 5600.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 9940.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.submit-batch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 15690.625,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.task-outcome.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 30443.75,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 1187.96992481203,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6180.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.submit-batch.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 3850.78125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.task-outcome.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 23532.8125,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 988.3381924198251,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.observability-page.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6900.0,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "absolute.core.host.actor-command.p99",
+      "kind": "maximum",
+      "passed": true,
+      "actual": 6631.37,
+      "limit": 30000000000.0,
+      "unit": "ns/unit"
+    },
+    {
+      "gate_id": "matrix.tasks",
+      "kind": "coverage",
+      "passed": true,
+      "actual": 3.0,
+      "limit": 3.0,
+      "unit": "distinct-values"
+    },
+    {
+      "gate_id": "matrix.runners",
+      "kind": "coverage",
+      "passed": true,
+      "actual": 3.0,
+      "limit": 3.0,
+      "unit": "distinct-values"
+    },
+    {
+      "gate_id": "matrix.ready_percent",
+      "kind": "coverage",
+      "passed": true,
+      "actual": 4.0,
+      "limit": 4.0,
+      "unit": "distinct-values"
+    },
+    {
+      "gate_id": "matrix.batch_size",
+      "kind": "coverage",
+      "passed": true,
+      "actual": 4.0,
+      "limit": 3.0,
+      "unit": "distinct-values"
+    },
+    {
+      "gate_id": "matrix.protocol_distribution",
+      "kind": "coverage",
+      "passed": true,
+      "actual": 4.0,
+      "limit": 4.0,
+      "unit": "distinct-values"
+    },
+    {
+      "gate_id": "matrix.case.core.idle-runtime",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.schedule.sparse-ready",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.schedule.full-ready",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.task-lifecycle",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.wait-wake",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.deadline-cancel",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.reload",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.resource-plan.none",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.resource-plan.shared-read",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.resource-plan.write-conflict",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.resource-plan.strict-order",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.completion-route",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.local-builtin-dispatch",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.host.submit-batch",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.host.task-outcome",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.host.observability-page",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.case.core.host.actor-command",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1.0,
+      "limit": 1.0,
+      "unit": "case"
+    },
+    {
+      "gate_id": "matrix.one-million-task-lifecycles",
+      "kind": "minimum",
+      "passed": true,
+      "actual": 1000000.0,
+      "limit": 1000000.0,
+      "unit": "lifecycles"
+    }
+  ],
+  "metadata": {
+    "command": "target\\release\\mutsuki-runtime-benchmarks.exe full --lane time --warmup 1 --samples 5 --gate smoke --output $OUTPUT",
+    "fixture_window": "fixture construction is outside each case measurement window"
+  }
+}
