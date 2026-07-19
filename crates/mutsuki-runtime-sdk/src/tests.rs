@@ -172,7 +172,7 @@ fn task_handle_future_polls_until_outcome() {
 }
 
 #[test]
-fn async_runner_adapter_suspends_and_resumes_call() {
+fn task_await_runner_adapter_suspends_and_resumes_call() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
@@ -245,7 +245,7 @@ fn async_runner_adapter_suspends_and_resumes_call() {
 }
 
 #[test]
-fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
+fn task_await_runner_adapter_cancel_removes_invocation_by_invocation_id() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
@@ -307,7 +307,7 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
 }
 
 #[test]
-fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
+fn task_await_runner_adapter_emits_generic_child_task_with_trace_context() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
@@ -350,7 +350,7 @@ fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
 }
 
 #[test]
-fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
+fn task_await_runner_adapter_emits_explicit_cancel_policy_descriptor() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
@@ -389,7 +389,7 @@ fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
 }
 
 #[test]
-fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
+fn task_await_runner_adapter_rejects_self_call_when_policy_disallows_it() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
@@ -464,7 +464,7 @@ fn task_await_runner_adapter_rejects_external_future_without_wake_source() {
 }
 
 #[test]
-fn async_runner_adapter_emits_targeted_child_task_descriptor() {
+fn task_await_runner_adapter_emits_targeted_child_task_descriptor() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });

@@ -696,16 +696,6 @@ impl TaskAwaitRunnerAdapter {
     }
 }
 
-#[deprecated(
-    note = "renamed to TaskAwaitRunnerAdapter; it only supports Mutsuki child-task awaits"
-)]
-pub type AsyncRunnerAdapter = TaskAwaitRunnerAdapter;
-
-#[deprecated(
-    note = "renamed to BoxedTaskAwaitRunner; it is not a general external-I/O future contract"
-)]
-pub type BoxedAsyncRunner = BoxedTaskAwaitRunner;
-
 #[cfg(test)]
 fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
     use mutsuki_runtime_contracts::{
