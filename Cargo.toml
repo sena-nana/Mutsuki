@@ -12,5 +12,5 @@ ratatui = "0.30.2"
 serde = "1.0"
 serde_json = "1.0"
 tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "time"] }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "77eab05a7e84daac0e66b7e06e19bedb29cf9d3a" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "77eab05a7e84daac0e66b7e06e19bedb29cf9d3a" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9fb03856c95027f849753c3b012e87a52f1598e7" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9fb03856c95027f849753c3b012e87a52f1598e7" }
