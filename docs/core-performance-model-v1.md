@@ -50,6 +50,10 @@ be mapped without making that implementation-oriented name the public case ident
 100k Task matrix, 8.64 million tick 24-hour equivalent and one-million lifecycle case remain full-mode
 coverage gates.
 
+`iterations` and `units` record the observed normalization counts. They are not part of case identity,
+because pagination and other asynchronous workloads can observe different valid counts across process
+rounds while retaining the same configured workload dimensions.
+
 ## Gates and baseline approval
 
 Public CI checks correctness, case completeness, bounded history and catastrophic absolute limits.

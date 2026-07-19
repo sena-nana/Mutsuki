@@ -590,11 +590,14 @@ fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateRe
 }
 
 fn case_key(case: &CaseReport) -> String {
+    let mut dimensions = case.dimensions.clone();
+    dimensions.remove("iterations");
+    dimensions.remove("units");
     format!(
         "{}|{}|{}",
         case.case_id,
         case.measurement_mode,
-        serde_json::to_string(&case.dimensions).expect("dimensions must serialize")
+        serde_json::to_string(&dimensions).expect("dimensions must serialize")
     )
 }
 

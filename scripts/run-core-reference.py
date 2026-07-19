@@ -70,7 +70,15 @@ def run_fragment(
 
 
 def case_key(case: dict[str, Any]) -> str:
-    dimensions = json.dumps(case["dimensions"], sort_keys=True, separators=(",", ":"))
+    dimensions = json.dumps(
+        {
+            name: value
+            for name, value in case["dimensions"].items()
+            if name not in {"iterations", "units"}
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return f"{case['case_id']}|{case['measurement_mode']}|{dimensions}"
 
 

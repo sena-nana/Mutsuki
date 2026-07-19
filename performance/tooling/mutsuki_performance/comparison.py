@@ -26,10 +26,15 @@ ZERO_TOLERANCE_COUNTERS = {
 
 
 def _case_key(case: dict[str, Any]) -> tuple[str, str, str]:
+    dimensions = {
+        name: value
+        for name, value in case["dimensions"].items()
+        if name not in {"iterations", "units"}
+    }
     return (
         case["case_id"],
         case["measurement_mode"],
-        repr(sorted(case["dimensions"].items())),
+        repr(sorted(dimensions.items())),
     )
 
 

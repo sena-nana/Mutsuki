@@ -124,6 +124,27 @@ class ContractTests(unittest.TestCase):
             any(not finding["passed"] for finding in comparison["findings"])
         )
 
+    def test_comparison_ignores_observed_iteration_and_unit_counts(self) -> None:
+        baseline = report()
+        baseline["cases"][0]["dimensions"] = {
+            "legacy_case_id": "host/events-pagination/entries-1",
+            "entries": "1",
+            "iterations": "1",
+            "units": "9",
+        }
+        current = deepcopy(baseline)
+        current["report_id"] = "current"
+        current["cases"][0]["dimensions"]["iterations"] = "2"
+        current["cases"][0]["dimensions"]["units"] = "12"
+        current["cases"][0]["metrics"]["latency_ns"] = distribution(130.0, 2.0)
+
+        comparison = compare_reports(baseline, current)
+
+        self.assertFalse(comparison["passed"])
+        self.assertFalse(
+            any(finding["kind"] == "unmatched" for finding in comparison["findings"])
+        )
+
     def test_zero_tolerance_correctness_counter_fails(self) -> None:
         baseline = report()
         current = deepcopy(baseline)
