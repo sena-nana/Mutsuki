@@ -11,55 +11,55 @@ unsupported_deployments = ["distributed-clustered-production"]
 [[repositories]]
 id = "core"
 url = "https://github.com/sena-nana/MutsukiCore.git"
-revision = "05dc54cd63dc443eb4599f8932e90a2f928e307c"
+revision = "d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 kind = "rust"
 
 [[repositories]]
 id = "service_host"
 url = "https://github.com/sena-nana/MutsukiServiceHost.git"
-revision = "77eab05a7e84daac0e66b7e06e19bedb29cf9d3a"
+revision = "9fb03856c95027f849753c3b012e87a52f1598e7"
 kind = "rust"
 
 [[repositories]]
 id = "link"
 url = "https://github.com/sena-nana/MutsukiLink.git"
-revision = "9d671b169b9db206ebb6d8c33ab01a544f6a22b9"
+revision = "71d40fd0d1e32fb0ba47bfd04ac94e1da8983679"
 kind = "rust"
 
 [[repositories]]
 id = "std_plugins"
 url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
-revision = "8b3ae3e6250f8dc9a368cd7775a7a09583db0055"
+revision = "d680004dc81843de1993e765482e5508becda3b9"
 kind = "rust"
 
 [[repositories]]
 id = "agent_kit"
 url = "https://github.com/sena-nana/MutsukiAgentKit.git"
-revision = "13490631140b97771dcdbbb164a2fc2e19733fb5"
+revision = "5e98ec0ea2ab68ddd91cb7eb50fd1d11e2a343c3"
 kind = "rust"
 
 [[repositories]]
 id = "bot_plugins"
 url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
-revision = "66e2d7b76f8ee5df4b96332867cd3f4d6aa14ed8"
+revision = "e0948702ade35a48da2203d6b5e72ddc9c7bf8ec"
 kind = "rust"
 
 [[repositories]]
 id = "distributed_host"
 url = "https://github.com/sena-nana/MutsukiDistributedHost.git"
-revision = "10d33a6ccdf0ab2307b38eaffb74957cc157ddb8"
+revision = "a308b5758cdc0e3fe9261f55a67cfcf2146e9d5a"
 kind = "rust"
 
 [[repositories]]
 id = "tauri_host"
 url = "https://github.com/sena-nana/MutsukiTauriHost.git"
-revision = "2901151b3efaffb2c48da475a53546e3181350b6"
+revision = "7efe925f3240fb16c9ef2a7e5991512429ba1f97"
 kind = "rust"
 
 [[repositories]]
 id = "python_runner_kit"
 url = "https://github.com/sena-nana/MutsukiPythonRunnerKit.git"
-revision = "c4d0ceb9af7366ba93af05ef85de910ebf0e32c7"
+revision = "877a09aa780b967f9d9194d90c9163845470c77d"
 kind = "python"
 
 [capabilities]
