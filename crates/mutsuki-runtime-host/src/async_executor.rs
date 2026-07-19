@@ -110,7 +110,7 @@ pub struct TokioAsyncExecutor {
     max_inflight_invocations: usize,
     max_inflight_entries: usize,
     max_inflight_bytes: usize,
-    runtime: Arc<Runtime>,
+    runtime: Option<Runtime>,
     state: Arc<AsyncExecutorState>,
 }
 
@@ -128,6 +128,12 @@ impl fmt::Debug for TokioAsyncExecutor {
 }
 
 impl TokioAsyncExecutor {
+    fn runtime(&self) -> &Runtime {
+        self.runtime
+            .as_ref()
+            .expect("async executor runtime is available until drop")
+    }
+
     pub fn new(
         configured_threads: usize,
         max_inflight_invocations: usize,
@@ -156,7 +162,7 @@ impl TokioAsyncExecutor {
             max_inflight_invocations,
             max_inflight_entries,
             max_inflight_bytes,
-            runtime: Arc::new(runtime),
+            runtime: Some(runtime),
             state: Arc::new(AsyncExecutorState::default()),
         })
     }
@@ -212,7 +218,7 @@ impl AsyncExecutor for TokioAsyncExecutor {
         let state = self.state.clone();
         let invocation_for_task = invocation.clone();
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
-        let task = self.runtime.spawn(async move {
+        let task = self.runtime().spawn(async move {
             let _ = start_rx.await;
             let _reservation = reservation;
             events(AsyncExecutorEvent::Started(invocation_for_task.clone()));
@@ -289,7 +295,7 @@ impl AsyncExecutor for TokioAsyncExecutor {
         let state = self.state.clone();
         let invocation_for_task = invocation.clone();
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
-        let task = self.runtime.spawn(async move {
+        let task = self.runtime().spawn(async move {
             let _ = start_rx.await;
             let _reservation = reservation;
             let deadline = invocation_for_task
@@ -372,6 +378,16 @@ impl AsyncExecutor for TokioAsyncExecutor {
     }
 }
 
+impl Drop for TokioAsyncExecutor {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            // A Host can be assembled or torn down from another Tokio runtime. The default
+            // Runtime destructor blocks, which Tokio rejects from an async context.
+            runtime.shutdown_background();
+        }
+    }
+}
+
 struct AsyncReservation {
     state: Arc<AsyncExecutorState>,
     entry_count: usize,
@@ -434,4 +450,17 @@ fn capacity_error(
         .evidence
         .insert("limit".into(), ScalarValue::Int(limit as i64));
     RuntimeFailure::new(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executor_can_drop_inside_an_async_context() {
+        let outer = Builder::new_current_thread().enable_all().build().unwrap();
+        outer.block_on(async {
+            drop(TokioAsyncExecutor::new(1, 1, 1, 1024).unwrap());
+        });
+    }
 }
