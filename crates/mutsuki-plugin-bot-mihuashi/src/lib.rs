@@ -8,8 +8,8 @@ use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
 use mutsuki_runtime_contracts::{
-    ExecutionClass, ReadPlan, RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeError,
-    ScalarValue, Task, TaskOutcome,
+    ExecutionClass, ProtocolClass, ReadPlan, RunnerDescriptor, RunnerPurity, RunnerResult,
+    RuntimeError, ScalarValue, Task, TaskOutcome,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -169,7 +169,7 @@ fn parse_profile(html: &str, final_url: &str) -> Result<(String, String, Option<
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
-    PluginBuilder::new(PLUGIN_ID)
+    let mut manifest = PluginBuilder::new(PLUGIN_ID)
         .runner_descriptor(descriptor())
         .protocol_handler(
             ProtocolDescriptorBuilder::new(LINK_RESOLVE)
@@ -181,7 +181,12 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
             "orchestration",
         )
         .build()
-        .manifest
+        .manifest;
+    manifest
+        .provides
+        .protocol_classes
+        .insert(LINK_RESOLVE.into(), ProtocolClass::Effect);
+    manifest
 }
 fn descriptor() -> RunnerDescriptor {
     RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
@@ -215,6 +220,15 @@ fn fail(task: &Task, detail: impl std::fmt::Display) -> RuntimeFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_classifies_the_effectful_protocol() {
+        assert_eq!(
+            manifest().provides.protocol_classes.get(LINK_RESOLVE),
+            Some(&ProtocolClass::Effect)
+        );
+    }
+
     #[test]
     fn parses_server_rendered_fixture() {
         let html = "<html><head><meta property='og:image' content='https://img.mihuashi.com/a.jpg'></head><body><h1>Painter</h1><main>Window</main></body></html>";

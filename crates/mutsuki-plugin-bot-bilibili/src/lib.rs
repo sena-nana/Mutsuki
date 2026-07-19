@@ -15,9 +15,9 @@ use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, DomainEvent, ExecutionClass, ReadPlan, RunnerBatchCapability, RunnerContext,
-    RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
-    ScalarValue, Task, TaskOutcome, WorkBatch,
+    CompletionBatch, DomainEvent, ExecutionClass, ProtocolClass, ReadPlan, RunnerBatchCapability,
+    RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
+    RuntimeError, ScalarValue, Task, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -48,6 +48,7 @@ pub const POLL_LIVE: &str = "mutsuki.bot.bilibili.poll/live@1";
 pub const POLL_DYNAMIC: &str = "mutsuki.bot.bilibili.poll/dynamic@1";
 pub const POLL_VIDEO: &str = "mutsuki.bot.bilibili.poll/video@1";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.link/resolve@1";
+pub const MANAGEMENT_COMMAND: &str = "mutsuki.bot.bilibili.management/command@1";
 pub const RISK_CONTROL_STATUS_EVENT: &str = "mutsuki.bot.bilibili.risk_control/status@1";
 pub const MAX_MEDIA_BYTES: usize = MAX_LINK_CARD_MEDIA_BYTES;
 
@@ -925,7 +926,7 @@ impl BilibiliRunner {
     }
 
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        if task.protocol_id == BOT_COMMAND_HANDLE_PROTOCOL_ID {
+        if task.protocol_id == MANAGEMENT_COMMAND {
             return self.run_command(task);
         }
         if task.protocol_id == LINK_RESOLVE {
@@ -1670,19 +1671,31 @@ fn manifest_for_backend(
             .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "io");
     }
     if let Some(command) = command {
-        builder = builder.handler_binding(
-            HandlerBindingBuilder::new(
-                bot_command_binding_id(command),
-                PLUGIN_ID,
-                BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                BOT_COMMAND_HANDLE_PROTOCOL_ID,
-            )
-            .target_runner_hint(RUNNER_ID)
-            .pool_id("io")
-            .build(),
-        );
+        builder = builder
+            .protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "io")
+            .handler_binding(
+                HandlerBindingBuilder::new(
+                    bot_command_binding_id(command),
+                    PLUGIN_ID,
+                    BOT_COMMAND_HANDLE_PROTOCOL_ID,
+                    MANAGEMENT_COMMAND,
+                )
+                .target_runner_hint(RUNNER_ID)
+                .pool_id("io")
+                .build(),
+            );
     }
     let mut manifest = builder.build().manifest;
+    for protocol_id in manifest.provides.runners[0]
+        .accepted_protocol_ids
+        .iter()
+        .cloned()
+    {
+        manifest
+            .provides
+            .protocol_classes
+            .insert(protocol_id, ProtocolClass::Effect);
+    }
     if risk_control_enabled {
         manifest.requires.push(format!("task_protocol:{SNAPSHOT}"));
     }
@@ -1703,7 +1716,7 @@ fn runner_descriptor(
         builder = builder.accepted_protocol(*protocol);
     }
     if management {
-        builder = builder.accepted_protocol(BOT_COMMAND_HANDLE_PROTOCOL_ID);
+        builder = builder.accepted_protocol(MANAGEMENT_COMMAND);
     }
     builder
         .purity(RunnerPurity::Effectful)
@@ -2596,12 +2609,23 @@ mod tests {
         assert!(
             managed.provides.runners[0]
                 .accepted_protocol_ids
-                .contains(&BOT_COMMAND_HANDLE_PROTOCOL_ID.to_string())
+                .contains(&MANAGEMENT_COMMAND.to_string())
         );
         assert!(managed.provides.handler_bindings.iter().any(|binding| {
             binding.binding_id == bot_command_binding_id("bili")
+                && binding.protocol_id == BOT_COMMAND_HANDLE_PROTOCOL_ID
+                && binding.target_protocol_id == MANAGEMENT_COMMAND
                 && binding.target_runner_hint.as_deref() == Some(RUNNER_ID)
         }));
+        assert!(
+            managed.provides.runners[0]
+                .accepted_protocol_ids
+                .iter()
+                .all(
+                    |protocol_id| managed.provides.protocol_classes.get(protocol_id)
+                        == Some(&ProtocolClass::Effect)
+                )
+        );
 
         let risk_control = manifest_with_management_and_risk_control(None, true);
         assert!(
@@ -2809,7 +2833,7 @@ mod tests {
         };
         Task::new(
             task_id,
-            BOT_COMMAND_HANDLE_PROTOCOL_ID,
+            MANAGEMENT_COMMAND,
             serde_json::to_value(BotCommandEvent {
                 source: BotEvent {
                     event_id: format!("event-{task_id}"),
