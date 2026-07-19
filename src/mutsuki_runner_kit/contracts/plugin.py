@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Self
 
@@ -48,6 +48,13 @@ class RuntimeProfileMode(StrEnum):
     EXTENSIBLE_RUNTIME = "extensible_runtime"
     BUILTIN_ONLY = "builtin_only"
     LOCKED_BUILTIN = "locked_builtin"
+
+
+class ProtocolClass(StrEnum):
+    DOMAIN = "domain"
+    EFFECT = "effect"
+    CORE = "core"
+    CONTROL = "control"
 
 
 def as_plugin_deployments(value: object, field: str) -> dict[str, PluginDeploymentKind]:
@@ -182,10 +189,15 @@ class PluginProvides:
     bridges: tuple[BridgeDescriptor, ...]
     scheduler_policies: tuple[SchedulerPolicyDescriptor, ...]
     workflows: tuple[WorkflowDescriptor, ...]
+    protocol_classes: dict[str, ProtocolClass] = field(
+        default_factory=dict,
+        metadata={"skip_serializing_if_empty": True},
+    )
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
         raw = as_mapping(data, "PluginProvides")
+        protocol_classes = as_mapping(raw.get("protocol_classes", {}), "protocol_classes")
         return cls(
             runners=tuple_from_json(raw, "runners", RunnerDescriptor),
             protocols=tuple_from_json(raw, "protocols", ProtocolDescriptor),
@@ -208,6 +220,10 @@ class PluginProvides:
                 raw, "scheduler_policies", SchedulerPolicyDescriptor
             ),
             workflows=tuple_from_json(raw, "workflows", WorkflowDescriptor),
+            protocol_classes={
+                str(protocol_id): ProtocolClass(as_str(value, "protocol_classes"))
+                for protocol_id, value in protocol_classes.items()
+            },
         )
 
 

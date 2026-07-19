@@ -103,7 +103,13 @@ def to_json_value(value: object) -> JsonValue:
     if isinstance(value, StrEnum):
         return value.value
     if is_dataclass(value):
-        return {item.name: to_json_value(getattr(value, item.name)) for item in fields(value)}
+        encoded: dict[str, JsonValue] = {}
+        for item in fields(value):
+            field_value = getattr(value, item.name)
+            if item.metadata.get("skip_serializing_if_empty") and not field_value:
+                continue
+            encoded[item.name] = to_json_value(field_value)
+        return encoded
     if isinstance(value, Mapping):
         return {str(key): to_json_value(item) for key, item in value.items()}
     if isinstance(value, tuple | list):

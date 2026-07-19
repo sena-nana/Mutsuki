@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from mutsuki_runner_kit.contracts.codec import to_json_dict
 from mutsuki_runner_kit.contracts.extension import (
     BridgeDescriptor,
     CodecDescriptor,
@@ -25,6 +28,7 @@ from mutsuki_runner_kit.contracts.plugin import (
     PluginArtifact,
     PluginManifest,
     PluginProvides,
+    ProtocolClass,
     ProtocolDescriptor,
     RuntimeCapabilityGraph,
     RuntimeLoadPlan,
@@ -97,6 +101,12 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
     provides = PluginProvides(
         runners=(descriptor,),
         protocols=(protocol,),
+        protocol_classes={
+            "raw.input": ProtocolClass.DOMAIN,
+            "im.message.received.v1": ProtocolClass.CONTROL,
+            "effect.chat.send": ProtocolClass.EFFECT,
+            "mutsuki.task.v1": ProtocolClass.CORE,
+        },
         handler_bindings=(binding,),
         resource_schemas=("bytes.v1",),
         resource_providers=("python.resource",),
@@ -361,6 +371,10 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
     )
     assert_json_roundtrip(PermissionAuditEntry, plan.capability_graph.permission_audit[0])
     assert_json_roundtrip(PluginProvides, provides)
+    legacy_provides = replace(provides, protocol_classes={})
+    legacy_json = to_json_dict(legacy_provides)
+    assert "protocol_classes" not in legacy_json
+    assert PluginProvides.from_json_dict(legacy_json) == legacy_provides
     assert_json_roundtrip(PluginManifest, manifest)
     assert_json_roundtrip(RuntimeCapabilityGraph, plan.capability_graph)
     assert_json_roundtrip(RuntimeLoadPlan, plan)

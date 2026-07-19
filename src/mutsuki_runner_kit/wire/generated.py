@@ -1,4 +1,4 @@
-"""Generated from MutsukiCore runtime-wire schema at revision 05dc54c.
+"""Generated from MutsukiCore runtime-wire schema at revision d4ec2e1.
 
 Do not add operation names outside this module. `test_wire_schema.py` verifies
 this generated registry against the checked-in Core artifact.
@@ -6,7 +6,7 @@ this generated registry against the checked-in Core artifact.
 
 from enum import IntEnum
 
-CORE_WIRE_REVISION = "05dc54cd63dc443eb4599f8932e90a2f928e307c"
+CORE_WIRE_REVISION = "d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 
 
 class Opcode(IntEnum):
