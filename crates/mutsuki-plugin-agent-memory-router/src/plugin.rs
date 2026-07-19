@@ -4,7 +4,7 @@ use mutsuki_agent_sdk::{
     orchestration_runner, service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
-use mutsuki_runtime_sdk::{AsyncRunnerAdapter, PluginBuilder, RuntimeClientRef, RuntimeResult};
+use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
 use crate::MemoryRouter;
 
@@ -19,13 +19,13 @@ pub fn plugin(client: RuntimeClientRef, router: MemoryRouter) -> PluginBuilder {
         .runner(Box::new(runner(client, router)))
 }
 
-pub fn runner(client: RuntimeClientRef, router: MemoryRouter) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, router: MemoryRouter) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentMemoryQueryProtocol>()
         .accepts::<AgentMemoryWriteProtocol>()
         .accepts::<AgentMemoryActivateProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |_ctx, task| {

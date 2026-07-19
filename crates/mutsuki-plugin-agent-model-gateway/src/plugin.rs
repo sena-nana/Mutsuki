@@ -6,7 +6,7 @@ use mutsuki_agent_sdk::{
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult,
+    AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
 };
 
 use crate::{HttpEffectRunner, ModelGateway, ModelPollRunner, ModelProviderExecution};
@@ -25,12 +25,12 @@ pub fn plugin(client: RuntimeClientRef, gateway: ModelGateway) -> PluginBuilder 
         .runner(Box::new(ModelPollRunner::default()))
 }
 
-pub fn runner(client: RuntimeClientRef, gateway: ModelGateway) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, gateway: ModelGateway) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentModelGenerateProtocol>()
         .accepts::<AgentModelStreamProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |ctx, task| {

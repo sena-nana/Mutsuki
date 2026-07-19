@@ -7,7 +7,7 @@ use mutsuki_agent_sdk::{
 };
 use mutsuki_runtime_sdk::AsyncRunnerContext;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, ScalarValue, Task};
-use mutsuki_runtime_sdk::{AsyncRunnerAdapter, PluginBuilder, RuntimeClientRef, RuntimeResult};
+use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
 use crate::AgentLoop;
 
@@ -20,11 +20,11 @@ pub fn plugin(client: RuntimeClientRef, agent_loop: AgentLoop) -> PluginBuilder 
         .runner(Box::new(runner(client, agent_loop)))
 }
 
-pub fn runner(client: RuntimeClientRef, agent_loop: AgentLoop) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, agent_loop: AgentLoop) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentRunProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |ctx, task| {

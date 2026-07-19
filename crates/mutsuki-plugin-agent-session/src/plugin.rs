@@ -4,7 +4,7 @@ use mutsuki_agent_sdk::{
     AgentSessionSnapshotProtocol, orchestration_runner, service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
-use mutsuki_runtime_sdk::{AsyncRunnerAdapter, PluginBuilder, RuntimeClientRef, RuntimeResult};
+use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
 use crate::SessionStore;
 
@@ -20,14 +20,14 @@ pub fn plugin(client: RuntimeClientRef, store: SessionStore) -> PluginBuilder {
         .runner(Box::new(runner(client, store)))
 }
 
-pub fn runner(client: RuntimeClientRef, store: SessionStore) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, store: SessionStore) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentSessionCreateProtocol>()
         .accepts::<AgentSessionGetProtocol>()
         .accepts::<AgentSessionAppendProtocol>()
         .accepts::<AgentSessionSnapshotProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |_ctx, task| {

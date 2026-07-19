@@ -6,7 +6,7 @@ use mutsuki_agent_sdk::{
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task, TaskOutcome};
 use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult,
+    AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
 };
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.tool_router";
@@ -19,12 +19,12 @@ pub fn plugin(client: RuntimeClientRef, registry: ToolRegistry) -> PluginBuilder
         .runner(Box::new(runner(client, registry)))
 }
 
-pub fn runner(client: RuntimeClientRef, registry: ToolRegistry) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, registry: ToolRegistry) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentToolListProtocol>()
         .accepts::<AgentToolExecuteProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |ctx, task| {

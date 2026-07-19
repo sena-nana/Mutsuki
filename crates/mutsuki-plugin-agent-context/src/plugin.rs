@@ -3,7 +3,7 @@ use mutsuki_agent_sdk::{
     AgentContextBuildProtocol, orchestration_runner, service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
-use mutsuki_runtime_sdk::{AsyncRunnerAdapter, PluginBuilder, RuntimeClientRef, RuntimeResult};
+use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
 
 use crate::ContextBuilder;
 
@@ -16,11 +16,11 @@ pub fn plugin(client: RuntimeClientRef, builder: ContextBuilder) -> PluginBuilde
         .runner(Box::new(runner(client, builder)))
 }
 
-pub fn runner(client: RuntimeClientRef, builder: ContextBuilder) -> AsyncRunnerAdapter {
+pub fn runner(client: RuntimeClientRef, builder: ContextBuilder) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentContextBuildProtocol>()
         .build();
-    AsyncRunnerAdapter::new(
+    TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(move |_ctx, task| {
