@@ -29,10 +29,10 @@ tokio = { version = "1.38", features = ["fs", "io-util", "macros", "process", "r
 toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "c6a68f8ab2c6450035580c12b5944e2a21ddf437" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "c6a68f8ab2c6450035580c12b5944e2a21ddf437" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "c6a68f8ab2c6450035580c12b5944e2a21ddf437" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "c6a68f8ab2c6450035580c12b5944e2a21ddf437" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "05dc54cd63dc443eb4599f8932e90a2f928e307c" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "05dc54cd63dc443eb4599f8932e90a2f928e307c" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "05dc54cd63dc443eb4599f8932e90a2f928e307c" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "05dc54cd63dc443eb4599f8932e90a2f928e307c" }
 
 mutsuki-tauri-bridge = { path = "crates/mutsuki-tauri-bridge" }
 mutsuki-tauri-resource = { path = "crates/mutsuki-tauri-resource" }
