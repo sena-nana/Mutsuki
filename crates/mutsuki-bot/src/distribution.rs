@@ -154,7 +154,8 @@ struct DataChannel {
 struct Budgets {
     cpu_units: u32,
     memory_bytes: u64,
-    vram_bytes: u64,
+    #[serde(rename = "vram_bytes")]
+    _vram_bytes: u64,
     network_bytes_per_second: u64,
     transfer_concurrency: u32,
     checkpoint_bytes_per_second: u64,
@@ -179,7 +180,7 @@ struct ValidatedDistribution {
     deployment: Option<Deployment>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Debug, Eq, PartialEq, Serialize)]
 struct DistributionHealth {
     mode: &'static str,
     state: &'static str,
@@ -213,47 +214,42 @@ impl Drop for DistributionMonitor {
 }
 
 impl DistributionRuntime {
+    fn local(mode: &'static str, state: &'static str) -> Self {
+        Self {
+            health: Arc::new(RwLock::new(DistributionHealth {
+                mode,
+                state,
+                execution: "local",
+                remote_execution: false,
+                fallback: "reject",
+                sidecar_revision: None,
+                last_error_code: None,
+            })),
+            monitor: None,
+        }
+    }
+
     pub fn health_snapshot(&self) -> serde_json::Value {
-        serde_json::to_value(
-            self.health
-                .read()
-                .expect("distribution health read lock")
-                .clone(),
-        )
-        .unwrap_or(serde_json::Value::Null)
+        health_snapshot(&self.health)
     }
 
     pub fn attach_health_probe(&self, builder: ServiceRuntimeBuilder) -> ServiceRuntimeBuilder {
         let health = self.health.clone();
-        builder.register_health_probe("distribution", move || {
-            serde_json::to_value(
-                health
-                    .read()
-                    .expect("distribution health read lock")
-                    .clone(),
-            )
-            .unwrap_or(serde_json::Value::Null)
-        })
+        builder.register_health_probe("distribution", move || health_snapshot(&health))
     }
 
     pub fn start_monitor(&mut self) -> Option<DistributionMonitor> {
         let config = self.monitor.take()?;
-        let client = config.client;
-        let expected_release = config.expected_release;
-        let expected_revision = config.expected_revision;
-        let capability_level = config.capability_level;
-        let required_features = config.required_features;
-        let fallback = config.fallback;
         let health = self.health.clone();
         Some(DistributionMonitor(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let result = probe_sidecar(
-                    &client,
-                    &expected_release,
-                    &expected_revision,
-                    capability_level,
-                    &required_features,
+                    &config.client,
+                    &config.expected_release,
+                    &config.expected_revision,
+                    config.capability_level,
+                    &config.required_features,
                 )
                 .await;
                 *health.write().expect("distribution health write lock") = health_after_probe(
@@ -262,11 +258,16 @@ impl DistributionRuntime {
                         .ok()
                         .map(|proof| proof.distributed_host_revision.clone()),
                     result.as_ref().err(),
-                    fallback,
+                    config.fallback,
                 );
             }
         })))
     }
+}
+
+fn health_snapshot(health: &RwLock<DistributionHealth>) -> serde_json::Value {
+    let health = health.read().expect("distribution health read lock");
+    serde_json::to_value(&*health).expect("distribution health serializes")
 }
 
 /// Static validation performs no network access and constructs no background task.
@@ -283,30 +284,11 @@ pub async fn prepare_distribution(
 ) -> Result<DistributionRuntime, DistributionConfigError> {
     let validated = load_distribution(product_config_path)?;
     match validated.selection.mode {
-        DistributionMode::Disabled => Ok(DistributionRuntime {
-            health: Arc::new(RwLock::new(DistributionHealth {
-                mode: "disabled",
-                state: "disabled",
-                execution: "local",
-                remote_execution: false,
-                fallback: "reject",
-                sidecar_revision: None,
-                last_error_code: None,
-            })),
-            monitor: None,
-        }),
-        DistributionMode::LocalObservable => Ok(DistributionRuntime {
-            health: Arc::new(RwLock::new(DistributionHealth {
-                mode: "local_observable",
-                state: "observing_local_only",
-                execution: "local",
-                remote_execution: false,
-                fallback: "reject",
-                sidecar_revision: None,
-                last_error_code: None,
-            })),
-            monitor: None,
-        }),
+        DistributionMode::Disabled => Ok(DistributionRuntime::local("disabled", "disabled")),
+        DistributionMode::LocalObservable => Ok(DistributionRuntime::local(
+            "local_observable",
+            "observing_local_only",
+        )),
         DistributionMode::Clustered => {
             let deployment = validated
                 .deployment
@@ -323,7 +305,7 @@ pub async fn prepare_distribution(
             let address = deployment
                 .external_service
                 .sidecar_control_endpoint
-                .strip_prefix("link-local://")
+                .strip_prefix(LINK_LOCAL_PREFIX)
                 .expect("validated sidecar endpoint");
             let client = Arc::new(
                 DistributedControlClient::new(
@@ -422,23 +404,21 @@ fn health_after_probe(
             sidecar_revision: revision,
             last_error_code: None,
         },
-        Some(error) => DistributionHealth {
-            mode: "clustered",
-            state: if fallback == LocalFallback::LocalDegraded {
-                "degraded"
-            } else {
-                "unavailable"
-            },
-            execution: if fallback == LocalFallback::LocalDegraded {
-                "local_fallback"
-            } else {
-                "clustered_unavailable"
-            },
-            remote_execution: false,
-            fallback: fallback_name(fallback),
-            sidecar_revision: revision,
-            last_error_code: Some(error.code.into()),
-        },
+        Some(error) => {
+            let (state, execution) = match fallback {
+                LocalFallback::Reject => ("unavailable", "clustered_unavailable"),
+                LocalFallback::LocalDegraded => ("degraded", "local_fallback"),
+            };
+            DistributionHealth {
+                mode: "clustered",
+                state,
+                execution,
+                remote_execution: false,
+                fallback: fallback_name(fallback),
+                sidecar_revision: revision,
+                last_error_code: Some(error.code.into()),
+            }
+        }
     }
 }
 
@@ -638,21 +618,13 @@ fn validate_deployment(
         "HA topology must require high_availability capability proof",
     )?;
     require(
-        !deployment
-            .external_service
-            .local_host_control_endpoint
-            .trim()
-            .is_empty()
+        is_present(&deployment.external_service.local_host_control_endpoint)
             && deployment
                 .external_service
                 .sidecar_control_endpoint
-                .starts_with("link-local://")
-            && deployment.external_service.sidecar_control_endpoint.len() > "link-local://".len()
-            && !deployment
-                .external_service
-                .sidecar_control_client_node
-                .trim()
-                .is_empty(),
+                .strip_prefix(LINK_LOCAL_PREFIX)
+                .is_some_and(|address| !address.is_empty())
+            && is_present(&deployment.external_service.sidecar_control_client_node),
         "distribution.control_endpoint_invalid",
         "local Host and authenticated sidecar control endpoints must be explicit",
     )?;
@@ -671,8 +643,8 @@ fn validate_deployment(
     let control = &deployment.channels.control;
     let data = &deployment.channels.data;
     require(
-        !control.endpoint.trim().is_empty()
-            && !data.endpoint.trim().is_empty()
+        is_present(&control.endpoint)
+            && is_present(&data.endpoint)
             && control.endpoint != data.endpoint,
         "distribution.channel_separation_required",
         "control and data endpoints must be explicit and distinct",
@@ -689,7 +661,6 @@ fn validate_deployment(
     )?;
 
     let budgets = &deployment.budgets;
-    let _vram_budget_may_be_zero = budgets.vram_bytes;
     require(
         budgets.cpu_units > 0
             && budgets.memory_bytes > 0
@@ -700,16 +671,8 @@ fn validate_deployment(
         "CPU, memory, network, transfer and checkpoint budgets must be positive",
     )?;
     require(
-        !deployment
-            .observability
-            .local_service_health
-            .trim()
-            .is_empty()
-            && !deployment
-                .observability
-                .cluster_health_endpoint
-                .trim()
-                .is_empty(),
+        is_present(&deployment.observability.local_service_health)
+            && is_present(&deployment.observability.cluster_health_endpoint),
         "distribution.observability_invalid",
         "local and cluster health sources must both be explicit",
     )?;
@@ -764,6 +727,12 @@ fn is_secret_reference(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+const LINK_LOCAL_PREFIX: &str = "link-local://";
+
+fn is_present(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 fn resolve(owner_file: &Path, referenced: &Path) -> PathBuf {
