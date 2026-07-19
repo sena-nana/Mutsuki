@@ -1,12 +1,12 @@
 use mutsuki_agent_protocol::*;
 use mutsuki_agent_sdk::{
-    AgentModelGenerateProtocol, AgentModelStreamProtocol, effectful_runner, result_event,
+    AgentModelGenerateProtocol, AgentModelStreamProtocol, orchestration_runner, result_event,
     runtime_failure, task_payload, unsupported_protocol,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::contracts::{
-    CompletionBatch, EntryCompletion, InvocationMode, RunnerBatchCapability, RunnerConcurrency,
-    RunnerMode, RunnerResult, RunnerSideEffect, Task, WorkBatch,
+    CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
+    RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, Task, WorkBatch,
 };
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult};
 use std::sync::Arc;
@@ -31,9 +31,10 @@ pub struct ModelAsyncHandler {
 impl ModelAsyncHandler {
     pub fn new(gateway: ModelGateway) -> Self {
         Self {
-            descriptor: effectful_runner(RUNNER_ID, PLUGIN_ID)
+            descriptor: orchestration_runner(RUNNER_ID, PLUGIN_ID)
                 .accepts::<AgentModelGenerateProtocol>()
                 .accepts::<AgentModelStreamProtocol>()
+                .execution_class(ExecutionClass::Io)
                 .invocation_mode(InvocationMode::AsyncReentrant)
                 .concurrency(RunnerConcurrency::Reentrant {
                     max_inflight_batches: 64,
