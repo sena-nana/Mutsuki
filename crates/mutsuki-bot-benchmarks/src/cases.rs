@@ -22,7 +22,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, RunnerDescriptorBuilder, RuntimeClient, RuntimeResult,
+    RunnerDescriptorBuilder, RuntimeClient, RuntimeResult, TaskAwaitRunnerAdapter,
 };
 use serde_json::json;
 
@@ -343,7 +343,7 @@ pub fn wait_resume_sample() -> Sample {
     let descriptor = RunnerDescriptorBuilder::new("benchmark.wait.runner", "benchmark.bot")
         .accepted_protocol("mutsuki.bot.benchmark/wait@1")
         .build();
-    let mut runner = AsyncRunnerAdapter::new(
+    let mut runner = TaskAwaitRunnerAdapter::new(
         descriptor,
         client.clone(),
         Box::new(|ctx, task| {

@@ -21,8 +21,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, AsyncRunnerContext, HandlerBindingBuilder, PluginBuilder,
-    ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder, RuntimeClientRef,
+    AsyncRunnerContext, HandlerBindingBuilder, PluginBuilder, ProtocolDescriptorBuilder,
+    ResourceRegistryGateway, RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter,
     map_work_batch_entries,
 };
 use qrcode::QrCode;
@@ -919,7 +919,9 @@ impl BilibiliRunner {
                     Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
                 >
         });
-        Box::new(AsyncRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
+        Box::new(
+            TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false),
+        )
     }
 
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {

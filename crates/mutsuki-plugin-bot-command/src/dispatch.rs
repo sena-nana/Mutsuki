@@ -5,11 +5,11 @@ use mutsuki_bot_protocol::{
     bot_command_binding_id,
 };
 use mutsuki_runtime_contracts::{
-    ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement,
-    PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerControlCapability,
-    RunnerDescriptor, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
-    RunnerResourceCapability, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
-    WorkBatch,
+    ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode,
+    OrderingRequirement, PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
+    RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
+    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
+    RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -171,6 +171,8 @@ pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         accepted_protocol_ids: vec![BOT_COMMAND_PARSE_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Orchestration,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({
             "type": "object",
             "required": ["event_id", "message"]

@@ -13,8 +13,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
-    RunnerDescriptorBuilder, RuntimeClientRef,
+    PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
+    RuntimeClientRef, TaskAwaitRunnerAdapter,
 };
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,7 @@ pub fn runner(
                 >
         },
     );
-    Box::new(AsyncRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
+    Box::new(TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
 }
 
 async fn run_task(

@@ -7,10 +7,11 @@ use mutsuki_bot_protocol::{
     QqBotAccountGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, OrderingRequirement, PluginManifest,
-    RunnerBatchCapability, RunnerControlCapability, RunnerDescriptor, RunnerMode,
-    RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
-    RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
+    CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode, OrderingRequirement,
+    PluginManifest, RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability,
+    RunnerDescriptor, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
+    RunnerResourceCapability, RunnerResult, RunnerSideEffect, RuntimeError, ScalarValue, Task,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
@@ -225,6 +226,8 @@ pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         accepted_protocol_ids: vec![QQBOT_GATEWAY_FRAME_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Io,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({
             "type": "object",
             "required": ["op"]
@@ -263,6 +266,8 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
         accepted_protocol_ids,
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Blocking,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({
             "type": "object",
             "additionalProperties": true

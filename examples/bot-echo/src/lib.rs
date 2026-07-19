@@ -6,10 +6,10 @@ use mutsuki_bot_protocol::{
 };
 use mutsuki_bot_sdk::MessageBuilder;
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, OrderingRequirement, RunnerBatchCapability,
-    RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
-    RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerSideEffect,
-    RuntimeError, ScalarValue, Task, WorkBatch,
+    CompletionBatch, ExecutionClass, InvocationMode, OrderingRequirement, RunnerBatchCapability,
+    RunnerConcurrency, RunnerControlCapability, RunnerDescriptor, RunnerMode,
+    RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability,
+    RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{HandlerBindingBuilder, PluginBuilder, map_work_batch_entries};
@@ -121,6 +121,8 @@ fn echo_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         accepted_protocol_ids: vec![BOT_COMMAND_HANDLE_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Orchestration,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({
             "type": "object",
             "required": ["source", "name", "args"]
