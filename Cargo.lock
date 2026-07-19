@@ -793,7 +793,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=05dc54cd63dc443eb4599f8932e90a2f928e307c#05dc54cd63dc443eb4599f8932e90a2f928e307c"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695#d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 dependencies = [
  "serde",
  "serde_json",
@@ -802,7 +802,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=05dc54cd63dc443eb4599f8932e90a2f928e307c#05dc54cd63dc443eb4599f8932e90a2f928e307c"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695#d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -812,7 +812,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=05dc54cd63dc443eb4599f8932e90a2f928e307c#05dc54cd63dc443eb4599f8932e90a2f928e307c"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695#d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -825,7 +825,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=05dc54cd63dc443eb4599f8932e90a2f928e307c#05dc54cd63dc443eb4599f8932e90a2f928e307c"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695#d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -835,7 +835,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-wire"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=05dc54cd63dc443eb4599f8932e90a2f928e307c#05dc54cd63dc443eb4599f8932e90a2f928e307c"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695#d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695"
 dependencies = [
  "mutsuki-runtime-contracts",
  "rmp-serde",
