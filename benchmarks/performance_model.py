@@ -252,9 +252,25 @@ def process_usage(pid: int) -> tuple[int, int]:
     fields = result.stdout.split()
     if len(fields) < 2:
         return 0, 0
-    minutes, seconds = fields[0].rsplit(":", 1)
-    cpu_ns = int((int(minutes) * 60 + float(seconds)) * 1_000_000_000)
-    return cpu_ns, int(fields[1]) * 1024
+    try:
+        return parse_ps_cpu_time(fields[0]), int(fields[1]) * 1024
+    except ValueError:
+        return 0, 0
+
+
+def parse_ps_cpu_time(value: str) -> int:
+    days = 0
+    if "-" in value:
+        day_text, value = value.split("-", 1)
+        days = int(day_text)
+    clock = value.split(":")
+    if len(clock) not in {2, 3}:
+        raise ValueError("ps CPU time must use [dd-]hh:mm:ss or mm:ss")
+    total_seconds = 0.0
+    for component in clock:
+        total_seconds = total_seconds * 60 + float(component)
+    total_seconds += days * 24 * 60 * 60
+    return int(total_seconds * 1_000_000_000)
 
 
 def windows_process_usage(pid: int) -> tuple[int, int]:
