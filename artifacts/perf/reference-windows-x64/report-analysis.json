@@ -1,0 +1,322 @@
+{
+  "classification": "environmental-noise",
+  "expected_time_samples_per_case": 15,
+  "framework_suspects": [],
+  "harness_errors": [],
+  "judgment": "Noise is broad across cases, which is more consistent with host/environment instability than one framework path.",
+  "noisy_case_count": 62,
+  "noisy_case_ratio": 0.96875,
+  "noisy_cases": [
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-1000/runners-1/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.07017543859649122
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-1000/runners-16/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.07317073170731707
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-1000/runners-128/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.24978241949521324
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-10000/runners-1/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.10929951690821256
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-10000/runners-16/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.09398496240601503
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-10000/runners-128/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.20807398186021697
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-100000/runners-1/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.10294514995947042
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.10875387061678801
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/scale/tasks-100000/runners-128/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.18515893905648928
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-0/batch-32/uniform_protocols",
+      "relative_mad": 0.090625
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+      "relative_mad": 0.21544419134396356
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+      "relative_mad": 0.08954355402787026
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-1/uniform_protocols",
+      "relative_mad": 0.1379132917744512
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+      "relative_mad": 0.1210596964727382
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-256/uniform_protocols",
+      "relative_mad": 0.08941971568398975
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/single_protocol",
+      "relative_mad": 0.08161214151532152
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+      "relative_mad": 0.10206768966096252
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/runner_hint",
+      "relative_mad": 0.1349268785876455
+    },
+    {
+      "case_id": "core.wait-wake",
+      "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/owner_continuation",
+      "relative_mad": 0.06378055215950547
+    },
+    {
+      "case_id": "core.idle-runtime",
+      "legacy_case_id": "longevity/idle-tick/24h-equivalent",
+      "relative_mad": 0.10543472266487303
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "longevity/observability/disabled",
+      "relative_mad": 0.09466720154676796
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "longevity/observability/enabled",
+      "relative_mad": 0.2414217426286147
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "longevity/observability/full-capacity",
+      "relative_mad": 0.09219590175846537
+    },
+    {
+      "case_id": "core.task-lifecycle",
+      "legacy_case_id": "longevity/task-lifecycle/bounded-history",
+      "relative_mad": 0.10781435124617077
+    },
+    {
+      "case_id": "core.deadline-cancel",
+      "legacy_case_id": "longevity/deadline-cancel/cycles",
+      "relative_mad": 0.12607611298461335
+    },
+    {
+      "case_id": "core.reload",
+      "legacy_case_id": "longevity/reload/identical-surface",
+      "relative_mad": 0.18572353247993764
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "legacy_case_id": "batch_resource/plan/entries-1/no_resources",
+      "relative_mad": 0.19607843137254902
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-1/no_resources",
+      "relative_mad": 0.20833333333333334
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "legacy_case_id": "batch_resource/plan/entries-1/shared_read",
+      "relative_mad": 0.23383084577114427
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-1/shared_read",
+      "relative_mad": 0.23170731707317074
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "legacy_case_id": "batch_resource/plan/entries-1/write_conflict",
+      "relative_mad": 0.1366906474820144
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-1/write_conflict",
+      "relative_mad": 0.09259259259259259
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "legacy_case_id": "batch_resource/plan/entries-1/strict_order",
+      "relative_mad": 0.1640625
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-1/strict_order",
+      "relative_mad": 0.1504424778761062
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "legacy_case_id": "batch_resource/plan/entries-32/no_resources",
+      "relative_mad": 0.21016483516483517
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-32/no_resources",
+      "relative_mad": 0.15361100496752006
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "legacy_case_id": "batch_resource/plan/entries-32/shared_read",
+      "relative_mad": 0.23450134770889489
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-32/shared_read",
+      "relative_mad": 0.11694152923538231
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-32/write_conflict",
+      "relative_mad": 0.08130081300813008
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "legacy_case_id": "batch_resource/plan/entries-32/strict_order",
+      "relative_mad": 0.18600867678958785
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-32/strict_order",
+      "relative_mad": 0.08044501497646556
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "legacy_case_id": "batch_resource/plan/entries-256/no_resources",
+      "relative_mad": 0.2404689608636977
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-256/no_resources",
+      "relative_mad": 0.21233856623617664
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "legacy_case_id": "batch_resource/plan/entries-256/shared_read",
+      "relative_mad": 0.2400390625
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-256/shared_read",
+      "relative_mad": 0.1473537275872916
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "legacy_case_id": "batch_resource/plan/entries-256/write_conflict",
+      "relative_mad": 0.2544029850746269
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-256/write_conflict",
+      "relative_mad": 0.19548872180451127
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "legacy_case_id": "batch_resource/plan/entries-256/strict_order",
+      "relative_mad": 0.24555952325743172
+    },
+    {
+      "case_id": "core.completion-route",
+      "legacy_case_id": "batch_resource/completion/entries-256/strict_order",
+      "relative_mad": 0.1324182564189332
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "legacy_case_id": "host/submit-batch/entries-1",
+      "relative_mad": 0.11503759398496241
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "legacy_case_id": "host/task-outcome-batch/entries-1",
+      "relative_mad": 0.0912863070539419
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/events-pagination/entries-1",
+      "relative_mad": 0.13493975903614466
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/traces-pagination/entries-1",
+      "relative_mad": 0.08108108108108109
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "legacy_case_id": "host/submit-batch/entries-32",
+      "relative_mad": 0.1276887871853547
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "legacy_case_id": "host/task-outcome-batch/entries-32",
+      "relative_mad": 0.060059422750424446
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/events-pagination/entries-32",
+      "relative_mad": 0.06274509803921566
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/traces-pagination/entries-32",
+      "relative_mad": 0.08527131782945736
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "legacy_case_id": "host/submit-batch/entries-256",
+      "relative_mad": 0.2144051267762608
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "legacy_case_id": "host/task-outcome-batch/entries-256",
+      "relative_mad": 0.4644346382737541
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/events-pagination/entries-256",
+      "relative_mad": 0.11436301032956223
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "legacy_case_id": "host/traces-pagination/entries-256",
+      "relative_mad": 0.15894039735099338
+    },
+    {
+      "case_id": "core.host.actor-command",
+      "legacy_case_id": "host/actor-command-round-trip/statistics",
+      "relative_mad": 0.1487536174282414
+    }
+  ],
+  "time_case_count": 64
+}

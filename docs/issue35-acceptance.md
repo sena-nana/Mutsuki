@@ -27,15 +27,15 @@ report's `repository_revisions` map.
 
 | Issue | Owner evidence | Local verification | Status |
 | --- | --- | --- | --- |
-| MutsukiCore#34 | Core v2 time/allocation lanes, stable case IDs, unified report, explicit approval gate, preserved 100k/24h/1m gates | 129 reference cases; 271 tests passed, 1 ignored | Pass locally |
-| MutsukiServiceHost#15 | builtin/ABI/Rust process deployments, canonical six-fixture manifest, lifecycle and IPC cases | 16 reference cases; 56 tests passed | Pass locally |
-| MutsukiTauriHost#4 | task pump, executable bridge, 1 MiB/64 MiB ResourceRef streaming and release cases | 36 reference cases; 31 tests passed | Pass locally |
-| MutsukiLink#21 | aligned local/TCP/QUIC dimensions, control/backpressure/mux/latest-only/reconnect cases | 53 reference cases; 100 tests passed | Pass locally |
-| MutsukiDistributedHost#22 | real Controller/Worker/ServiceHost processes, placement, registry, content localization and fault stages | 242 reference cases; 68 tests passed | Pass locally |
-| MutsukiPythonRunnerKit#4 | six fixtures across JSONL/binary, codec/pipe/process layers, 1/16/56 inflight and 1/32/256 batches | 92 reference cases; 81 tests passed; Pyright 0 errors | Pass locally |
-| MutsukiStdPlugins#5 | deterministic workflow/resource/fs/http/sqlite workloads with no public network | 18 reference cases; 35 tests passed, 1 ignored | Pass locally |
-| MutsukiAgentKit#4 | deterministic fake model/tool for single/tool/parallel/session/wait/cancel/failure paths | 27 reference cases; 16 tests passed | Pass locally |
-| MutsukiBotPlugins#10 | fake platform burst/multi-adapter/wait/rate-limit/reconnect/dedup/idle paths | 15 reference cases; 75 tests passed | Pass locally |
+| MutsukiCore#34 | Core v2 time/allocation lanes, stable case IDs, unified report, explicit approval gate, preserved 100k/24h/1m gates | 129 reference cases; 276 Rust tests passed, 1 ignored; 8 contract tests passed | Pass; Windows approved |
+| MutsukiServiceHost#15 | builtin/ABI/Rust process deployments, canonical six-fixture manifest, lifecycle and IPC cases | 16 reference cases; 56 tests passed | Pass; Windows approved |
+| MutsukiTauriHost#4 | task pump, executable bridge, 1 MiB/64 MiB ResourceRef streaming and release cases | 36 reference cases; 31 tests passed | Pass; Windows approved |
+| MutsukiLink#21 | aligned local/TCP/QUIC dimensions, control/backpressure/mux/latest-only/reconnect cases | 53 reference cases; 100 tests passed | Pass; Windows approved |
+| MutsukiDistributedHost#22 | real Controller/Worker/ServiceHost processes, placement, registry, content localization and fault stages | 242 reference cases; 68 tests passed | Pass; Windows approved |
+| MutsukiPythonRunnerKit#4 | six fixtures across JSONL/binary, codec/pipe/process layers, 1/16/56 inflight and 1/32/256 batches | 92 reference cases; 81 tests passed; Pyright 0 errors | Pass; Windows approved |
+| MutsukiStdPlugins#5 | deterministic workflow/resource/fs/http/sqlite workloads with no public network | 18 reference cases; 35 tests passed, 1 ignored | Pass; Windows approved |
+| MutsukiAgentKit#4 | deterministic fake model/tool for single/tool/parallel/session/wait/cancel/failure paths | 27 reference cases; 16 tests passed | Pass; Windows approved |
+| MutsukiBotPlugins#10 | fake platform burst/multi-adapter/wait/rate-limit/reconnect/dedup/idle paths | 15 reference cases; 75 tests passed | Pass; Windows approved |
 
 Every owner report validates as `mutsuki.performance.report/v1`, records the owner and actual
 dependencies, environment fingerprint and measurement boundary, and passes correctness gates.
@@ -50,7 +50,7 @@ dependencies, environment fingerprint and measurement boundary, and passes corre
 | Same Runner fixture across five deployments | ServiceHost manifest plus builtin, ABI, Rust process, Python JSONL and Python binary hashes are exact | Pass locally |
 | Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently in their owner repositories | Pass locally |
 | Fixed macOS ARM64 reference history | Every owner workflow targets `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Pending clean fixed-runner history |
-| Fixed Windows x64 reference history | Every owner workflow targets `[self-hosted,mutsuki-reference,Windows,X64]` | Pending real runner and retained run |
+| Fixed Windows x64 reference history | Physical Ryzen 7 5800X Windows x64 run retained in all nine owners; 628 clean cases and nine exact-byte approvals pass aggregate validation | Pass |
 | Baseline update requires explicit approval | Core tooling validates exact report bytes, revision snapshot and environment; no workflow auto-promotes output | Pass locally |
 | Localize an end-to-end regression by layer | Reports retain independent client/Host/Core/Runner/Link/Distributed boundaries | Pass locally |
 | Label every performance claim | All reports contain environment fingerprints and explicit measurement boundaries | Pass locally |
@@ -90,6 +90,19 @@ Repeatable observations:
   case-specific measurement/environment sensitivity and possible idle-runtime hotspot. It is not a
   test implementation correctness error and is not yet a framework regression.
 
+## Owner-local Windows x64 baseline
+
+On 2026-07-19 all nine owner suites ran on a physical AMD Ryzen 7 5800X Windows x64 machine with
+64 GiB RAM, the high-performance power plan and no active hypervisor. Each owner retains
+`report.json`, `report-analysis.json` and `report.approval.json` under
+`artifacts/performance/reference-windows-x64/` (`artifacts/perf/reference-windows-x64/` in Core).
+
+The Core aggregate validator reports `9 reports, 628 cases, clean_required=true`. All owner
+correctness gates pass, the canonical five-deployment Runner fixture hashes match, every recorded
+repository revision is clean, and each approval is bound to the exact report bytes, environment ID
+and revision snapshot. The reports classify broad timing variance as environmental noise; they do
+not make a regression claim without same-machine history.
+
 ## Harness errors found and corrected
 
 1. The registry reference matrix originally crossed every large scale with every fsync mode and
@@ -104,14 +117,27 @@ Repeatable observations:
 5. Extending the ServiceHost ABI fixture initially removed its legacy echo protocol. The fixture now
    preserves that contract while adding six benchmark protocols; the real cdylib and workspace tests
    pass.
+6. Windows executable discovery omitted `.exe` for DistributedHost benchmark binaries. The harness
+   now resolves platform-specific executable names before launch and supports raw-result resume.
+7. PythonRunnerKit's parent wrote every inflight pipe request before reading responses, which could
+   deadlock on a full Windows pipe. A concurrent bounded receiver now drains replies and enforces a
+   timeout while validating every response.
+8. DistributedHost content localization used the system temporary directory, so the 1 GiB x16 case
+   could exhaust a smaller system volume. Temporary data now lives beside the configured report on
+   the benchmark output filesystem and is still deleted outside the timed window.
+9. Core cross-process merging treated observed `iterations` and `units` as case identity, so valid
+   pagination-count variation broke aggregation. Those normalization counts are now excluded from
+   stable case identity in the Rust and Python comparison paths.
+10. Core's generic command helper mapped a successful empty `git status --porcelain` to
+    `unavailable`, permanently marking clean repositories dirty. Repository status now uses a
+    dedicated fail-closed check with clean/dirty/error regression tests.
 
-## Windows evidence boundary
+## Remaining evidence boundary
 
-The installed `x86_64-pc-windows-msvc` target cross-checks Core, ServiceHost, TauriHost and
-DistributedHost successfully. Link, StdPlugins, AgentKit and BotPlugins reach native dependencies
-and stop because macOS lacks Windows SDK/MSVC headers (`ring`, `libsqlite3-sys`, `aws-lc-sys`,
-including `assert.h`/`windows.h`). These are cross-toolchain limitations, not source failures. Only
-the fixed Windows x64 owner workflows can prove Windows compilation, execution and measurements.
+Windows x64 is now proven by native compilation, execution, clean reports and approvals. This
+Windows machine cannot produce the remaining fixed macOS ARM64 history, and the GitHub organization
+currently exposes no online self-hosted reference runner. The provisional Apple M4 observations
+above cannot be promoted or rewritten as clean fixed-runner evidence; macOS must be rerun natively.
 
 ## Local aggregate validation
 
