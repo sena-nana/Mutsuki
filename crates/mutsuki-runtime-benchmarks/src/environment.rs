@@ -194,6 +194,15 @@ fn ram_bytes() -> u64 {
     1
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn canonical_json(value: &impl serde::Serialize) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::to_value(value).expect("benchmark metadata must serialize"))
+        .expect("canonical benchmark metadata must serialize")
+}
+
 #[cfg(test)]
 mod tests {
     use super::dirty_from_status;
@@ -205,13 +214,4 @@ mod tests {
         assert!(dirty_from_status(true, b" M tracked.rs\n"));
         assert!(dirty_from_status(false, b""));
     }
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
-}
-
-fn canonical_json(value: &impl serde::Serialize) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::to_value(value).expect("benchmark metadata must serialize"))
-        .expect("canonical benchmark metadata must serialize")
 }
