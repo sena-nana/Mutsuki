@@ -1,0 +1,1916 @@
+{
+  "schema_version": "mutsuki.performance.report/v1",
+  "suite_version": "mutsuki-core/v2",
+  "workload_version": "mutsuki-core-kernel/v1",
+  "report_id": "core-full-allocation-20260719T153120Z",
+  "generated_at": "2026-07-19T15:31:20Z",
+  "revision_lock_hash": "023d9b654deeac48797e8d9f27de42f5c6fbfc8dd820b976396d3966b6f3f543",
+  "repository_revisions": {
+    "MutsukiCore": {
+      "revision": "d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695",
+      "dirty": false,
+      "remote": "https://github.com/sena-nana/MutsukiCore.git"
+    }
+  },
+  "environment_id": "c76549c42957fbf5deb7b3cd9175cec364e7ddca3ee491e6d37a64700a79efde",
+  "environment": {
+    "cpu_model": "AMD Ryzen 7 5800X 8-Core Processor",
+    "cpu_topology": "logical=16",
+    "ram_bytes": 68618801152,
+    "os": "windows unavailable",
+    "kernel": "unavailable",
+    "architecture": "x86_64",
+    "target_triple": "x86_64-pc-windows-msvc",
+    "toolchains": {
+      "node": "v26.5.0",
+      "python": "unavailable",
+      "rust": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+    },
+    "release_profile": {
+      "name": "release",
+      "lto": "thin",
+      "codegen_units": 1
+    },
+    "power_mode": "unrecorded",
+    "virtualization": "unrecorded",
+    "runner_configuration": {
+      "runner_instance_model": "single-active-batch"
+    }
+  },
+  "feature_set": [
+    "allocation-tracking"
+  ],
+  "deployment": "builtin",
+  "measurement_boundary": "Core runtime kernel and Host-facing component allocation instrumentation; timing is non-headline",
+  "sampling": {
+    "warmup_iterations": 0,
+    "samples_per_process": 1,
+    "process_runs": 1
+  },
+  "cases": [
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "1000",
+        "units": "10"
+      },
+      "metrics": {
+        "allocations": 23.8,
+        "allocated_bytes": 1921.2,
+        "retained_rss_bytes": 1440.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "1000",
+        "units": "16"
+      },
+      "metrics": {
+        "allocations": 26.4375,
+        "allocated_bytes": 3181.375,
+        "retained_rss_bytes": 13558.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-1000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "1000",
+        "units": "128"
+      },
+      "metrics": {
+        "allocations": 11.203125,
+        "allocated_bytes": 2003.015625,
+        "retained_rss_bytes": 70706.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 10,
+          "eligible": 10,
+          "expected_claimed": 10,
+          "queued_observations": 10,
+          "retained_records": 1000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "10000",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 22.8125,
+        "allocated_bytes": 1788.75,
+        "retained_rss_bytes": 4660.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 32,
+          "eligible": 100,
+          "expected_claimed": 32,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "10000",
+        "units": "100"
+      },
+      "metrics": {
+        "allocations": 24.5,
+        "allocated_bytes": 2057.3,
+        "retained_rss_bytes": 22220.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 100,
+          "eligible": 100,
+          "expected_claimed": 100,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-10000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "10000",
+        "units": "128"
+      },
+      "metrics": {
+        "allocations": 30.328125,
+        "allocated_bytes": 3568.421875,
+        "retained_rss_bytes": 117492.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 100,
+          "eligible": 100,
+          "expected_claimed": 100,
+          "queued_observations": 100,
+          "retained_records": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-1/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "1",
+        "tasks": "100000",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 22.8125,
+        "allocated_bytes": 1788.75,
+        "retained_rss_bytes": 4660.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 32,
+          "eligible": 1000,
+          "expected_claimed": 32,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 1000,
+          "expected_claimed": 512,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "scale",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/scale/tasks-100000/runners-128/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "128",
+        "tasks": "100000",
+        "units": "1000"
+      },
+      "metrics": {
+        "allocations": 23.961,
+        "allocated_bytes": 1995.014,
+        "retained_rss_bytes": 209412.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 1000,
+          "eligible": 1000,
+          "expected_claimed": 1000,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-0/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "0",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "16"
+      },
+      "metrics": {
+        "allocations": 9.25,
+        "allocated_bytes": 1779.625,
+        "retained_rss_bytes": 8110.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 0,
+          "eligible": 0,
+          "expected_claimed": 0,
+          "queued_observations": 0,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-1/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "1",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 1000,
+          "expected_claimed": 512,
+          "queued_observations": 1000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.sparse-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-50/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "50",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 50000,
+          "expected_claimed": 512,
+          "queued_observations": 50000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "ready_ratio",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/ready_ratio/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "1",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-1/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "16"
+      },
+      "metrics": {
+        "allocations": 36.75,
+        "allocated_bytes": 3347.625,
+        "retained_rss_bytes": 17452.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 16,
+          "eligible": 100000,
+          "expected_claimed": 16,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "batch_size",
+        "batch_size": "256",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/batch_size/tasks-100000/runners-16/ready-100/batch-256/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "4096"
+      },
+      "metrics": {
+        "allocations": 22.342529296875,
+        "allocated_bytes": 1752.16259765625,
+        "retained_rss_bytes": 447788.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 4096,
+          "eligible": 100000,
+          "expected_claimed": 4096,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/single_protocol",
+        "protocol_distribution": "single_protocol",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.734375,
+        "allocated_bytes": 1792.31640625,
+        "retained_rss_bytes": 67428.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 1600000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/uniform_protocols",
+        "protocol_distribution": "uniform_protocols",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 22.73828125,
+        "allocated_bytes": 1788.41015625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.schedule.full-ready",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/runner_hint",
+        "protocol_distribution": "runner_hint",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 24.73828125,
+        "allocated_bytes": 1821.78515625,
+        "retained_rss_bytes": 62708.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.wait-wake",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "axis": "protocol_distribution",
+        "batch_size": "32",
+        "category": "scheduling",
+        "iterations": "1",
+        "legacy_case_id": "scheduling/protocol_distribution/tasks-100000/runners-16/ready-100/batch-32/owner_continuation",
+        "protocol_distribution": "owner_continuation",
+        "ready_percent": "100",
+        "runners": "16",
+        "tasks": "100000",
+        "units": "512"
+      },
+      "metrics": {
+        "allocations": 25.5703125,
+        "allocated_bytes": 1807.2265625,
+        "retained_rss_bytes": 46658.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 512,
+          "eligible": 100000,
+          "expected_claimed": 512,
+          "queued_observations": 100000,
+          "retained_records": 100000
+        }
+      }
+    },
+    {
+      "case_id": "core.idle-runtime",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "longevity",
+        "equivalent_hours": "24",
+        "iterations": "8640000",
+        "legacy_case_id": "longevity/idle-tick/24h-equivalent",
+        "tick_interval_ms": "10",
+        "units": "8640000"
+      },
+      "metrics": {
+        "allocations": 6.944444444444445e-7,
+        "allocated_bytes": 0.00011215277777777778,
+        "retained_rss_bytes": 969.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "ready": 0,
+          "retained_records": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "capacity": "0",
+        "category": "longevity",
+        "iterations": "1000000",
+        "legacy_case_id": "longevity/observability/disabled",
+        "state": "disabled",
+        "units": "1000000"
+      },
+      "metrics": {
+        "allocations": 0.0,
+        "allocated_bytes": 0.0,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 0,
+          "dropped_events": 1000000,
+          "dropped_traces": 1000000,
+          "retained_events": 0,
+          "retained_traces": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "capacity": "4097",
+        "category": "longevity",
+        "iterations": "4096",
+        "legacy_case_id": "longevity/observability/enabled",
+        "state": "enabled",
+        "units": "4096"
+      },
+      "metrics": {
+        "allocations": 8.0,
+        "allocated_bytes": 109.729736328125,
+        "retained_rss_bytes": 211885.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 4097,
+          "dropped_events": 0,
+          "dropped_traces": 0,
+          "retained_events": 4096,
+          "retained_traces": 4096
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "capacity": "64",
+        "category": "longevity",
+        "iterations": "1000000",
+        "legacy_case_id": "longevity/observability/full-capacity",
+        "state": "full-capacity",
+        "units": "1000000"
+      },
+      "metrics": {
+        "allocations": 8.900001,
+        "allocated_bytes": 129.888916,
+        "retained_rss_bytes": 3457.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "allocated_trace_capacity": 64,
+          "dropped_events": 999936,
+          "dropped_traces": 999936,
+          "retained_events": 64,
+          "retained_traces": 64
+        }
+      }
+    },
+    {
+      "case_id": "core.task-lifecycle",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "longevity",
+        "evicted_id_capacity": "2048",
+        "iterations": "995904",
+        "legacy_case_id": "longevity/task-lifecycle/bounded-history",
+        "terminal_record_capacity": "1024",
+        "units": "4979520"
+      },
+      "metrics": {
+        "allocations": 19.60000060246771,
+        "allocated_bytes": 1992.260985797828,
+        "retained_rss_bytes": 1056768.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "evicted_task_ids": 2048,
+          "lifecycle_count": 1000000,
+          "retained_terminal_records": 1024,
+          "second_half_retained_growth_bytes": 0,
+          "terminal_records_evicted": 998976
+        }
+      }
+    },
+    {
+      "case_id": "core.deadline-cancel",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "longevity",
+        "iterations": "10000",
+        "legacy_case_id": "longevity/deadline-cancel/cycles",
+        "units": "10000"
+      },
+      "metrics": {
+        "allocations": 73.9779,
+        "allocated_bytes": 5839.6993,
+        "retained_rss_bytes": 707257.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "cancelled_retained": 256,
+          "deadline_rejections": 10000
+        }
+      }
+    },
+    {
+      "case_id": "core.reload",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "longevity",
+        "iterations": "1000",
+        "legacy_case_id": "longevity/reload/identical-surface",
+        "units": "1000"
+      },
+      "metrics": {
+        "allocations": 176.009,
+        "allocated_bytes": 14022.552,
+        "retained_rss_bytes": 93816.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "draining_generations": 0,
+          "final_generation": 1001
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 100.0,
+        "allocated_bytes": 8918.0,
+        "retained_rss_bytes": 4555.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -1939.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 111.0,
+        "allocated_bytes": 9995.0,
+        "retained_rss_bytes": 4801.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 1,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -2193.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 114.0,
+        "allocated_bytes": 10222.0,
+        "retained_rss_bytes": 4801.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -2193.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-1/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 101.0,
+        "allocated_bytes": 8864.0,
+        "retained_rss_bytes": 4501.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 1,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 1,
+          "serial_groups": 1,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-1/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -1903.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 49.9375,
+        "allocated_bytes": 3303.71875,
+        "retained_rss_bytes": 56382.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 1,
+          "parallelism_limit": 32,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 7.46875,
+        "allocated_bytes": 2371.8125,
+        "retained_rss_bytes": -42677.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 55.5,
+        "allocated_bytes": 3603.21875,
+        "retained_rss_bytes": 58461.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 1,
+          "parallelism_limit": 32,
+          "read_views": 1,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 7.46875,
+        "allocated_bytes": 2371.8125,
+        "retained_rss_bytes": -45012.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 34.0625,
+        "allocated_bytes": 2894.5,
+        "retained_rss_bytes": 1509.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 31,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -2193.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-32/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 51.90625,
+        "allocated_bytes": 3342.71875,
+        "retained_rss_bytes": 57630.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 32,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 32,
+          "serial_groups": 32,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-32/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 7.46875,
+        "allocated_bytes": 2371.8125,
+        "retained_rss_bytes": -44501.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32,
+          "retained_terminal": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.none",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 48.3984375,
+        "allocated_bytes": 3196.57421875,
+        "retained_rss_bytes": 431290.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 1,
+          "parallelism_limit": 256,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/no_resources",
+        "payload_layout": "row",
+        "resource_pattern": "no_resources",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 7.08203125,
+        "allocated_bytes": 2376.2734375,
+        "retained_rss_bytes": -341649.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.shared-read",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 53.515625,
+        "allocated_bytes": 3490.38671875,
+        "retained_rss_bytes": 447481.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 1,
+          "parallelism_limit": 256,
+          "read_views": 1,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/shared_read",
+        "payload_layout": "row",
+        "resource_pattern": "shared_read",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 7.08203125,
+        "allocated_bytes": 2376.2734375,
+        "retained_rss_bytes": -359888.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.write-conflict",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 31.671875,
+        "allocated_bytes": 2681.703125,
+        "retained_rss_bytes": -32607.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 255,
+          "dispatched_entries": 1,
+          "parallel_groups": 1,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 0,
+          "write_locks": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/write_conflict",
+        "payload_layout": "row",
+        "resource_pattern": "write_conflict",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 14.0,
+        "allocated_bytes": 2452.0,
+        "retained_rss_bytes": -2193.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1,
+          "retained_terminal": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.resource-plan.strict-order",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/plan/entries-256/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 50.39453125,
+        "allocated_bytes": 3238.19921875,
+        "retained_rss_bytes": 441946.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "conflict_entries": 0,
+          "deferred_entries": 0,
+          "dispatched_entries": 256,
+          "parallel_groups": 0,
+          "parallelism_limit": 1,
+          "read_views": 0,
+          "requested_entries": 256,
+          "serial_groups": 256,
+          "write_locks": 0
+        }
+      }
+    },
+    {
+      "case_id": "core.completion-route",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "batch_resource",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "batch_resource/completion/entries-256/strict_order",
+        "payload_layout": "row",
+        "resource_pattern": "strict_order",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 7.08203125,
+        "allocated_bytes": 2376.2734375,
+        "retained_rss_bytes": -356913.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256,
+          "retained_terminal": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "batch_size": "1",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-1",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 120.0,
+        "allocated_bytes": 9862.0,
+        "retained_rss_bytes": 812.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 1,
+          "completed": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "batch_size": "16",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-16",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "16"
+      },
+      "metrics": {
+        "allocations": 62.75,
+        "allocated_bytes": 5995.6875,
+        "retained_rss_bytes": 9585.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 16,
+          "completed": 16
+        }
+      }
+    },
+    {
+      "case_id": "core.local-builtin-dispatch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "batch_size": "256",
+        "category": "local_dispatch",
+        "deployment": "builtin",
+        "iterations": "1",
+        "legacy_case_id": "local_dispatch/entries-256",
+        "payload_representation": "typed_local",
+        "rss_scope": "benchmark_process",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 58.640625,
+        "allocated_bytes": 5858.52734375,
+        "retained_rss_bytes": 147801.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "claimed": 256,
+          "completed": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-1",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 51.0,
+        "allocated_bytes": 76691.0,
+        "retained_rss_bytes": 31158.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-1",
+        "units": "1"
+      },
+      "metrics": {
+        "allocations": 6.0,
+        "allocated_bytes": 44052.0,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/events-pagination/entries-1",
+        "units": "9"
+      },
+      "metrics": {
+        "allocations": 10.777777777777779,
+        "allocated_bytes": 6133.111111111111,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 9,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "1",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-1",
+        "units": "5"
+      },
+      "metrics": {
+        "allocations": 22.2,
+        "allocated_bytes": 10389.6,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-32",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 22.40625,
+        "allocated_bytes": 5272.9375,
+        "retained_rss_bytes": 68680.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-32",
+        "units": "32"
+      },
+      "metrics": {
+        "allocations": 6.0,
+        "allocated_bytes": 44866.375,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 32
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "5",
+        "legacy_case_id": "host/events-pagination/entries-32",
+        "units": "133"
+      },
+      "metrics": {
+        "allocations": 4.195488721804511,
+        "allocated_bytes": 2314.9774436090224,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 133,
+          "lost": 0,
+          "pages": 5
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "32",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-32",
+        "units": "5"
+      },
+      "metrics": {
+        "allocations": 22.2,
+        "allocated_bytes": 10580.8,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.submit-batch",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/submit-batch/entries-256",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 21.5,
+        "allocated_bytes": 3376.140625,
+        "retained_rss_bytes": 357544.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "handles": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.task-outcome",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/task-outcome-batch/entries-256",
+        "units": "256"
+      },
+      "metrics": {
+        "allocations": 6.03125,
+        "allocated_bytes": 44873.140625,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "completed": 256
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "33",
+        "legacy_case_id": "host/events-pagination/entries-256",
+        "units": "1029"
+      },
+      "metrics": {
+        "allocations": 3.7813411078717203,
+        "allocated_bytes": 2076.9533527696794,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 1029,
+          "lost": 0,
+          "pages": 33
+        }
+      }
+    },
+    {
+      "case_id": "core.host.observability-page",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "entries": "256",
+        "iterations": "1",
+        "legacy_case_id": "host/traces-pagination/entries-256",
+        "units": "5"
+      },
+      "metrics": {
+        "allocations": 22.2,
+        "allocated_bytes": 12052.6,
+        "retained_rss_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "items": 5,
+          "lost": 0,
+          "pages": 1
+        }
+      }
+    },
+    {
+      "case_id": "core.host.actor-command",
+      "measurement_mode": "allocation",
+      "dimensions": {
+        "category": "host",
+        "iterations": "10000",
+        "legacy_case_id": "host/actor-command-round-trip/statistics",
+        "units": "10000"
+      },
+      "metrics": {
+        "allocations": 3.0333,
+        "allocated_bytes": 44857.407,
+        "retained_rss_bytes": 26528.0
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {}
+      }
+    }
+  ],
+  "correctness": {
+    "passed": true,
+    "counters": {
+      "failed_gates": 0
+    }
+  },
+  "gates": [],
+  "metadata": {
+    "command": "target\\release\\mutsuki-runtime-benchmarks.exe full --lane allocation --warmup 0 --samples 1 --gate none --output $OUTPUT",
+    "fixture_window": "fixture construction is outside each case measurement window"
+  }
+}
