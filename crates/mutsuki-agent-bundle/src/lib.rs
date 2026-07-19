@@ -10,7 +10,7 @@ pub use mutsuki_plugin_agent_prompt::PromptRegistry;
 pub use mutsuki_plugin_agent_session::SessionStore;
 pub use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutcome};
-use mutsuki_runtime_core::Runner;
+use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
 
 /// Host-neutral collection of Agent services and plugin manifests.
@@ -34,18 +34,16 @@ pub enum AgentRuntimeRunner {
     Context,
     Loop,
     Memory,
-    Model,
     Prompt,
     Session,
     Tool,
 }
 
 impl AgentRuntimeRunner {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 6] = [
         Self::Context,
         Self::Loop,
         Self::Memory,
-        Self::Model,
         Self::Prompt,
         Self::Session,
         Self::Tool,
@@ -98,10 +96,6 @@ impl AgentPluginBundle {
                 client,
                 self.memory.clone(),
             )),
-            AgentRuntimeRunner::Model => Box::new(mutsuki_plugin_agent_model_gateway::runner(
-                client,
-                self.model.clone(),
-            )),
             AgentRuntimeRunner::Prompt => take_runner(mutsuki_plugin_agent_prompt::plugin(
                 client,
                 self.prompts.clone(),
@@ -117,27 +111,16 @@ impl AgentPluginBundle {
         }
     }
 
-    pub fn http_effect_runner(&self, handle: tokio::runtime::Handle) -> Box<dyn Runner> {
-        Box::new(
-            mutsuki_plugin_agent_model_gateway::HttpEffectRunner::cancellable(
-                self.model.clone(),
-                handle,
-            ),
-        )
+    pub fn model_async_handler(&self) -> Arc<dyn AsyncBatchHandler> {
+        mutsuki_plugin_agent_model_gateway::async_handler(self.model.clone())
     }
 
-    pub fn model_poll_runner(&self) -> Box<dyn Runner> {
-        Box::new(mutsuki_plugin_agent_model_gateway::ModelPollRunner::default())
-    }
-
-    pub fn runner_ids() -> [&'static str; 9] {
+    pub fn runner_ids() -> [&'static str; 7] {
         [
             mutsuki_plugin_agent_context::RUNNER_ID,
             mutsuki_plugin_agent_loop::RUNNER_ID,
             mutsuki_plugin_agent_memory_router::RUNNER_ID,
             mutsuki_plugin_agent_model_gateway::RUNNER_ID,
-            mutsuki_plugin_agent_model_gateway::EFFECT_RUNNER_ID,
-            mutsuki_plugin_agent_model_gateway::POLL_RUNNER_ID,
             mutsuki_plugin_agent_prompt::RUNNER_ID,
             mutsuki_plugin_agent_session::RUNNER_ID,
             mutsuki_plugin_agent_tool_router::RUNNER_ID,

@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 mutsuki-agent-protocol.workspace = true
+mutsuki-agent-sdk.workspace = true
 mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
 mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
 mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }

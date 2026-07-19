@@ -104,28 +104,12 @@ impl ModelGateway {
         provider.generate_async(request).await
     }
 
-    pub(crate) fn generate_effect(
-        &self,
-        request: AgentModelGenerateRequest,
-    ) -> AgentResult<AgentModelGenerateResult> {
-        let provider = self.effect_provider(&request)?;
-        provider.generate(request)
-    }
-
     pub(crate) async fn generate_effect_async(
         &self,
         request: AgentModelGenerateRequest,
     ) -> AgentResult<AgentModelGenerateResult> {
         let provider = self.effect_provider(&request)?;
         provider.generate_async(request).await
-    }
-
-    pub(crate) fn stream_effect(
-        &self,
-        request: AgentModelStreamRequest,
-    ) -> AgentResult<AgentModelStreamResult> {
-        let generated = self.generate_effect(request.request)?;
-        Ok(self.store_stream(generated))
     }
 
     pub(crate) async fn stream_effect_async(

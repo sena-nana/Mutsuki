@@ -180,13 +180,33 @@ impl Harness {
     }
 
     fn immediate_model(&self, task: Task) -> TaskOutcome {
-        let mut runner =
-            mutsuki_plugin_agent_model_gateway::runner(self.client.clone(), self.gateway.clone());
-        immediate_outcome(
-            &mut runner,
-            task,
-            mutsuki_plugin_agent_model_gateway::RUNNER_ID,
-        )
+        let task_id = task.task_id.clone();
+        let request = match serde_json::from_value::<AgentModelGenerateRequest>(task.payload) {
+            Ok(request) => request,
+            Err(error) => {
+                return TaskOutcome::Failed {
+                    task_id,
+                    error: RuntimeError::new(
+                        "agent.benchmark.model_decode",
+                        "agent.benchmark",
+                        error.to_string(),
+                    ),
+                };
+            }
+        };
+        match self.gateway.generate(request) {
+            Ok(output) => TaskOutcome::Completed {
+                task_id,
+                output: Some(serde_json::to_value(output).unwrap()),
+                output_ref: None,
+            },
+            Err(error) => TaskOutcome::Failed {
+                task_id: task_id.clone(),
+                error: mutsuki_agent_sdk::runtime_failure("agent.benchmark", &task_id, error)
+                    .error()
+                    .clone(),
+            },
+        }
     }
 
     fn immediate_session(&self, task: Task) -> TaskOutcome {

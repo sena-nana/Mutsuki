@@ -1,87 +1,114 @@
 use mutsuki_agent_protocol::*;
 use mutsuki_agent_sdk::{
-    AgentModelGenerateProtocol, AgentModelHttpEffectProtocol, AgentModelPollProtocol,
-    AgentModelStreamProtocol, completed_output, orchestration_runner, result_event,
+    AgentModelGenerateProtocol, AgentModelStreamProtocol, effectful_runner, result_event,
     runtime_failure, task_payload, unsupported_protocol,
 };
-use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
-use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
+use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
+use mutsuki_runtime_sdk::contracts::{
+    CompletionBatch, EntryCompletion, InvocationMode, RunnerBatchCapability, RunnerConcurrency,
+    RunnerMode, RunnerResult, RunnerSideEffect, Task, WorkBatch,
 };
+use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult};
+use std::sync::Arc;
 
-use crate::{HttpEffectRunner, ModelGateway, ModelPollRunner, ModelProviderExecution};
+use crate::{ModelGateway, ModelProviderExecution};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.model_gateway";
 pub const RUNNER_ID: &str = "mutsuki.agent.model_gateway.runner";
 
-pub fn plugin(client: RuntimeClientRef, gateway: ModelGateway) -> PluginBuilder {
+pub fn plugin(_client: RuntimeClientRef, gateway: ModelGateway) -> PluginBuilder {
     PluginBuilder::new(PLUGIN_ID)
         .protocol::<AgentModelGenerateProtocol>()
         .protocol::<AgentModelStreamProtocol>()
-        .protocol::<AgentModelHttpEffectProtocol>()
-        .protocol::<AgentModelPollProtocol>()
-        .runner(Box::new(runner(client, gateway.clone())))
-        .runner(Box::new(HttpEffectRunner::blocking(gateway)))
-        .runner(Box::new(ModelPollRunner::default()))
+        .async_handler(Arc::new(ModelAsyncHandler::new(gateway)))
 }
 
-pub fn runner(client: RuntimeClientRef, gateway: ModelGateway) -> TaskAwaitRunnerAdapter {
-    let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
-        .accepts::<AgentModelGenerateProtocol>()
-        .accepts::<AgentModelStreamProtocol>()
-        .build();
-    TaskAwaitRunnerAdapter::new(
-        descriptor,
-        client,
-        Box::new(move |ctx, task| {
-            let gateway = gateway.clone();
-            Box::pin(async move { run_task(gateway, ctx, task).await })
-        }),
-    )
-}
-
-async fn run_task(
+pub struct ModelAsyncHandler {
+    descriptor: mutsuki_runtime_sdk::contracts::RunnerDescriptor,
     gateway: ModelGateway,
-    ctx: AsyncRunnerContext,
-    task: Task,
-) -> RuntimeResult<RunnerResult> {
+}
+
+impl ModelAsyncHandler {
+    pub fn new(gateway: ModelGateway) -> Self {
+        Self {
+            descriptor: effectful_runner(RUNNER_ID, PLUGIN_ID)
+                .accepts::<AgentModelGenerateProtocol>()
+                .accepts::<AgentModelStreamProtocol>()
+                .invocation_mode(InvocationMode::AsyncReentrant)
+                .concurrency(RunnerConcurrency::Reentrant {
+                    max_inflight_batches: 64,
+                    max_inflight_entries: 64,
+                })
+                .batch_capability(RunnerBatchCapability {
+                    mode: RunnerMode::NativeBatch,
+                    preferred_batch_size: 1,
+                    max_batch_entries: 1,
+                    max_inflight_batches: 64,
+                    side_effect: RunnerSideEffect::External,
+                    ..Default::default()
+                })
+                .build(),
+            gateway,
+        }
+    }
+}
+
+impl AsyncBatchHandler for ModelAsyncHandler {
+    fn descriptor(&self) -> &mutsuki_runtime_sdk::contracts::RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(&self, _ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture {
+        let gateway = self.gateway.clone();
+        Box::pin(async move {
+            let tasks = match batch.row_payload_tasks() {
+                Ok(tasks) => tasks,
+                Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
+            };
+            let mut results = Vec::with_capacity(batch.entries.len());
+            for entry in &batch.entries {
+                let task = tasks
+                    .iter()
+                    .find(|task| task.task_id == entry.task_id)
+                    .expect("row payload task should exist for batch entry")
+                    .clone();
+                let (result, error) = match run_task(gateway.clone(), task).await {
+                    Ok(result) => (Some(result), None),
+                    Err(error) => (None, Some(error.error().clone())),
+                };
+                results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result,
+                    error,
+                });
+            }
+            Ok(CompletionBatch::from_results(&batch, results))
+        })
+    }
+}
+
+pub fn async_handler(gateway: ModelGateway) -> Arc<dyn AsyncBatchHandler> {
+    Arc::new(ModelAsyncHandler::new(gateway))
+}
+
+async fn run_task(gateway: ModelGateway, task: Task) -> RuntimeResult<RunnerResult> {
     match task.protocol_id.as_str() {
         AGENT_MODEL_GENERATE_PROTOCOL => {
             let request: AgentModelGenerateRequest = task_payload(PLUGIN_ID, &task)?;
             let callback_protocol = request.result_protocol_id.clone();
             let callback_context = request.result_context.clone();
             let session_id = request.session_id.clone();
-            if gateway
+            let generated = if gateway
                 .provider_execution(&request)
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?
                 == ModelProviderExecution::HttpEffect
             {
-                let outcome = ctx
-                    .call::<AgentModelHttpEffectProtocol>(AgentModelHttpEffectRequest::Generate(
-                        request,
-                    ))
-                    .await?;
-                let generated: AgentModelGenerateResult =
-                    completed_output(PLUGIN_ID, &task.task_id, outcome)?;
-                let mut result = result_event(
-                    task.task_id.clone(),
-                    "mutsuki.agent.model.generated",
-                    generated.clone(),
-                )?;
-                append_callback(
-                    &task,
-                    &mut result,
-                    callback_protocol,
-                    callback_context,
-                    session_id,
-                    generated,
-                )?;
-                return Ok(result);
+                gateway.generate_effect_async(request).await
+            } else {
+                gateway.generate_async(request).await
             }
-            let generated = gateway
-                .generate_async(request)
-                .await
-                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
+            .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             let mut result = result_event(
                 task.task_id.clone(),
                 "mutsuki.agent.model.generated",
@@ -99,42 +126,20 @@ async fn run_task(
         }
         AGENT_MODEL_STREAM_PROTOCOL => {
             let request: AgentModelStreamRequest = task_payload(PLUGIN_ID, &task)?;
-            if gateway
+            let streamed = if gateway
                 .provider_execution(&request.request)
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?
                 == ModelProviderExecution::HttpEffect
             {
-                let outcome = ctx
-                    .call::<AgentModelHttpEffectProtocol>(AgentModelHttpEffectRequest::Stream(
-                        request,
-                    ))
-                    .await?;
-                return effect_dispatch_result::<AgentModelStreamResult>(
-                    &task,
-                    outcome,
-                    "mutsuki.agent.model.stream_opened",
-                );
+                gateway.stream_effect_async(request).await
+            } else {
+                gateway.stream_async(request).await
             }
-            let streamed = gateway
-                .stream_async(request)
-                .await
-                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
+            .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             result_event(task.task_id, "mutsuki.agent.model.stream_opened", streamed)
         }
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
     }
-}
-
-fn effect_dispatch_result<T>(
-    task: &Task,
-    outcome: mutsuki_runtime_sdk::contracts::TaskOutcome,
-    event_kind: &'static str,
-) -> RuntimeResult<RunnerResult>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let output: T = completed_output(PLUGIN_ID, &task.task_id, outcome)?;
-    result_event(task.task_id.clone(), event_kind, output)
 }
 
 pub(crate) fn append_callback(

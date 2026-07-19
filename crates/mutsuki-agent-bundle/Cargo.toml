@@ -9,7 +9,6 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-agent-protocol.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
-tokio.workspace = true
 mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
 mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
 mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
