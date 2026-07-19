@@ -6,10 +6,13 @@ use mutsuki_runtime_contracts::{
     PluginManifest, RunnerDescriptor, RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
     WorkBatch,
 };
-use mutsuki_runtime_core::{CoreKernelRunner, CoreRuntime, Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_core::{
+    AsyncBatchHandler, AsyncCompletionFuture, CoreKernelRunner, CoreRuntime, Runner, RunnerContext,
+    RuntimeResult,
+};
 use mutsuki_runtime_sdk::{
-    HostServiceRegistry, LoadedPlugin, PluginLoader, ResourceProviderGateway,
-    RuntimeBootstrapperService,
+    AsyncResourceProviderGateway, HostServiceRegistry, LoadedPlugin, PluginLoader,
+    ResourceProviderGateway, RuntimeBootstrapperService,
 };
 
 use crate::capabilities::HostCapabilityRegistry;
@@ -112,13 +115,16 @@ impl Runner for NativeRunner {
 pub struct RuntimeBootstrapper {
     manifests: Vec<PluginManifest>,
     runners: Vec<RegisteredRunner>,
+    async_handlers: Vec<RegisteredAsyncHandler>,
     host_services: Vec<RuntimeBootstrapperService>,
     resource_providers: Vec<RegisteredResourceProvider>,
+    async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 }
 
 pub struct PreparedRuntimeReload {
     pub(crate) plan: RuntimeLoadPlan,
     pub(crate) runners: Vec<Box<dyn Runner>>,
+    pub(crate) async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     pub(crate) capabilities: HostCapabilityRegistry,
     pub(crate) services: Arc<HostServiceRegistry>,
     pub(crate) profile_id: String,
@@ -128,6 +134,11 @@ pub struct PreparedRuntimeReload {
 struct RegisteredRunner {
     deployment_kind: PluginDeploymentKind,
     runner: Box<dyn Runner>,
+}
+
+struct RegisteredAsyncHandler {
+    deployment_kind: PluginDeploymentKind,
+    handler: Arc<dyn AsyncBatchHandler>,
 }
 
 struct RegisteredResourceProvider {
@@ -148,8 +159,10 @@ impl RuntimeBootstrapper {
         let LoadedPlugin {
             manifest,
             runners,
+            async_handlers,
             host_services,
             resource_providers,
+            async_resource_providers,
         } = plugin;
         let deployment_kind =
             PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type);
@@ -157,12 +170,22 @@ impl RuntimeBootstrapper {
         for runner in runners {
             self.register_external_runner(deployment_kind.clone(), runner);
         }
+        for handler in async_handlers {
+            self.register_external_async_handler(deployment_kind.clone(), handler);
+        }
         self.host_services.extend(host_services);
         for resource_provider in resource_providers {
             self.resource_providers.push(RegisteredResourceProvider {
                 provider_id: resource_provider.provider_id,
                 provider: resource_provider.provider,
             });
+        }
+        for resource_provider in async_resource_providers {
+            self.async_resource_providers
+                .push(RegisteredAsyncResourceProvider {
+                    provider_id: resource_provider.provider_id,
+                    provider: resource_provider.provider,
+                });
         }
     }
 
@@ -185,6 +208,21 @@ impl RuntimeBootstrapper {
         self.register_external_runner(PluginDeploymentKind::Abi, runner);
     }
 
+    pub fn register_async_handler(&mut self, handler: Arc<dyn AsyncBatchHandler>) {
+        self.register_external_async_handler(PluginDeploymentKind::Builtin, handler);
+    }
+
+    pub fn register_external_async_handler(
+        &mut self,
+        deployment_kind: PluginDeploymentKind,
+        handler: Arc<dyn AsyncBatchHandler>,
+    ) {
+        self.async_handlers.push(RegisteredAsyncHandler {
+            deployment_kind,
+            handler,
+        });
+    }
+
     pub fn register_external_runner(
         &mut self,
         deployment_kind: PluginDeploymentKind,
@@ -194,6 +232,29 @@ impl RuntimeBootstrapper {
             deployment_kind,
             runner,
         });
+    }
+
+    pub fn register_resource_provider(
+        &mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn ResourceProviderGateway>,
+    ) {
+        self.resource_providers.push(RegisteredResourceProvider {
+            provider_id: provider_id.into(),
+            provider,
+        });
+    }
+
+    pub fn register_async_resource_provider(
+        &mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn AsyncResourceProviderGateway>,
+    ) {
+        self.async_resource_providers
+            .push(RegisteredAsyncResourceProvider {
+                provider_id: provider_id.into(),
+                provider,
+            });
     }
 
     pub fn into_runtime(self, profile: RuntimeProfile) -> RuntimeResult<CoreRuntime> {
@@ -219,6 +280,7 @@ impl RuntimeBootstrapper {
             config,
             &booted.active_resource_providers,
             booted.resource_providers,
+            booted.async_resource_providers,
         )?;
         HostRuntime::start(
             booted.core,
@@ -249,11 +311,20 @@ impl RuntimeBootstrapper {
                 Box::new(GenerationRunner::new(runner, registry_generation)) as Box<dyn Runner>
             })
             .collect();
+        prepared.async_handlers = prepared
+            .async_handlers
+            .into_iter()
+            .map(|handler| {
+                Arc::new(GenerationAsyncHandler::new(handler, registry_generation))
+                    as Arc<dyn AsyncBatchHandler>
+            })
+            .collect();
         append_core_kernel(&mut prepared.plan, &mut prepared.runners);
         prepared.registry_generation = registry_generation;
         Ok(PreparedRuntimeReload {
             plan: prepared.plan,
             runners: prepared.runners,
+            async_handlers: prepared.async_handlers,
             capabilities: prepared.capabilities,
             services: prepared.services,
             profile_id: prepared.profile_id,
@@ -276,30 +347,45 @@ impl RuntimeBootstrapper {
         let active_resource_providers = plan.capability_graph.active_resource_providers.clone();
         let capabilities = HostCapabilityRegistry::from_load_plan(&plan)?;
         validate_host_startup_capabilities(&plan, &capabilities)?;
-        validate_registered_runners(&plan, &self.runners)?;
+        validate_registered_runners(&plan, &self.runners, &self.async_handlers)?;
         validate_registered_resource_providers(&self.resource_providers)?;
+        validate_registered_async_resource_providers(
+            &self.resource_providers,
+            &self.async_resource_providers,
+        )?;
         let services = build_host_service_registry(self.host_services)?;
         let runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()
             .map(|registered| registered.runner)
             .collect();
+        let async_handlers = self
+            .async_handlers
+            .into_iter()
+            .map(|registered| registered.handler)
+            .collect();
         Ok(PreparedRuntime {
             plan,
             runners,
+            async_handlers,
             capabilities,
             services,
             profile_id,
             registry_generation,
             active_resource_providers,
             resource_providers: self.resource_providers,
+            async_resource_providers: self.async_resource_providers,
         })
     }
 }
 
 fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedRuntime> {
     append_core_kernel(&mut prepared.plan, &mut prepared.runners);
-    let core = CoreRuntime::boot(prepared.plan, prepared.runners)?;
+    let core = CoreRuntime::boot_with_async_handlers(
+        prepared.plan,
+        prepared.runners,
+        prepared.async_handlers,
+    )?;
     Ok(BootedRuntime {
         core,
         capabilities: prepared.capabilities,
@@ -308,6 +394,7 @@ fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedR
         registry_generation: prepared.registry_generation,
         active_resource_providers: prepared.active_resource_providers,
         resource_providers: prepared.resource_providers,
+        async_resource_providers: prepared.async_resource_providers,
     })
 }
 
@@ -319,17 +406,20 @@ struct BootedRuntime {
     registry_generation: u64,
     active_resource_providers: Vec<String>,
     resource_providers: Vec<RegisteredResourceProvider>,
+    async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 }
 
 struct PreparedRuntime {
     plan: RuntimeLoadPlan,
     runners: Vec<Box<dyn Runner>>,
+    async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     capabilities: HostCapabilityRegistry,
     services: Arc<HostServiceRegistry>,
     profile_id: String,
     registry_generation: u64,
     active_resource_providers: Vec<String>,
     resource_providers: Vec<RegisteredResourceProvider>,
+    async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 }
 
 fn build_host_service_registry(
@@ -383,6 +473,42 @@ impl Runner for GenerationRunner {
     }
 }
 
+struct RegisteredAsyncResourceProvider {
+    provider_id: String,
+    provider: Arc<dyn AsyncResourceProviderGateway>,
+}
+
+struct GenerationAsyncHandler {
+    descriptor: RunnerDescriptor,
+    inner: Arc<dyn AsyncBatchHandler>,
+}
+
+impl GenerationAsyncHandler {
+    fn new(inner: Arc<dyn AsyncBatchHandler>, generation: u64) -> Self {
+        let mut descriptor = inner.descriptor().clone();
+        descriptor.plugin_generation = generation;
+        Self { descriptor, inner }
+    }
+}
+
+impl AsyncBatchHandler for GenerationAsyncHandler {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(&self, ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture {
+        self.inner.run_batch(ctx, batch)
+    }
+
+    fn isolation(&self) -> mutsuki_runtime_core::RunnerIsolation {
+        self.inner.isolation()
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn mutsuki_runtime_core::RunnerManagementHandle>> {
+        self.inner.management_handle()
+    }
+}
+
 fn append_core_kernel(plan: &mut RuntimeLoadPlan, runners: &mut Vec<Box<dyn Runner>>) {
     let core_runner = CoreKernelRunner::new(plan.registry_generation);
     plan.plugins
@@ -400,11 +526,17 @@ fn append_core_kernel(plan: &mut RuntimeLoadPlan, runners: &mut Vec<Box<dyn Runn
 fn validate_registered_runners(
     plan: &RuntimeLoadPlan,
     runners: &[RegisteredRunner],
+    async_handlers: &[RegisteredAsyncHandler],
 ) -> RuntimeResult<()> {
     let mut registered_runner_ids = BTreeSet::new();
     for registered_runner in runners {
         let descriptor = registered_runner.runner.descriptor();
         validate_runner_deployment(plan, registered_runner, descriptor)?;
+        registered_runner_ids.insert(descriptor.runner_id.clone());
+    }
+    for registered_handler in async_handlers {
+        let descriptor = registered_handler.handler.descriptor();
+        validate_runner_deployment_kind(plan, &registered_handler.deployment_kind, descriptor)?;
         registered_runner_ids.insert(descriptor.runner_id.clone());
     }
     for manifest in &plan.plugins {
@@ -490,10 +622,27 @@ fn validate_registered_resource_providers(
     Ok(())
 }
 
+fn validate_registered_async_resource_providers(
+    resource_providers: &[RegisteredResourceProvider],
+    async_resource_providers: &[RegisteredAsyncResourceProvider],
+) -> RuntimeResult<()> {
+    let mut provider_ids: BTreeSet<_> = resource_providers
+        .iter()
+        .map(|provider| provider.provider_id.clone())
+        .collect();
+    for provider in async_resource_providers {
+        if !provider_ids.insert(provider.provider_id.clone()) {
+            return Err(resource_provider_duplicate(&provider.provider_id));
+        }
+    }
+    Ok(())
+}
+
 fn configure_resource_provider(
     mut config: HostRuntimeConfig,
     active_provider_ids: &[String],
     resource_providers: Vec<RegisteredResourceProvider>,
+    async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 ) -> RuntimeResult<HostRuntimeConfig> {
     for registered in resource_providers {
         config
@@ -501,9 +650,17 @@ fn configure_resource_provider(
             .entry(registered.provider_id)
             .or_insert(registered.provider);
     }
+    for registered in async_resource_providers {
+        config
+            .async_resource_providers
+            .entry(registered.provider_id)
+            .or_insert(registered.provider);
+    }
 
     for provider_id in active_provider_ids {
-        if !config.resource_providers.contains_key(provider_id) {
+        if !config.resource_providers.contains_key(provider_id)
+            && !config.async_resource_providers.contains_key(provider_id)
+        {
             return Err(resource_provider_missing(provider_id));
         }
     }
@@ -538,19 +695,27 @@ fn validate_runner_deployment(
     registered_runner: &RegisteredRunner,
     descriptor: &RunnerDescriptor,
 ) -> RuntimeResult<()> {
+    validate_runner_deployment_kind(plan, &registered_runner.deployment_kind, descriptor)
+}
+
+fn validate_runner_deployment_kind(
+    plan: &RuntimeLoadPlan,
+    registered_deployment: &PluginDeploymentKind,
+    descriptor: &RunnerDescriptor,
+) -> RuntimeResult<()> {
     let Some(planned_deployment) = plan.plugin_deployments.get(&descriptor.plugin_id) else {
         return Err(runner_for_disabled_plugin(
             &descriptor.plugin_id,
             &descriptor.runner_id,
         ));
     };
-    if planned_deployment == &registered_runner.deployment_kind {
+    if planned_deployment == registered_deployment {
         return Ok(());
     }
     Err(deployment_mismatch(
         "host.plugin.runner_deployment_mismatch",
         &descriptor.plugin_id,
-        &registered_runner.deployment_kind,
+        registered_deployment,
         planned_deployment,
     ))
 }

@@ -66,6 +66,8 @@ pub(super) fn runner_descriptor(
         accepted_protocol_ids: vec![protocol_id.into()],
         purity,
         execution_class: ExecutionClass::Cpu,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({}),
         output_schema: json!({}),
         batch: Default::default(),

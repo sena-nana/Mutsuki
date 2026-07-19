@@ -22,6 +22,8 @@ pub(super) fn descriptor_with_class(
         accepted_protocol_ids: vec![protocol_id.into()],
         purity: RunnerPurity::Pure,
         execution_class,
+        invocation_mode: InvocationMode::SyncExclusive,
+        concurrency: RunnerConcurrency::Exclusive,
         input_schema: json!({}),
         output_schema: json!({}),
         batch: Default::default(),

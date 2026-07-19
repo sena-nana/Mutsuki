@@ -13,21 +13,22 @@ use mutsuki_runtime_core::{
     TaskHistoryRetention,
 };
 use mutsuki_runtime_sdk::{
-    HostContext as SdkHostContext, HostServiceRegistry, HostTaskSnapshot, ResourceProviderGateway,
+    AsyncResourceProviderGateway, HostContext as SdkHostContext, HostServiceRegistry,
+    HostTaskSnapshot, ResourceProviderGateway,
 };
 
 use crate::actor::{CoreActorMsg, core_actor_loop};
+use crate::async_executor::{AsyncEventSink, AsyncExecutor};
 use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 use crate::error::host_failure;
 use crate::runtime_context::build_host_context;
-use crate::scheduler::{
-    DefaultScheduler, RunnerLimits, SchedulerPolicy, validate_single_instance_limits,
-};
+use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy, validate_runner_limits};
 use crate::worker::worker_pools;
 
 pub type HostResourceProviders = BTreeMap<String, Arc<dyn ResourceProviderGateway>>;
+pub type HostAsyncResourceProviders = BTreeMap<String, Arc<dyn AsyncResourceProviderGateway>>;
 
 #[derive(Debug, Default)]
 struct TaskCompletionSubscriptionState {
@@ -213,7 +214,15 @@ pub struct HostRuntimeConfig {
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
+    /// Host-owned executor for native async handlers. `None` keeps the minimal
+    /// synchronous Host surface and rejects async handlers structurally.
+    pub async_executor: Option<Arc<dyn AsyncExecutor>>,
+    #[doc(hidden)]
+    pub async_event_sink: Option<AsyncEventSink>,
+    #[doc(hidden)]
+    pub async_resource_sequence: Arc<AtomicU64>,
     pub resource_providers: HostResourceProviders,
+    pub async_resource_providers: HostAsyncResourceProviders,
     pub cancel_grace_period: Option<Duration>,
     pub worker_health_timeout: Option<Duration>,
     pub observability: Option<ObservabilityProfile>,
@@ -221,12 +230,27 @@ pub struct HostRuntimeConfig {
 }
 
 impl HostRuntimeConfig {
+    pub fn with_async_executor(mut self, executor: Arc<dyn AsyncExecutor>) -> Self {
+        self.async_executor = Some(executor);
+        self
+    }
+
     pub fn with_resource_provider(
         mut self,
         provider_id: impl Into<String>,
         provider: Arc<dyn ResourceProviderGateway>,
     ) -> Self {
         self.resource_providers.insert(provider_id.into(), provider);
+        self
+    }
+
+    pub fn with_async_resource_provider(
+        mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn AsyncResourceProviderGateway>,
+    ) -> Self {
+        self.async_resource_providers
+            .insert(provider_id.into(), provider);
         self
     }
 }
@@ -248,8 +272,19 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("runner_limits", &self.runner_limits)
             .field("scheduler_policy", &self.scheduler_policy)
             .field(
+                "async_executor",
+                &self
+                    .async_executor
+                    .as_ref()
+                    .map(|executor| executor.snapshot()),
+            )
+            .field(
                 "resource_providers",
                 &self.resource_providers.keys().collect::<Vec<_>>(),
+            )
+            .field(
+                "async_resource_providers",
+                &self.async_resource_providers.keys().collect::<Vec<_>>(),
             )
             .field("cancel_grace_period", &self.cancel_grace_period)
             .field("worker_health_timeout", &self.worker_health_timeout)
@@ -277,7 +312,11 @@ impl Default for HostRuntimeConfig {
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
+            async_executor: None,
+            async_event_sink: None,
+            async_resource_sequence: Arc::new(AtomicU64::new(0)),
             resource_providers: BTreeMap::new(),
+            async_resource_providers: BTreeMap::new(),
             cancel_grace_period: Some(Duration::from_secs(30)),
             worker_health_timeout: None,
             observability: None,
@@ -298,13 +337,13 @@ pub struct HostRuntime {
 impl HostRuntime {
     pub(crate) fn start(
         mut core: CoreRuntime,
-        config: HostRuntimeConfig,
+        mut config: HostRuntimeConfig,
         capabilities: HostCapabilityRegistry,
         services: Arc<HostServiceRegistry>,
         profile_id: String,
         registry_generation: u64,
     ) -> RuntimeResult<Self> {
-        validate_single_instance_limits(&config.default_runner_limits, &config.runner_limits)?;
+        validate_runner_limits(&config.default_runner_limits, &config.runner_limits)?;
         if config.tick_interval.is_zero() {
             return Err(host_failure(
                 "host.driver.tick_interval",
@@ -317,6 +356,10 @@ impl HostRuntime {
         core.configure_task_history_retention(config.task_history_retention);
         let (tx, rx) = mpsc::channel();
         let actor_tx = tx.clone();
+        let async_event_tx = tx.clone();
+        config.async_event_sink = Some(Arc::new(move |event| {
+            let _ = async_event_tx.send(CoreActorMsg::AsyncEvent(event));
+        }));
         let pools = worker_pools(&config, actor_tx)?;
         let management = crate::management::ManagementExecutor::new(
             config.management_threads,
@@ -510,6 +553,16 @@ impl HostRuntime {
             HostRuntimeReply::WorkerPools(pools) => Ok(pools),
             reply => Err(host_failure(
                 "host.worker_pools",
+                format!("unexpected reply: {reply:?}"),
+            )),
+        }
+    }
+
+    pub fn async_executor(&self) -> RuntimeResult<Option<crate::AsyncExecutorSnapshot>> {
+        match self.dispatch(HostRuntimeCommand::AsyncExecutor)? {
+            HostRuntimeReply::AsyncExecutor(snapshot) => Ok(snapshot),
+            reply => Err(host_failure(
+                "host.async_executor",
                 format!("unexpected reply: {reply:?}"),
             )),
         }

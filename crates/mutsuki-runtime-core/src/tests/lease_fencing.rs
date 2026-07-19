@@ -27,7 +27,16 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
     let stale_lease_id = dispatches[0].task_leases[0].lease_id.clone();
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Running));
 
-    runtime.tick_once().unwrap();
+    let (_report, redispatches) = runtime
+        .claim_ready_dispatches_at_step(
+            2,
+            |_descriptor, _load, _step, _generation| {
+                Ok(ScheduleDecision::new("test.scheduler", 0, "test.reclaim"))
+            },
+            None,
+        )
+        .unwrap();
+    assert!(redispatches.is_empty());
     assert_eq!(runtime.task_status("task-1"), Some(TaskStatus::Ready));
     assert!(runtime.task_events("task-1").iter().any(|event| {
         event.name == "task.lease.expired"
@@ -51,9 +60,12 @@ fn stale_runner_completion_is_rejected_after_lease_reclaim() {
         }],
         metadata: Vec::new(),
     };
+    let RunnerDispatchTarget::Sync(runner) = dispatch.target else {
+        panic!("test expected a synchronous runner dispatch");
+    };
     let report = runtime
         .complete_runner_dispatch(RunnerCompletion {
-            runner: dispatch.runner,
+            runner: Some(runner),
             task_leases: dispatch.task_leases,
             batch_id: dispatch.batch.batch_id.clone(),
             expected_entries: dispatch.batch.entries.clone(),

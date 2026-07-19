@@ -159,6 +159,7 @@ fn run_request() -> RunBatchRequest {
             lease_id: "lease-1".into(),
             task_id: "task-1".into(),
             runner_id: "jsonl.runner".into(),
+            attempt_generation: 1,
             executor_id: "executor:test".into(),
             registry_generation: 1,
             acquired_at_step: 1,

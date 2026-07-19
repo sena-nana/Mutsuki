@@ -4,7 +4,7 @@ use crate::RunnerContext;
 
 use super::batch::{build_work_batch, dispatch_batch_attrs};
 use super::trace_metadata::{runner_attrs, trace_attrs};
-use super::{CoreRuntime, RunnerDispatch};
+use super::{CoreRuntime, RunnerDispatch, RunnerDispatchTarget};
 
 pub(super) fn build_runner_dispatch(
     runtime: &mut CoreRuntime,
@@ -47,16 +47,22 @@ pub(super) fn build_runner_dispatch(
         } else {
             None
         };
-    let runner = runtime
-        .registry
-        .take_runner(&descriptor.runner_id)
-        .ok_or_else(|| {
-            crate::runtime_failure(
-                mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
-                "runtime.runner_loop",
-                format!("runner.{}", descriptor.runner_id),
-            )
-        })?;
+    let target = if let Some(handler) = runtime.registry.async_handler(&descriptor.runner_id) {
+        RunnerDispatchTarget::Async(handler)
+    } else {
+        RunnerDispatchTarget::Sync(
+            runtime
+                .registry
+                .take_runner(&descriptor.runner_id)
+                .ok_or_else(|| {
+                    crate::runtime_failure(
+                        mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
+                        "runtime.runner_loop",
+                        format!("runner.{}", descriptor.runner_id),
+                    )
+                })?,
+        )
+    };
     let ctx = RunnerContext::new(
         runtime.load_plan.registry_generation,
         runtime.current_step,
@@ -102,7 +108,7 @@ pub(super) fn build_runner_dispatch(
         );
     }
     Ok(RunnerDispatch {
-        runner,
+        target,
         ctx,
         task_leases,
         batch,

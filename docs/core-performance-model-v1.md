@@ -60,9 +60,10 @@ Public CI checks correctness, case completeness, bounded history and catastrophi
 It cannot substantiate 5–20% changes. A fixed physical reference machine compares an explicitly
 approved report using these initial policies:
 
-- median regression greater than 10% and greater than three baseline MADs;
+- median regression greater than 10% and greater than three baseline MADs; synchronous
+  `batch_size=1` cases use 5% for the Issue #36 compatibility boundary;
 - p99 regression greater than 20%;
-- throughput decrease greater than 10%;
+- throughput decrease greater than 10%; synchronous `batch_size=1` cases use 5%;
 - allocation growth greater than 10% and at least 64 bytes per unit;
 - peak RSS growth greater than 10%;
 - positive retained-memory slope after warmup;

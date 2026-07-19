@@ -1,3 +1,5 @@
+mod async_resources;
+mod async_runtime;
 mod binary;
 mod bootstrapper;
 mod helpers;

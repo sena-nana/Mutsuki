@@ -22,13 +22,13 @@ pub use registry::{
 };
 pub use resource_manager::{PackedValue, ResourceManager};
 pub use runner::{
-    CoreKernelRunner, Runner, RunnerIsolation, RunnerLoopReport, RunnerManagementHandle,
-    RunnerTerminationHandle,
+    AsyncBatchHandler, AsyncCompletionFuture, CoreKernelRunner, Runner, RunnerIsolation,
+    RunnerLoopReport, RunnerManagementHandle, RunnerTerminationHandle,
 };
 pub use runtime::{
     CoreRuntime, DispatchBudget, InvocationPollution, LaneBudget, RunnerCompletion, RunnerDispatch,
-    RunningInvocationDisposition, RuntimeStatistics, RuntimeStopState, ScheduleDecision,
-    TaskResultSnapshot,
+    RunnerDispatchTarget, RunningInvocationDisposition, RuntimeStatistics, RuntimeStopState,
+    ScheduleDecision, TaskResultSnapshot,
 };
 pub use task_pool::{RunnerLoad, TaskHistoryRetention, TaskPool, TaskPoolStatistics, TaskRecord};
 pub use trace::{TraceClosureIssue, validate_trace_closure};

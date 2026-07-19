@@ -51,6 +51,7 @@ pub const ERR_TASK_DEAD_LETTER: &str = "task.dead_letter";
 pub const ERR_TASK_UNSUPPORTED: &str = "task.unsupported";
 pub const ERR_RUNNER_NOT_FOUND: &str = "runner.not_found";
 pub const ERR_RUNNER_PURITY_VIOLATION: &str = "runner.purity_violation";
+pub const ERR_RUNNER_AWAITABLE_UNSUPPORTED: &str = "runner.awaitable_unsupported";
 pub const ERR_REGISTRY_FROZEN: &str = "registry.frozen";
 pub const ERR_REGISTRY_UNAUTHORIZED: &str = "registry.unauthorized";
 pub const ERR_REGISTRY_GENERATION_MISMATCH: &str = "registry.generation_mismatch";

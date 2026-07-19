@@ -8,7 +8,7 @@ use crate::task_pool::{RunnerLoad, TASK_LEASE_TTL_STEPS};
 
 use super::{CoreRuntime, ScheduleDecision};
 use executor::{InlineRunnerExecutor, RunnerExecutor};
-pub use executor::{RunnerCompletion, RunnerDispatch};
+pub use executor::{RunnerCompletion, RunnerDispatch, RunnerDispatchTarget};
 
 mod batch;
 mod completion_router;
@@ -249,7 +249,9 @@ impl CoreRuntime {
             self.tasks.defer_leased(lease, self.current_step)?;
         }
         let deferred = dispatch.task_leases.len();
-        self.registry.put_runner(dispatch.runner);
+        if let executor::RunnerDispatchTarget::Sync(runner) = dispatch.target {
+            self.registry.put_runner(runner);
+        }
         Ok(deferred)
     }
 

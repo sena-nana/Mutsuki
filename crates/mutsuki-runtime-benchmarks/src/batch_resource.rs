@@ -129,18 +129,21 @@ fn run_case(entries: usize, pattern: ResourcePattern) -> Result<Vec<CaseResult>,
     );
 
     let RunnerDispatch {
-        mut runner,
+        target,
         ctx,
         task_leases,
         batch,
     } = dispatch;
+    let mutsuki_runtime_core::RunnerDispatchTarget::Sync(mut runner) = target else {
+        return Err("batch resource benchmark requires a synchronous runner".into());
+    };
     let batch_id = batch.batch_id.clone();
     let expected_entries = batch.entries.clone();
     let completion_measurement = ALLOCATOR.measurement();
     let result = runner.run_batch(ctx, batch);
     let completed = runtime
         .complete_runner_dispatch(RunnerCompletion {
-            runner,
+            runner: Some(runner),
             task_leases,
             batch_id,
             expected_entries,

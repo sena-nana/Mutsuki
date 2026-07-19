@@ -42,6 +42,7 @@ pub fn run_batch_request(entries: usize, payload_bytes: usize) -> RunBatchReques
         leases.push(TaskLease {
             lease_id,
             task_id,
+            attempt_generation: 1,
             runner_id: "benchmark.runner".into(),
             executor_id: "benchmark.executor".into(),
             registry_generation: 1,

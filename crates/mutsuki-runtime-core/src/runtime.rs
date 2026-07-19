@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding,
@@ -12,7 +13,7 @@ use crate::registry::{
     HandlerBindingRegistry, PluginGenerationPhase, PluginGenerationState, RegistrySnapshot,
     RunnerRegistry, validate_runtime_descriptors,
 };
-use crate::runner::Runner;
+use crate::runner::{AsyncBatchHandler, Runner};
 use crate::state_store::StateStore;
 use crate::{
     ResourceManager, RuntimeFailure, RuntimeResult, TaskHistoryRetention, TaskPool,
@@ -26,7 +27,7 @@ mod scheduler;
 mod task_api;
 
 pub use reload::{InvocationPollution, RunningInvocationDisposition};
-pub use runner_loop::{RunnerCompletion, RunnerDispatch};
+pub use runner_loop::{RunnerCompletion, RunnerDispatch, RunnerDispatchTarget};
 pub use scheduler::{DispatchBudget, LaneBudget, ScheduleDecision};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,15 +83,32 @@ pub struct CoreRuntime {
 
 impl CoreRuntime {
     pub fn boot(load_plan: RuntimeLoadPlan, runners: Vec<Box<dyn Runner>>) -> RuntimeResult<Self> {
+        Self::boot_with_async_handlers(load_plan, runners, Vec::new())
+    }
+
+    pub fn boot_with_async_handlers(
+        load_plan: RuntimeLoadPlan,
+        runners: Vec<Box<dyn Runner>>,
+        async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
+    ) -> RuntimeResult<Self> {
         let runner_descriptors: Vec<_> = runners
             .iter()
             .map(|runner| runner.descriptor().clone())
+            .chain(
+                async_handlers
+                    .iter()
+                    .map(|handler| handler.descriptor().clone()),
+            )
             .collect();
         validate_runtime_descriptors(&load_plan, &runner_descriptors)?;
         let mut registry = RunnerRegistry::default();
         for runner in runners {
             registry.register(runner)?;
         }
+        for handler in async_handlers {
+            registry.register_async_handler(handler)?;
+        }
+        registry.validate_instance_counts()?;
         registry.freeze();
         let handler_bindings = HandlerBindingRegistry::from_load_plan(&load_plan);
         let generation_states =

@@ -303,33 +303,19 @@ fn host_runtime_rejects_non_kernel_control_runner_before_scheduling() {
 }
 
 #[test]
-fn host_runtime_rejects_default_multi_batch_limit_at_startup() {
+fn host_runtime_accepts_default_multi_batch_limit_at_startup() {
     let mut config = crate::HostRuntimeConfig::default();
     config.default_runner_limits.max_running = 2;
 
-    let error =
-        match host_with_echo_runner().into_host_runtime_with_config(runtime_profile(), config) {
-            Ok(_) => panic!("multi-batch default limit should fail at startup"),
-            Err(error) => error,
-        };
-
-    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
-    assert_eq!(
-        error.error().route,
-        "host.runner_limits.default.max_running"
-    );
-    assert_eq!(
-        error.error().evidence.get("configured_max_running"),
-        Some(&ScalarValue::Int(2))
-    );
-    assert_eq!(
-        error.error().evidence.get("supported_max_running"),
-        Some(&ScalarValue::Int(1))
+    assert!(
+        host_with_echo_runner()
+            .into_host_runtime_with_config(runtime_profile(), config)
+            .is_ok()
     );
 }
 
 #[test]
-fn host_runtime_rejects_runner_specific_multi_batch_limit_at_startup() {
+fn host_runtime_accepts_runner_specific_multi_batch_limit_at_startup() {
     let mut config = crate::HostRuntimeConfig::default();
     config.runner_limits.insert(
         "echo.runner".into(),
@@ -339,15 +325,9 @@ fn host_runtime_rejects_runner_specific_multi_batch_limit_at_startup() {
         },
     );
 
-    let error =
-        match host_with_echo_runner().into_host_runtime_with_config(runtime_profile(), config) {
-            Ok(_) => panic!("multi-batch runner limit should fail at startup"),
-            Err(error) => error,
-        };
-
-    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
-    assert_eq!(
-        error.error().route,
-        "host.runner_limits.echo.runner.max_running"
+    assert!(
+        host_with_echo_runner()
+            .into_host_runtime_with_config(runtime_profile(), config)
+            .is_ok()
     );
 }

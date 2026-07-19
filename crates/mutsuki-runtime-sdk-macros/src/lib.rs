@@ -124,8 +124,8 @@ fn expand_runner(attrs: RunnerAttrs, function: ItemFn) -> syn::Result<proc_macro
 
         #vis fn #adapter_ident(
             client: ::mutsuki_runtime_sdk::RuntimeClientRef,
-        ) -> ::mutsuki_runtime_sdk::AsyncRunnerAdapter {
-            ::mutsuki_runtime_sdk::AsyncRunnerAdapter::new(
+        ) -> ::mutsuki_runtime_sdk::TaskAwaitRunnerAdapter {
+            ::mutsuki_runtime_sdk::TaskAwaitRunnerAdapter::new(
                 #descriptor_ident(),
                 client,
                 Box::new(|ctx, task| Box::pin(#fn_ident(ctx, task))),

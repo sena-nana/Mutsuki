@@ -5,13 +5,22 @@ use crate::*;
 
 use super::fixtures::*;
 
-fn execute_dispatch(mut dispatch: RunnerDispatch) -> RunnerCompletion {
-    let batch_id = dispatch.batch.batch_id.clone();
-    let expected_entries = dispatch.batch.entries.clone();
-    let result = dispatch.runner.run_batch(dispatch.ctx, dispatch.batch);
+fn execute_dispatch(dispatch: RunnerDispatch) -> RunnerCompletion {
+    let RunnerDispatch {
+        target,
+        ctx,
+        task_leases,
+        batch,
+    } = dispatch;
+    let RunnerDispatchTarget::Sync(mut runner) = target else {
+        panic!("test expected a synchronous runner dispatch");
+    };
+    let batch_id = batch.batch_id.clone();
+    let expected_entries = batch.entries.clone();
+    let result = runner.run_batch(ctx, batch);
     RunnerCompletion {
-        runner: dispatch.runner,
-        task_leases: dispatch.task_leases,
+        runner: Some(runner),
+        task_leases,
         batch_id,
         expected_entries,
         result,

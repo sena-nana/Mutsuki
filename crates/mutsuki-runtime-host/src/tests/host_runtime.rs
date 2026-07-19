@@ -6,18 +6,16 @@ use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{
-    Runner, RunnerContext, RuntimeFailure, RuntimeResult, RuntimeStopState, ScheduleDecision,
-    TaskHistoryRetention,
+    AsyncBatchHandler, AsyncCompletionFuture, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
+    RuntimeStopState, ScheduleDecision, TaskHistoryRetention,
 };
-use mutsuki_runtime_sdk::{
-    AsyncRunnerAdapter, HostRuntime as SdkHostRuntime, RuntimeClient, RuntimeClientRef,
-};
+use mutsuki_runtime_sdk::HostRuntime as SdkHostRuntime;
 use serde_json::json;
 
 use crate::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativeRunner,
     ProcessRunnerSpec, RunnerLimits, RuntimeBootstrapper, ScheduleInput, SchedulerPolicy,
-    SpawnedJsonlRunner, runner_manifest,
+    SpawnedJsonlRunner, TokioAsyncExecutor, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile, test_resource_ref};
@@ -30,23 +28,33 @@ struct BlockingObservedRunner {
     disposed: Arc<Mutex<bool>>,
 }
 
-struct NoopRuntimeClient;
-
-impl RuntimeClient for NoopRuntimeClient {
-    fn submit_batch(&self, _batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
-        Ok(Vec::new())
-    }
-
-    fn task_outcome(&self, _handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
-        Ok(None)
-    }
-}
-
 struct PendingDrop(Arc<AtomicBool>);
 
 impl Drop for PendingDrop {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+struct PendingAsyncHandler {
+    descriptor: RunnerDescriptor,
+    started: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl AsyncBatchHandler for PendingAsyncHandler {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(&self, _ctx: RunnerContext, _batch: WorkBatch) -> AsyncCompletionFuture {
+        let started = self.started.clone();
+        let dropped = self.dropped.clone();
+        Box::pin(async move {
+            started.store(true, Ordering::SeqCst);
+            let _drop = PendingDrop(dropped);
+            std::future::pending::<RuntimeResult<CompletionBatch>>().await
+        })
     }
 }
 
@@ -264,7 +272,8 @@ fn event_driven_host_dispatches_submit_and_worker_backlog_without_polling() {
 #[test]
 fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
     let parent_descriptor = descriptor("parent.runner", "parent.work");
-    let child_descriptor = descriptor("child.runner", "child.work");
+    let mut child_descriptor = descriptor("child.runner", "child.work");
+    child_descriptor.invocation_mode = InvocationMode::AsyncExclusive;
     let child_started = Arc::new(AtomicBool::new(false));
     let child_dropped = Arc::new(AtomicBool::new(false));
     let mut host = RuntimeBootstrapper::new();
@@ -306,33 +315,20 @@ fn cancelling_waiting_parent_interrupts_cascaded_running_child_invocation() {
             Ok(result)
         },
     )));
-    let client: RuntimeClientRef = Arc::new(NoopRuntimeClient);
-    host.register_runner(Box::new(AsyncRunnerAdapter::new(
-        child_descriptor,
-        client,
-        Box::new({
-            let child_started = child_started.clone();
-            let child_dropped = child_dropped.clone();
-            move |_ctx, _task| {
-                let child_started = child_started.clone();
-                let child_dropped = child_dropped.clone();
-                Box::pin(async move {
-                    child_started.store(true, Ordering::SeqCst);
-                    let _drop = PendingDrop(child_dropped);
-                    std::future::pending::<()>().await;
-                    unreachable!()
-                })
-            }
-        }),
-    )));
+    host.register_async_handler(Arc::new(PendingAsyncHandler {
+        descriptor: child_descriptor,
+        started: child_started.clone(),
+        dropped: child_dropped.clone(),
+    }));
+    let config = HostRuntimeConfig {
+        event_driven: true,
+        ..HostRuntimeConfig::default()
+    }
+    .with_async_executor(Arc::new(
+        TokioAsyncExecutor::new(1, 4, 4, 1024 * 1024).unwrap(),
+    ));
     let runtime = host
-        .into_host_runtime_with_config(
-            runtime_profile(),
-            HostRuntimeConfig {
-                event_driven: true,
-                ..HostRuntimeConfig::default()
-            },
-        )
+        .into_host_runtime_with_config(runtime_profile(), config)
         .unwrap();
 
     let handle = match runtime

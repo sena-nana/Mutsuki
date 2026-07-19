@@ -12,9 +12,27 @@ pub(super) fn complete_runner_dispatch(
     runtime: &mut CoreRuntime,
     completion: RunnerCompletion,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let descriptor = completion.runner.descriptor().clone();
+    let descriptor = completion
+        .runner
+        .as_ref()
+        .map(|runner| runner.descriptor().clone())
+        .or_else(|| {
+            completion
+                .task_leases
+                .first()
+                .and_then(|lease| runtime.registry.descriptor(&lease.runner_id))
+        })
+        .ok_or_else(|| {
+            crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
+                "runtime.runner_loop",
+                format!("batch.{}.runner", completion.batch_id),
+            )
+        })?;
     let result = completion.result;
-    runtime.registry.put_runner(completion.runner);
+    if let Some(runner) = completion.runner {
+        runtime.registry.put_runner(runner);
+    }
     let result = match result {
         Ok(result) => result,
         Err(failure) => {

@@ -1,19 +1,23 @@
 mod cancellation;
 
+use futures_channel::oneshot;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CompletionBatch, ExecutionClass, TaskHandle, TaskStatus, WorkBatch,
+    AsyncInvocation, AsyncInvocationHandle, CancelPolicy, CompletionBatch, ExecutionClass,
+    InvocationMode, TaskHandle, TaskStatus, WorkBatch,
 };
 use mutsuki_runtime_core::{
-    CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerIsolation, RunnerLoopReport,
-    RunnerManagementHandle, RuntimeResult, TaskRecord,
+    CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerDispatchTarget, RunnerIsolation,
+    RunnerLoopReport, RunnerManagementHandle, RuntimeResult, TaskRecord,
 };
 use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 
 use crate::PreparedRuntimeReload;
+use crate::async_executor::AsyncExecutorEvent;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState, TaskCompletionHub};
@@ -34,6 +38,11 @@ pub(crate) enum CoreActorMsg {
     TaskStatus(String, mpsc::Sender<Option<TaskStatus>>),
     WorkerStarted(WorkerStarted),
     WorkerCompleted(RunnerCompletion),
+    AsyncEvent(AsyncExecutorEvent),
+    AsyncResourceCommand(
+        HostRuntimeCommand,
+        oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
+    ),
     WorkerExited(WorkerExited),
     ManagementFailed {
         runner_id: String,
@@ -56,6 +65,7 @@ struct RunningBatch {
     worker_started_at: Option<Instant>,
     isolation: RunnerIsolation,
     management: Option<std::sync::Arc<dyn RunnerManagementHandle>>,
+    async_handle: Option<AsyncInvocationHandle>,
 }
 
 struct DrainingInvocation {
@@ -236,6 +246,10 @@ pub(crate) fn core_actor_loop(
                 ),
                 reply_tx,
             ),
+            CoreActorMsg::AsyncResourceCommand(command, reply_tx) => {
+                start_async_resource_command(command, reply_tx, &config);
+                false
+            }
             CoreActorMsg::TaskStatus(task_id, reply_tx) => {
                 let _ = reply_tx.send(task_status(&core, &task_id));
                 false
@@ -247,6 +261,18 @@ pub(crate) fn core_actor_loop(
             CoreActorMsg::WorkerCompleted(completion) => {
                 let _ = handle_worker_completion(
                     completion,
+                    &mut core,
+                    &mut pending_cancels,
+                    &mut running_batches_by_task,
+                    &mut draining_invocations,
+                );
+                let _ =
+                    schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
+                false
+            }
+            CoreActorMsg::AsyncEvent(event) => {
+                let _ = handle_async_event(
+                    event,
                     &mut core,
                     &mut pending_cancels,
                     &mut running_batches_by_task,
@@ -277,6 +303,9 @@ pub(crate) fn core_actor_loop(
                 false
             }
             CoreActorMsg::Shutdown => {
+                if let Some(executor) = &config.async_executor {
+                    let _ = executor.cancel_all();
+                }
                 let _ = core.abort("host.shutdown");
                 true
             }
@@ -399,6 +428,9 @@ fn handle_command(
                     continue;
                 }
                 if let Some(invocation_id) = running_invocation {
+                    if cancel_async_invocation(&invocation_id, config, running_batches_by_task) {
+                        continue;
+                    }
                     request_running_cancel(
                         &invocation_id,
                         management,
@@ -423,6 +455,9 @@ fn handle_command(
                 .map(|task| task.invocation_id.clone())
                 .collect();
             for invocation_id in running_invocations {
+                if cancel_async_invocation(&invocation_id, config, running_batches_by_task) {
+                    continue;
+                }
                 request_running_cancel(
                     &invocation_id,
                     management,
@@ -446,6 +481,15 @@ fn handle_command(
         HostRuntimeCommand::WorkerPools => {
             Ok((HostRuntimeReply::WorkerPools(pools.snapshots()), false))
         }
+        HostRuntimeCommand::AsyncExecutor => Ok((
+            HostRuntimeReply::AsyncExecutor(
+                config
+                    .async_executor
+                    .as_ref()
+                    .map(|executor| executor.snapshot()),
+            ),
+            false,
+        )),
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
         }
@@ -583,7 +627,7 @@ fn reload_runtime(
         .into_iter()
         .map(|runner| Box::new(DisposeOnDropRunner::new(runner)) as Box<dyn Runner>)
         .collect();
-    core.reload_with_runners(prepared.plan, runners)
+    core.reload_with_async_handlers(prepared.plan, runners, prepared.async_handlers)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -638,6 +682,15 @@ fn drain_for_reload(
                     draining_invocations,
                 )?;
             }
+            Ok(CoreActorMsg::AsyncEvent(event)) => {
+                let _ = handle_async_event(
+                    event,
+                    core,
+                    pending_cancels,
+                    running_batches_by_task,
+                    draining_invocations,
+                )?;
+            }
             Ok(CoreActorMsg::WorkerExited(exited)) => {
                 if exited.isolated
                     && let Some(pool) = pools.get_mut(&exited.execution_class)
@@ -658,6 +711,12 @@ fn drain_for_reload(
                 let _ = reply_tx.send(task_status(core, &task_id));
             }
             Ok(CoreActorMsg::Command(_, reply_tx)) => {
+                let _ = reply_tx.send(Err(host_failure(
+                    "host.reload.busy",
+                    "runtime reload is draining active work",
+                )));
+            }
+            Ok(CoreActorMsg::AsyncResourceCommand(_, reply_tx)) => {
                 let _ = reply_tx.send(Err(host_failure(
                     "host.reload.busy",
                     "runtime reload is draining active work",
@@ -787,6 +846,21 @@ fn drain_worker_completions(
                     aggregate.completed_tasks += report.completed_tasks;
                 }
             }
+            Ok(CoreActorMsg::AsyncEvent(event)) => {
+                if let Ok(report) = handle_async_event(
+                    event,
+                    core,
+                    pending_cancels,
+                    running_batches_by_task,
+                    draining_invocations,
+                ) {
+                    aggregate.completed_tasks += report.completed_tasks;
+                }
+                if let Ok(report) = schedule_ready(core, config, pools, running_batches_by_task) {
+                    aggregate.claimed_tasks += report.claimed_tasks;
+                    aggregate.completed_tasks += report.completed_tasks;
+                }
+            }
             Ok(CoreActorMsg::WorkerExited(exited)) => {
                 if exited.isolated
                     && let Some(pool) = pools.get_mut(&exited.execution_class)
@@ -825,6 +899,9 @@ fn drain_worker_completions(
                     return true;
                 }
             }
+            Ok(CoreActorMsg::AsyncResourceCommand(command, reply_tx)) => {
+                start_async_resource_command(command, reply_tx, config);
+            }
             Ok(CoreActorMsg::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => return true,
             Err(mpsc::RecvTimeoutError::Timeout) => return false,
         }
@@ -836,12 +913,15 @@ fn apply_pending_cancels(
     completion: &mut RunnerCompletion,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
 ) {
-    let runner_id = completion.runner.descriptor().runner_id.clone();
+    let Some(runner) = completion.runner.as_mut() else {
+        return;
+    };
+    let runner_id = runner.descriptor().runner_id.clone();
     let Some(invocation_ids) = pending_cancels.remove(&runner_id) else {
         return;
     };
     for invocation_id in invocation_ids {
-        let _ = completion.runner.cancel(&invocation_id);
+        let _ = runner.cancel(&invocation_id);
     }
 }
 
@@ -872,15 +952,27 @@ fn handle_worker_completion(
     if let Some(draining) = draining_invocations.remove(&invocation_id) {
         remove_pending_cancel(pending_cancels, &draining.runner_id, &invocation_id);
         if draining.recover_after_termination {
-            completion.runner.recover_after_hard_termination()?;
+            let runner = completion.runner.as_mut().ok_or_else(|| {
+                host_failure(
+                    "host.runner.hard_timeout",
+                    "async handler cannot use hard-process recovery",
+                )
+            })?;
+            runner.recover_after_hard_termination()?;
             completion.result = Err(host_failure(
                 "host.runner.hard_timeout",
                 format!("runner {} was terminated and recovered", draining.runner_id),
             ));
             return core.complete_runner_dispatch(completion);
         }
-        let _ = completion.runner.cancel(&invocation_id);
-        let _ = completion.runner.dispose();
+        if let Some(runner) = completion.runner.as_mut() {
+            let _ = runner.cancel(&invocation_id);
+            let _ = runner.dispose();
+        }
+        if completion.runner.is_none() {
+            remove_running_batch_entries(&completion, running_batches_by_task);
+            return core.complete_runner_dispatch(completion);
+        }
         return Ok(RunnerLoopReport {
             claimed_tasks: 0,
             completed_tasks: 0,
@@ -892,6 +984,157 @@ fn handle_worker_completion(
     core.complete_runner_dispatch(completion)
 }
 
+fn start_async_resource_command(
+    command: HostRuntimeCommand,
+    reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
+    config: &HostRuntimeConfig,
+) {
+    let Some(executor) = config.async_executor.as_ref() else {
+        let _ = reply.send(Err(host_failure(
+            "host.async_executor.unavailable",
+            "async resource plan requires an async executor",
+        )));
+        return;
+    };
+    let Some(events) = config.async_event_sink.clone() else {
+        let _ = reply.send(Err(host_failure(
+            "host.async_executor.event_sink",
+            "async executor event sink is not configured",
+        )));
+        return;
+    };
+    let (provider_id, future, payload_bytes) =
+        match resource_router::prepare_async_resource_command(command, config) {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                let _ = reply.send(Err(failure));
+                return;
+            }
+        };
+    let sequence = config
+        .async_resource_sequence
+        .fetch_add(1, AtomicOrdering::Relaxed)
+        .saturating_add(1);
+    let invocation_id = format!("async-resource-{sequence}-{provider_id}");
+    let deadline_after_ms = config
+        .default_runner_limits
+        .wall_clock_deadline
+        .and_then(|deadline| u64::try_from(deadline.as_millis()).ok());
+    let invocation = AsyncInvocation {
+        invocation_id: invocation_id.clone(),
+        batch_id: invocation_id.clone(),
+        runner_id: format!("resource:{provider_id}"),
+        task_ids: Vec::new(),
+        task_lease_ids: Vec::new(),
+        attempt_generations: Vec::new(),
+        task_leases: Vec::new(),
+        expected_entries: Vec::new(),
+        registry_generation: 0,
+        plugin_generation: 0,
+        cancel_token: invocation_id,
+        deadline_after_ms,
+        entry_count: 0,
+        payload_bytes,
+    };
+    let _ = executor.spawn_resource(invocation, future, reply, events);
+}
+
+fn handle_async_event(
+    event: AsyncExecutorEvent,
+    core: &mut CoreRuntime,
+    pending_cancels: &mut BTreeMap<String, Vec<String>>,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+    draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
+) -> RuntimeResult<RunnerLoopReport> {
+    let (invocation, result) = match event {
+        AsyncExecutorEvent::ResourceCompleted {
+            invocation: _,
+            reply,
+            result,
+        } => {
+            let result = match *result {
+                Ok(value) => {
+                    resource_router::sync_async_resource_reply(core, &value).map(|()| value)
+                }
+                Err(failure) => Err(failure),
+            };
+            let _ = reply.send(result);
+            return Ok(RunnerLoopReport {
+                claimed_tasks: 0,
+                completed_tasks: 0,
+            });
+        }
+        AsyncExecutorEvent::ResourceTimedOut { invocation, reply } => {
+            let _ = reply.send(Err(host_failure(
+                "host.async_resource.timeout",
+                format!(
+                    "async resource invocation {} timed out",
+                    invocation.invocation_id
+                ),
+            )));
+            return Ok(RunnerLoopReport {
+                claimed_tasks: 0,
+                completed_tasks: 0,
+            });
+        }
+        AsyncExecutorEvent::ResourcePanicked { invocation, reply } => {
+            let _ = reply.send(Err(host_failure(
+                "host.async_resource.panic",
+                format!(
+                    "async resource invocation {} panicked",
+                    invocation.invocation_id
+                ),
+            )));
+            return Ok(RunnerLoopReport {
+                claimed_tasks: 0,
+                completed_tasks: 0,
+            });
+        }
+        AsyncExecutorEvent::Started(invocation) => {
+            let now = Instant::now();
+            for task_id in &invocation.task_ids {
+                if let Some(task) = running_batches_by_task.get_mut(task_id)
+                    && task.invocation_id == invocation.invocation_id
+                {
+                    task.worker_started_at = Some(now);
+                }
+            }
+            return Ok(RunnerLoopReport {
+                claimed_tasks: 0,
+                completed_tasks: 0,
+            });
+        }
+        AsyncExecutorEvent::Completed { invocation, result } => (invocation, result),
+        AsyncExecutorEvent::TimedOut(invocation) => {
+            let failure = host_failure(
+                "host.async_executor.timeout",
+                format!("async invocation {} timed out", invocation.invocation_id),
+            );
+            (invocation, Err(failure))
+        }
+        AsyncExecutorEvent::Panicked(invocation) => {
+            let failure = host_failure(
+                "host.async_executor.panic",
+                format!("async invocation {} panicked", invocation.invocation_id),
+            );
+            (invocation, Err(failure))
+        }
+    };
+    handle_worker_completion(
+        RunnerCompletion {
+            runner: None,
+            task_leases: invocation.task_leases,
+            batch_id: invocation.batch_id,
+            expected_entries: invocation.expected_entries,
+            result,
+        },
+        core,
+        pending_cancels,
+        running_batches_by_task,
+        draining_invocations,
+    )
+}
+
 fn supervise_running_invocations(
     core: &mut CoreRuntime,
     config: &HostRuntimeConfig,
@@ -901,13 +1144,21 @@ fn supervise_running_invocations(
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) {
-    cancel_expired_tick_deadlines(core, management, pending_cancels, running_batches_by_task);
+    cancel_expired_tick_deadlines(
+        core,
+        config,
+        management,
+        pending_cancels,
+        running_batches_by_task,
+    );
     let now = Instant::now();
     let expired: Vec<_> = running_batches_by_task
         .values()
         .filter(|task| {
-            task.wall_clock_deadline_at
-                .is_some_and(|deadline| now >= deadline)
+            (task.async_handle.is_none()
+                && task
+                    .wall_clock_deadline_at
+                    .is_some_and(|deadline| now >= deadline))
                 || task.cancel_requested_at.is_some_and(|cancelled_at| {
                     config
                         .cancel_grace_period
@@ -925,6 +1176,7 @@ fn supervise_running_invocations(
         isolate_invocation(
             &invocation_id,
             core,
+            config,
             pools,
             pending_cancels,
             running_batches_by_task,
@@ -935,6 +1187,7 @@ fn supervise_running_invocations(
 
 fn cancel_expired_tick_deadlines(
     core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
     management: &ManagementExecutor,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -954,12 +1207,14 @@ fn cancel_expired_tick_deadlines(
         };
         if task_status(core, &task_id) == Some(TaskStatus::Running) {
             let _ = core.cancel_task_handle(&task.handle);
-            request_running_cancel(
-                &task.invocation_id,
-                management,
-                running_batches_by_task,
-                pending_cancels,
-            );
+            if !cancel_async_invocation(&task.invocation_id, config, running_batches_by_task) {
+                request_running_cancel(
+                    &task.invocation_id,
+                    management,
+                    running_batches_by_task,
+                    pending_cancels,
+                );
+            }
         }
         running_batches_by_task.remove(&task_id);
     }
@@ -968,6 +1223,7 @@ fn cancel_expired_tick_deadlines(
 fn isolate_invocation(
     invocation_id: &str,
     core: &mut CoreRuntime,
+    config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
@@ -988,6 +1244,17 @@ fn isolate_invocation(
     else {
         return;
     };
+    if first_task.async_handle.is_some() {
+        for task_id in &task_ids {
+            if let Some(task) = running_batches_by_task.get(task_id)
+                && task_status(core, task_id) == Some(TaskStatus::Running)
+            {
+                let _ = core.cancel_task_handle(&task.handle);
+            }
+        }
+        let _ = cancel_async_invocation(invocation_id, config, running_batches_by_task);
+        return;
+    }
     for task_id in &task_ids {
         if let Some(task) = running_batches_by_task.get(task_id)
             && task_status(core, task_id) == Some(TaskStatus::Running)
@@ -1053,6 +1320,17 @@ fn remove_running_batch_entries(
     }
 }
 
+fn task_handle(task: &mutsuki_runtime_contracts::Task) -> TaskHandle {
+    TaskHandle {
+        task_id: task.task_id.clone(),
+        protocol_id: task.protocol_id.clone(),
+        target_binding_id: task.target_binding_id.clone(),
+        cancel_policy: CancelPolicy::Cascade,
+        trace_id: task.trace_id.clone(),
+        correlation_id: task.correlation_id.clone(),
+    }
+}
+
 fn running_batch_count_for_runner(
     running_batches_by_task: &BTreeMap<String, RunningBatch>,
     runner_id: &str,
@@ -1063,6 +1341,28 @@ fn running_batch_count_for_runner(
         .map(|task| task.batch_id.clone())
         .collect::<BTreeSet<_>>()
         .len()
+}
+
+fn cancel_async_invocation(
+    invocation_id: &str,
+    config: &HostRuntimeConfig,
+    running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
+) -> bool {
+    let handle = running_batches_by_task
+        .values()
+        .find(|task| task.invocation_id == invocation_id)
+        .and_then(|task| task.async_handle.clone());
+    let Some(handle) = handle else {
+        return false;
+    };
+    let cancelled = config
+        .async_executor
+        .as_ref()
+        .is_some_and(|executor| executor.cancel(&handle).unwrap_or(false));
+    if cancelled {
+        running_batches_by_task.retain(|_, task| task.invocation_id != invocation_id);
+    }
+    cancelled
 }
 
 fn schedule_ready(
@@ -1084,6 +1384,7 @@ fn schedule_ready_at(
 ) -> RuntimeResult<RunnerLoopReport> {
     let mut compute_reservations = 0usize;
     let mut blocking_reservations = 0usize;
+    let mut async_reservations = 0usize;
     let (report, dispatches) = core.claim_ready_dispatches_at_step(
         target_step,
         |descriptor, load, current_step, registry_generation| {
@@ -1091,23 +1392,62 @@ fn schedule_ready_at(
                 .runner_limits
                 .get(&descriptor.runner_id)
                 .unwrap_or(&config.default_runner_limits);
-            let reservations = match descriptor.execution_class {
-                ExecutionClass::Orchestration | ExecutionClass::Io | ExecutionClass::Cpu => {
-                    &mut compute_reservations
-                }
-                ExecutionClass::Blocking | ExecutionClass::Script => &mut blocking_reservations,
-                ExecutionClass::Control => {
-                    return Ok(mutsuki_runtime_core::ScheduleDecision::new(
-                        "host.default",
-                        0,
-                        "control.inline",
-                    ));
+            let async_invocation = matches!(
+                descriptor.invocation_mode,
+                InvocationMode::AsyncReentrant | InvocationMode::AsyncExclusive
+            );
+            let reservations = if async_invocation {
+                &mut async_reservations
+            } else {
+                match descriptor.execution_class {
+                    ExecutionClass::Orchestration | ExecutionClass::Cpu => {
+                        &mut compute_reservations
+                    }
+                    ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
+                        &mut blocking_reservations
+                    }
+                    ExecutionClass::Control => {
+                        return Ok(mutsuki_runtime_core::ScheduleDecision::new(
+                            "host.default",
+                            0,
+                            "control.inline",
+                        ));
+                    }
                 }
             };
-            let (pool_slots, mut pool_capacity) = pools
-                .get(&descriptor.execution_class)
-                .map(|pool| (pool.available_slots(), pool.capacity()))
-                .unwrap_or_default();
+            let (pool_slots, mut pool_capacity) = if async_invocation {
+                if let Some(executor) = &config.async_executor {
+                    let snapshot = executor.snapshot();
+                    (
+                        snapshot
+                            .max_inflight_invocations
+                            .saturating_sub(snapshot.running_invocations),
+                        crate::worker::PoolCapacitySnapshot {
+                            active_threads: snapshot.max_inflight_invocations,
+                            queued_batches: 0,
+                            queued_entries: 0,
+                            running_batches: snapshot.running_invocations,
+                            running_entries: snapshot.running_entries,
+                            inflight_bytes: snapshot.inflight_bytes,
+                            max_inflight_bytes: snapshot.max_inflight_bytes,
+                        },
+                    )
+                } else {
+                    (
+                        descriptor.concurrency.max_inflight_batches(),
+                        crate::worker::PoolCapacitySnapshot {
+                            active_threads: descriptor.concurrency.max_inflight_batches(),
+                            max_inflight_bytes: usize::MAX,
+                            ..Default::default()
+                        },
+                    )
+                }
+            } else {
+                pools
+                    .get(&descriptor.execution_class)
+                    .map(|pool| (pool.available_slots(), pool.capacity()))
+                    .unwrap_or_default()
+            };
             let pool_slots = pool_slots.saturating_sub(*reservations);
             pool_capacity.queued_batches =
                 pool_capacity.queued_batches.saturating_add(*reservations);
@@ -1125,7 +1465,7 @@ fn schedule_ready_at(
                 config.scheduler_policy.as_ref(),
             )?;
             if decision.dispatch_limit > 0 && decision.budget.max_batches > 0 {
-                *reservations = (*reservations).saturating_add(1);
+                *reservations = (*reservations).saturating_add(decision.budget.max_batches);
             }
             Ok(decision)
         },
@@ -1134,8 +1474,8 @@ fn schedule_ready_at(
     let mut deferred_entries = 0usize;
     let mut rejected_entries = 0usize;
     for mut dispatch in dispatches {
-        let execution_class = dispatch.runner.descriptor().execution_class.clone();
-        let runner_id = dispatch.runner.descriptor().runner_id.clone();
+        let execution_class = dispatch.target.descriptor().execution_class.clone();
+        let runner_id = dispatch.target.descriptor().runner_id.clone();
         let limits = config
             .runner_limits
             .get(&runner_id)
@@ -1143,10 +1483,13 @@ fn schedule_ready_at(
         dispatch.ctx.deadline_tick = limits
             .deadline_ticks
             .map(|ticks| dispatch.ctx.current_step.saturating_add(ticks));
+        dispatch.ctx.deadline_after_ms = limits
+            .wall_clock_deadline
+            .and_then(|deadline| u64::try_from(deadline.as_millis()).ok());
         let invocation_id = dispatch.ctx.invocation_id.clone();
         let batch_id = dispatch.ctx.batch_id.clone();
-        let isolation = dispatch.runner.isolation();
-        let management = dispatch.runner.management_handle();
+        let isolation = dispatch.target.isolation();
+        let management = dispatch.target.management_handle();
         let deadline_tick = dispatch.ctx.deadline_tick;
         let wall_clock_deadline_at = limits
             .wall_clock_deadline
@@ -1155,6 +1498,107 @@ fn schedule_ready_at(
             .batch
             .row_payload_tasks()
             .map_err(mutsuki_runtime_core::RuntimeFailure::new)?;
+        if dispatch.target.is_async() {
+            let Some(executor) = config.async_executor.as_ref() else {
+                let batch_id = dispatch.batch.batch_id.clone();
+                let expected_entries = dispatch.batch.entries.clone();
+                rejected_entries = rejected_entries.saturating_add(
+                    core.complete_runner_dispatch(RunnerCompletion {
+                        runner: None,
+                        task_leases: dispatch.task_leases,
+                        batch_id,
+                        expected_entries,
+                        result: Err(host_failure(
+                            "host.async_executor.unavailable",
+                            format!("runner {runner_id} requires an async executor"),
+                        )),
+                    })?
+                    .completed_tasks,
+                );
+                continue;
+            };
+            let Some(events) = config.async_event_sink.clone() else {
+                return Err(host_failure(
+                    "host.async_executor.event_sink",
+                    "async executor event sink is not configured",
+                ));
+            };
+            let payload_bytes = serde_json::to_vec(&dispatch.batch.payload)
+                .map_err(|error| host_failure("host.async_executor.payload", error.to_string()))?
+                .len();
+            let invocation = AsyncInvocation {
+                invocation_id: invocation_id.clone(),
+                batch_id: batch_id.clone(),
+                runner_id: runner_id.clone(),
+                task_ids: dispatch
+                    .task_leases
+                    .iter()
+                    .map(|lease| lease.task_id.clone())
+                    .collect(),
+                task_lease_ids: dispatch
+                    .task_leases
+                    .iter()
+                    .map(|lease| lease.lease_id.clone())
+                    .collect(),
+                attempt_generations: dispatch
+                    .task_leases
+                    .iter()
+                    .map(|lease| lease.attempt_generation)
+                    .collect(),
+                task_leases: dispatch.task_leases.clone(),
+                expected_entries: dispatch.batch.entries.clone(),
+                registry_generation: dispatch.ctx.registry_generation,
+                plugin_generation: dispatch.target.descriptor().plugin_generation,
+                cancel_token: dispatch.ctx.cancel_token.clone(),
+                deadline_after_ms: dispatch.ctx.deadline_after_ms,
+                entry_count: dispatch.batch.entries.len(),
+                payload_bytes,
+            };
+            let pending_task_leases = dispatch.task_leases.clone();
+            let pending_entries = dispatch.batch.entries.clone();
+            let RunnerDispatchTarget::Async(handler) = dispatch.target else {
+                unreachable!("async dispatch target checked above")
+            };
+            let future = handler.run_batch(dispatch.ctx, dispatch.batch);
+            let async_handle = match executor.spawn(invocation, future, events) {
+                Ok(handle) => handle,
+                Err(failure) => {
+                    rejected_entries = rejected_entries.saturating_add(
+                        core.complete_runner_dispatch(RunnerCompletion {
+                            runner: None,
+                            task_leases: pending_task_leases,
+                            batch_id: batch_id.clone(),
+                            expected_entries: pending_entries,
+                            result: Err(failure),
+                        })?
+                        .completed_tasks,
+                    );
+                    continue;
+                }
+            };
+            for task in tasks {
+                let handle = task_handle(&task);
+                running_batches_by_task.insert(
+                    task.task_id.clone(),
+                    RunningBatch {
+                        runner_id: runner_id.clone(),
+                        invocation_id: invocation_id.clone(),
+                        batch_id: batch_id.clone(),
+                        execution_class: execution_class.clone(),
+                        handle,
+                        deadline_tick,
+                        wall_clock_deadline_at,
+                        cancel_requested_at: None,
+                        worker_id: Some("async_io".into()),
+                        worker_started_at: None,
+                        isolation: isolation.clone(),
+                        management: management.clone(),
+                        async_handle: Some(async_handle.clone()),
+                    },
+                );
+            }
+            continue;
+        }
         let Some(pool) = pools.get(&execution_class) else {
             return Err(host_failure(
                 "host.worker.pool_missing",
@@ -1176,7 +1620,10 @@ fn schedule_ready_at(
                 let expected_entries = dispatch.batch.entries.clone();
                 rejected_entries = rejected_entries.saturating_add(
                     core.complete_runner_dispatch(RunnerCompletion {
-                        runner: dispatch.runner,
+                        runner: match dispatch.target {
+                            RunnerDispatchTarget::Sync(runner) => Some(runner),
+                            RunnerDispatchTarget::Async(_) => None,
+                        },
                         task_leases: dispatch.task_leases,
                         batch_id,
                         expected_entries,
@@ -1188,14 +1635,7 @@ fn schedule_ready_at(
             continue;
         }
         for task in tasks {
-            let handle = TaskHandle {
-                task_id: task.task_id.clone(),
-                protocol_id: task.protocol_id.clone(),
-                target_binding_id: task.target_binding_id.clone(),
-                cancel_policy: CancelPolicy::Cascade,
-                trace_id: task.trace_id.clone(),
-                correlation_id: task.correlation_id.clone(),
-            };
+            let handle = task_handle(&task);
             running_batches_by_task.insert(
                 task.task_id.clone(),
                 RunningBatch {
@@ -1211,6 +1651,7 @@ fn schedule_ready_at(
                     worker_started_at: None,
                     isolation: isolation.clone(),
                     management: management.clone(),
+                    async_handle: None,
                 },
             );
         }
@@ -1246,6 +1687,7 @@ mod tests {
             worker_started_at: None,
             isolation: RunnerIsolation::Cooperative,
             management: None,
+            async_handle: None,
         }
     }
 

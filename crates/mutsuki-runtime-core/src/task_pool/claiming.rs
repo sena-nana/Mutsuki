@@ -42,6 +42,7 @@ pub(super) fn claim_ready_for_executor_with_budget(
                     record.task.task_id, record.attempt_generation
                 ),
                 task_id: record.task.task_id.clone(),
+                attempt_generation: record.attempt_generation,
                 runner_id: runner.runner_id.clone(),
                 executor_id: executor_id.clone(),
                 registry_generation,

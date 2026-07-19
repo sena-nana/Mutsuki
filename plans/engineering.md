@@ -20,7 +20,7 @@ Mutsuki/
   crates/
     mutsuki-runtime-contracts/  # Task / TaskLease / Runner / Resource / Plugin load-plan protocol
     mutsuki-runtime-core/       # CoreRuntime / TaskPool / TaskLease / Executor dispatch / ResourceManager
-    mutsuki-runtime-host/       # runtime bootstrapper / JSONL runner client
+    mutsuki-runtime-host/       # runtime bootstrapper / worker pools / async executor / JSONL runner client
     mutsuki-runtime-sdk/        # Rust SDK async/await wrapper over TaskHandle
     mutsuki-runtime-sdk-macros/ # Rust SDK proc-macro authoring DSL
   plans/
@@ -44,9 +44,9 @@ Mutsuki/
   `TaskClient` / `ResourcePlanClient` 和 host-side bridge/codec/service descriptor；不得把
   Host shell 整体做成插件。
 - `mutsuki-runtime-sdk`：实现 Rust 插件作者侧 `RuntimeClient`、`TaskHandleFuture`、
-  `AsyncRunnerContext` 和 `AsyncRunnerAdapter`；同时定义 host/plugin 扩展基础 trait：
+  `AsyncRunnerContext` 和 `TaskAwaitRunnerAdapter`；同时定义 host/plugin 扩展基础 trait：
   `PluginBuilder` / `PluginLoader`、`HostContext`、`HostServiceRegistry`、
-  `CapabilityBroker`、`TaskSubmitter`、`ResourcePlanGateway`、`EventBridge`、
+  `CapabilityBroker`、`TaskSubmitter`、同步/异步 ResourcePlan gateway、`EventBridge`、
   `ConfigProvider` 和 `ShutdownController`。这些 trait 必须落回现有 contracts /
   host-side adapter，不得把 async runtime 语义或动态注册语义反向写入 Core。
 - `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
@@ -148,15 +148,19 @@ environment id。
   scalar adapter 串行执行，`max_entry_concurrency = 1`、`preserve_order = true`、
   `side_effect = unknown`、`entry_cancel = false`，不能因为插件作者使用 scalar 写法而
   重新引入 single-task ABI。entry 并发声明不得超过 batch entry 上限。
-- 当前 Runner instance model 是单实例：每个逻辑 `runner_id` 同时最多一个 active batch；
-  `RunnerDescriptor.batch.max_inflight_batches` 和 Host `RunnerLimits.max_running` 必须为 `1`，
-  大于或小于 `1` 都必须在启动阶段结构化拒绝。该限制不得误伤同一 batch 的多 entry 或
-  entry-level parallelism。
+- Runner instance model 必须由 `RunnerConcurrency` 声明：Exclusive 单批次、Reentrant
+  共享 async handler 多批次、Sharded 固定实例。batch capability 的 inflight 声明必须
+  一致；registry freeze 校验 sharded 实例数量和 descriptor；Host limits 只能收紧，不能
+  扩张声明能力。
+- Core crate 不得依赖 Tokio，也不得 poll Future。Host async executor 必须有固定线程数和
+  invocation/entry/payload-byte 上限，并把 started/completed/timeout/panic 事件送回 CoreActor。
+  cancel、timeout、drain、reload 与 late completion 均须经过 task lease、attempt generation、
+  registry/plugin generation fence。
 - `WorkResourcePlan` 必须在 dispatch 前给出 parallel_groups、serial_groups 和
   parallelism_limit；Host/SDK adapter 只能在资源计划、runner capability、HostCapacity
   和 scheduler budget 均允许时并行执行 scalar entries。
 - JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python
-  runner-side awaitable adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
+  runner-side task-await adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
   也不承诺调度任意 `asyncio` future。
 - registry boot 后 freeze；能力变化必须走新 registry generation。
 - 错误必须结构化，不能吞异常返回默认值。

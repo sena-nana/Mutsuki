@@ -13,8 +13,8 @@ StateStore、ResourceManager、EventLog 和 TraceLog 等领域中立运行事实
 - `crates/mutsuki-runtime-core`：`CoreRuntime`、TaskStore/`TaskPool`、`TaskLease`、
   `RunnerRegistry`、Executor dispatch、`ResultRouter`、`StateStore`、
   `ResourceManager`、EventLog/TraceLog。
-- `crates/mutsuki-runtime-host`：runtime bootstrapper、deterministic load-plan resolver
-  和 JSONL runner client。
+- `crates/mutsuki-runtime-host`：runtime bootstrapper、deterministic load-plan resolver、
+  bounded worker pools、可注入 async executor 和 JSONL runner client。
 - `crates/mutsuki-runtime-sdk`：Rust 插件作者侧 SDK，把 `TaskHandle` 包装为
   `Future`，提供 `ctx.call(...).await` 语法糖；单 task submit 由 SDK/Host 包装成
   one-entry batch。
@@ -97,12 +97,11 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     默认 scheduler 等价既有 runner limits / worker pool capacity 逻辑；policy
     决策失败必须结构化失败，不再 fallback。
   - `RunnerDescriptor.execution_class` 标记 Control、Orchestration、Io、Cpu、
-    Blocking、Script，host runtime 按 execution class 路由到普通或 blocking/script
-    worker pool；`Control` 仅用于 core kernel 控制面。
+    Blocking、Script；同步 Io/Blocking/Script 进入 blocking pool，显式 async invocation
+    进入 Host async executor；`Control` 仅用于 core kernel 控制面。
   - `Runner` trait 要求 `Send`，native runner 可被 host worker 线程移动执行。
-  - 当前明确采用单实例串行 Runner：每个 `runner_id` 同时最多一个 active batch，
-    descriptor 的 `max_inflight_batches` 与 Host `max_running` 只接受 `1`；batch 内仍可按
-    entry capability 和资源计划有界并行，不同 runner 可并行执行。
+  - `RunnerConcurrency` 区分 Exclusive、Reentrant 和固定实例 Sharded；registry、Host
+    scheduler 与 executor/pool 分别校验声明、容量和资源冲突，多批次不再被全局夹成 1。
   - Task terminal history 默认保持既有无限保留语义；长期 Host 可显式配置
     `TaskHistoryRetention`，把 terminal TaskRecord 与已淘汰 task id 防重窗口分别限制为固定
     容量。受 child wait link 保护的 terminal record 在 waiter 消费前不会淘汰；累计 submitted、
@@ -205,8 +204,8 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `RunnerContext.deadline_tick`，actor tick 发现超期 running invocation 后取消 Core
     task，并通过同一 runner management cancel 路径传播。
   - HostRuntime 支持 host-only wall-clock deadline、取消宽限和 worker health timeout。
-    Orchestration / Io / Cpu 共享 bounded compute pool，Blocking / Script 共享 bounded
-    blocking pool；两个 pool 使用多消费者有界 channel，不再复制 execution-class CPU pool
+    Orchestration / Cpu 共享 bounded compute pool，Io / Blocking / Script 共享 bounded
+    blocking pool；两个同步 pool 使用多消费者有界 channel，不再复制 execution-class CPU pool
     或串行锁住单 receiver。HostCapacity 报告真实 pool batch / entry / byte 容量。
   - 超时或取消后仍不归还的 native worker 只会被隔离；原线程退出前禁止补 replacement，
     达到隔离上限后 pool degraded / 拒绝新 dispatch。process runner 可通过独立 termination
@@ -229,7 +228,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - 外部 Python runner kit 覆盖：
   - 新协议 dataclass mirror 与 JSON roundtrip。
   - `PythonRunnerBackend`、`StdioJsonlBridge`、`PythonResourceManager`。
-  - `RunnerContext` 镜像 invocation id、cancel token、deadline tick 与
+  - `RunnerContext` 镜像 invocation id、cancel token、deadline tick、deadline-after-ms 与
     `cancel_requested`；`PythonRunnerBackend.cancel_runner` 会记录 cancellation 并在后续
     step context 中传播，async runner context 暴露这些字段。
   - runner-side async adapter 将 `await ctx.call_raw(...)` 映射为 `RunnerStatus::Waiting`
@@ -239,19 +238,20 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - Rust SDK 覆盖：
   - `RuntimeClient`、`TaskHandleFuture`、`SdkProtocol`、
     `AsyncRunnerContext::call::<P>` / `call_raw` / targeted variants。
-  - `AsyncRunnerAdapter` 将 Rust `async` runner 作为 one-entry scalar adapter poll 为
+  - `TaskAwaitRunnerAdapter` 将 Rust child-task await runner 作为 one-entry scalar adapter 降为
     `CompletionBatch` entry result。
   - `ProtocolSpec`、`ResourceKindSpec`、descriptor builders 和
     `mutsuki-runtime-sdk-macros` 提供 Rust 插件作者侧 typed DSL，用于生成
-    protocol/resource/runner descriptor 与 `AsyncRunnerAdapter` glue；宏只展开为现有
+    protocol/resource/runner descriptor 与 `TaskAwaitRunnerAdapter` glue；宏只展开为现有
     Task / RunnerResult / manifest 声明，不新增 Core 运行时语义。
-  - 不依赖 Tokio / async-std；由 Core tick 和 event/outcome 查询驱动恢复。
+  - task-await adapter 不依赖 Tokio / async-std；外部 I/O Future 使用独立
+    `AsyncBatchHandler` 并由 Host executor 驱动，Core 不轮询。
   - 核心 SDK 公共面已收敛为 `ResourceKind`、`TypedResourceHandle`、`ResourceClient`
     和 plan 构造；`TextBuffer`、`AstSnapshot`、`ProjectFacts`、`ModelOutputStream`、
     `DbPool` 这类 resource descriptor marker 只保留在示例 / 测试 helper 或领域包中。
   - SDK 现在提供 `plugin` / `host` / `backend` 基础抽象：`PluginBuilder` /
     `PluginLoader` 只构造 boot 前 manifest、runner 与 host service 声明；
-    `HostContext`、`CapabilityBroker`、`TaskSubmitter`、`ResourcePlanGateway`、
+    `HostContext`、`CapabilityBroker`、`TaskSubmitter`、同步/异步 ResourcePlan gateway、
     `EventBridge`、`ConfigProvider` 和 `ShutdownController` 只包装现有协议对象和
     host-side 执行面，不允许运行中动态越权注册。
 
@@ -268,7 +268,8 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - ResourceRef/ValueRef/ResourceCellRef/ResourceLease 是 descriptor，不是语言对象或裸指针。
   - Plugin/runtime registry 由 load plan 物化，运行中不得动态越权注册能力。
   - Core 不提供 TaskGroup、WaitSet、pipeline.run、broadcast.run、matcher.run 或 actor.send。
-  - Core 不暴露 Rust `Future` ABI；async/await 只属于 SDK / protocol helper 层。
+  - Core 不 poll Rust `Future`；`AsyncBatchHandler` 只作为 Host-owned executor 的注册边界，
+    child-task await 与外部 I/O await 必须保持两条独立路径。
   - Host / Plugin backend、codec、bridge、scheduler policy 和 workflow 以 descriptor
     进入 load-plan surface；Host shell、Core kernel、SDK 和 guest-side shim 不作为运行时
     热替换插件。

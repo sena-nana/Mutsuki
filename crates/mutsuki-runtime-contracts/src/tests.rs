@@ -148,6 +148,8 @@ fn task_runner_resource_contracts_roundtrip_json() {
         accepted_protocol_ids: vec!["raw.input.chat_message".into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Cpu,
+        invocation_mode: InvocationMode::default(),
+        concurrency: RunnerConcurrency::default(),
         input_schema: serde_json::json!({"type": "object"}),
         output_schema: serde_json::json!({"type": "object"}),
         batch: RunnerBatchCapability {
@@ -220,6 +222,7 @@ fn batch_work_contracts_roundtrip_json() {
     let lease = TaskLease {
         lease_id: "lease-1".into(),
         task_id: "task-1".into(),
+        attempt_generation: 1,
         runner_id: "runner-a".into(),
         executor_id: "executor-a".into(),
         registry_generation: 3,

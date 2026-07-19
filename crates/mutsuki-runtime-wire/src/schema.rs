@@ -77,6 +77,7 @@ pub fn generated_fixtures_value() -> Value {
     let lease = TaskLease {
         lease_id: "lease-wire-1".into(),
         task_id: task.task_id.clone(),
+        attempt_generation: 1,
         runner_id: "fixture.runner".into(),
         executor_id: "executor:fixture".into(),
         registry_generation: 7,

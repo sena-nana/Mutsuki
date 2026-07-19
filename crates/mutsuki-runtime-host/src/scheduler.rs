@@ -1,18 +1,17 @@
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor, RuntimeError, ScalarValue};
-use mutsuki_runtime_core::{RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision};
+use mutsuki_runtime_core::{
+    DispatchBudget, RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision,
+};
 
 use crate::worker::PoolCapacitySnapshot;
-
-pub const SINGLE_RUNNER_MAX_ACTIVE_BATCHES: usize = 1;
 
 #[derive(Clone, Debug)]
 pub struct RunnerLimits {
     /// Maximum active batches for one logical runner id.
     ///
-    /// The current single-instance model only accepts `1`. This does not limit
-    /// the number of entries inside that one batch.
+    /// Descriptor concurrency and Host capacity still clamp this value.
     pub max_running: usize,
     pub max_waiting: usize,
     pub max_inflight: usize,
@@ -23,7 +22,7 @@ pub struct RunnerLimits {
 impl Default for RunnerLimits {
     fn default() -> Self {
         Self {
-            max_running: 1,
+            max_running: 64,
             max_waiting: 64,
             max_inflight: 64,
             deadline_ticks: None,
@@ -53,6 +52,7 @@ pub struct ScheduleInput<'a> {
     pub host_capacity: HostCapacity,
     pub pool_slots: usize,
     pub hard_capacity: usize,
+    pub hard_batch_capacity: usize,
     pub current_step: u64,
     pub registry_generation: u64,
 }
@@ -83,11 +83,16 @@ impl SchedulerPolicy for DefaultScheduler {
         } else {
             "capacity.available"
         };
-        Ok(ScheduleDecision::new(
-            "host.default",
-            input.hard_capacity,
-            reason,
-        ))
+        Ok(
+            ScheduleDecision::new("host.default", input.hard_capacity, reason).with_budget(
+                DispatchBudget {
+                    max_entries: input.hard_capacity,
+                    max_batches: input.hard_batch_capacity,
+                    max_bytes: usize::MAX,
+                    lane_budget: Default::default(),
+                },
+            ),
+        )
     }
 }
 
@@ -104,7 +109,7 @@ pub(crate) fn decide_schedule(
     running_batches: usize,
     policy: &dyn SchedulerPolicy,
 ) -> RuntimeResult<ScheduleDecision> {
-    let hard_capacity =
+    let (hard_capacity, hard_batch_capacity) =
         hard_dispatch_capacity(descriptor, load, limits, pool_slots, running_batches);
     let host_capacity = host_capacity(descriptor, limits, pool_capacity);
     let input = ScheduleInput {
@@ -114,10 +119,14 @@ pub(crate) fn decide_schedule(
         host_capacity,
         pool_slots,
         hard_capacity,
+        hard_batch_capacity,
         current_step,
         registry_generation,
     };
-    let mut decision = policy.decide(&input)?.clamp_to(hard_capacity);
+    let mut decision = policy
+        .decide(&input)?
+        .clamp_to(hard_capacity)
+        .clamp_batches(hard_batch_capacity);
     decision.budget.max_bytes = decision.budget.max_bytes.min(
         pool_capacity
             .max_inflight_bytes
@@ -157,15 +166,16 @@ fn hard_dispatch_capacity(
     limits: &RunnerLimits,
     pool_slots: usize,
     running_batches: usize,
-) -> usize {
+) -> (usize, usize) {
     if descriptor.execution_class == ExecutionClass::Control {
         return if descriptor.runner_id == "core.kernel" {
-            1
+            (1, 1)
         } else {
-            0
+            (0, 0)
         };
     }
     standard_dispatch_capacity(
+        descriptor,
         load,
         limits,
         pool_slots,
@@ -175,36 +185,59 @@ fn hard_dispatch_capacity(
 }
 
 fn standard_dispatch_capacity(
+    descriptor: &RunnerDescriptor,
     load: &RunnerLoad,
     limits: &RunnerLimits,
     pool_slots: usize,
     running_batches: usize,
     max_batch_entries: usize,
-) -> usize {
-    if pool_slots == 0
-        || running_batches >= limits.max_running
-        || load.running_count > 0
-        || load.waiting_count >= limits.max_waiting
-    {
-        return 0;
+) -> (usize, usize) {
+    let maximum_batches = descriptor
+        .concurrency
+        .max_inflight_batches()
+        .min(limits.max_running);
+    let available_batches = maximum_batches
+        .saturating_sub(running_batches)
+        .min(pool_slots);
+    let exclusive_blocked = matches!(
+        descriptor.concurrency,
+        mutsuki_runtime_contracts::RunnerConcurrency::Exclusive
+    ) && load.running_count.saturating_add(load.waiting_count) > 0;
+    if available_batches == 0 || exclusive_blocked || load.waiting_count >= limits.max_waiting {
+        return (0, 0);
     }
     let inflight = load.running_count.saturating_add(load.waiting_count);
-    max_batch_entries.min(limits.max_inflight.saturating_sub(inflight))
+    let descriptor_entries = match descriptor.concurrency {
+        mutsuki_runtime_contracts::RunnerConcurrency::Reentrant {
+            max_inflight_entries,
+            ..
+        } => max_inflight_entries,
+        _ => max_batch_entries.saturating_mul(maximum_batches),
+    };
+    let available_entries = descriptor_entries
+        .min(limits.max_inflight)
+        .saturating_sub(inflight)
+        .min(max_batch_entries.saturating_mul(available_batches));
+    if available_entries == 0 {
+        (0, 0)
+    } else {
+        (available_entries, available_batches.min(available_entries))
+    }
 }
 
-pub(crate) fn validate_single_instance_limits(
+pub(crate) fn validate_runner_limits(
     default_limits: &RunnerLimits,
     runner_limits: &std::collections::BTreeMap<String, RunnerLimits>,
 ) -> RuntimeResult<()> {
-    validate_single_instance_limit("default", default_limits)?;
+    validate_runner_limit("default", default_limits)?;
     for (runner_id, limits) in runner_limits {
-        validate_single_instance_limit(runner_id, limits)?;
+        validate_runner_limit(runner_id, limits)?;
     }
     Ok(())
 }
 
-fn validate_single_instance_limit(scope: &str, limits: &RunnerLimits) -> RuntimeResult<()> {
-    if limits.max_running == SINGLE_RUNNER_MAX_ACTIVE_BATCHES {
+fn validate_runner_limit(scope: &str, limits: &RunnerLimits) -> RuntimeResult<()> {
+    if limits.max_running > 0 && limits.max_inflight > 0 {
         return Ok(());
     }
     let mut error = RuntimeError::new(
@@ -217,8 +250,8 @@ fn validate_single_instance_limit(scope: &str, limits: &RunnerLimits) -> Runtime
         ScalarValue::Int(limits.max_running as i64),
     );
     error.evidence.insert(
-        "supported_max_running".into(),
-        ScalarValue::Int(SINGLE_RUNNER_MAX_ACTIVE_BATCHES as i64),
+        "configured_max_inflight".into(),
+        ScalarValue::Int(limits.max_inflight as i64),
     );
     Err(RuntimeFailure::new(error))
 }
@@ -226,6 +259,28 @@ fn validate_single_instance_limit(scope: &str, limits: &RunnerLimits) -> Runtime
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn descriptor() -> RunnerDescriptor {
+        RunnerDescriptor {
+            runner_id: "test.runner".into(),
+            plugin_id: "test.plugin".into(),
+            plugin_generation: 1,
+            accepted_protocol_ids: vec!["test.work".into()],
+            purity: mutsuki_runtime_contracts::RunnerPurity::Pure,
+            execution_class: mutsuki_runtime_contracts::ExecutionClass::Cpu,
+            invocation_mode: mutsuki_runtime_contracts::InvocationMode::SyncExclusive,
+            concurrency: mutsuki_runtime_contracts::RunnerConcurrency::Exclusive,
+            input_schema: serde_json::json!({}),
+            output_schema: serde_json::json!({}),
+            batch: Default::default(),
+            payload: Default::default(),
+            resources: Default::default(),
+            ordering: Default::default(),
+            control: Default::default(),
+            metadata: Default::default(),
+            contract_surfaces: vec!["runner:test.runner".into()],
+        }
+    }
 
     #[test]
     fn ready_backlog_does_not_consume_inflight_capacity() {
@@ -241,7 +296,10 @@ mod tests {
             ..RunnerLimits::default()
         };
 
-        assert_eq!(standard_dispatch_capacity(&load, &limits, 1_024, 0, 64), 4);
+        assert_eq!(
+            standard_dispatch_capacity(&descriptor(), &load, &limits, 1_024, 0, 64),
+            (4, 1)
+        );
     }
 
     #[test]
@@ -258,7 +316,10 @@ mod tests {
             ..RunnerLimits::default()
         };
 
-        assert_eq!(standard_dispatch_capacity(&load, &limits, 4, 0, 4), 0);
+        assert_eq!(
+            standard_dispatch_capacity(&descriptor(), &load, &limits, 4, 0, 4),
+            (0, 0)
+        );
     }
 
     #[test]
@@ -271,8 +332,8 @@ mod tests {
         };
 
         assert_eq!(
-            standard_dispatch_capacity(&load, &RunnerLimits::default(), 4, 1, 4),
-            0
+            standard_dispatch_capacity(&descriptor(), &load, &RunnerLimits::default(), 4, 1, 4,),
+            (0, 0)
         );
     }
 }

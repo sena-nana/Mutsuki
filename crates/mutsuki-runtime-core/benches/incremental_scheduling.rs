@@ -115,6 +115,8 @@ fn runner_descriptor(index: usize) -> RunnerDescriptor {
         accepted_protocol_ids: vec![format!("bench.target.{index}")],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Cpu,
+        invocation_mode: Default::default(),
+        concurrency: Default::default(),
         input_schema: json!({}),
         output_schema: json!({}),
         batch: Default::default(),

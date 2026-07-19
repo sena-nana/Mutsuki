@@ -8,9 +8,9 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    ConfigProvider, HostContext as SdkHostContext, HostServiceRegistry, NoopEventBridge,
-    ResourcePlanGateway, ResourceRegistryGateway, ShutdownController, StaticConfigProvider,
-    TaskSubmitter,
+    AsyncResourcePlanGateway, BoxRuntimeFuture, ConfigProvider, HostContext as SdkHostContext,
+    HostServiceRegistry, NoopEventBridge, ResourcePlanGateway, ResourceRegistryGateway,
+    ShutdownController, StaticConfigProvider, TaskSubmitter,
 };
 
 use crate::actor::CoreActorMsg;
@@ -28,6 +28,7 @@ pub(crate) fn build_host_context(
     let command_client = Arc::new(ActorCommandClient { tx: tx.clone() });
     let task_submitter: Arc<dyn TaskSubmitter> = command_client.clone();
     let resource_gateway: Arc<dyn ResourcePlanGateway> = command_client.clone();
+    let async_resource_gateway: Arc<dyn AsyncResourcePlanGateway> = command_client.clone();
     let resource_registry: Arc<dyn ResourceRegistryGateway> = command_client;
     let shutdown = Arc::new(ActorShutdownController {
         tx,
@@ -44,6 +45,7 @@ pub(crate) fn build_host_context(
         Arc::new(NoopEventBridge),
         task_submitter,
         resource_gateway,
+        Some(async_resource_gateway),
         resource_registry,
         shutdown,
     )
@@ -62,6 +64,18 @@ impl ActorCommandClient {
         reply_rx
             .recv()
             .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
+    }
+
+    fn dispatch_async(&self, command: HostRuntimeCommand) -> BoxRuntimeFuture<HostRuntimeReply> {
+        let tx = self.tx.clone();
+        Box::pin(async move {
+            let (reply_tx, reply_rx) = futures_channel::oneshot::channel();
+            tx.send(CoreActorMsg::AsyncResourceCommand(command, reply_tx))
+                .map_err(|error| host_failure("host.actor.async_command", error.to_string()))?;
+            reply_rx
+                .await
+                .map_err(|error| host_failure("host.actor.async_reply", error.to_string()))?
+        })
     }
 }
 
@@ -161,6 +175,100 @@ impl ResourcePlanGateway for ActorCommandClient {
             HostRuntimeReply::PlanReceipts(receipts) => Ok(receipts),
             reply => Err(unexpected_reply("resource.saga", reply)),
         }
+    }
+}
+
+impl AsyncResourcePlanGateway for ActorCommandClient {
+    fn collect_read_plan(&self, plan: ReadPlan) -> BoxRuntimeFuture<Vec<u8>> {
+        let future = self.dispatch_async(HostRuntimeCommand::CollectReadPlan(Box::new(plan)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::ResourceBytes(bytes) => Ok(bytes),
+                reply => Err(unexpected_reply("resource.async_read.collect", reply)),
+            }
+        })
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        plan: ReadPlan,
+        kind_id: String,
+        schema: String,
+    ) -> BoxRuntimeFuture<SnapshotDescriptor> {
+        let future = self.dispatch_async(HostRuntimeCommand::SnapshotReadPlan {
+            plan: Box::new(plan),
+            kind_id,
+            schema,
+        });
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::Snapshot(snapshot) => Ok(snapshot),
+                reply => Err(unexpected_reply("resource.async_read.snapshot", reply)),
+            }
+        })
+    }
+
+    fn open_stream_plan(&self, plan: ReadPlan) -> BoxRuntimeFuture<StreamPlan> {
+        let future = self.dispatch_async(HostRuntimeCommand::OpenStreamPlan(Box::new(plan)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::StreamPlan(stream) => Ok(stream),
+                reply => Err(unexpected_reply("resource.async_stream.open", reply)),
+            }
+        })
+    }
+
+    fn execute_export_plan(&self, plan: ExportPlan) -> BoxRuntimeFuture<PlanReceipt> {
+        let future = self.dispatch_async(HostRuntimeCommand::ExecuteExportPlan(Box::new(plan)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::PlanReceipt(receipt) => Ok(receipt),
+                reply => Err(unexpected_reply("resource.async_export", reply)),
+            }
+        })
+    }
+
+    fn commit_write_plan(&self, plan: WritePlan, bytes: Vec<u8>) -> BoxRuntimeFuture<PlanReceipt> {
+        let future = self.dispatch_async(HostRuntimeCommand::CommitWritePlan {
+            plan: Box::new(plan),
+            bytes,
+        });
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::PlanReceipt(receipt) => Ok(receipt),
+                reply => Err(unexpected_reply("resource.async_write.commit", reply)),
+            }
+        })
+    }
+
+    fn execute_command_plan(&self, plan: CommandPlan) -> BoxRuntimeFuture<PlanReceipt> {
+        let future = self.dispatch_async(HostRuntimeCommand::ExecuteCommandPlan(Box::new(plan)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::PlanReceipt(receipt) => Ok(receipt),
+                reply => Err(unexpected_reply("resource.async_command", reply)),
+            }
+        })
+    }
+
+    fn execute_command_batch(&self, batch: CommandBatch) -> BoxRuntimeFuture<Vec<PlanReceipt>> {
+        let future = self.dispatch_async(HostRuntimeCommand::ExecuteCommandBatch(Box::new(batch)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::PlanReceipts(receipts) => Ok(receipts),
+                reply => Err(unexpected_reply("resource.async_command_batch", reply)),
+            }
+        })
+    }
+
+    fn execute_saga_plan(&self, saga: SagaPlan) -> BoxRuntimeFuture<Vec<PlanReceipt>> {
+        let future = self.dispatch_async(HostRuntimeCommand::ExecuteSagaPlan(Box::new(saga)));
+        Box::pin(async move {
+            match future.await? {
+                HostRuntimeReply::PlanReceipts(receipts) => Ok(receipts),
+                reply => Err(unexpected_reply("resource.async_saga", reply)),
+            }
+        })
     }
 }
 

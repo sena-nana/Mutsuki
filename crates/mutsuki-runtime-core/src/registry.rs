@@ -1,16 +1,20 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
-    ExecutionClass, HandlerBinding, OrderingRequirement, PayloadLayout, RunnerDescriptor,
-    RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility, SurfaceOccupancy,
+    ExecutionClass, HandlerBinding, InvocationMode, OrderingRequirement, PayloadLayout,
+    RunnerConcurrency, RunnerDescriptor, RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility,
+    SurfaceOccupancy,
 };
 
-use crate::{Runner, RuntimeResult};
+use crate::{AsyncBatchHandler, Runner, RuntimeResult};
 
 #[derive(Default)]
 pub struct RunnerRegistry {
-    runners: HashMap<String, Box<dyn Runner>>,
+    runners: HashMap<String, Vec<Box<dyn Runner>>>,
+    async_handlers: HashMap<String, Arc<dyn AsyncBatchHandler>>,
+    descriptors: HashMap<String, RunnerDescriptor>,
     heartbeats: HashMap<String, RunnerHeartbeat>,
     capabilities: HashMap<String, RunnerCapabilityDeclaration>,
     frozen: bool,
@@ -89,7 +93,59 @@ impl RunnerRegistry {
             ));
         }
         let runner_id = runner.descriptor().runner_id.clone();
-        self.runners.insert(runner_id, runner);
+        let descriptor = runner.descriptor().clone();
+        if self.async_handlers.contains_key(&runner_id) {
+            return Err(duplicate_runner(&runner_id));
+        }
+        if let Some(existing) = self.descriptors.get(&runner_id)
+            && existing != &descriptor
+        {
+            return Err(duplicate_runner(&runner_id));
+        }
+        let runners = self.runners.entry(runner_id.clone()).or_default();
+        let allowed_instances = match descriptor.concurrency {
+            RunnerConcurrency::Sharded { instances } => instances,
+            _ => 1,
+        };
+        if runners.len() >= allowed_instances {
+            return Err(duplicate_runner(&runner_id));
+        }
+        runners.push(runner);
+        self.descriptors.insert(runner_id, descriptor);
+        Ok(())
+    }
+
+    pub fn register_async_handler(
+        &mut self,
+        handler: Arc<dyn AsyncBatchHandler>,
+    ) -> RuntimeResult<()> {
+        if self.frozen {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_FROZEN,
+                "runtime.runner_registry",
+                "async_handler.register",
+            ));
+        }
+        let descriptor = handler.descriptor().clone();
+        let runner_id = descriptor.runner_id.clone();
+        if self.descriptors.contains_key(&runner_id)
+            || self.runners.contains_key(&runner_id)
+            || self.async_handlers.contains_key(&runner_id)
+        {
+            return Err(duplicate_runner(&runner_id));
+        }
+        if !matches!(
+            descriptor.invocation_mode,
+            InvocationMode::AsyncReentrant | InvocationMode::AsyncExclusive
+        ) {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.runner_registry",
+                format!("runner.{runner_id}.async_invocation_mode"),
+            ));
+        }
+        self.descriptors.insert(runner_id.clone(), descriptor);
+        self.async_handlers.insert(runner_id, handler);
         Ok(())
     }
 
@@ -103,19 +159,47 @@ impl RunnerRegistry {
         }
         self.heartbeats.remove(runner_id);
         self.capabilities.remove(runner_id);
-        Ok(self.runners.remove(runner_id))
+        self.async_handlers.remove(runner_id);
+        self.descriptors.remove(runner_id);
+        Ok(self
+            .runners
+            .remove(runner_id)
+            .and_then(|mut runners| runners.pop()))
     }
 
     pub fn freeze(&mut self) {
         self.frozen = true;
     }
 
+    pub(crate) fn validate_instance_counts(&self) -> RuntimeResult<()> {
+        for descriptor in self.descriptors.values() {
+            let expected = match descriptor.concurrency {
+                RunnerConcurrency::Sharded { instances } => instances,
+                _ => 1,
+            };
+            let actual = self
+                .runners
+                .get(&descriptor.runner_id)
+                .map(Vec::len)
+                .unwrap_or_else(|| {
+                    usize::from(self.async_handlers.contains_key(&descriptor.runner_id))
+                });
+            if actual != expected {
+                return Err(crate::runtime_failure(
+                    ERR_REGISTRY_UNAUTHORIZED,
+                    "runtime.runner_registry",
+                    format!(
+                        "runner.{}.instances.{actual}.expected.{expected}",
+                        descriptor.runner_id
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn descriptors(&self) -> Vec<mutsuki_runtime_contracts::RunnerDescriptor> {
-        let mut descriptors: Vec<_> = self
-            .runners
-            .values()
-            .map(|runner| runner.descriptor().clone())
-            .collect();
+        let mut descriptors: Vec<_> = self.descriptors.values().cloned().collect();
         descriptors.sort_by(|a, b| a.runner_id.cmp(&b.runner_id));
         descriptors
     }
@@ -124,13 +208,11 @@ impl RunnerRegistry {
         &self,
         runner_id: &str,
     ) -> Option<mutsuki_runtime_contracts::RunnerDescriptor> {
-        self.runners
-            .get(runner_id)
-            .map(|runner| runner.descriptor().clone())
+        self.descriptors.get(runner_id).cloned()
     }
 
     pub fn runner_ids(&self) -> Vec<String> {
-        let mut runner_ids: Vec<_> = self.runners.keys().cloned().collect();
+        let mut runner_ids: Vec<_> = self.descriptors.keys().cloned().collect();
         runner_ids.sort();
         runner_ids
     }
@@ -141,7 +223,7 @@ impl RunnerRegistry {
         executor_id: &str,
         current_step: u64,
     ) -> RuntimeResult<RunnerHeartbeat> {
-        if !self.runners.contains_key(runner_id) {
+        if !self.descriptors.contains_key(runner_id) {
             return Err(crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                 "runtime.runner_registry",
@@ -167,14 +249,14 @@ impl RunnerRegistry {
         protocol_ids: Vec<String>,
         capacity: usize,
     ) -> RuntimeResult<RunnerCapabilityDeclaration> {
-        let descriptor = self.runners.get(runner_id).ok_or_else(|| {
+        let descriptor = self.descriptors.get(runner_id).ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
                 "runtime.runner_registry",
                 format!("runner.capability.{runner_id}"),
             )
         })?;
-        let authorized = &descriptor.descriptor().accepted_protocol_ids;
+        let authorized = &descriptor.accepted_protocol_ids;
         if protocol_ids
             .iter()
             .any(|protocol_id| !authorized.contains(protocol_id))
@@ -200,33 +282,57 @@ impl RunnerRegistry {
     }
 
     pub(crate) fn take_runner(&mut self, runner_id: &str) -> Option<Box<dyn Runner>> {
-        self.runners.remove(runner_id)
+        self.runners.get_mut(runner_id)?.pop()
     }
 
     pub(crate) fn put_runner(&mut self, runner: Box<dyn Runner>) {
         let runner_id = runner.descriptor().runner_id.clone();
-        self.runners.insert(runner_id, runner);
+        self.runners.entry(runner_id).or_default().push(runner);
+    }
+
+    pub(crate) fn async_handler(&self, runner_id: &str) -> Option<Arc<dyn AsyncBatchHandler>> {
+        self.async_handlers.get(runner_id).cloned()
     }
 
     pub fn cancel_runner(&mut self, runner_id: &str, invocation_id: &str) -> RuntimeResult<()> {
-        let runner = self.runners.get_mut(runner_id).ok_or_else(|| {
-            crate::runtime_failure(
-                mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
-                "runtime.runner_registry",
-                format!("runner.cancel.{runner_id}"),
-            )
-        })?;
+        let runner = self
+            .runners
+            .get_mut(runner_id)
+            .and_then(|runners| runners.last_mut())
+            .ok_or_else(|| {
+                crate::runtime_failure(
+                    mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
+                    "runtime.runner_registry",
+                    format!("runner.cancel.{runner_id}"),
+                )
+            })?;
         runner.cancel(invocation_id)
     }
 
     pub fn dispose_all(&mut self) -> RuntimeResult<DisposeBag> {
         let mut bag = DisposeBag::default();
-        for runner in self.runners.values_mut() {
-            runner.dispose()?;
-            bag.disposed.push(runner.descriptor().runner_id.clone());
+        for runners in self.runners.values_mut() {
+            for runner in runners {
+                runner.dispose()?;
+                bag.disposed.push(runner.descriptor().runner_id.clone());
+            }
+        }
+        for handler in self.async_handlers.values() {
+            if let Some(management) = handler.management_handle() {
+                management.dispose()?;
+            }
+            bag.disposed.push(handler.descriptor().runner_id.clone());
         }
         Ok(bag)
     }
+}
+
+fn duplicate_runner(runner_id: &str) -> crate::RuntimeFailure {
+    crate::runtime_failure(
+        ERR_REGISTRY_UNAUTHORIZED,
+        "runtime.runner_registry",
+        format!("runner.{runner_id}.duplicate"),
+    )
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -279,19 +385,27 @@ pub fn validate_runtime_descriptors(
         .iter()
         .flat_map(|plugin| plugin.provides.runners.iter())
         .collect();
-    let authorized: BTreeSet<String> = planned
-        .iter()
-        .map(|runner| runner.runner_id.clone())
-        .collect();
-    for runner in planned {
+    for runner in &planned {
         validate_runner_privilege(runner)?;
     }
     for runner in runners {
-        if !authorized.contains(&runner.runner_id) {
+        let Some(planned_runner) = planned
+            .iter()
+            .find(|planned_runner| planned_runner.runner_id == runner.runner_id)
+        else {
             return Err(crate::runtime_failure(
                 ERR_REGISTRY_UNAUTHORIZED,
                 "runtime.load_plan",
                 format!("runner.{}", runner.runner_id),
+            ));
+        };
+        if planned_runner.invocation_mode != runner.invocation_mode
+            || planned_runner.concurrency != runner.concurrency
+        {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.load_plan",
+                format!("runner.{}.invocation", runner.runner_id),
             ));
         }
         validate_runner_privilege(runner)?;
@@ -320,10 +434,17 @@ fn validate_runner_privilege(runner: &RunnerDescriptor) -> RuntimeResult<()> {
 }
 
 fn validate_runner_batch_capabilities(runner: &RunnerDescriptor) -> RuntimeResult<()> {
+    let declared_batches = runner.concurrency.max_inflight_batches();
+    let declared_entries = runner
+        .concurrency
+        .max_inflight_entries(runner.batch.max_batch_entries);
     if runner.batch.preferred_batch_size == 0
         || runner.batch.max_batch_entries == 0
         || runner.batch.max_entry_concurrency == 0
-        || runner.batch.max_inflight_batches != 1
+        || runner.batch.max_inflight_batches == 0
+        || runner.batch.max_inflight_batches != declared_batches
+        || declared_batches == 0
+        || declared_entries == 0
         || runner.batch.preferred_batch_size > runner.batch.max_batch_entries
         || runner.batch.max_entry_concurrency > runner.batch.max_batch_entries
     {
@@ -331,6 +452,34 @@ fn validate_runner_batch_capabilities(runner: &RunnerDescriptor) -> RuntimeResul
             ERR_REGISTRY_UNAUTHORIZED,
             "runtime.load_plan",
             format!("runner.{}.batch", runner.runner_id),
+        ));
+    }
+    let invocation_matches_concurrency = matches!(
+        (&runner.invocation_mode, &runner.concurrency),
+        (InvocationMode::SyncExclusive, RunnerConcurrency::Exclusive)
+            | (
+                InvocationMode::SyncExclusive,
+                RunnerConcurrency::Sharded { .. }
+            )
+            | (InvocationMode::AsyncExclusive, RunnerConcurrency::Exclusive)
+            | (
+                InvocationMode::AsyncReentrant,
+                RunnerConcurrency::Reentrant { .. }
+            )
+            | (
+                InvocationMode::ExternalProcess,
+                RunnerConcurrency::Exclusive
+            )
+            | (
+                InvocationMode::ExternalProcess,
+                RunnerConcurrency::Sharded { .. }
+            )
+    );
+    if !invocation_matches_concurrency {
+        return Err(crate::runtime_failure(
+            ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.load_plan",
+            format!("runner.{}.concurrency", runner.runner_id),
         ));
     }
     if runner.payload.layouts.is_empty()

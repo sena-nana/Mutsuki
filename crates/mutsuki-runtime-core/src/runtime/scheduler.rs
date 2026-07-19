@@ -27,7 +27,19 @@ impl DispatchBudget {
 
     pub fn clamp_to(mut self, hard_capacity: usize) -> Self {
         self.max_entries = self.max_entries.min(hard_capacity);
-        self.max_batches = self.max_batches.min(usize::from(self.max_entries > 0));
+        if self.max_entries == 0 {
+            self.max_batches = 0;
+        } else {
+            self.max_batches = self.max_batches.min(self.max_entries);
+        }
+        self
+    }
+
+    pub fn clamp_batches(mut self, hard_batch_capacity: usize) -> Self {
+        self.max_batches = self.max_batches.min(hard_batch_capacity);
+        if self.max_batches == 0 {
+            self.max_entries = 0;
+        }
         self
     }
 }
@@ -37,7 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dispatch_budget_clamps_to_one_active_batch() {
+    fn dispatch_budget_preserves_bounded_multi_batch_capacity() {
         let budget = DispatchBudget {
             max_entries: 8,
             max_batches: 4,
@@ -47,7 +59,7 @@ mod tests {
         .clamp_to(8);
 
         assert_eq!(budget.max_entries, 8);
-        assert_eq!(budget.max_batches, 1);
+        assert_eq!(budget.max_batches, 4);
     }
 
     #[test]
@@ -92,6 +104,14 @@ impl ScheduleDecision {
     pub fn clamp_to(mut self, hard_capacity: usize) -> Self {
         self.dispatch_limit = self.dispatch_limit.min(hard_capacity);
         self.budget = self.budget.clamp_to(hard_capacity);
+        self
+    }
+
+    pub fn clamp_batches(mut self, hard_batch_capacity: usize) -> Self {
+        self.budget = self.budget.clamp_batches(hard_batch_capacity);
+        if self.budget.max_batches == 0 {
+            self.dispatch_limit = 0;
+        }
         self
     }
 

@@ -11,7 +11,8 @@ use mutsuki_runtime_contracts::{
     SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_contracts::{
-    BatchPayload, ColumnPayload, ExecutionClass, PayloadLayout, RunnerPurity, RuntimeError,
+    BatchPayload, ColumnPayload, ExecutionClass, InvocationMode, PayloadLayout, RunnerConcurrency,
+    RunnerPurity, RuntimeError,
 };
 use serde_json::json;
 
@@ -89,6 +90,11 @@ fn async_descriptor() -> RunnerDescriptor {
         accepted_protocol_ids: vec!["parent.work".into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Cpu,
+        invocation_mode: InvocationMode::AsyncReentrant,
+        concurrency: RunnerConcurrency::Reentrant {
+            max_inflight_batches: 4,
+            max_inflight_entries: 64,
+        },
         input_schema: json!({}),
         output_schema: json!({}),
         batch: Default::default(),
@@ -171,7 +177,7 @@ fn async_runner_adapter_suspends_and_resumes_call() {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client.clone(),
         Box::new(|ctx, task| {
@@ -244,7 +250,7 @@ fn async_runner_adapter_cancel_removes_invocation_by_invocation_id() {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client.clone(),
         Box::new(|ctx, task| {
@@ -306,7 +312,7 @@ fn async_runner_adapter_emits_generic_child_task_with_trace_context() {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(|ctx, task| {
@@ -349,7 +355,7 @@ fn async_runner_adapter_emits_explicit_cancel_policy_descriptor() {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(|ctx, task| {
@@ -388,7 +394,7 @@ fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(|ctx, task| {
@@ -423,12 +429,47 @@ fn async_runner_adapter_rejects_self_call_when_policy_disallows_it() {
 }
 
 #[test]
+fn task_await_runner_adapter_rejects_external_future_without_wake_source() {
+    let client = Arc::new(ManualClient {
+        outcomes: Mutex::new(HashMap::new()),
+    });
+    let mut adapter = TaskAwaitRunnerAdapter::new(
+        async_descriptor(),
+        client,
+        Box::new(|_ctx, task| {
+            Box::pin(async move {
+                std::future::pending::<()>().await;
+                Ok(RunnerResult::completed(task.task_id))
+            })
+        }),
+    );
+
+    let error = adapter
+        .run_one_for_test(
+            RunnerContext::new(
+                1,
+                1,
+                "executor:test",
+                Some("lease:test".into()),
+                "invocation:test",
+            ),
+            Task::new("parent-1", "parent.work", json!({})),
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error.error().code,
+        mutsuki_runtime_contracts::ERR_RUNNER_AWAITABLE_UNSUPPORTED
+    );
+}
+
+#[test]
 fn async_runner_adapter_emits_targeted_child_task_descriptor() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
     });
     let descriptor = async_descriptor();
-    let mut adapter = AsyncRunnerAdapter::new(
+    let mut adapter = TaskAwaitRunnerAdapter::new(
         descriptor,
         client,
         Box::new(|ctx, task| {

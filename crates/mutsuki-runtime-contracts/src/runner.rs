@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    BatchId, ExecutorId, OrderingRequirement, PayloadLayout, ProtocolId, RefId, ResourceRef,
-    ScalarValue, Task, TaskAwait, TaskId, TaskLeaseId, TickId, ValueRef,
+    BatchEntry, BatchId, ExecutorId, OrderingRequirement, PayloadLayout, ProtocolId, RefId,
+    ResourceRef, RunnerId, ScalarValue, Task, TaskAwait, TaskId, TaskLease, TaskLeaseId, TickId,
+    ValueRef,
 };
 use crate::{StateDelta, SurfaceId};
 
@@ -18,6 +19,60 @@ pub enum ExecutionClass {
     Cpu,
     Blocking,
     Script,
+}
+
+/// Describes how a runner invocation is driven by the Host.
+///
+/// Execution class is intentionally orthogonal to invocation mode: an `Io`
+/// runner may still be a synchronous/blocking implementation, while an async
+/// handler is only selected when it explicitly declares an async mode.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvocationMode {
+    #[default]
+    SyncExclusive,
+    AsyncReentrant,
+    AsyncExclusive,
+    ExternalProcess,
+}
+
+/// Declares the logical concurrency supported by one runner id.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RunnerConcurrency {
+    #[default]
+    Exclusive,
+    Reentrant {
+        max_inflight_batches: usize,
+        max_inflight_entries: usize,
+    },
+    Sharded {
+        instances: usize,
+    },
+}
+
+impl RunnerConcurrency {
+    pub fn max_inflight_batches(&self) -> usize {
+        match self {
+            Self::Exclusive => 1,
+            Self::Reentrant {
+                max_inflight_batches,
+                ..
+            } => *max_inflight_batches,
+            Self::Sharded { instances } => *instances,
+        }
+    }
+
+    pub fn max_inflight_entries(&self, fallback: usize) -> usize {
+        match self {
+            Self::Exclusive => fallback,
+            Self::Reentrant {
+                max_inflight_entries,
+                ..
+            } => *max_inflight_entries,
+            Self::Sharded { instances } => fallback.saturating_mul(*instances),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +91,10 @@ pub struct RunnerDescriptor {
     pub accepted_protocol_ids: Vec<ProtocolId>,
     pub purity: RunnerPurity,
     pub execution_class: ExecutionClass,
+    #[serde(default)]
+    pub invocation_mode: InvocationMode,
+    #[serde(default)]
+    pub concurrency: RunnerConcurrency,
     pub input_schema: Value,
     pub output_schema: Value,
     pub batch: RunnerBatchCapability,
@@ -72,7 +131,7 @@ pub struct RunnerBatchCapability {
     pub max_entry_concurrency: usize,
     /// Maximum active batches for one logical runner id.
     ///
-    /// The current single-instance runner model only supports `1`. Batch-internal
+    /// This must match `RunnerConcurrency::max_inflight_batches`. Batch-internal
     /// entry parallelism remains controlled by `max_entry_concurrency`.
     pub max_inflight_batches: usize,
     pub scalar_thread_safe: bool,
@@ -188,6 +247,10 @@ pub struct RunnerContext {
     pub invocation_id: String,
     pub cancel_token: String,
     pub deadline_tick: Option<u64>,
+    /// Host-owned wall-clock timeout relative to invocation start. Core never
+    /// derives or interprets this value.
+    #[serde(default)]
+    pub deadline_after_ms: Option<u64>,
     pub cancel_requested: bool,
 }
 
@@ -213,6 +276,7 @@ impl RunnerContext {
             cancel_token: invocation_id.clone(),
             invocation_id,
             deadline_tick: None,
+            deadline_after_ms: None,
             cancel_requested: false,
         }
     }
@@ -222,6 +286,32 @@ impl RunnerContext {
         self.entry_count = entry_count;
         self
     }
+}
+
+/// Serializable identity and fencing facts for one Host-owned async invocation.
+/// Futures, wakers and executor handles never cross the contract boundary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AsyncInvocation {
+    pub invocation_id: String,
+    pub batch_id: BatchId,
+    pub runner_id: RunnerId,
+    pub task_ids: Vec<TaskId>,
+    pub task_lease_ids: Vec<TaskLeaseId>,
+    pub attempt_generations: Vec<u64>,
+    pub task_leases: Vec<TaskLease>,
+    pub expected_entries: Vec<BatchEntry>,
+    pub registry_generation: u64,
+    pub plugin_generation: u64,
+    pub cancel_token: String,
+    pub deadline_after_ms: Option<u64>,
+    pub entry_count: usize,
+    pub payload_bytes: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsyncInvocationHandle {
+    pub invocation_id: String,
+    pub cancel_token: String,
 }
 
 pub trait IntoTaskLeaseIds {

@@ -6,7 +6,9 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{ReloadDecision, RunnerLoopReport, RuntimeStatistics, RuntimeStopState};
 use mutsuki_runtime_sdk::HostTaskSnapshot;
 
-use crate::{HostRuntimeDriveState, PreparedRuntimeReload, WorkerPoolSnapshot};
+use crate::{
+    AsyncExecutorSnapshot, HostRuntimeDriveState, PreparedRuntimeReload, WorkerPoolSnapshot,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostTaskState {
@@ -33,6 +35,7 @@ pub enum HostRuntimeCommand {
     Statistics,
     DriveState,
     WorkerPools,
+    AsyncExecutor,
     TaskSnapshots,
     TaskStatesBatch(Vec<TaskHandle>),
     TaskOutcome(TaskHandle),
@@ -97,6 +100,7 @@ pub enum HostRuntimeReply {
     Statistics(RuntimeStatistics),
     DriveState(HostRuntimeDriveState),
     WorkerPools(Vec<WorkerPoolSnapshot>),
+    AsyncExecutor(Option<AsyncExecutorSnapshot>),
     TaskSnapshots(Vec<HostTaskSnapshot>),
     TaskStatesBatch(Vec<HostTaskState>),
     TaskOutcome(Option<TaskOutcome>),

@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
@@ -8,6 +10,27 @@ use mutsuki_runtime_contracts::{
 };
 
 use crate::RuntimeResult;
+
+pub type AsyncCompletionFuture =
+    Pin<Box<dyn Future<Output = RuntimeResult<CompletionBatch>> + Send + 'static>>;
+
+/// Shared Host-driven async handler contract.
+///
+/// Core stores the descriptor and builds leased work, but never polls the
+/// returned future. Only a Host async executor may drive it.
+pub trait AsyncBatchHandler: Send + Sync {
+    fn descriptor(&self) -> &RunnerDescriptor;
+
+    fn run_batch(&self, ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture;
+
+    fn isolation(&self) -> RunnerIsolation {
+        RunnerIsolation::Cooperative
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        None
+    }
+}
 
 pub trait RunnerTerminationHandle: Send + Sync + fmt::Debug {
     /// Terminates the deployment boundary that is currently executing a runner invocation.
@@ -97,6 +120,8 @@ impl CoreKernelRunner {
                 accepted_protocol_ids: vec!["core.commit".into(), "core.event.append".into()],
                 purity: RunnerPurity::Committer,
                 execution_class: ExecutionClass::Control,
+                invocation_mode: Default::default(),
+                concurrency: Default::default(),
                 input_schema: serde_json::json!({}),
                 output_schema: serde_json::json!({}),
                 batch: Default::default(),

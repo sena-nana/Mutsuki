@@ -282,11 +282,13 @@ fn claim_ready_dispatches_splits_conflicting_writes_before_dispatch() {
 
     let mut completed = 0;
     for dispatch in dispatches {
-        let mut runner = dispatch.runner;
+        let RunnerDispatchTarget::Sync(mut runner) = dispatch.target else {
+            panic!("test expected a synchronous runner dispatch");
+        };
         let result = runner.run_batch(dispatch.ctx, dispatch.batch.clone());
         let report = runtime
             .complete_runner_dispatch(RunnerCompletion {
-                runner,
+                runner: Some(runner),
                 task_leases: dispatch.task_leases,
                 batch_id: dispatch.batch.batch_id.clone(),
                 expected_entries: dispatch.batch.entries.clone(),
@@ -317,11 +319,13 @@ fn claim_ready_dispatches_splits_conflicting_writes_before_dispatch() {
     );
 
     for dispatch in dispatches {
-        let mut runner = dispatch.runner;
+        let RunnerDispatchTarget::Sync(mut runner) = dispatch.target else {
+            panic!("test expected a synchronous runner dispatch");
+        };
         let result = runner.run_batch(dispatch.ctx, dispatch.batch.clone());
         let report = runtime
             .complete_runner_dispatch(RunnerCompletion {
-                runner,
+                runner: Some(runner),
                 task_leases: dispatch.task_leases,
                 batch_id: dispatch.batch.batch_id.clone(),
                 expected_entries: dispatch.batch.entries.clone(),
@@ -387,4 +391,59 @@ fn claim_ready_dispatches_keeps_shared_reads_in_one_work_batch() {
     assert!(dispatch.batch.resource_plan.serial_groups.is_empty());
     assert_eq!(dispatch.batch.resource_plan.parallelism_limit, 2);
     assert!(dispatch.batch.resource_plan.conflict_entries.is_empty());
+}
+
+#[test]
+fn sharded_runner_requires_declared_instances_and_dispatches_one_batch_per_instance() {
+    let mut worker = runner_descriptor("worker", "runtime.sharded.input", RunnerPurity::Pure);
+    worker.concurrency = RunnerConcurrency::Sharded { instances: 2 };
+    worker.batch.preferred_batch_size = 1;
+    worker.batch.max_batch_entries = 1;
+    worker.batch.max_entry_concurrency = 1;
+    worker.batch.max_inflight_batches = 2;
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+
+    let missing_instance: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(completed_runner!(worker.clone()));
+    let error = CoreRuntime::boot(plan.clone(), missing_instance)
+        .err()
+        .expect("sharded runner should require every declared instance");
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert!(error.error().route.contains("instances.1.expected.2"));
+
+    let runners: Vec<Box<dyn Runner>> =
+        runners_with_kernel!(completed_runner!(worker.clone()), completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    runtime
+        .submit_task(Task::new("shard-1", "runtime.sharded.input", json!({})))
+        .unwrap();
+    runtime
+        .submit_task(Task::new("shard-2", "runtime.sharded.input", json!({})))
+        .unwrap();
+
+    let (report, dispatches) = runtime
+        .claim_ready_dispatches(
+            |_descriptor, _load, _step, _generation| {
+                Ok(
+                    ScheduleDecision::new("test.scheduler", 2, "test.sharded").with_budget(
+                        DispatchBudget {
+                            max_entries: 2,
+                            max_batches: 2,
+                            max_bytes: usize::MAX,
+                            lane_budget: BTreeMap::new(),
+                        },
+                    ),
+                )
+            },
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(report.claimed_tasks, 2);
+    assert_eq!(dispatches.len(), 2);
+    assert!(
+        dispatches
+            .iter()
+            .all(|dispatch| matches!(dispatch.target, RunnerDispatchTarget::Sync(_)))
+    );
 }

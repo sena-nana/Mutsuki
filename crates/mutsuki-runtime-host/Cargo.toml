@@ -6,12 +6,15 @@ license.workspace = true
 
 [dependencies]
 crossbeam-channel.workspace = true
+futures-util.workspace = true
+futures-channel.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
 mutsuki-runtime-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 libc.workspace = true

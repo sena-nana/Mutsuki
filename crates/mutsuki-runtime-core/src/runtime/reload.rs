@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{RuntimeEventKind, RuntimeLoadPlan};
 
@@ -7,7 +8,7 @@ use crate::registry::{
     PluginGenerationPhase, PluginGenerationState, ReloadDecision, RunnerRegistry, compare_surfaces,
     validate_runtime_descriptors,
 };
-use crate::runner::Runner;
+use crate::runner::{AsyncBatchHandler, Runner};
 
 use super::{CoreRuntime, DrainingGeneration};
 use invocation::cancel_attrs;
@@ -75,9 +76,23 @@ impl CoreRuntime {
         new_plan: RuntimeLoadPlan,
         new_runners: Vec<Box<dyn Runner>>,
     ) -> RuntimeResult<ReloadDecision> {
+        self.reload_with_async_handlers(new_plan, new_runners, Vec::new())
+    }
+
+    pub fn reload_with_async_handlers(
+        &mut self,
+        new_plan: RuntimeLoadPlan,
+        new_runners: Vec<Box<dyn Runner>>,
+        new_async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
+    ) -> RuntimeResult<ReloadDecision> {
         let runner_descriptors: Vec<_> = new_runners
             .iter()
             .map(|runner| runner.descriptor().clone())
+            .chain(
+                new_async_handlers
+                    .iter()
+                    .map(|handler| handler.descriptor().clone()),
+            )
             .collect();
         validate_runtime_descriptors(&new_plan, &runner_descriptors)?;
         let occupancy = self.surface_occupancy();
@@ -94,6 +109,10 @@ impl CoreRuntime {
         for runner in new_runners {
             new_registry.register(runner)?;
         }
+        for handler in new_async_handlers {
+            new_registry.register_async_handler(handler)?;
+        }
+        new_registry.validate_instance_counts()?;
         new_registry.freeze();
         for shadow_state in
             generation_states_for_plan(&new_plan, PluginGenerationPhase::ShadowStarting)

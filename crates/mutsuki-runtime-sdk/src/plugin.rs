@@ -7,10 +7,11 @@ use mutsuki_runtime_contracts::{
     PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolDescriptor,
     ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
-use mutsuki_runtime_core::{Runner, RuntimeResult};
+use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
 
 use crate::{
-    HandlerBindingBuilder, HostService, ProtocolSpec, ResourceKindSpec, ResourceProviderGateway,
+    AsyncResourceProviderGateway, HandlerBindingBuilder, HostService, ProtocolSpec,
+    ResourceKindSpec, ResourceProviderGateway,
 };
 
 pub struct RuntimeBootstrapperService {
@@ -24,11 +25,18 @@ pub struct RuntimeBootstrapperResourceProvider {
     pub provider: Arc<dyn ResourceProviderGateway>,
 }
 
+pub struct RuntimeBootstrapperAsyncResourceProvider {
+    pub provider_id: String,
+    pub provider: Arc<dyn AsyncResourceProviderGateway>,
+}
+
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub runners: Vec<Box<dyn Runner>>,
+    pub async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     pub host_services: Vec<RuntimeBootstrapperService>,
     pub resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
+    pub async_resource_providers: Vec<RuntimeBootstrapperAsyncResourceProvider>,
 }
 
 pub trait Plugin: Send {
@@ -76,8 +84,10 @@ pub struct PluginBuilder {
     lifecycle: LifecyclePolicy,
     metadata: BTreeMap<String, ScalarValue>,
     runners: Vec<Box<dyn Runner>>,
+    async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     host_services: Vec<RuntimeBootstrapperService>,
     resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
+    async_resource_providers: Vec<RuntimeBootstrapperAsyncResourceProvider>,
 }
 
 impl PluginBuilder {
@@ -106,8 +116,10 @@ impl PluginBuilder {
             },
             metadata: BTreeMap::new(),
             runners: Vec::new(),
+            async_handlers: Vec::new(),
             host_services: Vec::new(),
             resource_providers: Vec::new(),
+            async_resource_providers: Vec::new(),
         }
     }
 
@@ -154,6 +166,12 @@ impl PluginBuilder {
 
     pub fn runner_descriptor(mut self, descriptor: RunnerDescriptor) -> Self {
         self.provides.runners.push(descriptor);
+        self
+    }
+
+    pub fn async_handler(mut self, handler: Arc<dyn AsyncBatchHandler>) -> Self {
+        self.provides.runners.push(handler.descriptor().clone());
+        self.async_handlers.push(handler);
         self
     }
 
@@ -245,6 +263,28 @@ impl PluginBuilder {
         self
     }
 
+    pub fn async_resource_provider_gateway(
+        mut self,
+        provider_id: impl Into<String>,
+        provider: Arc<dyn AsyncResourceProviderGateway>,
+    ) -> Self {
+        let provider_id = provider_id.into();
+        if !self
+            .provides
+            .resource_providers
+            .iter()
+            .any(|known| known == &provider_id)
+        {
+            self.provides.resource_providers.push(provider_id.clone());
+        }
+        self.async_resource_providers
+            .push(RuntimeBootstrapperAsyncResourceProvider {
+                provider_id,
+                provider,
+            });
+        self
+    }
+
     pub fn provides(mut self, provides: PluginProvides) -> Self {
         self.provides = provides;
         self
@@ -282,8 +322,10 @@ impl PluginBuilder {
                 metadata: self.metadata,
             },
             runners: self.runners,
+            async_handlers: self.async_handlers,
             host_services: self.host_services,
             resource_providers: self.resource_providers,
+            async_resource_providers: self.async_resource_providers,
         }
     }
 

@@ -1,5 +1,6 @@
 mod abi_transport;
 mod actor;
+mod async_executor;
 mod backend;
 mod binary;
 mod bootstrapper;
@@ -22,6 +23,9 @@ mod worker;
 pub use abi_transport::{
     TransportJsonlRunner, TransportResourceProvider, TransportRunner, TypedRequestTransport,
 };
+pub use async_executor::{
+    AsyncEventSink, AsyncExecutor, AsyncExecutorEvent, AsyncExecutorSnapshot, TokioAsyncExecutor,
+};
 pub use backend::{HostExtension, PluginBackend};
 pub use binary::{BinaryRunner, BinaryTransport};
 pub use bootstrapper::{NativeRunner, PreparedRuntimeReload, RuntimeBootstrapper};
@@ -32,8 +36,8 @@ pub use clients::{
 };
 pub use commands::{HostRuntimeCommand, HostRuntimeReply, HostTaskState};
 pub use host::{
-    HostRuntime, HostRuntimeConfig, HostRuntimeDriveState, HostRuntimeMetricsSnapshot,
-    TaskCompletionSubscription,
+    HostAsyncResourceProviders, HostResourceProviders, HostRuntime, HostRuntimeConfig,
+    HostRuntimeDriveState, HostRuntimeMetricsSnapshot, TaskCompletionSubscription,
 };
 pub use jsonl::{JsonlRunner, JsonlTransport};
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};

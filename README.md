@@ -112,6 +112,10 @@ are documented in [Core benchmark v2](docs/core-performance-model-v1.md), the sh
 [performance/README.md](performance/README.md), and the full cross-owner audit in
 [Epic #35 acceptance](docs/issue35-acceptance.md).
 
+Issue #36 keeps the synchronous one-entry path under a stricter release comparison: median
+latency and throughput may regress by at most 5% (with the existing three-MAD noise allowance
+for latency). Async I/O throughput is validated separately by the Host executor acceptance tests.
+
 ## Reading Order
 
 - [AGENTS.md](AGENTS.md)

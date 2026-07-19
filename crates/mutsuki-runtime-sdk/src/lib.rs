@@ -33,7 +33,10 @@ pub use abi::{
     BinaryPluginGuest, ConfiguredBinaryPluginGuest, ConfiguredJsonlPluginGuest, JsonlPluginGuest,
     dispatch_binary_host_request, dispatch_host_request,
 };
-pub use backend::{ResourcePlanGateway, ResourceProviderGateway, ResourceRegistryGateway};
+pub use backend::{
+    AsyncResourcePlanGateway, AsyncResourceProviderGateway, BoxRuntimeFuture, ResourcePlanGateway,
+    ResourceProviderGateway, ResourceRegistryGateway,
+};
 pub use batch::{BatchPayloadBuilder, TaskBatchBuilder, TaskOptions};
 pub use descriptor::{
     HandlerBindingBuilder, ProtocolDescriptorBuilder, ProtocolSpec, ResourceKindSpec,
@@ -49,7 +52,8 @@ pub use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{
     BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader,
-    RuntimeBootstrapperResourceProvider, RuntimeBootstrapperService,
+    RuntimeBootstrapperAsyncResourceProvider, RuntimeBootstrapperResourceProvider,
+    RuntimeBootstrapperService,
 };
 pub use portability::Checkpointable;
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};
@@ -467,7 +471,7 @@ impl PendingAwait {
     }
 }
 
-pub type BoxedAsyncRunner = Box<
+pub type BoxedTaskAwaitRunner = Box<
     dyn FnMut(
             AsyncRunnerContext,
             Task,
@@ -475,10 +479,15 @@ pub type BoxedAsyncRunner = Box<
         + Send,
 >;
 
-pub struct AsyncRunnerAdapter {
+/// Drives only Mutsuki child-task awaits (`ctx.call(...).await`).
+///
+/// This adapter is deliberately not a general-purpose I/O executor. A future
+/// that returns `Pending` without producing a `TaskAwait` wake source fails
+/// structurally instead of being polled again on subsequent Core ticks.
+pub struct TaskAwaitRunnerAdapter {
     descriptor: RunnerDescriptor,
     client: RuntimeClientRef,
-    factory: BoxedAsyncRunner,
+    factory: BoxedTaskAwaitRunner,
     invocations: HashMap<String, AsyncInvocation>,
     invocation_tasks: HashMap<String, String>,
     allow_self_call: bool,
@@ -489,11 +498,11 @@ struct AsyncInvocation {
     pending: Arc<Mutex<Option<PendingAwait>>>,
 }
 
-impl AsyncRunnerAdapter {
+impl TaskAwaitRunnerAdapter {
     pub fn new(
         descriptor: RunnerDescriptor,
         client: RuntimeClientRef,
-        factory: BoxedAsyncRunner,
+        factory: BoxedTaskAwaitRunner,
     ) -> Self {
         Self {
             descriptor,
@@ -526,7 +535,7 @@ impl AsyncRunnerAdapter {
     }
 }
 
-impl Runner for AsyncRunnerAdapter {
+impl Runner for TaskAwaitRunnerAdapter {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }
@@ -589,7 +598,7 @@ impl Runner for AsyncRunnerAdapter {
     }
 }
 
-impl AsyncRunnerAdapter {
+impl TaskAwaitRunnerAdapter {
     #[cfg(test)]
     pub(crate) fn run_one_for_test(
         &mut self,
@@ -670,23 +679,32 @@ impl AsyncRunnerAdapter {
                         status: RunnerStatus::Waiting,
                     })
                 } else {
-                    Ok(RunnerResult {
-                        task_id,
-                        output: None,
-                        deltas: Vec::new(),
-                        events: Vec::new(),
-                        tasks: Vec::new(),
-                        effects: Vec::new(),
-                        values: Vec::new(),
-                        resources: Vec::new(),
-                        task_await: None,
-                        status: RunnerStatus::Continue,
-                    })
+                    self.remove_invocation_by_task(&task_id);
+                    Err(mutsuki_runtime_core::RuntimeFailure::new(
+                        mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_RUNNER_AWAITABLE_UNSUPPORTED,
+                            "sdk.task_await_runner_adapter",
+                            format!(
+                                "runner.{}.external_future_pending",
+                                self.descriptor.runner_id
+                            ),
+                        ),
+                    ))
                 }
             }
         }
     }
 }
+
+#[deprecated(
+    note = "renamed to TaskAwaitRunnerAdapter; it only supports Mutsuki child-task awaits"
+)]
+pub type AsyncRunnerAdapter = TaskAwaitRunnerAdapter;
+
+#[deprecated(
+    note = "renamed to BoxedTaskAwaitRunner; it is not a general external-I/O future contract"
+)]
+pub type BoxedAsyncRunner = BoxedTaskAwaitRunner;
 
 #[cfg(test)]
 fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
@@ -703,6 +721,7 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
     let lease = TaskLease {
         lease_id,
         task_id: task.task_id.clone(),
+        attempt_generation: 1,
         runner_id: "sdk.test.runner".into(),
         executor_id: ctx.executor_id.clone(),
         registry_generation: ctx.registry_generation,

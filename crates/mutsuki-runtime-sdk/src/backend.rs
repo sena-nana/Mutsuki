@@ -4,6 +4,10 @@ use mutsuki_runtime_contracts::{
     WritePlan,
 };
 use mutsuki_runtime_core::RuntimeResult;
+use std::future::Future;
+use std::pin::Pin;
+
+pub type BoxRuntimeFuture<T> = Pin<Box<dyn Future<Output = RuntimeResult<T>> + Send + 'static>>;
 
 pub trait ResourcePlanGateway: Send + Sync {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>>;
@@ -50,6 +54,36 @@ pub trait ResourceRegistryGateway: ResourcePlanGateway {
 }
 
 pub trait ResourceProviderGateway: ResourcePlanGateway {
+    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
+    fn create_cow_state_resource(
+        &self,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef>;
+    fn create_capability_resource(&self, kind_id: &str, schema: &str)
+    -> RuntimeResult<ResourceRef>;
+}
+
+/// Native async resource plan boundary. Provider-owned futures are driven by
+/// the Host async executor and never polled by Core.
+pub trait AsyncResourcePlanGateway: Send + Sync {
+    fn collect_read_plan(&self, plan: ReadPlan) -> BoxRuntimeFuture<Vec<u8>>;
+    fn snapshot_read_plan(
+        &self,
+        plan: ReadPlan,
+        kind_id: String,
+        schema: String,
+    ) -> BoxRuntimeFuture<SnapshotDescriptor>;
+    fn open_stream_plan(&self, plan: ReadPlan) -> BoxRuntimeFuture<StreamPlan>;
+    fn execute_export_plan(&self, plan: ExportPlan) -> BoxRuntimeFuture<PlanReceipt>;
+    fn commit_write_plan(&self, plan: WritePlan, bytes: Vec<u8>) -> BoxRuntimeFuture<PlanReceipt>;
+    fn execute_command_plan(&self, plan: CommandPlan) -> BoxRuntimeFuture<PlanReceipt>;
+    fn execute_command_batch(&self, batch: CommandBatch) -> BoxRuntimeFuture<Vec<PlanReceipt>>;
+    fn execute_saga_plan(&self, saga: SagaPlan) -> BoxRuntimeFuture<Vec<PlanReceipt>>;
+}
+
+pub trait AsyncResourceProviderGateway: AsyncResourcePlanGateway {
     fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef>;
     fn create_cow_state_resource(
         &self,

@@ -533,7 +533,16 @@ fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateRe
         };
         if let (Some(current), Some(old)) = (&case.metrics.latency_ns, &previous.metrics.latency_ns)
         {
-            let median_limit = old.median + (old.median * 0.10).max(old.mad * 3.0);
+            let regression_ratio = if case
+                .dimensions
+                .get("batch_size")
+                .is_some_and(|value| value == "1")
+            {
+                0.05
+            } else {
+                0.10
+            };
+            let median_limit = old.median + (old.median * regression_ratio).max(old.mad * 3.0);
             gates.push(gate_at_most(
                 format!("relative.{}.median", case.case_id),
                 current.median,
@@ -551,10 +560,19 @@ fn relative_gates(cases: &[CaseReport], baseline: &BaselineReport) -> Vec<GateRe
             &case.metrics.throughput_per_second,
             &previous.metrics.throughput_per_second,
         ) {
+            let throughput_ratio = if case
+                .dimensions
+                .get("batch_size")
+                .is_some_and(|value| value == "1")
+            {
+                0.95
+            } else {
+                0.90
+            };
             gates.push(gate_at_least(
                 format!("relative.{}.throughput", case.case_id),
                 current.median,
-                old.median * 0.90,
+                old.median * throughput_ratio,
                 "units/s",
             ));
         }

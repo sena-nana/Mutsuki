@@ -6,7 +6,7 @@ use mutsuki_runtime_contracts::PluginManifest;
 
 pub const DEBUG_JSONL_CODEC_ID: &str = "mutsuki.codec.typed-jsonl.v1";
 pub const BINARY_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
-pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.2.0";
+pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.3.0";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_JSONL_LINE_BYTES: usize = 8 * 1024 * 1024;

@@ -6,7 +6,9 @@ use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use mutsuki_runtime_contracts::ExecutionClass;
-use mutsuki_runtime_core::{RunnerCompletion, RunnerDispatch, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{
+    RunnerCompletion, RunnerDispatch, RunnerDispatchTarget, RuntimeFailure, RuntimeResult,
+};
 use serde::Serialize;
 
 use crate::actor::CoreActorMsg;
@@ -366,20 +368,20 @@ pub(crate) struct WorkerPools {
 impl WorkerPools {
     pub(crate) fn get(&self, execution_class: &ExecutionClass) -> Option<&WorkerPool> {
         match execution_class {
-            ExecutionClass::Orchestration | ExecutionClass::Io | ExecutionClass::Cpu => {
-                Some(&self.compute)
+            ExecutionClass::Orchestration | ExecutionClass::Cpu => Some(&self.compute),
+            ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
+                Some(&self.blocking)
             }
-            ExecutionClass::Blocking | ExecutionClass::Script => Some(&self.blocking),
             ExecutionClass::Control => None,
         }
     }
 
     pub(crate) fn get_mut(&mut self, execution_class: &ExecutionClass) -> Option<&mut WorkerPool> {
         match execution_class {
-            ExecutionClass::Orchestration | ExecutionClass::Io | ExecutionClass::Cpu => {
-                Some(&mut self.compute)
+            ExecutionClass::Orchestration | ExecutionClass::Cpu => Some(&mut self.compute),
+            ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
+                Some(&mut self.blocking)
             }
-            ExecutionClass::Blocking | ExecutionClass::Script => Some(&mut self.blocking),
             ExecutionClass::Control => None,
         }
     }
@@ -396,11 +398,7 @@ pub(crate) fn worker_pools(
     Ok(WorkerPools {
         compute: WorkerPool::new(
             "compute",
-            vec![
-                ExecutionClass::Orchestration,
-                ExecutionClass::Io,
-                ExecutionClass::Cpu,
-            ],
+            vec![ExecutionClass::Orchestration, ExecutionClass::Cpu],
             config.worker_threads,
             config.pool_queue_limit,
             config.pool_max_inflight_bytes,
@@ -409,7 +407,11 @@ pub(crate) fn worker_pools(
         )?,
         blocking: WorkerPool::new(
             "blocking",
-            vec![ExecutionClass::Blocking, ExecutionClass::Script],
+            vec![
+                ExecutionClass::Io,
+                ExecutionClass::Blocking,
+                ExecutionClass::Script,
+            ],
             config.blocking_threads,
             config.pool_queue_limit,
             config.pool_max_inflight_bytes,
@@ -502,34 +504,48 @@ fn finish_dispatch_counters(state: &WorkerPoolState, entry_count: usize, payload
 
 fn execute_dispatch(dispatch: RunnerDispatch) -> RunnerCompletion {
     let RunnerDispatch {
-        mut runner,
+        target,
         ctx,
         task_leases,
         batch,
     } = dispatch;
     let batch_id = batch.batch_id.clone();
     let expected_entries = batch.entries.clone();
-    let result =
-        catch_unwind(AssertUnwindSafe(|| runner.run_batch(ctx, batch))).unwrap_or_else(|_| {
-            Err(host_failure(
-                "host.worker.panic",
-                format!("runner {} panicked", runner.descriptor().runner_id),
-            ))
-        });
-    RunnerCompletion {
-        runner,
-        task_leases,
-        batch_id,
-        expected_entries,
-        result,
+    match target {
+        RunnerDispatchTarget::Sync(mut runner) => {
+            let result = catch_unwind(AssertUnwindSafe(|| runner.run_batch(ctx, batch)))
+                .unwrap_or_else(|_| {
+                    Err(host_failure(
+                        "host.worker.panic",
+                        format!("runner {} panicked", runner.descriptor().runner_id),
+                    ))
+                });
+            RunnerCompletion {
+                runner: Some(runner),
+                task_leases,
+                batch_id,
+                expected_entries,
+                result,
+            }
+        }
+        RunnerDispatchTarget::Async(_) => RunnerCompletion {
+            runner: None,
+            task_leases,
+            batch_id,
+            expected_entries,
+            result: Err(host_failure(
+                "host.worker.async_dispatch",
+                "async handler was sent to a synchronous worker pool",
+            )),
+        },
     }
 }
 
 fn worker_started(worker_id: &str, dispatch: &RunnerDispatch) -> WorkerStarted {
     WorkerStarted {
         worker_id: worker_id.to_string(),
-        execution_class: dispatch.runner.descriptor().execution_class.clone(),
-        runner_id: dispatch.runner.descriptor().runner_id.clone(),
+        execution_class: dispatch.target.descriptor().execution_class.clone(),
+        runner_id: dispatch.target.descriptor().runner_id.clone(),
         invocation_id: dispatch.ctx.invocation_id.clone(),
         batch_id: dispatch.batch.batch_id.clone(),
         task_ids: dispatch

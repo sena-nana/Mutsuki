@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    ExecutionClass, HandlerBinding, ProtocolDescriptor, ResourceProviderCompatibility,
-    ResourceProviderReloadPolicy, ResourceSemantic, ResourceTypeDescriptor, RunnerBatchCapability,
-    RunnerControlCapability, RunnerDescriptor, RunnerOrderingCapability, RunnerPayloadCapability,
-    RunnerPurity, RunnerResourceCapability, ScalarValue,
+    ExecutionClass, HandlerBinding, InvocationMode, ProtocolDescriptor,
+    ResourceProviderCompatibility, ResourceProviderReloadPolicy, ResourceSemantic,
+    ResourceTypeDescriptor, RunnerBatchCapability, RunnerConcurrency, RunnerControlCapability,
+    RunnerDescriptor, RunnerOrderingCapability, RunnerPayloadCapability, RunnerPurity,
+    RunnerResourceCapability, ScalarValue,
 };
 use serde_json::{Value, json};
 
@@ -145,6 +146,8 @@ pub struct RunnerDescriptorBuilder {
     accepted_protocol_ids: Vec<String>,
     purity: RunnerPurity,
     execution_class: ExecutionClass,
+    invocation_mode: InvocationMode,
+    concurrency: RunnerConcurrency,
     input_schema: Value,
     output_schema: Value,
     batch: RunnerBatchCapability,
@@ -167,6 +170,8 @@ impl RunnerDescriptorBuilder {
             accepted_protocol_ids: Vec::new(),
             purity: RunnerPurity::Pure,
             execution_class: ExecutionClass::Cpu,
+            invocation_mode: InvocationMode::default(),
+            concurrency: RunnerConcurrency::default(),
             input_schema: json!({}),
             output_schema: json!({}),
             batch: RunnerBatchCapability::default(),
@@ -203,6 +208,16 @@ impl RunnerDescriptorBuilder {
 
     pub fn execution_class(mut self, execution_class: ExecutionClass) -> Self {
         self.execution_class = execution_class;
+        self
+    }
+
+    pub fn invocation_mode(mut self, invocation_mode: InvocationMode) -> Self {
+        self.invocation_mode = invocation_mode;
+        self
+    }
+
+    pub fn concurrency(mut self, concurrency: RunnerConcurrency) -> Self {
+        self.concurrency = concurrency;
         self
     }
 
@@ -259,6 +274,8 @@ impl RunnerDescriptorBuilder {
             accepted_protocol_ids: self.accepted_protocol_ids,
             purity: self.purity,
             execution_class: self.execution_class,
+            invocation_mode: self.invocation_mode,
+            concurrency: self.concurrency,
             input_schema: self.input_schema,
             output_schema: self.output_schema,
             batch: self.batch,

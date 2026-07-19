@@ -14,7 +14,18 @@ pub(super) fn claim_runner_work(
     decision: ScheduleDecision,
     lease_expires_at: Option<u64>,
 ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
-    let decision = decision.clamp_to(descriptor.batch.max_batch_entries);
+    let max_batches = decision
+        .budget
+        .max_batches
+        .min(descriptor.concurrency.max_inflight_batches());
+    let decision = decision
+        .clamp_to(
+            descriptor
+                .batch
+                .max_batch_entries
+                .saturating_mul(max_batches),
+        )
+        .clamp_batches(max_batches);
     runtime.record_scheduler_decision(&descriptor, &decision);
     if decision.dispatch_limit == 0 {
         return Ok((empty_runner_loop_report(), Vec::new()));
@@ -50,14 +61,26 @@ pub(super) fn claim_runner_work(
             runtime.tasks.defer_leased(&lease, runtime.current_step)?;
         }
     }
-    let claimed_tasks = dispatch_group.len();
-    let dispatch = runtime.build_runner_dispatch(&descriptor, executor_id, dispatch_group)?;
+    let mut chunks = dispatch_group
+        .chunks(descriptor.batch.max_batch_entries)
+        .take(max_batches)
+        .map(|chunk| chunk.to_vec())
+        .collect::<Vec<_>>();
+    let dispatched_tasks: usize = chunks.iter().map(Vec::len).sum();
+    let mut deferred_tail = dispatch_group.into_iter().skip(dispatched_tasks);
+    for (lease, _task) in deferred_tail.by_ref() {
+        runtime.tasks.defer_leased(&lease, runtime.current_step)?;
+    }
+    let mut dispatches = Vec::with_capacity(chunks.len());
+    for chunk in chunks.drain(..) {
+        dispatches.push(runtime.build_runner_dispatch(&descriptor, executor_id.clone(), chunk)?);
+    }
     Ok((
         RunnerLoopReport {
-            claimed_tasks,
+            claimed_tasks: dispatched_tasks,
             completed_tasks: 0,
         },
-        vec![dispatch],
+        dispatches,
     ))
 }
 

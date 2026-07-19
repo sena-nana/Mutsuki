@@ -203,8 +203,10 @@ fn loaded_abi_plugin_keeps_abi_runner_deployment() {
             Cursor::new(Vec::<u8>::new()),
             Cursor::new(Vec::<u8>::new()),
         ))],
+        async_handlers: Vec::new(),
         host_services: Vec::new(),
         resource_providers: Vec::new(),
+        async_resource_providers: Vec::new(),
     });
 
     let runtime = host.into_runtime(runtime_profile_with_deployment(

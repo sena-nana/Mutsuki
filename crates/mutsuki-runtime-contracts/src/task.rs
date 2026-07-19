@@ -86,6 +86,8 @@ impl Task {
 pub struct TaskLease {
     pub lease_id: TaskLeaseId,
     pub task_id: TaskId,
+    #[serde(default)]
+    pub attempt_generation: u64,
     pub runner_id: RunnerId,
     pub executor_id: ExecutorId,
     pub registry_generation: u64,

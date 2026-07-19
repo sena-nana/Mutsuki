@@ -92,6 +92,7 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
         lease_id: lease_id.into(),
         task_id: task.task_id.clone(),
         runner_id: "jsonl.runner".into(),
+        attempt_generation: 1,
         executor_id: "executor:test".into(),
         registry_generation: 1,
         acquired_at_step: 1,
