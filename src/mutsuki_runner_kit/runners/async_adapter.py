@@ -297,10 +297,6 @@ class _Invocation:
         self.pending: PendingCall | None = None
 
 
-AsyncRunnerFactory = TaskAwaitRunnerFactory
-AsyncRunnerAdapter = TaskAwaitRunnerAdapter
-
-
 def _waiting_result(task_id: str, pending: PendingCall) -> RunnerResult:
     tasks = () if pending.task is None else (pending.task,)
     return RunnerResult(

@@ -1,7 +1,6 @@
 """Runner protocol and host helpers."""
 
 from mutsuki_runner_kit.runners.async_adapter import (
-    AsyncRunnerAdapter,
     AsyncRunnerContext,
     RuntimeClient,
     TaskAwaitRunnerAdapter,
@@ -14,7 +13,6 @@ from mutsuki_runner_kit.runners.scalar import (
 )
 
 __all__ = [
-    "AsyncRunnerAdapter",
     "AsyncRunnerContext",
     "RuntimeClient",
     "ScalarBatchAdapter",
