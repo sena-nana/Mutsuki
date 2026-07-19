@@ -1,7 +1,7 @@
 # Runner Link v1
 
 当前 Python contract mirror 与 Runtime Wire active release fixtures 对齐 MutsukiCore revision
-`82c506d4301ae22d9826e7e33df202098fb568b9`。
+`c6a68f8ab2c6450035580c12b5944e2a21ddf437`。
 
 Runner Link is the language-neutral protocol between Mutsuki Core and external
 runners. This repository implements the Python side of that protocol.

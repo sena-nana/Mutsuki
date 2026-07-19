@@ -40,7 +40,7 @@ When contracts change, update this kit only by mirroring the published wire
 shape; do not add Python-only runtime semantics.
 
 The checked-in schema and semantic fixtures are pinned to MutsukiCore
-`82c506d4301ae22d9826e7e33df202098fb568b9`. Startup rejects an incompatible
+`c6a68f8ab2c6450035580c12b5944e2a21ddf437`. Startup rejects an incompatible
 protocol major, codec, or schema revision before runner work is dispatched.
 Performance measurements and JSONL operational limits are documented in
 `docs/performance/runtime-wire-v1.md`.
