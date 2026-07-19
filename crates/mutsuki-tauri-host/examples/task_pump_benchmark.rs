@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PROTOCOL_ID: &str = "benchmark.waiting";
 const IDLE_WINDOW: Duration = Duration::from_millis(500);
+const SETTLE_QUIET_WINDOW: Duration = Duration::from_millis(250);
 
 #[derive(Serialize)]
 struct BenchmarkReport {
@@ -212,9 +213,11 @@ fn settle_task_pump(host: &MutsukiTauriHost) {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let before = host.runtime_metrics();
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(SETTLE_QUIET_WINDOW);
         let after = host.runtime_metrics();
-        if before.actor_commands == after.actor_commands {
+        if before.actor_commands == after.actor_commands
+            && before.task_state_batch_queries == after.task_state_batch_queries
+        {
             return;
         }
         assert!(Instant::now() < deadline, "task pump did not settle");
