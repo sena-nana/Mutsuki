@@ -26,3 +26,4 @@ dist/
 # Codex/codegraph local index
 .codegraph/
 /artifacts/performance/issue4-macos-arm64-provisional/
+/artifacts/performance/reference-*/
