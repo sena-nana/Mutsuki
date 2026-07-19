@@ -11,7 +11,7 @@ use mutsuki_runtime_sdk::contracts::{
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult};
 use std::sync::Arc;
 
-use crate::{ModelGateway, ModelProviderExecution};
+use crate::ModelGateway;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.model_gateway";
 pub const RUNNER_ID: &str = "mutsuki.agent.model_gateway.runner";
@@ -100,16 +100,10 @@ async fn run_task(gateway: ModelGateway, task: Task) -> RuntimeResult<RunnerResu
             let callback_protocol = request.result_protocol_id.clone();
             let callback_context = request.result_context.clone();
             let session_id = request.session_id.clone();
-            let generated = if gateway
-                .provider_execution(&request)
-                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?
-                == ModelProviderExecution::HttpEffect
-            {
-                gateway.generate_effect_async(request).await
-            } else {
-                gateway.generate_async(request).await
-            }
-            .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
+            let generated = gateway
+                .generate_async(request)
+                .await
+                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             let mut result = result_event(
                 task.task_id.clone(),
                 "mutsuki.agent.model.generated",
@@ -127,16 +121,10 @@ async fn run_task(gateway: ModelGateway, task: Task) -> RuntimeResult<RunnerResu
         }
         AGENT_MODEL_STREAM_PROTOCOL => {
             let request: AgentModelStreamRequest = task_payload(PLUGIN_ID, &task)?;
-            let streamed = if gateway
-                .provider_execution(&request.request)
-                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?
-                == ModelProviderExecution::HttpEffect
-            {
-                gateway.stream_effect_async(request).await
-            } else {
-                gateway.stream_async(request).await
-            }
-            .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
+            let streamed = gateway
+                .stream_async(request)
+                .await
+                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             result_event(task.task_id, "mutsuki.agent.model.stream_opened", streamed)
         }
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),

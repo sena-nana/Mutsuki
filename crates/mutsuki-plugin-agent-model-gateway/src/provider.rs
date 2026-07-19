@@ -22,16 +22,6 @@ pub trait ModelProvider: Send + Sync {
         let result = self.generate(request);
         Box::pin(async move { result })
     }
-
-    fn execution(&self) -> ModelProviderExecution {
-        ModelProviderExecution::InlineDeterministic
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelProviderExecution {
-    InlineDeterministic,
-    HttpEffect,
 }
 
 pub type ModelProviderFuture =
@@ -75,49 +65,21 @@ impl ModelGateway {
         &self,
         request: AgentModelGenerateRequest,
     ) -> AgentResult<AgentModelGenerateResult> {
-        let provider = self.inline_provider(&request)?;
+        let provider = self.provider(&request)?;
         provider.generate(request)
     }
 
     pub fn stream(&self, request: AgentModelStreamRequest) -> AgentResult<AgentModelStreamResult> {
         let generated = self.generate(request.request)?;
-        let stream_id = self.next_stream.fetch_add(1, Ordering::Relaxed) + 1;
-        let slot = format!("stream-{stream_id}");
-        self.streams
-            .lock()
-            .expect("model stream mutex poisoned")
-            .insert(slot.clone(), generated.message.content.clone());
-        Ok(AgentModelStreamResult {
-            stream: stream_resource_ref(PLUGIN_ID, slot),
-            stop_reason: generated.stop_reason,
-            tool_calls: generated.tool_calls,
-            usage: generated.usage,
-            cost_microunits: generated.cost_microunits,
-        })
+        Ok(self.store_stream(generated))
     }
 
     pub async fn generate_async(
         &self,
         request: AgentModelGenerateRequest,
     ) -> AgentResult<AgentModelGenerateResult> {
-        let provider = self.inline_provider(&request)?;
+        let provider = self.provider(&request)?;
         provider.generate_async(request).await
-    }
-
-    pub(crate) async fn generate_effect_async(
-        &self,
-        request: AgentModelGenerateRequest,
-    ) -> AgentResult<AgentModelGenerateResult> {
-        let provider = self.effect_provider(&request)?;
-        provider.generate_async(request).await
-    }
-
-    pub(crate) async fn stream_effect_async(
-        &self,
-        request: AgentModelStreamRequest,
-    ) -> AgentResult<AgentModelStreamResult> {
-        let generated = self.generate_effect_async(request.request).await?;
-        Ok(self.store_stream(generated))
     }
 
     pub async fn stream_async(
@@ -125,19 +87,7 @@ impl ModelGateway {
         request: AgentModelStreamRequest,
     ) -> AgentResult<AgentModelStreamResult> {
         let generated = self.generate_async(request.request).await?;
-        let stream_id = self.next_stream.fetch_add(1, Ordering::Relaxed) + 1;
-        let slot = format!("stream-{stream_id}");
-        self.streams
-            .lock()
-            .expect("model stream mutex poisoned")
-            .insert(slot.clone(), generated.message.content.clone());
-        Ok(AgentModelStreamResult {
-            stream: stream_resource_ref(PLUGIN_ID, slot),
-            stop_reason: generated.stop_reason,
-            tool_calls: generated.tool_calls,
-            usage: generated.usage,
-            cost_microunits: generated.cost_microunits,
-        })
+        Ok(self.store_stream(generated))
     }
 
     pub fn read_stream(&self, stream: &mutsuki_agent_protocol::ResourceRef) -> Option<String> {
@@ -146,13 +96,6 @@ impl ModelGateway {
             .expect("model stream mutex poisoned")
             .get(&stream.resource_id.slot_id)
             .cloned()
-    }
-
-    pub fn provider_execution(
-        &self,
-        request: &AgentModelGenerateRequest,
-    ) -> AgentResult<ModelProviderExecution> {
-        Ok(self.provider(request)?.execution())
     }
 
     pub fn health_snapshot(&self) -> ModelGatewayHealth {
@@ -179,34 +122,6 @@ impl ModelGateway {
                     "model provider `{provider_id}` not registered"
                 ))
             })
-    }
-
-    fn inline_provider(
-        &self,
-        request: &AgentModelGenerateRequest,
-    ) -> AgentResult<Arc<dyn ModelProvider>> {
-        let provider = self.provider(request)?;
-        if provider.execution() != ModelProviderExecution::InlineDeterministic {
-            return Err(AgentError::new(
-                "agent.model.effect_required",
-                "effectful model provider must run through the model effect runner",
-            ));
-        }
-        Ok(provider)
-    }
-
-    fn effect_provider(
-        &self,
-        request: &AgentModelGenerateRequest,
-    ) -> AgentResult<Arc<dyn ModelProvider>> {
-        let provider = self.provider(request)?;
-        if provider.execution() != ModelProviderExecution::HttpEffect {
-            return Err(AgentError::new(
-                "agent.model.effect_provider_required",
-                "model effect runner requires an effectful provider",
-            ));
-        }
-        Ok(provider)
     }
 
     fn store_stream(&self, generated: AgentModelGenerateResult) -> AgentModelStreamResult {
@@ -519,10 +434,6 @@ impl ModelProvider for HttpModelProvider {
         let provider = self.clone();
         Box::pin(async move { provider.request(request).await })
     }
-
-    fn execution(&self) -> ModelProviderExecution {
-        ModelProviderExecution::HttpEffect
-    }
 }
 
 struct SecretValue(String);
@@ -684,40 +595,6 @@ mod http_tests {
             serde_json::json!({"value": "ping"})
         );
         assert_eq!(result.usage.total_tokens, 7);
-    }
-
-    #[test]
-    fn inline_gateway_rejects_http_effect_provider_without_network_io() {
-        let gateway = ModelGateway::with_default_provider("http");
-        gateway.register(Arc::new(
-            HttpModelProvider::new(
-                HttpModelProviderOptions {
-                    provider_id: "http".into(),
-                    endpoint: "http://127.0.0.1:9/generate".into(),
-                    default_model: "test".into(),
-                    timeout_ms: 10,
-                    max_retries: 0,
-                },
-                "TEST_SECRET",
-            )
-            .unwrap(),
-        ));
-
-        let error = gateway
-            .generate(AgentModelGenerateRequest {
-                model: "test".into(),
-                messages: vec![AgentMessage::user("must route as effect")],
-                temperature: None,
-                max_output_tokens: None,
-                provider_hint: None,
-                metadata: None,
-                result_protocol_id: None,
-                result_context: None,
-                session_id: None,
-            })
-            .unwrap_err();
-
-        assert_eq!(error.code, "agent.model.effect_required");
     }
 
     #[tokio::test]

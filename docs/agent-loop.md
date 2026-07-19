@@ -1,7 +1,7 @@
 # Agent Loop
 
 `mutsuki.agent/run@1` 是普通 orchestration runner，经 batch-first
-`AsyncRunnerAdapter` 接入 Core。run 逐步等待 model/tool 子 task，并从
+`TaskAwaitRunnerAdapter` 接入 Core。run 逐步等待 model/tool 子 task，并从
 `TaskOutcome::Completed.output` 解码真实 typed result；只有 lifecycle Completed 而没有
 业务 output 时结构化失败。model tool call 会形成普通 tool task，tool output 作为 Tool
 message 进入下一轮 model context。trace/correlation/session 在子 task 上透传。

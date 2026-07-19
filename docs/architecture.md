@@ -9,7 +9,7 @@ Product Host / platform adapters
   -> MutsukiCore (batch-first TaskPool)
 ```
 
-Runtime 路径：`WorkBatch` → `run_batch` → `CompletionBatch`（经 `AsyncRunnerAdapter`）。descriptor 声明 batch / payload / resources / ordering / control。
+Runtime 路径：orchestration runner 通过 `TaskAwaitRunnerAdapter` 等待子 task；外部 model future 由 Host 通过 `AsyncBatchHandler` 执行。descriptor 声明 batch / payload / resources / ordering / control。
 
 ## 红线
 

@@ -48,8 +48,8 @@ MutsukiAgentKit   Agent protocols + SDK + workflow plugins
 | memory.query / write | `mutsuki.agent.memory/query@1` · `.../write@1` |
 | llm.complete / stream | `mutsuki.agent.model/generate@1` · `.../stream@1` |
 
-Model gateway 是 provider-neutral orchestration runner。真实 HTTP provider 经
-`effect.mutsuki.agent.model/http@1` effect runner 执行；消费端显式构造 provider 并注入
+Model gateway 是 provider-neutral `AsyncBatchHandler`。真实 HTTP provider future 由 Host
+异步执行器驱动；消费端显式构造 provider 并注入
 运行参数与 credential。AgentKit 不读取或管理配置，credential 不进入 task、trace 或普通日志。stream 正文保存在
 provider 资源存储，runtime task 只携带 `ResourceRef`。
 
@@ -64,7 +64,7 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 | `mutsuki-plugin-agent-loop` | `agent/run@1` 状态机 | `mutsuki-agent-bundle` / 产品 Host |
 | context / session / memory-router / prompt | 各自协议的可选 state/resource service | `mutsuki-agent-bundle` 按产品选择注册 |
 | tool-router | tool metadata 到普通 target protocol 的 TaskPool 路由 | AgentLoop 与 bundle |
-| model-gateway | deterministic/provider-neutral model 编排与 HTTP effect runner | AgentLoop 与 bundle |
+| model-gateway | deterministic/provider-neutral model 编排与 Host-driven async provider | AgentLoop 与 bundle |
 | `mutsuki-agent-testkit` | fake model/tool 与 conformance | workspace tests、跨仓库产品验收 |
 | `mutsuki-agent-bundle` | Host-neutral manifest/runner catalog | ServiceHost 或产品装配层 |
 
