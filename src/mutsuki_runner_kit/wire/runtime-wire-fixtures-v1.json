@@ -18,7 +18,7 @@
           "major": 1,
           "minor": 2
         },
-        "schema_revision": "mutsuki.runtime.wire/1.2.0"
+        "schema_revision": "mutsuki.runtime.wire/1.3.0"
       }
     },
     {
@@ -43,7 +43,7 @@
             "major": 1,
             "minor": 2
           },
-          "schema_revision": "mutsuki.runtime.wire/1.2.0"
+          "schema_revision": "mutsuki.runtime.wire/1.3.0"
         }
       }
     },
@@ -65,7 +65,7 @@
           "major": 1,
           "minor": 2
         },
-        "schema_revision": "mutsuki.runtime.wire/1.2.0"
+        "schema_revision": "mutsuki.runtime.wire/1.3.0"
       }
     },
     {
@@ -138,6 +138,7 @@
           "task_leases": [
             {
               "acquired_at_step": 11,
+              "attempt_generation": 1,
               "executor_id": "executor:fixture",
               "expires_at_step": 21,
               "lease_id": "lease-wire-1",
@@ -153,6 +154,7 @@
           "cancel_requested": false,
           "cancel_token": "invocation-wire-1",
           "current_step": 11,
+          "deadline_after_ms": null,
           "deadline_tick": 20,
           "entry_count": 1,
           "executor_id": "executor:fixture",
@@ -297,5 +299,5 @@
       }
     }
   ],
-  "schema_revision": "mutsuki.runtime.wire/1.2.0"
+  "schema_revision": "mutsuki.runtime.wire/1.3.0"
 }

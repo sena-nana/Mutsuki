@@ -19,7 +19,9 @@ from mutsuki_runner_kit.contracts.resource import (
 )
 from mutsuki_runner_kit.contracts.runner import (
     ExecutionClass,
+    InvocationMode,
     RunnerBatchCapability,
+    RunnerConcurrency,
     RunnerContext,
     RunnerControlCapability,
     RunnerDescriptor,
@@ -86,6 +88,8 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
         accepted_protocol_ids=("raw.input",),
         purity=RunnerPurity.PURE,
         execution_class=ExecutionClass.CPU,
+        invocation_mode=InvocationMode.ASYNC_REENTRANT,
+        concurrency=RunnerConcurrency.reentrant(4, 32),
         input_schema={"type": "object"},
         output_schema={"type": "object"},
         batch=RunnerBatchCapability(
@@ -138,6 +142,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
             invocation_id="inv-1",
             cancel_token="inv-1",
             deadline_tick=9,
+            deadline_after_ms=250,
             cancel_requested=False,
         ),
     )
@@ -151,6 +156,7 @@ def test_task_and_runner_descriptor_roundtrip() -> None:
             registry_generation=3,
             acquired_at_step=2,
             expires_at_step=None,
+            attempt_generation=2,
         ),
     )
 

@@ -159,6 +159,7 @@ class TaskLease:
     registry_generation: int
     acquired_at_step: int
     expires_at_step: int | None
+    attempt_generation: int = 0
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -167,6 +168,7 @@ class TaskLease:
         return cls(
             lease_id=as_str(field_value(raw, "lease_id"), "lease_id"),
             task_id=as_str(field_value(raw, "task_id"), "task_id"),
+            attempt_generation=as_int(raw.get("attempt_generation", 0), "attempt_generation"),
             runner_id=as_str(field_value(raw, "runner_id"), "runner_id"),
             executor_id=as_str(field_value(raw, "executor_id"), "executor_id"),
             registry_generation=as_int(

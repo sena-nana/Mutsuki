@@ -47,6 +47,7 @@ class AsyncRunnerContext:
         invocation_id: str = "",
         cancel_token: str = "",
         deadline_tick: int | None = None,
+        deadline_after_ms: int | None = None,
         cancel_requested: bool = False,
         allow_self_call: bool = True,
     ) -> None:
@@ -56,6 +57,7 @@ class AsyncRunnerContext:
         self._invocation_id = invocation_id
         self._cancel_token = cancel_token
         self._deadline_tick = deadline_tick
+        self._deadline_after_ms = deadline_after_ms
         self._cancel_requested = cancel_requested
         self._allow_self_call = allow_self_call
         self._next_call = 0
@@ -75,6 +77,10 @@ class AsyncRunnerContext:
     @property
     def deadline_tick(self) -> int | None:
         return self._deadline_tick
+
+    @property
+    def deadline_after_ms(self) -> int | None:
+        return self._deadline_after_ms
 
     @property
     def cancel_requested(self) -> bool:
@@ -163,7 +169,7 @@ class AsyncRunnerContext:
         return TaskCallAwaitable(PendingCall(task=task, task_await=task_await))
 
 
-AsyncRunnerFactory = Callable[[AsyncRunnerContext, Task], Awaitable[RunnerResult]]
+TaskAwaitRunnerFactory = Callable[[AsyncRunnerContext, Task], Awaitable[RunnerResult]]
 
 
 class TaskCallAwaitable:
@@ -184,12 +190,12 @@ class PendingCall:
         return PendingCall(task=None, task_await=self.task_await)
 
 
-class AsyncRunnerAdapter:
+class TaskAwaitRunnerAdapter:
     def __init__(
         self,
         descriptor: RunnerDescriptor,
         client: RuntimeClient,
-        factory: AsyncRunnerFactory,
+        factory: TaskAwaitRunnerFactory,
         *,
         allow_self_call: bool = True,
     ) -> None:
@@ -214,6 +220,7 @@ class AsyncRunnerAdapter:
                 invocation_id=ctx.invocation_id,
                 cancel_token=ctx.cancel_token,
                 deadline_tick=ctx.deadline_tick,
+                deadline_after_ms=ctx.deadline_after_ms,
                 cancel_requested=ctx.cancel_requested,
                 allow_self_call=self._allow_self_call,
             )
@@ -244,6 +251,8 @@ class AsyncRunnerAdapter:
             return result
 
         if not isinstance(yielded, PendingCall):
+            invocation.iterator.close()
+            self._remove_invocation(task.task_id)
             raise RunnerInvokeError(
                 RuntimeError(
                     code="runner.awaitable_unsupported",
@@ -286,6 +295,10 @@ class _Invocation:
     def __init__(self, iterator: Generator[Any, TaskOutcome | None, RunnerResult]) -> None:
         self.iterator = iterator
         self.pending: PendingCall | None = None
+
+
+AsyncRunnerFactory = TaskAwaitRunnerFactory
+AsyncRunnerAdapter = TaskAwaitRunnerAdapter
 
 
 def _waiting_result(task_id: str, pending: PendingCall) -> RunnerResult:

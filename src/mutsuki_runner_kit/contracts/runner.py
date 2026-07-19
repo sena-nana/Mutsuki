@@ -44,6 +44,71 @@ class ExecutionClass(StrEnum):
     SCRIPT = "script"
 
 
+class InvocationMode(StrEnum):
+    SYNC_EXCLUSIVE = "sync_exclusive"
+    ASYNC_REENTRANT = "async_reentrant"
+    ASYNC_EXCLUSIVE = "async_exclusive"
+    EXTERNAL_PROCESS = "external_process"
+
+
+class RunnerConcurrencyMode(StrEnum):
+    EXCLUSIVE = "exclusive"
+    REENTRANT = "reentrant"
+    SHARDED = "sharded"
+
+
+@dataclass(frozen=True)
+class RunnerConcurrency:
+    mode: RunnerConcurrencyMode = RunnerConcurrencyMode.EXCLUSIVE
+    max_inflight_batches: int | None = None
+    max_inflight_entries: int | None = None
+    instances: int | None = None
+
+    @classmethod
+    def exclusive(cls) -> Self:
+        return cls()
+
+    @classmethod
+    def reentrant(cls, max_inflight_batches: int, max_inflight_entries: int) -> Self:
+        return cls(
+            mode=RunnerConcurrencyMode.REENTRANT,
+            max_inflight_batches=max_inflight_batches,
+            max_inflight_entries=max_inflight_entries,
+        )
+
+    @classmethod
+    def sharded(cls, instances: int) -> Self:
+        return cls(mode=RunnerConcurrencyMode.SHARDED, instances=instances)
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "RunnerConcurrency")
+        mode = RunnerConcurrencyMode(as_str(field_value(raw, "mode"), "mode"))
+        if mode is RunnerConcurrencyMode.EXCLUSIVE:
+            return cls.exclusive()
+        if mode is RunnerConcurrencyMode.REENTRANT:
+            return cls.reentrant(
+                as_int(field_value(raw, "max_inflight_batches"), "max_inflight_batches"),
+                as_int(field_value(raw, "max_inflight_entries"), "max_inflight_entries"),
+            )
+        return cls.sharded(as_int(field_value(raw, "instances"), "instances"))
+
+    def to_json_value(self) -> JsonDict:
+        if self.mode is RunnerConcurrencyMode.EXCLUSIVE:
+            return {"mode": self.mode.value}
+        if self.mode is RunnerConcurrencyMode.REENTRANT:
+            if self.max_inflight_batches is None or self.max_inflight_entries is None:
+                raise TypeError("reentrant concurrency requires batch and entry limits")
+            return {
+                "mode": self.mode.value,
+                "max_inflight_batches": self.max_inflight_batches,
+                "max_inflight_entries": self.max_inflight_entries,
+            }
+        if self.instances is None:
+            raise TypeError("sharded concurrency requires instances")
+        return {"mode": self.mode.value, "instances": self.instances}
+
+
 class RunnerStatus(StrEnum):
     COMPLETED = "completed"
     WAITING = "waiting"
@@ -199,6 +264,8 @@ class RunnerDescriptor:
     accepted_protocol_ids: tuple[str, ...]
     purity: RunnerPurity
     execution_class: ExecutionClass
+    invocation_mode: InvocationMode = InvocationMode.SYNC_EXCLUSIVE
+    concurrency: RunnerConcurrency = field(default_factory=RunnerConcurrency.exclusive)
     input_schema: JsonDict = field(default_factory=dict)
     output_schema: JsonDict = field(default_factory=dict)
     batch: RunnerBatchCapability = field(default_factory=RunnerBatchCapability)
@@ -222,6 +289,12 @@ class RunnerDescriptor:
             purity=RunnerPurity(as_str(field_value(raw, "purity"), "purity")),
             execution_class=ExecutionClass(
                 as_str(field_value(raw, "execution_class"), "execution_class")
+            ),
+            invocation_mode=InvocationMode(
+                as_str(raw.get("invocation_mode", "sync_exclusive"), "invocation_mode")
+            ),
+            concurrency=RunnerConcurrency.from_json_dict(
+                as_mapping(raw.get("concurrency", {"mode": "exclusive"}), "concurrency")
             ),
             input_schema=as_json_dict(field_value(raw, "input_schema"), "input_schema"),
             output_schema=as_json_dict(field_value(raw, "output_schema"), "output_schema"),
@@ -259,6 +332,7 @@ class RunnerContext:
     invocation_id: str = ""
     cancel_token: str = ""
     deadline_tick: int | None = None
+    deadline_after_ms: int | None = None
     cancel_requested: bool = False
 
     @classmethod
@@ -277,6 +351,7 @@ class RunnerContext:
             invocation_id=as_str(field_value(raw, "invocation_id"), "invocation_id"),
             cancel_token=as_str(field_value(raw, "cancel_token"), "cancel_token"),
             deadline_tick=optional_int(field_value(raw, "deadline_tick"), "deadline_tick"),
+            deadline_after_ms=optional_int(raw.get("deadline_after_ms"), "deadline_after_ms"),
             cancel_requested=as_bool(field_value(raw, "cancel_requested"), "cancel_requested"),
         )
 

@@ -13,7 +13,11 @@ from mutsuki_runner_kit.contracts.runner import (
     RunnerStatus,
 )
 from mutsuki_runner_kit.contracts.task import CancelPolicy, Task, TaskOutcome
-from mutsuki_runner_kit.runners.async_adapter import AsyncRunnerAdapter, AsyncRunnerContext
+from mutsuki_runner_kit.runners.async_adapter import (
+    AsyncRunnerAdapter,
+    AsyncRunnerContext,
+    TaskAwaitRunnerAdapter,
+)
 from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 from mutsuki_runner_kit.testing.batches import runner_context
 
@@ -212,12 +216,13 @@ async def test_async_runner_adapter_rejects_non_mutsuki_awaitable() -> None:
         await _plain_awaitable()
         return RunnerResult.completed(task.task_id)
 
-    adapter = AsyncRunnerAdapter(async_descriptor(), client, run)
+    adapter = TaskAwaitRunnerAdapter(async_descriptor(), client, run)
 
     with pytest.raises(RunnerInvokeError) as exc_info:
         await adapter.run_one(async_runner_context(), Task.new("parent-1", "parent.work"))
 
     assert exc_info.value.error.code == "runner.awaitable_unsupported"
+    assert AsyncRunnerAdapter is TaskAwaitRunnerAdapter
 
 
 async def _plain_awaitable() -> None:

@@ -9,7 +9,7 @@ from mutsuki_runner_kit.wire.schema import RUNTIME_WIRE_SCHEMA
 
 DEBUG_JSONL_CODEC_ID = "mutsuki.codec.typed-jsonl.v1"
 BINARY_CODEC_ID = "mutsuki.codec.typed-msgpack.v1"
-SCHEMA_REVISION = "mutsuki.runtime.wire/1.2.0"
+SCHEMA_REVISION = "mutsuki.runtime.wire/1.3.0"
 
 
 @dataclass(frozen=True)

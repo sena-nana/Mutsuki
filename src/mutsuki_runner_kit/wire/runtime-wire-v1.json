@@ -151,5 +151,5 @@
     "inline_limit_bytes": 65536,
     "large_bytes": "ResourceRef_or_stream_descriptor"
   },
-  "schema_revision": "mutsuki.runtime.wire/1.2.0"
+  "schema_revision": "mutsuki.runtime.wire/1.3.0"
 }
