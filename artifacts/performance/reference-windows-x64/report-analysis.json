@@ -1,0 +1,51 @@
+{
+  "schema_version": "mutsuki.performance.analysis/v1",
+  "classification": "environmental-noise",
+  "correctness_counters": {
+    "hash_mismatches": 0,
+    "public_network_requests": 0,
+    "runner_errors": 0
+  },
+  "noisy_cases": [
+    {
+      "case_id": "std.resource.memory.read",
+      "dimensions": {
+        "access": "shared-read",
+        "bytes": 1048576,
+        "boundary": "plugin-handler-or-provider-only"
+      }
+    },
+    {
+      "case_id": "std.workflow.broadcast",
+      "dimensions": {
+        "fan_out": 1,
+        "boundary": "plugin-handler-or-provider-only"
+      }
+    },
+    {
+      "case_id": "std.workflow.broadcast",
+      "dimensions": {
+        "fan_out": 64,
+        "boundary": "plugin-handler-or-provider-only"
+      }
+    },
+    {
+      "case_id": "std.workflow.linear",
+      "dimensions": {
+        "steps": 1,
+        "boundary": "plugin-handler-or-provider-only"
+      }
+    },
+    {
+      "case_id": "std.workflow.linear",
+      "dimensions": {
+        "steps": 8,
+        "boundary": "plugin-handler-or-provider-only"
+      }
+    }
+  ],
+  "limitations": [
+    "Plugin cases measure handler/provider cost and do not replace Core or ServiceHost.",
+    "HTTP uses a deterministic loopback server and makes no public-network claim."
+  ]
+}
