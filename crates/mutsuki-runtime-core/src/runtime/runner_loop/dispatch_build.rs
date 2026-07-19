@@ -1,4 +1,4 @@
-use mutsuki_runtime_contracts::{RuntimeEventKind, SpanStatus, Task, TaskLease};
+use mutsuki_runtime_contracts::{RuntimeEvent, RuntimeEventKind, SpanStatus, Task, TaskLease};
 
 use crate::RunnerContext;
 
@@ -10,7 +10,7 @@ pub(super) fn build_runner_dispatch(
     runtime: &mut CoreRuntime,
     descriptor: &mutsuki_runtime_contracts::RunnerDescriptor,
     executor_id: String,
-    leased_tasks: Vec<(TaskLease, Task)>,
+    leased_tasks: Vec<(TaskLease, std::sync::Arc<Task>)>,
 ) -> crate::RuntimeResult<RunnerDispatch> {
     let batch_id = format!(
         "batch-{}-{}-{}",
@@ -26,18 +26,17 @@ pub(super) fn build_runner_dispatch(
         .iter()
         .map(|(task_lease, _)| task_lease.clone())
         .collect();
-    let batch = build_work_batch(runtime.current_step, &batch_id, descriptor, &leased_tasks);
+    let trace_id = leased_tasks
+        .first()
+        .map(|(_, task)| dispatch_trace_id(task))
+        .unwrap_or_else(|| format!("trace-batch-{batch_id}"));
+    let batch = build_work_batch(runtime.current_step, &batch_id, descriptor, leased_tasks);
     let span =
         if runtime.load_plan.observability.dispatch_spans && runtime.traces.will_retain_next() {
-            let trace_id = leased_tasks
-                .first()
-                .map(|(_, task)| dispatch_trace_id(task))
-                .unwrap_or_else(|| format!("trace-batch-{batch_id}"));
             let mut attrs = runner_attrs(descriptor, &runtime.load_plan);
             attrs.extend(dispatch_batch_attrs(
                 descriptor,
                 &batch,
-                &leased_tasks,
                 &task_leases,
                 &executor_id,
             ));
@@ -75,11 +74,12 @@ pub(super) fn build_runner_dispatch(
     )
     .with_batch(batch_id.clone(), task_leases.len());
     for lease in &task_leases {
-        runtime.events.record(
-            RuntimeEventKind::Task,
-            "task.started",
-            Some(lease.task_id.clone()),
-            std::collections::BTreeMap::from([
+        runtime.events.record_with(|sequence| RuntimeEvent {
+            sequence,
+            kind: RuntimeEventKind::Task,
+            name: "task.started".into(),
+            subject_id: Some(lease.task_id.clone()),
+            attributes: std::collections::BTreeMap::from([
                 (
                     "lease_id".into(),
                     mutsuki_runtime_contracts::ScalarValue::String(lease.lease_id.clone()),
@@ -93,8 +93,8 @@ pub(super) fn build_runner_dispatch(
                     mutsuki_runtime_contracts::ScalarValue::Int(lease.registry_generation as i64),
                 ),
             ]),
-            None,
-        );
+            error: None,
+        });
     }
     if let Some(span) = span
         && runtime.events.is_enabled()

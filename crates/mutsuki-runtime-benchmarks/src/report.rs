@@ -392,6 +392,9 @@ fn standard_case_id(case: &CaseResult) -> String {
     if id.starts_with("batch_resource/completion/") {
         return "core.completion-route".into();
     }
+    if id.starts_with("local_dispatch/") {
+        return "core.local-builtin-dispatch".into();
+    }
     if id.starts_with("host/submit-batch/") {
         return "core.host.submit-batch".into();
     }

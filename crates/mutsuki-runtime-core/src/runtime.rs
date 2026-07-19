@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_RUNTIME_ABORTED, ERR_RUNTIME_NOT_ACCEPTING, HandlerBinding,
-    ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent, RuntimeEventKind,
-    RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
+    ObservabilityPage, ObservabilityProfile, ProtocolClass, RuntimeError, RuntimeEvent,
+    RuntimeEventKind, RuntimeLoadPlan, ScalarValue, TaskStatus, TraceSpan,
 };
 use serde_json::Value;
 
@@ -68,6 +68,7 @@ pub struct CoreRuntime {
     load_plan: RuntimeLoadPlan,
     handler_bindings: HandlerBindingRegistry,
     surfaces: Vec<ContractSurface>,
+    protocol_classes: BTreeMap<String, ProtocolClass>,
     registry: RunnerRegistry,
     draining_generations: Vec<DrainingGeneration>,
     generation_states: Vec<PluginGenerationState>,
@@ -115,8 +116,10 @@ impl CoreRuntime {
             reload::generation_states_for_plan(&load_plan, PluginGenerationPhase::Active);
         let events = EventLog::with_profile(load_plan.observability.events.clone());
         let traces = TraceLog::with_profile(load_plan.observability.traces.clone());
+        let protocol_classes = protocol_classes_for_plan(&load_plan);
         Ok(Self {
             surfaces: load_plan.contract_surfaces.clone(),
+            protocol_classes,
             load_plan,
             handler_bindings,
             registry,
@@ -404,13 +407,14 @@ impl CoreRuntime {
         name: &str,
         error: Option<RuntimeError>,
     ) {
-        self.events.record(
-            RuntimeEventKind::Task,
-            name,
-            Some(task_id.to_string()),
-            BTreeMap::new(),
+        self.events.record_with(|sequence| RuntimeEvent {
+            sequence,
+            kind: RuntimeEventKind::Task,
+            name: name.into(),
+            subject_id: Some(task_id.to_string()),
+            attributes: BTreeMap::new(),
             error,
-        );
+        });
     }
 
     pub(crate) fn wake_tasks_waiting_on(&mut self, child_task_id: &str) -> RuntimeResult<usize> {
@@ -484,4 +488,13 @@ impl CoreRuntime {
         }
         Ok(rejected)
     }
+}
+
+fn protocol_classes_for_plan(load_plan: &RuntimeLoadPlan) -> BTreeMap<String, ProtocolClass> {
+    load_plan
+        .plugins
+        .iter()
+        .flat_map(|plugin| plugin.provides.protocol_classes.iter())
+        .map(|(protocol_id, class)| (protocol_id.clone(), class.clone()))
+        .collect()
 }

@@ -84,7 +84,8 @@ macOS ARM64 observations remain an optional environment-specific lane.
 The full matrix covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
 ratios, batch sizes 1/32/256, protocol/hint/continuation routing, bounded
 long-running behavior, resource planning, completion routing, and Host-facing
-actor APIs. Reports include median/p95/p99/MAD/min/max, CPU time, allocation,
+actor APIs. It also includes typed local builtin dispatch at 1/16/256 entries.
+Reports include median/p95/p99/MAD/min/max, CPU time, allocation,
 peak RSS, context switches, complete environment fingerprints, revision/dirty state,
 sampling counts and correctness counters. Fixture construction is outside each
 headline measurement window.

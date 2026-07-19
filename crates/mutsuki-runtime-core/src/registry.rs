@@ -4,8 +4,8 @@ use std::sync::Arc;
 use mutsuki_runtime_contracts::{
     ContractSurface, ERR_REGISTRY_FROZEN, ERR_REGISTRY_UNAUTHORIZED, ERR_RELOAD_BLOCKED,
     ExecutionClass, HandlerBinding, InvocationMode, OrderingRequirement, PayloadLayout,
-    RunnerConcurrency, RunnerDescriptor, RunnerPurity, RuntimeLoadPlan, SurfaceCompatibility,
-    SurfaceOccupancy,
+    ProtocolClass, RunnerConcurrency, RunnerDescriptor, RunnerPurity, RuntimeLoadPlan,
+    SurfaceCompatibility, SurfaceOccupancy,
 };
 
 use crate::{AsyncBatchHandler, Runner, RuntimeResult};
@@ -15,6 +15,7 @@ pub struct RunnerRegistry {
     runners: HashMap<String, Vec<Box<dyn Runner>>>,
     async_handlers: HashMap<String, Arc<dyn AsyncBatchHandler>>,
     descriptors: HashMap<String, RunnerDescriptor>,
+    descriptor_snapshot: Arc<[RunnerDescriptor]>,
     heartbeats: HashMap<String, RunnerHeartbeat>,
     capabilities: HashMap<String, RunnerCapabilityDeclaration>,
     frozen: bool,
@@ -93,7 +94,7 @@ impl RunnerRegistry {
             ));
         }
         let runner_id = runner.descriptor().runner_id.clone();
-        let descriptor = runner.descriptor().clone();
+        let descriptor = normalized_descriptor(runner.descriptor().clone());
         if self.async_handlers.contains_key(&runner_id) {
             return Err(duplicate_runner(&runner_id));
         }
@@ -112,6 +113,7 @@ impl RunnerRegistry {
         }
         runners.push(runner);
         self.descriptors.insert(runner_id, descriptor);
+        self.rebuild_descriptor_snapshot();
         Ok(())
     }
 
@@ -126,7 +128,7 @@ impl RunnerRegistry {
                 "async_handler.register",
             ));
         }
-        let descriptor = handler.descriptor().clone();
+        let descriptor = normalized_descriptor(handler.descriptor().clone());
         let runner_id = descriptor.runner_id.clone();
         if self.descriptors.contains_key(&runner_id)
             || self.runners.contains_key(&runner_id)
@@ -146,6 +148,7 @@ impl RunnerRegistry {
         }
         self.descriptors.insert(runner_id.clone(), descriptor);
         self.async_handlers.insert(runner_id, handler);
+        self.rebuild_descriptor_snapshot();
         Ok(())
     }
 
@@ -161,6 +164,7 @@ impl RunnerRegistry {
         self.capabilities.remove(runner_id);
         self.async_handlers.remove(runner_id);
         self.descriptors.remove(runner_id);
+        self.rebuild_descriptor_snapshot();
         Ok(self
             .runners
             .remove(runner_id)
@@ -199,9 +203,11 @@ impl RunnerRegistry {
     }
 
     pub fn descriptors(&self) -> Vec<mutsuki_runtime_contracts::RunnerDescriptor> {
-        let mut descriptors: Vec<_> = self.descriptors.values().cloned().collect();
-        descriptors.sort_by(|a, b| a.runner_id.cmp(&b.runner_id));
-        descriptors
+        self.descriptor_snapshot.to_vec()
+    }
+
+    pub(crate) fn descriptor_snapshot(&self) -> Arc<[RunnerDescriptor]> {
+        Arc::clone(&self.descriptor_snapshot)
     }
 
     pub fn descriptor(
@@ -212,9 +218,10 @@ impl RunnerRegistry {
     }
 
     pub fn runner_ids(&self) -> Vec<String> {
-        let mut runner_ids: Vec<_> = self.descriptors.keys().cloned().collect();
-        runner_ids.sort();
-        runner_ids
+        self.descriptor_snapshot
+            .iter()
+            .map(|descriptor| descriptor.runner_id.clone())
+            .collect()
     }
 
     pub fn heartbeat(
@@ -294,6 +301,12 @@ impl RunnerRegistry {
         self.async_handlers.get(runner_id).cloned()
     }
 
+    fn rebuild_descriptor_snapshot(&mut self) {
+        let mut descriptors = self.descriptors.values().cloned().collect::<Vec<_>>();
+        descriptors.sort_by(|left, right| left.runner_id.cmp(&right.runner_id));
+        self.descriptor_snapshot = descriptors.into();
+    }
+
     pub fn cancel_runner(&mut self, runner_id: &str, invocation_id: &str) -> RuntimeResult<()> {
         let runner = self
             .runners
@@ -325,6 +338,12 @@ impl RunnerRegistry {
         }
         Ok(bag)
     }
+}
+
+fn normalized_descriptor(mut descriptor: RunnerDescriptor) -> RunnerDescriptor {
+    descriptor.accepted_protocol_ids.sort();
+    descriptor.accepted_protocol_ids.dedup();
+    descriptor
 }
 
 fn duplicate_runner(runner_id: &str) -> crate::RuntimeFailure {
@@ -387,6 +406,7 @@ pub fn validate_runtime_descriptors(
         .collect();
     for runner in &planned {
         validate_runner_privilege(runner)?;
+        validate_runner_protocol_classes(load_plan, runner)?;
     }
     for runner in runners {
         let Some(planned_runner) = planned
@@ -409,8 +429,49 @@ pub fn validate_runtime_descriptors(
             ));
         }
         validate_runner_privilege(runner)?;
+        validate_runner_protocol_classes(load_plan, runner)?;
     }
     validate_handler_bindings(load_plan)?;
+    Ok(())
+}
+
+fn validate_runner_protocol_classes(
+    load_plan: &RuntimeLoadPlan,
+    runner: &RunnerDescriptor,
+) -> RuntimeResult<()> {
+    for protocol_id in &runner.accepted_protocol_ids {
+        let class = load_plan
+            .plugins
+            .iter()
+            .find_map(|plugin| plugin.provides.protocol_classes.get(protocol_id))
+            .ok_or_else(|| {
+                crate::runtime_failure(
+                    ERR_REGISTRY_UNAUTHORIZED,
+                    "runtime.load_plan.protocol_class",
+                    format!("runner.{}.protocol.{protocol_id}.unknown", runner.runner_id),
+                )
+            })?;
+        let matches_purity = matches!(
+            (&runner.purity, class),
+            (RunnerPurity::Pure, ProtocolClass::Domain)
+                | (RunnerPurity::Effectful, ProtocolClass::Effect)
+                | (RunnerPurity::Committer, ProtocolClass::Core)
+                | (RunnerPurity::Committer, ProtocolClass::Control)
+        );
+        if !matches_purity
+            || (class == &ProtocolClass::Control
+                && runner.execution_class != ExecutionClass::Control)
+        {
+            return Err(crate::runtime_failure(
+                ERR_REGISTRY_UNAUTHORIZED,
+                "runtime.load_plan.protocol_class",
+                format!(
+                    "runner.{}.protocol.{protocol_id}.purity_conflict",
+                    runner.runner_id
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 

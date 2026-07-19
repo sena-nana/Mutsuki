@@ -57,10 +57,13 @@ pub fn runtime_profile(observability: ObservabilityProfile) -> RuntimeProfile {
 pub fn echo_bootstrapper(descriptor: RunnerDescriptor) -> RuntimeBootstrapper {
     let mut bootstrapper = RuntimeBootstrapper::new();
     bootstrapper.register_manifest(runner_manifest(BENCH_PLUGIN_ID, vec![descriptor.clone()]));
-    bootstrapper.register_runner(Box::new(NativeRunner::new(descriptor, |_ctx, task| {
-        Ok(mutsuki_runtime_contracts::RunnerResult::completed(
-            task.task_id,
-        ))
-    })));
+    bootstrapper.register_runner(Box::new(NativeRunner::new_borrowed(
+        descriptor,
+        |_ctx, task| {
+            Ok(mutsuki_runtime_contracts::RunnerResult::completed(
+                task.task_id.clone(),
+            ))
+        },
+    )));
     bootstrapper
 }

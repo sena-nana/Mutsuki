@@ -46,7 +46,7 @@ impl CoreRuntime {
         }
         let deprecated_surface = self
             .tasks
-            .surface_ids_for_task(&task)
+            .surface_ids_for_task(&task, &self.protocol_classes)
             .into_iter()
             .find(|surface_id| self.is_surface_deprecated(surface_id));
         let task_id = self.tasks.enqueue_at(task, self.current_step)?;
@@ -60,20 +60,22 @@ impl CoreRuntime {
                 ),
             );
         }
-        self.events.record(
-            RuntimeEventKind::Task,
-            "task.enqueue",
-            Some(task_id.clone()),
-            BTreeMap::new(),
-            None,
-        );
-        self.events.record(
-            RuntimeEventKind::Task,
-            "task.submitted",
-            Some(task_id.clone()),
-            BTreeMap::new(),
-            None,
-        );
+        self.events.record_with(|sequence| RuntimeEvent {
+            sequence,
+            kind: RuntimeEventKind::Task,
+            name: "task.enqueue".into(),
+            subject_id: Some(task_id.clone()),
+            attributes: BTreeMap::new(),
+            error: None,
+        });
+        self.events.record_with(|sequence| RuntimeEvent {
+            sequence,
+            kind: RuntimeEventKind::Task,
+            name: "task.submitted".into(),
+            subject_id: Some(task_id.clone()),
+            attributes: BTreeMap::new(),
+            error: None,
+        });
         Ok(task_id)
     }
 

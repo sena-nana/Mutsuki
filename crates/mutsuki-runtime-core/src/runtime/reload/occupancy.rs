@@ -7,7 +7,7 @@ use super::CoreRuntime;
 impl CoreRuntime {
     pub fn surface_occupancy(&self) -> Vec<SurfaceOccupancy> {
         merge_occupancy(
-            self.tasks.surface_occupancy(),
+            self.tasks.surface_occupancy(&self.protocol_classes),
             self.resources.surface_occupancy(&self.surfaces),
         )
     }

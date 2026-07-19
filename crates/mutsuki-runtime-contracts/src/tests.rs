@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::de::DeserializeOwned;
 
 use crate::resource::experimental::{CommandBatch, SagaPlan, TransactionPlan};
@@ -375,6 +377,28 @@ fn batch_payload_helpers_report_layout_counts_and_row_decode_errors() {
 }
 
 #[test]
+fn local_task_payload_preserves_row_wire_shape_without_local_roundtrip() {
+    let task = Task::new("task-local", "sim.local", serde_json::json!({"value": 7}));
+    let local = BatchPayload::from_local_tasks(vec![task.clone()]);
+    let row = BatchPayload::from_tasks(std::slice::from_ref(&task));
+
+    assert_eq!(
+        serde_json::to_value(&local).unwrap(),
+        serde_json::to_value(&row).unwrap()
+    );
+    assert!(matches!(
+        local.task_at(0).unwrap(),
+        std::borrow::Cow::Borrowed(_)
+    ));
+    assert_eq!(local.task_at(0).unwrap().task_id, task.task_id);
+
+    let decoded: BatchPayload =
+        serde_json::from_value(serde_json::to_value(local).unwrap()).unwrap();
+    assert!(matches!(decoded, BatchPayload::Row(_)));
+    assert_eq!(decoded.task_at(0).unwrap().task_id, task.task_id);
+}
+
+#[test]
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
         runners: Vec::new(),
@@ -387,6 +411,10 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
             codec: "json".into(),
             compatibility: "semver".into(),
         }],
+        protocol_classes: BTreeMap::from([
+            ("im.message.received.v1".into(), ProtocolClass::Domain),
+            ("effect.chat.send".into(), ProtocolClass::Effect),
+        ]),
         handler_bindings: vec![HandlerBinding {
             binding_id: "message-handler".into(),
             plugin_id: "plugin-a".into(),

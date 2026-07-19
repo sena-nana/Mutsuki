@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
-    ArtifactType, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginDeploymentKind,
-    PluginManifest, PluginProvides, RunnerDescriptor, RuntimeCapabilityGraph, RuntimeProfile,
+    ArtifactType, ExecutionClass, LifecyclePolicy, PermissionGrant, PluginArtifact,
+    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass, RunnerDescriptor,
+    RunnerPurity, RuntimeCapabilityGraph, RuntimeProfile,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -31,9 +32,126 @@ pub(super) fn resolve_enabled_plugins(
             &manifest.artifact.artifact_type,
         )?;
         resolved.deployments.insert(plugin_id.clone(), deployment);
-        resolved.manifests.push(manifest.clone());
+        let mut manifest = manifest.clone();
+        normalize_protocol_classes(&mut manifest)?;
+        resolved.manifests.push(manifest);
     }
+    reject_cross_plugin_protocol_class_conflicts(&resolved.manifests)?;
     Ok(resolved)
+}
+
+fn reject_cross_plugin_protocol_class_conflicts(manifests: &[PluginManifest]) -> RuntimeResult<()> {
+    let mut classes = BTreeMap::new();
+    for manifest in manifests {
+        for (protocol_id, class) in &manifest.provides.protocol_classes {
+            if let Some(existing) = classes.insert(protocol_id.as_str(), class)
+                && existing != class
+            {
+                return Err(protocol_class_error(
+                    manifest,
+                    protocol_id,
+                    "cross_plugin_conflict",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn normalize_protocol_classes(manifest: &mut PluginManifest) -> RuntimeResult<()> {
+    let mut known_protocols = manifest
+        .provides
+        .protocols
+        .iter()
+        .map(|protocol| protocol.protocol_id.clone())
+        .collect::<BTreeSet<_>>();
+    for runner in &mut manifest.provides.runners {
+        runner.accepted_protocol_ids.sort();
+        runner.accepted_protocol_ids.dedup();
+        known_protocols.extend(runner.accepted_protocol_ids.iter().cloned());
+    }
+    known_protocols.extend(manifest.provides.effects.iter().cloned());
+
+    if let Some(unknown) = manifest
+        .provides
+        .protocol_classes
+        .keys()
+        .find(|protocol_id| !known_protocols.contains(*protocol_id))
+    {
+        return Err(protocol_class_error(manifest, unknown, "unknown_protocol"));
+    }
+
+    for protocol_id in known_protocols {
+        let legacy_class = legacy_protocol_class(&protocol_id);
+        let class = manifest
+            .provides
+            .protocol_classes
+            .entry(protocol_id.clone())
+            .or_insert(legacy_class.clone());
+        if (protocol_id.starts_with("effect.") && class != &ProtocolClass::Effect)
+            || (protocol_id.starts_with("core.")
+                && !matches!(class, ProtocolClass::Core | ProtocolClass::Control))
+            || (manifest.provides.effects.contains(&protocol_id) && class != &ProtocolClass::Effect)
+        {
+            return Err(protocol_class_error(
+                manifest,
+                &protocol_id,
+                "canonical_conflict",
+            ));
+        }
+    }
+
+    for runner in &manifest.provides.runners {
+        for protocol_id in &runner.accepted_protocol_ids {
+            let class = manifest
+                .provides
+                .protocol_classes
+                .get(protocol_id)
+                .expect("known runner protocol was normalized");
+            let purity_matches = matches!(
+                (&runner.purity, class),
+                (RunnerPurity::Pure, ProtocolClass::Domain)
+                    | (RunnerPurity::Effectful, ProtocolClass::Effect)
+                    | (RunnerPurity::Committer, ProtocolClass::Core)
+                    | (RunnerPurity::Committer, ProtocolClass::Control)
+            );
+            let control_matches = class != &ProtocolClass::Control
+                || runner.execution_class == ExecutionClass::Control;
+            if !purity_matches || !control_matches {
+                return Err(protocol_class_error(
+                    manifest,
+                    protocol_id,
+                    &format!("runner.{}.purity_conflict", runner.runner_id),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn legacy_protocol_class(protocol_id: &str) -> ProtocolClass {
+    if protocol_id.starts_with("effect.") {
+        ProtocolClass::Effect
+    } else if protocol_id.starts_with("core.") {
+        ProtocolClass::Core
+    } else {
+        ProtocolClass::Domain
+    }
+}
+
+fn protocol_class_error(
+    manifest: &PluginManifest,
+    protocol_id: &str,
+    reason: &str,
+) -> mutsuki_runtime_core::RuntimeFailure {
+    mutsuki_runtime_core::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "host.load_plan.protocol_class",
+        format!(
+            "plugin.{}.protocol.{protocol_id}.{reason}",
+            manifest.plugin_id
+        ),
+    ))
 }
 
 fn deployment_for(profile: &RuntimeProfile, manifest: &PluginManifest) -> PluginDeploymentKind {
@@ -133,6 +251,12 @@ pub(super) fn profile_hash(
 }
 
 pub(crate) fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {
+    let protocol_classes = runner
+        .accepted_protocol_ids
+        .iter()
+        .cloned()
+        .map(|protocol_id| (protocol_id, ProtocolClass::Core))
+        .collect();
     PluginManifest {
         plugin_id: "core".into(),
         version: "0.1.0".into(),
@@ -144,6 +268,7 @@ pub(crate) fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {
         },
         provides: PluginProvides {
             runners: vec![runner],
+            protocol_classes,
             ..PluginProvides::default()
         },
         requires: Vec::new(),

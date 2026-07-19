@@ -84,6 +84,24 @@ fn manifest(
     runners: Vec<RunnerDescriptor>,
     handler_bindings: Vec<HandlerBinding>,
 ) -> PluginManifest {
+    let mut protocol_classes = runners
+        .iter()
+        .flat_map(|runner| {
+            runner
+                .accepted_protocol_ids
+                .iter()
+                .cloned()
+                .map(|protocol_id| {
+                    let class = match runner.purity {
+                        RunnerPurity::Pure => ProtocolClass::Domain,
+                        RunnerPurity::Effectful => ProtocolClass::Effect,
+                        RunnerPurity::Committer => ProtocolClass::Core,
+                    };
+                    (protocol_id, class)
+                })
+        })
+        .collect::<BTreeMap<_, _>>();
+    protocol_classes.insert("effect.chat.send".into(), ProtocolClass::Effect);
     PluginManifest {
         plugin_id: "plugin-a".into(),
         version: "0.1.0".into(),
@@ -96,6 +114,7 @@ fn manifest(
         provides: PluginProvides {
             runners,
             protocols: Vec::new(),
+            protocol_classes,
             handler_bindings,
             effects: vec!["effect.chat.send".into()],
             streams: vec!["chat.events".into()],
@@ -346,26 +365,25 @@ pub(super) fn scalar_batch_result(
     batch: &WorkBatch,
     mut result: impl FnMut(&Task) -> RuntimeResult<RunnerResult>,
 ) -> RuntimeResult<CompletionBatch> {
-    let tasks = match batch.row_payload_tasks() {
-        Ok(tasks) => tasks,
-        Err(error) => return Ok(CompletionBatch::from_error(batch, error)),
-    };
     let mut results = Vec::with_capacity(batch.entries.len());
     for entry in &batch.entries {
-        let Some(task) = tasks.iter().find(|task| task.task_id == entry.task_id) else {
-            results.push(EntryCompletion {
-                entry_id: entry.entry_id.clone(),
-                task_id: entry.task_id.clone(),
-                result: None,
-                error: Some(RuntimeError::new(
-                    ERR_TASK_CLAIM_CONFLICT,
-                    "test.runner",
-                    format!("batch.entry.{}", entry.entry_id),
-                )),
-            });
-            continue;
+        let task = match batch.payload_task(entry.payload_index) {
+            Ok(task) if task.task_id == entry.task_id => task,
+            Ok(_) | Err(_) => {
+                results.push(EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: None,
+                    error: Some(RuntimeError::new(
+                        ERR_TASK_CLAIM_CONFLICT,
+                        "test.runner",
+                        format!("batch.entry.{}", entry.entry_id),
+                    )),
+                });
+                continue;
+            }
         };
-        match result(task) {
+        match result(&task) {
             Ok(result) => results.push(EntryCompletion {
                 entry_id: entry.entry_id.clone(),
                 task_id: entry.task_id.clone(),

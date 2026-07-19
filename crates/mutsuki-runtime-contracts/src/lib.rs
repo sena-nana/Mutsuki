@@ -14,9 +14,10 @@ mod trace;
 
 pub use batch::{
     BatchEntry, BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload, CompletionBatch,
-    DeferredResourceOp, DispatchLane, EntryCompletion, OrderingRequirement, PayloadLayout,
-    ResourceAccessMode, ResourceBackedPayload, ResourceReadView, ResourceRequirement,
-    ResourceSlice, ResourceWriteLock, RowPayload, TaskBatch, WorkBatch, WorkResourcePlan, WorkSet,
+    DeferredResourceOp, DispatchLane, EntryCompletion, LocalTaskPayload, OrderingRequirement,
+    PayloadLayout, ResourceAccessMode, ResourceBackedPayload, ResourceReadView,
+    ResourceRequirement, ResourceSlice, ResourceWriteLock, RowPayload, TaskBatch, WorkBatch,
+    WorkResourcePlan, WorkSet,
 };
 pub use common::{
     BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,
@@ -54,7 +55,7 @@ pub use observability::{
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, ContractSurface, ContractSurfaceKind,
     HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant, PluginArtifact,
-    PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides,
+    PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass,
     ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
     RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle,
     SurfaceOccupancyHandleKind,

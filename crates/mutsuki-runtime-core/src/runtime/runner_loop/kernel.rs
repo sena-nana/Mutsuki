@@ -13,7 +13,7 @@ impl CoreRuntime {
     pub(super) fn process_kernel_tasks(
         &mut self,
         _runner: &RunnerDescriptor,
-        tasks: Vec<(TaskLease, Task)>,
+        tasks: Vec<(TaskLease, std::sync::Arc<Task>)>,
     ) -> RuntimeResult<usize> {
         let mut completed = 0;
         for (lease, task) in tasks {

@@ -12,8 +12,8 @@ pub use entry::{
     BatchEntry, DispatchLane, OrderingRequirement, ResourceAccessMode, ResourceRequirement,
 };
 pub use payload::{
-    BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload, PayloadLayout,
-    ResourceBackedPayload, ResourceSlice, RowPayload,
+    BatchPayload, BinaryPackedPayload, ColumnPayload, ColumnarPayload, LocalTaskPayload,
+    PayloadLayout, ResourceBackedPayload, ResourceSlice, RowPayload,
 };
 pub use resource_plan::{
     DeferredResourceOp, ResourceReadView, ResourceWriteLock, WorkResourcePlan,
@@ -62,5 +62,13 @@ impl WorkBatch {
     #[allow(clippy::result_large_err)]
     pub fn row_payload_tasks(&self) -> Result<Vec<Task>, crate::RuntimeError> {
         self.payload.try_row_tasks()
+    }
+
+    #[allow(clippy::result_large_err)]
+    pub fn payload_task(
+        &self,
+        index: usize,
+    ) -> Result<std::borrow::Cow<'_, Task>, crate::RuntimeError> {
+        self.payload.task_at(index)
     }
 }

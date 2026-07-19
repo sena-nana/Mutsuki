@@ -3,6 +3,7 @@ mod batch_resource;
 mod environment;
 mod fixtures;
 mod host_api;
+mod local_dispatch;
 mod longevity;
 mod report;
 mod scheduling;
@@ -185,6 +186,7 @@ fn run_cases(mode: BenchmarkMode) -> Result<Vec<report::CaseResult>, String> {
     cases.extend(scheduling::run(mode)?);
     cases.extend(longevity::run(mode)?);
     cases.extend(batch_resource::run(mode)?);
+    cases.extend(local_dispatch::run(mode)?);
     cases.extend(host_api::run(mode)?);
     Ok(cases)
 }
@@ -478,6 +480,7 @@ fn full_matrix_gates(cases: &[CaseReport]) -> Vec<GateResult> {
         "core.resource-plan.write-conflict",
         "core.resource-plan.strict-order",
         "core.completion-route",
+        "core.local-builtin-dispatch",
         "core.host.submit-batch",
         "core.host.task-outcome",
         "core.host.observability-page",

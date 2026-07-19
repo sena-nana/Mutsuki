@@ -40,6 +40,7 @@ fragment set and then rebuilds only the merged report and anomaly analysis.
 - `core.resource-plan.write-conflict`
 - `core.resource-plan.strict-order`
 - `core.completion-route`
+- `core.local-builtin-dispatch`
 - `core.host.submit-batch`
 - `core.host.task-outcome`
 - `core.host.observability-page`
@@ -53,6 +54,11 @@ coverage gates.
 `iterations` and `units` record the observed normalization counts. They are not part of case identity,
 because pagination and other asynchronous workloads can observe different valid counts across process
 rounds while retaining the same configured workload dimensions.
+
+`core.local-builtin-dispatch` covers 1, 16 and 256 entries with a builtin runner, borrowed
+`RunnerContext`, typed local task payload and process-scoped RSS. Its correctness counters prove all
+entries complete through the ordinary lease/completion route. Serialization of the same payload is
+covered separately and must retain the existing Row wire shape.
 
 ## Gates and baseline approval
 

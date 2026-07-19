@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use mutsuki_runtime_contracts::{
     BatchEntry, CompletionBatch, EntryCompletion, RunnerDescriptor, RuntimeError, TaskLease,
@@ -12,16 +12,27 @@ pub(super) fn complete_runner_dispatch(
     runtime: &mut CoreRuntime,
     completion: RunnerCompletion,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let descriptor = completion
+    let runner_id = completion
         .runner
         .as_ref()
-        .map(|runner| runner.descriptor().clone())
+        .map(|runner| runner.descriptor().runner_id.as_str())
         .or_else(|| {
             completion
                 .task_leases
                 .first()
-                .and_then(|lease| runtime.registry.descriptor(&lease.runner_id))
+                .map(|lease| lease.runner_id.as_str())
         })
+        .ok_or_else(|| {
+            crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
+                "runtime.runner_loop",
+                format!("batch.{}.runner", completion.batch_id),
+            )
+        })?;
+    let descriptors = runtime.registry.descriptor_snapshot();
+    let descriptor = descriptors
+        .iter()
+        .find(|descriptor| descriptor.runner_id == runner_id)
         .ok_or_else(|| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNNER_NOT_FOUND,
@@ -61,7 +72,7 @@ pub(super) fn complete_runner_dispatch(
     }
     let completed = route_completion_batch(
         runtime,
-        &descriptor,
+        descriptor,
         &completion.task_leases,
         &completion.expected_entries,
         result,
@@ -79,14 +90,14 @@ fn route_completion_batch(
     expected_entries: &[BatchEntry],
     batch: CompletionBatch,
 ) -> RuntimeResult<usize> {
-    let mut leases_by_task = BTreeMap::new();
+    let mut leases_by_task = HashMap::new();
     for lease in leases {
         leases_by_task.insert(lease.task_id.as_str(), lease);
     }
-    let mut expected_entries_by_id = BTreeMap::new();
-    for entry in expected_entries {
+    let mut expected_entries_by_id = HashMap::new();
+    for (index, entry) in expected_entries.iter().enumerate() {
         if expected_entries_by_id
-            .insert(entry.entry_id.as_str(), entry)
+            .insert(entry.entry_id.as_str(), index)
             .is_some()
             || !leases_by_task.contains_key(entry.task_id.as_str())
         {
@@ -97,15 +108,21 @@ fn route_completion_batch(
             );
         }
     }
-    let mut completions_by_entry = BTreeMap::new();
-    for completion in &batch.results {
-        let Some(entry) = expected_entries_by_id.get(completion.entry_id.as_str()) else {
+    let mut completions_by_entry = (0..expected_entries.len())
+        .map(|_| None)
+        .collect::<Vec<Option<EntryCompletion>>>();
+    for completion in batch.results {
+        let Some(index) = expected_entries_by_id
+            .get(completion.entry_id.as_str())
+            .copied()
+        else {
             return super::failure_reporting::fail_runner_dispatches(
                 runtime,
                 leases,
                 batch_claim_conflict(format!("batch.entry.{}", completion.entry_id)),
             );
         };
+        let entry = &expected_entries[index];
         if entry.task_id != completion.task_id
             || !leases_by_task.contains_key(completion.task_id.as_str())
         {
@@ -115,19 +132,16 @@ fn route_completion_batch(
                 batch_claim_conflict(format!("batch.entry.{}", completion.entry_id)),
             );
         }
-        if completions_by_entry
-            .insert(completion.entry_id.as_str(), completion)
-            .is_some()
-        {
+        if completions_by_entry[index].replace(completion).is_some() {
             return super::failure_reporting::fail_runner_dispatches(
                 runtime,
                 leases,
-                batch_claim_conflict(format!("batch.entry.{}", completion.entry_id)),
+                batch_claim_conflict(format!("batch.entry.{}", entry.entry_id)),
             );
         }
     }
     let mut completed = 0;
-    for entry in expected_entries {
+    for (index, entry) in expected_entries.iter().enumerate() {
         let Some(lease) = leases_by_task.get(entry.task_id.as_str()) else {
             return super::failure_reporting::fail_runner_dispatches(
                 runtime,
@@ -135,7 +149,7 @@ fn route_completion_batch(
                 batch_claim_conflict(format!("batch.entry.expected.{}", entry.entry_id)),
             );
         };
-        let Some(completion) = completions_by_entry.get(entry.entry_id.as_str()) else {
+        let Some(completion) = completions_by_entry[index].take() else {
             completed += super::failure_reporting::fail_runner_dispatch(
                 runtime,
                 lease,
@@ -143,7 +157,7 @@ fn route_completion_batch(
             )?;
             continue;
         };
-        completed += route_entry_completion(runtime, descriptor, lease, (*completion).clone())?;
+        completed += route_entry_completion(runtime, descriptor, lease, completion)?;
     }
     Ok(completed)
 }

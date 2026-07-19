@@ -90,6 +90,12 @@ pub struct LifecyclePolicy {
 pub struct PluginProvides {
     pub runners: Vec<RunnerDescriptor>,
     pub protocols: Vec<ProtocolDescriptor>,
+    /// Runtime semantic class for each task protocol.
+    ///
+    /// Empty maps are accepted only as legacy manifest input and are
+    /// normalized by the Host resolver before a RuntimeLoadPlan is emitted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub protocol_classes: BTreeMap<String, ProtocolClass>,
     pub handler_bindings: Vec<HandlerBinding>,
     pub resource_schemas: Vec<String>,
     pub resource_providers: Vec<String>,
@@ -105,6 +111,16 @@ pub struct PluginProvides {
     pub bridges: Vec<BridgeDescriptor>,
     pub scheduler_policies: Vec<SchedulerPolicyDescriptor>,
     pub workflows: Vec<WorkflowDescriptor>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProtocolClass {
+    #[default]
+    Domain,
+    Effect,
+    Core,
+    Control,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

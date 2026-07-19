@@ -10,7 +10,7 @@ pub(super) fn runner_can_dispatch(descriptor: &RunnerDescriptor) -> bool {
 
 pub(super) fn claim_runner_work(
     runtime: &mut CoreRuntime,
-    descriptor: RunnerDescriptor,
+    descriptor: &RunnerDescriptor,
     decision: ScheduleDecision,
     lease_expires_at: Option<u64>,
 ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
@@ -26,13 +26,13 @@ pub(super) fn claim_runner_work(
                 .saturating_mul(max_batches),
         )
         .clamp_batches(max_batches);
-    runtime.record_scheduler_decision(&descriptor, &decision);
+    runtime.record_scheduler_decision(descriptor, &decision);
     if decision.dispatch_limit == 0 {
         return Ok((empty_runner_loop_report(), Vec::new()));
     }
     let executor_id = format!("executor:{}", descriptor.runner_id);
-    let leased_tasks = runtime.tasks.claim_ready_for_executor_with_budget(
-        &descriptor,
+    let leased_tasks = runtime.tasks.claim_ready_for_executor_shared_with_budget(
+        descriptor,
         executor_id.clone(),
         runtime.current_step,
         runtime.load_plan.registry_generation,
@@ -45,7 +45,7 @@ pub(super) fn claim_runner_work(
     }
     if descriptor.purity == RunnerPurity::Committer && descriptor.runner_id == "core.kernel" {
         let claimed_tasks = leased_tasks.len();
-        let completed_tasks = runtime.process_kernel_tasks(&descriptor, leased_tasks)?;
+        let completed_tasks = runtime.process_kernel_tasks(descriptor, leased_tasks)?;
         return Ok((
             RunnerLoopReport {
                 claimed_tasks,
@@ -73,7 +73,7 @@ pub(super) fn claim_runner_work(
     }
     let mut dispatches = Vec::with_capacity(chunks.len());
     for chunk in chunks.drain(..) {
-        dispatches.push(runtime.build_runner_dispatch(&descriptor, executor_id.clone(), chunk)?);
+        dispatches.push(runtime.build_runner_dispatch(descriptor, executor_id.clone(), chunk)?);
     }
     Ok((
         RunnerLoopReport {

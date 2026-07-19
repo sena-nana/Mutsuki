@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use mutsuki_runtime_contracts::{
-    RunnerDescriptor, RunnerPurity, RuntimeEventKind, ScalarValue, Task,
+    ProtocolClass, RunnerDescriptor, RunnerPurity, RuntimeEventKind, ScalarValue, Task,
 };
 
 use crate::RuntimeResult;
@@ -51,7 +51,11 @@ impl CoreRuntime {
                         runner_id: runner_id.clone(),
                         plugin_id: descriptor.plugin_id.clone(),
                         plugin_generation: descriptor.plugin_generation,
-                        pollution: classify_pollution(&record.task, &descriptor),
+                        pollution: classify_pollution(
+                            &record.task,
+                            &descriptor,
+                            &self.protocol_classes,
+                        ),
                     },
                     None => RunningInvocationDisposition {
                         task_id: record.task.task_id.clone(),
@@ -67,12 +71,17 @@ impl CoreRuntime {
     }
 }
 
-fn classify_pollution(task: &Task, runner: &RunnerDescriptor) -> InvocationPollution {
-    if task.protocol_id.starts_with("effect.") || runner.purity == RunnerPurity::Effectful {
-        return InvocationPollution::Polluted;
-    }
-    if task.protocol_id.starts_with("core.") || runner.purity == RunnerPurity::Committer {
-        return InvocationPollution::Polluted;
+fn classify_pollution(
+    task: &Task,
+    runner: &RunnerDescriptor,
+    protocol_classes: &BTreeMap<String, ProtocolClass>,
+) -> InvocationPollution {
+    match protocol_classes.get(&task.protocol_id) {
+        Some(ProtocolClass::Effect | ProtocolClass::Core | ProtocolClass::Control) => {
+            return InvocationPollution::Polluted;
+        }
+        Some(ProtocolClass::Domain) if runner.purity == RunnerPurity::Pure => {}
+        Some(ProtocolClass::Domain) | None => return InvocationPollution::UnknownDirty,
     }
     if runner.purity != RunnerPurity::Pure {
         return InvocationPollution::UnknownDirty;

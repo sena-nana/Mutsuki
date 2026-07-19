@@ -1,9 +1,10 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 use crate::DispatchBudget;
 use mutsuki_runtime_contracts::{
-    ExecutorId, RunnerDescriptor, RunnerPurity, Task, TaskId, TaskLease, TaskStatus,
+    ExecutorId, RunnerDescriptor, Task, TaskId, TaskLease, TaskStatus,
 };
 
 use super::{TaskPool, TaskRecord};
@@ -18,7 +19,7 @@ pub(super) fn claim_ready_for_executor_with_budget(
     limit: usize,
     budget: Option<&DispatchBudget>,
     expires_at_step: Option<u64>,
-) -> Vec<(TaskLease, Task)> {
+) -> Vec<(TaskLease, Arc<Task>)> {
     let executor_id = executor_id.into();
     let candidates =
         select_candidate_ids(task_pool, runner, step, registry_generation, limit, budget);
@@ -53,7 +54,7 @@ pub(super) fn claim_ready_for_executor_with_budget(
             record.claimed_by = Some(runner.runner_id.clone());
             record.owner_runner = Some(runner.runner_id.clone());
             record.lease = Some(lease.clone());
-            record.task.lease_id = Some(lease.lease_id.clone());
+            Arc::make_mut(&mut record.task).lease_id = Some(lease.lease_id.clone());
             (lease, record.task.clone())
         };
         task_pool.insert_record_indexes(&task_id);
@@ -79,11 +80,11 @@ pub(super) fn queued_count(
     step: u64,
     registry_generation: u64,
 ) -> usize {
-    visit_candidate_records(task_pool, runner, step, registry_generation, |_| true)
+    task_pool.ready_dispatch_count(runner, step, registry_generation)
 }
 
 fn runner_accepts_indexed_task(
-    runner: &RunnerDescriptor,
+    _runner: &RunnerDescriptor,
     task: &Task,
     registry_generation: u64,
 ) -> bool {
@@ -93,13 +94,7 @@ fn runner_accepts_indexed_task(
     {
         return false;
     }
-    match runner.purity {
-        RunnerPurity::Pure => {
-            !task.protocol_id.starts_with("effect.") && !task.protocol_id.starts_with("core.")
-        }
-        RunnerPurity::Effectful => task.protocol_id.starts_with("effect."),
-        RunnerPurity::Committer => task.protocol_id.starts_with("core."),
-    }
+    true
 }
 
 fn select_candidate_ids(

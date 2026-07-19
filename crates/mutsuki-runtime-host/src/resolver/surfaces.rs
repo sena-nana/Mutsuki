@@ -93,11 +93,6 @@ fn push_named_capability_surfaces(surfaces: &mut Vec<ContractSurface>, manifest:
             &manifest.provides.resource_schemas,
         ),
         (
-            ContractSurfaceKind::Effect,
-            "effect",
-            &manifest.provides.effects,
-        ),
-        (
             ContractSurfaceKind::Stream,
             "stream",
             &manifest.provides.streams,
@@ -120,6 +115,22 @@ fn push_named_capability_surfaces(surfaces: &mut Vec<ContractSurface>, manifest:
     ] {
         push_named_surfaces(surfaces, &manifest.plugin_id, kind, prefix, names);
     }
+    let effects = manifest
+        .provides
+        .protocol_classes
+        .iter()
+        .filter_map(|(protocol_id, class)| {
+            (class == &mutsuki_runtime_contracts::ProtocolClass::Effect)
+                .then_some(protocol_id.clone())
+        })
+        .collect::<Vec<_>>();
+    push_named_surfaces(
+        surfaces,
+        &manifest.plugin_id,
+        ContractSurfaceKind::Effect,
+        "effect",
+        &effects,
+    );
 }
 
 fn push_resource_type_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {

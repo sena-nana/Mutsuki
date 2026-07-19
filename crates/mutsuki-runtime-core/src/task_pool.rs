@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     ERR_TASK_NOT_FOUND, ExecutorId, RunnerDescriptor, RunnerId, RuntimeError, SurfaceOccupancy,
@@ -15,7 +17,7 @@ mod indexes;
 mod occupancy;
 mod transitions;
 
-use indexes::TaskIndexes;
+use indexes::{ReadySelector, TaskIndexes};
 
 pub const TASK_LEASE_TTL_STEPS: u64 = 1;
 
@@ -36,7 +38,7 @@ impl TaskHistoryRetention {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskRecord {
-    pub task: Task,
+    pub task: Arc<Task>,
     pub output: Option<Value>,
     pub status: TaskStatus,
     pub claimed_by: Option<String>,
@@ -112,6 +114,7 @@ pub struct TaskPool {
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     indexes: TaskIndexes,
+    ready_selector_cache: RefCell<HashMap<String, [ReadySelector; 4]>>,
     payload_wire_bytes: HashMap<TaskId, usize>,
     terminal_order: VecDeque<TaskId>,
     evicted_task_ids: HashSet<TaskId>,
@@ -120,6 +123,8 @@ pub struct TaskPool {
     next_sequence: u64,
     statistics: TaskPoolStatistics,
 }
+
+const READY_SELECTOR_CACHE_CAPACITY: usize = 1024;
 
 impl TaskPool {
     pub fn enqueue(&mut self, task: Task) -> RuntimeResult<TaskId> {
@@ -135,15 +140,13 @@ impl TaskPool {
                 format!("task.enqueue.{task_id}"),
             ));
         }
-        let payload_wire_bytes = serde_json::to_vec(&task.payload)
-            .map_err(|error| {
-                crate::runtime_failure(
-                    mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-                    "runtime.task_pool",
-                    format!("task.payload.encode.{task_id}:{error}"),
-                )
-            })?
-            .len();
+        let payload_wire_bytes = compact_json_len(&task.payload).map_err(|error| {
+            crate::runtime_failure(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                "runtime.task_pool",
+                format!("task.payload.encode.{task_id}:{error}"),
+            )
+        })?;
         self.next_sequence += 1;
         if task.created_sequence == 0 {
             task.created_sequence = self.next_sequence;
@@ -151,7 +154,7 @@ impl TaskPool {
         self.tasks.insert(
             task_id.clone(),
             TaskRecord {
-                task,
+                task: Arc::new(task),
                 output: None,
                 status: TaskStatus::Ready,
                 claimed_by: None,
@@ -355,6 +358,31 @@ impl TaskPool {
         budget: Option<&DispatchBudget>,
         expires_at_step: Option<u64>,
     ) -> Vec<(TaskLease, Task)> {
+        self.claim_ready_for_executor_shared_with_budget(
+            runner,
+            executor_id,
+            step,
+            registry_generation,
+            limit,
+            budget,
+            expires_at_step,
+        )
+        .into_iter()
+        .map(|(lease, task)| (lease, task.as_ref().clone()))
+        .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn claim_ready_for_executor_shared_with_budget(
+        &mut self,
+        runner: &RunnerDescriptor,
+        executor_id: impl Into<ExecutorId>,
+        step: u64,
+        registry_generation: u64,
+        limit: usize,
+        budget: Option<&DispatchBudget>,
+        expires_at_step: Option<u64>,
+    ) -> Vec<(TaskLease, Arc<Task>)> {
         claiming::claim_ready_for_executor_with_budget(
             self,
             runner,
@@ -505,8 +533,15 @@ impl TaskPool {
         transitions::reclaim_expired_task_leases(self, current_step)
     }
 
-    pub(crate) fn surface_ids_for_task(&self, task: &Task) -> Vec<String> {
-        occupancy::surface_ids_for_task(task)
+    pub(crate) fn surface_ids_for_task(
+        &self,
+        task: &Task,
+        protocol_classes: &std::collections::BTreeMap<
+            String,
+            mutsuki_runtime_contracts::ProtocolClass,
+        >,
+    ) -> Vec<String> {
+        occupancy::surface_ids_for_task(task, protocol_classes)
     }
 
     pub fn awaits_for_parent(&self, task_id: &str) -> Vec<TaskAwait> {
@@ -523,8 +558,14 @@ impl TaskPool {
         transitions::rebind_ready_generation(self, old_generation, new_generation)
     }
 
-    pub fn surface_occupancy(&self) -> Vec<SurfaceOccupancy> {
-        occupancy::surface_occupancy(self)
+    pub(crate) fn surface_occupancy(
+        &self,
+        protocol_classes: &std::collections::BTreeMap<
+            String,
+            mutsuki_runtime_contracts::ProtocolClass,
+        >,
+    ) -> Vec<SurfaceOccupancy> {
+        occupancy::surface_occupancy(self, protocol_classes)
     }
 
     fn record(&self, task_id: &str) -> RuntimeResult<&TaskRecord> {
@@ -630,4 +671,24 @@ impl TaskPool {
         self.insert_record_indexes(task_id);
         result
     }
+}
+
+fn compact_json_len(value: &serde_json::Value) -> Result<usize, serde_json::Error> {
+    #[derive(Default)]
+    struct CountingWriter(usize);
+
+    impl std::io::Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = CountingWriter::default();
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.0)
 }

@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
     CapabilityProviderSelection, PermissionAuditEntry, PluginDeploymentKind, PluginManifest,
-    ResourceTypeDescriptor, RuntimeCapabilityGraph, RuntimeProfile, RuntimeProfileMode,
+    ProtocolClass, ResourceTypeDescriptor, RuntimeCapabilityGraph, RuntimeProfile,
+    RuntimeProfileMode,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -256,7 +257,6 @@ fn collect_base_capabilities(
     }
     for (prefix, names) in [
         ("resource_schema", &manifest.provides.resource_schemas),
-        ("effect", &manifest.provides.effects),
         ("stream", &manifest.provides.streams),
         ("subscription", &manifest.provides.subscriptions),
         ("timer", &manifest.provides.timers),
@@ -265,6 +265,23 @@ fn collect_base_capabilities(
         for name in names {
             collect_active_capability(manifest, provided, active, providers, prefix, name, None);
         }
+    }
+    let effect_protocols = manifest
+        .provides
+        .protocol_classes
+        .iter()
+        .filter_map(|(protocol_id, class)| (class == &ProtocolClass::Effect).then_some(protocol_id))
+        .collect::<BTreeSet<_>>();
+    for protocol_id in effect_protocols {
+        collect_active_capability(
+            manifest,
+            provided,
+            active,
+            providers,
+            "effect",
+            protocol_id,
+            None,
+        );
     }
     for resource_type in &manifest.provides.resource_types {
         collect_active_capability(

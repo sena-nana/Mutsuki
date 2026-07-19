@@ -6,6 +6,9 @@ use mutsuki_runtime_contracts::{RunnerDescriptor, TaskId, TaskStatus};
 
 use super::{TaskPool, TaskRecord};
 
+type ReadyQueues = HashMap<String, HashMap<ReadySelector, BTreeSet<ReadyKey>>>;
+type ReadyCounts = HashMap<String, HashMap<ReadySelector, BTreeMap<(u64, u64), usize>>>;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) struct ReadySelector {
     runner_hint: Option<String>,
@@ -32,54 +35,14 @@ impl ReadyKey {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct TaskIndexes {
-    ready_by_protocol: HashMap<String, HashMap<ReadySelector, BTreeSet<ReadyKey>>>,
+    ready_by_protocol: ReadyQueues,
+    ready_counts_by_protocol: ReadyCounts,
     ready_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
     ready_with_expectations: BTreeSet<TaskId>,
     wake_by_step: BTreeMap<u64, BTreeSet<TaskId>>,
     running_by_runner: HashMap<String, BTreeSet<TaskId>>,
     waiting_by_runner: HashMap<String, BTreeSet<TaskId>>,
     leases_by_expiry: BTreeMap<u64, BTreeSet<TaskId>>,
-}
-
-#[derive(Clone, Debug)]
-struct IndexSnapshot {
-    task_id: TaskId,
-    protocol_id: String,
-    selector: ReadySelector,
-    claimed_by: Option<String>,
-    status: TaskStatus,
-    ready_key: ReadyKey,
-    ready_at_step: Option<u64>,
-    has_expectations: bool,
-    lease_expires_at_step: Option<u64>,
-}
-
-impl IndexSnapshot {
-    fn from_record(record: &TaskRecord) -> Self {
-        let task_id = record.task.task_id.clone();
-        Self {
-            task_id: task_id.clone(),
-            protocol_id: record.task.protocol_id.clone(),
-            selector: ReadySelector {
-                runner_hint: record.task.runner_hint.clone(),
-                owner_runner: record.owner_runner.clone(),
-            },
-            claimed_by: record.claimed_by.clone(),
-            status: record.status.clone(),
-            ready_key: ReadyKey {
-                ready_at_step: record.task.ready_at_step.unwrap_or(0),
-                priority: Reverse(record.task.priority),
-                created_sequence: record.task.created_sequence,
-                task_id: task_id.clone(),
-            },
-            ready_at_step: record.task.ready_at_step,
-            has_expectations: !record.task.expected_versions.is_empty(),
-            lease_expires_at_step: record
-                .lease
-                .as_ref()
-                .and_then(|lease| lease.expires_at_step),
-        }
-    }
 }
 
 impl TaskPool {
@@ -92,20 +55,15 @@ impl TaskPool {
     }
 
     fn update_record_indexes(&mut self, task_id: &str, present: bool) {
-        if let Some(snapshot) = self.tasks.get(task_id).map(IndexSnapshot::from_record) {
-            self.update_snapshot(&snapshot, present);
+        if let Some(record) = self.tasks.get(task_id) {
+            self.indexes.update_record(record, present);
         }
     }
 
     pub(super) fn rebuild_indexes(&mut self) {
         self.indexes = TaskIndexes::default();
-        let snapshots = self
-            .tasks
-            .values()
-            .map(IndexSnapshot::from_record)
-            .collect::<Vec<_>>();
-        for snapshot in &snapshots {
-            self.update_snapshot(snapshot, true);
+        for record in self.tasks.values() {
+            self.indexes.update_record(record, true);
         }
     }
 
@@ -114,25 +72,65 @@ impl TaskPool {
         runner: &RunnerDescriptor,
     ) -> Vec<&BTreeSet<ReadyKey>> {
         let mut queues = Vec::new();
-        for (index, protocol_id) in runner.accepted_protocol_ids.iter().enumerate() {
-            if runner.accepted_protocol_ids[..index].contains(protocol_id) {
-                continue;
-            }
-            let Some(by_selector) = self.indexes.ready_by_protocol.get(protocol_id) else {
-                continue;
-            };
-            for runner_hint in [None, Some(runner.runner_id.clone())] {
-                for owner_runner in [None, Some(runner.runner_id.clone())] {
-                    if let Some(queue) = by_selector.get(&ReadySelector {
-                        runner_hint: runner_hint.clone(),
-                        owner_runner,
-                    }) {
+        self.with_ready_selectors(&runner.runner_id, |selectors| {
+            for protocol_id in &runner.accepted_protocol_ids {
+                let Some(by_selector) = self.indexes.ready_by_protocol.get(protocol_id) else {
+                    continue;
+                };
+                for selector in selectors {
+                    if let Some(queue) = by_selector.get(selector) {
                         queues.push(queue);
                     }
                 }
             }
-        }
+        });
         queues
+    }
+
+    pub(super) fn ready_dispatch_count(
+        &self,
+        runner: &RunnerDescriptor,
+        current_step: u64,
+        registry_generation: u64,
+    ) -> usize {
+        self.with_ready_selectors(&runner.runner_id, |selectors| {
+            runner
+                .accepted_protocol_ids
+                .iter()
+                .filter_map(|protocol_id| self.indexes.ready_counts_by_protocol.get(protocol_id))
+                .flat_map(|by_selector| {
+                    selectors
+                        .iter()
+                        .filter_map(|selector| by_selector.get(selector))
+                })
+                .flat_map(|by_step| by_step.iter())
+                .filter(|((ready_at_step, task_generation), _count)| {
+                    *ready_at_step <= current_step
+                        && (registry_generation == 0
+                            || *task_generation == 0
+                            || *task_generation == registry_generation)
+                })
+                .map(|(_key, count)| count)
+                .copied()
+                .sum()
+        })
+    }
+
+    fn with_ready_selectors<R>(
+        &self,
+        runner_id: &str,
+        use_selectors: impl FnOnce(&[ReadySelector; 4]) -> R,
+    ) -> R {
+        let mut cache = self.ready_selector_cache.borrow_mut();
+        if cache.contains_key(runner_id) {
+            return use_selectors(cache.get(runner_id).expect("cached selector exists"));
+        }
+        if cache.len() < super::READY_SELECTOR_CACHE_CAPACITY {
+            cache.insert(runner_id.into(), build_ready_selectors(runner_id));
+            return use_selectors(cache.get(runner_id).expect("inserted selector exists"));
+        }
+        drop(cache);
+        use_selectors(&build_ready_selectors(runner_id))
     }
 
     pub(super) fn running_task_ids(&self, runner_id: &str) -> Option<&BTreeSet<TaskId>> {
@@ -183,77 +181,6 @@ impl TaskPool {
         .min()
     }
 
-    fn update_snapshot(&mut self, snapshot: &IndexSnapshot, present: bool) {
-        match snapshot.status {
-            TaskStatus::Ready => {
-                set_ready(
-                    &mut self.indexes.ready_by_protocol,
-                    &snapshot.protocol_id,
-                    &snapshot.selector,
-                    &snapshot.ready_key,
-                    present,
-                );
-                if snapshot.has_expectations {
-                    set_value(
-                        &mut self.indexes.ready_with_expectations,
-                        &snapshot.task_id,
-                        present,
-                    );
-                }
-                if let Some(step) = snapshot.ready_at_step {
-                    set_bucket(
-                        &mut self.indexes.ready_by_step,
-                        step,
-                        &snapshot.task_id,
-                        present,
-                    );
-                }
-            }
-            TaskStatus::Running => {
-                if let Some(runner_id) = &snapshot.claimed_by {
-                    set_map_value(
-                        &mut self.indexes.running_by_runner,
-                        runner_id,
-                        &snapshot.task_id,
-                        present,
-                    );
-                }
-                if let Some(step) = snapshot.lease_expires_at_step {
-                    set_bucket(
-                        &mut self.indexes.leases_by_expiry,
-                        step,
-                        &snapshot.task_id,
-                        present,
-                    );
-                }
-            }
-            TaskStatus::Waiting => {
-                if let Some(runner_id) = &snapshot.selector.owner_runner {
-                    set_map_value(
-                        &mut self.indexes.waiting_by_runner,
-                        runner_id,
-                        &snapshot.task_id,
-                        present,
-                    );
-                }
-                self.update_wake(snapshot, present);
-            }
-            TaskStatus::Blocked => self.update_wake(snapshot, present),
-            _ => {}
-        }
-    }
-
-    fn update_wake(&mut self, snapshot: &IndexSnapshot, present: bool) {
-        if let Some(step) = snapshot.ready_at_step {
-            set_bucket(
-                &mut self.indexes.wake_by_step,
-                step,
-                &snapshot.task_id,
-                present,
-            );
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn assert_indexes_consistent(&self) {
         let mut rebuilt = self.clone();
@@ -299,6 +226,111 @@ impl TaskPool {
     }
 }
 
+impl TaskIndexes {
+    fn update_record(&mut self, record: &TaskRecord, present: bool) {
+        match record.status {
+            TaskStatus::Ready => {
+                let selector = ReadySelector {
+                    runner_hint: record.task.runner_hint.clone(),
+                    owner_runner: record.owner_runner.clone(),
+                };
+                let ready_at_step = record.task.ready_at_step.unwrap_or(0);
+                let ready_key = ReadyKey {
+                    ready_at_step,
+                    priority: Reverse(record.task.priority),
+                    created_sequence: record.task.created_sequence,
+                    task_id: record.task.task_id.clone(),
+                };
+                set_ready(
+                    &mut self.ready_by_protocol,
+                    &record.task.protocol_id,
+                    &selector,
+                    &ready_key,
+                    present,
+                );
+                set_ready_count(
+                    &mut self.ready_counts_by_protocol,
+                    &record.task.protocol_id,
+                    &selector,
+                    ready_at_step,
+                    record.task.registry_generation,
+                    present,
+                );
+                if !record.task.expected_versions.is_empty() {
+                    set_value(
+                        &mut self.ready_with_expectations,
+                        &record.task.task_id,
+                        present,
+                    );
+                }
+                if let Some(step) = record.task.ready_at_step {
+                    set_bucket(&mut self.ready_by_step, step, &record.task.task_id, present);
+                }
+            }
+            TaskStatus::Running => {
+                if let Some(runner_id) = &record.claimed_by {
+                    set_map_value(
+                        &mut self.running_by_runner,
+                        runner_id,
+                        &record.task.task_id,
+                        present,
+                    );
+                }
+                if let Some(step) = record
+                    .lease
+                    .as_ref()
+                    .and_then(|lease| lease.expires_at_step)
+                {
+                    set_bucket(
+                        &mut self.leases_by_expiry,
+                        step,
+                        &record.task.task_id,
+                        present,
+                    );
+                }
+            }
+            TaskStatus::Waiting => {
+                if let Some(runner_id) = &record.owner_runner {
+                    set_map_value(
+                        &mut self.waiting_by_runner,
+                        runner_id,
+                        &record.task.task_id,
+                        present,
+                    );
+                }
+                self.update_wake(record, present);
+            }
+            TaskStatus::Blocked => self.update_wake(record, present),
+            _ => {}
+        }
+    }
+
+    fn update_wake(&mut self, record: &TaskRecord, present: bool) {
+        if let Some(step) = record.task.ready_at_step {
+            set_bucket(&mut self.wake_by_step, step, &record.task.task_id, present);
+        }
+    }
+}
+
+fn build_ready_selectors(runner_id: &str) -> [ReadySelector; 4] {
+    let runner_id = runner_id.to_owned();
+    [
+        ReadySelector::default(),
+        ReadySelector {
+            runner_hint: Some(runner_id.clone()),
+            owner_runner: None,
+        },
+        ReadySelector {
+            runner_hint: None,
+            owner_runner: Some(runner_id.clone()),
+        },
+        ReadySelector {
+            runner_hint: Some(runner_id.clone()),
+            owner_runner: Some(runner_id),
+        },
+    ]
+}
+
 fn next_bucket_after(buckets: &BTreeMap<u64, BTreeSet<TaskId>>, current_step: u64) -> Option<u64> {
     buckets
         .range((
@@ -310,7 +342,7 @@ fn next_bucket_after(buckets: &BTreeMap<u64, BTreeSet<TaskId>>, current_step: u6
 }
 
 fn set_ready(
-    index: &mut HashMap<String, HashMap<ReadySelector, BTreeSet<ReadyKey>>>,
+    index: &mut ReadyQueues,
     protocol_id: &str,
     selector: &ReadySelector,
     key: &ReadyKey,
@@ -329,6 +361,46 @@ fn set_ready(
         let remove_selector = by_selector.get_mut(selector).is_some_and(|queue| {
             queue.remove(key);
             queue.is_empty()
+        });
+        if remove_selector {
+            by_selector.remove(selector);
+        }
+        by_selector.is_empty()
+    });
+    if remove_protocol {
+        index.remove(protocol_id);
+    }
+}
+
+fn set_ready_count(
+    index: &mut ReadyCounts,
+    protocol_id: &str,
+    selector: &ReadySelector,
+    ready_at_step: u64,
+    registry_generation: u64,
+    present: bool,
+) {
+    let bucket = (ready_at_step, registry_generation);
+    if present {
+        *index
+            .entry(protocol_id.into())
+            .or_default()
+            .entry(selector.clone())
+            .or_default()
+            .entry(bucket)
+            .or_default() += 1;
+        return;
+    }
+    let remove_protocol = index.get_mut(protocol_id).is_some_and(|by_selector| {
+        let remove_selector = by_selector.get_mut(selector).is_some_and(|by_bucket| {
+            let remove_bucket = by_bucket.get_mut(&bucket).is_some_and(|count| {
+                *count = count.saturating_sub(1);
+                *count == 0
+            });
+            if remove_bucket {
+                by_bucket.remove(&bucket);
+            }
+            by_bucket.is_empty()
         });
         if remove_selector {
             by_selector.remove(selector);

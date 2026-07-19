@@ -42,7 +42,7 @@ fn same_step_retry_and_generation_switch_reject_the_old_attempt() {
         pool.cancel_running_invocation("worker", &first.lease_id, 7),
         1
     );
-    pool.get_mut_for_test("task-1").task.registry_generation = 2;
+    std::sync::Arc::make_mut(&mut pool.get_mut_for_test("task-1").task).registry_generation = 2;
     let second =
         pool.claim_ready_for_executor_with_expiry(&descriptor, "executor-2", 7, 2, 1, None)[0]
             .0

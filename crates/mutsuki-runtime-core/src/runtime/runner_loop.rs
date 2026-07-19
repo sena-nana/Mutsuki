@@ -36,13 +36,13 @@ impl CoreRuntime {
         self.wake_due_tasks();
         let mut loop_report = empty_runner_loop_report();
         loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
-        let descriptors = self.registry.descriptors();
-        for descriptor in descriptors {
-            if !dispatch_selection::runner_can_dispatch(&descriptor) {
+        let descriptors = self.registry.descriptor_snapshot();
+        for descriptor in descriptors.iter() {
+            if !dispatch_selection::runner_can_dispatch(descriptor) {
                 continue;
             }
             let load = self.tasks.runner_load(
-                &descriptor,
+                descriptor,
                 self.current_step,
                 self.load_plan.registry_generation,
             );
@@ -108,18 +108,18 @@ impl CoreRuntime {
         let mut loop_report = empty_runner_loop_report();
         loop_report.completed_tasks += self.reject_stale_ready_tasks()?;
         let mut dispatches = Vec::new();
-        let descriptors = self.registry.descriptors();
-        for descriptor in descriptors {
-            if !dispatch_selection::runner_can_dispatch(&descriptor) {
+        let descriptors = self.registry.descriptor_snapshot();
+        for descriptor in descriptors.iter() {
+            if !dispatch_selection::runner_can_dispatch(descriptor) {
                 continue;
             }
             let load = self.tasks.runner_load(
-                &descriptor,
+                descriptor,
                 self.current_step,
                 self.load_plan.registry_generation,
             );
             let decision = decide_schedule(
-                &descriptor,
+                descriptor,
                 &load,
                 self.current_step,
                 self.load_plan.registry_generation,
@@ -135,7 +135,7 @@ impl CoreRuntime {
 
     fn claim_runner_work(
         &mut self,
-        descriptor: RunnerDescriptor,
+        descriptor: &RunnerDescriptor,
         decision: ScheduleDecision,
         lease_expires_at: Option<u64>,
     ) -> RuntimeResult<(RunnerLoopReport, Vec<RunnerDispatch>)> {
@@ -146,7 +146,7 @@ impl CoreRuntime {
         &mut self,
         descriptor: &RunnerDescriptor,
         executor_id: String,
-        leased_tasks: Vec<(TaskLease, Task)>,
+        leased_tasks: Vec<(TaskLease, std::sync::Arc<Task>)>,
     ) -> RuntimeResult<RunnerDispatch> {
         dispatch_build::build_runner_dispatch(self, descriptor, executor_id, leased_tasks)
     }

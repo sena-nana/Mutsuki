@@ -188,6 +188,10 @@ impl EventLog {
         self.inner.is_enabled()
     }
 
+    pub fn will_retain_next(&self) -> bool {
+        self.inner.will_retain_next()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &RuntimeEvent> {
         self.inner.records.iter()
     }
@@ -199,17 +203,19 @@ impl EventLog {
         subject_id: Option<String>,
         attributes: BTreeMap<String, ScalarValue>,
         error: Option<RuntimeError>,
-    ) -> RuntimeEvent {
-        let event = RuntimeEvent {
-            sequence: self.inner.next_sequence(),
+    ) -> Option<RuntimeEvent> {
+        self.record_with(|sequence| RuntimeEvent {
+            sequence,
             kind,
             name: name.into(),
             subject_id,
             attributes,
             error,
-        };
-        self.inner.retain(event.clone());
-        event
+        })
+    }
+
+    pub fn record_with(&mut self, build: impl FnOnce(u64) -> RuntimeEvent) -> Option<RuntimeEvent> {
+        self.inner.record_with(build)
     }
 
     pub fn snapshot(&self) -> &VecDeque<RuntimeEvent> {
@@ -326,6 +332,39 @@ mod tests {
 
     fn record_trace(log: &mut TraceLog, trace_id: &str) {
         log.record(trace_id, "test.span", None, SpanStatus::Ok, BTreeMap::new());
+    }
+
+    #[test]
+    fn disabled_and_drop_new_event_logs_do_not_invoke_lazy_builder() {
+        for profile in [
+            ObservabilityOutletProfile::new(0, ObservabilityOverflowPolicy::DropOldest),
+            ObservabilityOutletProfile::new(1, ObservabilityOverflowPolicy::DropNew),
+        ] {
+            let mut log = EventLog::with_profile(profile);
+            if log.inner.profile.capacity == 1 {
+                log.record(
+                    RuntimeEventKind::Task,
+                    "retained",
+                    None,
+                    BTreeMap::new(),
+                    None,
+                );
+            }
+            let mut built = false;
+            let event = log.record_with(|sequence| {
+                built = true;
+                RuntimeEvent {
+                    sequence,
+                    kind: RuntimeEventKind::Task,
+                    name: "discarded".into(),
+                    subject_id: None,
+                    attributes: BTreeMap::new(),
+                    error: None,
+                }
+            });
+            assert!(event.is_none());
+            assert!(!built);
+        }
     }
 
     #[test]

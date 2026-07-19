@@ -27,10 +27,17 @@ use crate::scheduler::{DefaultScheduler, SchedulerPolicy};
 
 pub type NativeEntryHandler =
     Box<dyn FnMut(RunnerContext, Task) -> RuntimeResult<RunnerResult> + Send>;
+pub type BorrowedNativeEntryHandler =
+    Box<dyn FnMut(&RunnerContext, &Task) -> RuntimeResult<RunnerResult> + Send>;
+
+enum NativeHandler {
+    Owned(NativeEntryHandler),
+    Borrowed(BorrowedNativeEntryHandler),
+}
 
 pub struct NativeRunner {
     descriptor: RunnerDescriptor,
-    handler: NativeEntryHandler,
+    handler: NativeHandler,
     cancelled: Vec<String>,
     disposed: bool,
 }
@@ -42,7 +49,23 @@ impl NativeRunner {
     ) -> Self {
         Self {
             descriptor,
-            handler: Box::new(handler),
+            handler: NativeHandler::Owned(Box::new(handler)),
+            cancelled: Vec::new(),
+            disposed: false,
+        }
+    }
+
+    /// Creates a builtin runner whose entry handler borrows typed local tasks.
+    ///
+    /// This is the allocation-free in-process path. Wire-backed payloads are
+    /// still decoded to an owned temporary by `BatchPayload::task_at`.
+    pub fn new_borrowed(
+        descriptor: RunnerDescriptor,
+        handler: impl FnMut(&RunnerContext, &Task) -> RuntimeResult<RunnerResult> + Send + 'static,
+    ) -> Self {
+        Self {
+            descriptor,
+            handler: NativeHandler::Borrowed(Box::new(handler)),
             cancelled: Vec::new(),
             disposed: false,
         }
@@ -59,30 +82,38 @@ impl Runner for NativeRunner {
         ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
-        let tasks = match batch.row_payload_tasks() {
-            Ok(tasks) => tasks,
-            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
-        };
         let mut results = Vec::with_capacity(batch.entries.len());
         for entry in &batch.entries {
-            let Some(task) = tasks
-                .iter()
-                .find(|task| task.task_id == entry.task_id)
-                .cloned()
-            else {
-                results.push(EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: None,
-                    error: Some(mutsuki_runtime_contracts::RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                        "native_runner",
-                        format!("batch.entry.{}", entry.entry_id),
-                    )),
-                });
-                continue;
+            let task = match batch.payload_task(entry.payload_index) {
+                Ok(task) if task.task_id == entry.task_id => task,
+                Ok(_) => {
+                    results.push(EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: None,
+                        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                            "native_runner",
+                            format!("batch.entry.{}.payload_task_id", entry.entry_id),
+                        )),
+                    });
+                    continue;
+                }
+                Err(error) => {
+                    results.push(EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: None,
+                        error: Some(error),
+                    });
+                    continue;
+                }
             };
-            match (self.handler)(ctx.clone(), task) {
+            let result = match &mut self.handler {
+                NativeHandler::Owned(handler) => handler(ctx.clone(), task.into_owned()),
+                NativeHandler::Borrowed(handler) => handler(&ctx, task.as_ref()),
+            };
+            match result {
                 Ok(result) => results.push(EntryCompletion {
                     entry_id: entry.entry_id.clone(),
                     task_id: entry.task_id.clone(),

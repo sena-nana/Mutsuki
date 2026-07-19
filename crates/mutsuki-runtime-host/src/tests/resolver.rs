@@ -8,6 +8,94 @@ use crate::{runner_manifest, runner_manifest_with_artifact};
 use super::helpers::{descriptor, runtime_profile};
 
 #[test]
+fn resolver_normalizes_legacy_protocol_classes_and_accepted_protocols() {
+    let mut runner = descriptor("legacy.runner", "sim.beta");
+    runner.accepted_protocol_ids = vec!["sim.beta".into(), "sim.alpha".into(), "sim.beta".into()];
+    let manifest = runner_manifest("plugin-a", vec![runner]);
+
+    let plan = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap();
+    let provides = &plan.plugins[0].provides;
+
+    assert_eq!(
+        provides.runners[0].accepted_protocol_ids,
+        vec!["sim.alpha", "sim.beta"]
+    );
+    assert_eq!(
+        provides.protocol_classes.get("sim.alpha"),
+        Some(&ProtocolClass::Domain)
+    );
+    assert_eq!(
+        provides.protocol_classes.get("sim.beta"),
+        Some(&ProtocolClass::Domain)
+    );
+}
+
+#[test]
+fn resolver_rejects_protocol_class_purity_conflicts() {
+    let runner = descriptor("conflict.runner", "sim.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner]);
+    manifest
+        .provides
+        .protocol_classes
+        .insert("sim.work".into(), ProtocolClass::Effect);
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap_err();
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert!(error.error().route.contains("purity_conflict"));
+}
+
+#[test]
+fn resolver_rejects_protocol_classes_for_unknown_protocols() {
+    let runner = descriptor("unknown.runner", "sim.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner]);
+    manifest
+        .provides
+        .protocol_classes
+        .insert("sim.unknown".into(), ProtocolClass::Domain);
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap_err();
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert!(error.error().route.contains("unknown_protocol"));
+}
+
+#[test]
+fn resolver_rejects_cross_plugin_protocol_class_conflicts() {
+    let protocol = |plugin_id: &str, class| {
+        let mut manifest = runner_manifest(plugin_id, Vec::new());
+        manifest.provides.protocols = vec![ProtocolDescriptor {
+            protocol_id: "shared.protocol".into(),
+            version: "1.0.0".into(),
+            input_schema: json!({}),
+            output_schema: json!({}),
+            error_schema: json!({}),
+            codec: "json".into(),
+            compatibility: "semver".into(),
+        }];
+        manifest
+            .provides
+            .protocol_classes
+            .insert("shared.protocol".into(), class);
+        manifest
+    };
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec!["plugin-a".into(), "plugin-b".into()];
+
+    let error = crate::resolve_load_plan(
+        &[
+            protocol("plugin-a", ProtocolClass::Domain),
+            protocol("plugin-b", ProtocolClass::Effect),
+        ],
+        &profile,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert!(error.error().route.contains("cross_plugin_conflict"));
+}
+
+#[test]
 fn resolver_records_builtin_and_abi_plugin_deployments() {
     let builtin_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut abi_descriptor = descriptor("abi.runner", "abi.work");
@@ -506,6 +594,33 @@ fn resolver_records_capability_provider_selection_and_permission_audit() {
                 && entry.granted
                 && entry.provider_capability.as_deref() == Some("resource_type:bytes"))
     );
+}
+
+#[test]
+fn resolver_uses_protocol_class_for_non_prefixed_effect_permissions_and_surfaces() {
+    let mut runner = descriptor("custom.effect.runner", "chat.send.v1");
+    runner.purity = RunnerPurity::Effectful;
+    let mut manifest = runner_manifest("plugin-a", vec![runner]);
+    manifest
+        .provides
+        .protocol_classes
+        .insert("chat.send.v1".into(), ProtocolClass::Effect);
+    manifest.permissions.effects = vec!["chat.send.v1".into()];
+
+    let plan = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap();
+
+    assert!(
+        plan.capability_graph
+            .active_capabilities
+            .contains(&"effect:chat.send.v1".into())
+    );
+    assert!(plan.contract_surfaces.iter().any(|surface| {
+        surface.surface_id == "effect:chat.send.v1" && surface.kind == ContractSurfaceKind::Effect
+    }));
+    assert!(plan.capability_graph.permission_audit.iter().any(|entry| {
+        entry.permission == "chat.send.v1"
+            && entry.provider_capability.as_deref() == Some("effect:chat.send.v1")
+    }));
 }
 
 #[test]

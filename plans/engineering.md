@@ -87,6 +87,11 @@ environment id。
 - TaskPool 增量索引必须能从 TaskRecord 确定性重建；所有状态迁移同步更新 ready、wake、
   expectation、lease expiry 和 runner load 索引。调度热路径不得使用 `records()` 快照、
   克隆全部候选 Task、重新排序完整候选集合或为 byte budget 重复 JSON 编码 payload。
+- builtin dispatch 必须使用 typed local payload，并允许 adapter 借用 `RunnerContext` 与
+  `Task`；跨进程序列化仍保持 Row wire shape。TaskPool 内部只共享 `Arc<Task>` 到 dispatch
+  生命周期，公开兼容 claim API 才返回 owned clone。
+- registry freeze 后的 descriptor iteration 必须使用排序快照；ready backlog 计数必须由
+  protocol/selector/step/generation 增量索引给出，不能在 load 计算和 claim 时重复扫描。
 - Task terminal history 上限只能显式启用；默认保留既有无限 outcome 语义。启用时 terminal
   record、payload byte cache、wait link 与防重 tombstone 必须一起保持有界，受 child wait
   保护的 record 不得提前淘汰，累计统计不能随 record 淘汰回退。
@@ -125,7 +130,8 @@ environment id。
 - 普通 runner 禁止直接副作用。
 - StateStore 只能通过 `core.commit` task 修改。
 - EventLog 只能通过 kernel event append 或 runtime 事件记录修改。
-- Effectful runner 只处理 `effect.*` task。
+- Effectful runner 只处理 load plan 中显式标记为 `ProtocolClass::Effect` 的 task；协议前缀
+  只允许用于 manifest 校验、legacy 导入和诊断。
 - ResourceRef/ValueRef/ResourceCellRef/ResourceLease/StateRef 是跨边界 descriptor，不是语言对象引用。
 - 长期资源状态归 ResourceManager / ResourceCell；runner 只能持有 step 期间的 ResourceLease。
 - 具体资源数据读写归 backend / provider；ResourceManager 保留 descriptor、lease、

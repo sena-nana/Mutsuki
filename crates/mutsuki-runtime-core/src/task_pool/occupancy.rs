@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use mutsuki_runtime_contracts::{RunnerDescriptor, SurfaceOccupancy, Task, TaskStatus};
+use mutsuki_runtime_contracts::{
+    ProtocolClass, RunnerDescriptor, SurfaceOccupancy, Task, TaskStatus,
+};
 
 use super::claiming;
 use super::{RunnerLoad, TaskPool, TaskRecord};
@@ -22,23 +24,26 @@ pub(super) fn runner_load(
     }
 }
 
-pub(super) fn surface_occupancy(task_pool: &TaskPool) -> Vec<SurfaceOccupancy> {
+pub(super) fn surface_occupancy(
+    task_pool: &TaskPool,
+    protocol_classes: &BTreeMap<String, ProtocolClass>,
+) -> Vec<SurfaceOccupancy> {
     let mut occupancy: HashMap<String, SurfaceOccupancy> = HashMap::new();
     for record in task_pool.tasks.values() {
-        for surface_id in surface_ids_for_record(record) {
+        for surface_id in surface_ids_for_record(record, protocol_classes) {
             let entry = occupancy
                 .entry(surface_id)
                 .or_insert_with_key(|surface_id| zero_occupancy(surface_id));
             match record.status {
                 TaskStatus::Ready => {
                     entry.ready_tasks += 1;
-                    if record.task.protocol_id.starts_with("effect.") {
+                    if is_effect(&record.task, protocol_classes) {
                         entry.effect_inflight += 1;
                     }
                 }
                 TaskStatus::Running | TaskStatus::Waiting => {
                     entry.running_invocations += 1;
-                    if record.task.protocol_id.starts_with("effect.") {
+                    if is_effect(&record.task, protocol_classes) {
                         entry.effect_inflight += 1;
                     }
                 }
@@ -51,14 +56,20 @@ pub(super) fn surface_occupancy(task_pool: &TaskPool) -> Vec<SurfaceOccupancy> {
     items
 }
 
-fn surface_ids_for_record(record: &TaskRecord) -> Vec<String> {
-    surface_ids_for_task(&record.task)
+fn surface_ids_for_record(
+    record: &TaskRecord,
+    protocol_classes: &BTreeMap<String, ProtocolClass>,
+) -> Vec<String> {
+    surface_ids_for_task(&record.task, protocol_classes)
 }
 
-pub(super) fn surface_ids_for_task(task: &Task) -> Vec<String> {
+pub(super) fn surface_ids_for_task(
+    task: &Task,
+    protocol_classes: &BTreeMap<String, ProtocolClass>,
+) -> Vec<String> {
     let mut surface_ids = task.required_surfaces.clone();
     surface_ids.push(format!("task_protocol:{}", task.protocol_id));
-    if task.protocol_id.starts_with("effect.") {
+    if is_effect(task, protocol_classes) {
         surface_ids.push(format!("effect:{}", task.protocol_id));
     }
     if let Some(runner_hint) = &task.runner_hint {
@@ -67,6 +78,10 @@ pub(super) fn surface_ids_for_task(task: &Task) -> Vec<String> {
     surface_ids.sort();
     surface_ids.dedup();
     surface_ids
+}
+
+fn is_effect(task: &Task, protocol_classes: &BTreeMap<String, ProtocolClass>) -> bool {
+    protocol_classes.get(&task.protocol_id) == Some(&ProtocolClass::Effect)
 }
 
 fn zero_occupancy(surface_id: &str) -> SurfaceOccupancy {

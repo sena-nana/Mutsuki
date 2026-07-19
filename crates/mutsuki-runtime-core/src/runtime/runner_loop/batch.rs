@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, OrderingRequirement, ResourceAccessMode, ResourceReadView,
@@ -9,7 +10,6 @@ use mutsuki_runtime_contracts::{
 pub(super) fn dispatch_batch_attrs(
     descriptor: &RunnerDescriptor,
     batch: &WorkBatch,
-    leased_tasks: &[(TaskLease, Task)],
     task_leases: &[TaskLease],
     executor_id: &str,
 ) -> BTreeMap<String, ScalarValue> {
@@ -67,7 +67,7 @@ pub(super) fn dispatch_batch_attrs(
             ScalarValue::String(format!("{:?}", entry.lane)),
         );
     }
-    if let Some((_, task)) = leased_tasks.first()
+    if let Ok(task) = batch.payload_task(0)
         && let Some(correlation_id) = &task.correlation_id
     {
         attrs.insert(
@@ -92,14 +92,19 @@ pub(super) fn build_work_batch(
     current_step: u64,
     batch_id: &str,
     descriptor: &RunnerDescriptor,
-    leased_tasks: &[(TaskLease, Task)],
+    leased_tasks: Vec<(TaskLease, Arc<Task>)>,
 ) -> WorkBatch {
     let tick_id = format!("tick-{current_step}");
     let mut resource_requirements = Vec::new();
+    let mut requirement_entry_indices = Vec::new();
     let mut entries = Vec::with_capacity(leased_tasks.len());
     for (payload_index, (_lease, task)) in leased_tasks.iter().enumerate() {
         let resource_start = resource_requirements.len();
         resource_requirements.extend(task.resource_requirements.clone());
+        requirement_entry_indices.extend(std::iter::repeat_n(
+            payload_index,
+            task.resource_requirements.len(),
+        ));
         let resource_requirement_indices =
             (resource_start..resource_requirements.len()).collect::<Vec<_>>();
         entries.push(BatchEntry {
@@ -122,27 +127,33 @@ pub(super) fn build_work_batch(
         entries,
         resource_requirements,
     };
-    let resource_plan = build_work_resource_plan(&work_set);
+    let resource_plan = build_work_resource_plan(&work_set, &requirement_entry_indices);
+    let task_leases = leased_tasks
+        .iter()
+        .map(|(lease, _task)| lease.clone())
+        .collect();
     WorkBatch {
         batch_id: batch_id.into(),
         tick_id,
         batch_key: work_set.batch_key,
         entries: work_set.entries,
-        payload: BatchPayload::from_task_refs(leased_tasks.iter().map(|(_lease, task)| task)),
+        payload: BatchPayload::from_local_tasks(
+            leased_tasks
+                .into_iter()
+                .map(|(_lease, task)| task)
+                .collect(),
+        ),
         resource_plan,
-        task_leases: leased_tasks
-            .iter()
-            .map(|(lease, _task)| lease.clone())
-            .collect(),
+        task_leases,
     }
 }
 
 pub(super) fn split_leased_tasks_by_resource_conflict(
-    leased_tasks: Vec<(TaskLease, Task)>,
-) -> Vec<Vec<(TaskLease, Task)>> {
-    let mut groups: Vec<Vec<(TaskLease, Task)>> = Vec::new();
-    let mut current_group: Vec<(TaskLease, Task)> = Vec::new();
-    let mut current_write_refs: Vec<String> = Vec::new();
+    leased_tasks: Vec<(TaskLease, Arc<Task>)>,
+) -> Vec<Vec<(TaskLease, Arc<Task>)>> {
+    let mut groups: Vec<Vec<(TaskLease, Arc<Task>)>> = Vec::new();
+    let mut current_group: Vec<(TaskLease, Arc<Task>)> = Vec::new();
+    let mut current_write_refs = HashSet::new();
     for leased_task in leased_tasks {
         let write_refs = write_requirement_refs(&leased_task.1);
         if !current_group.is_empty()
@@ -155,9 +166,7 @@ pub(super) fn split_leased_tasks_by_resource_conflict(
             current_write_refs.clear();
         }
         for ref_id in write_refs {
-            if !current_write_refs.contains(&ref_id) {
-                current_write_refs.push(ref_id);
-            }
+            current_write_refs.insert(ref_id);
         }
         current_group.push(leased_task);
     }
@@ -180,7 +189,10 @@ fn write_requirement_refs(task: &Task) -> Vec<String> {
         .collect()
 }
 
-fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
+fn build_work_resource_plan(
+    work_set: &WorkSet,
+    requirement_entry_indices: &[usize],
+) -> WorkResourcePlan {
     let mut plan = WorkResourcePlan::empty();
     let mut read_views: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut write_locks: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -213,12 +225,15 @@ fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
             requirement_indices,
         })
         .collect();
+    let mut conflict_entry_indices = HashSet::new();
     plan.write_locks = write_locks
         .into_iter()
         .map(|(ref_id, requirement_indices)| {
             if requirement_indices.len() > 1 {
                 for requirement_index in &requirement_indices {
-                    mark_conflict_entry(work_set, *requirement_index, &mut plan);
+                    if let Some(entry_index) = requirement_entry_indices.get(*requirement_index) {
+                        conflict_entry_indices.insert(*entry_index);
+                    }
                 }
             }
             ResourceWriteLock {
@@ -228,8 +243,9 @@ fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
         })
         .collect();
     let mut parallel_group = Vec::new();
-    for entry in &work_set.entries {
-        if plan.conflict_entries.contains(&entry.entry_id) {
+    for (entry_index, entry) in work_set.entries.iter().enumerate() {
+        if conflict_entry_indices.contains(&entry_index) {
+            plan.conflict_entries.push(entry.entry_id.clone());
             continue;
         }
         match entry.ordering {
@@ -246,15 +262,4 @@ fn build_work_resource_plan(work_set: &WorkSet) -> WorkResourcePlan {
         1
     };
     plan
-}
-
-fn mark_conflict_entry(work_set: &WorkSet, requirement_index: usize, plan: &mut WorkResourcePlan) {
-    if let Some(entry) = work_set.entries.iter().find(|entry| {
-        entry
-            .resource_requirement_indices
-            .contains(&requirement_index)
-    }) && !plan.conflict_entries.contains(&entry.entry_id)
-    {
-        plan.conflict_entries.push(entry.entry_id.clone());
-    }
 }

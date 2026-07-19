@@ -28,6 +28,28 @@ impl SdkProtocol for ParentWork {
     const PROTOCOL_ID: &'static str = "parent.work";
 }
 
+#[test]
+#[allow(clippy::result_large_err)]
+fn batch_entry_mapping_uses_payload_index_and_rejects_task_id_mismatch() {
+    let ctx = RunnerContext::new(1, 1, "executor", Some("lease-1".into()), "invocation");
+    let mut batch = single_entry_batch(&ctx, Task::new("task-a", "sim.work", json!({})));
+    batch.entries[0].task_id = "task-b".into();
+    let mut invoked = false;
+
+    let completion = map_work_batch_entries(&batch, |_task| {
+        invoked = true;
+        Ok(RunnerResult::completed("task-a"))
+    })
+    .unwrap();
+
+    assert!(!invoked);
+    assert_eq!(completion.results.len(), 1);
+    assert_eq!(
+        completion.results[0].error.as_ref().unwrap().code,
+        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT
+    );
+}
+
 fn sdk_resource_ref(ref_id: &str) -> ResourceRef {
     ResourceRef {
         resource_id: ResourceId {

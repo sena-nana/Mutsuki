@@ -220,6 +220,33 @@ fn waiting_tasks_count_toward_runner_inflight_load() {
 }
 
 #[test]
+fn runner_load_uses_due_generation_and_selector_counts_without_claim_scan() {
+    let descriptor = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
+    let mut pool = TaskPool::default();
+    let mut due = Task::new("due", "sim.work", json!({}));
+    due.registry_generation = 7;
+    let mut future = Task::new("future", "sim.work", json!({}));
+    future.registry_generation = 7;
+    future.ready_at_step = Some(9);
+    let mut stale = Task::new("stale", "sim.work", json!({}));
+    stale.registry_generation = 6;
+    let mut other_hint = Task::new("other-hint", "sim.work", json!({}));
+    other_hint.registry_generation = 7;
+    other_hint.runner_hint = Some("other".into());
+    for task in [due, future, stale, other_hint] {
+        pool.enqueue(task).unwrap();
+    }
+
+    assert_eq!(pool.runner_load(&descriptor, 1, 7).queued_count, 1);
+    assert_eq!(pool.runner_load(&descriptor, 9, 7).queued_count, 2);
+    assert_eq!(pool.runner_load(&descriptor, 9, 6).queued_count, 1);
+
+    pool.claim_ready_for_executor(&descriptor, "executor", 1, 7, 1);
+    assert_eq!(pool.runner_load(&descriptor, 1, 7).queued_count, 0);
+    pool.assert_indexes_consistent();
+}
+
+#[test]
 fn woken_continuation_can_only_be_reclaimed_by_owner_runner() {
     let owner = runner_descriptor("owner.runner", "sim.work", RunnerPurity::Pure);
     let alternate = runner_descriptor("alternate.runner", "sim.work", RunnerPurity::Pure);
@@ -413,18 +440,14 @@ fn core_task_facade_returns_result_snapshot_and_task_events() {
 }
 
 #[test]
-fn task_pool_rejects_purity_and_generation_mismatched_claims() {
+fn task_pool_rejects_generation_mismatched_claims() {
     let mut pool = TaskPool::default();
-    let effectful = runner_descriptor("effect.chat", "sim.work", RunnerPurity::Effectful);
-    let committer = runner_descriptor("commit", "sim.work", RunnerPurity::Committer);
     let pure = runner_descriptor("worker", "sim.work", RunnerPurity::Pure);
 
     let mut work = Task::new("work-1", "sim.work", json!({}));
     work.registry_generation = 1;
     pool.enqueue(work).unwrap();
 
-    assert!(pool.claim_ready(&effectful, 1, 1, 8).is_empty());
-    assert!(pool.claim_ready(&committer, 1, 1, 8).is_empty());
     assert!(pool.claim_ready(&pure, 1, 2, 8).is_empty());
 
     assert_eq!(pool.rebind_ready_generation(1, 2), 1);

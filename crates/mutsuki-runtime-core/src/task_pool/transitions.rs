@@ -55,7 +55,7 @@ pub(super) fn wait(
     task_pool.mutate_record_indexed(&lease.task_id, |record| {
         validate_record_lease(record, lease, current_step, "wait")?;
         record.status = TaskStatus::Waiting;
-        record.task.ready_at_step = ready_at_step;
+        std::sync::Arc::make_mut(&mut record.task).ready_at_step = ready_at_step;
         release_record_lease(record);
         Ok(())
     })?;
@@ -375,7 +375,7 @@ pub(super) fn rebind_ready_generation(
     let mut rebound = 0;
     for record in task_pool.tasks.values_mut() {
         if record.status == TaskStatus::Ready && record.task.registry_generation == old_generation {
-            record.task.registry_generation = new_generation;
+            std::sync::Arc::make_mut(&mut record.task).registry_generation = new_generation;
             rebound += 1;
         }
     }
@@ -396,7 +396,7 @@ pub(super) fn mark_terminal_record(
 
 pub(super) fn release_record_lease(record: &mut super::TaskRecord) {
     record.lease = None;
-    record.task.lease_id = None;
+    std::sync::Arc::make_mut(&mut record.task).lease_id = None;
     record.claimed_by = None;
 }
 

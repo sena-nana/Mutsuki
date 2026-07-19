@@ -109,10 +109,16 @@ descriptor；字符串 task id 只保留为 TaskPool 和 host actor 内部事实
 Task 仍然可以保持 Ready 并积压。Runner 不长期拥有 Task。
 
 TaskPool 内部以 TaskRecord 为权威，同时维护可重建的增量索引：protocol/hint/owner 复合稳定
-ready queue、Waiting/Blocked wake bucket、Running lease-expiry bucket、expected-version
-ready set 和 runner running/waiting set。正常 tick、runner load 和 claim 只访问本轮到期桶、
-相关 protocol/runner selector 队列与实际候选；完整 TaskRecord 扫描只允许出现在显式
+ready queue、按 step/generation 聚合的 queued count、Waiting/Blocked wake bucket、Running
+lease-expiry bucket、expected-version ready set 和 runner running/waiting set。正常 tick 的
+runner load 读取增量 count，claim 才访问相关 protocol/runner selector 队列与实际候选；
+完整 TaskRecord 扫描只允许出现在显式
 snapshot、occupancy audit、Abort 或 reload index rebuild 等非调度热路径。
+
+TaskRecord 内部以 `Arc<Task>` 保持一次权威任务对象，claim 到 builtin dispatch 只复制 Arc。
+`LocalTaskPayload` 只在进程内借用 typed task；一旦进入 ABI/process/persistence 序列化，它与
+普通 Row payload 产生完全相同的 wire shape。兼容用公开 owned claim API 可以显式克隆 Task，
+但 runtime 调度热路径不得使用该 API。
 
 Terminal TaskRecord 默认无限保留，以保持既有 TaskHandle outcome 和 runtime 生命周期内
 task id 唯一语义。长期 Host 可以显式启用 `TaskHistoryRetention`：Core 按 created sequence
@@ -299,7 +305,8 @@ RunnerResult 不直接修改事实源：
 - `task_await` -> 保存当前 task continuation，注册 child terminal wake link。
 - `deltas` -> `core.commit` task -> Committer runner -> StateStore。
 - `events` -> `core.event.append` task -> EventLog。
-- `effects` -> `effect.*` task -> Effectful runner。
+- `effects` -> `ProtocolClass::Effect` task -> Effectful runner；`effect.*` 是规范命名，
+  RuntimeLoadPlan 中的显式 class 才是调度、purity、permission 与 occupancy 的权威。
 - `tasks` -> 显式进入 TaskPool。
 - `values` / `resources` -> Resource/Event lineage facts。
 

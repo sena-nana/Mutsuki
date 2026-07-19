@@ -155,13 +155,6 @@ impl CoreRuntime {
                 format!("runner.{}.core_derivation", runner.runner_id),
             ));
         }
-        if runner.purity == RunnerPurity::Effectful && !runner.runner_id.starts_with("effect.") {
-            return Err(crate::runtime_failure(
-                ERR_RUNNER_PURITY_VIOLATION,
-                "runtime.result_router",
-                format!("runner.{}", runner.runner_id),
-            ));
-        }
         let pending_tasks = pending_output_tasks(task_id, generation, &runner.purity, &outputs);
         self.ensure_output_task_ids_available(&pending_tasks)?;
         for value_ref in outputs.values {

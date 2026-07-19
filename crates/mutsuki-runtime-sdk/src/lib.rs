@@ -94,19 +94,34 @@ pub fn map_work_batch_entries(
     batch: &WorkBatch,
     mut handler: impl FnMut(&Task) -> Result<RunnerResult, RuntimeError>,
 ) -> RuntimeResult<CompletionBatch> {
-    let tasks = match batch.row_payload_tasks() {
-        Ok(tasks) => tasks,
-        Err(error) => return Ok(CompletionBatch::from_error(batch, error)),
-    };
     let results = batch
         .entries
         .iter()
         .map(|entry| {
-            let task = tasks
-                .iter()
-                .find(|task| task.task_id == entry.task_id)
-                .expect("row payload task should exist for batch entry");
-            match handler(task) {
+            let task = match batch.payload_task(entry.payload_index) {
+                Ok(task) if task.task_id == entry.task_id => task,
+                Ok(_) => {
+                    return EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: None,
+                        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                            "runtime.sdk",
+                            format!("batch.entry.{}.payload_task_id", entry.entry_id),
+                        )),
+                    };
+                }
+                Err(error) => {
+                    return EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: None,
+                        error: Some(error),
+                    };
+                }
+            };
+            match handler(&task) {
                 Ok(result) => EntryCompletion {
                     entry_id: entry.entry_id.clone(),
                     task_id: entry.task_id.clone(),
@@ -545,28 +560,23 @@ impl Runner for TaskAwaitRunnerAdapter {
         ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
-        let tasks = match batch.row_payload_tasks() {
-            Ok(tasks) => tasks,
-            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
-        };
         let mut results = Vec::with_capacity(batch.entries.len());
         for entry in &batch.entries {
-            let Some(task) = tasks
-                .iter()
-                .find(|task| task.task_id == entry.task_id)
-                .cloned()
-            else {
-                results.push(EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: None,
-                    error: Some(mutsuki_runtime_contracts::RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                        "sdk.async_runner_adapter",
-                        format!("batch.entry.{}", entry.entry_id),
-                    )),
-                });
-                continue;
+            let task = match batch.payload_task(entry.payload_index) {
+                Ok(task) if task.task_id == entry.task_id => task.into_owned(),
+                Ok(_) | Err(_) => {
+                    results.push(EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: None,
+                        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
+                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+                            "sdk.async_runner_adapter",
+                            format!("batch.entry.{}", entry.entry_id),
+                        )),
+                    });
+                    continue;
+                }
             };
             match self.run_one(ctx.clone(), task) {
                 Ok(result) => results.push(EntryCompletion {
