@@ -503,7 +503,6 @@ run_dir = "run"
 
 [ipc]
 enabled = true
-transport = "unix-socket"
 name = "agent-issue3-e2e"
 token = "test-token"
 

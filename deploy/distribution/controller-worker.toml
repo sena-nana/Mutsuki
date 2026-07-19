@@ -6,7 +6,7 @@ policy_catalog = "task-policies.toml"
 
 [external_service]
 artifact = "mutsuki-distributed-host"
-revision = "146dc7f064e38efff10be3367a957ad2c9f47868"
+revision = "f25d266081ff4064eec2554d9134f35730a324ca"
 local_host_control_endpoint = "servicehost://local/control"
 sidecar_control_endpoint = "link-local://mutsuki-distributed-management"
 sidecar_control_client_node = "mutsuki-bot-template"
