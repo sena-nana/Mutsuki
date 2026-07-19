@@ -59,7 +59,7 @@ kind = "rust"
 [[repositories]]
 id = "python_runner_kit"
 url = "https://github.com/sena-nana/MutsukiPythonRunnerKit.git"
-revision = "de7f3d2c47b0487b3adf442742453782a58bed18"
+revision = "e45330c0238ad62c713f5667c47b2c209297a051"
 kind = "python"
 
 [capabilities]
