@@ -55,10 +55,23 @@ pub fn repository_revisions() -> BTreeMap<String, RepositoryRevision> {
         "MutsukiCore".into(),
         RepositoryRevision {
             revision: command_output("git", &["rev-parse", "HEAD"]),
-            dirty: !command_output("git", &["status", "--porcelain"]).is_empty(),
+            dirty: repository_is_dirty(),
             remote: command_output("git", &["remote", "get-url", "origin"]),
         },
     )])
+}
+
+fn repository_is_dirty() -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .map_or(true, |output| {
+            dirty_from_status(output.status.success(), &output.stdout)
+        })
+}
+
+fn dirty_from_status(success: bool, stdout: &[u8]) -> bool {
+    !success || !String::from_utf8_lossy(stdout).trim().is_empty()
 }
 
 pub fn revision_lock_hash(revisions: &BTreeMap<String, RepositoryRevision>) -> String {
@@ -179,6 +192,19 @@ fn ram_bytes() -> u64 {
     }
     #[allow(unreachable_code)]
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dirty_from_status;
+
+    #[test]
+    fn repository_status_is_clean_only_for_successful_empty_output() {
+        assert!(!dirty_from_status(true, b""));
+        assert!(!dirty_from_status(true, b"\r\n"));
+        assert!(dirty_from_status(true, b" M tracked.rs\n"));
+        assert!(dirty_from_status(false, b""));
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
