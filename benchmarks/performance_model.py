@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import concurrent.futures
 import datetime as dt
 import gc
 import hashlib
@@ -442,11 +443,26 @@ def pipe_cases(
             sequence = warm_samples + 1
             for inflight in (1, 16, 56):
                 started = time.perf_counter_ns()
-                expected = {
-                    process.dispatch("runner.echo", {"message": "mutsuki"}, sequence + index)
-                    for index in range(inflight)
-                }
-                received = {process.receive()[0] for _ in range(inflight)}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as receiver:
+                    responses_future = receiver.submit(
+                        lambda: [process.receive() for _ in range(inflight)]
+                    )
+                    expected = {
+                        process.dispatch(
+                            "runner.echo", {"message": "mutsuki"}, sequence + index
+                        )
+                        for index in range(inflight)
+                    }
+                    try:
+                        responses = responses_future.result(timeout=30)
+                    except TimeoutError as error:
+                        process.kill()
+                        raise RuntimeError(
+                            f"timed out receiving {inflight} concurrent {codec} responses"
+                        ) from error
+                received = {response[0] for response in responses}
+                for response in responses:
+                    validate_response(response, correctness)
                 elapsed = float(time.perf_counter_ns() - started)
                 if received != expected:
                     correctness["response_id_mismatches"] += 1
