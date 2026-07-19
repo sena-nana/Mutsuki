@@ -44,13 +44,14 @@ Runner fixture hashes after each owner has produced its own report.
 ```bash
 python scripts/performance/validate_issue35_reports.py \
   --fixture-manifest ../MutsukiServiceHost/fixtures/performance/runner-fixtures-v1.json \
-  --report core=artifacts/perf/issue35-macos-arm64-provisional/report.json \
-  --report service-host=../MutsukiServiceHost/artifacts/performance/issue15-macos-arm64-provisional/report.json \
-  --report tauri-host=../MutsukiTauriHost/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report link=../MutsukiLink/artifacts/performance/issue21-macos-arm64-provisional/report.json \
-  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/issue22-macos-arm64-provisional/report.json \
-  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/issue5-macos-arm64-provisional/report.json \
-  --report agent-kit=../MutsukiAgentKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/issue10-macos-arm64-provisional/report.json
+  --report core=artifacts/perf/reference-windows-x64/report.json \
+  --report service-host=../MutsukiServiceHost/artifacts/performance/reference-windows-x64/report.json \
+  --report tauri-host=../MutsukiTauriHost/artifacts/performance/reference-windows-x64/report.json \
+  --report link=../MutsukiLink/artifacts/performance/reference-windows-x64/report.json \
+  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/reference-windows-x64/report.json \
+  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/reference-windows-x64/report.json \
+  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/reference-windows-x64/report.json \
+  --report agent-kit=../MutsukiAgentKit/artifacts/performance/reference-windows-x64/report.json \
+  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/reference-windows-x64/report.json \
+  --require-clean
 ```

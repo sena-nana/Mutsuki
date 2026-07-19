@@ -77,8 +77,9 @@ cargo bench-reference
 runs stable in-process sampling with the system allocator. `cargo bench-reference`
 runs warmup plus multiple samples across independent time-lane processes, then runs
 the tracking allocator in a separate process and writes a merged report and anomaly
-analysis under `target/mutsuki-benchmarks/`. The retained owner-local Epic #35 run is
-under `artifacts/perf/issue35-macos-arm64-provisional/`.
+analysis under `target/mutsuki-benchmarks/`. The accepted owner-local Epic #35
+Windows x64 reference run is under `artifacts/perf/reference-windows-x64/`;
+macOS ARM64 observations remain an optional environment-specific lane.
 
 The full matrix covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
 ratios, batch sizes 1/32/256, protocol/hint/continuation routing, bounded

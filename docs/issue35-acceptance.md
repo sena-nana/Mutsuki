@@ -1,7 +1,9 @@
 # MutsukiCore Epic #35 acceptance evidence
 
-This document is the requirement-by-requirement audit for Epic #35 and its nine owner issues. The
-Epic remains open while any row marked pending lacks authoritative evidence.
+This document is the requirement-by-requirement audit for Epic #35 and its nine owner issues. On
+2026-07-19 the repository owner accepted the completed physical Windows x64 fixed-reference lane as
+the release evidence required to close the Epic. macOS ARM64 remains an optional future evidence
+lane and is not a closure gate.
 
 ## Ownership decision
 
@@ -49,13 +51,13 @@ dependencies, environment fingerprint and measurement boundary, and passes corre
 | Parse every owner report | `scripts/performance/validate_issue35_reports.py` validates 9 reports and 628 cases | Pass locally |
 | Same Runner fixture across five deployments | ServiceHost manifest plus builtin, ABI, Rust process, Python JSONL and Python binary hashes are exact | Pass locally |
 | Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently in their owner repositories | Pass locally |
-| Fixed macOS ARM64 reference history | Every owner workflow targets `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Pending clean fixed-runner history |
+| Optional macOS ARM64 reference history | Every owner workflow can target `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Not required for closure; waived by owner |
 | Fixed Windows x64 reference history | Physical Ryzen 7 5800X Windows x64 run retained in all nine owners; 628 clean cases and nine exact-byte approvals pass aggregate validation | Pass |
 | Baseline update requires explicit approval | Core tooling validates exact report bytes, revision snapshot and environment; no workflow auto-promotes output | Pass locally |
 | Localize an end-to-end regression by layer | Reports retain independent client/Host/Core/Runner/Link/Distributed boundaries | Pass locally |
 | Label every performance claim | All reports contain environment fingerprints and explicit measurement boundaries | Pass locally |
 
-## Owner-local macOS ARM64 baseline
+## Optional owner-local macOS ARM64 observations
 
 The physical Apple M4 AC run is retained under these owner paths:
 
@@ -132,12 +134,13 @@ not make a regression claim without same-machine history.
     `unavailable`, permanently marking clean repositories dirty. Repository status now uses a
     dedicated fail-closed check with clean/dirty/error regression tests.
 
-## Remaining evidence boundary
+## Accepted reference boundary
 
-Windows x64 is now proven by native compilation, execution, clean reports and approvals. This
-Windows machine cannot produce the remaining fixed macOS ARM64 history, and the GitHub organization
-currently exposes no online self-hosted reference runner. The provisional Apple M4 observations
-above cannot be promoted or rewritten as clean fixed-runner evidence; macOS must be rerun natively.
+Windows x64 is proven by native compilation, execution, clean reports and exact-byte approvals. The
+repository owner explicitly accepted this lane as sufficient closure evidence on 2026-07-19 and
+waived a clean fixed macOS ARM64 run for Epic #35. The provisional Apple M4 observations above remain
+environment-specific historical data: they are not promoted or rewritten as clean fixed-runner
+evidence and do not support macOS performance claims.
 
 ## Local aggregate validation
 
@@ -146,21 +149,22 @@ Run from MutsukiCore after every owner has produced its own report:
 ```text
 python scripts/performance/validate_issue35_reports.py \
   --fixture-manifest ../MutsukiServiceHost/fixtures/performance/runner-fixtures-v1.json \
-  --report core=artifacts/perf/issue35-macos-arm64-provisional/report.json \
-  --report service-host=../MutsukiServiceHost/artifacts/performance/issue15-macos-arm64-provisional/report.json \
-  --report tauri-host=../MutsukiTauriHost/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report link=../MutsukiLink/artifacts/performance/issue21-macos-arm64-provisional/report.json \
-  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/issue22-macos-arm64-provisional/report.json \
-  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/issue5-macos-arm64-provisional/report.json \
-  --report agent-kit=../MutsukiAgentKit/artifacts/performance/issue4-macos-arm64-provisional/report.json \
-  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/issue10-macos-arm64-provisional/report.json
+  --report core=artifacts/perf/reference-windows-x64/report.json \
+  --report service-host=../MutsukiServiceHost/artifacts/performance/reference-windows-x64/report.json \
+  --report tauri-host=../MutsukiTauriHost/artifacts/performance/reference-windows-x64/report.json \
+  --report link=../MutsukiLink/artifacts/performance/reference-windows-x64/report.json \
+  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/reference-windows-x64/report.json \
+  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/reference-windows-x64/report.json \
+  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/reference-windows-x64/report.json \
+  --report agent-kit=../MutsukiAgentKit/artifacts/performance/reference-windows-x64/report.json \
+  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/reference-windows-x64/report.json \
+  --require-clean
 ```
 
 ## Required closure sequence
 
 1. Review, commit and push each owner repository after user confirmation.
-2. Run the owner workflows on fixed macOS ARM64 and Windows x64 machines and retain their artifacts.
-3. Create exact-byte approvals for clean reports inside each owner repository.
-4. Run the Core validator with `--require-clean`, compare same-machine history and re-audit every row.
-5. Close child issues and Epic #35 only after every pending row is complete.
+2. Retain the completed physical Windows x64 fixed-reference artifacts in all nine owners.
+3. Validate the exact-byte approvals for every clean Windows report.
+4. Run the Core validator with `--require-clean` and re-audit every required row.
+5. Push this final acceptance record, then close the child issues and Epic #35 in that order.
