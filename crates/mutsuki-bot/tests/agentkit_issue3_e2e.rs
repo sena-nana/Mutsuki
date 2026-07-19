@@ -14,7 +14,7 @@ use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
 use mutsuki_bot::assemble_service;
 use mutsuki_plugin_agent_model_gateway::{ModelProvider, ModelProviderFuture};
 use mutsuki_runtime_contracts::{PluginManifest, RunnerResult, Task, TaskBatch};
-use mutsuki_runtime_sdk::{AsyncRunnerAdapter, PluginBuilder, ProtocolSpec, SdkProtocol};
+use mutsuki_runtime_sdk::{PluginBuilder, ProtocolSpec, SdkProtocol, TaskAwaitRunnerAdapter};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_control::{ControlMethod, TaskOutcomeView, TaskSubmitBatchParam};
 use mutsuki_service_ipc::ControlClient;
@@ -210,12 +210,8 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
         builder = builder
             .register_runtime_client_runner(move |client| bundle.runtime_runner(kind, client));
     }
-    let effect_bundle = bundle.clone();
-    let handle = tokio::runtime::Handle::current();
-    builder =
-        builder.register_builtin_runner(move || effect_bundle.http_effect_runner(handle.clone()));
-    let poll_bundle = bundle.clone();
-    builder = builder.register_builtin_runner(move || poll_bundle.model_poll_runner());
+    let model_bundle = bundle.clone();
+    builder = builder.register_builtin_async_handler(move || model_bundle.model_async_handler());
     let descriptor = test_runner_descriptor();
     builder = builder.register_runtime_client_runner({
         let tool_executions = tool_executions.clone();
@@ -224,7 +220,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
             let descriptor = descriptor.clone();
             let tool_executions = tool_executions.clone();
             let callbacks = callbacks.clone();
-            Box::new(AsyncRunnerAdapter::new(
+            Box::new(TaskAwaitRunnerAdapter::new(
                 descriptor,
                 client,
                 Box::new(move |_ctx, task| {
