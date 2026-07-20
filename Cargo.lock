@@ -1405,7 +1405,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-distributed-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=a308b5758cdc0e3fe9261f55a67cfcf2146e9d5a#a308b5758cdc0e3fe9261f55a67cfcf2146e9d5a"
+source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=04d1fe2f432555b2c93dd241612fd2f1978fd17a#04d1fe2f432555b2c93dd241612fd2f1978fd17a"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1416,7 +1416,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-distributed-control-client"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=a308b5758cdc0e3fe9261f55a67cfcf2146e9d5a#a308b5758cdc0e3fe9261f55a67cfcf2146e9d5a"
+source = "git+https://github.com/sena-nana/MutsukiDistributedHost.git?rev=04d1fe2f432555b2c93dd241612fd2f1978fd17a#04d1fe2f432555b2c93dd241612fd2f1978fd17a"
 dependencies = [
  "hmac",
  "mutsuki-distributed-contracts",
