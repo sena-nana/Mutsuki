@@ -375,6 +375,15 @@ impl AppLinkTransport for LinkLocalAppTransport {
                             .collect(),
                     });
                 }
+            } else if self.try_connect(&session.app_id).await.is_ok() {
+                // Peer endpoint is listening. Capability readiness is confirmed by
+                // the subsequent transmit/receipt exchange rather than a local catalog.
+                return Ok(AppLinkSession {
+                    app_id: session.app_id.clone(),
+                    instance_id: session.instance_id.clone(),
+                    host_protocol_version: session.host_protocol_version,
+                    capabilities: vec![capability.clone()],
+                });
             }
             if started.elapsed() >= timeout {
                 return Err(AppDeliveryError::ReadyTimeout);
