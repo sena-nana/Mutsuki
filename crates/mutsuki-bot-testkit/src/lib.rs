@@ -15,6 +15,14 @@ use tokio_tungstenite::tungstenite::Message;
 pub mod benchmark;
 pub use benchmark::*;
 
+const HEARTBEAT_ACK: &str = r#"{"op":11}"#;
+
+fn gateway_frame_opcode(text: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|frame| frame.get("op").and_then(Value::as_u64))
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FakeQqSnapshot {
     pub sends: Vec<Value>,
@@ -291,10 +299,9 @@ async fn run_gateway_server(
         while let Some(message) = socket.next().await {
             match message {
                 Ok(Message::Text(text)) => {
-                    let frame: Value = serde_json::from_str(text.as_ref()).unwrap();
-                    if frame["op"] == 1 {
+                    if gateway_frame_opcode(text.as_ref()) == Some(1) {
                         socket
-                            .send(Message::Text(json!({"op": 11}).to_string().into()))
+                            .send(Message::Text(HEARTBEAT_ACK.into()))
                             .await
                             .unwrap();
                     }

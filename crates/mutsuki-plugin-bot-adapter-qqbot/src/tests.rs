@@ -923,6 +923,7 @@ fn gateway_pump_models_identify_heartbeat_resume_and_reconnect() {
         .unwrap();
     assert_eq!(pump.pop_action(), Some(GatewayAction::Resume));
     assert_eq!(pump.heartbeat_frame(), json!({"op": 1, "d": 1}));
+    assert_eq!(pump.heartbeat_text(), r#"{"op":1,"d":1}"#);
 
     pump.handle_raw_frame(json!({"op": 11, "d": null}), 0)
         .unwrap();

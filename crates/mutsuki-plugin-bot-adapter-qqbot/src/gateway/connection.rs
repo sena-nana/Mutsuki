@@ -123,6 +123,15 @@ impl QqGatewayPump {
         json!({"op": 1, "d": self.last_sequence})
     }
 
+    /// Compact heartbeat JSON without building an intermediate `Value` tree.
+    /// Sequence changes are rare on an established connection, so callers may cache the result.
+    pub fn heartbeat_text(&self) -> String {
+        match self.last_sequence {
+            Some(sequence) => format!(r#"{{"op":1,"d":{sequence}}}"#),
+            None => r#"{"op":1,"d":null}"#.to_string(),
+        }
+    }
+
     pub fn pop_action(&mut self) -> Option<GatewayAction> {
         self.actions.pop_front()
     }

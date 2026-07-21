@@ -48,7 +48,9 @@ pub fn connection_idle_sample(idle_window_ms: u64) -> Sample {
         ))));
     Sample {
         elapsed_ns: run.idle_elapsed_ns,
-        cpu_time_ns: 0,
+        // Idle case owns its CPU boundary: only the post-resume idle window counts.
+        // The outer harness must not wrap setup/reconnect/shutdown into cpu_time_ns.
+        cpu_time_ns: run.idle_cpu_time_ns,
         idle_cpu_time_ns: run.idle_cpu_time_ns,
         simulated_platform_ns: u128::from(idle_window_ms) * 1_000_000,
         events: 0,

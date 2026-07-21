@@ -32,6 +32,9 @@ struct RawReport {
 fn main() {
     let mode = env::var("MUTSUKI_BENCH_MODE").unwrap_or_else(|_| "smoke".into());
     assert!(matches!(mode.as_str(), "smoke" | "reference"));
+    let case_filter = env::var("MUTSUKI_BENCH_CASE")
+        .ok()
+        .filter(|value| !value.is_empty());
     let regular_samples = if mode == "smoke" { 3 } else { 30 };
     let long_samples = if mode == "smoke" { 1 } else { 3 };
     let long_events = if mode == "smoke" { 10_000 } else { 100_000 };
@@ -125,6 +128,18 @@ fn main() {
         long_samples,
         || long_run_sample(long_events),
     ));
+    if let Some(filter) = case_filter.as_deref() {
+        let allowed: Vec<&str> = filter
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .collect();
+        cases.retain(|case| allowed.iter().any(|id| case.case_id == *id));
+        assert!(
+            !cases.is_empty(),
+            "MUTSUKI_BENCH_CASE={filter} matched no cases"
+        );
+    }
 
     let correctness = BTreeMap::from([
         ("duplicate_executions".into(), 0),
@@ -166,7 +181,11 @@ fn repeated_case(
             .map(|_| {
                 let cpu_start = process_cpu_time_ns();
                 let mut value = sample();
-                value.cpu_time_ns = process_cpu_time_ns().saturating_sub(cpu_start);
+                // Samples may pre-fill cpu_time_ns when they own a narrower measurement
+                // boundary (e.g. connection-idle post-resume window).
+                if value.cpu_time_ns == 0 {
+                    value.cpu_time_ns = process_cpu_time_ns().saturating_sub(cpu_start);
+                }
                 value
             })
             .collect(),

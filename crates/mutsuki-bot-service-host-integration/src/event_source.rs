@@ -342,18 +342,28 @@ async fn run_connection(
     let mut heartbeat = tokio::time::interval(Duration::from_millis(heartbeat_ms));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     heartbeat.tick().await;
-    let ack_poll_ms = (config.gateway_ack_timeout_ms / 2).clamp(10, 1_000);
-    let mut ack_watch = tokio::time::interval(Duration::from_millis(ack_poll_ms));
-    ack_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    ack_watch.tick().await;
+    let ack_timeout = Duration::from_millis(config.gateway_ack_timeout_ms);
     let mut awaiting_ack_since: Option<Instant> = None;
+    let mut cached_heartbeat_seq: Option<Option<u64>> = None;
+    let mut cached_heartbeat_text = String::new();
 
     let end = loop {
+        let ack_deadline = async {
+            match awaiting_ack_since {
+                Some(sent) => {
+                    let elapsed = sent.elapsed();
+                    if elapsed < ack_timeout {
+                        tokio::time::sleep(ack_timeout - elapsed).await;
+                    }
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
         tokio::select! {
             _ = host_stop.cancelled() => break ConnectionEnd::Shutdown,
             _ = local_stop.changed() => break ConnectionEnd::Shutdown,
-            _ = ack_watch.tick() => {
-                if awaiting_ack_since.is_some_and(|sent| sent.elapsed() >= Duration::from_millis(config.gateway_ack_timeout_ms)) {
+            _ = ack_deadline => {
+                if awaiting_ack_since.is_some() {
                     break ConnectionEnd::Reconnect("heartbeat ACK timed out".into());
                 }
             }
@@ -361,7 +371,12 @@ async fn run_connection(
                 if awaiting_ack_since.is_some() {
                     continue;
                 }
-                sink.send(Message::Text(pump.heartbeat_frame().to_string().into()))
+                let sequence = pump.last_sequence();
+                if cached_heartbeat_seq != Some(sequence) {
+                    cached_heartbeat_text = pump.heartbeat_text();
+                    cached_heartbeat_seq = Some(sequence);
+                }
+                sink.send(Message::Text(cached_heartbeat_text.clone().into()))
                     .await
                     .map_err(recoverable_failure)?;
                 awaiting_ack_since = Some(Instant::now());
@@ -407,6 +422,15 @@ async fn run_connection(
                             }
                         }
                     }
+                    Message::Text(ref text)
+                        if gateway_opcode(text.as_ref()) == Some(11) =>
+                    {
+                        // Heartbeat ACK is the idle hot path: skip full GatewayFrame decode
+                        // and the pump action queue.
+                        awaiting_ack_since = None;
+                        health.inner.lock().expect("QQBot health mutex").last_ack_unix_ms =
+                            unix_ms();
+                    }
                     Message::Text(_) | Message::Binary(_) => {
                         let raw = message_json(message)?;
                         let frame: GatewayFrame = serde_json::from_value(raw.clone())
@@ -431,7 +455,12 @@ async fn run_connection(
                                         .map_err(recoverable_failure)?;
                                 }
                                 GatewayAction::Heartbeat(_) => {
-                                    sink.send(Message::Text(pump.heartbeat_frame().to_string().into())).await
+                                    let sequence = pump.last_sequence();
+                                    if cached_heartbeat_seq != Some(sequence) {
+                                        cached_heartbeat_text = pump.heartbeat_text();
+                                        cached_heartbeat_seq = Some(sequence);
+                                    }
+                                    sink.send(Message::Text(cached_heartbeat_text.clone().into())).await
                                         .map_err(recoverable_failure)?;
                                 }
                                 GatewayAction::Reconnect => break,
@@ -557,6 +586,16 @@ fn message_json(message: Message) -> Result<Value, GatewayFailure> {
         }
     }
     .map_err(recoverable_failure)
+}
+
+fn gateway_opcode(text: &str) -> Option<u64> {
+    #[derive(serde::Deserialize)]
+    struct OpOnly {
+        op: u64,
+    }
+    serde_json::from_str::<OpOnly>(text)
+        .ok()
+        .map(|frame| frame.op)
 }
 
 fn reconnect_delay(config: &QqBotConfig, attempt: u32) -> Duration {
