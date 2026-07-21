@@ -6,5 +6,5 @@ license.workspace = true
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "d4ec2e16db4a473c5fcf3f36a88e2ade09b3f695" }
+mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1787ab5c6d9aee9982505d0686d6c2e03547275e" }
 serde_json.workspace = true

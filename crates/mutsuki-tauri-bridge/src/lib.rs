@@ -291,6 +291,17 @@ pub struct FrontendLogRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryProgress {
+    pub request_id: String,
+    pub target_app: String,
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MutsukiFrontendEvent {
     Batch {
@@ -329,6 +340,9 @@ pub enum MutsukiFrontendEvent {
         runner_id: String,
         status: String,
     },
+    AppDelivery {
+        progress: DeliveryProgress,
+    },
 }
 
 impl MutsukiFrontendEvent {
@@ -344,6 +358,7 @@ impl MutsukiFrontendEvent {
             Self::Approval { .. } => "mutsuki://approval/event",
             Self::Plugin { .. } => "mutsuki://plugin/event",
             Self::Runner { .. } => "mutsuki://runner/event",
+            Self::AppDelivery { .. } => "mutsuki://app_delivery/event",
         }
     }
 }

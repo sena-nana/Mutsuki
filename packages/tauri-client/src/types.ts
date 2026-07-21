@@ -90,7 +90,26 @@ export type MutsukiFrontendEvent =
   | { type: "resource"; ref_id: string; operation: string }
   | { type: "approval"; request: ApprovalRequest }
   | { type: "plugin"; plugin: PluginSummary; operation: string }
-  | { type: "runner"; runner_id: string; status: string };
+  | { type: "runner"; runner_id: string; status: string }
+  | { type: "app_delivery"; progress: AppDeliveryProgress };
+
+export interface AppDeliveryProgress {
+  request_id: string;
+  target_app: string;
+  phase:
+    | "draft_saved"
+    | "connecting"
+    | "target_activating"
+    | "target_ready"
+    | "negotiating"
+    | "transmitting"
+    | "accepted"
+    | "processing"
+    | "completed"
+    | "delivery_failed";
+  error?: string | null;
+  error_kind?: string | null;
+}
 
 export type TaskFrontendEvent = Extract<MutsukiFrontendEvent, { type: "task" }>;
 export type RuntimeFrontendEvent = Extract<MutsukiFrontendEvent, { type: "runtime" }>;
@@ -98,6 +117,7 @@ export type TraceFrontendEvent = Extract<MutsukiFrontendEvent, { type: "trace" }
 export type LogFrontendEvent = Extract<MutsukiFrontendEvent, { type: "log" }>;
 export type PluginFrontendEvent = Extract<MutsukiFrontendEvent, { type: "plugin" }>;
 export type RunnerFrontendEvent = Extract<MutsukiFrontendEvent, { type: "runner" }>;
+export type AppDeliveryFrontendEvent = Extract<MutsukiFrontendEvent, { type: "app_delivery" }>;
 
 export interface ResourceRef {
   ref_id: string;

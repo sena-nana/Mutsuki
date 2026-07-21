@@ -1,5 +1,7 @@
 export { createMutsukiClient } from "./client";
 export type {
+  AppDeliveryFrontendEvent,
+  AppDeliveryProgress,
   ApprovalDecisionInput,
   ApprovalRequest,
   ApprovalResponse,

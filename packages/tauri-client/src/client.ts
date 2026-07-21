@@ -321,5 +321,6 @@ function eventChannel(event: MutsukiFrontendEvent): string {
     case "approval": return "mutsuki://approval/event";
     case "plugin": return "mutsuki://plugin/event";
     case "runner": return "mutsuki://runner/event";
+    case "app_delivery": return "mutsuki://app_delivery/event";
   }
 }
