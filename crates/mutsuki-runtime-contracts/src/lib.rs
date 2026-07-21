@@ -1,4 +1,5 @@
 mod batch;
+mod capability_request;
 mod common;
 mod error;
 mod event;
@@ -18,6 +19,10 @@ pub use batch::{
     PayloadLayout, ResourceAccessMode, ResourceBackedPayload, ResourceReadView,
     ResourceRequirement, ResourceSlice, ResourceWriteLock, RowPayload, TaskBatch, WorkBatch,
     WorkResourcePlan, WorkSet,
+};
+pub use capability_request::{
+    CapabilityDescriptor, CapabilityPeerId, CapabilityRequestEnvelope, CapabilityRequestId,
+    CapabilityRequestStatus, DeliveryReceipt, IdempotentReceiptStore, RejectionReason,
 };
 pub use common::{
     BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,
