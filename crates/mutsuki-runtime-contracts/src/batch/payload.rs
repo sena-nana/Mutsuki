@@ -96,24 +96,11 @@ impl BatchPayload {
     }
 
     /// Builds an in-process local payload that shares each task by `Arc`.
-    ///
-    /// Prefer this over JSON row materialization on builtin hot paths. Wire
-    /// serialization still projects to the existing row layout.
     pub fn from_task_refs<'a>(tasks: impl IntoIterator<Item = &'a Task>) -> Self {
         Self::Local(LocalTaskPayload {
             tasks: tasks
                 .into_iter()
                 .map(|task| Arc::new(task.clone()))
-                .collect(),
-        })
-    }
-
-    /// Wire-oriented row payload that eagerly serializes each task to JSON.
-    pub fn from_tasks_json(tasks: &[Task]) -> Self {
-        Self::Row(RowPayload {
-            rows: tasks
-                .iter()
-                .map(|task| serde_json::to_value(task).expect("Task serializes"))
                 .collect(),
         })
     }

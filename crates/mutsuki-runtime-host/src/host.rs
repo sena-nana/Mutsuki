@@ -57,19 +57,7 @@ impl TaskCompletionSubscription {
     }
 
     pub fn wait_after(&self, revision: u64) -> Option<u64> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while !state.closed && state.revision <= revision {
-            state = self
-                .inner
-                .changed
-                .wait(state)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-        (!state.closed).then_some(state.revision)
+        self.wait_until(revision, None)
     }
 
     /// Waits for a completion revision newer than `revision`, or until `timeout` elapses.
@@ -77,26 +65,38 @@ impl TaskCompletionSubscription {
     /// Returns `Some(revision)` when notified, and `None` when the subscription is closed or the
     /// wait times out without a newer revision.
     pub fn wait_after_timeout(&self, revision: u64, timeout: Duration) -> Option<u64> {
+        self.wait_until(revision, Some(Instant::now() + timeout))
+    }
+
+    fn wait_until(&self, revision: u64, deadline: Option<Instant>) -> Option<u64> {
         let mut state = self
             .inner
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let deadline = Instant::now() + timeout;
         while !state.closed && state.revision <= revision {
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-            let (guard, wait_result) = self
-                .inner
-                .changed
-                .wait_timeout(state, deadline.saturating_duration_since(now))
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state = guard;
-            if wait_result.timed_out() && state.revision <= revision {
-                return None;
-            }
+            state = match deadline {
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return None;
+                    }
+                    let (guard, wait_result) = self
+                        .inner
+                        .changed
+                        .wait_timeout(state, deadline.saturating_duration_since(now))
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if wait_result.timed_out() && guard.revision <= revision {
+                        return None;
+                    }
+                    guard
+                }
+                None => self
+                    .inner
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            };
         }
         (!state.closed).then_some(state.revision)
     }

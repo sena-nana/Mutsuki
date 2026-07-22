@@ -91,14 +91,6 @@ impl BatchPayloadBuilder {
         BatchPayload::from_tasks(tasks)
     }
 
-    pub fn local_tasks(tasks: Vec<Task>) -> BatchPayload {
-        BatchPayload::from_local_tasks(tasks)
-    }
-
-    pub fn row_tasks_json(tasks: &[Task]) -> BatchPayload {
-        BatchPayload::from_tasks_json(tasks)
-    }
-
     pub fn columnar(columns: Vec<ColumnPayload>, row_count: usize) -> BatchPayload {
         BatchPayload::Columnar(ColumnarPayload { columns, row_count })
     }

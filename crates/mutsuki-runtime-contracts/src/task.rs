@@ -40,28 +40,23 @@ struct LocalPayload {
 }
 
 impl LocalPayload {
-    fn ensure_json(&self) -> &Value {
-        self.json
-            .get_or_init(|| {
-                Arc::new((self.to_json)(self.body.as_ref()).unwrap_or_else(|error| {
-                    panic!(
-                        "local task payload `{}` must serialize for wire form: {error}",
-                        self.type_name
-                    )
-                }))
-            })
-            .as_ref()
-    }
-
-    fn json_arc(&self) -> Arc<Value> {
-        Arc::clone(self.json.get_or_init(|| {
+    fn materialize_json(&self) -> &Arc<Value> {
+        self.json.get_or_init(|| {
             Arc::new((self.to_json)(self.body.as_ref()).unwrap_or_else(|error| {
                 panic!(
                     "local task payload `{}` must serialize for wire form: {error}",
                     self.type_name
                 )
             }))
-        }))
+        })
+    }
+
+    fn ensure_json(&self) -> &Value {
+        self.materialize_json().as_ref()
+    }
+
+    fn json_arc(&self) -> Arc<Value> {
+        Arc::clone(self.materialize_json())
     }
 }
 
@@ -155,17 +150,6 @@ impl TaskPayload {
 
     pub fn is_local(&self) -> bool {
         matches!(self.kind, TaskPayloadKind::Local(_))
-    }
-
-    pub fn is_json(&self) -> bool {
-        matches!(self.kind, TaskPayloadKind::Json(_))
-    }
-
-    pub fn local_type_name(&self) -> Option<&'static str> {
-        match &self.kind {
-            TaskPayloadKind::Local(local) => Some(local.type_name),
-            TaskPayloadKind::Json(_) => None,
-        }
     }
 
     pub fn local_ref<T: Any>(&self) -> Option<&T> {

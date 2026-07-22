@@ -979,6 +979,6 @@ fn typed_local_payload_shares_arc_and_decodes_without_json() {
     let encoded = serde_json::to_value(&derived).expect("local payload encodes for wire");
     assert_eq!(encoded["payload"]["name"], "demo");
     let decoded: Task = serde_json::from_value(encoded).unwrap();
-    assert!(decoded.payload.is_json());
+    assert!(!decoded.payload.is_local());
     assert_eq!(decoded.payload.decode::<DemoBody>().unwrap(), body);
 }
