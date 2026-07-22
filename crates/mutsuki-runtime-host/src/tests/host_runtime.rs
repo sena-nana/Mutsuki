@@ -410,6 +410,42 @@ fn completion_subscription_wakes_and_batch_state_returns_terminal_outcome() {
 }
 
 #[test]
+fn wait_task_states_blocks_until_terminal_without_status_polling() {
+    let runtime = super::helpers::host_with_echo_runner()
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+    let handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "wait-states",
+            "raw.input",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("unexpected submit reply: {reply:?}"),
+    };
+
+    let states = runtime
+        .wait_task_states(vec![handle.clone()], Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].handle, handle);
+    assert_eq!(states[0].status, Some(TaskStatus::Completed));
+
+    let metrics = runtime.metrics();
+    assert_eq!(metrics.task_status_queries, 0);
+    assert!(metrics.task_state_batch_queries >= 1);
+    assert!(metrics.completion_notifications >= 1);
+}
+
+#[test]
 fn dropping_runtime_closes_completion_waiters() {
     let runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())

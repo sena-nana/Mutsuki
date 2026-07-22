@@ -72,6 +72,35 @@ impl TaskCompletionSubscription {
         (!state.closed).then_some(state.revision)
     }
 
+    /// Waits for a completion revision newer than `revision`, or until `timeout` elapses.
+    ///
+    /// Returns `Some(revision)` when notified, and `None` when the subscription is closed or the
+    /// wait times out without a newer revision.
+    pub fn wait_after_timeout(&self, revision: u64, timeout: Duration) -> Option<u64> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let deadline = Instant::now() + timeout;
+        while !state.closed && state.revision <= revision {
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            let (guard, wait_result) = self
+                .inner
+                .changed
+                .wait_timeout(state, deadline.saturating_duration_since(now))
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state = guard;
+            if wait_result.timed_out() && state.revision <= revision {
+                return None;
+            }
+        }
+        (!state.closed).then_some(state.revision)
+    }
+
     pub fn close(&self) {
         let mut state = self
             .inner
@@ -482,6 +511,47 @@ impl HostRuntime {
 
     pub fn subscribe_task_completions(&self) -> TaskCompletionSubscription {
         self.completion_hub.subscribe()
+    }
+
+    /// Blocks until every handle reaches a terminal outcome, the subscription closes, or `timeout`
+    /// elapses. Uses completion notifications instead of busy-polling the actor mailbox.
+    pub fn wait_task_states(
+        &self,
+        handles: Vec<mutsuki_runtime_contracts::TaskHandle>,
+        timeout: Duration,
+    ) -> RuntimeResult<Vec<HostTaskState>> {
+        if handles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let subscription = self.subscribe_task_completions();
+        let mut revision = subscription.revision();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let states = self.task_states(handles.clone())?;
+            if states.iter().all(|state| {
+                matches!(
+                    state.status,
+                    Some(
+                        TaskStatus::Completed
+                            | TaskStatus::Failed
+                            | TaskStatus::Cancelled
+                            | TaskStatus::Expired
+                            | TaskStatus::DeadLetter
+                    )
+                )
+            }) {
+                return Ok(states);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Ok(states);
+            }
+            match subscription.wait_after_timeout(revision, deadline.saturating_duration_since(now))
+            {
+                Some(next_revision) => revision = next_revision,
+                None => return self.task_states(handles),
+            }
+        }
     }
 
     pub fn metrics(&self) -> HostRuntimeMetricsSnapshot {
