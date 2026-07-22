@@ -21,8 +21,8 @@ impl CoreRuntime {
                 .ensure_active_lease(&task.task_id, &lease, self.current_step, "kernel")?;
             match task.protocol_id.as_str() {
                 "core.commit" => {
-                    let delta: StateDelta =
-                        serde_json::from_value(task.payload.clone()).map_err(|err| {
+                    let delta: StateDelta = serde_json::from_value(task.payload.to_value())
+                        .map_err(|err| {
                             crate::runtime_failure(
                                 "state.delta_decode_failed",
                                 "runtime.committer",
@@ -39,8 +39,8 @@ impl CoreRuntime {
                     );
                 }
                 "core.event.append" => {
-                    let event: DomainEvent =
-                        serde_json::from_value(task.payload.clone()).map_err(|err| {
+                    let event: DomainEvent = serde_json::from_value(task.payload.to_value())
+                        .map_err(|err| {
                             crate::runtime_failure(
                                 "event.decode_failed",
                                 "runtime.event_log",

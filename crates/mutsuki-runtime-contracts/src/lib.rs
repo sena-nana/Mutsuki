@@ -88,7 +88,7 @@ pub use runner::{
 };
 pub use task::{
     CancelPolicy, ConflictPolicy, StateDelta, StateRef, Task, TaskAwait, TaskHandle, TaskLease,
-    TaskOutcome, TaskStatus, TaskStepContinuation, VersionExpectation, WakeCondition,
+    TaskOutcome, TaskPayload, TaskStatus, TaskStepContinuation, VersionExpectation, WakeCondition,
 };
 pub use trace::{SpanStatus, TraceSpan};
 

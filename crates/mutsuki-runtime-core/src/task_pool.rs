@@ -140,7 +140,7 @@ impl TaskPool {
                 format!("task.enqueue.{task_id}"),
             ));
         }
-        let payload_wire_bytes = compact_json_len(&task.payload).map_err(|error| {
+        let payload_wire_bytes = compact_json_len(task.payload.as_value()).map_err(|error| {
             crate::runtime_failure(
                 mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
                 "runtime.task_pool",

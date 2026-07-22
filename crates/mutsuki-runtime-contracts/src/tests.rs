@@ -113,7 +113,7 @@ fn task_runner_resource_contracts_roundtrip_json() {
         protocol_id: "raw.input.chat_message".into(),
         priority: 10,
         ready_at_step: Some(2),
-        payload: serde_json::json!({"actor_id": "actor-a"}),
+        payload: serde_json::json!({"actor_id": "actor-a"}).into(),
         input_refs: vec!["value:raw-1".into()],
         output_ref: None,
         continuation_ref: None,
@@ -927,4 +927,25 @@ fn missing_new_contract_fields_fail_deserialization() {
     assert_missing_fields_fail::<ResourceRef>(serde_json::json!({
         "ref_id": "resource:1"
     }));
+}
+
+#[test]
+fn derive_with_protocol_shares_payload_arc_without_deep_clone() {
+    let source = Task::new(
+        "facade-1",
+        "mutsuki.fs.read",
+        serde_json::json!({
+            "path": "/tmp/a",
+            "content": "x".repeat(64 * 1024),
+        }),
+    );
+    let derived = source.derive_with_protocol("facade-1:effect", "effect.mutsuki.fs.read");
+    assert_eq!(derived.task_id, "facade-1:effect");
+    assert_eq!(derived.protocol_id, "effect.mutsuki.fs.read");
+    assert_eq!(derived.correlation_id.as_deref(), Some("facade-1"));
+    assert_eq!(source.payload.strong_count(), 2);
+    assert_eq!(derived.payload.strong_count(), 2);
+    assert_eq!(source.payload.as_value(), derived.payload.as_value());
+    let encoded = serde_json::to_value(&derived).expect("task encodes");
+    assert!(encoded.get("payload").unwrap().is_object());
 }

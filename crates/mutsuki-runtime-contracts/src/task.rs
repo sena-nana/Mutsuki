@@ -1,3 +1,6 @@
+use std::ops::Deref;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -6,6 +9,113 @@ use crate::{
     ResourceRequirement, RunnerId, RuntimeError, SurfaceId, TaskId,
 };
 use crate::{TaskLeaseId, TraceId};
+
+/// In-process shared JSON payload.
+///
+/// Wire serialization remains a plain JSON value. Cloning shares the underlying
+/// `Arc` so builtin facade derivation can rebind protocol metadata without a
+/// deep copy of large request bodies.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskPayload {
+    inner: Arc<Value>,
+}
+
+impl Serialize for TaskPayload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner.as_ref().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskPayload {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Value::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl TaskPayload {
+    pub fn new(value: Value) -> Self {
+        Self {
+            inner: Arc::new(value),
+        }
+    }
+
+    pub fn shared(inner: Arc<Value>) -> Self {
+        Self { inner }
+    }
+
+    pub fn as_value(&self) -> &Value {
+        &self.inner
+    }
+
+    pub fn arc(&self) -> Arc<Value> {
+        Arc::clone(&self.inner)
+    }
+
+    pub fn to_value(&self) -> Value {
+        (*self.inner).clone()
+    }
+
+    pub fn into_value(self) -> Value {
+        match Arc::try_unwrap(self.inner) {
+            Ok(value) => value,
+            Err(shared) => (*shared).clone(),
+        }
+    }
+
+    pub fn strong_count(&self) -> usize {
+        Arc::strong_count(&self.inner)
+    }
+}
+
+impl Deref for TaskPayload {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl AsRef<Value> for TaskPayload {
+    fn as_ref(&self) -> &Value {
+        &self.inner
+    }
+}
+
+impl From<Value> for TaskPayload {
+    fn from(value: Value) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Arc<Value>> for TaskPayload {
+    fn from(inner: Arc<Value>) -> Self {
+        Self::shared(inner)
+    }
+}
+
+impl From<TaskPayload> for Value {
+    fn from(payload: TaskPayload) -> Self {
+        payload.into_value()
+    }
+}
+
+impl PartialEq<Value> for TaskPayload {
+    fn eq(&self, other: &Value) -> bool {
+        self.inner.as_ref() == other
+    }
+}
+
+impl PartialEq<TaskPayload> for Value {
+    fn eq(&self, other: &TaskPayload) -> bool {
+        self == other.inner.as_ref()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,7 +144,7 @@ pub struct Task {
     pub protocol_id: ProtocolId,
     pub priority: i64,
     pub ready_at_step: Option<u64>,
-    pub payload: Value,
+    pub payload: TaskPayload,
     pub input_refs: Vec<RefId>,
     pub output_ref: Option<RefId>,
     pub continuation_ref: Option<RefId>,
@@ -54,14 +164,18 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(task_id: impl Into<String>, protocol_id: impl Into<String>, payload: Value) -> Self {
+    pub fn new(
+        task_id: impl Into<String>,
+        protocol_id: impl Into<String>,
+        payload: impl Into<TaskPayload>,
+    ) -> Self {
         let protocol_id = protocol_id.into();
         Self {
             task_id: task_id.into(),
             protocol_id,
             priority: 0,
             ready_at_step: None,
-            payload,
+            payload: payload.into(),
             input_refs: Vec::new(),
             output_ref: None,
             continuation_ref: None,
@@ -79,6 +193,30 @@ impl Task {
             resource_requirements: Vec::new(),
             created_sequence: 0,
         }
+    }
+
+    /// Rebinds protocol metadata while sharing the source payload `Arc`.
+    pub fn derive_with_protocol(
+        &self,
+        task_id: impl Into<String>,
+        protocol_id: impl Into<String>,
+    ) -> Self {
+        let mut derived = Self::new(task_id, protocol_id, self.payload.clone());
+        derived.priority = self.priority;
+        derived.trace_id = self.trace_id.clone();
+        derived.correlation_id = self
+            .correlation_id
+            .clone()
+            .or_else(|| Some(self.task_id.clone()));
+        derived.idempotency_key = self.idempotency_key.clone();
+        derived.input_refs = self.input_refs.clone();
+        derived.expected_versions = self.expected_versions.clone();
+        derived.required_surfaces = self.required_surfaces.clone();
+        derived.dispatch_lane = self.dispatch_lane.clone();
+        derived.ordering = self.ordering.clone();
+        derived.resource_requirements = self.resource_requirements.clone();
+        derived.registry_generation = self.registry_generation;
+        derived
     }
 }
 
