@@ -1,5 +1,4 @@
-use super::types::{AppDeliveryError, AppId};
-use mutsuki_link_core::Connection;
+use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION};
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
 };
@@ -18,11 +17,34 @@ pub struct AppLinkSession {
     pub capabilities: Vec<CapabilityDescriptor>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityStatus {
+    Ready,
+    Unavailable,
+    Incompatible,
+}
+
 impl AppLinkSession {
     pub fn capability_ready(&self, required: &CapabilityDescriptor) -> bool {
-        self.capabilities
+        matches!(self.capability_status(required), CapabilityStatus::Ready)
+    }
+
+    pub fn capability_status(&self, required: &CapabilityDescriptor) -> CapabilityStatus {
+        if self
+            .capabilities
             .iter()
             .any(|offered| required.is_compatible_with(offered))
+        {
+            return CapabilityStatus::Ready;
+        }
+        if self
+            .capabilities
+            .iter()
+            .any(|offered| offered.name == required.name)
+        {
+            return CapabilityStatus::Incompatible;
+        }
+        CapabilityStatus::Unavailable
     }
 }
 
@@ -78,7 +100,7 @@ impl InMemoryAppLinkTransport {
             app_id.as_str().to_string(),
             MemoryPeer {
                 online: true,
-                host_protocol_version: 1,
+                host_protocol_version: HOST_PROTOCOL_VERSION,
                 capabilities,
                 ..MemoryPeer::default()
             },
@@ -95,7 +117,7 @@ impl InMemoryAppLinkTransport {
             app_id.as_str().to_string(),
             MemoryPeer {
                 online: false,
-                host_protocol_version: 1,
+                host_protocol_version: HOST_PROTOCOL_VERSION,
                 capabilities,
                 ready_after: Some(ready_after),
                 ..MemoryPeer::default()
@@ -109,15 +131,29 @@ impl InMemoryAppLinkTransport {
         }
     }
 
+    pub fn set_host_protocol_version(&self, app_id: &AppId, version: u32) {
+        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+            peer.host_protocol_version = version;
+        }
+    }
+
+    pub fn set_capabilities(&self, app_id: &AppId, capabilities: Vec<CapabilityDescriptor>) {
+        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
+            peer.capabilities = capabilities;
+        }
+    }
+
     pub fn mark_online(&self, app_id: &AppId) {
         if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
             peer.online = true;
         }
     }
-}
 
-impl AppLinkTransport for InMemoryAppLinkTransport {
-    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
+    fn snapshot_session(
+        &self,
+        app_id: &AppId,
+        readiness: MemoryReadinessView,
+    ) -> Result<AppLinkSession, AppDeliveryError> {
         let peers = self.peers.lock();
         let Some(peer) = peers.get(app_id.as_str()) else {
             return Err(AppDeliveryError::AppNotInstalled);
@@ -128,16 +164,34 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         if !peer.online {
             return Err(AppDeliveryError::EndpointUnavailable);
         }
+        let capabilities = match (peer.ready_after, readiness) {
+            (_, MemoryReadinessView::Authoritative) => peer.capabilities.clone(),
+            // Probe path: delayed peers advertise no capabilities until wait observes readiness.
+            (Some(_), MemoryReadinessView::Probe) => Vec::new(),
+            (Some(delay), MemoryReadinessView::Waiting { since }) if since.elapsed() < delay => {
+                Vec::new()
+            }
+            _ => peer.capabilities.clone(),
+        };
         Ok(AppLinkSession {
             app_id: app_id.clone(),
             instance_id: format!("memory-{}", app_id.as_str()),
             host_protocol_version: peer.host_protocol_version,
-            capabilities: if peer.ready_after.is_some_and(|delay| delay > Duration::ZERO) {
-                Vec::new()
-            } else {
-                peer.capabilities.clone()
-            },
+            capabilities,
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MemoryReadinessView {
+    Probe,
+    Waiting { since: tokio::time::Instant },
+    Authoritative,
+}
+
+impl AppLinkTransport for InMemoryAppLinkTransport {
+    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
+        self.snapshot_session(app_id, MemoryReadinessView::Probe)
     }
 
     async fn wait_capability_ready(
@@ -148,29 +202,19 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
     ) -> Result<AppLinkSession, AppDeliveryError> {
         let started = tokio::time::Instant::now();
         loop {
-            {
-                let peers = self.peers.lock();
-                let peer = peers
-                    .get(session.app_id.as_str())
-                    .ok_or(AppDeliveryError::EndpointUnavailable)?;
-                if let Some(error) = peer.force_error.clone() {
-                    return Err(error);
+            let current = self.snapshot_session(
+                &session.app_id,
+                MemoryReadinessView::Waiting { since: started },
+            )?;
+            if current.host_protocol_version != HOST_PROTOCOL_VERSION {
+                return Err(AppDeliveryError::ProtocolIncompatible);
+            }
+            match current.capability_status(capability) {
+                CapabilityStatus::Ready => return Ok(current),
+                CapabilityStatus::Incompatible => {
+                    return Err(AppDeliveryError::ProtocolIncompatible);
                 }
-                if peer
-                    .capabilities
-                    .iter()
-                    .any(|offered| capability.is_compatible_with(offered))
-                    && peer
-                        .ready_after
-                        .is_none_or(|delay| started.elapsed() >= delay)
-                {
-                    return Ok(AppLinkSession {
-                        app_id: session.app_id.clone(),
-                        instance_id: session.instance_id.clone(),
-                        host_protocol_version: peer.host_protocol_version,
-                        capabilities: peer.capabilities.clone(),
-                    });
-                }
+                CapabilityStatus::Unavailable => {}
             }
             if started.elapsed() >= timeout {
                 return Err(AppDeliveryError::ReadyTimeout);
@@ -184,19 +228,25 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         session: &AppLinkSession,
         envelope: &CapabilityRequestEnvelope,
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
+        let current = self.snapshot_session(&session.app_id, MemoryReadinessView::Authoritative)?;
+        if current.host_protocol_version != HOST_PROTOCOL_VERSION {
+            return Err(AppDeliveryError::ProtocolIncompatible);
+        }
+        match current.capability_status(&envelope.capability) {
+            CapabilityStatus::Ready => {}
+            CapabilityStatus::Incompatible => {
+                return Err(AppDeliveryError::ProtocolIncompatible);
+            }
+            CapabilityStatus::Unavailable => {
+                return Err(AppDeliveryError::CapabilityUnavailable);
+            }
+        }
         let mut peers = self.peers.lock();
         let peer = peers
             .get_mut(session.app_id.as_str())
             .ok_or(AppDeliveryError::EndpointUnavailable)?;
         if let Some(error) = peer.force_error.clone() {
             return Err(error);
-        }
-        if !peer
-            .capabilities
-            .iter()
-            .any(|offered| envelope.capability.is_compatible_with(offered))
-        {
-            return Err(AppDeliveryError::CapabilityUnavailable);
         }
         let receipt = DeliveryReceipt::Accepted {
             request_id: envelope.request_id.clone(),
@@ -226,6 +276,7 @@ pub struct LinkLocalAppTransport {
     session: mutsuki_link_local::SessionIdentity,
     lease_dir: PathBuf,
     request_timeout: Duration,
+    probe_timeout: Duration,
 }
 
 impl LinkLocalAppTransport {
@@ -234,6 +285,7 @@ impl LinkLocalAppTransport {
             session: mutsuki_link_local::SessionIdentity::current(),
             lease_dir: lease_dir.into(),
             request_timeout: Duration::from_secs(30),
+            probe_timeout: Duration::from_millis(200),
         }
     }
 
@@ -241,10 +293,8 @@ impl LinkLocalAppTransport {
         self.request_timeout = timeout;
         self
     }
-}
 
-impl AppLinkTransport for LinkLocalAppTransport {
-    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
+    async fn handshake(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
         let link_app = mutsuki_link_local::AppId::new(app_id.as_str())
             .map_err(|_| AppDeliveryError::AppNotInstalled)?;
         let _ = mutsuki_link_local::reclaim_stale_lease(
@@ -252,36 +302,18 @@ impl AppLinkTransport for LinkLocalAppTransport {
             &link_app,
             Duration::from_secs(0),
         );
-        let address = mutsuki_link_local::local_address_for_app(&link_app, &self.session);
-        let budget = mutsuki_link_core::TransportBudget {
-            idle_timeout: None,
-            ..mutsuki_link_core::TransportBudget::default()
-        };
-        let context = mutsuki_link_core::ConnectContext {
-            deadline: Some(std::time::Instant::now() + Duration::from_millis(200)),
-            ..mutsuki_link_core::ConnectContext::default()
-        };
-        match mutsuki_link_local::connect(
-            &address,
-            mutsuki_link_core::EndpointId::from_bytes([1; 16]),
-            mutsuki_link_local::endpoint_id_for_app(&link_app, &self.session),
-            budget,
-            &context,
+        crate::app_delivery::endpoint::connect_and_handshake(
+            app_id,
+            &self.session,
+            self.probe_timeout,
         )
         .await
-        {
-            Ok(mut connection) => {
-                let _ = connection.close_write();
-                Ok(AppLinkSession {
-                    app_id: app_id.clone(),
-                    instance_id: format!("probed-{}", app_id.as_str()),
-                    host_protocol_version: super::types::HOST_PROTOCOL_VERSION,
-                    // Capability readiness is confirmed by wait/transmit, not a local catalog.
-                    capabilities: Vec::new(),
-                })
-            }
-            Err(_) => Err(AppDeliveryError::EndpointUnavailable),
-        }
+    }
+}
+
+impl AppLinkTransport for LinkLocalAppTransport {
+    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
+        self.handshake(app_id).await
     }
 
     async fn wait_capability_ready(
@@ -292,14 +324,21 @@ impl AppLinkTransport for LinkLocalAppTransport {
     ) -> Result<AppLinkSession, AppDeliveryError> {
         let started = tokio::time::Instant::now();
         loop {
-            if self.try_connect(&session.app_id).await.is_ok() {
-                // Peer endpoint is listening; typed negotiate happens on transmit/receipt.
-                return Ok(AppLinkSession {
-                    app_id: session.app_id.clone(),
-                    instance_id: session.instance_id.clone(),
-                    host_protocol_version: session.host_protocol_version,
-                    capabilities: vec![capability.clone()],
-                });
+            match self.handshake(&session.app_id).await {
+                Ok(current) => {
+                    if current.host_protocol_version != HOST_PROTOCOL_VERSION {
+                        return Err(AppDeliveryError::ProtocolIncompatible);
+                    }
+                    match current.capability_status(capability) {
+                        CapabilityStatus::Ready => return Ok(current),
+                        CapabilityStatus::Incompatible => {
+                            return Err(AppDeliveryError::ProtocolIncompatible);
+                        }
+                        CapabilityStatus::Unavailable => {}
+                    }
+                }
+                Err(AppDeliveryError::EndpointUnavailable) => {}
+                Err(error) => return Err(error),
             }
             if started.elapsed() >= timeout {
                 return Err(AppDeliveryError::ReadyTimeout);
@@ -310,9 +349,21 @@ impl AppLinkTransport for LinkLocalAppTransport {
 
     async fn transmit(
         &self,
-        _session: &AppLinkSession,
+        session: &AppLinkSession,
         envelope: &CapabilityRequestEnvelope,
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
+        if session.host_protocol_version != HOST_PROTOCOL_VERSION {
+            return Err(AppDeliveryError::ProtocolIncompatible);
+        }
+        match session.capability_status(&envelope.capability) {
+            CapabilityStatus::Ready => {}
+            CapabilityStatus::Incompatible => {
+                return Err(AppDeliveryError::ProtocolIncompatible);
+            }
+            CapabilityStatus::Unavailable => {
+                return Err(AppDeliveryError::CapabilityUnavailable);
+            }
+        }
         let target = AppId::new(envelope.target.clone())?;
         crate::app_delivery::endpoint::connect_and_transmit(
             &target,

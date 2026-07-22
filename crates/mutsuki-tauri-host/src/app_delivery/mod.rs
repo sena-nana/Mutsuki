@@ -17,9 +17,10 @@ mod tests;
 pub use activator::{ProcessAppActivator, TauriAppActivator};
 pub use delivery::AppDeliveryService;
 pub use draft::{DeliveryDraft, DeliveryDraftStore};
-pub use endpoint::AppCapabilityEndpoint;
+pub use endpoint::{AppCapabilityEndpoint, EndpointDescriptor};
 pub use transport::{
-    AppLinkSession, AppLinkTransport, InMemoryAppLinkTransport, LinkLocalAppTransport,
+    AppLinkSession, AppLinkTransport, CapabilityStatus, InMemoryAppLinkTransport,
+    LinkLocalAppTransport,
 };
 pub use types::{
     ActivationError, ActivationReceipt, AppDeliveryError, AppDeliveryOptions, AppDescriptor, AppId,

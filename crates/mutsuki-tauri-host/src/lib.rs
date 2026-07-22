@@ -12,8 +12,9 @@ mod plugin_runner;
 pub use app_delivery::{
     ActivationError, ActivationReceipt, AppCapabilityEndpoint, AppDeliveryError,
     AppDeliveryOptions, AppDeliveryService, AppDescriptor, AppId, AppIdentity, AppLinkSession,
-    AppLinkTransport, DeliveryDraft, DeliveryDraftStore, DeliveryPhase, HOST_PROTOCOL_VERSION,
-    InMemoryAppLinkTransport, LinkLocalAppTransport, ProcessAppActivator, TauriAppActivator,
+    AppLinkTransport, CapabilityStatus, DeliveryDraft, DeliveryDraftStore, DeliveryPhase,
+    EndpointDescriptor, HOST_PROTOCOL_VERSION, InMemoryAppLinkTransport, LinkLocalAppTransport,
+    ProcessAppActivator, TauriAppActivator,
 };
 pub use approval::{ApprovalBridge, PendingApproval};
 pub use builder::MutsukiTauriHostBuilder;
