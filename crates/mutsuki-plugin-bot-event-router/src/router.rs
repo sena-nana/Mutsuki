@@ -133,8 +133,10 @@ pub fn router_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         }),
         batch: RunnerBatchCapability {
             mode: RunnerMode::NativeBatch,
-            preferred_batch_size: 16,
-            max_batch_entries: 64,
+            preferred_batch_size: 32,
+            max_batch_entries: 128,
+            max_entry_concurrency: 32,
+            max_inflight_batches: 1,
             side_effect: RunnerSideEffect::None,
             ..Default::default()
         },
