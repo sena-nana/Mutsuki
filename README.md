@@ -8,7 +8,7 @@ It provides:
 - Core bootstrap and graceful shutdown for embedded desktop runtimes.
 - Tauri command/event bridge for task calls, streams, approvals, resources, plugins, logs and trace.
 - A ResourceRef bridge that keeps large data out of invoke payloads.
-- Cross-app delivery (`request_app` / `deliver_to_app`): discover/activate a peer Tauri app,
+- Cross-app delivery (`request_app`): discover/activate a peer Tauri app,
   wait until its MutsukiLink endpoint and typed capability are ready, then transmit a request and
   receive an idempotent receipt over local IPC (Named Pipe / Unix Domain Socket).
 - A lightweight TypeScript client package for frontend code.

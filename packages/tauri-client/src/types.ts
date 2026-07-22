@@ -104,7 +104,6 @@ export interface AppDeliveryProgress {
     | "negotiating"
     | "transmitting"
     | "accepted"
-    | "processing"
     | "completed"
     | "delivery_failed";
   error?: string | null;

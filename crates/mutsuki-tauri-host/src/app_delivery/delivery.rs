@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-/// Unified `request_app` / `deliver_to_app` orchestration.
+/// Unified wake-then-deliver orchestration for typed capability requests.
 pub struct AppDeliveryService<A, T> {
     source: AppIdentity,
     activator: A,
@@ -66,22 +66,12 @@ where
         payload: Value,
         options: AppDeliveryOptions,
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
-        let request_id = Uuid::new_v4().to_string();
-        self.deliver_to_app(request_id, target, capability, payload, options)
-            .await
-    }
-
-    pub async fn deliver_to_app(
-        &self,
-        request_id: impl Into<String>,
-        target: AppId,
-        capability: CapabilityDescriptor,
-        payload: Value,
-        options: AppDeliveryOptions,
-    ) -> Result<DeliveryReceipt, AppDeliveryError> {
-        let request_id = request_id.into();
+        let request_id = options
+            .request_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let envelope = CapabilityRequestEnvelope::new(
-            request_id.clone(),
+            request_id,
             self.source.app_id.as_str(),
             target.as_str(),
             capability,

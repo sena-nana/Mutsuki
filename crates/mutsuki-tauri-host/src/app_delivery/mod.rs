@@ -14,7 +14,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
-pub use activator::{NullAppActivator, ProcessAppActivator, TauriAppActivator};
+pub use activator::{ProcessAppActivator, TauriAppActivator};
 pub use delivery::AppDeliveryService;
 pub use draft::{DeliveryDraft, DeliveryDraftStore};
 pub use endpoint::AppCapabilityEndpoint;

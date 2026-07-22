@@ -1,7 +1,7 @@
 # Cross-app delivery (request_app)
 
-`MutsukiTauriHost` owns the desktop path for waking a peer Tauri app and delivering a typed
-capability request over MutsukiLink local IPC (Named Pipe on Windows, UDS on macOS/Linux).
+`MutsukiTauriHost` owns waking a peer Tauri app and delivering a typed capability request over
+MutsukiLink local IPC (Named Pipe / UDS).
 
 ```rust
 use mutsuki_tauri_host::{
@@ -51,6 +51,6 @@ let receipt = delivery
 Rules:
 
 - Do not put the full business task into argv or treat a handoff file as the default online path.
-- Persist `DeliveryDraft` only after structured delivery failure; drafts are never marked delivered.
+- Persist `DeliveryDraft` only after structured delivery failure; drafts are recovery artifacts.
 - Wait for capability ready, not merely process start, before transmit.
 - Ordinary app-to-app traffic does not require `MutsukiServiceHost`.

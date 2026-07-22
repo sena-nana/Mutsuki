@@ -1,5 +1,5 @@
 use super::types::AppId;
-use mutsuki_runtime_contracts::CapabilityRequestEnvelope;
+use mutsuki_runtime_contracts::{CapabilityDescriptor, CapabilityRequestEnvelope};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,19 +9,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Failure-recovery draft. Presence means delivery did not complete; never treat as delivered.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DeliveryDraft {
     pub request_id: String,
     pub source_app: String,
     pub target_app: String,
-    pub capability_name: String,
-    pub capability_protocol_version: u32,
-    pub capability_schema_version: u32,
+    pub capability: CapabilityDescriptor,
     pub payload: Value,
     pub saved_at_unix_ms: u64,
     pub reason: String,
-    /// Draft is recoverable but must never be presented as delivered.
-    pub delivered: bool,
 }
 
 impl DeliveryDraft {
@@ -30,13 +27,10 @@ impl DeliveryDraft {
             request_id: envelope.request_id.clone(),
             source_app: envelope.source.clone(),
             target_app: envelope.target.clone(),
-            capability_name: envelope.capability.name.clone(),
-            capability_protocol_version: envelope.capability.protocol_version,
-            capability_schema_version: envelope.capability.schema_version,
+            capability: envelope.capability.clone(),
             payload: envelope.payload.clone(),
             saved_at_unix_ms: now_unix_ms(),
             reason: reason.into(),
-            delivered: false,
         }
     }
 }
@@ -76,7 +70,6 @@ impl DeliveryDraftStore {
     }
 
     pub fn save(&self, draft: DeliveryDraft) -> std::io::Result<()> {
-        debug_assert!(!draft.delivered, "drafts must never be marked delivered");
         if let Some(directory) = &self.directory {
             write_draft_file(directory, &draft)?;
         }
@@ -92,7 +85,7 @@ impl DeliveryDraftStore {
         self.inner
             .read()
             .values()
-            .filter(|draft| draft.target_app == target.as_str() && !draft.delivered)
+            .filter(|draft| draft.target_app == target.as_str())
             .cloned()
             .collect()
     }

@@ -60,8 +60,6 @@ struct MemoryPeer {
     ready_after: Option<Duration>,
     force_error: Option<AppDeliveryError>,
     receipts: IdempotentReceiptStore,
-    accept_handler:
-        Option<Arc<dyn Fn(&CapabilityRequestEnvelope) -> DeliveryReceipt + Send + Sync>>,
 }
 
 /// Injectable in-memory transport for pure Rust delivery state-machine tests.
@@ -87,11 +85,10 @@ impl InMemoryAppLinkTransport {
         );
     }
 
-    pub fn register_offline_with_activation(
+    pub fn register_offline(
         &self,
         app_id: &AppId,
         capabilities: Vec<CapabilityDescriptor>,
-        _activating_delay: Duration,
         ready_after: Duration,
     ) {
         self.peers.lock().insert(
@@ -109,15 +106,6 @@ impl InMemoryAppLinkTransport {
     pub fn set_force_error(&self, app_id: &AppId, error: AppDeliveryError) {
         if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
             peer.force_error = Some(error);
-        }
-    }
-
-    pub fn set_accept_handler<F>(&self, app_id: &AppId, handler: F)
-    where
-        F: Fn(&CapabilityRequestEnvelope) -> DeliveryReceipt + Send + Sync + 'static,
-    {
-        if let Some(peer) = self.peers.lock().get_mut(app_id.as_str()) {
-            peer.accept_handler = Some(Arc::new(handler));
         }
     }
 
@@ -145,7 +133,6 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
             instance_id: format!("memory-{}", app_id.as_str()),
             host_protocol_version: peer.host_protocol_version,
             capabilities: if peer.ready_after.is_some_and(|delay| delay > Duration::ZERO) {
-                // Process up but capability not ready yet — empty until wait.
                 Vec::new()
             } else {
                 peer.capabilities.clone()
@@ -211,13 +198,9 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         {
             return Err(AppDeliveryError::CapabilityUnavailable);
         }
-        let receipt = if let Some(handler) = &peer.accept_handler {
-            handler(envelope)
-        } else {
-            DeliveryReceipt::Accepted {
-                request_id: envelope.request_id.clone(),
-                remote_task_id: Some(format!("task-{}", envelope.request_id)),
-            }
+        let receipt = DeliveryReceipt::Accepted {
+            request_id: envelope.request_id.clone(),
+            remote_task_id: Some(format!("task-{}", envelope.request_id)),
         };
         Ok(peer
             .receipts
@@ -242,7 +225,6 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
 pub struct LinkLocalAppTransport {
     session: mutsuki_link_local::SessionIdentity,
     lease_dir: PathBuf,
-    endpoints: Arc<Mutex<BTreeMap<String, mutsuki_link_local::AppEndpointDescriptor>>>,
     request_timeout: Duration,
 }
 
@@ -251,7 +233,6 @@ impl LinkLocalAppTransport {
         Self {
             session: mutsuki_link_local::SessionIdentity::current(),
             lease_dir: lease_dir.into(),
-            endpoints: Arc::new(Mutex::new(BTreeMap::new())),
             request_timeout: Duration::from_secs(30),
         }
     }
@@ -259,24 +240,6 @@ impl LinkLocalAppTransport {
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
         self
-    }
-
-    pub fn advertise(&self, descriptor: mutsuki_link_local::AppEndpointDescriptor) {
-        self.endpoints
-            .lock()
-            .insert(descriptor.app_id.as_str().to_string(), descriptor);
-    }
-
-    pub fn local_address_for(
-        &self,
-        app_id: &AppId,
-    ) -> Result<mutsuki_link_local::LocalAddress, AppDeliveryError> {
-        let link_app = mutsuki_link_local::AppId::new(app_id.as_str())
-            .map_err(|_| AppDeliveryError::AppNotInstalled)?;
-        Ok(mutsuki_link_local::local_address_for_app(
-            &link_app,
-            &self.session,
-        ))
     }
 }
 
@@ -289,29 +252,6 @@ impl AppLinkTransport for LinkLocalAppTransport {
             &link_app,
             Duration::from_secs(0),
         );
-        if let Some(descriptor) = self.endpoints.lock().get(app_id.as_str()).cloned() {
-            if descriptor.host_protocol_version != super::types::HOST_PROTOCOL_VERSION {
-                return Err(AppDeliveryError::ProtocolIncompatible);
-            }
-            return Ok(AppLinkSession {
-                app_id: app_id.clone(),
-                instance_id: descriptor.instance_id.clone(),
-                host_protocol_version: descriptor.host_protocol_version,
-                capabilities: descriptor
-                    .capabilities
-                    .iter()
-                    .filter(|capability| capability.ready)
-                    .map(|capability| {
-                        CapabilityDescriptor::new(
-                            capability.name.clone(),
-                            capability.protocol_version,
-                            capability.schema_version,
-                        )
-                    })
-                    .collect(),
-            });
-        }
-        // Probe the stable local address; connect failure means offline.
         let address = mutsuki_link_local::local_address_for_app(&link_app, &self.session);
         let budget = mutsuki_link_core::TransportBudget {
             idle_timeout: None,
@@ -336,6 +276,7 @@ impl AppLinkTransport for LinkLocalAppTransport {
                     app_id: app_id.clone(),
                     instance_id: format!("probed-{}", app_id.as_str()),
                     host_protocol_version: super::types::HOST_PROTOCOL_VERSION,
+                    // Capability readiness is confirmed by wait/transmit, not a local catalog.
                     capabilities: Vec::new(),
                 })
             }
@@ -351,33 +292,8 @@ impl AppLinkTransport for LinkLocalAppTransport {
     ) -> Result<AppLinkSession, AppDeliveryError> {
         let started = tokio::time::Instant::now();
         loop {
-            if let Some(descriptor) = self.endpoints.lock().get(session.app_id.as_str()).cloned() {
-                if descriptor.capability_ready(
-                    &capability.name,
-                    capability.protocol_version,
-                    capability.schema_version,
-                ) {
-                    return Ok(AppLinkSession {
-                        app_id: session.app_id.clone(),
-                        instance_id: descriptor.instance_id,
-                        host_protocol_version: descriptor.host_protocol_version,
-                        capabilities: descriptor
-                            .capabilities
-                            .iter()
-                            .filter(|item| item.ready)
-                            .map(|item| {
-                                CapabilityDescriptor::new(
-                                    item.name.clone(),
-                                    item.protocol_version,
-                                    item.schema_version,
-                                )
-                            })
-                            .collect(),
-                    });
-                }
-            } else if self.try_connect(&session.app_id).await.is_ok() {
-                // Peer endpoint is listening. Capability readiness is confirmed by
-                // the subsequent transmit/receipt exchange rather than a local catalog.
+            if self.try_connect(&session.app_id).await.is_ok() {
+                // Peer endpoint is listening; typed negotiate happens on transmit/receipt.
                 return Ok(AppLinkSession {
                     app_id: session.app_id.clone(),
                     instance_id: session.instance_id.clone(),

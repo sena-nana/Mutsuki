@@ -1,10 +1,10 @@
-use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION};
+use super::types::{AppDeliveryError, AppId};
 use mutsuki_link_core::{
     ConnectContext, Connection, EndpointId, TransportBudget, TransportErrorKind,
 };
 use mutsuki_link_local::{
-    self, AppEndpointDescriptor, CapabilityOffer, EndpointLease, LocalAddress, LocalConnection,
-    LocalListener, SessionIdentity, endpoint_id_for_app, local_address_for_app,
+    self, EndpointLease, LocalConnection, LocalListener, SessionIdentity, endpoint_id_for_app,
+    local_address_for_app,
 };
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
@@ -23,9 +23,6 @@ type CapabilityHandler =
 /// Local endpoint owner that accepts typed capability requests over Link IPC.
 pub struct AppCapabilityEndpoint {
     app_id: AppId,
-    instance_id: String,
-    address: LocalAddress,
-    endpoint_id: EndpointId,
     lease: Mutex<Option<EndpointLease>>,
     handlers: Arc<Mutex<BTreeMap<String, (CapabilityDescriptor, CapabilityHandler)>>>,
     receipts: Arc<Mutex<IdempotentReceiptStore>>,
@@ -53,43 +50,17 @@ impl AppCapabilityEndpoint {
         })?;
         let endpoint = Arc::new(Self {
             app_id,
-            instance_id: lease.instance_id.clone(),
-            address,
-            endpoint_id,
             lease: Mutex::new(Some(lease)),
             handlers: Arc::new(Mutex::new(BTreeMap::new())),
             receipts: Arc::new(Mutex::new(IdempotentReceiptStore::new())),
             accept_task: Mutex::new(None),
         });
-        endpoint.clone().spawn_accept_loop()?;
+        endpoint.clone().spawn_accept_loop(address, endpoint_id)?;
         Ok(endpoint)
     }
 
     pub fn app_id(&self) -> &AppId {
         &self.app_id
-    }
-
-    pub fn descriptor(&self) -> AppEndpointDescriptor {
-        let handlers = self.handlers.lock();
-        AppEndpointDescriptor {
-            app_id: mutsuki_link_local::AppId::new(self.app_id.as_str()).expect("validated"),
-            instance_id: self.instance_id.clone(),
-            host_protocol_version: HOST_PROTOCOL_VERSION,
-            endpoint_id: self.endpoint_id,
-            address: self.address.clone(),
-            capabilities: handlers
-                .values()
-                .map(|(capability, _)| {
-                    CapabilityOffer::new(
-                        capability.name.clone(),
-                        capability.protocol_version,
-                        capability.schema_version,
-                        true,
-                    )
-                    .expect("validated")
-                })
-                .collect(),
-        }
     }
 
     pub fn register_handler<F>(&self, capability: CapabilityDescriptor, handler: F)
@@ -102,17 +73,20 @@ impl AppCapabilityEndpoint {
         );
     }
 
-    fn spawn_accept_loop(self: Arc<Self>) -> Result<(), AppDeliveryError> {
+    fn spawn_accept_loop(
+        self: Arc<Self>,
+        address: mutsuki_link_local::LocalAddress,
+        endpoint_id: EndpointId,
+    ) -> Result<(), AppDeliveryError> {
         let budget = TransportBudget {
             idle_timeout: None,
             ..TransportBudget::default()
         };
-        let listener =
-            LocalListener::bind(&self.address, self.endpoint_id, budget).map_err(|error| {
-                AppDeliveryError::ActivationFailed {
-                    message: format!("bind local endpoint failed: {error}"),
-                }
-            })?;
+        let listener = LocalListener::bind(&address, endpoint_id, budget).map_err(|error| {
+            AppDeliveryError::ActivationFailed {
+                message: format!("bind local endpoint failed: {error}"),
+            }
+        })?;
         let endpoint = self.clone();
         let handle = tokio::spawn(async move {
             loop {
@@ -121,17 +95,13 @@ impl AppCapabilityEndpoint {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     continue;
                 };
-                match recv_json::<CapabilityRequestEnvelope>(&mut connection).await {
-                    Ok(envelope) => {
-                        let receipt = endpoint.handle_envelope(envelope);
-                        if send_json(&mut connection, &receipt).await.is_ok() {
-                            // Allow the framed writer to flush before half-close.
-                            for _ in 0..32 {
-                                tokio::task::yield_now().await;
-                            }
-                        }
+                if let Ok(envelope) = recv_json::<CapabilityRequestEnvelope>(&mut connection).await
+                {
+                    let receipt = endpoint.handle_envelope(envelope);
+                    if send_json(&mut connection, &receipt).await.is_ok() {
+                        // Let the framed writer flush before half-close.
+                        tokio::time::sleep(Duration::from_millis(1)).await;
                     }
-                    Err(_) => {}
                 }
                 let _ = connection.close_write();
             }
@@ -179,7 +149,7 @@ impl Drop for AppCapabilityEndpoint {
     }
 }
 
-pub async fn connect_and_transmit(
+pub(crate) async fn connect_and_transmit(
     target: &AppId,
     session: &SessionIdentity,
     envelope: &CapabilityRequestEnvelope,

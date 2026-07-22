@@ -1,13 +1,12 @@
 use super::activator::{ProcessAppActivator, TauriAppActivator};
 use super::delivery::AppDeliveryService;
 use super::draft::DeliveryDraftStore;
-use super::endpoint::{AppCapabilityEndpoint, connect_and_transmit};
-use super::transport::InMemoryAppLinkTransport;
+use super::endpoint::AppCapabilityEndpoint;
+use super::transport::{InMemoryAppLinkTransport, LinkLocalAppTransport};
 use super::types::{
     AppDeliveryError, AppDeliveryOptions, AppDescriptor, AppId, AppIdentity, DeliveryPhase,
 };
-use mutsuki_link_local::SessionIdentity;
-use mutsuki_runtime_contracts::{CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt};
+use mutsuki_runtime_contracts::{CapabilityDescriptor, DeliveryReceipt};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -23,26 +22,31 @@ fn capability() -> CapabilityDescriptor {
     CapabilityDescriptor::new("lilia.code.task.accept", 1, 1)
 }
 
+fn options_with_id(request_id: &str) -> AppDeliveryOptions {
+    AppDeliveryOptions {
+        request_id: Some(request_id.into()),
+        ..AppDeliveryOptions::default()
+    }
+}
+
 #[tokio::test]
 async fn online_direct_delivery_returns_accepted_receipt() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, vec![capability()]);
-    let activator = ProcessAppActivator::new();
     let service = AppDeliveryService::new(
         source_identity(),
-        activator,
+        ProcessAppActivator::new(),
         transport,
         DeliveryDraftStore::memory(),
     );
 
     let receipt = service
-        .deliver_to_app(
-            "req-online-1",
+        .request_app(
             target,
             capability(),
             json!({"title": "fix CI"}),
-            AppDeliveryOptions::default(),
+            options_with_id("req-online-1"),
         )
         .await
         .unwrap();
@@ -61,12 +65,7 @@ async fn online_direct_delivery_returns_accepted_receipt() {
 async fn offline_activation_waits_for_capability_ready_before_transmit() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = Arc::new(InMemoryAppLinkTransport::new());
-    transport.register_offline_with_activation(
-        &target,
-        vec![capability()],
-        Duration::from_millis(5),
-        Duration::from_millis(20),
-    );
+    transport.register_offline(&target, vec![capability()], Duration::from_millis(20));
 
     let activator = ProcessAppActivator::new();
     activator
@@ -117,12 +116,12 @@ async fn offline_activation_waits_for_capability_ready_before_transmit() {
     );
 
     let receipt = service
-        .deliver_to_app(
-            "req-offline-1",
+        .request_app(
             target,
             capability(),
             json!({"title": "wake and deliver"}),
             AppDeliveryOptions {
+                request_id: Some("req-offline-1".into()),
                 ready_timeout: Duration::from_secs(2),
                 ..AppDeliveryOptions::default()
             },
@@ -141,12 +140,7 @@ async fn offline_activation_waits_for_capability_ready_before_transmit() {
 async fn process_started_but_not_ready_does_not_transmit_early() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
-    transport.register_offline_with_activation(
-        &target,
-        vec![capability()],
-        Duration::ZERO,
-        Duration::from_secs(30),
-    );
+    transport.register_offline(&target, vec![capability()], Duration::from_secs(30));
     transport.mark_online(&target);
 
     let service = AppDeliveryService::new(
@@ -156,12 +150,12 @@ async fn process_started_but_not_ready_does_not_transmit_early() {
         DeliveryDraftStore::memory(),
     );
     let error = service
-        .deliver_to_app(
-            "req-not-ready",
+        .request_app(
             target,
             capability(),
             json!({}),
             AppDeliveryOptions {
+                request_id: Some("req-not-ready".into()),
                 activate_if_offline: false,
                 ready_timeout: Duration::from_millis(40),
                 persist_on_failure: true,
@@ -171,8 +165,7 @@ async fn process_started_but_not_ready_does_not_transmit_early() {
         .await
         .unwrap_err();
     assert_eq!(error, AppDeliveryError::ReadyTimeout);
-    let draft = service.drafts().get("req-not-ready").unwrap();
-    assert!(!draft.delivered);
+    assert!(service.drafts().get("req-not-ready").is_some());
     assert_eq!(
         service.phase_for("req-not-ready"),
         Some(DeliveryPhase::DeliveryFailed)
@@ -190,24 +183,18 @@ async fn duplicate_request_id_returns_previous_receipt() {
         transport,
         DeliveryDraftStore::memory(),
     );
+    let options = options_with_id("req-dup");
     let first = service
-        .deliver_to_app(
-            "req-dup",
+        .request_app(
             target.clone(),
             capability(),
             json!({"n": 1}),
-            AppDeliveryOptions::default(),
+            options.clone(),
         )
         .await
         .unwrap();
     let second = service
-        .deliver_to_app(
-            "req-dup",
-            target,
-            capability(),
-            json!({"n": 2}),
-            AppDeliveryOptions::default(),
-        )
+        .request_app(target, capability(), json!({"n": 2}), options)
         .await
         .unwrap();
     assert!(matches!(first, DeliveryReceipt::Accepted { .. }));
@@ -279,7 +266,7 @@ async fn structured_errors_are_distinguishable() {
 }
 
 #[tokio::test]
-async fn draft_saved_is_never_marked_delivered() {
+async fn draft_saved_on_structured_failure() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, vec![capability()]);
@@ -297,18 +284,16 @@ async fn draft_saved_is_never_marked_delivered() {
     );
     let request_id = "req-draft";
     let _ = service
-        .deliver_to_app(
-            request_id,
+        .request_app(
             target,
             capability(),
             json!({"keep": true}),
-            AppDeliveryOptions::default(),
+            options_with_id(request_id),
         )
         .await
         .unwrap_err();
     let draft = service.drafts().get(request_id).unwrap();
-    assert!(!draft.delivered);
-    assert_eq!(draft.capability_name, "lilia.code.task.accept");
+    assert_eq!(draft.capability.name, "lilia.code.task.accept");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -326,21 +311,29 @@ async fn local_link_roundtrip_delivers_typed_receipt() {
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let envelope = CapabilityRequestEnvelope::new(
-        "req-local-1",
-        "lilia.github",
-        target.as_str(),
-        capability(),
-        json!({"title": "local ipc"}),
+    let transport =
+        LinkLocalAppTransport::new(&lease_dir).with_request_timeout(Duration::from_secs(5));
+    let service = AppDeliveryService::new(
+        source_identity(),
+        ProcessAppActivator::new(),
+        transport,
+        DeliveryDraftStore::memory(),
     );
-    let receipt = connect_and_transmit(
-        &target,
-        &SessionIdentity::current(),
-        &envelope,
-        Duration::from_secs(5),
-    )
-    .await
-    .expect("local transmit");
+    let receipt = service
+        .request_app(
+            target,
+            capability(),
+            json!({"title": "local ipc"}),
+            AppDeliveryOptions {
+                request_id: Some("req-local-1".into()),
+                activate_if_offline: false,
+                ready_timeout: Duration::from_secs(2),
+                request_timeout: Duration::from_secs(5),
+                persist_on_failure: false,
+            },
+        )
+        .await
+        .expect("local transmit");
     assert!(matches!(
         receipt,
         DeliveryReceipt::Accepted {

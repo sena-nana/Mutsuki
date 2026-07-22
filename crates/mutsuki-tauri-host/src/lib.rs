@@ -13,8 +13,7 @@ pub use app_delivery::{
     ActivationError, ActivationReceipt, AppCapabilityEndpoint, AppDeliveryError,
     AppDeliveryOptions, AppDeliveryService, AppDescriptor, AppId, AppIdentity, AppLinkSession,
     AppLinkTransport, DeliveryDraft, DeliveryDraftStore, DeliveryPhase, HOST_PROTOCOL_VERSION,
-    InMemoryAppLinkTransport, LinkLocalAppTransport, NullAppActivator, ProcessAppActivator,
-    TauriAppActivator,
+    InMemoryAppLinkTransport, LinkLocalAppTransport, ProcessAppActivator, TauriAppActivator,
 };
 pub use approval::{ApprovalBridge, PendingApproval};
 pub use builder::MutsukiTauriHostBuilder;

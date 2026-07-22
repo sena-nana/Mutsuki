@@ -52,6 +52,8 @@ pub struct AppDescriptor {
 
 #[derive(Clone, Debug)]
 pub struct AppDeliveryOptions {
+    /// Stable request id for idempotent replay. Generated when omitted.
+    pub request_id: Option<String>,
     pub activate_if_offline: bool,
     pub ready_timeout: Duration,
     pub request_timeout: Duration,
@@ -61,6 +63,7 @@ pub struct AppDeliveryOptions {
 impl Default for AppDeliveryOptions {
     fn default() -> Self {
         Self {
+            request_id: None,
             activate_if_offline: true,
             ready_timeout: Duration::from_secs(30),
             request_timeout: Duration::from_secs(30),
@@ -79,7 +82,6 @@ pub enum DeliveryPhase {
     Negotiating,
     Transmitting,
     Accepted,
-    Processing,
     Completed,
     DeliveryFailed,
 }
@@ -94,7 +96,6 @@ impl DeliveryPhase {
             Self::Negotiating => "negotiating",
             Self::Transmitting => "transmitting",
             Self::Accepted => "accepted",
-            Self::Processing => "processing",
             Self::Completed => "completed",
             Self::DeliveryFailed => "delivery_failed",
         }

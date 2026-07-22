@@ -16,24 +16,10 @@ pub trait TauriAppActivator: Send + Sync {
     ) -> impl std::future::Future<Output = Result<ActivationReceipt, ActivationError>> + Send;
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct NullAppActivator;
-
-impl TauriAppActivator for NullAppActivator {
-    async fn resolve(&self, app_id: &AppId) -> Result<AppDescriptor, ActivationError> {
-        Err(ActivationError::AppNotInstalled(app_id.to_string()))
-    }
-
-    async fn activate(&self, app: &AppDescriptor) -> Result<ActivationReceipt, ActivationError> {
-        Err(ActivationError::AppNotInstalled(app.app_id.to_string()))
-    }
-}
-
 /// Registry-backed activator that can launch installed executables.
 #[derive(Clone, Default)]
 pub struct ProcessAppActivator {
     apps: Arc<Mutex<BTreeMap<String, AppDescriptor>>>,
-    running: Arc<Mutex<BTreeMap<String, String>>>,
 }
 
 impl ProcessAppActivator {
@@ -46,13 +32,6 @@ impl ProcessAppActivator {
             .lock()
             .await
             .insert(descriptor.app_id.as_str().to_string(), descriptor);
-    }
-
-    pub async fn mark_running(&self, app_id: &AppId, instance_id: impl Into<String>) {
-        self.running
-            .lock()
-            .await
-            .insert(app_id.as_str().to_string(), instance_id.into());
     }
 }
 
@@ -67,13 +46,6 @@ impl TauriAppActivator for ProcessAppActivator {
     }
 
     async fn activate(&self, app: &AppDescriptor) -> Result<ActivationReceipt, ActivationError> {
-        if let Some(instance_id) = self.running.lock().await.get(app.app_id.as_str()).cloned() {
-            return Ok(ActivationReceipt {
-                app_id: app.app_id.clone(),
-                instance_id,
-                already_running: true,
-            });
-        }
         let executable = app.executable.as_ref().ok_or_else(|| {
             ActivationError::ActivationFailed(format!(
                 "no executable registered for {}",
@@ -85,14 +57,9 @@ impl TauriAppActivator for ProcessAppActivator {
         command
             .spawn()
             .map_err(|error| ActivationError::ActivationFailed(error.to_string()))?;
-        let instance_id = uuid::Uuid::new_v4().to_string();
-        self.running
-            .lock()
-            .await
-            .insert(app.app_id.as_str().to_string(), instance_id.clone());
         Ok(ActivationReceipt {
             app_id: app.app_id.clone(),
-            instance_id,
+            instance_id: uuid::Uuid::new_v4().to_string(),
             already_running: false,
         })
     }
