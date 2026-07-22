@@ -241,7 +241,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
                                     ));
                                 }
                                 let mut result = RunnerResult::completed(task.task_id);
-                                result.output = Some(task.payload);
+                                result.output = Some(task.payload.into_value());
                                 Ok(result)
                             }
                             CALLBACK_PROTOCOL => {
