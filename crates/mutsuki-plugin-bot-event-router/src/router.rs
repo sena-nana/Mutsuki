@@ -85,7 +85,7 @@ impl Runner for BotEventRouterRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let event: BotEvent = serde_json::from_value(task.payload.clone())
+            let event: BotEvent = serde_json::from_value(task.payload.clone().into())
                 .map_err(|error| failure("mutsuki.bot.router.event.decode", error))?;
             let mut dispatch_tasks = self
                 .router

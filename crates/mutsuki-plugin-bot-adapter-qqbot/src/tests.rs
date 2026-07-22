@@ -73,7 +73,7 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
 
     assert_eq!(result.tasks.len(), 1);
     let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result.tasks[0].payload.clone()).unwrap();
+        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
     assert_eq!(event.kind, BotEventKind::MessageCreated);
     let message = event.message.unwrap();
     assert_eq!(message.plain_text(), "ping");
@@ -122,7 +122,10 @@ fn gateway_runner_uses_official_group_member_openid_and_c2c_id_fallbacks() {
         .iter()
         .map(|entry| {
             serde_json::from_value::<mutsuki_bot_protocol::BotEvent>(
-                entry.result.as_ref().unwrap().tasks[0].payload.clone(),
+                entry.result.as_ref().unwrap().tasks[0]
+                    .payload
+                    .clone()
+                    .into(),
             )
             .unwrap()
         })
@@ -184,7 +187,10 @@ fn gateway_runner_maps_lifecycle_seconds_and_reaction_identity_fields() {
         .iter()
         .map(|entry| {
             serde_json::from_value::<mutsuki_bot_protocol::BotEvent>(
-                entry.result.as_ref().unwrap().tasks[0].payload.clone(),
+                entry.result.as_ref().unwrap().tasks[0]
+                    .payload
+                    .clone()
+                    .into(),
             )
             .unwrap()
         })
@@ -227,7 +233,7 @@ fn gateway_runner_strips_only_the_bot_mention_from_group_at_content() {
 
     let result = run_one(&mut runner, task).unwrap();
     let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result.tasks[0].payload.clone()).unwrap();
+        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
 
     assert_eq!(
         event.message.unwrap().plain_text(),

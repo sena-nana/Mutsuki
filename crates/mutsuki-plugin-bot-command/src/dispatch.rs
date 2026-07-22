@@ -119,7 +119,7 @@ impl Runner for BotCommandRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let event: BotEvent = serde_json::from_value(task.payload.clone())
+            let event: BotEvent = serde_json::from_value(task.payload.clone().into())
                 .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
             let Some(text) = message_text(&event) else {
                 return Ok(RunnerResult::completed(task.task_id.clone()));
@@ -247,8 +247,10 @@ mod tests {
         let third = &completion.results[2].result.as_ref().unwrap().tasks[0];
         assert_eq!(first.registry_generation, 11);
         assert_eq!(third.registry_generation, 11);
-        let first_command: BotCommandEvent = serde_json::from_value(first.payload.clone()).unwrap();
-        let third_command: BotCommandEvent = serde_json::from_value(third.payload.clone()).unwrap();
+        let first_command: BotCommandEvent =
+            serde_json::from_value(first.payload.clone().into()).unwrap();
+        let third_command: BotCommandEvent =
+            serde_json::from_value(third.payload.clone().into()).unwrap();
         assert_eq!(first_command.name, "echo");
         assert_eq!(first_command.args, ["one"]);
         assert_eq!(third_command.name, "ping");

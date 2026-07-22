@@ -116,8 +116,8 @@ impl WorkshopRunner {
         }
     }
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        let request: WorkshopResolveRequest =
-            serde_json::from_value(task.payload.clone()).map_err(|error| failure(task, error))?;
+        let request: WorkshopResolveRequest = serde_json::from_value(task.payload.clone().into())
+            .map_err(|error| failure(task, error))?;
         let card = self
             .transport
             .resolve(&request.url)

@@ -80,7 +80,7 @@ impl Runner for QqGatewayMapRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let frame: GatewayFrame = serde_json::from_value(task.payload.clone())
+            let frame: GatewayFrame = serde_json::from_value(task.payload.clone().into())
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.decode", error))?;
             let event = qq_gateway_frame_to_bot_event(&self.account_id, frame)
                 .map_err(|error| failure("mutsuki.bot.qqbot.gateway.map", error))?;
@@ -156,12 +156,13 @@ impl Runner for QqOpenApiRunner {
         map_work_batch_entries(&batch, |task| {
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
-                    let message: BotMessage = serde_json::from_value(task.payload.clone())
-                        .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
+                    let message: BotMessage =
+                        serde_json::from_value(task.payload.clone().into())
+                            .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
                     self.service.send_bot_message(message)
                 }
                 BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
-                    let request: BotMediaUploadRequest = parse_payload(task.payload.clone())
+                    let request: BotMediaUploadRequest = parse_payload(task.payload.clone().into())
                         .map_err(|error| failure("mutsuki.bot.media.upload.payload", error))?;
                     self.service.upload_media(
                         bot_media_upload_to_qq_upload(request).map_err(|error| {
@@ -170,8 +171,10 @@ impl Runner for QqOpenApiRunner {
                     )
                 }
                 BOT_MESSAGE_RECALL_PROTOCOL_ID => {
-                    let request: BotMessageRecallRequest = parse_payload(task.payload.clone())
-                        .map_err(|error| failure("mutsuki.bot.message.recall.payload", error))?;
+                    let request: BotMessageRecallRequest =
+                        parse_payload(task.payload.clone().into()).map_err(|error| {
+                            failure("mutsuki.bot.message.recall.payload", error)
+                        })?;
                     self.service.recall_message(
                         bot_recall_to_qq_recall(request).map_err(|error| {
                             failure("mutsuki.bot.message.recall.map.qqbot", error)
@@ -179,19 +182,19 @@ impl Runner for QqOpenApiRunner {
                     )
                 }
                 QQBOT_ACCOUNT_GET_PROTOCOL_ID => {
-                    let _: QqBotAccountGetRequest = parse_payload(task.payload.clone())
+                    let _: QqBotAccountGetRequest = parse_payload(task.payload.clone().into())
                         .map_err(|error| failure("mutsuki.bot.qqbot.account.get.payload", error))?;
                     self.service.get_account()
                 }
                 QQBOT_GATEWAY_STATUS_PROTOCOL_ID => {
-                    let _: QqBotGatewayStatusRequest = parse_payload(task.payload.clone())
+                    let _: QqBotGatewayStatusRequest = parse_payload(task.payload.clone().into())
                         .map_err(|error| {
-                            failure("mutsuki.bot.qqbot.gateway.status.payload", error)
-                        })?;
+                        failure("mutsuki.bot.qqbot.gateway.status.payload", error)
+                    })?;
                     self.service.gateway_status()
                 }
                 QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
-                    parse_payload::<RawCallPayload>(task.payload.clone())
+                    parse_payload::<RawCallPayload>(task.payload.clone().into())
                         .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,
                 ),
                 _ => Err(QqOpenApiError::InvalidPayload(format!(

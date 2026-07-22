@@ -64,7 +64,7 @@ impl Runner for EchoCommandRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let command: BotCommandEvent = serde_json::from_value(task.payload.clone())
+            let command: BotCommandEvent = serde_json::from_value(task.payload.clone().into())
                 .map_err(|error| echo_error(format!("echo.command.decode:{error}")))?;
             let mut result =
                 mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());

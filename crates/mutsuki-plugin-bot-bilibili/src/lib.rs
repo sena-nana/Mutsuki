@@ -1773,7 +1773,7 @@ impl Runner for ManifestRunner {
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(task: &Task) -> Result<T, RuntimeError> {
-    serde_json::from_value(task.payload.clone())
+    serde_json::from_value(task.payload.clone().into())
         .map_err(|error| bili_error(task, BilibiliError::InvalidResponse(error.to_string())))
 }
 

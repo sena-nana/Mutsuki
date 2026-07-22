@@ -60,7 +60,7 @@ async fn run_task(
     media_provider_id: String,
 ) -> RuntimeResult<RunnerResult> {
     let request: MihuashiResolveRequest =
-        serde_json::from_value(task.payload.clone()).map_err(|error| fail(&task, error))?;
+        serde_json::from_value(task.payload.clone().into()).map_err(|error| fail(&task, error))?;
     ensure_mihuashi_url(&request.url).map_err(|error| fail(&task, error))?;
     let output = resources.create_cow_state_resource(
         &media_provider_id,
