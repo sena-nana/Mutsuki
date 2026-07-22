@@ -26,7 +26,7 @@ pub fn task_payload<T>(source: &'static str, task: &Task) -> RuntimeResult<T>
 where
     T: DeserializeOwned,
 {
-    serde_json::from_value(task.payload.clone()).map_err(|error| {
+    serde_json::from_value(task.payload.clone().into()).map_err(|error| {
         runtime_failure(
             source,
             &task.task_id,

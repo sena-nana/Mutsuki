@@ -181,7 +181,8 @@ impl Harness {
 
     fn immediate_model(&self, task: Task) -> TaskOutcome {
         let task_id = task.task_id.clone();
-        let request = match serde_json::from_value::<AgentModelGenerateRequest>(task.payload) {
+        let request = match serde_json::from_value::<AgentModelGenerateRequest>(task.payload.into())
+        {
             Ok(request) => request,
             Err(error) => {
                 return TaskOutcome::Failed {
@@ -256,7 +257,7 @@ impl Harness {
             AgentToolExecuteRequest {
                 call_id: None,
                 name: BENCHMARK_TOOL_NAME.into(),
-                input: target.payload,
+                input: target.payload.into(),
                 session_id: None,
             },
             self.latency,
@@ -362,7 +363,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                         AgentToolExecuteRequest {
                             call_id: None,
                             name: BENCHMARK_TOOL_NAME.into(),
-                            input: target.payload,
+                            input: target.payload.into(),
                             session_id: None,
                         },
                         latency,
