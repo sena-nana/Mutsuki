@@ -11,13 +11,13 @@ unsupported_deployments = ["distributed-clustered-production"]
 [[repositories]]
 id = "core"
 url = "https://github.com/sena-nana/MutsukiCore.git"
-revision = "1d42325107a82f98dda3912097c3c0aefd4907ba"
+revision = "cb6139ca4e8c342551f1f929da9f243495bf09d7"
 kind = "rust"
 
 [[repositories]]
 id = "service_host"
 url = "https://github.com/sena-nana/MutsukiServiceHost.git"
-revision = "f98ed2d609d6a650d686a26949dfe556fb4f6fdb"
+revision = "d045eb2553ed443acad5054243fbd5cd61cb80c9"
 kind = "rust"
 
 [[repositories]]
@@ -29,25 +29,25 @@ kind = "rust"
 [[repositories]]
 id = "std_plugins"
 url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
-revision = "37aec963d2bef635c7fd0e29fdb9d40f7b1718dd"
+revision = "9647c1615ac83dee1aa234fb10ec3e0093547977"
 kind = "rust"
 
 [[repositories]]
 id = "agent_kit"
 url = "https://github.com/sena-nana/MutsukiAgentKit.git"
-revision = "245e75b9520740da2fdfd37de21a84bc91bcae5a"
+revision = "dafcf33af798f52d2f3a75640caabb30fbeff967"
 kind = "rust"
 
 [[repositories]]
 id = "bot_plugins"
 url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
-revision = "5f2ebd6a8cc2ab45e14232c43fbe9f19537c0bbe"
+revision = "9bdc485b0d3477dad1981b1155b164900dc4015d"
 kind = "rust"
 
 [[repositories]]
 id = "distributed_host"
 url = "https://github.com/sena-nana/MutsukiDistributedHost.git"
-revision = "d36cae7c5a70d62ae13afe520bcf6f46127dcc64"
+revision = "57f327ec39a5fe063c0d2715446a92e3c25b75af"
 kind = "rust"
 
 [[repositories]]
