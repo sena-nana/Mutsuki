@@ -22,9 +22,9 @@ pub struct RunnerLimits {
 impl Default for RunnerLimits {
     fn default() -> Self {
         Self {
-            max_running: 64,
-            max_waiting: 64,
-            max_inflight: 64,
+            max_running: 128,
+            max_waiting: 256,
+            max_inflight: 256,
             deadline_ticks: None,
             wall_clock_deadline: None,
         }
