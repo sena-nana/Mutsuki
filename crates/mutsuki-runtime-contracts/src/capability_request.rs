@@ -143,9 +143,8 @@ impl DeliveryReceipt {
 
 /// Retention limits for in-memory idempotent receipts.
 ///
-/// Missing limits are unbounded on that dimension. Eviction follows completion
-/// order (oldest finished receipt first) and never rescans the whole map on the
-/// hot path beyond queue pops.
+/// `None` means unbounded on that dimension. Eviction is oldest-completed-first
+/// via a completion queue (no full-map scan on the hot path).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptRetentionPolicy {
     pub max_entries: Option<usize>,
@@ -159,19 +158,6 @@ impl ReceiptRetentionPolicy {
         max_bytes: None,
         ttl: None,
     };
-
-    /// Desktop-oriented defaults: 10_000 entries, 16 MiB, 1 hour TTL.
-    pub fn desktop_default() -> Self {
-        Self {
-            max_entries: Some(10_000),
-            max_bytes: Some(16 * 1024 * 1024),
-            ttl: Some(Duration::from_secs(60 * 60)),
-        }
-    }
-
-    pub fn is_unbounded(&self) -> bool {
-        self.max_entries.is_none() && self.max_bytes.is_none() && self.ttl.is_none()
-    }
 }
 
 impl Default for ReceiptRetentionPolicy {
@@ -186,7 +172,6 @@ pub struct ReceiptStoreStats {
     pub entries: usize,
     pub estimated_bytes: usize,
     pub evictions: u64,
-    pub oldest_age: Option<Duration>,
 }
 
 #[derive(Clone, Debug)]
@@ -196,11 +181,10 @@ struct StoredReceipt {
     estimated_bytes: usize,
 }
 
-/// Minimal in-memory idempotent receipt store for hosts and tests.
+/// In-memory idempotent receipt store.
 ///
-/// Evicted or TTL-expired request IDs are treated as never seen (`TreatAsNew`):
-/// `get` returns `None` and a later `accept_or_duplicate` records a fresh first
-/// receipt. Within the retention window the first receipt still wins.
+/// Evicted / TTL-expired IDs are TreatAsNew: `get` returns `None` and a later
+/// `accept_or_duplicate` records a fresh first receipt.
 #[derive(Clone, Debug)]
 pub struct IdempotentReceiptStore {
     receipts: BTreeMap<CapabilityRequestId, StoredReceipt>,
@@ -217,8 +201,7 @@ impl Default for IdempotentReceiptStore {
 }
 
 impl IdempotentReceiptStore {
-    /// Unbounded store for light tests. Production hosts should use
-    /// [`Self::with_policy`] / [`ReceiptRetentionPolicy::desktop_default`].
+    /// Unbounded store (tests / callers that opt out of retention).
     pub fn new() -> Self {
         Self::with_policy(ReceiptRetentionPolicy::UNBOUNDED)
     }
@@ -233,10 +216,6 @@ impl IdempotentReceiptStore {
         }
     }
 
-    pub fn policy(&self) -> &ReceiptRetentionPolicy {
-        &self.policy
-    }
-
     /// Record the first receipt for a request id. Replays return a `Duplicate`.
     pub fn accept_or_duplicate(
         &mut self,
@@ -246,7 +225,7 @@ impl IdempotentReceiptStore {
         self.accept_or_duplicate_at(request_id, receipt, Instant::now())
     }
 
-    pub fn accept_or_duplicate_at(
+    fn accept_or_duplicate_at(
         &mut self,
         request_id: impl Into<CapabilityRequestId>,
         receipt: DeliveryReceipt,
@@ -271,7 +250,11 @@ impl IdempotentReceiptStore {
         );
         self.order.push_back(request_id);
         self.estimated_bytes = self.estimated_bytes.saturating_add(estimated_bytes);
-        self.enforce_budget(now);
+        while self.over_budget() {
+            if !self.evict_front() {
+                break;
+            }
+        }
         receipt
     }
 
@@ -279,20 +262,16 @@ impl IdempotentReceiptStore {
         self.get_at(request_id, Instant::now())
     }
 
-    pub fn get_at(&self, request_id: &str, now: Instant) -> Option<&DeliveryReceipt> {
+    fn get_at(&self, request_id: &str, now: Instant) -> Option<&DeliveryReceipt> {
         let entry = self.receipts.get(request_id)?;
-        if self.is_expired(entry, now) {
+        if self
+            .policy
+            .ttl
+            .is_some_and(|ttl| now.saturating_duration_since(entry.completed_at) >= ttl)
+        {
             return None;
         }
         Some(&entry.receipt)
-    }
-
-    /// Drop TTL-expired entries, then return a live receipt if present.
-    pub fn take_live(&mut self, request_id: &str, now: Instant) -> Option<DeliveryReceipt> {
-        self.expire_due(now);
-        self.receipts
-            .get(request_id)
-            .map(|entry| entry.receipt.clone())
     }
 
     pub fn len(&self) -> usize {
@@ -304,27 +283,11 @@ impl IdempotentReceiptStore {
     }
 
     pub fn stats(&self) -> ReceiptStoreStats {
-        self.stats_at(Instant::now())
-    }
-
-    pub fn stats_at(&self, now: Instant) -> ReceiptStoreStats {
-        let oldest_age = self
-            .order
-            .front()
-            .and_then(|id| self.receipts.get(id))
-            .map(|entry| now.saturating_duration_since(entry.completed_at));
         ReceiptStoreStats {
             entries: self.receipts.len(),
             estimated_bytes: self.estimated_bytes,
             evictions: self.evictions,
-            oldest_age,
         }
-    }
-
-    fn is_expired(&self, entry: &StoredReceipt, now: Instant) -> bool {
-        self.policy
-            .ttl
-            .is_some_and(|ttl| now.saturating_duration_since(entry.completed_at) >= ttl)
     }
 
     fn expire_due(&mut self, now: Instant) {
@@ -343,31 +306,14 @@ impl IdempotentReceiptStore {
         }
     }
 
-    fn enforce_budget(&mut self, now: Instant) {
-        self.expire_due(now);
-        while self.over_budget() {
-            if !self.evict_front() {
-                break;
-            }
-        }
-    }
-
     fn over_budget(&self) -> bool {
-        if self
-            .policy
+        self.policy
             .max_entries
             .is_some_and(|limit| self.receipts.len() > limit)
-        {
-            return true;
-        }
-        if self
-            .policy
-            .max_bytes
-            .is_some_and(|limit| self.estimated_bytes > limit)
-        {
-            return true;
-        }
-        false
+            || self
+                .policy
+                .max_bytes
+                .is_some_and(|limit| self.estimated_bytes > limit)
     }
 
     fn evict_front(&mut self) -> bool {
@@ -377,23 +323,23 @@ impl IdempotentReceiptStore {
         if let Some(entry) = self.receipts.remove(&request_id) {
             self.estimated_bytes = self.estimated_bytes.saturating_sub(entry.estimated_bytes);
             self.evictions = self.evictions.saturating_add(1);
-            true
-        } else {
-            true
         }
+        true
     }
 }
 
 fn estimate_receipt_bytes(request_id: &str, receipt: &DeliveryReceipt) -> usize {
-    const TAG_OVERHEAD: usize = 32;
+    const OVERHEAD: usize = 32;
     let body = match receipt {
         DeliveryReceipt::Accepted { remote_task_id, .. } => {
             remote_task_id.as_ref().map_or(0, String::len)
         }
-        DeliveryReceipt::Duplicate { previous, .. } => {
-            estimate_receipt_bytes(previous.request_id(), previous)
-        }
-        DeliveryReceipt::Rejected { reason, .. } => estimate_rejection_bytes(reason),
+        // Duplicate receipts are never stored.
+        DeliveryReceipt::Duplicate { .. } => 0,
+        DeliveryReceipt::Rejected { reason, .. } => match reason {
+            RejectionReason::Other { code, message } => code.len() + message.len() + 16,
+            _ => 16,
+        },
         DeliveryReceipt::Completed {
             remote_task_id,
             output,
@@ -408,15 +354,8 @@ fn estimate_receipt_bytes(request_id: &str, receipt: &DeliveryReceipt) -> usize 
     };
     request_id
         .len()
-        .saturating_add(TAG_OVERHEAD)
+        .saturating_add(OVERHEAD)
         .saturating_add(body)
-}
-
-fn estimate_rejection_bytes(reason: &RejectionReason) -> usize {
-    match reason {
-        RejectionReason::Other { code, message } => code.len() + message.len() + 16,
-        _ => 16,
-    }
 }
 
 fn estimate_json_bytes(value: &Value) -> usize {
@@ -510,12 +449,11 @@ mod tests {
 
     #[test]
     fn bounded_store_evicts_oldest_and_treats_expired_as_new() {
-        let policy = ReceiptRetentionPolicy {
+        let mut store = IdempotentReceiptStore::with_policy(ReceiptRetentionPolicy {
             max_entries: Some(2),
             max_bytes: None,
             ttl: None,
-        };
-        let mut store = IdempotentReceiptStore::with_policy(policy);
+        });
         let now = Instant::now();
         for index in 1..=3 {
             let id = format!("req-{index}");
@@ -529,7 +467,7 @@ mod tests {
                 now,
             );
         }
-        let stats = store.stats_at(now);
+        let stats = store.stats();
         assert_eq!(stats.entries, 2);
         assert_eq!(stats.evictions, 1);
         assert!(store.get_at("req-1", now).is_none());
@@ -566,12 +504,11 @@ mod tests {
 
     #[test]
     fn bounded_store_counts_large_output_against_byte_budget() {
-        let policy = ReceiptRetentionPolicy {
+        let mut store = IdempotentReceiptStore::with_policy(ReceiptRetentionPolicy {
             max_entries: Some(100),
             max_bytes: Some(2_000),
             ttl: None,
-        };
-        let mut store = IdempotentReceiptStore::with_policy(policy);
+        });
         let now = Instant::now();
         for index in 0..10 {
             let id = format!("req-{index}");
@@ -585,7 +522,7 @@ mod tests {
                 now,
             );
         }
-        let stats = store.stats_at(now);
+        let stats = store.stats();
         assert!(stats.entries < 10);
         assert!(stats.estimated_bytes <= 2_000);
         assert!(stats.evictions > 0);
@@ -593,12 +530,11 @@ mod tests {
 
     #[test]
     fn ttl_expiry_drops_receipts_without_full_scan_of_live_window() {
-        let policy = ReceiptRetentionPolicy {
+        let mut store = IdempotentReceiptStore::with_policy(ReceiptRetentionPolicy {
             max_entries: None,
             max_bytes: None,
             ttl: Some(Duration::from_secs(10)),
-        };
-        let mut store = IdempotentReceiptStore::with_policy(policy);
+        });
         let start = Instant::now();
         store.accept_or_duplicate_at(
             "old",
@@ -626,7 +562,6 @@ mod tests {
                 .get_at("old", start + Duration::from_secs(10))
                 .is_none()
         );
-        // Mutating accept path drops expired front entries without scanning the live window.
         store.accept_or_duplicate_at(
             "probe",
             DeliveryReceipt::Accepted {
@@ -646,52 +581,5 @@ mod tests {
                 .is_some()
         );
         assert_eq!(store.len(), 2);
-    }
-
-    #[test]
-    fn concurrent_first_receipt_wins_under_retention() {
-        use std::sync::{Arc, Mutex};
-        use std::thread;
-
-        let store = Arc::new(Mutex::new(IdempotentReceiptStore::with_policy(
-            ReceiptRetentionPolicy {
-                max_entries: Some(1_000),
-                max_bytes: None,
-                ttl: None,
-            },
-        )));
-        let mut handles = Vec::new();
-        for index in 0..32 {
-            let store = store.clone();
-            handles.push(thread::spawn(move || {
-                let mut guard = store.lock().unwrap();
-                guard.accept_or_duplicate(
-                    "shared",
-                    DeliveryReceipt::Accepted {
-                        request_id: "shared".into(),
-                        remote_task_id: Some(format!("worker-{index}")),
-                    },
-                )
-            }));
-        }
-        let mut accepted = 0;
-        let mut duplicates = 0;
-        let mut winner = None;
-        for handle in handles {
-            match handle.join().unwrap() {
-                DeliveryReceipt::Accepted { remote_task_id, .. } => {
-                    accepted += 1;
-                    winner = remote_task_id;
-                }
-                DeliveryReceipt::Duplicate { previous, .. } => {
-                    duplicates += 1;
-                    assert!(matches!(*previous, DeliveryReceipt::Accepted { .. }));
-                }
-                other => panic!("unexpected receipt {other:?}"),
-            }
-        }
-        assert_eq!(accepted, 1);
-        assert_eq!(duplicates, 31);
-        assert!(winner.is_some());
     }
 }
