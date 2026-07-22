@@ -563,3 +563,162 @@ async fn spawn_legacy_endpoint(target: AppId, lease_dir: PathBuf) {
     });
     tokio::time::sleep(Duration::from_millis(30)).await;
 }
+
+#[tokio::test]
+async fn receipt_and_operation_history_stay_within_configured_bounds() {
+    use super::operation_history::OperationHistoryPolicy;
+    use mutsuki_runtime_contracts::ReceiptRetentionPolicy;
+
+    let (lease_dir, target) = unique_local_fixture("retention");
+    let endpoint = AppCapabilityEndpoint::open_with_receipt_policy(
+        target.clone(),
+        "endpoint-1",
+        &lease_dir,
+        ReceiptRetentionPolicy {
+            max_entries: Some(128),
+            max_bytes: Some(64 * 1024),
+            ttl: None,
+        },
+    )
+    .unwrap();
+    endpoint.register_handler(capability(), |envelope| DeliveryReceipt::Completed {
+        request_id: envelope.request_id,
+        remote_task_id: None,
+        output: json!({"ok": true, "payload": "x".repeat(32)}),
+    });
+
+    let service = AppDeliveryService::with_operation_policy(
+        source_identity(),
+        ProcessAppActivator::new(),
+        LinkLocalAppTransport::new(&lease_dir).with_request_timeout(Duration::from_secs(5)),
+        DeliveryDraftStore::memory(),
+        OperationHistoryPolicy {
+            max_terminal_entries: 128,
+        },
+    );
+
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    for index in 0..512 {
+        let request_id = format!("req-bound-{index}");
+        let receipt = service
+            .request_app(
+                target.clone(),
+                capability(),
+                json!({"n": index}),
+                options_with_id(&request_id),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            receipt,
+            DeliveryReceipt::Completed { .. } | DeliveryReceipt::Accepted { .. }
+        ));
+    }
+
+    let receipt_stats = endpoint.receipt_stats();
+    assert!(receipt_stats.entries <= 128);
+    assert!(receipt_stats.estimated_bytes <= 64 * 1024);
+    assert!(receipt_stats.evictions >= 384);
+
+    let operation_stats = service.operation_stats();
+    assert!(operation_stats.terminal_entries <= 128);
+    assert!(operation_stats.evictions >= 384);
+
+    // Retention window still returns the original receipt.
+    let kept_id = format!("req-bound-{}", 511);
+    let duplicate = service
+        .request_app(
+            target.clone(),
+            capability(),
+            json!({"n": 511}),
+            options_with_id(&kept_id),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(duplicate, DeliveryReceipt::Duplicate { .. }));
+
+    // Evicted IDs are treated as new requests.
+    let expired_id = "req-bound-0";
+    let refreshed = service
+        .request_app(
+            target,
+            capability(),
+            json!({"n": 0}),
+            options_with_id(expired_id),
+        )
+        .await
+        .unwrap();
+    assert!(!matches!(refreshed, DeliveryReceipt::Duplicate { .. }));
+}
+
+#[tokio::test]
+async fn accepted_rejected_completed_and_failed_receipts_share_one_budget() {
+    use mutsuki_runtime_contracts::{ReceiptRetentionPolicy, RejectionReason};
+
+    let (lease_dir, target) = unique_local_fixture("mixed-budget");
+    let endpoint = AppCapabilityEndpoint::open_with_receipt_policy(
+        target.clone(),
+        "endpoint-1",
+        &lease_dir,
+        ReceiptRetentionPolicy {
+            max_entries: Some(4),
+            max_bytes: None,
+            ttl: None,
+        },
+    )
+    .unwrap();
+    endpoint.register_handler(CapabilityDescriptor::new("demo.accept", 1, 1), |envelope| {
+        DeliveryReceipt::Accepted {
+            request_id: envelope.request_id,
+            remote_task_id: Some("task".into()),
+        }
+    });
+    endpoint.register_handler(
+        CapabilityDescriptor::new("demo.complete", 1, 1),
+        |envelope| DeliveryReceipt::Completed {
+            request_id: envelope.request_id,
+            remote_task_id: None,
+            output: json!({}),
+        },
+    );
+    endpoint.register_handler(CapabilityDescriptor::new("demo.reject", 1, 1), |envelope| {
+        DeliveryReceipt::Rejected {
+            request_id: envelope.request_id,
+            reason: RejectionReason::PermissionDenied,
+        }
+    });
+    endpoint.register_handler(CapabilityDescriptor::new("demo.fail", 1, 1), |envelope| {
+        DeliveryReceipt::Failed {
+            request_id: envelope.request_id,
+            remote_task_id: None,
+            code: "boom".into(),
+            message: "failed".into(),
+        }
+    });
+
+    let service = link_service(&lease_dir);
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    let kinds = [
+        ("demo.accept", "a"),
+        ("demo.complete", "c"),
+        ("demo.reject", "r"),
+        ("demo.fail", "f"),
+        ("demo.accept", "a2"),
+    ];
+    for (capability_name, suffix) in kinds {
+        let _ = service
+            .request_app(
+                target.clone(),
+                CapabilityDescriptor::new(capability_name, 1, 1),
+                json!({}),
+                options_with_id(&format!("mixed-{suffix}")),
+            )
+            .await
+            .unwrap();
+    }
+
+    let stats = endpoint.receipt_stats();
+    assert_eq!(stats.entries, 4);
+    assert_eq!(stats.evictions, 1);
+}

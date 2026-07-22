@@ -1,6 +1,7 @@
 use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION};
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
+    ReceiptRetentionPolicy,
 };
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
@@ -104,7 +105,7 @@ pub trait AppLinkTransport: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Option<DeliveryReceipt>, AppDeliveryError>> + Send;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct MemoryPeer {
     online: bool,
     host_protocol_version: u32,
@@ -112,6 +113,19 @@ struct MemoryPeer {
     ready_after: Option<Duration>,
     force_error: Option<AppDeliveryError>,
     receipts: IdempotentReceiptStore,
+}
+
+impl Default for MemoryPeer {
+    fn default() -> Self {
+        Self {
+            online: false,
+            host_protocol_version: HOST_PROTOCOL_VERSION,
+            capabilities: Vec::new(),
+            ready_after: None,
+            force_error: None,
+            receipts: IdempotentReceiptStore::with_policy(ReceiptRetentionPolicy::desktop_default()),
+        }
+    }
 }
 
 /// Injectable in-memory transport for pure Rust delivery state-machine tests.

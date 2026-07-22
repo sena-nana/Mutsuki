@@ -29,10 +29,10 @@ tokio = { version = "1.38", features = ["fs", "io-util", "macros", "process", "r
 toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1d42325107a82f98dda3912097c3c0aefd4907ba" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1d42325107a82f98dda3912097c3c0aefd4907ba" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1d42325107a82f98dda3912097c3c0aefd4907ba" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "1d42325107a82f98dda3912097c3c0aefd4907ba" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "3ee98f97d17fc9feca8f2c2449a87e590d321248" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "3ee98f97d17fc9feca8f2c2449a87e590d321248" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "3ee98f97d17fc9feca8f2c2449a87e590d321248" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "3ee98f97d17fc9feca8f2c2449a87e590d321248" }
 mutsuki-link-local = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 mutsuki-link-core = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 

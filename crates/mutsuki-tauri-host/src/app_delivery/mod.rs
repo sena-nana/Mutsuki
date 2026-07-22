@@ -8,6 +8,7 @@ mod activator;
 mod delivery;
 mod draft;
 mod endpoint;
+mod operation_history;
 mod transport;
 mod types;
 
@@ -18,6 +19,7 @@ pub use activator::{ProcessAppActivator, TauriAppActivator};
 pub use delivery::AppDeliveryService;
 pub use draft::{DeliveryDraft, DeliveryDraftStore};
 pub use endpoint::{AppCapabilityEndpoint, EndpointDescriptor};
+pub use operation_history::{OperationHistoryPolicy, OperationHistoryStats};
 pub use transport::{
     AppLinkSession, AppLinkTransport, CapabilityStatus, InMemoryAppLinkTransport,
     LinkLocalAppTransport,

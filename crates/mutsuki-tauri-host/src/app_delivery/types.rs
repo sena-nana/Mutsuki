@@ -100,6 +100,15 @@ impl DeliveryPhase {
             Self::DeliveryFailed => "delivery_failed",
         }
     }
+
+    /// Terminal phases may be evicted once the retention budget is exceeded.
+    /// In-flight phases are always retained until they become terminal.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Accepted | Self::Completed | Self::DeliveryFailed
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

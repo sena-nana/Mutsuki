@@ -1,12 +1,12 @@
 use super::activator::TauriAppActivator;
 use super::draft::{DeliveryDraft, DeliveryDraftStore};
+use super::operation_history::{OperationHistory, OperationHistoryPolicy, OperationHistoryStats};
 use super::transport::AppLinkTransport;
 use super::types::{AppDeliveryError, AppDeliveryOptions, AppId, AppIdentity, DeliveryPhase};
 use mutsuki_runtime_contracts::{CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt};
 use mutsuki_tauri_bridge::{DeliveryProgress, EventHub, MutsukiFrontendEvent};
 use parking_lot::Mutex;
 use serde_json::Value;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -19,7 +19,7 @@ pub struct AppDeliveryService<A, T> {
     transport: T,
     drafts: DeliveryDraftStore,
     events: Option<Arc<EventHub>>,
-    operations: Mutex<BTreeMap<String, DeliveryPhase>>,
+    operations: Mutex<OperationHistory>,
     cancel: watch::Sender<bool>,
 }
 
@@ -34,6 +34,22 @@ where
         transport: T,
         drafts: DeliveryDraftStore,
     ) -> Self {
+        Self::with_operation_policy(
+            source,
+            activator,
+            transport,
+            drafts,
+            OperationHistoryPolicy::desktop_default(),
+        )
+    }
+
+    pub fn with_operation_policy(
+        source: AppIdentity,
+        activator: A,
+        transport: T,
+        drafts: DeliveryDraftStore,
+        operation_policy: OperationHistoryPolicy,
+    ) -> Self {
         let (cancel, _) = watch::channel(false);
         Self {
             source,
@@ -41,7 +57,7 @@ where
             transport,
             drafts,
             events: None,
-            operations: Mutex::new(BTreeMap::new()),
+            operations: Mutex::new(OperationHistory::new(operation_policy)),
             cancel,
         }
     }
@@ -256,9 +272,7 @@ where
         phase: DeliveryPhase,
         error: Option<&AppDeliveryError>,
     ) {
-        self.operations
-            .lock()
-            .insert(request_id.to_string(), phase.clone());
+        self.operations.lock().record(request_id, phase.clone());
         if let Some(events) = &self.events {
             let progress = DeliveryProgress {
                 request_id: request_id.to_string(),
@@ -272,6 +286,10 @@ where
     }
 
     pub fn phase_for(&self, request_id: &str) -> Option<DeliveryPhase> {
-        self.operations.lock().get(request_id).cloned()
+        self.operations.lock().phase_for(request_id)
+    }
+
+    pub fn operation_stats(&self) -> OperationHistoryStats {
+        self.operations.lock().stats()
     }
 }

@@ -8,7 +8,7 @@ use mutsuki_link_local::{
 };
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
-    RejectionReason,
+    ReceiptRetentionPolicy, ReceiptStoreStats, RejectionReason,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,20 @@ impl AppCapabilityEndpoint {
         instance_id: impl Into<String>,
         lease_dir: impl Into<PathBuf>,
     ) -> Result<Arc<Self>, AppDeliveryError> {
+        Self::open_with_receipt_policy(
+            app_id,
+            instance_id,
+            lease_dir,
+            ReceiptRetentionPolicy::desktop_default(),
+        )
+    }
+
+    pub fn open_with_receipt_policy(
+        app_id: AppId,
+        instance_id: impl Into<String>,
+        lease_dir: impl Into<PathBuf>,
+        receipt_policy: ReceiptRetentionPolicy,
+    ) -> Result<Arc<Self>, AppDeliveryError> {
         let instance_id = instance_id.into();
         let session = SessionIdentity::current();
         let link_app = mutsuki_link_local::AppId::new(app_id.as_str())
@@ -95,7 +109,9 @@ impl AppCapabilityEndpoint {
             instance_id,
             lease: Mutex::new(Some(lease)),
             handlers: Arc::new(Mutex::new(BTreeMap::new())),
-            receipts: Arc::new(Mutex::new(IdempotentReceiptStore::new())),
+            receipts: Arc::new(Mutex::new(IdempotentReceiptStore::with_policy(
+                receipt_policy,
+            ))),
             accept_task: Mutex::new(None),
         });
         endpoint.clone().spawn_accept_loop(address, endpoint_id)?;
@@ -114,6 +130,10 @@ impl AppCapabilityEndpoint {
             capability.name.clone(),
             (capability, Arc::new(handler) as CapabilityHandler),
         );
+    }
+
+    pub fn receipt_stats(&self) -> ReceiptStoreStats {
+        self.receipts.lock().stats()
     }
 
     pub(crate) fn describe(&self) -> EndpointDescriptor {
@@ -204,12 +224,14 @@ impl AppCapabilityEndpoint {
     }
 
     fn handle_envelope(&self, envelope: CapabilityRequestEnvelope) -> DeliveryReceipt {
-        if let Some(existing) = self.receipts.lock().get(&envelope.request_id).cloned() {
+        let mut receipts = self.receipts.lock();
+        if let Some(existing) = receipts.take_live(&envelope.request_id, Instant::now()) {
             return DeliveryReceipt::Duplicate {
                 request_id: envelope.request_id.clone(),
                 previous: Box::new(existing),
             };
         }
+        drop(receipts);
         let handlers = self.handlers.lock();
         let Some((capability, handler)) = handlers.get(&envelope.capability.name) else {
             return DeliveryReceipt::Rejected {
