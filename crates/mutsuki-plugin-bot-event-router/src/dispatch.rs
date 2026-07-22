@@ -19,5 +19,7 @@ pub fn build_dispatch_task(
     let mut task = parent.derive_with_protocol(task_id, subscription.handler_protocol_id.clone());
     task.target_binding_id = subscription.handler_binding_id.clone();
     task.registry_generation = registry_generation;
+    // Keep the parent's correlation as-is; derive_with_protocol falls back to task_id.
+    task.correlation_id = parent.correlation_id.clone();
     task
 }

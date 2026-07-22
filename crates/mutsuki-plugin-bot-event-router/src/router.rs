@@ -91,13 +91,9 @@ impl Runner for BotEventRouterRunner {
                 .payload
                 .decode_shared::<BotEvent>()
                 .map_err(|error| failure("mutsuki.bot.router.event.decode", error))?;
-            let mut dispatch_tasks =
-                self.router
-                    .route(task, event.as_ref(), ctx.registry_generation);
-            for child in &mut dispatch_tasks {
-                child.trace_id = task.trace_id.clone();
-                child.correlation_id = task.correlation_id.clone();
-            }
+            let dispatch_tasks = self
+                .router
+                .route(task, event.as_ref(), ctx.registry_generation);
             tracing::info!(
                 account_id = %event.bot.account_id,
                 event_id = %event.event_id,
@@ -136,7 +132,6 @@ pub fn router_descriptor(plugin_generation: u64) -> RunnerDescriptor {
             preferred_batch_size: 32,
             max_batch_entries: 128,
             max_entry_concurrency: 32,
-            max_inflight_batches: 1,
             side_effect: RunnerSideEffect::None,
             ..Default::default()
         },
