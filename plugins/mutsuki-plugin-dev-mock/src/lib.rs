@@ -110,7 +110,7 @@ fn echo_result(task: &mutsuki_runtime_contracts::Task) -> RunnerResult {
     result.events.push(DomainEvent {
         event_id: format!("event:{}.echo", task.task_id),
         kind: "mutsuki.dev.echo".into(),
-        payload: task.payload.clone(),
+        payload: task.payload.to_value(),
     });
     result
 }

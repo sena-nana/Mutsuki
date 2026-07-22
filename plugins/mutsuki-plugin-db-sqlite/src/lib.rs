@@ -10,6 +10,9 @@ use mutsuki_runtime_sdk::{
     LoadedPlugin, Plugin, PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use mutsuki_std_effect::{
+    EffectObservation, ProtocolPair, ProtocolPairTable, derive_effect_from_pair,
+};
 use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{Connection, OpenFlags, params_from_iter};
 use serde_json::{Map, Value, json};
@@ -30,15 +33,51 @@ pub const EFFECT_DB_EXECUTE_PROTOCOL: &str = "effect.mutsuki.db.execute";
 pub const EFFECT_DB_TRANSACTION_PROTOCOL: &str = "effect.mutsuki.db.transaction";
 pub const EFFECT_DB_CLOSE_PROTOCOL: &str = "effect.mutsuki.db.close";
 
+const DB_PROTOCOL_PAIRS: &[ProtocolPair] = &[
+    ProtocolPair {
+        public: DB_OPEN_PROTOCOL,
+        effect: EFFECT_DB_OPEN_PROTOCOL,
+        queued_event_kind: "mutsuki.effect.db.queued",
+    },
+    ProtocolPair {
+        public: DB_QUERY_PROTOCOL,
+        effect: EFFECT_DB_QUERY_PROTOCOL,
+        queued_event_kind: "mutsuki.effect.db.queued",
+    },
+    ProtocolPair {
+        public: DB_EXECUTE_PROTOCOL,
+        effect: EFFECT_DB_EXECUTE_PROTOCOL,
+        queued_event_kind: "mutsuki.effect.db.queued",
+    },
+    ProtocolPair {
+        public: DB_TRANSACTION_PROTOCOL,
+        effect: EFFECT_DB_TRANSACTION_PROTOCOL,
+        queued_event_kind: "mutsuki.effect.db.queued",
+    },
+    ProtocolPair {
+        public: DB_CLOSE_PROTOCOL,
+        effect: EFFECT_DB_CLOSE_PROTOCOL,
+        queued_event_kind: "mutsuki.effect.db.queued",
+    },
+];
+
+pub const DB_PROTOCOL_TABLE: ProtocolPairTable = ProtocolPairTable::new(DB_PROTOCOL_PAIRS);
+
 #[derive(Clone)]
 pub struct SqliteFacadeRunner {
     descriptor: RunnerDescriptor,
+    observation: EffectObservation,
 }
 
 impl SqliteFacadeRunner {
     pub fn new() -> Self {
+        Self::with_observation(EffectObservation::Quiet)
+    }
+
+    pub fn with_observation(observation: EffectObservation) -> Self {
         Self {
             descriptor: facade_runner_descriptor(),
+            observation,
         }
     }
 }
@@ -59,7 +98,8 @@ impl Runner for SqliteFacadeRunner {
         _ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, facade_result)
+        let observation = self.observation;
+        map_work_batch_entries(&batch, |task| facade_result(task, observation))
     }
 }
 
@@ -108,10 +148,10 @@ fn plugin_builder() -> PluginBuilder {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(SqliteFacadeRunner::new()))
         .runner(Box::new(SqliteEffectRunner::new()));
-    for protocol_id in public_protocols() {
+    for protocol_id in DB_PROTOCOL_TABLE.public_protocols() {
         builder = builder.protocol_handler(protocol_descriptor(protocol_id), RUNNER_ID, "db");
     }
-    for protocol_id in effect_protocols() {
+    for protocol_id in DB_PROTOCOL_TABLE.effect_protocols() {
         builder = builder.protocol_descriptor(protocol_descriptor(protocol_id));
     }
     builder
@@ -127,7 +167,7 @@ fn facade_runner_descriptor() -> RunnerDescriptor {
             ..Default::default()
         })
         .metadata("standard_plugin", ScalarValue::String("db_sqlite".into()));
-    for protocol_id in public_protocols() {
+    for protocol_id in DB_PROTOCOL_TABLE.public_protocols() {
         builder = builder.accepted_protocol(protocol_id);
     }
     builder.build()
@@ -140,33 +180,19 @@ fn effect_runner_descriptor() -> RunnerDescriptor {
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             side_effect: RunnerSideEffect::External,
+            max_inflight_batches: 1,
+            preserve_order: true,
             ..Default::default()
         })
-        .metadata("standard_plugin", ScalarValue::String("db_sqlite".into()));
-    for protocol_id in effect_protocols() {
+        .metadata("standard_plugin", ScalarValue::String("db_sqlite".into()))
+        .metadata(
+            "effect_execution",
+            ScalarValue::String("blocking_io_isolated".into()),
+        );
+    for protocol_id in DB_PROTOCOL_TABLE.effect_protocols() {
         builder = builder.accepted_protocol(protocol_id);
     }
     builder.build()
-}
-
-fn public_protocols() -> [&'static str; 5] {
-    [
-        DB_OPEN_PROTOCOL,
-        DB_QUERY_PROTOCOL,
-        DB_EXECUTE_PROTOCOL,
-        DB_TRANSACTION_PROTOCOL,
-        DB_CLOSE_PROTOCOL,
-    ]
-}
-
-fn effect_protocols() -> [&'static str; 5] {
-    [
-        EFFECT_DB_OPEN_PROTOCOL,
-        EFFECT_DB_QUERY_PROTOCOL,
-        EFFECT_DB_EXECUTE_PROTOCOL,
-        EFFECT_DB_TRANSACTION_PROTOCOL,
-        EFFECT_DB_CLOSE_PROTOCOL,
-    ]
 }
 
 fn protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::ProtocolDescriptor {
@@ -187,58 +213,24 @@ fn protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::Protocol
         .build()
 }
 
-fn facade_result(task: &Task) -> Result<RunnerResult, RuntimeError> {
+fn facade_result(
+    task: &Task,
+    observation: EffectObservation,
+) -> Result<RunnerResult, RuntimeError> {
     if task.protocol_id != DB_CLOSE_PROTOCOL {
         checked_path(task)?;
     }
-    let effect_protocol = effect_protocol_for(&task.protocol_id).ok_or_else(|| {
+    derive_effect_from_pair(task, &DB_PROTOCOL_TABLE, EFFECT_RUNNER_ID, observation).map_err(|_| {
         RuntimeError::new(
             mutsuki_runtime_contracts::ERR_TASK_UNSUPPORTED,
             "runtime.db_sqlite",
             format!("db_sqlite.protocol.{}", task.protocol_id),
         )
-    })?;
-    let mut effect_task = Task::new(
-        format!("{}:effect", task.task_id),
-        effect_protocol,
-        task.payload.clone(),
-    );
-    effect_task.runner_hint = Some(EFFECT_RUNNER_ID.into());
-    effect_task.trace_id = task.trace_id.clone();
-    effect_task.correlation_id = task
-        .correlation_id
-        .clone()
-        .or_else(|| Some(task.task_id.clone()));
-    let mut result = RunnerResult::completed(task.task_id.clone());
-    result.tasks.push(effect_task);
-    result.events.push(DomainEvent {
-        event_id: format!("event:{}:queued", task.task_id),
-        kind: task.protocol_id.clone(),
-        payload: json!({"effect_task_id": format!("{}:effect", task.task_id)}),
-    });
-    Ok(result)
-}
-
-fn effect_protocol_for(protocol_id: &str) -> Option<&'static str> {
-    match protocol_id {
-        DB_OPEN_PROTOCOL => Some(EFFECT_DB_OPEN_PROTOCOL),
-        DB_QUERY_PROTOCOL => Some(EFFECT_DB_QUERY_PROTOCOL),
-        DB_EXECUTE_PROTOCOL => Some(EFFECT_DB_EXECUTE_PROTOCOL),
-        DB_TRANSACTION_PROTOCOL => Some(EFFECT_DB_TRANSACTION_PROTOCOL),
-        DB_CLOSE_PROTOCOL => Some(EFFECT_DB_CLOSE_PROTOCOL),
-        _ => None,
-    }
+    })
 }
 
 fn public_protocol_for(protocol_id: &str) -> Option<&'static str> {
-    match protocol_id {
-        EFFECT_DB_OPEN_PROTOCOL => Some(DB_OPEN_PROTOCOL),
-        EFFECT_DB_QUERY_PROTOCOL => Some(DB_QUERY_PROTOCOL),
-        EFFECT_DB_EXECUTE_PROTOCOL => Some(DB_EXECUTE_PROTOCOL),
-        EFFECT_DB_TRANSACTION_PROTOCOL => Some(DB_TRANSACTION_PROTOCOL),
-        EFFECT_DB_CLOSE_PROTOCOL => Some(DB_CLOSE_PROTOCOL),
-        _ => None,
-    }
+    DB_PROTOCOL_TABLE.public_for(protocol_id)
 }
 
 fn effect_result(task: &Task) -> Result<RunnerResult, RuntimeError> {
@@ -469,6 +461,40 @@ fn sqlite_error(task: &Task, code: impl Into<String>, error: rusqlite::Error) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_runtime_contracts::{
+        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, RunnerContext,
+        WorkResourcePlan,
+    };
+    use mutsuki_runtime_core::Runner;
+    use tempfile::TempDir;
+
+    fn work_batch(runner_id: &str, task: Task) -> WorkBatch {
+        WorkBatch {
+            batch_id: format!("batch-{}", task.task_id),
+            tick_id: "tick-1".into(),
+            batch_key: runner_id.into(),
+            entries: vec![BatchEntry {
+                entry_id: task.task_id.clone(),
+                task_id: task.task_id.clone(),
+                trace_id: None,
+                parent_id: None,
+                payload_index: 0,
+                resource_requirement_indices: Vec::new(),
+                cancel_index: Some(0),
+                deadline_tick: None,
+                priority: 0,
+                lane: DispatchLane::Normal,
+                ordering: OrderingRequirement::None,
+            }],
+            payload: BatchPayload::from_local_tasks(vec![task]),
+            resource_plan: WorkResourcePlan::empty(),
+            task_leases: Vec::new(),
+        }
+    }
+
+    fn ctx() -> RunnerContext {
+        RunnerContext::new(1, 1, "executor-1", None, "invoke-1")
+    }
 
     #[test]
     fn loaded_plugin_declares_sqlite_protocols_and_runners() {
@@ -481,5 +507,56 @@ mod tests {
         );
         assert_eq!(plugin.manifest.provides.protocols.len(), 10);
         assert_eq!(plugin.manifest.provides.handler_bindings.len(), 5);
+        DB_PROTOCOL_TABLE.validate_unique().unwrap();
+    }
+
+    #[test]
+    fn facade_to_effect_query_roundtrip() {
+        let root = TempDir::new().unwrap();
+        let path = root.path().join("demo.db");
+        let allow = json!([root.path().to_string_lossy()]);
+        let open = Task::new(
+            "open-1",
+            EFFECT_DB_OPEN_PROTOCOL,
+            json!({"path": path.to_string_lossy(), "db_path_allowlist": allow}),
+        );
+        let mut effect = SqliteEffectRunner::new();
+        effect
+            .run_batch(ctx(), work_batch(EFFECT_RUNNER_ID, open))
+            .unwrap();
+        let execute = Task::new(
+            "exec-1",
+            EFFECT_DB_EXECUTE_PROTOCOL,
+            json!({
+                "path": path.to_string_lossy(),
+                "db_path_allowlist": allow,
+                "sql": "create table t(id integer); insert into t values (1);"
+            }),
+        );
+        effect
+            .run_batch(ctx(), work_batch(EFFECT_RUNNER_ID, execute))
+            .unwrap();
+        let facade_task = Task::new(
+            "query-1",
+            DB_QUERY_PROTOCOL,
+            json!({
+                "path": path.to_string_lossy(),
+                "db_path_allowlist": allow,
+                "sql": "select id from t",
+                "content": "y".repeat(2048),
+            }),
+        );
+        let mut facade = SqliteFacadeRunner::new();
+        let derived = facade
+            .run_batch(ctx(), work_batch(RUNNER_ID, facade_task.clone()))
+            .unwrap();
+        let result = derived.results[0].result.as_ref().unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(facade_task.payload.strong_count(), 2);
+        let query = result.tasks[0].clone();
+        let done = effect
+            .run_batch(ctx(), work_batch(EFFECT_RUNNER_ID, query))
+            .unwrap();
+        assert!(done.results[0].result.is_some());
     }
 }

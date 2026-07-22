@@ -166,7 +166,7 @@ impl BrowserSnapshotRunner {
     }
 
     fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        let request: BrowserSnapshotRequest = serde_json::from_value(task.payload.clone())
+        let request: BrowserSnapshotRequest = serde_json::from_value(task.payload.to_value())
             .map_err(|error| browser_error(task, "request.invalid", error.to_string()))?;
         validate_request(&self.config, &request)
             .map_err(|detail| browser_error(task, "request.denied", detail))?;

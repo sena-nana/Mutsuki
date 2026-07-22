@@ -19,7 +19,16 @@ mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource
 mutsuki-plugin-resource-shared-memory = { path = "../../plugins/mutsuki-plugin-resource-shared-memory" }
 mutsuki-plugin-workflow-broadcast = { path = "../../plugins/mutsuki-plugin-workflow-broadcast" }
 mutsuki-plugin-workflow-linear = { path = "../../plugins/mutsuki-plugin-workflow-linear" }
+mutsuki-std-effect.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+
+[[bin]]
+name = "mutsuki-std-benchmarks"
+path = "src/main.rs"
+
+[[bin]]
+name = "effect-derive-bench"
+path = "src/bin/effect_derive_bench.rs"

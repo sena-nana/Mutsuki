@@ -124,7 +124,7 @@ fn event_result(task: &mutsuki_runtime_contracts::Task) -> RunnerResult {
     result.events.push(DomainEvent {
         event_id: format!("event:{}:{}", task.protocol_id, task.task_id),
         kind: task.protocol_id.clone(),
-        payload: task.payload.clone(),
+        payload: task.payload.to_value(),
     });
     result
 }

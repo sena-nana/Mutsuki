@@ -8,5 +8,9 @@ license.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
+mutsuki-std-effect.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
