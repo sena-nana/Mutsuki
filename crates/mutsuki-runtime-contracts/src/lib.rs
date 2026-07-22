@@ -22,7 +22,7 @@ pub use batch::{
 };
 pub use capability_request::{
     CapabilityDescriptor, CapabilityPeerId, CapabilityRequestEnvelope, CapabilityRequestId,
-    CapabilityRequestStatus, DeliveryReceipt, IdempotentReceiptStore, RejectionReason,
+    DeliveryReceipt, IdempotentReceiptStore, RejectionReason,
 };
 pub use common::{
     BatchId, BatchKey, BindingId, EntryId, ExecutorId, PayloadIndex, PluginId, ProtocolId, RefId,

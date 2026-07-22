@@ -141,28 +141,6 @@ impl DeliveryReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityRequestStatus {
-    Accepted,
-    Processing,
-    Completed,
-    Failed,
-    Rejected,
-    Unknown,
-}
-
-impl From<&DeliveryReceipt> for CapabilityRequestStatus {
-    fn from(receipt: &DeliveryReceipt) -> Self {
-        match receipt {
-            DeliveryReceipt::Accepted { .. } | DeliveryReceipt::Duplicate { .. } => Self::Accepted,
-            DeliveryReceipt::Rejected { .. } => Self::Rejected,
-            DeliveryReceipt::Completed { .. } => Self::Completed,
-            DeliveryReceipt::Failed { .. } => Self::Failed,
-        }
-    }
-}
-
 /// Minimal in-memory idempotent receipt store for hosts and tests.
 #[derive(Clone, Debug, Default)]
 pub struct IdempotentReceiptStore {
@@ -193,11 +171,6 @@ impl IdempotentReceiptStore {
 
     pub fn get(&self, request_id: &str) -> Option<&DeliveryReceipt> {
         self.receipts.get(request_id)
-    }
-
-    pub fn upsert(&mut self, receipt: DeliveryReceipt) {
-        self.receipts
-            .insert(receipt.request_id().to_string(), receipt);
     }
 }
 
