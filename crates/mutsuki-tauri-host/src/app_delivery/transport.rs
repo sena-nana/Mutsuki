@@ -1,7 +1,6 @@
-use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION};
+use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION, desktop_receipt_retention};
 use mutsuki_runtime_contracts::{
     CapabilityDescriptor, CapabilityRequestEnvelope, DeliveryReceipt, IdempotentReceiptStore,
-    ReceiptRetentionPolicy,
 };
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
@@ -123,7 +122,7 @@ impl Default for MemoryPeer {
             capabilities: Vec::new(),
             ready_after: None,
             force_error: None,
-            receipts: IdempotentReceiptStore::with_policy(ReceiptRetentionPolicy::desktop_default()),
+            receipts: IdempotentReceiptStore::with_policy(desktop_receipt_retention()),
         }
     }
 }

@@ -1,9 +1,19 @@
+use mutsuki_runtime_contracts::ReceiptRetentionPolicy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
 pub const HOST_PROTOCOL_VERSION: u32 = 1;
+
+/// Desktop receipt retention: 10_000 entries / 16 MiB / 1 hour TTL.
+pub fn desktop_receipt_retention() -> ReceiptRetentionPolicy {
+    ReceiptRetentionPolicy {
+        max_entries: Some(10_000),
+        max_bytes: Some(16 * 1024 * 1024),
+        ttl: Some(Duration::from_secs(60 * 60)),
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct AppId(String);
@@ -101,8 +111,6 @@ impl DeliveryPhase {
         }
     }
 
-    /// Terminal phases may be evicted once the retention budget is exceeded.
-    /// In-flight phases are always retained until they become terminal.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,

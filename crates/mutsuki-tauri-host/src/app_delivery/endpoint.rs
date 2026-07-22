@@ -1,4 +1,4 @@
-use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION};
+use super::types::{AppDeliveryError, AppId, HOST_PROTOCOL_VERSION, desktop_receipt_retention};
 use mutsuki_link_core::{
     ConnectContext, Connection, EndpointId, TransportBudget, TransportErrorKind,
 };
@@ -76,12 +76,7 @@ impl AppCapabilityEndpoint {
         instance_id: impl Into<String>,
         lease_dir: impl Into<PathBuf>,
     ) -> Result<Arc<Self>, AppDeliveryError> {
-        Self::open_with_receipt_policy(
-            app_id,
-            instance_id,
-            lease_dir,
-            ReceiptRetentionPolicy::desktop_default(),
-        )
+        Self::open_with_receipt_policy(app_id, instance_id, lease_dir, desktop_receipt_retention())
     }
 
     pub fn open_with_receipt_policy(
@@ -224,14 +219,15 @@ impl AppCapabilityEndpoint {
     }
 
     fn handle_envelope(&self, envelope: CapabilityRequestEnvelope) -> DeliveryReceipt {
-        let mut receipts = self.receipts.lock();
-        if let Some(existing) = receipts.take_live(&envelope.request_id, Instant::now()) {
-            return DeliveryReceipt::Duplicate {
-                request_id: envelope.request_id.clone(),
-                previous: Box::new(existing),
-            };
+        {
+            let receipts = self.receipts.lock();
+            if let Some(existing) = receipts.get(&envelope.request_id) {
+                return DeliveryReceipt::Duplicate {
+                    request_id: envelope.request_id.clone(),
+                    previous: Box::new(existing.clone()),
+                };
+            }
         }
-        drop(receipts);
         let handlers = self.handlers.lock();
         let Some((capability, handler)) = handlers.get(&envelope.capability.name) else {
             return DeliveryReceipt::Rejected {

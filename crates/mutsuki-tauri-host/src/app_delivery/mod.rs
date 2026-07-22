@@ -26,5 +26,5 @@ pub use transport::{
 };
 pub use types::{
     ActivationError, ActivationReceipt, AppDeliveryError, AppDeliveryOptions, AppDescriptor, AppId,
-    AppIdentity, DeliveryPhase, HOST_PROTOCOL_VERSION,
+    AppIdentity, DeliveryPhase, HOST_PROTOCOL_VERSION, desktop_receipt_retention,
 };

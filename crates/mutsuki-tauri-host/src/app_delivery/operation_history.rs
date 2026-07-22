@@ -1,11 +1,9 @@
 use super::types::DeliveryPhase;
 use std::collections::{BTreeMap, VecDeque};
 
-/// Retention limits for completed delivery operation phases.
+/// Max terminal delivery phases retained for desktop hosts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationHistoryPolicy {
-    /// Maximum number of terminal request IDs retained after completion.
-    /// Active (in-flight) phases are always kept until they become terminal.
     pub max_terminal_entries: usize,
 }
 
@@ -27,7 +25,6 @@ impl Default for OperationHistoryPolicy {
 pub struct OperationHistoryStats {
     pub entries: usize,
     pub terminal_entries: usize,
-    pub active_entries: usize,
     pub evictions: u64,
 }
 
@@ -60,7 +57,19 @@ impl OperationHistory {
             if !previously_terminal {
                 self.terminal_order.push_back(request_id);
             }
-            self.enforce_terminal_budget();
+            while self.terminal_order.len() > self.policy.max_terminal_entries {
+                let Some(old_id) = self.terminal_order.pop_front() else {
+                    break;
+                };
+                if self
+                    .phases
+                    .get(&old_id)
+                    .is_some_and(DeliveryPhase::is_terminal)
+                {
+                    self.phases.remove(&old_id);
+                    self.evictions = self.evictions.saturating_add(1);
+                }
+            }
         }
     }
 
@@ -69,30 +78,10 @@ impl OperationHistory {
     }
 
     pub(crate) fn stats(&self) -> OperationHistoryStats {
-        let terminal_entries = self.terminal_order.len();
-        let entries = self.phases.len();
         OperationHistoryStats {
-            entries,
-            terminal_entries,
-            active_entries: entries.saturating_sub(terminal_entries),
+            entries: self.phases.len(),
+            terminal_entries: self.terminal_order.len(),
             evictions: self.evictions,
-        }
-    }
-
-    fn enforce_terminal_budget(&mut self) {
-        let limit = self.policy.max_terminal_entries;
-        while self.terminal_order.len() > limit {
-            let Some(old_id) = self.terminal_order.pop_front() else {
-                break;
-            };
-            if self
-                .phases
-                .get(&old_id)
-                .is_some_and(DeliveryPhase::is_terminal)
-            {
-                self.phases.remove(&old_id);
-                self.evictions = self.evictions.saturating_add(1);
-            }
         }
     }
 }
