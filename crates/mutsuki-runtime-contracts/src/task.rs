@@ -1,6 +1,9 @@
+use std::any::{Any, TypeId};
+use std::fmt;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -10,14 +13,88 @@ use crate::{
 };
 use crate::{TaskLeaseId, TraceId};
 
-/// In-process shared JSON payload.
+type LocalJsonFn = fn(&(dyn Any + Send + Sync)) -> Result<Value, serde_json::Error>;
+
+/// In-process task payload.
 ///
-/// Wire serialization remains a plain JSON value. Cloning shares the underlying
-/// `Arc` so builtin facade derivation can rebind protocol metadata without a
-/// deep copy of large request bodies.
-#[derive(Clone, Debug, PartialEq)]
+/// Hot paths prefer typed local values shared by `Arc`. Wire serialization remains
+/// a plain JSON value; local payloads materialize JSON lazily only when required
+/// for interoperability or control-plane views.
+#[derive(Clone)]
 pub struct TaskPayload {
-    inner: Arc<Value>,
+    kind: TaskPayloadKind,
+}
+
+#[derive(Clone)]
+enum TaskPayloadKind {
+    Json(Arc<Value>),
+    Local(Arc<LocalPayload>),
+}
+
+struct LocalPayload {
+    body: Arc<dyn Any + Send + Sync>,
+    type_id: TypeId,
+    type_name: &'static str,
+    to_json: LocalJsonFn,
+    json: OnceLock<Arc<Value>>,
+}
+
+impl LocalPayload {
+    fn ensure_json(&self) -> &Value {
+        self.json
+            .get_or_init(|| {
+                Arc::new((self.to_json)(self.body.as_ref()).unwrap_or_else(|error| {
+                    panic!(
+                        "local task payload `{}` must serialize for wire form: {error}",
+                        self.type_name
+                    )
+                }))
+            })
+            .as_ref()
+    }
+
+    fn json_arc(&self) -> Arc<Value> {
+        Arc::clone(self.json.get_or_init(|| {
+            Arc::new((self.to_json)(self.body.as_ref()).unwrap_or_else(|error| {
+                panic!(
+                    "local task payload `{}` must serialize for wire form: {error}",
+                    self.type_name
+                )
+            }))
+        }))
+    }
+}
+
+impl fmt::Debug for TaskPayload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            TaskPayloadKind::Json(value) => formatter
+                .debug_struct("TaskPayload")
+                .field("kind", &"json")
+                .field("value", value)
+                .finish(),
+            TaskPayloadKind::Local(local) => formatter
+                .debug_struct("TaskPayload")
+                .field("kind", &"local")
+                .field("type_name", &local.type_name)
+                .field("json_cached", &local.json.get().is_some())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for TaskPayload {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.kind, &other.kind) {
+            (TaskPayloadKind::Json(left), TaskPayloadKind::Json(right)) => left == right,
+            (TaskPayloadKind::Local(left), TaskPayloadKind::Local(right)) => {
+                Arc::ptr_eq(left, right)
+                    || Arc::ptr_eq(&left.body, &right.body)
+                    || left.ensure_json() == right.ensure_json()
+            }
+            _ => self.as_value() == other.as_value(),
+        }
+    }
 }
 
 impl Serialize for TaskPayload {
@@ -25,7 +102,7 @@ impl Serialize for TaskPayload {
     where
         S: serde::Serializer,
     {
-        self.inner.as_ref().serialize(serializer)
+        self.as_value().serialize(serializer)
     }
 }
 
@@ -41,49 +118,164 @@ impl<'de> Deserialize<'de> for TaskPayload {
 impl TaskPayload {
     pub fn new(value: Value) -> Self {
         Self {
-            inner: Arc::new(value),
+            kind: TaskPayloadKind::Json(Arc::new(value)),
         }
     }
 
     pub fn shared(inner: Arc<Value>) -> Self {
-        Self { inner }
+        Self {
+            kind: TaskPayloadKind::Json(inner),
+        }
+    }
+
+    /// Stores an owned local value shared by `Arc` for in-process hot paths.
+    pub fn from_local<T>(value: T) -> Self
+    where
+        T: Any + Send + Sync + Serialize + 'static,
+    {
+        Self::share_local(Arc::new(value))
+    }
+
+    /// Shares an existing local `Arc` without copying the typed body.
+    pub fn share_local<T>(value: Arc<T>) -> Self
+    where
+        T: Any + Send + Sync + Serialize + 'static,
+    {
+        let local = LocalPayload {
+            body: value,
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            to_json: local_to_json::<T>,
+            json: OnceLock::new(),
+        };
+        Self {
+            kind: TaskPayloadKind::Local(Arc::new(local)),
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self.kind, TaskPayloadKind::Local(_))
+    }
+
+    pub fn is_json(&self) -> bool {
+        matches!(self.kind, TaskPayloadKind::Json(_))
+    }
+
+    pub fn local_type_name(&self) -> Option<&'static str> {
+        match &self.kind {
+            TaskPayloadKind::Local(local) => Some(local.type_name),
+            TaskPayloadKind::Json(_) => None,
+        }
+    }
+
+    pub fn local_ref<T: Any>(&self) -> Option<&T> {
+        match &self.kind {
+            TaskPayloadKind::Local(local) => local.body.downcast_ref::<T>(),
+            TaskPayloadKind::Json(_) => None,
+        }
+    }
+
+    pub fn as_local<T>(&self) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        match &self.kind {
+            TaskPayloadKind::Local(local) if local.type_id == TypeId::of::<T>() => {
+                Arc::downcast(Arc::clone(&local.body)).ok()
+            }
+            _ => None,
+        }
+    }
+
+    /// Prefer typed local data; fall back to JSON without cloning the Value tree.
+    pub fn decode<T>(&self) -> Result<T, serde_json::Error>
+    where
+        T: Any + Clone + DeserializeOwned,
+    {
+        if let Some(local) = self.local_ref::<T>() {
+            return Ok(local.clone());
+        }
+        T::deserialize(self.as_value())
+    }
+
+    /// Prefer a shared local `Arc`; JSON payloads are decoded once into a fresh `Arc`.
+    pub fn decode_shared<T>(&self) -> Result<Arc<T>, serde_json::Error>
+    where
+        T: Any + Send + Sync + Clone + DeserializeOwned + 'static,
+    {
+        if let Some(local) = self.as_local::<T>() {
+            return Ok(local);
+        }
+        Ok(Arc::new(T::deserialize(self.as_value())?))
     }
 
     pub fn as_value(&self) -> &Value {
-        &self.inner
+        match &self.kind {
+            TaskPayloadKind::Json(value) => value,
+            TaskPayloadKind::Local(local) => local.ensure_json(),
+        }
     }
 
     pub fn arc(&self) -> Arc<Value> {
-        Arc::clone(&self.inner)
+        match &self.kind {
+            TaskPayloadKind::Json(value) => Arc::clone(value),
+            TaskPayloadKind::Local(local) => local.json_arc(),
+        }
     }
 
     pub fn to_value(&self) -> Value {
-        (*self.inner).clone()
+        self.as_value().clone()
     }
 
     pub fn into_value(self) -> Value {
-        match Arc::try_unwrap(self.inner) {
-            Ok(value) => value,
-            Err(shared) => (*shared).clone(),
+        match self.kind {
+            TaskPayloadKind::Json(value) => match Arc::try_unwrap(value) {
+                Ok(value) => value,
+                Err(shared) => (*shared).clone(),
+            },
+            TaskPayloadKind::Local(local) => match Arc::try_unwrap(local) {
+                Ok(local) => match local.json.into_inner() {
+                    Some(json) => match Arc::try_unwrap(json) {
+                        Ok(value) => value,
+                        Err(shared) => (*shared).clone(),
+                    },
+                    None => (local.to_json)(local.body.as_ref())
+                        .expect("local task payload must serialize for wire form"),
+                },
+                Err(shared) => shared.ensure_json().clone(),
+            },
         }
     }
 
     pub fn strong_count(&self) -> usize {
-        Arc::strong_count(&self.inner)
+        match &self.kind {
+            TaskPayloadKind::Json(value) => Arc::strong_count(value),
+            TaskPayloadKind::Local(local) => Arc::strong_count(local),
+        }
     }
+}
+
+fn local_to_json<T>(any: &(dyn Any + Send + Sync)) -> Result<Value, serde_json::Error>
+where
+    T: Any + Serialize + 'static,
+{
+    let value = any
+        .downcast_ref::<T>()
+        .expect("local payload type id mismatch");
+    serde_json::to_value(value)
 }
 
 impl Deref for TaskPayload {
     type Target = Value;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.as_value()
     }
 }
 
 impl AsRef<Value> for TaskPayload {
     fn as_ref(&self) -> &Value {
-        &self.inner
+        self.as_value()
     }
 }
 
@@ -107,13 +299,13 @@ impl From<TaskPayload> for Value {
 
 impl PartialEq<Value> for TaskPayload {
     fn eq(&self, other: &Value) -> bool {
-        self.inner.as_ref() == other
+        self.as_value() == other
     }
 }
 
 impl PartialEq<TaskPayload> for Value {
     fn eq(&self, other: &TaskPayload) -> bool {
-        self == other.inner.as_ref()
+        self == other.as_value()
     }
 }
 

@@ -949,3 +949,36 @@ fn derive_with_protocol_shares_payload_arc_without_deep_clone() {
     let encoded = serde_json::to_value(&derived).expect("task encodes");
     assert!(encoded.get("payload").unwrap().is_object());
 }
+
+#[test]
+fn typed_local_payload_shares_arc_and_decodes_without_json() {
+    #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct DemoBody {
+        name: String,
+        payload: String,
+    }
+
+    let body = DemoBody {
+        name: "demo".into(),
+        payload: "y".repeat(32 * 1024),
+    };
+    let source = Task::new(
+        "local-1",
+        "demo.local",
+        TaskPayload::from_local(body.clone()),
+    );
+    assert!(source.payload.is_local());
+    assert_eq!(source.payload.local_ref::<DemoBody>(), Some(&body));
+    let derived = source.derive_with_protocol("local-1:child", "demo.child");
+    assert_eq!(source.payload.strong_count(), 2);
+    assert_eq!(
+        source.payload.as_local::<DemoBody>().unwrap(),
+        derived.payload.as_local::<DemoBody>().unwrap()
+    );
+    assert_eq!(derived.payload.decode::<DemoBody>().unwrap(), body);
+    let encoded = serde_json::to_value(&derived).expect("local payload encodes for wire");
+    assert_eq!(encoded["payload"]["name"], "demo");
+    let decoded: Task = serde_json::from_value(encoded).unwrap();
+    assert!(decoded.payload.is_json());
+    assert_eq!(decoded.payload.decode::<DemoBody>().unwrap(), body);
+}

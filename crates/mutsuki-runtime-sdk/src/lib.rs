@@ -745,7 +745,7 @@ fn single_entry_batch(ctx: &RunnerContext, mut task: Task) -> WorkBatch {
             lane: DispatchLane::Normal,
             ordering: OrderingRequirement::None,
         }],
-        payload: BatchPayload::from_tasks(&[task.clone()]),
+        payload: BatchPayload::from_local_tasks(vec![task]),
         resource_plan: WorkResourcePlan::empty(),
         task_leases: vec![lease],
     }
