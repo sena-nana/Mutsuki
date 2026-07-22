@@ -32,9 +32,9 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "a87cd7ada380d32879d6093ffdcf934d4ef688c3" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "a87cd7ada380d32879d6093ffdcf934d4ef688c3" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "a87cd7ada380d32879d6093ffdcf934d4ef688c3" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6139ca4e8c342551f1f929da9f243495bf09d7" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6139ca4e8c342551f1f929da9f243495bf09d7" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6139ca4e8c342551f1f929da9f243495bf09d7" }
 mutsuki-std-effect = { path = "crates/mutsuki-std-effect" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
