@@ -17,8 +17,8 @@ use mutsuki_plugin_bot_command::BotCommandRunner;
 use mutsuki_plugin_bot_event_router::{BOT_EVENT_ROUTER_RUNNER_ID, BotEventRouterRunner};
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerContext,
-    RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome, WorkBatch,
-    WorkResourcePlan,
+    RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome,
+    TaskPayload, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
@@ -54,7 +54,7 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
                 Task::new(
                     format!("ingest:{}", event.event_id),
                     BOT_EVENT_INGEST_PROTOCOL_ID,
-                    serde_json::to_value(event).unwrap(),
+                    TaskPayload::from_local(event.clone()),
                 )
             })
             .collect::<Vec<_>>();
@@ -113,7 +113,7 @@ pub fn command_sample(hit: bool) -> Sample {
     let task = Task::new(
         "command-case",
         BOT_COMMAND_PARSE_PROTOCOL_ID,
-        serde_json::to_value(event).unwrap(),
+        TaskPayload::from_local(event),
     );
     let mut runner = BotCommandRunner::new(1, vec!["/".into()]);
     let allocation_start = allocation_snapshot();

@@ -64,7 +64,9 @@ impl Runner for EchoCommandRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let command: BotCommandEvent = serde_json::from_value(task.payload.clone().into())
+            let command = task
+                .payload
+                .decode::<BotCommandEvent>()
                 .map_err(|error| echo_error(format!("echo.command.decode:{error}")))?;
             let mut result =
                 mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
@@ -72,8 +74,7 @@ impl Runner for EchoCommandRunner {
                 let mut send = Task::new(
                     format!("example.bot.echo.send:{}", command.source.event_id),
                     BOT_MESSAGE_SEND_PROTOCOL_ID,
-                    serde_json::to_value(message)
-                        .map_err(|error| echo_error(format!("echo.message.encode:{error}")))?,
+                    mutsuki_runtime_contracts::TaskPayload::from_local(message),
                 );
                 send.trace_id = task.trace_id.clone();
                 send.correlation_id = task.correlation_id.clone();

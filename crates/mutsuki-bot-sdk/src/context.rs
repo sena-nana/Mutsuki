@@ -133,7 +133,7 @@ struct ResolvedBotTaskOptions {
 }
 
 impl ResolvedBotTaskOptions {
-    fn task(&self, protocol_id: &str, payload: serde_json::Value) -> Task {
+    fn task(&self, protocol_id: &str, payload: mutsuki_runtime_contracts::TaskPayload) -> Task {
         let mut task = Task::new(&self.task_id, protocol_id, payload);
         task.trace_id = self.trace_id.clone();
         task.correlation_id = self.correlation_id.clone();
@@ -338,12 +338,15 @@ impl BotContext {
         options: BotTaskOptions,
     ) -> Result<BotTask, BotSdkError>
     where
-        T: Serialize,
+        T: Serialize + std::any::Any + Send + Sync + 'static,
     {
         let sequence = self.next_task_id.fetch_add(1, Ordering::Relaxed) + 1;
         let generated_task_id = format!("{}:{sequence}", self.task_id_prefix);
         let options = options.resolve(&self.defaults, generated_task_id);
-        let task = options.task(protocol_id, serde_json::to_value(payload)?);
+        let task = options.task(
+            protocol_id,
+            mutsuki_runtime_contracts::TaskPayload::from_local(payload),
+        );
         Ok(BotTask {
             task,
             cancel_policy: options.cancel_policy,

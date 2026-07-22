@@ -9,7 +9,7 @@ use mutsuki_runtime_contracts::{
     OrderingRequirement, PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
     RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
     RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
-    RunnerSideEffect, RuntimeError, ScalarValue, Task, WorkBatch,
+    RunnerSideEffect, RuntimeError, ScalarValue, Task, TaskPayload, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -119,9 +119,11 @@ impl Runner for BotCommandRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let event: BotEvent = serde_json::from_value(task.payload.clone().into())
+            let event = task
+                .payload
+                .decode_shared::<BotEvent>()
                 .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
-            let Some(text) = message_text(&event) else {
+            let Some(text) = message_text(event.as_ref()) else {
                 return Ok(RunnerResult::completed(task.task_id.clone()));
             };
             let command = match self.parser.parse(&text) {
@@ -132,7 +134,7 @@ impl Runner for BotCommandRunner {
                 Err(error) => return Err(failure("mutsuki.bot.command.parse", error)),
             };
             let command_event = BotCommandEvent {
-                source: event,
+                source: (*event).clone(),
                 name: command.name,
                 args: command.args,
                 raw_text: command.raw_text,
@@ -146,16 +148,16 @@ impl Runner for BotCommandRunner {
                 correlation_id = task.correlation_id.as_deref().unwrap_or(""),
                 "Bot command parsed"
             );
+            let binding_id = bot_command_binding_id(&command_event.name);
             let mut child = Task::new(
                 format!("mutsuki.bot.command.handle:{}", task.task_id),
                 BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                serde_json::to_value(&command_event)
-                    .map_err(|error| failure("mutsuki.bot.command.encode", error))?,
+                TaskPayload::from_local(command_event),
             );
             child.registry_generation = ctx.registry_generation;
             child.trace_id = task.trace_id.clone();
             child.correlation_id = task.correlation_id.clone();
-            child.target_binding_id = Some(bot_command_binding_id(&command_event.name));
+            child.target_binding_id = Some(binding_id);
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks.push(child);
             Ok(result)
@@ -247,10 +249,8 @@ mod tests {
         let third = &completion.results[2].result.as_ref().unwrap().tasks[0];
         assert_eq!(first.registry_generation, 11);
         assert_eq!(third.registry_generation, 11);
-        let first_command: BotCommandEvent =
-            serde_json::from_value(first.payload.clone().into()).unwrap();
-        let third_command: BotCommandEvent =
-            serde_json::from_value(third.payload.clone().into()).unwrap();
+        let first_command: BotCommandEvent = first.payload.decode().unwrap();
+        let third_command: BotCommandEvent = third.payload.decode().unwrap();
         assert_eq!(first_command.name, "echo");
         assert_eq!(first_command.args, ["one"]);
         assert_eq!(third_command.name, "ping");
@@ -279,7 +279,7 @@ mod tests {
         Task::new(
             task_id,
             BOT_COMMAND_PARSE_PROTOCOL_ID,
-            serde_json::to_value(BotEvent {
+            TaskPayload::from_local(BotEvent {
                 event_id: event_id.into(),
                 platform: BotPlatform::QqBot,
                 bot: BotAccountRef {
@@ -293,8 +293,7 @@ mod tests {
                 message: Some(BotMessage::text(target, text)),
                 raw: None,
                 ext: Default::default(),
-            })
-            .unwrap(),
+            }),
         )
     }
 

@@ -9,18 +9,15 @@ pub struct BotDispatchTask {
 }
 
 pub fn build_dispatch_task(
+    parent: &Task,
     event: &BotEvent,
     subscription: &BotEventSubscription,
     sequence: u64,
     registry_generation: u64,
-) -> Result<Task, serde_json::Error> {
+) -> Task {
     let task_id = format!("mutsuki.bot.event.dispatch:{}:{}", event.event_id, sequence);
-    let mut task = Task::new(
-        task_id,
-        subscription.handler_protocol_id.clone(),
-        serde_json::to_value(event)?,
-    );
+    let mut task = parent.derive_with_protocol(task_id, subscription.handler_protocol_id.clone());
     task.target_binding_id = subscription.handler_binding_id.clone();
     task.registry_generation = registry_generation;
-    Ok(task)
+    task
 }

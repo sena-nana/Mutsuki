@@ -41,22 +41,24 @@ impl BotEventRouter {
 
     pub fn route(
         &mut self,
+        parent: &Task,
         event: &BotEvent,
         registry_generation: u64,
-    ) -> Result<Vec<Task>, serde_json::Error> {
+    ) -> Vec<Task> {
         let mut tasks = Vec::new();
         for subscription in &self.subscriptions {
             if matches_subscription(event, subscription) {
                 self.next_sequence += 1;
                 tasks.push(build_dispatch_task(
+                    parent,
                     event,
                     subscription,
                     self.next_sequence,
                     registry_generation,
-                )?);
+                ));
             }
         }
-        Ok(tasks)
+        tasks
     }
 }
 
@@ -85,12 +87,13 @@ impl Runner for BotEventRouterRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let event: BotEvent = serde_json::from_value(task.payload.clone().into())
+            let event = task
+                .payload
+                .decode_shared::<BotEvent>()
                 .map_err(|error| failure("mutsuki.bot.router.event.decode", error))?;
-            let mut dispatch_tasks = self
-                .router
-                .route(&event, ctx.registry_generation)
-                .map_err(|error| failure("mutsuki.bot.router.event.dispatch", error))?;
+            let mut dispatch_tasks =
+                self.router
+                    .route(task, event.as_ref(), ctx.registry_generation);
             for child in &mut dispatch_tasks {
                 child.trace_id = task.trace_id.clone();
                 child.correlation_id = task.correlation_id.clone();
@@ -209,7 +212,7 @@ mod tests {
         Task::new(
             task_id,
             BOT_EVENT_INGEST_PROTOCOL_ID,
-            serde_json::to_value(BotEvent {
+            mutsuki_runtime_contracts::TaskPayload::from_local(BotEvent {
                 event_id: event_id.into(),
                 platform: BotPlatform::QqBot,
                 bot: BotAccountRef {
@@ -225,8 +228,7 @@ mod tests {
                 message: None,
                 raw: None,
                 ext: Default::default(),
-            })
-            .unwrap(),
+            }),
         )
     }
 

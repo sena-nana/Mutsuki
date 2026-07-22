@@ -95,8 +95,7 @@ impl Runner for QqGatewayMapRunner {
             let mut ingest = Task::new(
                 format!("mutsuki.bot.event.ingest:{}", task.task_id),
                 BOT_EVENT_INGEST_PROTOCOL_ID,
-                serde_json::to_value(event)
-                    .map_err(|error| failure("mutsuki.bot.qqbot.gateway.encode", error))?,
+                mutsuki_runtime_contracts::TaskPayload::from_local(event),
             );
             ingest.registry_generation = ctx.registry_generation;
             ingest.trace_id = task.trace_id.clone();
