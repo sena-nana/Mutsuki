@@ -9,6 +9,7 @@ use super::types::{
 };
 use mutsuki_runtime_contracts::{CapabilityDescriptor, DeliveryReceipt};
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,17 +31,44 @@ fn options_with_id(request_id: &str) -> AppDeliveryOptions {
     }
 }
 
+fn unique_local_fixture(label: &str) -> (PathBuf, AppId) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let lease_dir = std::env::temp_dir().join(format!("mutsuki-delivery-{label}-{unique}"));
+    let target = AppId::new(format!("demo.{label}{unique}")).unwrap();
+    (lease_dir, target)
+}
+
+fn memory_service(
+    transport: InMemoryAppLinkTransport,
+) -> AppDeliveryService<ProcessAppActivator, InMemoryAppLinkTransport> {
+    AppDeliveryService::new(
+        source_identity(),
+        ProcessAppActivator::new(),
+        transport,
+        DeliveryDraftStore::memory(),
+    )
+}
+
+fn link_service(
+    lease_dir: &PathBuf,
+) -> AppDeliveryService<ProcessAppActivator, LinkLocalAppTransport> {
+    AppDeliveryService::new(
+        source_identity(),
+        ProcessAppActivator::new(),
+        LinkLocalAppTransport::new(lease_dir).with_request_timeout(Duration::from_secs(5)),
+        DeliveryDraftStore::memory(),
+    )
+}
+
 #[tokio::test]
 async fn online_direct_delivery_returns_accepted_receipt() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, vec![capability()]);
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
 
     let receipt = service
         .request_app(
@@ -144,12 +172,7 @@ async fn process_started_but_not_ready_does_not_transmit_early() {
     transport.register_offline(&target, vec![capability()], Duration::from_secs(30));
     transport.mark_online(&target);
 
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
     let error = service
         .request_app(
             target,
@@ -178,12 +201,7 @@ async fn duplicate_request_id_returns_previous_receipt() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, vec![capability()]);
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
     let options = options_with_id("req-dup");
     let first = service
         .request_app(
@@ -222,12 +240,7 @@ async fn structured_errors_are_distinguishable() {
         let transport = InMemoryAppLinkTransport::new();
         transport.register_online(&target, vec![capability()]);
         transport.set_force_error(&target, expected.clone());
-        let service = AppDeliveryService::new(
-            source_identity(),
-            ProcessAppActivator::new(),
-            transport,
-            DeliveryDraftStore::memory(),
-        );
+        let service = memory_service(transport);
         let error = service
             .request_app(
                 target.clone(),
@@ -244,13 +257,7 @@ async fn structured_errors_are_distinguishable() {
     }
 
     let missing = AppId::new("missing.app").unwrap();
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        InMemoryAppLinkTransport::new(),
-        DeliveryDraftStore::memory(),
-    );
-    let error = service
+    let error = memory_service(InMemoryAppLinkTransport::new())
         .request_app(
             missing,
             capability(),
@@ -277,12 +284,7 @@ async fn draft_saved_on_structured_failure() {
             message: "boom".into(),
         },
     );
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
     let request_id = "req-draft";
     let _ = service
         .request_app(
@@ -299,12 +301,7 @@ async fn draft_saved_on_structured_failure() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_link_roundtrip_delivers_typed_receipt() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let lease_dir = std::env::temp_dir().join(format!("mutsuki-delivery-{unique}"));
-    let target = AppId::new(format!("demo.app{unique}")).unwrap();
+    let (lease_dir, target) = unique_local_fixture("app");
     let endpoint = AppCapabilityEndpoint::open(target.clone(), "code-1", &lease_dir).unwrap();
     endpoint.register_handler(capability(), |envelope| DeliveryReceipt::Accepted {
         request_id: envelope.request_id,
@@ -312,15 +309,7 @@ async fn local_link_roundtrip_delivers_typed_receipt() {
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let transport =
-        LinkLocalAppTransport::new(&lease_dir).with_request_timeout(Duration::from_secs(5));
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
-    let receipt = service
+    let receipt = link_service(&lease_dir)
         .request_app(
             target,
             capability(),
@@ -346,12 +335,7 @@ async fn local_link_roundtrip_delivers_typed_receipt() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_link_waits_for_delayed_handler_registration() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let lease_dir = std::env::temp_dir().join(format!("mutsuki-delivery-delay-{unique}"));
-    let target = AppId::new(format!("demo.delay{unique}")).unwrap();
+    let (lease_dir, target) = unique_local_fixture("delay");
     let endpoint = AppCapabilityEndpoint::open(target.clone(), "code-delay", &lease_dir).unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;
 
@@ -360,11 +344,7 @@ async fn local_link_waits_for_delayed_handler_registration() {
         .try_connect(&target)
         .await
         .expect("endpoint listening");
-    assert!(
-        session.capabilities.is_empty(),
-        "handler not registered yet must not report capabilities"
-    );
-    assert!(!session.capability_ready(&capability()));
+    assert!(session.capabilities.is_empty());
 
     let endpoint_for_handler = endpoint.clone();
     tokio::spawn(async move {
@@ -375,13 +355,7 @@ async fn local_link_waits_for_delayed_handler_registration() {
         });
     });
 
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
-    let receipt = service
+    let receipt = link_service(&lease_dir)
         .request_app(
             target,
             capability(),
@@ -407,12 +381,7 @@ async fn local_link_waits_for_delayed_handler_registration() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_link_unregistered_capability_is_not_ready_before_timeout() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let lease_dir = std::env::temp_dir().join(format!("mutsuki-delivery-unreg-{unique}"));
-    let target = AppId::new(format!("demo.unreg{unique}")).unwrap();
+    let (lease_dir, target) = unique_local_fixture("unreg");
     let _endpoint = AppCapabilityEndpoint::open(target.clone(), "code-unreg", &lease_dir).unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;
 
@@ -431,28 +400,10 @@ async fn local_link_unregistered_capability_is_not_ready_before_timeout() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_link_legacy_peer_is_protocol_incompatible() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let lease_dir = std::env::temp_dir().join(format!("mutsuki-delivery-legacy-{unique}"));
-    let target = AppId::new(format!("demo.legacy{unique}")).unwrap();
+    let (lease_dir, target) = unique_local_fixture("legacy");
     spawn_legacy_endpoint(target.clone(), lease_dir.clone()).await;
 
-    let transport =
-        LinkLocalAppTransport::new(&lease_dir).with_request_timeout(Duration::from_secs(2));
-    let error = transport
-        .try_connect(&target)
-        .await
-        .expect_err("legacy peer must fail handshake");
-    assert_eq!(error, AppDeliveryError::ProtocolIncompatible);
-
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = link_service(&lease_dir);
     let error = service
         .request_app(
             target,
@@ -478,12 +429,7 @@ async fn protocol_version_mismatch_fails_before_transmit() {
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, vec![capability()]);
     transport.set_host_protocol_version(&target, HOST_PROTOCOL_VERSION + 1);
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
     let error = service
         .request_app(
             target,
@@ -510,12 +456,7 @@ async fn incompatible_capability_schema_returns_protocol_incompatible() {
         &target,
         vec![CapabilityDescriptor::new("lilia.code.task.accept", 1, 99)],
     );
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport,
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport);
     let error = service
         .request_app(
             target,
@@ -539,14 +480,8 @@ async fn missing_capability_after_ready_wait_is_capability_unavailable() {
     let target = AppId::new("lilia.code").unwrap();
     let transport = InMemoryAppLinkTransport::new();
     transport.register_online(&target, Vec::new());
-    let service = AppDeliveryService::new(
-        source_identity(),
-        ProcessAppActivator::new(),
-        transport.clone(),
-        DeliveryDraftStore::memory(),
-    );
+    let service = memory_service(transport.clone());
 
-    // Simulate a peer that never advertises the required capability.
     let error = service
         .request_app(
             target.clone(),
@@ -565,7 +500,6 @@ async fn missing_capability_after_ready_wait_is_capability_unavailable() {
     assert_eq!(error, AppDeliveryError::ReadyTimeout);
     assert!(service.drafts().get("req-missing-cap").is_some());
 
-    // If handshake later reports a different capability only, transmit must still fail structured.
     transport.set_capabilities(
         &target,
         vec![CapabilityDescriptor::new("other.capability", 1, 1)],
@@ -587,7 +521,7 @@ async fn missing_capability_after_ready_wait_is_capability_unavailable() {
     assert_eq!(error, AppDeliveryError::CapabilityUnavailable);
 }
 
-async fn spawn_legacy_endpoint(target: AppId, lease_dir: std::path::PathBuf) {
+async fn spawn_legacy_endpoint(target: AppId, lease_dir: PathBuf) {
     use mutsuki_link_core::{Connection, EndpointId, TransportBudget};
     use mutsuki_link_local::{
         EndpointLease, LocalListener, SessionIdentity, endpoint_id_for_app, local_address_for_app,
@@ -612,7 +546,6 @@ async fn spawn_legacy_endpoint(target: AppId, lease_dir: std::path::PathBuf) {
                 continue;
             };
             // Old peers only accepted bare CapabilityRequestEnvelope frames.
-            let _ = connection.try_receive();
             let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
             loop {
                 match connection.try_receive() {

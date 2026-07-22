@@ -113,12 +113,8 @@ where
             }
         };
 
-        if session.host_protocol_version != super::types::HOST_PROTOCOL_VERSION {
-            return self.fail_with_optional_draft(
-                envelope,
-                options,
-                AppDeliveryError::ProtocolIncompatible,
-            );
+        if let Err(error) = session.ensure_protocol_compatible() {
+            return self.fail_with_optional_draft(envelope, options, error);
         }
 
         self.emit_phase(
@@ -146,12 +142,8 @@ where
             None,
         );
 
-        if !session.capability_ready(&envelope.capability) {
-            return self.fail_with_optional_draft(
-                envelope,
-                options,
-                AppDeliveryError::CapabilityUnavailable,
-            );
+        if let Err(error) = session.ensure_capability_ready(&envelope.capability) {
+            return self.fail_with_optional_draft(envelope, options, error);
         }
 
         self.emit_phase(

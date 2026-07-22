@@ -46,6 +46,36 @@ impl AppLinkSession {
         }
         CapabilityStatus::Unavailable
     }
+
+    pub fn ensure_protocol_compatible(&self) -> Result<(), AppDeliveryError> {
+        if self.host_protocol_version != HOST_PROTOCOL_VERSION {
+            Err(AppDeliveryError::ProtocolIncompatible)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Wait-loop probe: `Ok(true)` ready, `Ok(false)` keep waiting, `Err` terminal failure.
+    pub fn readiness_for(&self, required: &CapabilityDescriptor) -> Result<bool, AppDeliveryError> {
+        self.ensure_protocol_compatible()?;
+        match self.capability_status(required) {
+            CapabilityStatus::Ready => Ok(true),
+            CapabilityStatus::Incompatible => Err(AppDeliveryError::ProtocolIncompatible),
+            CapabilityStatus::Unavailable => Ok(false),
+        }
+    }
+
+    pub fn ensure_capability_ready(
+        &self,
+        required: &CapabilityDescriptor,
+    ) -> Result<(), AppDeliveryError> {
+        self.ensure_protocol_compatible()?;
+        match self.capability_status(required) {
+            CapabilityStatus::Ready => Ok(()),
+            CapabilityStatus::Incompatible => Err(AppDeliveryError::ProtocolIncompatible),
+            CapabilityStatus::Unavailable => Err(AppDeliveryError::CapabilityUnavailable),
+        }
+    }
 }
 
 pub trait AppLinkTransport: Send + Sync {
@@ -164,14 +194,10 @@ impl InMemoryAppLinkTransport {
         if !peer.online {
             return Err(AppDeliveryError::EndpointUnavailable);
         }
-        let capabilities = match (peer.ready_after, readiness) {
-            (_, MemoryReadinessView::Authoritative) => peer.capabilities.clone(),
-            // Probe path: delayed peers advertise no capabilities until wait observes readiness.
-            (Some(_), MemoryReadinessView::Probe) => Vec::new(),
-            (Some(delay), MemoryReadinessView::Waiting { since }) if since.elapsed() < delay => {
-                Vec::new()
-            }
-            _ => peer.capabilities.clone(),
+        let capabilities = if readiness.capabilities_visible(peer) {
+            peer.capabilities.clone()
+        } else {
+            Vec::new()
         };
         Ok(AppLinkSession {
             app_id: app_id.clone(),
@@ -187,6 +213,16 @@ enum MemoryReadinessView {
     Probe,
     Waiting { since: tokio::time::Instant },
     Authoritative,
+}
+
+impl MemoryReadinessView {
+    fn capabilities_visible(self, peer: &MemoryPeer) -> bool {
+        match (peer.ready_after, self) {
+            (_, Self::Authoritative) | (None, _) => true,
+            (Some(_), Self::Probe) => false,
+            (Some(delay), Self::Waiting { since }) => since.elapsed() >= delay,
+        }
+    }
 }
 
 impl AppLinkTransport for InMemoryAppLinkTransport {
@@ -206,15 +242,8 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
                 &session.app_id,
                 MemoryReadinessView::Waiting { since: started },
             )?;
-            if current.host_protocol_version != HOST_PROTOCOL_VERSION {
-                return Err(AppDeliveryError::ProtocolIncompatible);
-            }
-            match current.capability_status(capability) {
-                CapabilityStatus::Ready => return Ok(current),
-                CapabilityStatus::Incompatible => {
-                    return Err(AppDeliveryError::ProtocolIncompatible);
-                }
-                CapabilityStatus::Unavailable => {}
+            if current.readiness_for(capability)? {
+                return Ok(current);
             }
             if started.elapsed() >= timeout {
                 return Err(AppDeliveryError::ReadyTimeout);
@@ -229,25 +258,11 @@ impl AppLinkTransport for InMemoryAppLinkTransport {
         envelope: &CapabilityRequestEnvelope,
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
         let current = self.snapshot_session(&session.app_id, MemoryReadinessView::Authoritative)?;
-        if current.host_protocol_version != HOST_PROTOCOL_VERSION {
-            return Err(AppDeliveryError::ProtocolIncompatible);
-        }
-        match current.capability_status(&envelope.capability) {
-            CapabilityStatus::Ready => {}
-            CapabilityStatus::Incompatible => {
-                return Err(AppDeliveryError::ProtocolIncompatible);
-            }
-            CapabilityStatus::Unavailable => {
-                return Err(AppDeliveryError::CapabilityUnavailable);
-            }
-        }
+        current.ensure_capability_ready(&envelope.capability)?;
         let mut peers = self.peers.lock();
         let peer = peers
             .get_mut(session.app_id.as_str())
             .ok_or(AppDeliveryError::EndpointUnavailable)?;
-        if let Some(error) = peer.force_error.clone() {
-            return Err(error);
-        }
         let receipt = DeliveryReceipt::Accepted {
             request_id: envelope.request_id.clone(),
             remote_task_id: Some(format!("task-{}", envelope.request_id)),
@@ -293,8 +308,10 @@ impl LinkLocalAppTransport {
         self.request_timeout = timeout;
         self
     }
+}
 
-    async fn handshake(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
+impl AppLinkTransport for LinkLocalAppTransport {
+    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
         let link_app = mutsuki_link_local::AppId::new(app_id.as_str())
             .map_err(|_| AppDeliveryError::AppNotInstalled)?;
         let _ = mutsuki_link_local::reclaim_stale_lease(
@@ -309,12 +326,6 @@ impl LinkLocalAppTransport {
         )
         .await
     }
-}
-
-impl AppLinkTransport for LinkLocalAppTransport {
-    async fn try_connect(&self, app_id: &AppId) -> Result<AppLinkSession, AppDeliveryError> {
-        self.handshake(app_id).await
-    }
 
     async fn wait_capability_ready(
         &self,
@@ -324,17 +335,10 @@ impl AppLinkTransport for LinkLocalAppTransport {
     ) -> Result<AppLinkSession, AppDeliveryError> {
         let started = tokio::time::Instant::now();
         loop {
-            match self.handshake(&session.app_id).await {
+            match self.try_connect(&session.app_id).await {
                 Ok(current) => {
-                    if current.host_protocol_version != HOST_PROTOCOL_VERSION {
-                        return Err(AppDeliveryError::ProtocolIncompatible);
-                    }
-                    match current.capability_status(capability) {
-                        CapabilityStatus::Ready => return Ok(current),
-                        CapabilityStatus::Incompatible => {
-                            return Err(AppDeliveryError::ProtocolIncompatible);
-                        }
-                        CapabilityStatus::Unavailable => {}
+                    if current.readiness_for(capability)? {
+                        return Ok(current);
                     }
                 }
                 Err(AppDeliveryError::EndpointUnavailable) => {}
@@ -352,18 +356,7 @@ impl AppLinkTransport for LinkLocalAppTransport {
         session: &AppLinkSession,
         envelope: &CapabilityRequestEnvelope,
     ) -> Result<DeliveryReceipt, AppDeliveryError> {
-        if session.host_protocol_version != HOST_PROTOCOL_VERSION {
-            return Err(AppDeliveryError::ProtocolIncompatible);
-        }
-        match session.capability_status(&envelope.capability) {
-            CapabilityStatus::Ready => {}
-            CapabilityStatus::Incompatible => {
-                return Err(AppDeliveryError::ProtocolIncompatible);
-            }
-            CapabilityStatus::Unavailable => {
-                return Err(AppDeliveryError::CapabilityUnavailable);
-            }
-        }
+        session.ensure_capability_ready(&envelope.capability)?;
         let target = AppId::new(envelope.target.clone())?;
         crate::app_delivery::endpoint::connect_and_transmit(
             &target,

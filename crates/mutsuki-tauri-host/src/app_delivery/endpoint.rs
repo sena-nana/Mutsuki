@@ -21,7 +21,6 @@ use tokio::task::JoinHandle;
 type CapabilityHandler =
     Arc<dyn Fn(CapabilityRequestEnvelope) -> DeliveryReceipt + Send + Sync + 'static>;
 
-/// Real endpoint descriptor returned by the Link-local handshake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointDescriptor {
     pub app_id: String,
@@ -30,7 +29,6 @@ pub struct EndpointDescriptor {
     pub capabilities: Vec<CapabilityDescriptor>,
 }
 
-/// Client → endpoint frame on a Link-local connection.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub(crate) enum LinkLocalClientFrame {
@@ -38,7 +36,6 @@ pub(crate) enum LinkLocalClientFrame {
     CapabilityRequest(CapabilityRequestEnvelope),
 }
 
-/// Endpoint → client frame.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub(crate) enum LinkLocalServerFrame {
@@ -52,6 +49,15 @@ pub(crate) enum LinkLocalServerFrame {
 pub(crate) enum LinkLocalRejectReason {
     ProtocolIncompatible,
     CapabilityUnavailable,
+}
+
+impl From<LinkLocalRejectReason> for AppDeliveryError {
+    fn from(reason: LinkLocalRejectReason) -> Self {
+        match reason {
+            LinkLocalRejectReason::ProtocolIncompatible => Self::ProtocolIncompatible,
+            LinkLocalRejectReason::CapabilityUnavailable => Self::CapabilityUnavailable,
+        }
+    }
 }
 
 /// Local endpoint owner that accepts typed capability requests over Link IPC.
@@ -98,10 +104,6 @@ impl AppCapabilityEndpoint {
 
     pub fn app_id(&self) -> &AppId {
         &self.app_id
-    }
-
-    pub fn instance_id(&self) -> &str {
-        &self.instance_id
     }
 
     pub fn register_handler<F>(&self, capability: CapabilityDescriptor, handler: F)
@@ -169,18 +171,23 @@ impl AppCapabilityEndpoint {
                 LinkLocalClientFrame::DescribeEndpoint {
                     host_protocol_version,
                 } => {
-                    let incompatible = host_protocol_version != HOST_PROTOCOL_VERSION;
-                    let response = if incompatible {
-                        LinkLocalServerFrame::Rejected {
-                            reason: LinkLocalRejectReason::ProtocolIncompatible,
-                        }
-                    } else {
-                        LinkLocalServerFrame::EndpointDescriptor(self.describe())
-                    };
-                    if send_json(connection, &response).await.is_err() {
+                    if host_protocol_version != HOST_PROTOCOL_VERSION {
+                        let _ = send_json(
+                            connection,
+                            &LinkLocalServerFrame::Rejected {
+                                reason: LinkLocalRejectReason::ProtocolIncompatible,
+                            },
+                        )
+                        .await;
                         return;
                     }
-                    if incompatible {
+                    if send_json(
+                        connection,
+                        &LinkLocalServerFrame::EndpointDescriptor(self.describe()),
+                    )
+                    .await
+                    .is_err()
+                    {
                         return;
                     }
                 }
@@ -254,18 +261,7 @@ pub(crate) async fn connect_and_transmit(
 ) -> Result<DeliveryReceipt, AppDeliveryError> {
     let mut connection = connect_local(target, session, timeout).await?;
     let link_session = perform_handshake(target, &mut connection).await?;
-    if link_session.host_protocol_version != HOST_PROTOCOL_VERSION {
-        return Err(AppDeliveryError::ProtocolIncompatible);
-    }
-    match link_session.capability_status(&envelope.capability) {
-        super::transport::CapabilityStatus::Ready => {}
-        super::transport::CapabilityStatus::Incompatible => {
-            return Err(AppDeliveryError::ProtocolIncompatible);
-        }
-        super::transport::CapabilityStatus::Unavailable => {
-            return Err(AppDeliveryError::CapabilityUnavailable);
-        }
-    }
+    link_session.ensure_capability_ready(&envelope.capability)?;
     send_json(
         &mut connection,
         &LinkLocalClientFrame::CapabilityRequest(envelope.clone()),
@@ -276,15 +272,7 @@ pub(crate) async fn connect_and_transmit(
     })?;
     let receipt = match recv_json::<LinkLocalServerFrame>(&mut connection).await? {
         LinkLocalServerFrame::DeliveryReceipt(receipt) => receipt,
-        LinkLocalServerFrame::Rejected {
-            reason: LinkLocalRejectReason::ProtocolIncompatible,
-        } => return Err(AppDeliveryError::ProtocolIncompatible),
-        LinkLocalServerFrame::Rejected {
-            reason: LinkLocalRejectReason::CapabilityUnavailable,
-        } => return Err(AppDeliveryError::CapabilityUnavailable),
-        LinkLocalServerFrame::EndpointDescriptor(_) => {
-            return Err(AppDeliveryError::ProtocolIncompatible);
-        }
+        other => return Err(map_unexpected_server_frame(other)),
     };
     let _ = connection.close_write();
     Ok(receipt)
@@ -337,10 +325,9 @@ async fn perform_handshake(
         .map_err(map_handshake_failure)?;
     match frame {
         LinkLocalServerFrame::EndpointDescriptor(descriptor) => {
-            if descriptor.app_id != target.as_str() {
-                return Err(AppDeliveryError::ProtocolIncompatible);
-            }
-            if descriptor.host_protocol_version != HOST_PROTOCOL_VERSION {
+            if descriptor.app_id != target.as_str()
+                || descriptor.host_protocol_version != HOST_PROTOCOL_VERSION
+            {
                 return Err(AppDeliveryError::ProtocolIncompatible);
             }
             Ok(super::transport::AppLinkSession {
@@ -350,43 +337,24 @@ async fn perform_handshake(
                 capabilities: descriptor.capabilities,
             })
         }
-        LinkLocalServerFrame::Rejected {
-            reason: LinkLocalRejectReason::ProtocolIncompatible,
-        } => Err(AppDeliveryError::ProtocolIncompatible),
-        LinkLocalServerFrame::Rejected {
-            reason: LinkLocalRejectReason::CapabilityUnavailable,
-        } => Err(AppDeliveryError::CapabilityUnavailable),
-        LinkLocalServerFrame::DeliveryReceipt(_) => Err(AppDeliveryError::ProtocolIncompatible),
+        other => Err(map_unexpected_server_frame(other)),
     }
 }
 
 fn map_handshake_failure(error: AppDeliveryError) -> AppDeliveryError {
     match error {
         AppDeliveryError::EndpointUnavailable => AppDeliveryError::EndpointUnavailable,
-        AppDeliveryError::ReceiptTimeout => AppDeliveryError::ProtocolIncompatible,
-        AppDeliveryError::DeliveryFailed { message }
-            if message.contains("connection closed")
-                || message.contains("EOF")
-                || message.contains("expected")
-                || message.contains("invalid type")
-                || message.contains("missing field")
-                || message.contains("unknown variant") =>
-        {
+        AppDeliveryError::DeliveryFailed { .. } | AppDeliveryError::ReceiptTimeout => {
             AppDeliveryError::ProtocolIncompatible
         }
-        AppDeliveryError::DeliveryFailed { message }
-            if message.contains("timed out") || message.contains("send timed out") =>
-        {
-            AppDeliveryError::ProtocolIncompatible
-        }
-        other => {
-            // JSON/frame decode errors from old peers must not become unstructured DeliveryFailed.
-            if other.kind_name() == "delivery_failed" {
-                AppDeliveryError::ProtocolIncompatible
-            } else {
-                other
-            }
-        }
+        other => other,
+    }
+}
+
+fn map_unexpected_server_frame(frame: LinkLocalServerFrame) -> AppDeliveryError {
+    match frame {
+        LinkLocalServerFrame::Rejected { reason } => reason.into(),
+        _ => AppDeliveryError::ProtocolIncompatible,
     }
 }
 
