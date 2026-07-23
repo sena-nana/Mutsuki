@@ -15,8 +15,9 @@ secret_file = "local.secret.toml"
 mode = "disabled"
 
 # Optional embedded Web Console (WebHost + control/overview/config/upgrade extensions).
-# Set include_config = true to mount config-web in the same shell (?page=config).
-# release_set enables the auto-upgrade page (module list from [[repositories]]).
+# Set include_config = true to mount config-web with an empty provider registry
+# until product ConfigProviders are registered (demo provider is test-only).
+# release_set enables the auto-upgrade page (Git→build→ABI/pin; not a marketplace).
 # Paths are relative to the product repository root
 # (when config lives under config/, paths resolve from the parent directory).
 # Copy auth token into local.secret.toml under WEB_CONSOLE_AUTH_TOKEN.

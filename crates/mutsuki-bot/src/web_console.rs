@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use mutsuki_bot_web_console::{
     ConsoleAssetDirs, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
-    WebConsoleSecrets, build_console_host, demo_config_service,
+    WebConsoleSecrets, build_console_host, empty_config_service,
 };
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
@@ -37,8 +37,10 @@ impl WebConsoleGuard {
         let product = load_product_toml(product_config_path)?;
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config, &product);
+        // Product path mounts an empty ConfigService until real providers are registered.
+        // `demo_config_service` stays in BotPlugins for tests only — never as a fake product loop.
         let config_service = if config.include_config {
-            Some(demo_config_service())
+            Some(empty_config_service())
         } else {
             None
         };
