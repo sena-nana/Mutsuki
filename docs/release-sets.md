@@ -64,3 +64,13 @@ Clustered MVP 的断线、脉冲、取消安全和内容落盘修复；Core、Li
 revision 均保持不变。该升级不改变外部配置 schema 或 capability maturity：distributed disabled 与
 local-observable 继续 active，clustered 继续 candidate，clustered production 继续 unsupported。
 `mutsuki-0.1-alpha-1` 已转为 unsupported，不再作为产品 pin。
+
+## WebHost 与 release set
+
+`MutsukiWebHost` **当前不单独列入** `releases/*.toml` 的 `[[repositories]]` 条目，原因如下：
+
+- Release set 的 required owner 集合（见 `scripts/release_set.py` 的 `REQUIRED_REPOSITORIES`）覆盖 Core、ServiceHost、Link、StdPlugins、BotPlugins 等产品/runtime 装配面；WebHost 是 **Web 运行宿主库**，由 BotPlugins（Console 扩展）与 BotTemplate（`web.console` 装配）以 Cargo Git pin 间接锁定 revision。
+- Active 组合验证路径为 ServiceHost 嵌入式 Console（Template `web_console_smoke`）与 BotPlugins crate 测试；Standalone Link 控制 Runtime 仍属骨架阶段，尚不足以成为独立 release owner。
+- 当 WebHost 成为独立部署面（Standalone + Link 桥接生产可用）或 revision 需要与 BotPlugins 解耦升级时，再新增 `web_host` repository 条目并扩展 `release_set.py` 同步逻辑。
+
+在此之前，WebHost revision 以 BotTemplate / BotPlugins 工作区 `[workspace.dependencies]` 中的 Git `rev` 为事实源；升级 BotPlugins 或 Template pin 时一并核对 `mutsuki-web-host` / `mutsuki-web-protocol` 与 lockfile 一致。
