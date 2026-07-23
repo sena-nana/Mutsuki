@@ -14,7 +14,7 @@ Use for `crates/mutsuki-web-{host,protocol,bridge,extension,recovery}`.
 - Tokens authenticate once and never appear in logs, errors, or extension APIs.
 - Recovery Shell: status, load failures, disable extension, clear cache, safe mode, minimal errors — not a plugin admin console.
 - Default listen is loopback; non-loopback requires TLS or explicit remote auth.
-- Standalone mode requires validated `link_endpoint`.
+- Standalone mode requires validated `link_endpoint` (`local://` only; not a Bot product path).
 - Axum/Hyper types stay inside `server.rs` and are not public ABI.
 
 ## Rules
