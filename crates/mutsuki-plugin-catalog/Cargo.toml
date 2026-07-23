@@ -1,0 +1,21 @@
+[package]
+name = "mutsuki-plugin-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mutsuki module upgrade catalog: release set pins, remote checks and upgrade planning."
+
+[dependencies]
+mutsuki-runtime-contracts = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[[bin]]
+name = "mutsuki-plugin"
+path = "src/bin/mutsuki-plugin.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -4,9 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use mutsuki_plugin_bot_overview_web::{
-    FixtureControlHandler, OverviewWebExtension, materialize_frontend_assets,
-};
+use mutsuki_plugin_bot_control_web::{ControlRpcCaller, FixtureControlHandler};
+use mutsuki_plugin_bot_overview_web::{OverviewWebExtension, materialize_frontend_assets};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{
     DeploymentMode, RpcRequest, WEB_PROTOCOL_VERSION, WebApplicationDescriptor, WebShellAssets,
@@ -22,7 +21,8 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let mut fixture = FixtureControlHandler::default();
     fixture.fail_statistics = fail_statistics;
     let extension =
-        OverviewWebExtension::new(Arc::new(fixture), "local-dev").with_frontend_assets(&assets);
+        OverviewWebExtension::new(ControlRpcCaller::new(Arc::new(fixture), "local-dev"))
+            .with_frontend_assets(&assets);
     let mut host = MutsukiWebHost::builder()
         .application(MinimalWebApplication::new(
             WebApplicationDescriptor {

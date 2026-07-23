@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'" />
+  <title>Mutsuki Console</title>
+  <link rel="stylesheet" href="./lilia-tokens.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { SimpleRpc, mountConsole, loadConsoleOptions } from "./index.js";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const rpc = new SimpleRpc(`${proto}://${location.host}/ws`, {
+      capabilities: ["runtime.read", "runtime.write", "*"],
+    });
+    await rpc.connect();
+    let options = await loadConsoleOptions();
+    mountConsole(document.getElementById("app"), rpc, options);
+  </script>
+</body>
+</html>

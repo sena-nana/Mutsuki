@@ -1551,6 +1551,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-web-console"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mutsuki-bot-config",
+ "mutsuki-plugin-bot-config-web",
+ "mutsuki-plugin-bot-control-web",
+ "mutsuki-plugin-bot-overview-web",
+ "mutsuki-plugin-bot-upgrade-web",
+ "mutsuki-service-control",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "mutsuki-link-core"
 version = "0.1.0"
 source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=26c66311e0e90ddb28d37e886bdda699f8662439#26c66311e0e90ddb28d37e886bdda699f8662439"
@@ -1681,6 +1703,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-control-web"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "mutsuki-service-control",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-event-router"
 version = "0.1.0"
 dependencies = [
@@ -1717,7 +1758,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "futures-util",
- "mutsuki-service-control",
+ "mutsuki-plugin-bot-control-web",
  "mutsuki-web-bridge",
  "mutsuki-web-extension",
  "mutsuki-web-host",
@@ -1729,6 +1770,37 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-upgrade-web"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mutsuki-plugin-bot-control-web",
+ "mutsuki-plugin-catalog",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-catalog"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

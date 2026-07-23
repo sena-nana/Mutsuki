@@ -1,0 +1,19 @@
+schema_version = 1
+release = "mutsuki-0.1-alpha-3"
+status = "active"
+contracts_api = "0.1.0"
+runtime_wire_schema = "mutsuki.runtime.wire/1.3.0"
+supported_deployments = ["service", "desktop", "python-runner"]
+unsupported_deployments = ["distributed-clustered-production"]
+
+[[repositories]]
+id = "core"
+url = "https://github.com/sena-nana/MutsukiCore.git"
+revision = "aaaa1111bbbb2222"
+kind = "rust"
+
+[[repositories]]
+id = "bot_plugins"
+url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
+revision = "cccc3333dddd4444"
+kind = "rust"

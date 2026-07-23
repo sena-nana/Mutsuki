@@ -1,6 +1,18 @@
 /**
- * Overview console: system status, Bot structure, task/runner counts, uptime.
+ * Mutsuki Bot Web Console shell: overview, plugins, runners, event sources, logs.
  */
+
+const READ_CAPS = ["runtime.read"];
+const WRITE_CAPS = ["runtime.read", "runtime.write"];
+
+const PAGES = [
+  { id: "overview", label: "概览" },
+  { id: "upgrade", label: "自动升级", optional: true },
+  { id: "plugins", label: "插件" },
+  { id: "runners", label: "Runners" },
+  { id: "events", label: "EventSources" },
+  { id: "logs", label: "日志" },
+];
 
 function formatDuration(ms) {
   if (ms == null || Number.isNaN(Number(ms))) return "—";
@@ -26,157 +38,27 @@ function healthClass(value) {
   return "";
 }
 
-function createApp(rpc) {
-  const state = { data: null, error: "" };
-  const app = document.createElement("div");
-  app.className = "mutsuki-console";
-  app.innerHTML = `
-    <aside class="sidebar">
-      <div class="brand">Mutsuki</div>
-      <nav class="nav"><button class="nav-item active">概览</button></nav>
-      <div class="sidebar-footer">runtime overview</div>
-    </aside>
-    <main class="workspace">
-      <header class="workspace-header">
-        <div class="header-row">
-          <div><h1>概览</h1><p>系统状态 · Bot 结构 · 运行时间</p></div>
-          <button type="button" id="refresh" class="ghost">刷新</button>
-        </div>
-      </header>
-      <section id="content" class="workspace-content"></section>
-    </main>
-  `;
+function currentPage() {
+  return new URLSearchParams(location.search).get("page") || "overview";
+}
 
-  async function refresh() {
-    state.error = "";
-    try {
-      state.data = await rpc.call("overview", "summary");
-    } catch (err) {
-      state.error = err?.message || String(err);
-      state.data = null;
-    }
-    render();
-  }
-
-  function render() {
-    const content = app.querySelector("#content");
-    content.innerHTML = "";
-    if (state.error) {
-      content.innerHTML = `<div class="error-banner">${state.error}</div>`;
-      return;
-    }
-    if (!state.data) {
-      content.textContent = "加载中…";
-      return;
-    }
-    const d = state.data;
-    const h = d.health || {};
-    const c = d.counts || {};
-    const tasks = c.tasks || {};
-
-    const status = document.createElement("div");
-    status.className = "card-grid";
-    for (const [label, value] of [
-      ["Service", h.service],
-      ["Core", h.core],
-      ["Plugins", h.plugins],
-      ["Runners", h.runners],
-      ["EventSources", h.event_sources],
-    ]) {
-      status.innerHTML += `<div class="status-card ${healthClass(value)}"><div class="label">${label}</div><div class="value">${value || "—"}</div></div>`;
-    }
-    content.appendChild(status);
-
-    const active =
-      (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
-    const metrics = document.createElement("div");
-    metrics.className = "card-grid";
-    for (const [label, value] of [
-      ["Uptime", formatDuration(d.uptime_ms)],
-      ["Tasks", String(active)],
-      ["Submitted", String(tasks.submitted_total ?? "—")],
-      ["Plugins", String(c.plugins ?? 0)],
-      ["Runners", String(c.runners ?? 0)],
-      ["EventSources", String(c.event_sources ?? 0)],
-    ]) {
-      metrics.innerHTML += `<div class="metric-card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
-    }
-    content.appendChild(metrics);
-
-    const section = (title, html) => {
-      const el = document.createElement("div");
-      el.className = "section";
-      el.innerHTML = `<h2>${title}</h2>${html}`;
-      content.appendChild(el);
-    };
-
-    const plugins = d.plugins?.plugins || [];
-    section(
-      "插件",
-      plugins.length
-        ? plugins
-            .map(
-              (p) =>
-                `<div class="tree-item"><strong>${p.plugin_id}</strong><div class="muted">active=${p.active_deployment || "—"} · configured=${p.configured}</div></div>`,
-            )
-            .join("")
-        : "<div class='muted'>暂无</div>",
-    );
-
-    const runners = d.runners || [];
-    section(
-      "Runners",
-      runners.length
-        ? runners
-            .map(
-              (r) =>
-                `<div class="tree-item"><strong>${r.runner_id}</strong><div class="muted">${r.plugin_id} · ${r.state} · pid=${r.pid ?? "—"}</div></div>`,
-            )
-            .join("")
-        : "<div class='muted'>暂无</div>",
-    );
-
-    const sources = d.event_sources || [];
-    section(
-      "EventSources",
-      sources.length
-        ? sources
-            .map(
-              (s) =>
-                `<div class="tree-item"><strong>${s.source_id}</strong><div class="muted">${s.state}/${s.health} · uptime=${formatDuration(elapsed(s.started_at_unix_ms))}</div></div>`,
-            )
-            .join("")
-        : "<div class='muted'>暂无</div>",
-    );
-
-    const comps = d.components || {};
-    const ids = Object.keys(comps);
-    if (ids.length) {
-      section(
-        "Health 组件",
-        ids
-          .map((id) => {
-            const snap = comps[id] || {};
-            const started = snap.started_at_unix_ms ?? snap.connected_since_unix_ms;
-            return `<div class="tree-item"><strong>${id}</strong><div class="muted">status=${snap.status ?? "—"} · uptime=${formatDuration(elapsed(started))}</div></div>`;
-          })
-          .join(""),
-      );
-    }
-  }
-
-  app.querySelector("#refresh").onclick = refresh;
-  refresh();
-  setInterval(refresh, 5000);
-  return app;
+function navigate(page) {
+  const url = new URL(location.href);
+  if (page === "overview") url.searchParams.delete("page");
+  else url.searchParams.set("page", page);
+  history.pushState({}, "", url);
+  return page;
 }
 
 export class SimpleRpc {
-  constructor(url) {
+  constructor(url, options = {}) {
     this.url = url;
+    this.capabilities = options.capabilities || READ_CAPS;
+    this.authToken = options.authToken || "local-dev";
     this.ws = null;
     this.pending = new Map();
   }
+
   async connect() {
     await new Promise((resolve, reject) => {
       this.ws = new WebSocket(this.url);
@@ -185,8 +67,8 @@ export class SimpleRpc {
           JSON.stringify({
             type: "hello",
             protocol_version: "1.0.0",
-            capabilities: [],
-            auth_token: "local-dev",
+            capabilities: this.capabilities,
+            auth_token: this.authToken,
           }),
         );
       });
@@ -197,23 +79,703 @@ export class SimpleRpc {
           const p = this.pending.get(msg.id);
           if (!p) return;
           this.pending.delete(msg.id);
-          if (msg.error) p.reject(new Error(msg.error.message || "rpc failed"));
-          else p.resolve(msg.result);
+          if (msg.error) {
+            const err = new Error(msg.error.message || "rpc failed");
+            err.code = msg.error.code;
+            p.reject(err);
+          } else p.resolve(msg.result);
         }
       });
       this.ws.addEventListener("error", reject);
     });
   }
-  call(namespace, method, params = {}) {
+
+  call(namespace, method, params = {}, capabilities = this.capabilities) {
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ type: "rpc", id, namespace, method, params }));
+      this.ws.send(
+        JSON.stringify({
+          type: "rpc",
+          id,
+          namespace,
+          method,
+          params: { capabilities, ...params },
+        }),
+      );
     });
+  }
+
+  /** @param {unknown} err */
+  static formatError(err) {
+    if (err && typeof err === "object" && "code" in err && err.code) {
+      const code = String(err.code);
+      const message = "message" in err && err.message ? String(err.message) : "操作失败";
+      return `[${code}] ${message}`;
+    }
+    if (err instanceof Error) return err.message;
+    return String(err);
+  }
+
+  read(namespace, method, params = {}) {
+    return this.call(namespace, method, params, READ_CAPS);
+  }
+
+  write(namespace, method, params = {}) {
+    return this.call(namespace, method, params, WRITE_CAPS);
   }
 }
 
-export function mountConsole(el, rpc) {
+function createShell(rpc, options = {}) {
+  const includeConfig = options.includeConfig === true;
+  const includeUpgrade = options.includeUpgrade === true;
+  const state = { page: currentPage(), error: "", busy: false, upgradeDetail: null, upgradeQuery: "" };
+
+  const app = document.createElement("div");
+  app.className = "mutsuki-console";
+
+  function renderNav() {
+    const nav = app.querySelector(".nav");
+    nav.innerHTML = "";
+    for (const page of PAGES) {
+      if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `nav-item${state.page === page.id ? " active" : ""}`;
+      btn.textContent = page.label;
+      btn.onclick = () => {
+        state.page = navigate(page.id);
+        renderNav();
+        renderPage();
+      };
+      nav.appendChild(btn);
+    }
+    if (includeConfig) {
+      const btn = document.createElement("a");
+      btn.className = "nav-item nav-link";
+      btn.href = "?page=config";
+      btn.textContent = "配置";
+      nav.appendChild(btn);
+    }
+  }
+
+  async function renderPage() {
+    const content = app.querySelector("#content");
+    const title = app.querySelector("#page-title");
+    const subtitle = app.querySelector("#page-subtitle");
+    const pageMeta = PAGES.find((p) => p.id === state.page) || PAGES[0];
+    title.textContent = pageMeta.label;
+    subtitle.textContent = pageSubtitle(state.page);
+    content.innerHTML = "";
+    state.error = "";
+    state.busy = true;
+    try {
+      if (state.page === "overview") await renderOverview(content, rpc);
+      else if (state.page === "upgrade") await renderUpgrade(content, rpc, app, state);
+      else if (state.page === "plugins") await renderPlugins(content, rpc, app);
+      else if (state.page === "runners") await renderRunners(content, rpc, app);
+      else if (state.page === "events") await renderEvents(content, rpc, app);
+      else if (state.page === "logs") await renderLogs(content, rpc);
+      else await renderOverview(content, rpc);
+    } catch (err) {
+      state.error = SimpleRpc.formatError(err);
+      content.innerHTML = `<div class="error-banner"><strong>加载失败</strong><div class="muted">${escapeHtml(state.error)}</div></div>`;
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  app.innerHTML = `
+    <aside class="sidebar">
+      <div class="brand">Mutsuki</div>
+      <nav class="nav"></nav>
+      <div class="sidebar-footer">bot console</div>
+    </aside>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div class="header-row">
+          <div><h1 id="page-title">概览</h1><p id="page-subtitle"></p></div>
+          <button type="button" id="refresh" class="ghost">刷新</button>
+        </div>
+      </header>
+      <section id="content" class="workspace-content">加载中…</section>
+    </main>
+  `;
+
+  renderNav();
+  app.querySelector("#refresh").onclick = renderPage;
+  window.addEventListener("popstate", () => {
+    state.page = currentPage();
+    renderNav();
+    renderPage();
+  });
+  renderPage();
+  return app;
+}
+
+function pageSubtitle(page) {
+  switch (page) {
+    case "upgrade":
+      return "对照 release set 检查 Mutsuki 模块 Git pin，生成 fetch / build / ABI / pin 升级计划";
+    case "plugins":
+      return "插件清单与部署偏好";
+    case "runners":
+      return "Runner 进程状态与运维操作";
+    case "events":
+      return "EventSource 连接与健康";
+    case "logs":
+      return "运行时日志尾部与任务快照";
+    default:
+      return "系统状态 · Bot 结构 · 运行时间";
+  }
+}
+
+async function renderOverview(content, rpc) {
+  const d = await rpc.read("overview", "summary");
+  const h = d.health || {};
+  const c = d.counts || {};
+  const tasks = c.tasks || {};
+
+  const status = document.createElement("div");
+  status.className = "card-grid";
+  for (const [label, value] of [
+    ["Service", h.service],
+    ["Core", h.core],
+    ["Plugins", h.plugins],
+    ["Runners", h.runners],
+    ["EventSources", h.event_sources],
+  ]) {
+    status.innerHTML += `<div class="status-card ${healthClass(value)}"><div class="label">${label}</div><div class="value">${value || "—"}</div></div>`;
+  }
+  content.appendChild(status);
+
+  const active =
+    (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
+  const metrics = document.createElement("div");
+  metrics.className = "card-grid";
+  for (const [label, value] of [
+    ["Uptime", formatDuration(d.uptime_ms)],
+    ["Tasks", String(active)],
+    ["Submitted", String(tasks.submitted_total ?? "—")],
+    ["Plugins", String(c.plugins ?? 0)],
+    ["Runners", String(c.runners ?? 0)],
+    ["EventSources", String(c.event_sources ?? 0)],
+  ]) {
+    metrics.innerHTML += `<div class="metric-card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+  }
+  content.appendChild(metrics);
+
+  appendSection(content, "Health 组件", renderComponents(d.components || {}));
+  await renderSecretStatusSection(content, rpc);
+}
+
+async function renderSecretStatusSection(content, rpc) {
+  try {
+    const body = await rpc.read("secret", "status");
+    const secrets = body?.secrets || [];
+    if (!secrets.length) return;
+    appendSection(content, "Secret 状态", renderSecretRows(secrets));
+  } catch {
+    // Secret monitor not configured for this console build.
+  }
+}
+
+function renderSecretRows(secrets) {
+  return secrets
+    .map((item) => {
+      const state = String(item.state || "absent");
+      const label = secretStateLabel(state);
+      return `<div class="tree-item row-item"><div><strong>${escapeHtml(item.key)}</strong><div class="muted">Host secret key</div></div><span class="pill ${secretStateClass(state)}">${label}</span></div>`;
+    })
+    .join("");
+}
+
+function secretStateLabel(state) {
+  switch (state) {
+    case "present":
+      return "已配置";
+    case "invalid":
+      return "无效";
+    default:
+      return "缺失";
+  }
+}
+
+function secretStateClass(state) {
+  switch (state) {
+    case "present":
+      return "ok";
+    case "invalid":
+      return "err";
+    default:
+      return "warn";
+  }
+}
+
+async function renderPlugins(content, rpc, app) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "toolbar";
+  toolbar.innerHTML = `<button type="button" class="ghost" id="reload-plugins">重载插件</button>`;
+  content.appendChild(toolbar);
+
+  const plugins = await rpc.read("control", "plugin_list");
+  const list = plugins?.plugins || [];
+  const diagnostics = plugins?.diagnostics || [];
+
+  if (diagnostics.length) {
+    appendSection(content, "清单诊断", renderPluginDiagnostics(diagnostics));
+  }
+
+  if (!list.length) {
+    content.appendChild(emptyBlock("暂无插件"));
+  } else {
+    for (const p of list) {
+      content.appendChild(renderPluginCard(p, rpc, app));
+    }
+  }
+
+  toolbar.querySelector("#reload-plugins").onclick = async () => {
+    if (!confirmAction("确认重载全部插件？Runners 将按 Host 策略重启。")) return;
+    try {
+      await rpc.write("control", "plugin_reload");
+      flash(app, "插件重载已提交");
+      await renderPlugins(content, rpc, app);
+    } catch (err) {
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
+}
+
+function renderPluginDiagnostics(diagnostics) {
+  return diagnostics
+    .map((d) => {
+      const id = d.plugin_id ? `${escapeHtml(d.plugin_id)} · ` : "";
+      const deployment = d.deployment ? `${escapeHtml(d.deployment)} · ` : "";
+      return `<div class="tree-item"><strong>${escapeHtml(d.manifest_path || "manifest")}</strong><div class="muted">${id}${deployment}${escapeHtml(d.detail || "—")}</div></div>`;
+    })
+    .join("");
+}
+
+function renderPluginCard(plugin, rpc, app) {
+  const el = document.createElement("div");
+  el.className = "plugin-card";
+  const header = document.createElement("div");
+  header.className = "tree-item";
+  header.innerHTML = `
+    <strong>${escapeHtml(plugin.plugin_id)}</strong>
+    <div class="muted">active=${escapeHtml(plugin.active_deployment || "—")} · preferred=${escapeHtml(plugin.preferred_deployment || "—")} · configured=${plugin.configured ? "yes" : "no"}</div>
+  `;
+  el.appendChild(header);
+
+  const candidates = plugin.candidates || [];
+  if (candidates.length) {
+    const section = document.createElement("div");
+    section.className = "section nested";
+    section.innerHTML = "<h3>候选部署</h3>";
+    for (const c of candidates) {
+      section.appendChild(renderCandidateRow(plugin.plugin_id, c, rpc, app));
+    }
+    el.appendChild(section);
+  }
+
+  if (plugin.preferred_deployment) {
+    const actions = document.createElement("div");
+    actions.className = "toolbar nested";
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "ghost";
+    clearBtn.textContent = "清除部署偏好";
+    clearBtn.onclick = async () => {
+      if (!confirmAction(`清除 ${plugin.plugin_id} 的部署偏好？`)) return;
+      try {
+        await rpc.write("control", "plugin_deployment_clear", { plugin_id: plugin.plugin_id });
+        flash(app, "部署偏好已清除");
+        await rerenderPlugins(app, rpc);
+      } catch (err) {
+        flash(app, SimpleRpc.formatError(err), true);
+      }
+    };
+    actions.appendChild(clearBtn);
+    el.appendChild(actions);
+  }
+
+  return el;
+}
+
+function renderCandidateRow(pluginId, candidate, rpc, app) {
+  const row = document.createElement("div");
+  row.className = "tree-item row-item candidate-row";
+  const linkNote = candidate.runner_link
+    ? ` · link=${candidate.runner_link}`
+    : " · link=—"; // TODO(standalone-link): surface Link health when Standalone Link ships.
+  row.innerHTML = `
+    <div>
+      <strong>${escapeHtml(candidate.deployment)}</strong>
+      <div class="muted">${escapeHtml(candidate.version)} · api=${escapeHtml(candidate.api_version)} · ${candidate.available ? "可用" : "不可用"}${escapeHtml(linkNote)}</div>
+      <div class="muted mono">${escapeHtml(candidate.sha256?.slice(0, 12) || "—")}… · ${escapeHtml(candidate.path || "—")}</div>
+    </div>
+  `;
+  const actions = document.createElement("div");
+  actions.className = "row-actions";
+  const setBtn = document.createElement("button");
+  setBtn.type = "button";
+  setBtn.className = "ghost";
+  setBtn.textContent = "设为偏好";
+  setBtn.disabled = !candidate.available;
+  setBtn.onclick = async () => {
+    if (
+      !confirmAction(
+        `将 ${pluginId} 的部署偏好设为 ${candidate.deployment}？`,
+      )
+    )
+      return;
+    try {
+      await rpc.write("control", "plugin_deployment_set", {
+        plugin_id: pluginId,
+        deployment: candidate.deployment,
+      });
+      flash(app, `已设置 ${pluginId} → ${candidate.deployment}`);
+      await rerenderPlugins(app, rpc);
+    } catch (err) {
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
+  actions.appendChild(setBtn);
+  row.appendChild(actions);
+  return row;
+}
+
+async function rerenderPlugins(app, rpc) {
+  const content = app.querySelector("#content");
+  content.innerHTML = "";
+  await renderPlugins(content, rpc, app);
+}
+
+async function renderRunners(content, rpc, app) {
+  const runners = await rpc.read("control", "runner_list");
+  if (!runners?.length) {
+    content.appendChild(emptyBlock("暂无 Runner"));
+    return;
+  }
+  for (const r of runners) {
+    const el = document.createElement("div");
+    el.className = "tree-item row-item";
+    el.innerHTML = `
+      <div>
+        <strong>${r.runner_id}</strong>
+        <div class="muted">${r.plugin_id} · ${r.state} · pid=${r.pid ?? "—"} · restarts=${r.restarts ?? 0}</div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="ghost" data-action="restart" data-id="${r.runner_id}">重启</button>
+        <button type="button" class="ghost danger" data-action="stop" data-id="${r.runner_id}">停止</button>
+      </div>
+    `;
+    content.appendChild(el);
+  }
+  content.querySelectorAll("[data-action]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute("data-id");
+      const action = btn.getAttribute("data-action");
+      const label = action === "restart" ? "重启" : "停止";
+      if (!confirmAction(`确认${label} Runner ${id}？`)) return;
+      try {
+        if (action === "restart") await rpc.write("control", "runner_restart", { id });
+        else await rpc.write("control", "runner_stop", { id });
+        flash(app, `${label} ${id} 已提交`);
+      } catch (err) {
+        flash(app, SimpleRpc.formatError(err), true);
+      }
+    };
+  });
+}
+
+async function renderEvents(content, rpc, app) {
+  const sources = await rpc.read("control", "event_source_list");
+  if (!sources?.length) {
+    content.appendChild(emptyBlock("暂无 EventSource"));
+    return;
+  }
+  for (const s of sources) {
+    const el = document.createElement("div");
+    el.className = "tree-item row-item";
+    const errLine = s.last_error
+      ? `<div class="muted err-text">${escapeHtml(s.last_error)}</div>`
+      : "";
+    el.innerHTML = `
+      <div>
+        <strong>${escapeHtml(s.source_id)}</strong>
+        <div class="muted">${escapeHtml(s.plugin_id)} · ${escapeHtml(s.state)}/${escapeHtml(s.health)} · reconnects=${s.reconnects ?? 0}</div>
+        ${errLine}
+      </div>
+      <div class="row-actions">
+        <button type="button" class="ghost" data-restart="${escapeHtml(s.source_id)}">重启</button>
+      </div>
+    `;
+    content.appendChild(el);
+  }
+  content.querySelectorAll("[data-restart]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.getAttribute("data-restart");
+      if (!confirmAction(`确认重启 EventSource ${id}？`)) return;
+      try {
+        await rpc.write("control", "event_source_restart", { id });
+        flash(app, `EventSource ${id} 重启已提交`);
+        content.innerHTML = "";
+        await renderEvents(content, rpc, app);
+      } catch (err) {
+        flash(app, SimpleRpc.formatError(err), true);
+      }
+    };
+  });
+}
+
+async function renderLogs(content, rpc) {
+  const [logs, tasks] = await Promise.all([
+    rpc.read("control", "log_tail", { lines: 50 }),
+    rpc.read("control", "task_list"),
+  ]);
+
+  appendSection(content, "日志尾部", renderLogLines(logs?.entries || []));
+  appendSection(content, "任务快照", renderTasks(tasks || []));
+}
+
+function renderLogLines(entries) {
+  if (!entries.length) return "<div class='muted'>暂无日志</div>";
+  return `<pre class="log-block">${entries.map((e) => escapeHtml(e.line)).join("\n")}</pre>`;
+}
+
+function renderTasks(tasks) {
+  if (!tasks.length) return "<div class='muted'>暂无任务</div>";
+  return tasks
+    .map(
+      (t) =>
+        `<div class="tree-item"><strong>${escapeHtml(t.task_id)}</strong><div class="muted">${escapeHtml(t.protocol_id)} · ${escapeHtml(t.status)} · hint=${escapeHtml(t.runner_hint || "—")}</div></div>`,
+    )
+    .join("");
+}
+
+function renderComponents(comps) {
+  const ids = Object.keys(comps);
+  if (!ids.length) return "<div class='muted'>暂无</div>";
+  return ids
+    .map((id) => {
+      const snap = comps[id] || {};
+      const started = snap.started_at_unix_ms ?? snap.connected_since_unix_ms;
+      return `<div class="tree-item"><strong>${escapeHtml(id)}</strong><div class="muted">status=${snap.status ?? "—"} · uptime=${formatDuration(elapsed(started))}</div></div>`;
+    })
+    .join("");
+}
+
+function appendSection(content, title, html) {
+  const el = document.createElement("div");
+  el.className = "section";
+  el.innerHTML = `<h2>${title}</h2>${html}`;
+  content.appendChild(el);
+}
+
+function emptyBlock(text) {
+  const el = document.createElement("div");
+  el.className = "muted";
+  el.textContent = text;
+  return el;
+}
+
+function confirmAction(message) {
+  return globalThis.confirm?.(message) !== false;
+}
+
+function flash(app, message, isError = false) {
+  let banner = app.querySelector(".flash-banner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.className = "flash-banner";
+    app.querySelector(".workspace").prepend(banner);
+  }
+  banner.className = `flash-banner${isError ? " error" : ""}`;
+  banner.textContent = message;
+  setTimeout(() => banner.remove(), 3500);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+export async function loadConsoleOptions() {
+  try {
+    const response = await fetch("./console-options.json");
+    if (!response.ok) return {};
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+function compatLabel(status) {
+  switch (status) {
+    case "compatible":
+      return "兼容";
+    case "incompatible":
+      return "不兼容";
+    default:
+      return "未知";
+  }
+}
+
+function compatClass(status) {
+  switch (status) {
+    case "compatible":
+      return "ok";
+    case "incompatible":
+      return "err";
+    default:
+      return "warn";
+  }
+}
+
+function upgradeStatusLabel(status) {
+  switch (status) {
+    case "up_to_date":
+      return "已是最新";
+    case "update_available":
+      return "可升级";
+    default:
+      return "未知";
+  }
+}
+
+function upgradeStatusClass(status) {
+  switch (status) {
+    case "up_to_date":
+      return "ok";
+    case "update_available":
+      return "warn";
+    default:
+      return "warn";
+  }
+}
+
+async function renderUpgrade(content, rpc, app, state) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "toolbar row-item";
+  toolbar.innerHTML = `
+    <input id="upgrade-search" type="search" placeholder="搜索模块…" value="${escapeHtml(state.upgradeQuery || "")}" />
+    <button type="button" class="ghost" id="upgrade-search-btn">搜索</button>
+  `;
+  content.appendChild(toolbar);
+
+  const summaryBody = document.createElement("div");
+  content.appendChild(summaryBody);
+  const listBody = document.createElement("div");
+  content.appendChild(listBody);
+  const detailBody = document.createElement("div");
+  content.appendChild(detailBody);
+
+  async function loadCheck() {
+    summaryBody.innerHTML = "<div class='muted'>检查 release set 模块 pin…</div>";
+    listBody.innerHTML = "";
+    detailBody.innerHTML = "";
+    const body = await rpc.read("upgrade", "check", {
+      query: state.upgradeQuery || undefined,
+    });
+    const releaseSet = body?.release_set || "—";
+    const updateCount = body?.update_count ?? 0;
+    summaryBody.innerHTML = `
+      <div class="section">
+        <h2>Release set · ${escapeHtml(releaseSet)}</h2>
+        <div class="toolbar nested">
+          <span class="pill ${updateCount > 0 ? "warn" : "ok"}">${updateCount} 个模块可升级</span>
+        </div>
+        <div class="muted">流程：检查 → Git 获取 → 编译 → ABI/pin 更新 → 重载/重启</div>
+      </div>
+    `;
+    const modules = body?.modules || [];
+    if (!modules.length) {
+      listBody.innerHTML = "<div class='muted'>没有匹配的模块</div>";
+      return;
+    }
+    listBody.innerHTML = modules
+      .map(
+        (module) => `
+      <div class="tree-item row-item upgrade-row">
+        <div>
+          <strong>${escapeHtml(module.id)}</strong>
+          <div class="muted">${escapeHtml(module.kind || "")} · ${escapeHtml(module.url || "")}</div>
+          <div class="muted">pin ${escapeHtml(module.pinned_revision || "—")}${module.remote_revision ? ` → 远端 ${escapeHtml(module.remote_revision)}` : ""}</div>
+        </div>
+        <div class="row-actions">
+          <span class="pill ${upgradeStatusClass(module.status)}">${upgradeStatusLabel(module.status)}</span>
+          <button type="button" class="ghost" data-plan="${escapeHtml(module.id)}" data-target="${escapeHtml(module.remote_revision || module.pinned_revision || "")}">升级计划</button>
+        </div>
+      </div>`,
+      )
+      .join("");
+    listBody.querySelectorAll("[data-plan]").forEach((btn) => {
+      btn.onclick = () =>
+        openPlan(
+          btn.getAttribute("data-plan"),
+          btn.getAttribute("data-target") || undefined,
+        );
+    });
+  }
+
+  async function openPlan(moduleId, targetRevision) {
+    detailBody.innerHTML = "<div class='section'><h2>升级计划</h2><div class='muted'>生成中…</div></div>";
+    const params = { module_id: moduleId };
+    if (targetRevision) params.target_revision = targetRevision;
+    const body = await rpc.read("upgrade", "plan", params);
+    const plan = body?.plan || {};
+    const steps = plan.steps || [];
+    detailBody.innerHTML = `
+      <div class="section">
+        <h2>${escapeHtml(moduleId)}</h2>
+        <div class="muted">目标 revision · ${escapeHtml(plan.target_revision || "—")}</div>
+        <div class="muted">当前 pin · ${escapeHtml(plan.pinned_revision || "—")}</div>
+      </div>
+      <div class="section">
+        <h3>升级步骤（CLI 执行）</h3>
+        ${steps
+          .map(
+            (step, index) =>
+              `<div class="tree-item"><strong>${index + 1}. ${escapeHtml(step.title || step.id)}</strong><div class="muted">${escapeHtml(step.detail || "")}</div>${step.cli_hint ? `<pre class="log-block mono">${escapeHtml(step.cli_hint)}</pre>` : ""}</div>`,
+          )
+          .join("") || "<div class='muted'>暂无</div>"}
+        <div class="toolbar nested">
+          <button type="button" class="ghost" id="goto-plugins">ABI 更新后去插件页重载</button>
+        </div>
+      </div>
+    `;
+    detailBody.querySelector("#goto-plugins")?.addEventListener("click", () => {
+      state.page = navigate("plugins");
+      const nav = app.querySelector(".nav");
+      if (nav) {
+        nav.querySelectorAll(".nav-item").forEach((btn) => {
+          btn.classList.toggle("active", btn.textContent === "插件");
+        });
+      }
+      const contentEl = app.querySelector("#content");
+      contentEl.innerHTML = "";
+      renderPlugins(contentEl, rpc, app);
+    });
+  }
+
+  toolbar.querySelector("#upgrade-search-btn").onclick = async () => {
+    state.upgradeQuery = toolbar.querySelector("#upgrade-search").value.trim();
+    await loadCheck();
+  };
+  toolbar.querySelector("#upgrade-search").addEventListener("keydown", async (ev) => {
+    if (ev.key === "Enter") {
+      state.upgradeQuery = ev.target.value.trim();
+      await loadCheck();
+    }
+  });
+
+  await loadCheck();
+}
+
+export function mountConsole(el, rpc, options = {}) {
   el.innerHTML = "";
   const link = document.createElement("link");
   link.rel = "stylesheet";
@@ -222,7 +784,13 @@ export function mountConsole(el, rpc) {
   const style = document.createElement("style");
   style.textContent = CSS;
   document.head.appendChild(style);
-  el.appendChild(createApp(rpc));
+  const includeConfig =
+    options.includeConfig === true ||
+    globalThis.__MUTSUKI_CONSOLE__?.includeConfig === true;
+  const includeUpgrade =
+    options.includeUpgrade === true ||
+    globalThis.__MUTSUKI_CONSOLE__?.includeUpgrade === true;
+  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade }));
 }
 
 const CSS = `
@@ -230,15 +798,18 @@ html,body,#app{height:100%;margin:0;background:var(--bg);color:var(--text);font-
 .mutsuki-console{display:flex;height:100%}
 .sidebar{width:200px;background:var(--bg-elev);border-right:1px solid var(--border-soft);display:flex;flex-direction:column}
 .brand{font-size:1.2rem;font-weight:700;padding:1rem;color:var(--accent)}
-.nav{padding:.5rem}.nav-item{background:var(--accent-soft);border:0;color:var(--text);text-align:left;padding:.55rem .75rem;border-radius:6px;width:100%}
+.nav{padding:.5rem;display:flex;flex-direction:column;gap:.25rem}
+.nav-item{background:transparent;border:0;color:var(--text-muted);text-align:left;padding:.55rem .75rem;border-radius:6px;width:100%;cursor:pointer;text-decoration:none;display:block}
+.nav-item.active,.nav-item:hover{background:var(--accent-soft);color:var(--text)}
 .sidebar-footer{margin-top:auto;padding:1rem;color:var(--text-faint);font-size:.75rem}
 .workspace{flex:1;display:flex;flex-direction:column;min-width:0}
 .workspace-header{padding:1rem 1.3rem;border-bottom:1px solid var(--border-soft)}
-.header-row{display:flex;justify-content:space-between;gap:1rem}
+.header-row{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
 .workspace-header h1{margin:0;font-size:1.1rem}
 .workspace-header p{margin:.3rem 0 0;color:var(--text-muted);font-size:.85rem}
 .workspace-content{padding:1.1rem 1.3rem;overflow:auto}
 .ghost{background:var(--bg-subtle);border:1px solid var(--border);color:var(--text);padding:.4rem .7rem;border-radius:6px;cursor:pointer}
+.ghost.danger{border-color:color-mix(in oklch,var(--err) 40%,var(--border));color:var(--err)}
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:.7rem;margin-bottom:1rem}
 .status-card,.metric-card{background:var(--bg-elev);border:1px solid var(--border-soft);border-radius:8px;padding:.8rem}
 .status-card.ok{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft))}
@@ -247,9 +818,27 @@ html,body,#app{height:100%;margin:0;background:var(--bg);color:var(--text);font-
 .label{font-size:.75rem;color:var(--text-muted);margin-bottom:.3rem}
 .value{font-size:1.05rem;font-weight:600}
 .section{margin:1.2rem 0}.section h2{margin:0 0 .6rem;font-size:.95rem}
+.section.nested{margin:.6rem 0 0}.section.nested h3{margin:0 0 .45rem;font-size:.85rem;color:var(--text-muted);font-weight:600}
+.plugin-card{margin-bottom:.8rem}
+.candidate-row{margin-top:.35rem}
+.pill{display:inline-flex;align-items:center;padding:.2rem .55rem;border-radius:999px;font-size:.75rem;border:1px solid var(--border-soft);background:var(--bg-subtle)}
+.pill.ok{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft));color:var(--ok)}
+.pill.warn{border-color:color-mix(in oklch,var(--accent) 40%,var(--border-soft));color:var(--accent)}
+.pill.err{border-color:color-mix(in oklch,var(--err) 40%,var(--border-soft));color:var(--err)}
+.mono{font-family:var(--font-mono, ui-monospace, monospace)}
+.err-text{color:var(--err)}
+.toolbar.nested{margin-top:.45rem}
 .tree-item{background:var(--bg-elev);border:1px solid var(--border-soft);border-radius:8px;padding:.7rem .85rem;margin-bottom:.45rem}
+.row-item{display:flex;justify-content:space-between;gap:1rem;align-items:center}
+.row-actions{display:flex;gap:.4rem;flex-shrink:0}
 .muted{color:var(--text-muted);font-size:.8rem;margin-top:.2rem}
-.error-banner{background:color-mix(in oklch,var(--err) 16%,var(--bg-elev));border:1px solid var(--err);color:var(--err);padding:.8rem;border-radius:8px}
+.toolbar{margin-bottom:.8rem}
+input[type=search]{flex:1;min-width:0;background:var(--bg-subtle);border:1px solid var(--border-soft);color:var(--text);padding:.45rem .6rem;border-radius:6px}
+select{background:var(--bg-subtle);border:1px solid var(--border-soft);color:var(--text);padding:.45rem .6rem;border-radius:6px;margin-top:.35rem}
+.log-block{background:var(--bg-subtle);border:1px solid var(--border-soft);border-radius:8px;padding:.8rem;overflow:auto;max-height:320px;font-size:.78rem;line-height:1.45}
+.error-banner,.flash-banner{background:color-mix(in oklch,var(--err) 16%,var(--bg-elev));border:1px solid var(--err);color:var(--err);padding:.8rem;border-radius:8px;margin:.8rem 1.3rem 0}
+.flash-banner{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft));color:var(--text);background:color-mix(in oklch,var(--ok) 12%,var(--bg-elev))}
+.flash-banner.error{border-color:var(--err);color:var(--err);background:color-mix(in oklch,var(--err) 16%,var(--bg-elev))}
 `;
 
 export default {
