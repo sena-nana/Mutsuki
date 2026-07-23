@@ -218,7 +218,7 @@ fn plan_steps(
     steps
 }
 
-fn sibling_checkout_hint(module_id: &str) -> String {
+pub(crate) fn sibling_checkout_hint(module_id: &str) -> String {
     match module_id {
         "core" => "../MutsukiCore".into(),
         "service_host" => "../MutsukiServiceHost".into(),

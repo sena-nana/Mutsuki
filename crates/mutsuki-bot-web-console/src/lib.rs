@@ -3,11 +3,13 @@
 //! Console = WebApplication shell + control/overview/(optional) config WebExtensions.
 //! Does not embed business pages into WebHost Recovery.
 
+mod config_demo;
 mod secret_status;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub use config_demo::demo_config_service;
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};

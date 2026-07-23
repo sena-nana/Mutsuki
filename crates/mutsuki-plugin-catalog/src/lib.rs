@@ -3,9 +3,14 @@
 //! Does not perform runtime plugin registration; ABI artifacts must land under
 //! `plugins/installed` and be selected via `[[plugins.configured]]` + LoadPlan.
 
+mod execute;
 mod release_set;
 mod upgrade;
 
+pub use execute::{
+    StepStatus, UpgradeExecuteOptions, UpgradeExecuteReport, UpgradeStepResult,
+    execute_module_upgrade, format_execute_cli_command,
+};
 pub use release_set::{ReleaseSetInfo, ReleaseSetRepository, load_release_set};
 pub use upgrade::{
     FixtureRemoteHeadProvider, ModuleUpgradeSummary, RemoteHeadError, RemoteHeadProvider,

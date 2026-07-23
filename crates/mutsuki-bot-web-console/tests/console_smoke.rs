@@ -6,7 +6,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_web_console::{
     SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    build_console_host, empty_config_service,
+    build_console_host, demo_config_service, empty_config_service,
 };
 use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 use mutsuki_web_host::WebHost;
@@ -84,7 +84,42 @@ async fn embedded_console_with_config_shell() {
     )
     .await
     .unwrap();
-    assert!(providers.as_array().unwrap().is_empty());
+    assert_eq!(providers.as_array().unwrap().len(), 0);
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn embedded_console_demo_config_provider_is_usable() {
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        include_config: true,
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, _dirs) = build_console_host(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        Some(demo_config_service()),
+        None,
+        &WebConsolePaths::default(),
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let providers = ws_rpc(
+        &host.listen_addr().unwrap().to_string(),
+        "config",
+        "providers.list",
+    )
+    .await
+    .unwrap();
+    assert_eq!(providers.as_array().unwrap(), &vec![json!("product")]);
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

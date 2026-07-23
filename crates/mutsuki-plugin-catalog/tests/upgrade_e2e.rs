@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use mutsuki_plugin_catalog::{
-    FixtureRemoteHeadProvider, UpgradeStatus, check_module_updates, load_release_set,
-    plan_module_upgrade,
+    FixtureRemoteHeadProvider, UpgradeExecuteOptions, UpgradeStatus, check_module_updates,
+    execute_module_upgrade, load_release_set,
 };
 
 #[test]
@@ -30,14 +30,21 @@ fn check_fixture_remote_reports_updates() {
 }
 
 #[test]
-fn plan_core_module_includes_build_and_pin_steps() {
+fn execute_dry_run_emits_structured_report() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let release_set = load_release_set(&root.join("tests/fixtures/release-set.toml")).unwrap();
-    let plan = plan_module_upgrade(&release_set, "core", Some("bbbb2222")).unwrap();
-    assert_eq!(plan.target_revision, "bbbb2222");
-    let step_ids: Vec<_> = plan.steps.iter().map(|step| step.id.as_str()).collect();
-    assert!(step_ids.contains(&"fetch"));
-    assert!(step_ids.contains(&"build"));
-    assert!(step_ids.contains(&"pin"));
-    assert!(step_ids.contains(&"reload"));
+    let report = execute_module_upgrade(
+        &release_set,
+        &root.join("tests/fixtures/release-set.toml"),
+        "core",
+        Some("bbbb2222"),
+        &UpgradeExecuteOptions {
+            dry_run: true,
+            workspace: Some(root.join("..").join("..")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(report.success);
+    assert!(report.steps.iter().any(|step| step.id == "pin"));
 }

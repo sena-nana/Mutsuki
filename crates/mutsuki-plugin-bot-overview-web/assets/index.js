@@ -728,6 +728,7 @@ async function renderUpgrade(content, rpc, app, state) {
     const body = await rpc.read("upgrade", "plan", params);
     const plan = body?.plan || {};
     const steps = plan.steps || [];
+    const cliCommand = body?.cli_command || "";
     detailBody.innerHTML = `
       <div class="section">
         <h2>${escapeHtml(moduleId)}</h2>
@@ -742,11 +743,48 @@ async function renderUpgrade(content, rpc, app, state) {
               `<div class="tree-item"><strong>${index + 1}. ${escapeHtml(step.title || step.id)}</strong><div class="muted">${escapeHtml(step.detail || "")}</div>${step.cli_hint ? `<pre class="log-block mono">${escapeHtml(step.cli_hint)}</pre>` : ""}</div>`,
           )
           .join("") || "<div class='muted'>暂无</div>"}
+        ${cliCommand ? `<pre class="log-block mono" id="upgrade-cli-command">${escapeHtml(cliCommand)}</pre>` : ""}
         <div class="toolbar nested">
+          <button type="button" class="ghost" id="copy-upgrade-cli">复制 execute 命令</button>
+          <button type="button" class="ghost" id="preview-upgrade-execute">预览 dry-run</button>
           <button type="button" class="ghost" id="goto-plugins">ABI 更新后去插件页重载</button>
         </div>
+        <div id="upgrade-execute-preview"></div>
       </div>
     `;
+    detailBody.querySelector("#copy-upgrade-cli")?.addEventListener("click", async () => {
+      if (!cliCommand) return;
+      try {
+        await navigator.clipboard.writeText(cliCommand);
+      } catch {
+        window.prompt("复制 execute 命令", cliCommand);
+      }
+    });
+    detailBody.querySelector("#preview-upgrade-execute")?.addEventListener("click", async () => {
+      const preview = detailBody.querySelector("#upgrade-execute-preview");
+      if (!preview) return;
+      preview.innerHTML = "<div class='muted'>dry-run 预览中…</div>";
+      try {
+        const executeParams = { module_id: moduleId, dry_run: true };
+        if (targetRevision) executeParams.target_revision = targetRevision;
+        const executeBody = await rpc.read("upgrade", "execute", executeParams);
+        const report = executeBody?.report || {};
+        const reportSteps = report.steps || [];
+        preview.innerHTML = `
+          <div class="section nested">
+            <h4>dry-run 结果</h4>
+            <div class="muted">${escapeHtml(executeBody?.note || "")}</div>
+            ${reportSteps
+              .map(
+                (step) =>
+                  `<div class="tree-item"><strong>${escapeHtml(step.id)} · ${escapeHtml(step.status || "")}</strong><div class="muted">${escapeHtml(step.detail || "")}</div></div>`,
+              )
+              .join("") || "<div class='muted'>暂无</div>"}
+          </div>`;
+      } catch (error) {
+        preview.innerHTML = `<div class="err">${escapeHtml(String(error))}</div>`;
+      }
+    });
     detailBody.querySelector("#goto-plugins")?.addEventListener("click", () => {
       state.page = navigate("plugins");
       const nav = app.querySelector(".nav");

@@ -90,6 +90,26 @@ async fn upgrade_check_and_plan_use_fixture_remote() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
+#[tokio::test]
+async fn upgrade_execute_dry_run_via_web() {
+    let mut host = start().await;
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let report = ws_rpc(
+        &addr,
+        "execute",
+        json!({"module_id": "core", "target_revision": "bbbb2222cccc3333dddd4444", "dry_run": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report["dry_run"], true);
+    assert!(report["cli_command"].as_str().unwrap().contains("execute"));
+    assert!(report["report"]["steps"].as_array().unwrap().len() >= 3);
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
 async fn ws_rpc(
     addr: &str,
     method: &str,
