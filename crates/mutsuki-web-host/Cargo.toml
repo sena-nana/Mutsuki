@@ -1,0 +1,29 @@
+[package]
+name = "mutsuki-web-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mutsuki WebHost lifecycle, HTTP/WebSocket serving and application assembly"
+
+[dependencies]
+axum.workspace = true
+futures.workspace = true
+mime_guess.workspace = true
+mutsuki-web-bridge.workspace = true
+mutsuki-web-extension.workspace = true
+mutsuki-web-protocol.workspace = true
+mutsuki-web-recovery.workspace = true
+mutsuki-link-core.workspace = true
+mutsuki-link-local.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+uuid.workspace = true

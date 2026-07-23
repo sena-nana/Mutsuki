@@ -1,0 +1,16 @@
+[package]
+name = "mutsuki-web-extension"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WebExtension descriptors, manifest validation and asset registration"
+
+[dependencies]
+mutsuki-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

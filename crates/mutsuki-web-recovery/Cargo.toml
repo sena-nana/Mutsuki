@@ -1,0 +1,14 @@
+[package]
+name = "mutsuki-web-recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal recovery and safe-mode shell for MutsukiWebHost"
+
+[dependencies]
+mutsuki-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

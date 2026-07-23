@@ -1,0 +1,280 @@
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use axum::Router;
+use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use futures::{SinkExt, StreamExt};
+use mutsuki_web_bridge::{HandleOutcome, WebBridge};
+use mutsuki_web_protocol::{WebShellAssets, WireMessage};
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use crate::config::WebHostConfig;
+use crate::error::{WebHostError, WebHostResult};
+
+#[derive(Clone)]
+struct AppState {
+    bridge: WebBridge,
+    shell_root: PathBuf,
+    index_file: String,
+    connections: Arc<AtomicU64>,
+    budgets_max_connections: usize,
+}
+
+pub struct HostServer {
+    config: WebHostConfig,
+    bridge: WebBridge,
+    shell: WebShellAssets,
+}
+
+impl HostServer {
+    pub fn new(
+        config: WebHostConfig,
+        bridge: WebBridge,
+        shell: WebShellAssets,
+        _cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            config,
+            bridge,
+            shell,
+        }
+    }
+
+    pub async fn serve(
+        self,
+        ready_tx: oneshot::Sender<WebHostResult<SocketAddr>>,
+        stop_rx: oneshot::Receiver<()>,
+        cancel: CancellationToken,
+    ) -> WebHostResult<()> {
+        let connections = Arc::new(AtomicU64::new(0));
+        let state = AppState {
+            bridge: self.bridge.clone(),
+            shell_root: self.shell.root_dir.clone(),
+            index_file: self.shell.index_file.clone(),
+            connections: connections.clone(),
+            budgets_max_connections: self.config.budgets.max_connections,
+        };
+
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/ws", get(ws_handler))
+            .route("/", get(index_handler))
+            .route("/{*path}", get(static_handler))
+            .with_state(state);
+
+        // Axum/Hyper types stay inside this module and are not part of the stable ABI.
+        let addr = self
+            .config
+            .listen
+            .socket_addr()
+            .parse::<SocketAddr>()
+            .map_err(|err| WebHostError::InvalidConfig(err.to_string()))?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|err| WebHostError::StartFailed(err.to_string()))?;
+        let local = listener
+            .local_addr()
+            .map_err(|err| WebHostError::StartFailed(err.to_string()))?;
+        let _ = ready_tx.send(Ok(local));
+
+        let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = cancel.cancelled() => {}
+                _ = stop_rx => {}
+            }
+        });
+
+        server
+            .await
+            .map_err(|err| WebHostError::StopFailed(err.to_string()))?;
+        Ok(())
+    }
+}
+
+async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let metrics = state.bridge.metrics();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({
+            "healthy": true,
+            "active_sessions": state.bridge.active_sessions(),
+            "safe_mode": state.bridge.safe_mode(),
+            "metrics": metrics,
+        })
+        .to_string(),
+    )
+}
+
+async fn index_handler(State(state): State<AppState>) -> Response {
+    serve_file(&state.shell_root.join(&state.index_file), true).await
+}
+
+async fn static_handler(
+    State(state): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    // Prevent path traversal.
+    if path.contains("..") {
+        return (StatusCode::BAD_REQUEST, "invalid path").into_response();
+    }
+    let file_path = state.shell_root.join(&path);
+    serve_file(&file_path, false).await
+}
+
+async fn serve_file(path: &std::path::Path, is_index: bool) -> Response {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => {
+            let mime = mime_guess::from_path(path)
+                .first_or_octet_stream()
+                .essence_str()
+                .to_string();
+            let mut response = (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (
+                        header::CONTENT_SECURITY_POLICY,
+                        "default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'".into(),
+                    ),
+                    (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+                ],
+                bytes,
+            )
+                .into_response();
+            if !is_index {
+                response.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                );
+            }
+            response
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    let current = state.connections.load(Ordering::Relaxed) as usize;
+    if current >= state.budgets_max_connections {
+        return (StatusCode::TOO_MANY_REQUESTS, "connection budget exceeded").into_response();
+    }
+    state.connections.fetch_add(1, Ordering::Relaxed);
+    state
+        .bridge
+        .set_connections(state.connections.load(Ordering::Relaxed));
+    ws.on_upgrade(move |socket| handle_socket(socket, state))
+}
+
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut session_id: Option<Uuid> = None;
+
+    while let Some(message) = receiver.next().await {
+        let Ok(message) = message else {
+            break;
+        };
+        let Message::Text(text) = message else {
+            continue;
+        };
+        if text.len() > state.bridge.budgets().max_payload_bytes {
+            let _ = sender
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "error",
+                        "code": "payload_too_large",
+                        "message": "payload exceeds budget",
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            break;
+        }
+
+        let parsed = WireMessage::decode(text.as_bytes());
+        let Ok(wire) = parsed else {
+            let _ = sender
+                .send(Message::Text(
+                    serde_json::json!({
+                        "type": "error",
+                        "code": "invalid_message",
+                        "message": "invalid wire message",
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            continue;
+        };
+
+        match state.bridge.handle_message(session_id, wire) {
+            Ok(HandleOutcome::Reply(reply)) => {
+                if let WireMessage::HelloAck { session, .. } = &reply {
+                    session_id = Some(session.session_id);
+                }
+                if let Ok(bytes) = reply.encode() {
+                    if sender
+                        .send(Message::Text(
+                            String::from_utf8_lossy(&bytes).into_owned().into(),
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+            Ok(HandleOutcome::Subscribed(_)) | Ok(HandleOutcome::Unsubscribed(_)) => {}
+            Err(err) => {
+                let _ = sender
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "type": "error",
+                            "code": "bridge_error",
+                            "message": err.to_string(),
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await;
+            }
+        }
+
+        // Event delivery is pull-on-activity (pong/rpc), never a busy poll loop.
+        if let Some(sid) = session_id {
+            let events = state.bridge.take_events(sid);
+            state.bridge.set_ws_queue_depth(events.len() as u64);
+            for event in events {
+                if let Ok(bytes) = WireMessage::Event(event).encode() {
+                    if sender
+                        .send(Message::Text(
+                            String::from_utf8_lossy(&bytes).into_owned().into(),
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(session_id) = session_id {
+        state.bridge.close_session(session_id);
+    }
+    state.connections.fetch_sub(1, Ordering::Relaxed);
+    state
+        .bridge
+        .set_connections(state.connections.load(Ordering::Relaxed));
+}
