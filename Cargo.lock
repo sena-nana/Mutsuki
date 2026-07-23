@@ -330,7 +330,6 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-config",
  "mutsuki-plugin-bot-config-web",
- "mutsuki-plugin-bot-overview-web",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -1718,8 +1717,6 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "futures-util",
- "mutsuki-bot-config",
- "mutsuki-plugin-bot-config-web",
  "mutsuki-service-control",
  "mutsuki-web-bridge",
  "mutsuki-web-extension",

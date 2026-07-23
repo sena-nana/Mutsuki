@@ -58,8 +58,8 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 
 - `mutsuki-bot-config` / `mutsuki-bot-config-derive`: Schema-first ConfigDescriptor + `#[derive(MutsukiConfig)]`
 - `mutsuki-plugin-bot-config-web`: 默认 Web 配置插件（Koishi 风格控制台 + LiliaUI tokens）
-- `mutsuki-plugin-bot-overview-web`: Web 主界面概览（系统状态、Bot 结构、任务/Runner 计数、uptime）
-- `examples/config-demo`: overview + config 控制台 demo（fixture ControlHandler）
+- `mutsuki-plugin-bot-overview-web`: Web 概览（`overview.summary`：状态/结构/计数/uptime）
+- `examples/config-demo`: Discord-like 最小可用配置闭环
 
 - `mutsuki-bot-protocol`: common `BotEvent`, `BotMessage`, `MessageSegment`, `BotTarget`, account, permission, and error contracts.
 - `mutsuki-bot-sdk`: author-facing helpers that lower to Mutsuki task protocols.
