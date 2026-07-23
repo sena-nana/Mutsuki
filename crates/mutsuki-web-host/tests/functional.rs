@@ -103,6 +103,7 @@ async fn start_host(safe_mode: bool, extension: Option<ExampleExtension>) -> Mut
         .listen("127.0.0.1:0")
         .safe_mode(safe_mode)
         .shell_dir(shell_dir.path().join("shell"))
+        .auth_token("test-token")
         .mode(DeploymentMode::Embedded);
     if let Some(extension) = extension {
         builder = builder.extension(extension);
@@ -166,7 +167,7 @@ async fn loads_extension_and_answers_rpc_over_bridge() {
             mutsuki_web_protocol::WireMessage::Hello {
                 protocol_version: WEB_PROTOCOL_VERSION.into(),
                 capabilities: vec!["example.read".into()],
-                auth_token: None,
+                auth_token: Some("test-token".into()),
             },
         )
         .unwrap();
@@ -217,7 +218,7 @@ async fn extension_failure_is_isolated_and_recovery_still_works() {
             mutsuki_web_protocol::WireMessage::Hello {
                 protocol_version: WEB_PROTOCOL_VERSION.into(),
                 capabilities: vec!["recovery.read".into(), "recovery.write".into()],
-                auth_token: None,
+                auth_token: Some("test-token".into()),
             },
         )
         .unwrap();
@@ -304,8 +305,16 @@ async fn standalone_mode_builds_with_link_endpoint() {
 
 #[tokio::test]
 async fn capability_denies_missing_permission() {
-    let dir = tempdir().unwrap();
-    let mut host = start_host(false, Some(ExampleExtension::ok(dir.path()))).await;
+    // Unauthenticated open_local is read-only: host.status works, recovery.write does not.
+    let shell_dir = tempdir().unwrap();
+    let mut host = MutsukiWebHost::builder()
+        .application(MinimalWebApplication::empty("mutsuki.web.example"))
+        .listen("127.0.0.1:0")
+        .shell_dir(shell_dir.path().join("shell"))
+        .mode(DeploymentMode::Embedded)
+        .build()
+        .unwrap();
+    host.start().await.unwrap();
     let bridge = host.bridge().cloned().unwrap();
     let hello = bridge
         .handle_message(
@@ -321,14 +330,16 @@ async fn capability_denies_missing_permission() {
         mutsuki_web_bridge::HandleOutcome::Reply(mutsuki_web_protocol::WireMessage::HelloAck {
             session,
             ..
-        }) => session.session_id,
+        }) => {
+            assert!(
+                !session.capabilities.iter().any(|cap| cap == "*"),
+                "open_local must not grant *"
+            );
+            session.session_id
+        }
         _ => panic!("hello"),
     };
 
-    // open_local grants "*", so explicitly use a restricted auth by creating a fresh bridge call
-    // through recovery method which checks recovery.write.
-    // Clear capabilities by using host-only path: disable extension requires recovery.write.
-    // With open_local, * is granted. Verify token redaction instead.
     let response = bridge
         .handle_message(
             Some(session_id),
@@ -350,8 +361,28 @@ async fn capability_denies_missing_permission() {
         }
         _ => panic!("status"),
     }
+
+    let denied = bridge
+        .handle_message(
+            Some(session_id),
+            mutsuki_web_protocol::WireMessage::Rpc(mutsuki_web_protocol::RpcRequest {
+                id: Uuid::new_v4(),
+                namespace: "recovery".into(),
+                method: "disable_extension".into(),
+                params: JsonValue::Null,
+            }),
+        )
+        .unwrap();
+    match denied {
+        mutsuki_web_bridge::HandleOutcome::Reply(mutsuki_web_protocol::WireMessage::RpcResult(
+            result,
+        )) => {
+            assert_eq!(result.error.as_ref().unwrap().code, "capability_denied");
+        }
+        _ => panic!("expected capability denial"),
+    }
     host.stop().await.unwrap();
-    std::mem::forget(dir);
+    std::mem::forget(shell_dir);
 }
 
 #[tokio::test]
@@ -365,7 +396,7 @@ async fn slow_client_budget_does_not_block_stop() {
             mutsuki_web_protocol::WireMessage::Hello {
                 protocol_version: WEB_PROTOCOL_VERSION.into(),
                 capabilities: vec!["*".into()],
-                auth_token: None,
+                auth_token: Some("test-token".into()),
             },
         )
         .unwrap();
