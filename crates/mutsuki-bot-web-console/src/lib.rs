@@ -4,6 +4,7 @@
 //! Does not embed business pages into WebHost Recovery.
 
 mod config_demo;
+mod product_config;
 mod secret_status;
 mod standalone;
 
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
+pub use product_config::{ProductConfigError, product_config_service};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use standalone::{StandaloneConsoleSpec, build_standalone_console_host};
 

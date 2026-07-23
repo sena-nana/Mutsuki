@@ -330,7 +330,7 @@ fn run_abi_step(
     let target_dir = workspace.join("target").join("release");
     let inventory = default_abi_inventory_dir(module_id);
     let detail = format!(
-        "校验 `{target}` 中的动态库并将产物指引写入 `{inventory}`",
+        "校验 `{target}` 中的动态库 ABI 入口符号与 sha256，并将产物指引写入 `{inventory}`",
         target = target_dir.display(),
         inventory = inventory.display()
     );
@@ -352,13 +352,31 @@ fn run_abi_step(
     }
     let mut summaries = Vec::new();
     for artifact in artifacts {
+        let contract = match verify_abi_entry_symbol(&artifact) {
+            Ok(contract) => contract,
+            Err(detail) => {
+                return Ok(failed_step(
+                    "abi",
+                    format!(
+                        "{}: {detail}",
+                        artifact
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("artifact")
+                    ),
+                    None,
+                ));
+            }
+        };
         let hash = sha256_file(&artifact)?;
         summaries.push(format!(
-            "{} sha256:{}",
+            "{} abi={} entry={} sha256:{}",
             artifact
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("artifact"),
+            contract.transport_version,
+            contract.entry_symbol,
             hash
         ));
     }
@@ -372,6 +390,45 @@ fn run_abi_step(
         ),
         command: None,
     })
+}
+
+#[derive(Clone, Copy)]
+struct AbiSymbolContract {
+    transport_version: u32,
+    entry_symbol: &'static str,
+}
+
+const ABI_ENTRY_CANDIDATES: &[AbiSymbolContract] = &[
+    AbiSymbolContract {
+        transport_version: 2,
+        entry_symbol: "mutsuki_plugin_abi_v2",
+    },
+    AbiSymbolContract {
+        transport_version: 1,
+        entry_symbol: "mutsuki_plugin_abi_v1",
+    },
+];
+
+fn verify_abi_entry_symbol(path: &Path) -> Result<AbiSymbolContract, String> {
+    // Safety: only resolving presence of known ABI entry symbols; never calling them.
+    let library = unsafe { libloading::Library::new(path) }
+        .map_err(|error| format!("not a loadable ABI dynamic library ({error})"))?;
+    for contract in ABI_ENTRY_CANDIDATES {
+        let mut symbol = contract.entry_symbol.as_bytes().to_vec();
+        symbol.push(0);
+        let found = unsafe { library.get::<libloading::Symbol<*const ()>>(symbol.as_slice()) };
+        if found.is_ok() {
+            return Ok(*contract);
+        }
+    }
+    Err(format!(
+        "missing ABI entry symbol (expected one of {})",
+        ABI_ENTRY_CANDIDATES
+            .iter()
+            .map(|c| c.entry_symbol)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 fn collect_dynamic_libraries(dir: &Path) -> Vec<PathBuf> {

@@ -37,11 +37,11 @@ mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.gi
 mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6e279e7c9339944757e1ac2cc9dae9723acf4140" }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6e279e7c9339944757e1ac2cc9dae9723acf4140" }
-mutsuki-service-link = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6e279e7c9339944757e1ac2cc9dae9723acf4140" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6e279e7c9339944757e1ac2cc9dae9723acf4140" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6e279e7c9339944757e1ac2cc9dae9723acf4140", default-features = false }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
+mutsuki-service-link = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-bot-config = { path = "crates/mutsuki-bot-config" }
@@ -52,10 +52,10 @@ mutsuki-plugin-bot-overview-web = { path = "crates/mutsuki-plugin-bot-overview-w
 mutsuki-plugin-bot-upgrade-web = { path = "crates/mutsuki-plugin-bot-upgrade-web" }
 mutsuki-plugin-catalog = { path = "crates/mutsuki-plugin-catalog" }
 mutsuki-bot-web-console = { path = "crates/mutsuki-bot-web-console" }
-mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "b29e9e88d53bb0ce608a50056840df58a83bffaa" }
-mutsuki-web-extension = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "b29e9e88d53bb0ce608a50056840df58a83bffaa" }
-mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "b29e9e88d53bb0ce608a50056840df58a83bffaa" }
-mutsuki-web-bridge = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "b29e9e88d53bb0ce608a50056840df58a83bffaa" }
+mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "aa35448c9adacd2510f394821d9c14876848bf16" }
+mutsuki-web-extension = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "aa35448c9adacd2510f394821d9c14876848bf16" }
+mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "aa35448c9adacd2510f394821d9c14876848bf16" }
+mutsuki-web-bridge = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "aa35448c9adacd2510f394821d9c14876848bf16" }
 parking_lot = "0.12"
 async-trait = "0.1"
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }

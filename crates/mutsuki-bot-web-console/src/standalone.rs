@@ -36,12 +36,17 @@ pub fn build_standalone_console_host(
     }
 
     let target = parse_link_endpoint(&spec.link_endpoint)?;
-    let app_id = target.app_id.ok_or_else(|| {
-        mutsuki_web_host::WebHostError::InvalidConfig(
-            "standalone control bridge currently requires a local:// link endpoint".into(),
-        )
-    })?;
-
+    let control = if let Some(app_id) = target.app_id {
+        Arc::new(LinkControlHandler::for_app(app_id))
+    } else if target.quic.is_some() {
+        return Err(mutsuki_web_host::WebHostError::InvalidConfig(
+            "standalone quic:// bridge requires caller-injected TLS identity via QuicLinkControlHandler; product Console wiring is not configured yet — use local://mutsuki.servicehost".into(),
+        ));
+    } else {
+        return Err(mutsuki_web_host::WebHostError::InvalidConfig(
+            "standalone control bridge requires local:// or quic:// link endpoint".into(),
+        ));
+    };
     let secrets = WebConsoleSecrets {
         auth_token: spec.auth_token.clone(),
     };
@@ -63,10 +68,8 @@ pub fn build_standalone_console_host(
     )
     .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
-    let caller = mutsuki_plugin_bot_control_web::ControlRpcCaller::new(
-        Arc::new(LinkControlHandler::for_app(app_id)),
-        spec.auth_token.clone(),
-    );
+    let caller =
+        mutsuki_plugin_bot_control_web::ControlRpcCaller::new(control, spec.auth_token.clone());
     let mut builder = base_builder(&config, &secrets, &asset_dirs)
         .mode(DeploymentMode::Standalone)
         .link_endpoint(&spec.link_endpoint);

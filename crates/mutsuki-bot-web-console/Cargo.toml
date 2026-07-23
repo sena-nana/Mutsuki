@@ -19,6 +19,8 @@ mutsuki-web-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 futures-util = { workspace = true }

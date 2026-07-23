@@ -7,6 +7,7 @@ description = "Mutsuki module upgrade catalog: release set pins, remote checks a
 
 [dependencies]
 mutsuki-runtime-contracts = { workspace = true }
+libloading = "0.8"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
