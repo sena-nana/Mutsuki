@@ -70,7 +70,16 @@ local-observable 继续 active，clustered 继续 candidate，clustered producti
 `MutsukiWebHost` **当前不单独列入** `releases/*.toml` 的 `[[repositories]]` 条目，原因如下：
 
 - Release set 的 required owner 集合（见 `scripts/release_set.py` 的 `REQUIRED_REPOSITORIES`）覆盖 Core、ServiceHost、Link、StdPlugins、BotPlugins 等产品/runtime 装配面；WebHost 是 **Web 运行宿主库**，由 BotPlugins（Console 扩展）与 BotTemplate（`web.console` 装配）以 Cargo Git pin 间接锁定 revision。
-- Active 组合验证路径为 ServiceHost 嵌入式 Console（Template `web_console_smoke`）与 BotPlugins crate 测试。Standalone Console 已通过 MutsukiLink local 控制桥接（`local://mutsuki.servicehost`）实现最小闭环；WebHost 尚未单独纳入 release set，因 QUIC/远程 Link 仍未落地。
-- 当 WebHost 成为独立部署面（Standalone + Link 桥接生产可用）或 revision 需要与 BotPlugins 解耦升级时，再新增 `web_host` repository 条目并扩展 `release_set.py` 同步逻辑。
+- Active 组合验证路径为 ServiceHost 嵌入式 Console（Template `web_console_smoke`）与 BotPlugins crate 测试。
+- Standalone Console 的 **local://** 控制桥接（`local://mutsuki.servicehost`）已是 ServiceHost `mutsuki-service-link` 的生产路径。
+- **QUIC/远程**：ServiceHost 已提供 `QuicLinkControlServer` / `QuicLinkControlHandler`（同一控制协议帧，调用方注入 Quinn TLS identity）。WebHost 可解析 `quic://host:port`，但产品 Console 装配尚未接入 TLS identity 配置面；无 identity 时结构化失败，禁止假成功。
+
+### 何时把 `web_host` 写入 release set
+
+同时满足后再新增 `web_host` repository 条目并扩展 `release_set.py`：
+
+1. Standalone + Link 成为独立部署面（不仅是 Template 嵌入式 pin）；
+2. 产品可配置的远程/QUIC TLS identity（证书/信任策略）落地，且有非测试闭环 smoke；
+3. WebHost revision 需要与 BotPlugins 解耦升级。
 
 在此之前，WebHost revision 以 BotTemplate / BotPlugins 工作区 `[workspace.dependencies]` 中的 Git `rev` 为事实源；升级 BotPlugins 或 Template pin 时一并核对 `mutsuki-web-host` / `mutsuki-web-protocol` 与 lockfile 一致。
