@@ -24,6 +24,9 @@ cargo run -p mutsuki-bot
 cargo run -p mutsuki-bot -- path/to/product.toml
 ```
 
+独立 Console 进程（Standalone + Link，与 Runtime 分进程）使用 `mutsuki-bot-console`；
+配置与启动见 [docs/standalone-console.md](docs/standalone-console.md)。
+
 ## 可选 DistributedHost
 
 提交的产品配置显式使用 `[distribution] mode = "disabled"`。此模式不会启动或监管

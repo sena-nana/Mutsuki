@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "mutsuki-bot"
+path = "src/main.rs"
+
+[[bin]]
+name = "mutsuki-bot-console"
+path = "src/bin/mutsuki_bot_console.rs"
+
 [dependencies]
 mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-control-client.workspace = true

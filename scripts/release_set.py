@@ -27,6 +27,7 @@ REQUIRED_REPOSITORIES = {
     "std_plugins",
     "agent_kit",
     "bot_plugins",
+    "web_host",
     "distributed_host",
     "tauri_host",
     "python_runner_kit",

@@ -37,6 +37,8 @@ key_pem_key = "LINK_QUIC_KEY_PEM"
 #   link_endpoint = "quic://127.0.0.1:4433"
 #   quic_server_name = "localhost"
 #   quic_ca_cert_key = "LINK_QUIC_CA_CERT_PEM"
+# Run that mode with: cargo run -p mutsuki-bot --bin mutsuki-bot-console
+# See docs/standalone-console.md.
 [web.console]
 enabled = false
 listen = "127.0.0.1:8787"

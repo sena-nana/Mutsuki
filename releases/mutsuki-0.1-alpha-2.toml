@@ -45,6 +45,12 @@ revision = "137e7474fb9ac16e0648a917caddff851151d832"
 kind = "rust"
 
 [[repositories]]
+id = "web_host"
+url = "https://github.com/sena-nana/MutsukiWebHost.git"
+revision = "aa35448c9adacd2510f394821d9c14876848bf16"
+kind = "rust"
+
+[[repositories]]
 id = "distributed_host"
 url = "https://github.com/sena-nana/MutsukiDistributedHost.git"
 revision = "99c0e8489e5c438177bb7a245182aa7e14973df9"
