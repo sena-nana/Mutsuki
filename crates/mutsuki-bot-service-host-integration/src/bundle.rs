@@ -160,6 +160,8 @@ impl QqBotPluginBundle {
                     "last_event_unix_ms": snapshot.last_event_unix_ms,
                     "reconnect_count": snapshot.reconnect_count,
                     "last_error": snapshot.last_error,
+                    "started_at_unix_ms": snapshot.started_at_unix_ms,
+                    "connected_since_unix_ms": snapshot.connected_since_unix_ms,
                 })
             })
             .register_event_source(Box::new(source)))

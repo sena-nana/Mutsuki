@@ -27,6 +27,8 @@ pub struct QqGatewayHealthSnapshot {
     pub last_event_unix_ms: Option<u128>,
     pub reconnect_count: u64,
     pub last_error: Option<String>,
+    pub started_at_unix_ms: Option<u128>,
+    pub connected_since_unix_ms: Option<u128>,
 }
 
 #[derive(Clone)]
@@ -66,7 +68,10 @@ impl QqGatewayEventSource {
             credentials,
             auth,
             health: QqGatewayHealthHandle {
-                inner: Arc::new(Mutex::new(QqGatewayHealthSnapshot::default())),
+                inner: Arc::new(Mutex::new(QqGatewayHealthSnapshot {
+                    started_at_unix_ms: unix_ms(),
+                    ..QqGatewayHealthSnapshot::default()
+                })),
             },
             stop: Arc::new(Mutex::new(None)),
             stopped: Arc::new(Mutex::new(None)),
@@ -617,6 +622,11 @@ fn reconnect_delay(config: &QqBotConfig, attempt: u32) -> Duration {
 
 fn mark_connected(health: &QqGatewayHealthHandle) {
     let mut health = health.inner.lock().expect("QQBot health mutex");
+    let now = unix_ms();
+    if health.started_at_unix_ms.is_none() {
+        health.started_at_unix_ms = now;
+    }
+    health.connected_since_unix_ms = now;
     health.connected = true;
     health.identified = false;
     health.last_error = None;
@@ -626,12 +636,14 @@ fn mark_disconnected(health: &QqGatewayHealthHandle) {
     let mut health = health.inner.lock().expect("QQBot health mutex");
     health.connected = false;
     health.identified = false;
+    health.connected_since_unix_ms = None;
 }
 
 fn mark_reconnect(health: &QqGatewayHealthHandle, error: &str) {
     let mut health = health.inner.lock().expect("QQBot health mutex");
     health.connected = false;
     health.identified = false;
+    health.connected_since_unix_ms = None;
     health.reconnect_count = health.reconnect_count.saturating_add(1);
     health.last_error = Some(error.into());
 }
@@ -640,6 +652,7 @@ fn mark_error(health: &QqGatewayHealthHandle, error: &str) {
     let mut health = health.inner.lock().expect("QQBot health mutex");
     health.connected = false;
     health.identified = false;
+    health.connected_since_unix_ms = None;
     health.last_error = Some(error.into());
 }
 

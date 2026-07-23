@@ -330,6 +330,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-bot-config",
  "mutsuki-plugin-bot-config-web",
+ "mutsuki-plugin-bot-overview-web",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
  "serde",
@@ -1712,6 +1713,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-overview-web"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "mutsuki-bot-config",
+ "mutsuki-plugin-bot-config-web",
+ "mutsuki-service-control",
+ "mutsuki-web-bridge",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "mutsuki-protocol-browser"
 version = "0.1.0"
 source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=4ed0f8ec2b2ed22041efb362d6754e1c32d527e9#4ed0f8ec2b2ed22041efb362d6754e1c32d527e9"
@@ -1795,7 +1818,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "dirs",
  "serde",
@@ -1807,7 +1830,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
@@ -1819,7 +1842,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -1834,7 +1857,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -1845,7 +1868,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1857,7 +1880,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -1870,7 +1893,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=9556bf6dd85c1215a9387921e3756423f408c471#9556bf6dd85c1215a9387921e3756423f408c471"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=ad9fc746bf47f6cf5c96480f3abc692065bf4c12#ad9fc746bf47f6cf5c96480f3abc692065bf4c12"
 dependencies = [
  "anyhow",
  "futures",

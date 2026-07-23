@@ -1,0 +1,36 @@
+/* Minimal LiliaUI-aligned tokens used by the default config console. */
+:root {
+  color-scheme: dark;
+  --font-sans:
+    "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --bg: oklch(20.9% 0 89.9);
+  --bg-elev: oklch(24.35% 0 89.9);
+  --bg-subtle: oklch(22.64% 0 89.9);
+  --border: oklch(28.5% 0 89.9);
+  --border-soft: oklch(25.62% 0 89.9);
+  --text: oklch(89.75% 0 89.9);
+  --text-muted: oklch(71.5% 0 89.9);
+  --text-faint: oklch(46.76% 0 89.9);
+  --accent: oklch(76.49% 0.102 246.4);
+  --accent-soft: oklch(76.49% 0.102 246.4 / 0.14);
+  --accent-text: oklch(19.78% 0.0278 255.9);
+  --ok: oklch(69.51% 0.1809 145.6);
+  --err: oklch(70.56% 0.1614 20.7);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: oklch(100% 0 89.9);
+  --bg-elev: oklch(96.7% 0.0029 264.5);
+  --bg-subtle: oklch(97.89% 0.0029 264.5);
+  --border: oklch(88% 0.004 260);
+  --border-soft: oklch(92% 0.003 260);
+  --text: oklch(22% 0.01 260);
+  --text-muted: oklch(45% 0.01 260);
+  --text-faint: oklch(62% 0.01 260);
+  --accent: oklch(55% 0.14 250);
+  --accent-soft: oklch(55% 0.14 250 / 0.12);
+  --accent-text: oklch(100% 0 89.9);
+  --ok: oklch(55% 0.16 145);
+  --err: oklch(55% 0.16 25);
+}

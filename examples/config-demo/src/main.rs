@@ -1,4 +1,4 @@
-//! MVP: Discord-like plugin config with #[derive(MutsukiConfig)] + Web console.
+//! Console demo: overview shell + config providers with fixture ControlHandler.
 
 use std::sync::Arc;
 
@@ -6,7 +6,10 @@ use mutsuki_bot_config::{
     ConfigApplyMode, ConfigProviderRegistry, ConfigService, ConfigValue, MemoryConfigProvider,
     MutsukiConfig, MutsukiConfigSchema,
 };
-use mutsuki_plugin_bot_config_web::{ConfigWebExtension, materialize_frontend_assets};
+use mutsuki_plugin_bot_config_web::ConfigWebExtension;
+use mutsuki_plugin_bot_overview_web::{
+    FixtureControlHandler, OverviewWebExtension, materialize_frontend_assets,
+};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{DeploymentMode, WebApplicationDescriptor, WebShellAssets};
 use serde::{Deserialize, Serialize};
@@ -61,7 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let assets_dir = tempfile::tempdir()?;
     let shell_dir = tempfile::tempdir()?;
     let frontend = materialize_frontend_assets(assets_dir.path())?;
-    let extension = ConfigWebExtension::new(service).with_frontend_assets(&frontend);
+    let overview =
+        OverviewWebExtension::new(Arc::new(FixtureControlHandler::default()), "local-dev")
+            .with_frontend_assets(&frontend);
+    let config = ConfigWebExtension::new(service).with_frontend_assets(&frontend);
 
     let shell = WebShellAssets {
         root_dir: frontend.clone(),
@@ -70,8 +76,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let app = MinimalWebApplication::new(
         WebApplicationDescriptor {
-            id: "mutsuki.bot.config.console".into(),
-            name: "Mutsuki Config Console".into(),
+            id: "mutsuki.bot.console".into(),
+            name: "Mutsuki Console".into(),
             version: "0.1.0".into(),
             brand: Some("Mutsuki".into()),
             theme: Some("lilia".into()),
@@ -86,15 +92,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .listen(&listen)
         .mode(DeploymentMode::Embedded)
         .shell_dir(shell_dir.path())
-        .extension(extension)
+        .extension(overview)
+        .extension(config)
         .auth_token("local-dev")
         .build()?;
     host.start().await?;
-    // Keep tempdirs alive for process lifetime.
     std::mem::forget(assets_dir);
     std::mem::forget(shell_dir);
     println!(
-        "Mutsuki config console listening on http://{} (schema-first Discord demo)",
+        "Mutsuki console listening on http://{} (overview + config)",
         host.listen_addr().unwrap()
     );
     tokio::signal::ctrl_c().await?;
