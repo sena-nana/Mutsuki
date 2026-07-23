@@ -14,7 +14,9 @@ use std::sync::Arc;
 pub use config_demo::demo_config_service;
 pub use product_config::{ProductConfigError, product_config_service};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
-pub use standalone::{StandaloneConsoleSpec, build_standalone_console_host};
+pub use standalone::{
+    StandaloneConsoleSpec, StandaloneQuicTlsIdentity, build_standalone_console_host,
+};
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
 use mutsuki_plugin_bot_config_web::{
@@ -48,6 +50,12 @@ pub struct WebConsoleConfig {
     pub include_config: bool,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
+    /// Standalone Link endpoint (`local://…` or `quic://host:port`). Embedded console ignores this.
+    pub link_endpoint: Option<String>,
+    /// TLS server name for `quic://` Standalone Link clients.
+    pub quic_server_name: Option<String>,
+    /// Host secret key referencing the CA / server certificate PEM trusted by Standalone clients.
+    pub quic_ca_cert_key: Option<String>,
 }
 
 fn default_listen() -> String {

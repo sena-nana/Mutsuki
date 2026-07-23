@@ -145,6 +145,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         auth_token_key: None,
         include_config: false,
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
+        ..Default::default()
     };
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),
@@ -232,6 +233,7 @@ async fn standalone_console_fails_loud_when_link_runtime_absent() {
         auth_token: "local-dev".into(),
         include_config: false,
         include_upgrade: false,
+        quic_tls: None,
     };
     let (mut host, _dirs) =
         build_standalone_console_host(&spec, &WebConsolePaths::default()).unwrap();
@@ -310,6 +312,7 @@ async fn standalone_link_control_rpc_reaches_service_host() {
         auth_token: "local-dev".into(),
         include_config: false,
         include_upgrade: false,
+        quic_tls: None,
     };
     let (mut host, _dirs) =
         build_standalone_console_host(&spec, &WebConsolePaths::default()).unwrap();
@@ -337,8 +340,120 @@ async fn standalone_console_requires_link_endpoint() {
         auth_token: "local-dev".into(),
         include_config: false,
         include_upgrade: false,
+        quic_tls: None,
     };
     assert!(build_standalone_console_host(&spec, &WebConsolePaths::default()).is_err());
+}
+
+#[tokio::test]
+async fn standalone_quic_requires_tls_identity() {
+    use mutsuki_bot_web_console::{
+        StandaloneConsoleSpec, WebConsolePaths, build_standalone_console_host,
+    };
+
+    let spec = StandaloneConsoleSpec {
+        listen: "127.0.0.1:0".into(),
+        link_endpoint: "quic://127.0.0.1:4433".into(),
+        auth_token: "local-dev".into(),
+        include_config: false,
+        include_upgrade: false,
+        quic_tls: None,
+    };
+    let err = match build_standalone_console_host(&spec, &WebConsolePaths::default()) {
+        Ok(_) => panic!("expected tls identity failure"),
+        Err(error) => error,
+    };
+    assert!(
+        err.to_string().contains("quic_tls"),
+        "expected tls identity failure, got: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn standalone_quic_link_control_rpc_roundtrip() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use mutsuki_bot_web_console::{
+        StandaloneConsoleSpec, StandaloneQuicTlsIdentity, WebConsolePaths,
+        build_standalone_console_host,
+    };
+    use mutsuki_service_control::{
+        ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest,
+        ControlResponse, HealthReport, ServiceStatus,
+    };
+    use mutsuki_service_link::{QuicLinkControlServer, server_config_from_pem};
+
+    let _guard = link_test_lock();
+
+    struct QuicFixture;
+
+    impl ControlHandler for QuicFixture {
+        fn handle(&self, request: ControlRequest) -> ControlFuture {
+            Box::pin(async move {
+                if request.token != "local-dev" {
+                    return ControlResponse::err(ControlError::Unauthorized);
+                }
+                match request.method {
+                    ControlMethod::HealthCheck => ControlResponse::ok(HealthReport {
+                        service: "ok".into(),
+                        core: "ok".into(),
+                        plugins: "ok".into(),
+                        runners: "ok".into(),
+                        event_sources: "ok".into(),
+                        event_source_details: Vec::new(),
+                        recent_errors: Vec::new(),
+                        components: Default::default(),
+                    }),
+                    ControlMethod::ServiceStatus => ControlResponse::ok(ServiceStatus {
+                        instance_id: "standalone-quic".into(),
+                        profile: "standalone".into(),
+                        uptime_ms: 1,
+                        ipc_endpoint: "quic://127.0.0.1:0".into(),
+                        core_running: true,
+                        plugin_count: 0,
+                        runner_count: 0,
+                    }),
+                    other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
+                }
+            })
+        }
+    }
+
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+    let cert_pem = generated.cert.pem();
+    let key_pem = generated.key_pair.serialize_pem();
+    let server = QuicLinkControlServer::start(
+        "127.0.0.1:0".parse().unwrap(),
+        server_config_from_pem(&cert_pem, &key_pem).unwrap(),
+        Arc::new(QuicFixture),
+    )
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let spec = StandaloneConsoleSpec {
+        listen: "127.0.0.1:0".into(),
+        link_endpoint: format!("quic://{}", server.local_addr()),
+        auth_token: "local-dev".into(),
+        include_config: false,
+        include_upgrade: false,
+        quic_tls: Some(StandaloneQuicTlsIdentity {
+            server_name: "localhost".into(),
+            ca_cert_pem: cert_pem,
+        }),
+    };
+    let (mut host, _dirs) =
+        build_standalone_console_host(&spec, &WebConsolePaths::default()).unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let health = ws_rpc(&addr, "control", "health").await.unwrap();
+    assert_eq!(health["service"], "ok");
+    let status = ws_rpc(&addr, "control", "service_status").await.unwrap();
+    assert_eq!(status["instance_id"], "standalone-quic");
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
 async fn ws_rpc(addr: &str, namespace: &str, method: &str) -> Result<serde_json::Value, String> {

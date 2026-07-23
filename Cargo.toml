@@ -37,11 +37,11 @@ mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.gi
 mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
-mutsuki-service-link = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "b06e2107dc2d0887406afb89d8d4a25f9383fb2e", default-features = false }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa" }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa" }
+mutsuki-service-link = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa", default-features = false }
 mutsuki-bot-protocol = { path = "crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "crates/mutsuki-bot-sdk" }
 mutsuki-bot-config = { path = "crates/mutsuki-bot-config" }
