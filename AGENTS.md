@@ -34,6 +34,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `MutsukiAgentKit` | Agent 协议、SDK、模型、工具和记忆能力 |
 | `MutsukiCliHost` | ServiceHost 公开控制 API 的 CLI/TUI 客户端 |
 | `MutsukiTauriHost` | 内嵌 Core 的桌面 Host、Tauri/WebView bridge 和前端 SDK |
+| `MutsukiWebHost` | Web 运行宿主：HTTP/WS、静态资源、RPC/Event bridge、WebExtension 加载与 Recovery Shell |
 | 其他能力仓库 | 自己领域的协议、插件、Provider、Runner 或 sidecar |
 | 本仓库 | 外部配置契约、catalog 聚合、ServiceRuntime 启动和跨仓库装配验收 |
 

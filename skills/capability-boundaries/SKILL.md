@@ -24,6 +24,7 @@ description: Audit Mutsuki BotTemplate issues and route missing runtime, host, B
 - AgentKit/Provider 仓库：Agent 协议、模型、工具和记忆。
 - CliHost：ServiceHost 控制 API 的终端客户端。
 - TauriHost：桌面内嵌生命周期、Tauri/WebView bridge 和前端 SDK。
+- WebHost：Web 运行宿主、HTTP/WS、静态资源、RPC/Event bridge、WebExtension 加载与 Recovery Shell。
 - 本仓库：外部配置、owner catalog 聚合、Runtime 启动和跨仓库装配验收；不得拥有业务 Runner。
 
 优先修复共享边界。上游缺失或未推送时报告 unavailable，不在模板中添加 shim 或用 test double 冒充生产能力。最终列出各仓库职责、验证和远端 revision。
