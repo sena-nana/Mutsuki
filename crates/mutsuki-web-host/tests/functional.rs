@@ -292,7 +292,7 @@ async fn standalone_mode_builds_with_link_endpoint() {
         .application(MinimalWebApplication::empty("app"))
         .listen("127.0.0.1:0")
         .mode(DeploymentMode::Standalone)
-        .link_endpoint("local://webhost")
+        .link_endpoint("local://mutsuki.servicehost")
         .shell_dir(shell_dir.path())
         .build()
         .unwrap();

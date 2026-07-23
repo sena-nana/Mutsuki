@@ -6,8 +6,8 @@ listen = "127.0.0.1:8080"
 mode = "embedded" # or "standalone"
 safe_mode = false
 
-# standalone only
-# link_endpoint = "local://webhost"
+# standalone only — ServiceHost Link control app id
+# link_endpoint = "local://mutsuki.servicehost"
 
 # Optional local auth token reference (never commit real secrets).
 # auth_token = "secret:webhost.auth_token"
