@@ -1,25 +1,18 @@
-//! Standalone WebHost + Link endpoint assembly skeleton.
+//! Standalone WebHost + Link control bridge assembly.
 //!
 //! WebHost validates `link_endpoint` and serves the console shell in
-//! [`DeploymentMode::Standalone`]. Control-plane RPC still requires an in-process
-//! [`ControlHandler`]; Link transport that proxies control over MutsukiLink is
-//! **not wired yet**. Until the WebHost Link bridge lands, use
-//! [`UnwiredLinkControlHandler`] so `control.*` fails with structured
-//! [`STANDALONE_LINK_NOT_WIRED`] instead of returning fixture/demo data.
+//! [`DeploymentMode::Standalone`]. Control-plane RPC is forwarded to ServiceHost
+//! over MutsukiLink local transport via [`mutsuki_service_link::LinkControlHandler`].
 
 use std::sync::Arc;
 
-use mutsuki_service_control::{
-    ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse,
-};
-use mutsuki_web_host::{MutsukiWebHost, WebHostResult};
+use mutsuki_service_link::LinkControlHandler;
+use mutsuki_web_host::{MutsukiWebHost, WebHostResult, parse_link_endpoint};
 use mutsuki_web_protocol::DeploymentMode;
 
 use crate::{
     ConsoleAssetDirs, WebConsolePaths, WebConsoleSecrets, base_builder, materialize_console_shell,
 };
-
-pub const STANDALONE_LINK_NOT_WIRED: &str = "standalone.link_not_wired";
 
 /// Standalone console build inputs (Link endpoint required).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,22 +24,7 @@ pub struct StandaloneConsoleSpec {
     pub include_upgrade: bool,
 }
 
-/// Placeholder control plane for standalone builds before Link transport ships.
-#[derive(Clone, Default)]
-pub struct UnwiredLinkControlHandler;
-
-impl ControlHandler for UnwiredLinkControlHandler {
-    fn handle(&self, _request: ControlRequest) -> ControlFuture {
-        Box::pin(async move {
-            ControlResponse::err(ControlError::Failed(format!(
-                "{STANDALONE_LINK_NOT_WIRED}: Link transport not wired; \
-                 embedded console or WebHost Link bridge required"
-            )))
-        })
-    }
-}
-
-/// Build a standalone WebHost console shell. Control RPC fails until Link bridge is wired.
+/// Build a standalone WebHost console shell with Link-bridged control RPC.
 pub fn build_standalone_console_host(
     spec: &StandaloneConsoleSpec,
     paths: &WebConsolePaths,
@@ -56,6 +34,13 @@ pub fn build_standalone_console_host(
             "standalone console requires non-empty link_endpoint".into(),
         ));
     }
+
+    let target = parse_link_endpoint(&spec.link_endpoint)?;
+    let app_id = target.app_id.ok_or_else(|| {
+        mutsuki_web_host::WebHostError::InvalidConfig(
+            "standalone control bridge currently requires a local:// link endpoint".into(),
+        )
+    })?;
 
     let secrets = WebConsoleSecrets {
         auth_token: spec.auth_token.clone(),
@@ -79,7 +64,7 @@ pub fn build_standalone_console_host(
     .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
     let caller = mutsuki_plugin_bot_control_web::ControlRpcCaller::new(
-        Arc::new(UnwiredLinkControlHandler),
+        Arc::new(LinkControlHandler::for_app(app_id)),
         spec.auth_token.clone(),
     );
     let mut builder = base_builder(&config, &secrets, &asset_dirs)

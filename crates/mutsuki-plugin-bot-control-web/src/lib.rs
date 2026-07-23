@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use mutsuki_service_control::{
     ControlError, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
-    CoreDrainResponse, EventSourceStatus, HealthReport, LogTailResponse,
-    PluginListResponse, PluginReloadResponse, RunnerStatus, RuntimeStatisticsView, ServiceStatus,
-    TaskEventPage, TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchResponse,
+    CoreDrainResponse, EventSourceStatus, HealthReport, LogTailResponse, PluginListResponse,
+    PluginReloadResponse, RunnerStatus, RuntimeStatisticsView, ServiceStatus, TaskEventPage,
+    TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchResponse,
 };
 use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
 use mutsuki_web_protocol::{
@@ -40,7 +40,7 @@ impl ControlRpcCaller {
     pub fn invoke(&self, method: ControlMethod, params: Value) -> Result<Value, ExtensionError> {
         let control = self.control.clone();
         let token = self.token.clone();
-        unwrap_control(futures_executor::block_on(async move {
+        let future = async move {
             control
                 .handle(ControlRequest {
                     token,
@@ -48,7 +48,8 @@ impl ControlRpcCaller {
                     params,
                 })
                 .await
-        }))
+        };
+        unwrap_control(run_control_future(future))
     }
 
     pub fn health(&self) -> Result<HealthReport, ExtensionError> {
@@ -350,6 +351,32 @@ fn manifest() -> ExtensionManifest {
         permissions: vec![],
         assets: vec![],
         protocol_version: WEB_PROTOCOL_VERSION.into(),
+    }
+}
+
+fn run_control_future<F>(future: F) -> ControlResponse
+where
+    F: std::future::Future<Output = ControlResponse> + Send + 'static,
+{
+    // WebHost RPC handlers are sync; Link control I/O is async.
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => match handle.runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => {
+                // Prefer the host reactor so local Link shares ServiceHost accept loop timing.
+                tokio::task::block_in_place(|| handle.block_on(future))
+            }
+            _ => std::thread::spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .enable_all()
+                    .build()
+                    .expect("control bridge runtime")
+                    .block_on(future)
+            })
+            .join()
+            .expect("control bridge thread"),
+        },
+        Err(_) => futures_executor::block_on(future),
     }
 }
 

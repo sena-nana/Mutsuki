@@ -14,6 +14,14 @@ use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
 use serde_json::json;
 use uuid::Uuid;
 
+static LINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn link_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    LINK_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[tokio::test]
 async fn embedded_console_reads_overview_and_control() {
     let config = WebConsoleConfig {
@@ -210,16 +218,17 @@ async fn embedded_console_secret_status_is_read_only() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
-#[tokio::test]
-async fn standalone_console_builds_and_rejects_control_until_link_wired() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn standalone_console_fails_loud_when_link_runtime_absent() {
     use mutsuki_bot_web_console::{
-        STANDALONE_LINK_NOT_WIRED, StandaloneConsoleSpec, WebConsolePaths,
-        build_standalone_console_host,
+        StandaloneConsoleSpec, WebConsolePaths, build_standalone_console_host,
     };
+    use mutsuki_service_link::STANDALONE_LINK_CONNECT_FAILED;
 
+    let _guard = link_test_lock();
     let spec = StandaloneConsoleSpec {
         listen: "127.0.0.1:0".into(),
-        link_endpoint: "local://webhost".into(),
+        link_endpoint: "local://mutsuki.nolink.test".into(),
         auth_token: "local-dev".into(),
         include_config: false,
         include_upgrade: false,
@@ -230,7 +239,87 @@ async fn standalone_console_builds_and_rejects_control_until_link_wired() {
     let addr = host.listen_addr().unwrap().to_string();
 
     let err = ws_rpc(&addr, "control", "health").await.unwrap_err();
-    assert!(err.contains(STANDALONE_LINK_NOT_WIRED));
+    assert!(
+        err.contains(STANDALONE_LINK_CONNECT_FAILED),
+        "expected connect failure, got: {err}"
+    );
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn standalone_link_control_rpc_reaches_service_host() {
+    use std::sync::Arc;
+
+    use mutsuki_bot_web_console::{
+        StandaloneConsoleSpec, WebConsolePaths, build_standalone_console_host,
+    };
+    use mutsuki_service_control::{
+        ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest,
+        ControlResponse, HealthReport, ServiceStatus,
+    };
+    use mutsuki_service_link::{LinkControlServer, SERVICE_LINK_APP_ID};
+    use tempfile::tempdir;
+
+    let _guard = link_test_lock();
+
+    struct StandaloneFixture;
+
+    impl ControlHandler for StandaloneFixture {
+        fn handle(&self, request: ControlRequest) -> ControlFuture {
+            Box::pin(async move {
+                if request.token != "local-dev" {
+                    return ControlResponse::err(ControlError::Unauthorized);
+                }
+                match request.method {
+                    ControlMethod::HealthCheck => ControlResponse::ok(HealthReport {
+                        service: "ok".into(),
+                        core: "ok".into(),
+                        plugins: "ok".into(),
+                        runners: "ok".into(),
+                        event_sources: "ok".into(),
+                        event_source_details: Vec::new(),
+                        recent_errors: Vec::new(),
+                        components: Default::default(),
+                    }),
+                    ControlMethod::ServiceStatus => ControlResponse::ok(ServiceStatus {
+                        instance_id: "standalone-link".into(),
+                        profile: "standalone".into(),
+                        uptime_ms: 1,
+                        ipc_endpoint: format!("local://{SERVICE_LINK_APP_ID}"),
+                        core_running: true,
+                        plugin_count: 0,
+                        runner_count: 0,
+                    }),
+                    other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
+                }
+            })
+        }
+    }
+
+    let dir = tempdir().unwrap();
+    let _link =
+        LinkControlServer::start(dir.path(), "standalone-link", Arc::new(StandaloneFixture))
+            .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let spec = StandaloneConsoleSpec {
+        listen: "127.0.0.1:0".into(),
+        link_endpoint: format!("local://{SERVICE_LINK_APP_ID}"),
+        auth_token: "local-dev".into(),
+        include_config: false,
+        include_upgrade: false,
+    };
+    let (mut host, _dirs) =
+        build_standalone_console_host(&spec, &WebConsolePaths::default()).unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let health = ws_rpc(&addr, "control", "health").await.unwrap();
+    assert_eq!(health["service"], "ok");
+    let status = ws_rpc(&addr, "control", "service_status").await.unwrap();
+    assert_eq!(status["instance_id"], "standalone-link");
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;

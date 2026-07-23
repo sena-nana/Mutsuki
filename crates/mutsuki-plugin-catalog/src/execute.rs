@@ -134,12 +134,13 @@ pub fn execute_module_upgrade(
     if !options.skip_pin {
         steps.push(UpgradeStepResult {
             id: "pin".into(),
-            status: if options.dry_run {
-                StepStatus::Skipped
-            } else {
-                StepStatus::Succeeded
-            },
-            detail: pin_guidance.clone().unwrap_or_default(),
+            status: StepStatus::Skipped,
+            detail: format!(
+                "pin 同步未自动执行；{}",
+                pin_guidance.clone().unwrap_or_else(|| {
+                    "请按指引更新 release set 并运行 release_set sync".into()
+                })
+            ),
             command: Some(format!(
                 "python3 scripts/release_set.py --manifest {} sync --workspace-root {}",
                 shell_quote(release_set_path),

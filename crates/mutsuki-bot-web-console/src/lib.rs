@@ -12,10 +12,7 @@ use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
-pub use standalone::{
-    STANDALONE_LINK_NOT_WIRED, StandaloneConsoleSpec, UnwiredLinkControlHandler,
-    build_standalone_console_host,
-};
+pub use standalone::{StandaloneConsoleSpec, build_standalone_console_host};
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
 use mutsuki_plugin_bot_config_web::{
