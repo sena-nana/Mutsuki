@@ -1,0 +1,13 @@
+# Example product-facing fields only. Advanced host internals inherit defaults.
+
+[host]
+# Default is loopback. Non-loopback requires tls or remote auth.
+listen = "127.0.0.1:8080"
+mode = "embedded" # or "standalone"
+safe_mode = false
+
+# standalone only
+# link_endpoint = "local://webhost"
+
+# Optional local auth token reference (never commit real secrets).
+# auth_token = "secret:webhost.auth_token"
