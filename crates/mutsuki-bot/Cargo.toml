@@ -8,10 +8,6 @@ license.workspace = true
 name = "mutsuki-bot"
 path = "src/main.rs"
 
-[[bin]]
-name = "mutsuki-bot-console"
-path = "src/bin/mutsuki_bot_console.rs"
-
 [dependencies]
 mutsuki-distributed-contracts.workspace = true
 mutsuki-distributed-control-client.workspace = true
@@ -37,12 +33,10 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
-mutsuki-service-link.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-service-plugin-loader.workspace = true
-rcgen.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 futures-util = "0.3"

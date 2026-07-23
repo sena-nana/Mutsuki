@@ -17,7 +17,7 @@ kind = "rust"
 [[repositories]]
 id = "service_host"
 url = "https://github.com/sena-nana/MutsukiServiceHost.git"
-revision = "c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
+revision = "5abf3a3f4a455a365a18f4883b81e959994d34f2"
 kind = "rust"
 
 [[repositories]]
@@ -29,7 +29,7 @@ kind = "rust"
 [[repositories]]
 id = "std_plugins"
 url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
-revision = "cebc35d473fcccfd4769850e33951c91872ca8d5"
+revision = "109e3cdb70f5997559fe09bc84d519cc265c16cd"
 kind = "rust"
 
 [[repositories]]
@@ -41,13 +41,13 @@ kind = "rust"
 [[repositories]]
 id = "bot_plugins"
 url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
-revision = "712a1f8f9e5e5bd144fc39d2bb4beb97986a627b"
+revision = "09bb313c8a46d0a3d168b21f3888ebf3742a5623"
 kind = "rust"
 
 [[repositories]]
 id = "web_host"
 url = "https://github.com/sena-nana/MutsukiWebHost.git"
-revision = "aa35448c9adacd2510f394821d9c14876848bf16"
+revision = "f77cb0beb637f7f184c020f1c824633509a0d2b6"
 kind = "rust"
 
 [[repositories]]
@@ -75,7 +75,6 @@ standard_plugins = "active"
 bot = "active"
 agent = "active"
 desktop = "active"
-web_host = "active"
 python_runner = "active"
 distributed_local_observable = "active"
 distributed_clustered = "candidate"

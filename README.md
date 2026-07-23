@@ -24,8 +24,10 @@ cargo run -p mutsuki-bot
 cargo run -p mutsuki-bot -- path/to/product.toml
 ```
 
-独立 Console 进程（Standalone + Link，与 Runtime 分进程）使用 `mutsuki-bot-console`；
-配置与启动见 [docs/standalone-console.md](docs/standalone-console.md)。
+嵌入式 Web Console：在 `config/local.toml` 设置 `[web.console] enabled = true`，并在
+`local.secret.toml` 配置 `WEB_CONSOLE_AUTH_TOKEN`。可选 `include_config = true`（产品配置页）与
+`release_set`（自动升级 dry-run）。不提供独立 Console 进程；见
+[docs/standalone-console.md](docs/standalone-console.md)。
 
 ## 可选 DistributedHost
 
