@@ -27,6 +27,8 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 6. manifest、RunnerDescriptor、EventSource 和 LoadPlan capability 必须与真实实现一致；缺失时 fail loud。
 7. 禁止复制 Core/Host/Agent 实现、生产 fallback 或兼容 shim。
 8. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
+   WebHost（`mutsuki-web-host` / `mutsuki-web-protocol`）必须用 Git `rev` pin，不得绑成仓内
+   path；产品组合以 BotTemplate release-set 的 `web_host` 为权威，可独立 bump。
 9. 平台 Adapter crate 不依赖具体 Host；`HostEventSource`、health 和 builder 安装只能位于显式 integration crate。
 10. 媒体等可选后端必须显式提供并与 manifest capability 一致，不注册 unavailable 生产替代。
 11. QQBot 文档必须区分单元、fake E2E 和真实账号 smoke，且与当前 manifest、配置和实现同步。
