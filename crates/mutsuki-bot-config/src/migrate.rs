@@ -20,14 +20,6 @@ pub enum MigrationStep {
     SetDefault { path: String, value: ConfigValue },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MigrationDryRun {
-    pub from_version: u32,
-    pub to_version: u32,
-    pub result: ConfigValue,
-    pub diff: Vec<FieldDiff>,
-}
-
 pub fn migrate(
     value: &ConfigValue,
     plan: &MigrationPlan,

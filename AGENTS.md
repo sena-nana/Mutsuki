@@ -12,7 +12,6 @@ Adapter/Gateway。它不拥有 Core 调度、Host 生命周期、Agent 能力或
 - `skills/platform-adapters/SKILL.md`：QQBot 等平台 Adapter、Gateway 和 transport。
 - `skills/service-host-integration/SKILL.md`：bundle、manifest、EventSource 和 ServiceRuntime 装配。
 - `skills/bot-testing/SKILL.md`：batch Runner、fake transport、闭环和真实 smoke。
-- `docs/config-schema.md`：Schema-first ConfigProvider 与默认 Web 配置插件（Issue #15）。
 - `skills/qqbot-documentation/SKILL.md`：QQBot 配置、能力矩阵、官方协议核对、运行与排障文档。
 
 运行时边界同时读取 `../MutsukiCore/AGENTS.md`；Host 装配读取

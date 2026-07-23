@@ -8,7 +8,7 @@
 //! - config / apply
 //! - config / metrics
 //!
-//! Frontend assets generate Vue forms from ConfigDescriptor (Koishi-like shell + LiliaUI tokens).
+//! Frontend assets generate forms from ConfigDescriptor (Koishi-like shell + LiliaUI tokens).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -147,37 +147,7 @@ impl WebExtension for ConfigWebExtension {
                 let caps = caps_from_params(&params);
                 let provider_id = required_str(&params, "provider_id")?;
                 let context = context_from_params(&params)?;
-                let request_value = params
-                    .get("request")
-                    .cloned()
-                    .ok_or_else(|| ExtensionError::Registration("missing request".into()))?;
-                let mut request: ConfigApplyRequest = serde_json::from_value(request_value.clone())
-                    .or_else(|_| {
-                        let candidate =
-                            request_value.get("candidate").cloned().ok_or_else(|| {
-                                ExtensionError::Registration("missing candidate".into())
-                            })?;
-                        let expected = request_value
-                            .get("expected_revision")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(1);
-                        let dry_run = request_value
-                            .get("dry_run")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        Ok::<_, ExtensionError>(ConfigApplyRequest {
-                            candidate: ConfigValue::from_json(&candidate),
-                            expected_revision: mutsuki_bot_config::ConfigRevision(expected),
-                            dry_run,
-                        })
-                    })
-                    .map_err(|e| ExtensionError::Registration(e.to_string()))?;
-                // Normalize plain object candidates into typed ConfigValue.
-                if let Ok(plain) = serde_json::to_value(&request.candidate) {
-                    if plain.get("type").is_none() {
-                        request.candidate = ConfigValue::from_json(&plain);
-                    }
-                }
+                let request = apply_request_from_params(&params)?;
                 let result = ConfigWebExtension::block_on(service.apply(
                     &provider_id,
                     request,
@@ -242,7 +212,34 @@ fn candidate_from_params(params: &JsonValue) -> Result<ConfigValue, ExtensionErr
         .get("candidate")
         .cloned()
         .ok_or_else(|| ExtensionError::Registration("missing candidate".into()))?;
-    // Accept either typed ConfigValue JSON or plain object map.
+    config_value_from_json(raw)
+}
+
+fn apply_request_from_params(params: &JsonValue) -> Result<ConfigApplyRequest, ExtensionError> {
+    let request_value = params
+        .get("request")
+        .cloned()
+        .ok_or_else(|| ExtensionError::Registration("missing request".into()))?;
+    let candidate = request_value
+        .get("candidate")
+        .cloned()
+        .ok_or_else(|| ExtensionError::Registration("missing candidate".into()))?;
+    let expected = request_value
+        .get("expected_revision")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1);
+    let dry_run = request_value
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(ConfigApplyRequest {
+        candidate: config_value_from_json(candidate)?,
+        expected_revision: mutsuki_bot_config::ConfigRevision(expected),
+        dry_run,
+    })
+}
+
+fn config_value_from_json(raw: JsonValue) -> Result<ConfigValue, ExtensionError> {
     if raw.get("type").is_some() {
         serde_json::from_value(raw).map_err(|e| ExtensionError::Registration(e.to_string()))
     } else {
