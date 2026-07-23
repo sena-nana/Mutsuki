@@ -58,23 +58,29 @@ pub struct WebHostConfig {
 }
 
 impl WebHostConfig {
-    pub fn auth_policy(&self) -> AuthPolicy {
+    pub fn auth_policy(&self, extension_capabilities: &[String]) -> AuthPolicy {
         if self.listen.is_loopback() {
             if let Some(token) = &self.auth_token {
+                let mut default_capabilities = vec![
+                    "host.read".into(),
+                    "recovery.read".into(),
+                    "recovery.write".into(),
+                    "runtime.read".into(),
+                    "runtime.write".into(),
+                    "config.schema.read".into(),
+                    "config.value.read".into(),
+                    "config.value.write".into(),
+                    "config.secret.write".into(),
+                    "config.apply".into(),
+                ];
+                for cap in extension_capabilities {
+                    if !default_capabilities.iter().any(|owned| owned == cap) {
+                        default_capabilities.push(cap.clone());
+                    }
+                }
                 return AuthPolicy::Local {
                     accepted_tokens: vec![token.clone()],
-                    default_capabilities: vec![
-                        "host.read".into(),
-                        "recovery.read".into(),
-                        "recovery.write".into(),
-                        "runtime.read".into(),
-                        "runtime.write".into(),
-                        "config.schema.read".into(),
-                        "config.value.read".into(),
-                        "config.value.write".into(),
-                        "config.secret.write".into(),
-                        "config.apply".into(),
-                    ],
+                    default_capabilities,
                     allow_unauthenticated: false,
                 };
             }

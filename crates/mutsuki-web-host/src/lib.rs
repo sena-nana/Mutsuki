@@ -125,10 +125,14 @@ impl MutsukiWebHost {
         let mut registry = ExtensionRegistry::new(budgets);
         let mut loaded = 0usize;
         let mut failed = 0usize;
+        let mut extension_capabilities = Vec::new();
 
         for extension in &self.extensions {
             match registry.load_extension(extension.as_ref()) {
-                Ok(_) => loaded += 1,
+                Ok(record) => {
+                    loaded += 1;
+                    extension_capabilities.extend(record.manifest.capabilities);
+                }
                 Err(err) => {
                     failed += 1;
                     let extension_id = extension.descriptor().id;
@@ -155,7 +159,7 @@ impl MutsukiWebHost {
         }
         let _ = service_ctx;
 
-        let auth = self.config.auth_policy();
+        let auth = self.config.auth_policy(&extension_capabilities);
         let bridge = WebBridge::new(budgets, registry, auth, self.config.safe_mode);
         let report = bridge.extensions().report();
         bridge.set_extension_counts(report.loaded.len() as u64, report.failed.len() as u64);

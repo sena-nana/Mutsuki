@@ -49,15 +49,14 @@ pub enum AuthPolicy {
 }
 
 impl AuthPolicy {
+    /// Unauthenticated loopback sessions get a minimal read-only set.
+    ///
+    /// Does **not** grant `*`, recovery writes, runtime writes, or config writes.
+    /// Token-authenticated local consoles use explicit capability lists instead.
     pub fn open_local() -> Self {
         Self::Local {
             accepted_tokens: vec![],
-            default_capabilities: vec![
-                "host.read".into(),
-                "recovery.read".into(),
-                "recovery.write".into(),
-                "*".into(),
-            ],
+            default_capabilities: vec!["host.read".into(), "recovery.read".into()],
             allow_unauthenticated: true,
         }
     }
