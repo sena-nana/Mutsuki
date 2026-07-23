@@ -42,15 +42,13 @@ fn provider() -> Arc<MemoryConfigProvider> {
 }
 
 #[tokio::test]
-async fn derive_schema_round_trip_and_json_schema_export() {
+async fn derive_schema_round_trip() {
     let schema = DiscordConfig::schema();
     assert_eq!(schema.provider_id.as_str(), "discord");
     assert!(schema.root.children.iter().any(|n| n.presentation.secret));
     let encoded = serde_json::to_value(&schema).unwrap();
     let decoded: ConfigDescriptor = serde_json::from_value(encoded).unwrap();
     assert_eq!(decoded.provider_id, schema.provider_id);
-    let json_schema = to_json_schema(&schema);
-    assert_eq!(json_schema["type"], "object");
 }
 
 #[tokio::test]

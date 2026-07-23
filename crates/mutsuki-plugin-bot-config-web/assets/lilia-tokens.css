@@ -1,111 +1,21 @@
+/* Minimal LiliaUI-aligned tokens used by the default config console. */
 :root {
   color-scheme: dark;
   --font-sans:
-    "Noto Sans SC",
-    "Segoe UI Variable Text", "Segoe UI",
-    "Microsoft YaHei UI", "Microsoft YaHei",
-    system-ui, -apple-system, BlinkMacSystemFont,
-    "PingFang SC", "Source Han Sans SC",
-    Roboto, "Helvetica Neue", Arial,
-    sans-serif,
-    "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol";
-  --font-mono:
-    ui-monospace, "SF Mono", "Cascadia Mono", "Cascadia Code",
-    "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    "Noto Sans SC", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   --bg: oklch(20.9% 0 89.9);
   --bg-elev: oklch(24.35% 0 89.9);
   --bg-subtle: oklch(22.64% 0 89.9);
-  --bg-hover: oklch(29.72% 0 89.9);
-  --bg-active: oklch(32.9% 0 89.9);
-  --lilia-alpha-hover: 0.06;
-  --lilia-alpha-pressed: 0.1;
-  --lilia-alpha-selected: 0.15;
-  --lilia-alpha-selected-hover: 0.19;
-  --lilia-alpha-selected-pressed: 0.23;
-  --lilia-color-state-hover-solid: oklch(29.72% 0 89.9);
-  --lilia-color-state-pressed-solid: oklch(32.9% 0 89.9);
-  --lilia-color-state-selected-solid: oklch(32.9% 0 89.9);
-  --lilia-color-state-selected-hover-solid: oklch(35.5% 0 89.9);
-  --lilia-color-state-selected-pressed-solid: oklch(30.5% 0 89.9);
-  --lilia-color-state-hover-translucent: oklch(100% 0 89.9 / var(--lilia-alpha-hover));
-  --lilia-color-state-pressed-translucent: oklch(100% 0 89.9 / var(--lilia-alpha-pressed));
-  --lilia-color-state-selected-translucent: oklch(100% 0 89.9 / var(--lilia-alpha-selected));
-  --lilia-color-state-selected-hover-translucent: oklch(100% 0 89.9 / var(--lilia-alpha-selected-hover));
-  --lilia-color-state-selected-pressed-translucent: oklch(100% 0 89.9 / var(--lilia-alpha-selected-pressed));
-  --lilia-state-layer-hover: var(--lilia-color-state-hover-solid);
-  --lilia-state-layer-pressed: var(--lilia-color-state-pressed-solid);
-  --lilia-state-layer-selected: var(--lilia-color-state-selected-solid);
-  --lilia-state-layer-selected-hover: var(--lilia-color-state-selected-hover-solid);
-  --lilia-state-layer-selected-pressed: var(--lilia-color-state-selected-pressed-solid);
-  --lilia-state-foreground-selected: var(--text);
-  --lilia-state-indicator-selected: var(--accent);
-  --lilia-state-focus-ring: var(--accent);
-  --lilia-surface-css-blur: 24px;
-  --lilia-surface-opacity-raised: 0.82;
-  --lilia-surface-fill-base: var(--bg);
-  --lilia-surface-fill-raised: var(--bg-elev);
   --border: oklch(28.5% 0 89.9);
   --border-soft: oklch(25.62% 0 89.9);
-  --border-strong: oklch(34.85% 0 89.9);
-  --divider-soft: var(--border-soft);
   --text: oklch(89.75% 0 89.9);
   --text-muted: oklch(71.5% 0 89.9);
   --text-faint: oklch(46.76% 0 89.9);
   --accent: oklch(76.49% 0.102 246.4);
-  --accent-strong: oklch(64.18% 0.128 249.9);
-  --accent-on-soft: var(--accent);
   --accent-soft: oklch(76.49% 0.102 246.4 / 0.14);
   --accent-text: oklch(19.78% 0.0278 255.9);
   --ok: oklch(69.51% 0.1809 145.6);
-  --warn: oklch(75.61% 0.1084 79.9);
   --err: oklch(70.56% 0.1614 20.7);
-  --ok-soft: oklch(69.51% 0.1809 145.6 / 0.14);
-  --warn-soft: oklch(75.61% 0.1084 79.9 / 0.16);
-  --err-soft: oklch(70.56% 0.1614 20.7 / 0.14);
-  --err-solid: oklch(55.63% 0.1427 20.3);
-  --err-solid-hover: oklch(59.34% 0.1435 19.8);
-  --err-solid-text: oklch(100% 0 89.9);
-  --calendar-heatmap-level-default: var(--bg-subtle);
-  --calendar-heatmap-level-0: var(--bg-subtle);
-  --calendar-heatmap-level-1: color-mix(in oklch, var(--accent) 28%, var(--bg-subtle));
-  --calendar-heatmap-level-2: color-mix(in oklch, var(--accent) 48%, var(--bg-subtle));
-  --calendar-heatmap-level-3: color-mix(in oklch, var(--accent) 70%, var(--bg-subtle));
-  --calendar-heatmap-level-4: var(--accent);
-  --panel: var(--bg-elev);
-  --surface: var(--bg);
-  --surface-raised: var(--bg-elev);
-  --bg-elevated: var(--bg-elev);
-  --bg-soft: var(--bg-subtle);
-  --border-subtle: var(--border-soft);
-  --muted: var(--text-muted);
-  --success: var(--ok);
-  --shadow: oklch(0% 0 0);
-  --shadow-lg:
-    0 18px 48px -20px oklch(0% 0 0 / 0.72),
-    0 10px 28px -18px oklch(0% 0 0 / 0.55);
-  --scrim: oklch(0% 0 0 / 0.45);
-  --shadow-surface: 0 10px 30px -24px oklch(0% 0 0 / 0.62);
-  --shadow-dialog: 0 14px 40px oklch(0% 0 0 / 0.45);
-  --shadow-menu: 0 10px 28px -10px oklch(0% 0 0 / 0.55);
-  --z-dialog: 1800;
-  --z-scrollbar-overlay: 2147483647;
-  --app-corner-shape: squircle;
-  --app-corner-radius: 16px;
-  --radius-xs: calc(var(--app-corner-radius) * 0.5);
-  --radius-sm: calc(var(--app-corner-radius) * 0.75);
-  --radius-md: var(--app-corner-radius);
-  --radius-lg: calc(var(--app-corner-radius) * 1.25);
-  --radius: var(--radius-md);
-  --radius-pill: 999px;
-  --lilia-backdrop-opacity: 0.64;
-  --lilia-backdrop-tint: 24.35% 0 89.9;
-  --lilia-backdrop-surface: oklch(
-    var(--lilia-backdrop-tint) / var(--lilia-backdrop-opacity)
-  );
-  --lilia-surface-fill-base-translucent: transparent;
-  --lilia-surface-fill-raised-translucent: oklch(
-    var(--lilia-backdrop-tint) / var(--lilia-surface-opacity-raised)
-  );
 }
 
 :root[data-theme="light"] {
@@ -113,8 +23,14 @@
   --bg: oklch(100% 0 89.9);
   --bg-elev: oklch(96.7% 0.0029 264.5);
   --bg-subtle: oklch(97.89% 0.0029 264.5);
-  --bg-hover: oklch(94.54% 0.0046 258.3);
-  --bg-active: oklch(91.19% 0.0075 260.7);
-  --lilia-color-state-hover-solid: oklch(94.54% 0.0046 258.3);
-  --lilia-color-state-pressed-solid: oklch(91.19% 0.0075 260.7);
-  --lilia-color-state-selected-solid: oklch(91.19% 0 89.9);
+  --border: oklch(88% 0.004 260);
+  --border-soft: oklch(92% 0.003 260);
+  --text: oklch(22% 0.01 260);
+  --text-muted: oklch(45% 0.01 260);
+  --text-faint: oklch(62% 0.01 260);
+  --accent: oklch(55% 0.14 250);
+  --accent-soft: oklch(55% 0.14 250 / 0.12);
+  --accent-text: oklch(100% 0 89.9);
+  --ok: oklch(55% 0.16 145);
+  --err: oklch(55% 0.16 25);
+}

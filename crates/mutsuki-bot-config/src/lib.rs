@@ -6,7 +6,6 @@
 mod budgets;
 mod error;
 mod expr;
-mod json_schema;
 mod memory;
 mod metrics;
 mod migrate;
@@ -25,10 +24,9 @@ pub use error::{
     ValidationSeverity, capability,
 };
 pub use expr::ConfigExpr;
-pub use json_schema::to_json_schema;
-pub use memory::{MemoryConfigProvider, SharedMemoryProvider};
+pub use memory::MemoryConfigProvider;
 pub use metrics::{ConfigMetrics, ConfigMetricsSnapshot};
-pub use migrate::{MigrationDryRun, MigrationPlan, MigrationStep, migrate, require_migration};
+pub use migrate::{MigrationPlan, MigrationStep, migrate, require_migration};
 pub use provider::{
     ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigProvider, ConfigRegistration,
     ConfigRevision, ConfigSnapshot, ConfigSource,

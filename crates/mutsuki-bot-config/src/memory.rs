@@ -1,7 +1,6 @@
 //! In-memory ConfigProvider used by tests and MVP demo plugins.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -348,5 +347,3 @@ impl ConfigProvider for MemoryConfigProvider {
         })
     }
 }
-
-pub type SharedMemoryProvider = Arc<MemoryConfigProvider>;
