@@ -60,12 +60,12 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 - `mutsuki-plugin-bot-config-web`: 默认 Web 配置插件（Koishi 风格控制台 + LiliaUI tokens）
 - `mutsuki-plugin-bot-control-web`: ServiceHost ControlMethod 的 `control.*` Web RPC 代理（`runtime.read` / `runtime.write` 门禁；含 task 调试与 lifecycle drain/shutdown）
 - `mutsuki-plugin-bot-overview-web`: Web 概览（`overview.summary`：经 control-web 聚合状态/结构/计数/uptime）
-- `mutsuki-bot-web-console`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）；另提供 [`build_standalone_console_host`](crates/mutsuki-bot-web-console/src/standalone.rs)（Standalone + `local://` / `quic://` Link；`quic://` 需注入 TLS identity，缺失时结构化失败）。可发布的独立 Console **进程**由 BotTemplate 的 `mutsuki-bot-console` 提供（读产品配置经 Link 控 Runtime），本 crate 只提供装配库。
+- `mutsuki-bot-web-console`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）。产品路径仅 Embedded；不提供 Standalone / 分进程 Console 装配。
 - `examples/config-demo`: Discord-like 最小可用配置闭环
 
 WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用 **Git `rev` pin**（非兄弟 path）。
-产品组合以 BotTemplate release-set 的 `web_host` 条目为权威；可单独 bump WebHost revision 再
-`release_set.py sync`，不必捆绑 BotPlugins 业务提交。仅当 WebHost 破坏 Console 扩展 API 时才改本仓代码。
+产品组合以 BotTemplate release-set 的 `web_host` 条目为 pin 追踪；可单独 bump WebHost revision 再
+`release_set.py sync`。`web_host` 不是独立产品部署能力，仅作为 Embedded Console 的库依赖。
 
 - `mutsuki-bot-protocol`: common `BotEvent`, `BotMessage`, `MessageSegment`, `BotTarget`, account, permission, and error contracts.
 - `mutsuki-bot-sdk`: author-facing helpers that lower to Mutsuki task protocols.
