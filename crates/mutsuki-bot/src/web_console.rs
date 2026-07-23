@@ -1,9 +1,10 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_bot_web_console::{
     ConsoleAssetDirs, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
-    WebConsoleSecrets, build_console_host, empty_config_service,
+    WebConsoleSecrets, build_console_host, demo_config_service,
 };
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
@@ -33,10 +34,11 @@ impl WebConsoleGuard {
         if !config.enabled {
             return Ok(None);
         }
+        let product = load_product_toml(product_config_path)?;
         let secrets = resolve_secrets(service, &config)?;
-        let secret_monitor = build_secret_monitor(service, &config);
+        let secret_monitor = build_secret_monitor(service, &config, &product);
         let config_service = if config.include_config {
-            Some(empty_config_service())
+            Some(demo_config_service())
         } else {
             None
         };
@@ -121,13 +123,59 @@ impl SecretKeyResolver for HostSecretResolver {
 fn build_secret_monitor(
     service: &ServiceConfig,
     config: &WebConsoleConfig,
+    product: &toml::Value,
 ) -> Option<SecretMonitor> {
-    let key = config.auth_token_key.as_ref()?;
+    let mut keys = collect_secret_key_refs(product);
+    if let Some(key) = &config.auth_token_key {
+        keys.insert(key.clone());
+    }
+    if keys.is_empty() {
+        return None;
+    }
     let store = service.host_secret_store();
     Some(SecretMonitor::new(
-        vec![key.clone()],
+        keys.into_iter().collect(),
         Arc::new(HostSecretResolver { store }),
     ))
+}
+
+fn collect_secret_key_refs(value: &toml::Value) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    collect_secret_key_refs_inner(value, &mut keys);
+    keys
+}
+
+fn collect_secret_key_refs_inner(value: &toml::Value, keys: &mut BTreeSet<String>) {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, child) in table {
+                if key.ends_with("_key") {
+                    if let toml::Value::String(reference) = child {
+                        if is_secret_reference(reference) {
+                            keys.insert(reference.clone());
+                        }
+                    }
+                }
+                collect_secret_key_refs_inner(child, keys);
+            }
+        }
+        toml::Value::Array(items) => {
+            for item in items {
+                collect_secret_key_refs_inner(item, keys);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_secret_reference(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.contains('.')
 }
 
 fn product_root(product_config_path: &Path) -> PathBuf {
@@ -191,5 +239,22 @@ enabled = true
             .unwrap();
         let config = load_web_console_config(&path).unwrap();
         assert!(resolve_secrets(&service, &config).is_err());
+    }
+
+    #[test]
+    fn collects_secret_key_refs_from_product_config() {
+        let product: toml::Value = toml::from_str(
+            r#"
+[web.console]
+auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
+
+[distribution.external_service]
+control_secret_key = "MUTSUKI_DISTRIBUTED_CONTROL_KEY"
+"#,
+        )
+        .unwrap();
+        let keys = collect_secret_key_refs(&product);
+        assert!(keys.contains("WEB_CONSOLE_AUTH_TOKEN"));
+        assert!(keys.contains("MUTSUKI_DISTRIBUTED_CONTROL_KEY"));
     }
 }
