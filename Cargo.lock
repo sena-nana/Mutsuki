@@ -1425,11 +1425,13 @@ dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
  "mutsuki-service-ipc",
+ "mutsuki-service-link",
  "mutsuki-service-plugin-loader",
  "mutsuki-service-runtime",
  "mutsuki-std-plugins",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
+ "rcgen",
  "serde",
  "serde_json",
  "sha2",
@@ -1444,7 +1446,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "async-trait",
  "mutsuki-bot-config-derive",
@@ -1457,7 +1459,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-config-derive"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1468,7 +1470,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-link-parser"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "regex",
  "serde",
@@ -1480,7 +1482,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-protocol"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1491,7 +1493,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-service-host-integration"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -1518,7 +1520,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-testkit"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "futures-util",
  "mutsuki-bot-protocol",
@@ -1531,7 +1533,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-bot-web-console"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-bot-config",
  "mutsuki-plugin-bot-config-web",
@@ -1716,7 +1718,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-adapter-qqbot"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -1741,7 +1743,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-bilibili"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "fastrand",
  "hmac",
@@ -1767,7 +1769,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-bilibili-workshop"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
@@ -1784,7 +1786,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-command"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
@@ -1799,7 +1801,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-config-web"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "async-trait",
  "futures-executor",
@@ -1816,7 +1818,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-control-web"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "futures-executor",
  "mutsuki-service-control",
@@ -1831,7 +1833,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-event-router"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
@@ -1846,7 +1848,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-mihuashi"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
@@ -1864,7 +1866,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-overview-web"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "futures-executor",
  "mutsuki-plugin-bot-control-web",
@@ -1878,7 +1880,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-bot-upgrade-web"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "mutsuki-plugin-bot-control-web",
  "mutsuki-plugin-catalog",
@@ -1891,7 +1893,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-catalog"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=474c3a1cabf04e5f2af5938c0535ec667aebe9d0#474c3a1cabf04e5f2af5938c0535ec667aebe9d0"
+source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031#7bae11f1d4bf6d6d6eb2efa0a56ec64e61e5c031"
 dependencies = [
  "libloading",
  "mutsuki-runtime-contracts",
@@ -1906,10 +1908,10 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-io-browser-chromium"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=32d596e592ba1b7a6c47dafd6fc316942fa35869#32d596e592ba1b7a6c47dafd6fc316942fa35869"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=cebc35d473fcccfd4769850e33951c91872ca8d5#cebc35d473fcccfd4769850e33951c91872ca8d5"
 dependencies = [
  "headless_chrome",
- "mutsuki-protocol-browser 0.1.0 (git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=32d596e592ba1b7a6c47dafd6fc316942fa35869)",
+ "mutsuki-protocol-browser 0.1.0 (git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=cebc35d473fcccfd4769850e33951c91872ca8d5)",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -1921,7 +1923,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-plugin-resource-memory"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=32d596e592ba1b7a6c47dafd6fc316942fa35869#32d596e592ba1b7a6c47dafd6fc316942fa35869"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=cebc35d473fcccfd4769850e33951c91872ca8d5#cebc35d473fcccfd4769850e33951c91872ca8d5"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -1932,7 +1934,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-protocol-browser"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=32d596e592ba1b7a6c47dafd6fc316942fa35869#32d596e592ba1b7a6c47dafd6fc316942fa35869"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=4ed0f8ec2b2ed22041efb362d6754e1c32d527e9#4ed0f8ec2b2ed22041efb362d6754e1c32d527e9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -1942,7 +1944,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-protocol-browser"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=4ed0f8ec2b2ed22041efb362d6754e1c32d527e9#4ed0f8ec2b2ed22041efb362d6754e1c32d527e9"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=cebc35d473fcccfd4769850e33951c91872ca8d5#cebc35d473fcccfd4769850e33951c91872ca8d5"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -2023,7 +2025,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-config"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "dirs",
  "serde",
@@ -2035,7 +2037,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-control"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "futures",
  "mutsuki-runtime-contracts",
@@ -2047,7 +2049,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-ipc"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-control",
@@ -2062,13 +2064,14 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-link"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "mutsuki-link-core",
  "mutsuki-link-local",
  "mutsuki-link-quic",
  "mutsuki-service-control",
  "quinn",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror",
@@ -2079,7 +2082,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-observe"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "mutsuki-service-config",
  "tracing",
@@ -2090,7 +2093,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-plugin-loader"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -2102,7 +2105,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runner-supervisor"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "mutsuki-service-config",
  "mutsuki-service-plugin-loader",
@@ -2115,7 +2118,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-service-runtime"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=b06e2107dc2d0887406afb89d8d4a25f9383fb2e#b06e2107dc2d0887406afb89d8d4a25f9383fb2e"
+source = "git+https://github.com/sena-nana/MutsukiServiceHost.git?rev=c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa#c68ab1d4e964ec25f9c6183ea35694bbff9b2bfa"
 dependencies = [
  "anyhow",
  "futures",
@@ -2142,7 +2145,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-std-plugins"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=32d596e592ba1b7a6c47dafd6fc316942fa35869#32d596e592ba1b7a6c47dafd6fc316942fa35869"
+source = "git+https://github.com/sena-nana/MutsukiStdPlugins.git?rev=cebc35d473fcccfd4769850e33951c91872ca8d5#cebc35d473fcccfd4769850e33951c91872ca8d5"
 dependencies = [
  "mutsuki-plugin-io-browser-chromium",
  "mutsuki-plugin-resource-memory",
@@ -2293,6 +2296,16 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64",
+ "serde_core",
 ]
 
 [[package]]
@@ -2578,6 +2591,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
 ]
 
 [[package]]
@@ -4023,6 +4049,15 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
+]
 
 [[package]]
 name = "yoke"

@@ -70,16 +70,16 @@ local-observable 继续 active，clustered 继续 candidate，clustered producti
 `MutsukiWebHost` **当前不单独列入** `releases/*.toml` 的 `[[repositories]]` 条目，原因如下：
 
 - Release set 的 required owner 集合（见 `scripts/release_set.py` 的 `REQUIRED_REPOSITORIES`）覆盖 Core、ServiceHost、Link、StdPlugins、BotPlugins 等产品/runtime 装配面；WebHost 是 **Web 运行宿主库**，由 BotPlugins（Console 扩展）与 BotTemplate（`web.console` 装配）以 Cargo Git pin 间接锁定 revision。
-- Active 组合验证路径为 ServiceHost 嵌入式 Console（Template `web_console_smoke`）与 BotPlugins crate 测试。
+- Active 组合验证路径为 ServiceHost 嵌入式 Console（Template `web_console_smoke`）、Standalone `local://` / `quic://` Link（Template `standalone_quic_smoke`、BotPlugins console smoke）与 BotPlugins crate 测试。
 - Standalone Console 的 **local://** 控制桥接（`local://mutsuki.servicehost`）已是 ServiceHost `mutsuki-service-link` 的生产路径。
-- **QUIC/远程**：ServiceHost 已提供 `QuicLinkControlServer` / `QuicLinkControlHandler`（同一控制协议帧，调用方注入 Quinn TLS identity）。WebHost 可解析 `quic://host:port`，但产品 Console 装配尚未接入 TLS identity 配置面；无 identity 时结构化失败，禁止假成功。
+- **QUIC/远程**：ServiceHost 提供 `QuicLinkControlServer` / `QuicLinkControlHandler` 与 PEM TLS identity 加载（`[link.quic]` + secret key 引用）。WebHost 解析 `quic://host:port`；BotPlugins Standalone Console 与 Template 产品装配接入 `quic_server_name` / `quic_ca_cert_key`。无 identity 或缺 secret 时结构化失败，禁止假成功。loopback QUIC smoke 覆盖 `control.health` / `service_status`。
 
 ### 何时把 `web_host` 写入 release set
 
 同时满足后再新增 `web_host` repository 条目并扩展 `release_set.py`：
 
-1. Standalone + Link 成为独立部署面（不仅是 Template 嵌入式 pin）；
-2. 产品可配置的远程/QUIC TLS identity（证书/信任策略）落地，且有非测试闭环 smoke；
+1. Standalone + Link 成为独立部署面（不仅是 Template/BotPlugins 库装配与 smoke，还有可发布的独立 Console 进程/包）；
+2. ~~产品可配置的远程/QUIC TLS identity（证书/信任策略）落地，且有非测试闭环 smoke~~（已满足：`[link.quic]` + `web.console.quic_*` + loopback smoke）；
 3. WebHost revision 需要与 BotPlugins 解耦升级。
 
-在此之前，WebHost revision 以 BotTemplate / BotPlugins 工作区 `[workspace.dependencies]` 中的 Git `rev` 为事实源；升级 BotPlugins 或 Template pin 时一并核对 `mutsuki-web-host` / `mutsuki-web-protocol` 与 lockfile 一致。
+因此 **暂不** 将 `web_host` 写入 release set：条件 2 已落地，但条件 1（独立部署面）与条件 3（与 BotPlugins 解耦）仍未满足。在此之前，WebHost revision 以 BotTemplate / BotPlugins 工作区 `[workspace.dependencies]` 中的 Git `rev` 为事实源；升级 BotPlugins 或 Template pin 时一并核对 `mutsuki-web-host` / `mutsuki-web-protocol` 与 lockfile 一致。

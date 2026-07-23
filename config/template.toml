@@ -14,6 +14,15 @@ secret_file = "local.secret.toml"
 [distribution]
 mode = "disabled"
 
+# Optional QUIC Link control listener (ServiceHost). Disabled by default.
+# When enabled, cert/key PEMs must exist under the referenced secret keys
+# in the Host secret file (never commit real PEMs).
+[link.quic]
+enabled = false
+listen = "127.0.0.1:4433"
+cert_pem_key = "LINK_QUIC_CERT_PEM"
+key_pem_key = "LINK_QUIC_KEY_PEM"
+
 # Optional embedded Web Console (WebHost + control/overview/config/upgrade extensions).
 # Set include_config = true to mount config-web with the product.toml ConfigProvider
 # (provider id `product`). demo_config_service remains test-only.
@@ -21,6 +30,13 @@ mode = "disabled"
 # Paths are relative to the product repository root
 # (when config lives under config/, paths resolve from the parent directory).
 # Copy auth token into local.secret.toml under WEB_CONSOLE_AUTH_TOKEN.
+#
+# Standalone / remote Console (separate process) uses link_endpoint:
+#   link_endpoint = "local://mutsuki.servicehost"
+#   # or authenticated QUIC (requires quic_server_name + quic_ca_cert_key):
+#   link_endpoint = "quic://127.0.0.1:4433"
+#   quic_server_name = "localhost"
+#   quic_ca_cert_key = "LINK_QUIC_CA_CERT_PEM"
 [web.console]
 enabled = false
 listen = "127.0.0.1:8787"
