@@ -6,7 +6,9 @@ use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
 use mutsuki_std_plugins::configured_std_plugin_catalog;
 
 mod distribution;
+mod web_console;
 pub use distribution::*;
+pub use web_console::*;
 
 pub fn repository_local_config_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

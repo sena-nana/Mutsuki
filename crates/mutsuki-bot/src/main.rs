@@ -1,7 +1,9 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use mutsuki_bot::{assemble_service, prepare_distribution, repository_local_config_path};
+use mutsuki_bot::{
+    WebConsoleGuard, assemble_service, prepare_distribution, repository_local_config_path,
+};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -17,9 +19,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The template authenticates and proves an already-running sidecar; it
     // never starts, restarts, or supervises that external process.
     let mut distribution = prepare_distribution(&config_path, &service).await?;
-    let builder = distribution.attach_health_probe(assemble_service(service)?);
+    let builder = distribution.attach_health_probe(assemble_service(service.clone())?);
     let _monitor = distribution.start_monitor();
-    builder.start().await?.run_foreground().await?;
+    let runtime = builder.start().await?;
+    let console = WebConsoleGuard::start(&config_path, &service, &runtime).await?;
+    if let Some(console) = &console {
+        if let Some(addr) = console.listen_addr() {
+            eprintln!("Mutsuki Web Console listening on http://{addr}");
+        }
+    }
+    let result = runtime.run_foreground().await;
+    if let Some(console) = console {
+        console.stop().await?;
+    }
+    result?;
     Ok(())
 }
 

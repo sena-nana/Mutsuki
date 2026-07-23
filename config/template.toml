@@ -14,6 +14,19 @@ secret_file = "local.secret.toml"
 [distribution]
 mode = "disabled"
 
+# Optional embedded Web Console (WebHost + control/overview/config/upgrade extensions).
+# Set include_config = true to mount config-web in the same shell (?page=config).
+# release_set enables the auto-upgrade page (module list from [[repositories]]).
+# Paths are relative to the product repository root
+# (when config lives under config/, paths resolve from the parent directory).
+# Copy auth token into local.secret.toml under WEB_CONSOLE_AUTH_TOKEN.
+[web.console]
+enabled = false
+listen = "127.0.0.1:8787"
+auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
+include_config = false
+release_set = "releases/mutsuki-0.1-alpha-3.toml"
+
 # Native owner factories are selected with [[plugins.configured]].
 # External plugin artifacts are discovered from ServiceHost plugin directories.
 # This template intentionally selects no platform, router, command, Agent,
