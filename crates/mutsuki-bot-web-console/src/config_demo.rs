@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use mutsuki_bot_config::{
     ConfigApplyMode, ConfigDescriptor, ConfigMutability, ConfigNode, ConfigProviderId,
-    ConfigProviderRegistry, ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
-    MemoryConfigProvider, RestartPolicy, SecretState,
+    ConfigProviderRegistry, ConfigScope, ConfigService, ConfigValue, ConfigValueType,
+    LocalizedText, MemoryConfigProvider, RestartPolicy, SecretState,
 };
 
 pub fn demo_config_service() -> Arc<ConfigService> {

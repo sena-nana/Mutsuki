@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use mutsuki_service_control::{
     ControlError, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
-    EventSourceStatus, HealthReport, LogTailResponse, PluginListResponse, PluginReloadResponse,
-    RunnerStatus, RuntimeStatisticsView, ServiceStatus, TaskSnapshot,
+    CoreDrainResponse, EventSourceStatus, HealthReport, LogTailResponse,
+    PluginListResponse, PluginReloadResponse, RunnerStatus, RuntimeStatisticsView, ServiceStatus,
+    TaskEventPage, TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchResponse,
 };
 use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
 use mutsuki_web_protocol::{
@@ -88,6 +89,32 @@ impl ControlRpcCaller {
     pub fn task_list(&self) -> Result<Vec<TaskSnapshot>, ExtensionError> {
         serde_json::from_value(self.invoke(ControlMethod::TaskList, Value::Null)?)
             .map_err(|e| ExtensionError::Registration(e.to_string()))
+    }
+
+    pub fn task_events_after(&self, params: Value) -> Result<TaskEventPage, ExtensionError> {
+        serde_json::from_value(self.invoke(ControlMethod::TaskEventsAfter, params)?)
+            .map_err(|e| ExtensionError::Registration(e.to_string()))
+    }
+
+    pub fn task_submit_batch(
+        &self,
+        params: Value,
+    ) -> Result<TaskSubmitBatchResponse, ExtensionError> {
+        serde_json::from_value(self.invoke(ControlMethod::TaskSubmitBatch, params)?)
+            .map_err(|e| ExtensionError::Registration(e.to_string()))
+    }
+
+    pub fn task_cancel(&self, params: Value) -> Result<Value, ExtensionError> {
+        self.invoke(ControlMethod::TaskCancel, params)
+    }
+
+    pub fn core_begin_drain(&self) -> Result<CoreDrainResponse, ExtensionError> {
+        serde_json::from_value(self.invoke(ControlMethod::CoreBeginDrain, Value::Null)?)
+            .map_err(|e| ExtensionError::Registration(e.to_string()))
+    }
+
+    pub fn service_shutdown(&self) -> Result<Value, ExtensionError> {
+        self.invoke(ControlMethod::ServiceShutdown, Value::Null)
     }
 }
 
@@ -175,6 +202,16 @@ impl WebExtension for ControlWebExtension {
                 Ok(serde_json::to_value(caller.task_list()?).unwrap_or_default())
             }
         });
+        ctx.register("task_events_after", {
+            let caller = caller.clone();
+            move |params| {
+                require_runtime_read(&params)?;
+                Ok(
+                    serde_json::to_value(caller.task_events_after(control_params(&params))?)
+                        .unwrap_or_default(),
+                )
+            }
+        });
         register_write(
             ctx,
             caller.clone(),
@@ -207,9 +244,33 @@ impl WebExtension for ControlWebExtension {
         );
         register_write(
             ctx,
-            caller,
+            caller.clone(),
             "event_source_restart",
             ControlMethod::EventSourceRestart,
+        );
+        register_write(
+            ctx,
+            caller.clone(),
+            "task_submit_batch",
+            ControlMethod::TaskSubmitBatch,
+        );
+        register_write(
+            ctx,
+            caller.clone(),
+            "task_cancel",
+            ControlMethod::TaskCancel,
+        );
+        register_write(
+            ctx,
+            caller.clone(),
+            "core_begin_drain",
+            ControlMethod::CoreBeginDrain,
+        );
+        register_write(
+            ctx,
+            caller,
+            "service_shutdown",
+            ControlMethod::ServiceShutdown,
         );
         Ok(())
     }
@@ -516,6 +577,61 @@ impl ControlHandler for FixtureControlHandler {
                 ControlMethod::EventSourceRestart => {
                     fixture.record_mutation("event_source_restart");
                     ControlResponse::ok(Value::Null)
+                }
+                ControlMethod::TaskSubmitBatch => {
+                    fixture.record_mutation("task_submit_batch");
+                    ControlResponse::ok(json!({
+                        "handles": [{
+                            "task_id": "submitted.demo",
+                            "protocol_id": "demo.protocol",
+                            "target_binding_id": null,
+                            "cancel_policy": "best_effort",
+                            "trace_id": null,
+                            "correlation_id": null,
+                        }]
+                    }))
+                }
+                ControlMethod::TaskCancel => {
+                    fixture.record_mutation("task_cancel");
+                    ControlResponse::ok(json!({
+                        "task_id": request.params.get("id").and_then(|v| v.as_str()).unwrap_or("demo.task"),
+                        "status": "cancelled",
+                    }))
+                }
+                ControlMethod::TaskEventsAfter => {
+                    let param = match serde_json::from_value::<TaskEventsAfterParam>(request.params)
+                    {
+                        Ok(param) => param,
+                        Err(error) => {
+                            return ControlResponse::err(ControlError::BadRequest(
+                                error.to_string(),
+                            ));
+                        }
+                    };
+                    if param.limit == 0 {
+                        return ControlResponse::err(ControlError::BadRequest(
+                            "limit must be greater than zero".into(),
+                        ));
+                    }
+                    ControlResponse::ok(TaskEventPage {
+                        next_sequence: param.sequence + 1,
+                        earliest_available_sequence: Some(1),
+                        latest_sequence: 1,
+                        lost: 0,
+                        dropped: 0,
+                        has_more: false,
+                        events: vec![],
+                    })
+                }
+                ControlMethod::CoreBeginDrain => {
+                    fixture.record_mutation("core_begin_drain");
+                    ControlResponse::ok(CoreDrainResponse {
+                        state: "draining".into(),
+                    })
+                }
+                ControlMethod::ServiceShutdown => {
+                    fixture.record_mutation("service_shutdown");
+                    ControlResponse::empty_ok()
                 }
                 other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
             }

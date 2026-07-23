@@ -242,3 +242,89 @@ async fn control_plugin_list_includes_candidates_and_diagnostics() {
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
+
+#[tokio::test]
+async fn control_task_debug_and_lifecycle_methods() {
+    let handler = Arc::new(FixtureControlHandler::default());
+    let mut host = start(handler.clone()).await;
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let events = ws_rpc(
+        &addr,
+        "task_events_after",
+        json!({"capabilities": ["runtime.read"], "sequence": 0, "limit": 8}),
+        &["runtime.read"],
+    )
+    .await
+    .unwrap();
+    assert_eq!(events["lost"], 0);
+
+    let denied = ws_rpc(
+        &addr,
+        "core_begin_drain",
+        read_params(),
+        &["runtime.read", "runtime.write"],
+    )
+    .await
+    .unwrap_err();
+    assert!(denied.contains("runtime.write"));
+
+    let drain = ws_rpc(
+        &addr,
+        "core_begin_drain",
+        write_params(),
+        &["runtime.read", "runtime.write"],
+    )
+    .await
+    .unwrap();
+    assert_eq!(drain["state"], "draining");
+
+    ws_rpc(
+        &addr,
+        "service_shutdown",
+        write_params(),
+        &["runtime.read", "runtime.write"],
+    )
+    .await
+    .unwrap();
+
+    ws_rpc(
+        &addr,
+        "task_submit_batch",
+        json!({
+            "capabilities": ["runtime.read", "runtime.write"],
+            "batch": {
+                "batch_id": "console-debug",
+                "tasks": [{
+                    "task_id": "debug-task-1",
+                    "protocol_id": "control.input",
+                    "input": { "value": 1 }
+                }]
+            }
+        }),
+        &["runtime.read", "runtime.write"],
+    )
+    .await
+    .unwrap();
+
+    ws_rpc(
+        &addr,
+        "task_cancel",
+        json!({
+            "capabilities": ["runtime.read", "runtime.write"],
+            "id": "demo.task",
+        }),
+        &["runtime.read", "runtime.write"],
+    )
+    .await
+    .unwrap();
+
+    let mutations = handler.mutations.lock().unwrap();
+    assert!(mutations.contains(&"core_begin_drain".to_string()));
+    assert!(mutations.contains(&"service_shutdown".to_string()));
+    assert!(mutations.contains(&"task_submit_batch".to_string()));
+    assert!(mutations.contains(&"task_cancel".to_string()));
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}

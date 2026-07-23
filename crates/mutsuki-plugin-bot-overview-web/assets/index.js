@@ -11,6 +11,8 @@ const PAGES = [
   { id: "plugins", label: "插件" },
   { id: "runners", label: "Runners" },
   { id: "events", label: "EventSources" },
+  { id: "tasks", label: "任务" },
+  { id: "lifecycle", label: "生命周期" },
   { id: "logs", label: "日志" },
 ];
 
@@ -175,6 +177,8 @@ function createShell(rpc, options = {}) {
       else if (state.page === "plugins") await renderPlugins(content, rpc, app);
       else if (state.page === "runners") await renderRunners(content, rpc, app);
       else if (state.page === "events") await renderEvents(content, rpc, app);
+      else if (state.page === "tasks") await renderTasks(content, rpc, app);
+      else if (state.page === "lifecycle") await renderLifecycle(content, rpc, app);
       else if (state.page === "logs") await renderLogs(content, rpc);
       else await renderOverview(content, rpc);
     } catch (err) {
@@ -223,8 +227,12 @@ function pageSubtitle(page) {
       return "Runner 进程状态与运维操作";
     case "events":
       return "EventSource 连接与健康";
+    case "tasks":
+      return "Task 列表、事件流与调试提交（需 runtime.write）";
+    case "lifecycle":
+      return "Core drain 与 Service 关闭（强确认 + runtime.write）";
     case "logs":
-      return "运行时日志尾部与任务快照";
+      return "运行时日志尾部";
     default:
       return "系统状态 · Bot 结构 · 运行时间";
   }
@@ -530,13 +538,8 @@ async function renderEvents(content, rpc, app) {
 }
 
 async function renderLogs(content, rpc) {
-  const [logs, tasks] = await Promise.all([
-    rpc.read("control", "log_tail", { lines: 50 }),
-    rpc.read("control", "task_list"),
-  ]);
-
+  const logs = await rpc.read("control", "log_tail", { lines: 50 });
   appendSection(content, "日志尾部", renderLogLines(logs?.entries || []));
-  appendSection(content, "任务快照", renderTasks(tasks || []));
 }
 
 function renderLogLines(entries) {
@@ -544,14 +547,165 @@ function renderLogLines(entries) {
   return `<pre class="log-block">${entries.map((e) => escapeHtml(e.line)).join("\n")}</pre>`;
 }
 
-function renderTasks(tasks) {
+function renderTaskRows(tasks) {
   if (!tasks.length) return "<div class='muted'>暂无任务</div>";
   return tasks
     .map(
       (t) =>
-        `<div class="tree-item"><strong>${escapeHtml(t.task_id)}</strong><div class="muted">${escapeHtml(t.protocol_id)} · ${escapeHtml(t.status)} · hint=${escapeHtml(t.runner_hint || "—")}</div></div>`,
+        `<div class="tree-item row-item"><div><strong>${escapeHtml(t.task_id)}</strong><div class="muted">${escapeHtml(t.protocol_id)} · ${escapeHtml(t.status)} · hint=${escapeHtml(t.runner_hint || "—")}</div></div><div class="row-actions"><button type="button" class="ghost" data-cancel-task="${escapeHtml(t.task_id)}">取消</button></div></div>`,
     )
     .join("");
+}
+
+async function renderTasks(content, rpc, app) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "toolbar row-item";
+  toolbar.innerHTML = `
+    <button type="button" class="ghost" id="tasks-refresh">刷新列表</button>
+    <span class="muted">调试提交需 Core 运行且具备 runtime.write</span>
+  `;
+  content.appendChild(toolbar);
+
+  const listBody = document.createElement("div");
+  content.appendChild(listBody);
+
+  const eventsBody = document.createElement("div");
+  eventsBody.className = "section";
+  eventsBody.innerHTML = `
+    <h2>Task 事件</h2>
+    <div class="toolbar row-item">
+      <label>sequence <input id="task-event-seq" type="number" min="0" value="0" /></label>
+      <label>limit <input id="task-event-limit" type="number" min="1" value="16" /></label>
+      <button type="button" class="ghost" id="task-events-fetch">拉取</button>
+    </div>
+    <div id="task-events-output" class="muted">尚未拉取</div>
+  `;
+  content.appendChild(eventsBody);
+
+  const submitBody = document.createElement("div");
+  submitBody.className = "section";
+  submitBody.innerHTML = `
+    <h2>submit_batch（调试）</h2>
+    <p class="muted">提交合法 TaskBatch JSON；空 batch 会被 ServiceHost 拒绝。</p>
+    <textarea id="task-submit-json" class="log-block" rows="8">${escapeHtml(DEFAULT_TASK_BATCH_JSON)}</textarea>
+    <div class="toolbar">
+      <button type="button" class="ghost" id="task-submit-btn">提交 batch</button>
+    </div>
+    <div id="task-submit-output" class="muted"></div>
+  `;
+  content.appendChild(submitBody);
+
+  async function loadTasks() {
+    listBody.innerHTML = "<div class='muted'>加载任务…</div>";
+    const tasks = await rpc.read("control", "task_list");
+    listBody.innerHTML = `<h2>任务列表</h2>${renderTaskRows(tasks || [])}`;
+    listBody.querySelectorAll("[data-cancel-task]").forEach((btn) => {
+      btn.onclick = async () => {
+        const id = btn.getAttribute("data-cancel-task");
+        if (!confirmAction(`确认取消任务 ${id}？`)) return;
+        try {
+          await rpc.write("control", "task_cancel", { id });
+          flash(app, `任务 ${id} 取消已提交`);
+          await loadTasks();
+        } catch (err) {
+          flash(app, SimpleRpc.formatError(err), true);
+        }
+      };
+    });
+  }
+
+  toolbar.querySelector("#tasks-refresh").onclick = () => loadTasks().catch((err) => {
+    flash(app, SimpleRpc.formatError(err), true);
+  });
+
+  eventsBody.querySelector("#task-events-fetch").onclick = async () => {
+    const sequence = Number(eventsBody.querySelector("#task-event-seq").value || 0);
+    const limit = Number(eventsBody.querySelector("#task-event-limit").value || 16);
+    const output = eventsBody.querySelector("#task-events-output");
+    output.textContent = "拉取中…";
+    try {
+      const page = await rpc.read("control", "task_events_after", { sequence, limit });
+      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
+    } catch (err) {
+      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+    }
+  };
+
+  submitBody.querySelector("#task-submit-btn").onclick = async () => {
+    const raw = submitBody.querySelector("#task-submit-json").value;
+    const output = submitBody.querySelector("#task-submit-output");
+    if (!confirmAction("确认提交 TaskBatch？此操作会进入 Core 调度。")) return;
+    try {
+      const payload = JSON.parse(raw);
+      const result = await rpc.write("control", "task_submit_batch", payload);
+      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+      flash(app, "TaskBatch 已提交");
+      await loadTasks();
+    } catch (err) {
+      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
+
+  await loadTasks();
+}
+
+const DEFAULT_TASK_BATCH_JSON = `{
+  "batch": {
+    "batch_id": "console-debug",
+    "tasks": [
+      {
+        "task_id": "debug-task-1",
+        "protocol_id": "control.input",
+        "input": { "value": 1 }
+      }
+    ]
+  }
+}`;
+
+async function renderLifecycle(content, rpc, app) {
+  content.innerHTML = `
+    <div class="section">
+      <h2>Core drain</h2>
+      <p class="muted">停止接受新 Task 并进入 draining。需要 runtime.write 与二次确认。</p>
+      <button type="button" class="ghost" id="core-drain-btn">开始 Core drain</button>
+      <div id="core-drain-output" class="muted"></div>
+    </div>
+    <div class="section">
+      <h2>Service shutdown</h2>
+      <p class="muted">触发 ServiceHost 优雅关闭。需要 runtime.write 与输入 SHUTDOWN 确认。</p>
+      <button type="button" class="ghost danger" id="service-shutdown-btn">关闭 Service</button>
+      <div id="service-shutdown-output" class="muted"></div>
+    </div>
+  `;
+
+  content.querySelector("#core-drain-btn").onclick = async () => {
+    if (!confirmDestructiveAction("Core drain", "DRAIN")) return;
+    const output = content.querySelector("#core-drain-output");
+    output.textContent = "提交中…";
+    try {
+      const result = await rpc.write("control", "core_begin_drain");
+      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+      flash(app, "Core drain 已提交");
+    } catch (err) {
+      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
+
+  content.querySelector("#service-shutdown-btn").onclick = async () => {
+    if (!confirmDestructiveAction("Service 关闭", "SHUTDOWN")) return;
+    const output = content.querySelector("#service-shutdown-output");
+    output.textContent = "提交中…";
+    try {
+      await rpc.write("control", "service_shutdown");
+      output.textContent = "关闭信号已发送";
+      flash(app, "Service shutdown 已提交");
+    } catch (err) {
+      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
 }
 
 function renderComponents(comps) {
@@ -582,6 +736,14 @@ function emptyBlock(text) {
 
 function confirmAction(message) {
   return globalThis.confirm?.(message) !== false;
+}
+
+function confirmDestructiveAction(label, token) {
+  if (!confirmAction(`即将执行 ${label}。此操作会影响正在运行的服务，是否继续？`)) {
+    return false;
+  }
+  const typed = globalThis.prompt?.(`请输入 ${token} 以确认 ${label}`) ?? "";
+  return typed.trim() === token;
 }
 
 function flash(app, message, isError = false) {

@@ -210,6 +210,48 @@ async fn embedded_console_secret_status_is_read_only() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
 
+#[tokio::test]
+async fn standalone_console_builds_and_rejects_control_until_link_wired() {
+    use mutsuki_bot_web_console::{
+        STANDALONE_LINK_NOT_WIRED, StandaloneConsoleSpec, WebConsolePaths,
+        build_standalone_console_host,
+    };
+
+    let spec = StandaloneConsoleSpec {
+        listen: "127.0.0.1:0".into(),
+        link_endpoint: "local://webhost".into(),
+        auth_token: "local-dev".into(),
+        include_config: false,
+        include_upgrade: false,
+    };
+    let (mut host, _dirs) =
+        build_standalone_console_host(&spec, &WebConsolePaths::default()).unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let err = ws_rpc(&addr, "control", "health").await.unwrap_err();
+    assert!(err.contains(STANDALONE_LINK_NOT_WIRED));
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn standalone_console_requires_link_endpoint() {
+    use mutsuki_bot_web_console::{
+        StandaloneConsoleSpec, WebConsolePaths, build_standalone_console_host,
+    };
+
+    let spec = StandaloneConsoleSpec {
+        listen: "127.0.0.1:0".into(),
+        link_endpoint: "   ".into(),
+        auth_token: "local-dev".into(),
+        include_config: false,
+        include_upgrade: false,
+    };
+    assert!(build_standalone_console_host(&spec, &WebConsolePaths::default()).is_err());
+}
+
 async fn ws_rpc(addr: &str, namespace: &str, method: &str) -> Result<serde_json::Value, String> {
     ws_rpc_params(addr, namespace, method, json!({})).await
 }

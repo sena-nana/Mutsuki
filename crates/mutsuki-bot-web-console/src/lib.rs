@@ -5,12 +5,17 @@
 
 mod config_demo;
 mod secret_status;
+mod standalone;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
+pub use standalone::{
+    STANDALONE_LINK_NOT_WIRED, StandaloneConsoleSpec, UnwiredLinkControlHandler,
+    build_standalone_console_host,
+};
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
 use mutsuki_plugin_bot_config_web::{
@@ -137,7 +142,7 @@ pub fn build_console_host(
     Ok((builder.build()?, asset_dirs))
 }
 
-fn base_builder(
+pub(crate) fn base_builder(
     config: &WebConsoleConfig,
     secrets: &WebConsoleSecrets,
     asset_dirs: &ConsoleAssetDirs,
@@ -207,7 +212,7 @@ impl ConsoleAssetDirs {
     }
 }
 
-fn materialize_console_shell(
+pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
     include_upgrade: bool,
