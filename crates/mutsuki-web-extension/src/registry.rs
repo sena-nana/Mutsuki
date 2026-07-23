@@ -78,7 +78,7 @@ impl RpcRegistry {
     }
 
     pub fn call(&self, method: &str, params: JsonValue) -> Result<JsonValue, ExtensionError> {
-        let key = if method.contains('.') {
+        let key = if method.starts_with(&format!("{}.", self.namespace)) {
             method.to_string()
         } else {
             format!("{}.{}", self.namespace, method)
@@ -313,5 +313,24 @@ impl ExtensionRegistry {
             )));
         }
         record.rpc.call(method, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_web_protocol::DEFAULT_BUDGETS;
+
+    #[test]
+    fn dotted_methods_resolve_under_namespace() {
+        let mut rpc = RpcRegistry::new("config");
+        rpc.register("providers.list", |_params| Ok(serde_json::json!(["demo"])));
+        let value = rpc.call("providers.list", serde_json::json!({})).unwrap();
+        assert_eq!(value, serde_json::json!(["demo"]));
+        let value = rpc
+            .call("config.providers.list", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(value, serde_json::json!(["demo"]));
+        let _ = DEFAULT_BUDGETS;
     }
 }
