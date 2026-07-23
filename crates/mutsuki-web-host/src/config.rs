@@ -67,7 +67,10 @@ impl WebHostConfig {
                         "host.read".into(),
                         "recovery.read".into(),
                         "recovery.write".into(),
-                        "*".into(),
+                        "runtime.read".into(),
+                        "runtime.write".into(),
+                        "config.read".into(),
+                        "config.write".into(),
                     ],
                     allow_unauthenticated: false,
                 };

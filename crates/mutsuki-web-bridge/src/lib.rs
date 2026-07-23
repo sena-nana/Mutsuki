@@ -112,13 +112,12 @@ impl WebBridge {
         match message {
             WireMessage::Hello {
                 protocol_version,
-                capabilities,
+                capabilities: _client_capabilities,
                 auth_token,
             } => {
                 ensure_protocol_compatible(&protocol_version)?;
-                let granted = self.inner.auth.authenticate(auth_token.as_deref())?;
-                let mut session_caps = granted;
-                session_caps.extend(capabilities);
+                // Capabilities are server-granted only. Client Hello must not escalate.
+                let mut session_caps = self.inner.auth.authenticate(auth_token.as_deref())?;
                 if self.safe_mode() {
                     session_caps.retain(|cap| cap.starts_with("recovery.") || cap == "*");
                     if session_caps.is_empty() {
@@ -211,7 +210,7 @@ impl WebBridge {
             match self.inner.extensions.read().call_rpc(
                 &request.namespace,
                 &request.method,
-                request.params.clone(),
+                inject_session_capabilities(request.params.clone(), &session.capabilities),
                 &session.capabilities,
             ) {
                 Ok(result) => RpcResponse {
@@ -379,6 +378,30 @@ fn rpc_error(id: Uuid, code: &str, message: String) -> RpcResponse {
     }
 }
 
+/// Overwrite client-supplied `capabilities` with the authenticated session set.
+fn inject_session_capabilities(
+    params: mutsuki_web_protocol::JsonValue,
+    session_capabilities: &[String],
+) -> mutsuki_web_protocol::JsonValue {
+    let caps = serde_json::Value::Array(
+        session_capabilities
+            .iter()
+            .map(|cap| serde_json::Value::String(cap.clone()))
+            .collect(),
+    );
+    match params {
+        serde_json::Value::Object(mut map) => {
+            map.insert("capabilities".into(), caps);
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Null => serde_json::json!({ "capabilities": caps }),
+        other => serde_json::json!({
+            "capabilities": caps,
+            "value": other,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +447,33 @@ mod tests {
                 assert_eq!(result.error.unwrap().code, "capability_denied");
             }
             _ => panic!("expected rpc result"),
+        }
+    }
+
+    #[test]
+    fn hello_ignores_client_capability_escalation() {
+        let bridge = WebBridge::new(
+            DEFAULT_BUDGETS,
+            ExtensionRegistry::new(DEFAULT_BUDGETS),
+            AuthPolicy::allow_local(vec!["host.read".into()]),
+            false,
+        );
+        let hello = bridge
+            .handle_message(
+                None,
+                WireMessage::Hello {
+                    protocol_version: WEB_PROTOCOL_VERSION.into(),
+                    capabilities: vec!["*".into(), "runtime.write".into()],
+                    auth_token: Some("local-dev".into()),
+                },
+            )
+            .unwrap();
+        match hello {
+            HandleOutcome::Reply(WireMessage::HelloAck { session, .. }) => {
+                assert_eq!(session.capabilities, vec!["host.read".to_string()]);
+                assert!(!session.capabilities.iter().any(|cap| cap == "*"));
+            }
+            _ => panic!("expected hello ack"),
         }
     }
 
