@@ -8,6 +8,19 @@ importers:
 
   .: {}
 
+  packages/ui:
+    dependencies:
+      '@lilia/theme':
+        specifier: github:sena-nana/LiliaUI#4dab5476073468c4da24a39cf4b85cad6464e83a&path:/packages/theme
+        version: https://codeload.github.com/sena-nana/LiliaUI/tar.gz/4dab5476073468c4da24a39cf4b85cad6464e83a#path:/packages/theme
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vue:
+        specifier: ^3.5.0
+        version: 3.5.40(typescript@5.9.3)
+
   packages/web-build:
     dependencies:
       esbuild:
@@ -38,6 +51,9 @@ importers:
 
   packages/web-shell:
     dependencies:
+      '@mutsuki/ui':
+        specifier: workspace:*
+        version: link:../ui
       '@mutsuki/web-sdk':
         specifier: workspace:*
         version: link:../web-sdk
@@ -232,6 +248,11 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@lilia/theme@https://codeload.github.com/sena-nana/LiliaUI/tar.gz/4dab5476073468c4da24a39cf4b85cad6464e83a#path:/packages/theme':
+    resolution: {path: /packages/theme, tarball: https://codeload.github.com/sena-nana/LiliaUI/tar.gz/4dab5476073468c4da24a39cf4b85cad6464e83a}
+    version: 0.1.0
+    engines: {node: '>=26.0.0 <27'}
 
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
@@ -435,6 +456,8 @@ snapshots:
     optional: true
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
+
+  '@lilia/theme@https://codeload.github.com/sena-nana/LiliaUI/tar.gz/4dab5476073468c4da24a39cf4b85cad6464e83a#path:/packages/theme': {}
 
   '@types/node@22.20.1':
     dependencies:

@@ -34,6 +34,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `mutsuki-web-recovery` | 最小恢复与安全模式 Shell |
 | `@mutsuki/web-sdk` | Vue/WebExtension 前端 SDK |
 | `@mutsuki/web-shell` | 可复用 Shell 基础实现 |
+| `@mutsuki/ui` | LiliaUI token/layout 包装（styles + ConsoleShell）；视觉基座来自 pinned `@lilia/theme`，构建期由 `bundle-css.mjs` 打进 `dist/mutsuki-ui.css` |
 | `@mutsuki/web-build` | Vue/TS/CSS 标准构建工具（运行时不调用） |
 
 跨仓库：`MutsukiCore`（仅通用协议缺口）、`MutsukiLink`（standalone 桥接）、

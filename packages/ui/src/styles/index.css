@@ -1,0 +1,6 @@
+/* 视觉基座来自唯一事实源 @lilia/theme（pinned），本包不再复制 Lilia CSS。 */
+@import "@lilia/theme/base.css"; /* 字体契约 + tokens + state-layer + reset + 表单控件基线 */
+@import "@lilia/theme/styles/workspace.css";
+@import "@lilia/theme/styles/sidebar.css";
+@import "@lilia/theme/styles/page.css";
+@import "./console.css"; /* Mutsuki 产品 chrome */

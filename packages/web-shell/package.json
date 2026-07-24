@@ -15,6 +15,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@mutsuki/ui": "workspace:*",
     "@mutsuki/web-sdk": "workspace:*"
   },
   "peerDependencies": {
