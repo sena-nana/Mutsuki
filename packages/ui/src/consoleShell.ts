@@ -15,12 +15,7 @@ export type ConsoleShellSlots = {
   default?: () => VNode | VNode[];
 };
 
-/**
- * Lilia Workspace-shaped console chrome: an elevated navigation region built on
- * `.secondary-panel` + `.sb-tree__row`, and a base-surface main region whose
- * page uses the Lilia `.page-header` language. Consumes only `@lilia/theme`
- * layout classes plus the product `console.css`.
- */
+/** Lilia workspace chrome: secondary-panel nav + page-header main. */
 export const ConsoleShell = defineComponent({
   name: "MutsukiConsoleShell",
   props: {
@@ -63,36 +58,35 @@ export const ConsoleShell = defineComponent({
                       class: "secondary-panel__body sb-section nav",
                       "aria-label": "Console",
                     },
-                    props.navItems.map((item) =>
-                      item.href
-                        ? h(
-                            "a",
-                            {
-                              class: [
-                                "sb-tree__row",
-                                "lilia-interactive-item",
-                                item.active ? "is-active" : undefined,
-                              ],
-                              href: item.href,
-                              "aria-current": item.active ? "page" : undefined,
-                            },
-                            [h("span", { class: "sb-tree__name" }, item.label)],
-                          )
-                        : h(
-                            "button",
-                            {
-                              type: "button",
-                              class: [
-                                "sb-tree__row",
-                                "lilia-interactive-item",
-                                item.active ? "is-active" : undefined,
-                              ],
-                              "aria-current": item.active ? "page" : undefined,
-                              onClick: () => emit("navigate", item.id),
-                            },
-                            [h("span", { class: "sb-tree__name" }, item.label)],
-                          ),
-                    ),
+                    props.navItems.map((item) => {
+                      const className = [
+                        "sb-tree__row",
+                        "lilia-interactive-item",
+                        item.active ? "is-active" : undefined,
+                      ];
+                      const label = [h("span", { class: "sb-tree__name" }, item.label)];
+                      if (item.href) {
+                        return h(
+                          "a",
+                          {
+                            class: className,
+                            href: item.href,
+                            "aria-current": item.active ? "page" : undefined,
+                          },
+                          label,
+                        );
+                      }
+                      return h(
+                        "button",
+                        {
+                          type: "button",
+                          class: className,
+                          "aria-current": item.active ? "page" : undefined,
+                          onClick: () => emit("navigate", item.id),
+                        },
+                        label,
+                      );
+                    }),
                   ),
                 slots.footer?.() ??
                   h("div", { class: "secondary-panel__footer sidebar-footer" }, props.footer),
@@ -106,35 +100,27 @@ export const ConsoleShell = defineComponent({
               "data-region": "main",
             },
             [
-              h(
-                "div",
-                { class: "lilia-workspace-region__content page-scroll" },
-                [
-                  slots.header?.() ??
-                    h("div", { class: "page-header" }, [
-                      h("div", [
-                        h("h1", props.title),
-                        props.subtitle ? h("p", props.subtitle) : null,
-                      ]),
-                      h("div", { class: "page-actions" }, [
-                        h(
-                          "button",
-                          {
-                            type: "button",
-                            class: "ghost",
-                            onClick: () => emit("refresh"),
-                          },
-                          "刷新",
-                        ),
-                      ]),
+              h("div", { class: "lilia-workspace-region__content page-scroll" }, [
+                slots.header?.() ??
+                  h("div", { class: "page-header" }, [
+                    h("div", [
+                      h("h1", props.title),
+                      props.subtitle ? h("p", props.subtitle) : null,
                     ]),
-                  h(
-                    "section",
-                    { class: "page-body", id: "content" },
-                    slots.default?.() ?? [],
-                  ),
-                ],
-              ),
+                    h("div", { class: "page-actions" }, [
+                      h(
+                        "button",
+                        {
+                          type: "button",
+                          class: "ghost",
+                          onClick: () => emit("refresh"),
+                        },
+                        "刷新",
+                      ),
+                    ]),
+                  ]),
+                h("section", { class: "page-body", id: "content" }, slots.default?.() ?? []),
+              ]),
             ],
           ),
         ],
@@ -142,7 +128,7 @@ export const ConsoleShell = defineComponent({
   },
 });
 
-/** Vanilla DOM factory matching ConsoleShell markup (for non-Vue console pages). */
+/** Vanilla DOM factory matching ConsoleShell markup. */
 export function createConsoleShellElement(options: {
   brand?: string;
   footer?: string;
