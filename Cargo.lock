@@ -2026,7 +2026,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-web-bridge"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=f77cb0beb637f7f184c020f1c824633509a0d2b6#f77cb0beb637f7f184c020f1c824633509a0d2b6"
+source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=d460b6f4dab3767ff27ce2bea1a277e78cec2b82#d460b6f4dab3767ff27ce2bea1a277e78cec2b82"
 dependencies = [
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
@@ -2041,7 +2041,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-web-extension"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=f77cb0beb637f7f184c020f1c824633509a0d2b6#f77cb0beb637f7f184c020f1c824633509a0d2b6"
+source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=d460b6f4dab3767ff27ce2bea1a277e78cec2b82#d460b6f4dab3767ff27ce2bea1a277e78cec2b82"
 dependencies = [
  "mutsuki-web-protocol",
  "serde",
@@ -2053,7 +2053,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-web-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=f77cb0beb637f7f184c020f1c824633509a0d2b6#f77cb0beb637f7f184c020f1c824633509a0d2b6"
+source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=d460b6f4dab3767ff27ce2bea1a277e78cec2b82#d460b6f4dab3767ff27ce2bea1a277e78cec2b82"
 dependencies = [
  "axum",
  "futures",
@@ -2076,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-web-protocol"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=f77cb0beb637f7f184c020f1c824633509a0d2b6#f77cb0beb637f7f184c020f1c824633509a0d2b6"
+source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=d460b6f4dab3767ff27ce2bea1a277e78cec2b82#d460b6f4dab3767ff27ce2bea1a277e78cec2b82"
 dependencies = [
  "serde",
  "serde_json",
@@ -2087,7 +2087,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-web-recovery"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=f77cb0beb637f7f184c020f1c824633509a0d2b6#f77cb0beb637f7f184c020f1c824633509a0d2b6"
+source = "git+https://github.com/sena-nana/MutsukiWebHost.git?rev=d460b6f4dab3767ff27ce2bea1a277e78cec2b82#d460b6f4dab3767ff27ce2bea1a277e78cec2b82"
 dependencies = [
  "mutsuki-web-protocol",
  "serde",
@@ -3165,7 +3165,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
