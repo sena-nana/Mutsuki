@@ -1,0 +1,409 @@
+/* Mutsuki Console host chrome on top of LiliaUI tokens + workspace/page.
+   Keeps product-specific nav/form rules without forking Lilia layout language. */
+
+html,
+body,
+#app,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.mutsuki-console.lilia-workspace {
+  --lilia-workspace-nav-width: 220px;
+  grid-template-columns: var(--lilia-workspace-nav-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.mutsuki-console .lilia-workspace-region[data-region="navigation"] {
+  background: var(--bg-elev);
+  border-inline-end: 1px solid var(--border-soft);
+}
+
+.mutsuki-console .lilia-workspace-region[data-region="main"] {
+  background: var(--bg);
+}
+
+.mutsuki-console .lilia-workspace-region__content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.mutsuki-console .brand {
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 1rem 1.1rem;
+  color: var(--accent);
+}
+
+.mutsuki-console .nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem;
+  flex: 1;
+  overflow: auto;
+}
+
+.mutsuki-console .nav-item {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm, 6px);
+  width: 100%;
+  cursor: pointer;
+  text-decoration: none;
+  display: block;
+  font: inherit;
+}
+
+.mutsuki-console .nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.mutsuki-console .nav-item.active,
+.mutsuki-console .nav-item[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.mutsuki-console .nav-item:focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: 1px;
+}
+
+.mutsuki-console .sidebar-footer {
+  margin-top: auto;
+  padding: 1rem 1.1rem;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.mutsuki-console .workspace-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+.mutsuki-console .header-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.mutsuki-console .workspace-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.mutsuki-console .workspace-header p {
+  margin: 0.3rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.mutsuki-console .workspace-content {
+  padding: 1.1rem 1.25rem;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.mutsuki-console .ghost,
+.mutsuki-console .provider-item,
+.mutsuki-console .actions button,
+.mutsuki-console .secret-row button,
+.mutsuki-console .array-editor button,
+.mutsuki-console .map-editor button,
+.mutsuki-console .conflict button {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  font: inherit;
+}
+
+.mutsuki-console .ghost:hover,
+.mutsuki-console .provider-item:hover {
+  background: var(--bg-hover);
+}
+
+.mutsuki-console .ghost:focus-visible,
+.mutsuki-console .provider-item:focus-visible,
+.mutsuki-console .field input:focus-visible,
+.mutsuki-console .field textarea:focus-visible,
+.mutsuki-console .field select:focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: 1px;
+}
+
+.mutsuki-console .ghost.danger {
+  border-color: color-mix(in oklch, var(--err) 40%, var(--border));
+  color: var(--err);
+}
+
+.mutsuki-console .actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.mutsuki-console .actions .primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.mutsuki-console .provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 420px;
+}
+
+.mutsuki-console .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+  max-width: 560px;
+}
+
+.mutsuki-console .field.nested {
+  margin-left: 0.75rem;
+  border-left: 2px solid var(--border-soft);
+  padding-left: 0.75rem;
+}
+
+.mutsuki-console .field-title {
+  font-size: 0.9rem;
+}
+
+.mutsuki-console .field-help,
+.mutsuki-console .field-restart,
+.mutsuki-console .field-format,
+.mutsuki-console .meta,
+.mutsuki-console .muted {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.mutsuki-console .field input,
+.mutsuki-console .field textarea,
+.mutsuki-console .field select {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+}
+
+.mutsuki-console .field input:disabled,
+.mutsuki-console .field textarea:disabled,
+.mutsuki-console .field select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mutsuki-console .field.is-error input,
+.mutsuki-console .field.is-error textarea,
+.mutsuki-console .field.is-error select {
+  border-color: var(--err);
+}
+
+.mutsuki-console .secret-row,
+.mutsuki-console .array-row,
+.mutsuki-console .map-row,
+.mutsuki-console .enum-multi {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .secret-row .danger {
+  color: var(--err);
+}
+
+.mutsuki-console .message {
+  margin-top: 1rem;
+  color: var(--ok);
+}
+
+.mutsuki-console .conflict,
+.mutsuki-console .error-banner {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md, 8px);
+  background: var(--err-soft, color-mix(in oklch, var(--err) 14%, transparent));
+  color: var(--err);
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 0.75rem;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.mutsuki-console .pill.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.mutsuki-console .pill.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.mutsuki-console .pill.err {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.mutsuki-console .tree-item.row-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mutsuki-console .tree-item.row-item:last-child {
+  border-bottom: 0;
+}
+
+.mutsuki-console .log-view,
+.mutsuki-console .mono {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.75rem;
+}
+
+.mutsuki-console .status-ok {
+  color: var(--ok);
+}
+.mutsuki-console .status-warn {
+  color: var(--warn);
+}
+.mutsuki-console .status-err {
+  color: var(--err);
+}
+.mutsuki-console .status-muted {
+  color: var(--text-muted);
+}
+
+.mutsuki-console .section {
+  margin: 1rem 0;
+}
+.mutsuki-console .section.nested {
+  margin: 0.6rem 0 0;
+}
+.mutsuki-console .section.nested h3,
+.mutsuki-console .section.nested h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.mutsuki-console .toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+  flex-wrap: wrap;
+}
+.mutsuki-console .toolbar.nested {
+  margin-top: 0.45rem;
+}
+
+.mutsuki-console input[type="search"],
+.mutsuki-console select {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm, 6px);
+  font: inherit;
+}
+.mutsuki-console input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.mutsuki-console .tree-item {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.mutsuki-console .tree-item:last-child {
+  border-bottom: 0;
+}
+.mutsuki-console .row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.mutsuki-console .plugin-card,
+.mutsuki-console .candidate-row {
+  margin-top: 0.35rem;
+}
+
+.mutsuki-console .log-block {
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.8rem;
+  overflow: auto;
+  max-height: 320px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.mutsuki-console .flash-banner {
+  margin: 0.8rem 0;
+  padding: 0.8rem;
+  border-radius: var(--radius-md, 8px);
+  background: var(--ok-soft);
+  color: var(--text);
+}
+.mutsuki-console .flash-banner.error {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.mutsuki-console .err-text,
+.mutsuki-console .err {
+  color: var(--err);
+}

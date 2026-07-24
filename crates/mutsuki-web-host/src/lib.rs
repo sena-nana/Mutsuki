@@ -301,13 +301,16 @@ impl WebHost for MutsukiWebHost {
 }
 
 fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
         if entry.file_type()?.is_dir() {
             copy_dir_recursive(&entry.path(), &target)?;
-        } else {
+        } else if entry.path() != target {
             std::fs::copy(entry.path(), target)?;
         }
     }

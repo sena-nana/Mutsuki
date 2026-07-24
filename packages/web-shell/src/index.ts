@@ -85,3 +85,12 @@ export const SHARED_IMPORT_MAP = {
   "@mutsuki/web-sdk": "/shared/web-sdk.js",
   "@mutsuki/ui": "/shared/ui.js",
 } as const;
+
+export {
+  applyTheme,
+  resolveTheme,
+  ConsoleShell,
+  createConsoleShellElement,
+  type ConsoleNavItem,
+  type MutsukiTheme,
+} from "@mutsuki/ui";
