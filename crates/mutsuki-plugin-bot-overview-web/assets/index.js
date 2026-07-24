@@ -5,13 +5,32 @@
 const READ_CAPS = ["runtime.read"];
 const WRITE_CAPS = ["runtime.read", "runtime.write"];
 
+const PAGE_ALIASES = {
+  runners: { page: "runtime", tab: "runners" },
+  events: { page: "runtime", tab: "events" },
+  lifecycle: { page: "ops", tab: "lifecycle" },
+  logs: { page: "ops", tab: "logs" },
+};
+
 const PAGES = [
   { id: "overview", label: "概览" },
-  { id: "upgrade", label: "自动升级", optional: true },
+  { id: "runtime", label: "运行时" },
   { id: "plugins", label: "插件" },
-  { id: "runners", label: "Runners" },
-  { id: "events", label: "EventSources" },
   { id: "tasks", label: "任务" },
+  { id: "resources", label: "资源" },
+  { id: "database", label: "数据库" },
+  { id: "config", label: "配置", optional: true },
+  { id: "upgrade", label: "自动升级", optional: true },
+  { id: "ops", label: "运维" },
+];
+
+const RUNTIME_TABS = [
+  { id: "runners", label: "运行器" },
+  { id: "events", label: "事件源" },
+  { id: "topology", label: "拓扑" },
+];
+
+const OPS_TABS = [
   { id: "lifecycle", label: "生命周期" },
   { id: "logs", label: "日志" },
 ];
@@ -71,16 +90,50 @@ function componentLabel(id) {
   }
 }
 
-function currentPage() {
-  return new URLSearchParams(location.search).get("page") || "overview";
+function parseRoute() {
+  const params = new URLSearchParams(location.search);
+  let page = params.get("page") || "overview";
+  let tab = params.get("tab") || "";
+  const alias = PAGE_ALIASES[page];
+  if (alias) {
+    page = alias.page;
+    tab = tab || alias.tab;
+  }
+  if (page === "runtime" && !RUNTIME_TABS.some((item) => item.id === tab)) {
+    tab = "runners";
+  }
+  if (page === "ops" && !OPS_TABS.some((item) => item.id === tab)) {
+    tab = "lifecycle";
+  }
+  return { page, tab };
 }
 
-function navigate(page) {
+function currentPage() {
+  return parseRoute().page;
+}
+
+function currentTab() {
+  return parseRoute().tab;
+}
+
+function navigate(page, tab) {
   const url = new URL(location.href);
   if (page === "overview") url.searchParams.delete("page");
   else url.searchParams.set("page", page);
+  if (tab) url.searchParams.set("tab", tab);
+  else url.searchParams.delete("tab");
+  // Drop legacy alias params after normalize.
   history.pushState({}, "", url);
-  return page;
+  return { page, tab: tab || "" };
+}
+
+function formatBytes(bytes) {
+  if (bytes == null || Number.isNaN(Number(bytes))) return "—";
+  const value = Number(bytes);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(value / (1024 ** 3)).toFixed(2)} GB`;
 }
 
 export class SimpleRpc {
@@ -162,18 +215,37 @@ export class SimpleRpc {
 function createShell(rpc, options = {}) {
   const includeConfig = options.includeConfig === true;
   const includeUpgrade = options.includeUpgrade === true;
-  const state = { page: currentPage(), error: "", busy: false, upgradeDetail: null, upgradeQuery: "" };
+  const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
+  const route = parseRoute();
+  const state = {
+    page: route.page,
+    tab: route.tab,
+    error: "",
+    busy: false,
+    upgradeDetail: null,
+    upgradeQuery: "",
+    selectedTaskId: null,
+  };
 
   const app = document.createElement("div");
   app.className = "mutsuki-console lilia-workspace";
   app.dataset.liliaSurfaceMode = "solid";
   app.dataset.liliaSurfaceLevel = "base";
 
+  function go(page, tab) {
+    const next = navigate(page, tab);
+    state.page = next.page;
+    state.tab = next.tab;
+    renderNav();
+    renderPage();
+  }
+
   function renderNav() {
     const nav = app.querySelector(".nav");
     nav.innerHTML = "";
     for (const page of PAGES) {
       if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
+      if (page.optional === true && page.id === "config" && !includeConfig) continue;
       const btn = document.createElement("button");
       btn.type = "button";
       const active = state.page === page.id;
@@ -185,18 +257,11 @@ function createShell(rpc, options = {}) {
       }
       btn.innerHTML = `<span class="sb-tree__name">${escapeHtml(page.label)}</span>`;
       btn.onclick = () => {
-        state.page = navigate(page.id);
-        renderNav();
-        renderPage();
+        if (page.id === "runtime") go("runtime", state.page === "runtime" ? state.tab || "runners" : "runners");
+        else if (page.id === "ops") go("ops", state.page === "ops" ? state.tab || "lifecycle" : "lifecycle");
+        else go(page.id);
       };
       nav.appendChild(btn);
-    }
-    if (includeConfig) {
-      const link = document.createElement("a");
-      link.className = "sb-tree__row lilia-interactive-item";
-      link.href = "?page=config";
-      link.innerHTML = `<span class="sb-tree__name">配置</span>`;
-      nav.appendChild(link);
     }
   }
 
@@ -206,21 +271,22 @@ function createShell(rpc, options = {}) {
     const subtitle = app.querySelector("#page-subtitle");
     const pageMeta = PAGES.find((p) => p.id === state.page) || PAGES[0];
     title.textContent = pageMeta.label;
-    subtitle.textContent = pageSubtitle(state.page);
+    subtitle.textContent = pageSubtitle(state.page, state.tab);
     content.className = "page-body";
     content.innerHTML = "";
     state.error = "";
     state.busy = true;
     try {
-      if (state.page === "overview") await renderOverview(content, rpc);
-      else if (state.page === "upgrade") await renderUpgrade(content, rpc, app, state);
+      if (state.page === "overview") await renderOverview(content, rpc, { go });
+      else if (state.page === "runtime") await renderRuntime(content, rpc, app, state, go);
+      else if (state.page === "upgrade") await renderUpgrade(content, rpc, app, state, go);
       else if (state.page === "plugins") await renderPlugins(content, rpc, app);
-      else if (state.page === "runners") await renderRunners(content, rpc, app);
-      else if (state.page === "events") await renderEvents(content, rpc, app);
-      else if (state.page === "tasks") await renderTasks(content, rpc, app);
-      else if (state.page === "lifecycle") await renderLifecycle(content, rpc, app);
-      else if (state.page === "logs") await renderLogs(content, rpc);
-      else await renderOverview(content, rpc);
+      else if (state.page === "tasks") await renderTasks(content, rpc, app, state);
+      else if (state.page === "resources") await renderResources(content, rpc);
+      else if (state.page === "database") await renderDatabase(content, rpc, app, builtinDatabases);
+      else if (state.page === "config") await renderConfig(content, rpc);
+      else if (state.page === "ops") await renderOps(content, rpc, app, state, go);
+      else await renderOverview(content, rpc, { go });
     } catch (err) {
       state.error = SimpleRpc.formatError(err);
       content.innerHTML = `<div class="error-banner"><strong>加载失败</strong><div class="muted">${escapeHtml(state.error)}</div></div>`;
@@ -253,7 +319,9 @@ function createShell(rpc, options = {}) {
   renderNav();
   app.querySelector("#refresh").onclick = renderPage;
   window.addEventListener("popstate", () => {
-    state.page = currentPage();
+    const route = parseRoute();
+    state.page = route.page;
+    state.tab = route.tab;
     renderNav();
     renderPage();
   });
@@ -261,43 +329,49 @@ function createShell(rpc, options = {}) {
   return app;
 }
 
-function pageSubtitle(page) {
+function pageSubtitle(page, tab) {
   switch (page) {
     case "upgrade":
       return "对照 release set 检查 Mutsuki 模块 Git pin，生成 fetch / build / ABI / pin 升级计划";
     case "plugins":
       return "插件清单与部署偏好";
-    case "runners":
-      return "Runner 进程状态与运维操作";
-    case "events":
-      return "EventSource 连接与健康";
+    case "runtime":
+      if (tab === "events") return "事件源连接与健康";
+      if (tab === "topology") return "插件 → 运行器 → 事件源 关系图";
+      return "运行器进程状态与运维操作";
     case "tasks":
-      return "Task 列表、事件流与调试提交（需 runtime.write）";
-    case "lifecycle":
-      return "Core drain 与 Service 关闭（强确认 + runtime.write）";
-    case "logs":
-      return "运行时日志尾部";
+      return "任务表、详情与事件时间线（调试提交默认折叠）";
+    case "resources":
+      return "Runtime ResourceRef 清单（只读）";
+    case "database":
+      return "产品内置 SQLite 只读浏览（经 task_submit_batch / mutsuki.db.*）";
+    case "config":
+      return "由 ConfigDescriptor 自动生成表单";
+    case "ops":
+      return tab === "logs" ? "运行时日志尾部" : "Core drain 与 Service 关闭（强确认 + runtime.write）";
     default:
-      return "系统状态 · Bot 结构 · 运行时间";
+      return "系统状态 · 主机指标 · 可下钻统计";
   }
 }
 
-async function renderOverview(content, rpc) {
+async function renderOverview(content, rpc, ctx = {}) {
   content.className = "page-body overview-dashboard";
+  const go = ctx.go || (() => {});
   const d = await rpc.read("overview", "summary");
   const h = d.health || {};
   const c = d.counts || {};
   const tasks = c.tasks || {};
+  const host = d.host || {};
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
 
   appendMetricGrid(content, [
-    ["运行时间", formatDuration(d.uptime_ms)],
-    ["任务", String(active)],
-    ["已提交", String(tasks.submitted_total ?? "—")],
-    ["插件", String(c.plugins ?? 0)],
-    ["运行器", String(c.runners ?? 0)],
-    ["事件源", String(c.event_sources ?? 0)],
+    { label: "运行时间", value: formatDuration(d.uptime_ms) },
+    { label: "任务", value: String(active), onClick: () => go("tasks") },
+    { label: "已提交", value: String(tasks.submitted_total ?? "—"), onClick: () => go("tasks") },
+    { label: "插件", value: String(c.plugins ?? 0), onClick: () => go("plugins") },
+    { label: "运行器", value: String(c.runners ?? 0), onClick: () => go("runtime", "runners") },
+    { label: "事件源", value: String(c.event_sources ?? 0), onClick: () => go("runtime", "events") },
   ]);
 
   const grid = document.createElement("div");
@@ -311,19 +385,67 @@ async function renderOverview(content, rpc) {
     ["运行器", h.runners, true],
     ["事件源", h.event_sources, true],
   ]);
+
+  const hostRows = [
+    ["进程 PID", host.pid != null ? String(host.pid) : "—"],
+    ["主机运行时间", formatDuration(host.uptime_ms ?? d.uptime_ms)],
+    ["内存 RSS", formatBytes(host.rss_bytes)],
+    ["CPU 时间", host.cpu_time_ms != null ? formatDuration(host.cpu_time_ms) : "—"],
+  ];
+  const hostCard = appendKvCard(grid, "主机资源", hostRows.map(([k, v]) => [k, v, false]));
+  if (host.unavailable || host.available === false) {
+    const note = document.createElement("div");
+    note.className = "muted capability-gap";
+    note.textContent =
+      host.reason ||
+      "完整主机指标（RSS / CPU）需 ServiceHost host_metrics 控制面；当前仅展示已有 uptime。";
+    hostCard.appendChild(note);
+  }
+
   appendSection(grid, "健康组件", renderComponents(d.components || {}));
+
+  const ops = document.createElement("section");
+  ops.className = "card";
+  ops.innerHTML = `<h2>运维入口</h2><p class="muted">生命周期与日志已降级到侧栏「运维」。</p>`;
+  const opsBar = document.createElement("div");
+  opsBar.className = "toolbar nested";
+  const lifeBtn = document.createElement("button");
+  lifeBtn.type = "button";
+  lifeBtn.className = "ghost";
+  lifeBtn.textContent = "生命周期";
+  lifeBtn.onclick = () => go("ops", "lifecycle");
+  const logBtn = document.createElement("button");
+  logBtn.type = "button";
+  logBtn.className = "ghost";
+  logBtn.textContent = "日志";
+  logBtn.onclick = () => go("ops", "logs");
+  const topoBtn = document.createElement("button");
+  topoBtn.type = "button";
+  topoBtn.className = "ghost";
+  topoBtn.textContent = "查看拓扑";
+  topoBtn.onclick = () => go("runtime", "topology");
+  opsBar.append(lifeBtn, logBtn, topoBtn);
+  ops.appendChild(opsBar);
+  grid.appendChild(ops);
+
   await renderSecretStatusSection(grid, rpc);
 }
 
 function appendMetricGrid(content, metrics) {
   const grid = document.createElement("div");
   grid.className = "metric-grid";
-  grid.innerHTML = metrics
-    .map(
-      ([label, value]) =>
-        `<div class="metric-card"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div></div>`,
-    )
-    .join("");
+  for (const metric of metrics) {
+    const card = document.createElement(metric.onClick ? "button" : "div");
+    if (metric.onClick) {
+      card.type = "button";
+      card.className = "metric-card metric-card--link";
+      card.onclick = metric.onClick;
+    } else {
+      card.className = "metric-card";
+    }
+    card.innerHTML = `<div class="metric-label">${escapeHtml(metric.label)}</div><div class="metric-value">${escapeHtml(metric.value)}</div>`;
+    grid.appendChild(card);
+  }
   content.appendChild(grid);
 }
 
@@ -342,7 +464,7 @@ function appendKvCard(content, title, rows) {
       return `<li><span>${escapeHtml(label)}</span>${right}</li>`;
     })
     .join("");
-  appendSection(content, title, `<ul class="kv">${items}</ul>`);
+  return appendSection(content, title, `<ul class="kv">${items}</ul>`);
 }
 
 async function renderSecretStatusSection(content, rpc) {
@@ -528,6 +650,254 @@ async function rerenderPlugins(app, rpc) {
   await renderPlugins(content, rpc, app);
 }
 
+function renderTabBar(tabs, active, onSelect) {
+  const bar = document.createElement("div");
+  bar.className = "tab-bar";
+  bar.setAttribute("role", "tablist");
+  for (const tab of tabs) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `tab-bar__item${tab.id === active ? " is-active" : ""}`;
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", tab.id === active ? "true" : "false");
+    btn.textContent = tab.label;
+    btn.onclick = () => onSelect(tab.id);
+    bar.appendChild(btn);
+  }
+  return bar;
+}
+
+async function renderRuntime(content, rpc, app, state, go) {
+  content.appendChild(
+    renderTabBar(RUNTIME_TABS, state.tab || "runners", (tab) => go("runtime", tab)),
+  );
+  const body = document.createElement("div");
+  body.className = "tab-panel";
+  content.appendChild(body);
+  if (state.tab === "events") await renderEvents(body, rpc, app);
+  else if (state.tab === "topology") await renderTopology(body, rpc, go);
+  else await renderRunners(body, rpc, app);
+}
+
+async function renderOps(content, rpc, app, state, go) {
+  content.appendChild(
+    renderTabBar(OPS_TABS, state.tab || "lifecycle", (tab) => go("ops", tab)),
+  );
+  const body = document.createElement("div");
+  body.className = "tab-panel";
+  content.appendChild(body);
+  if (state.tab === "logs") await renderLogs(body, rpc);
+  else await renderLifecycle(body, rpc, app);
+}
+
+async function renderConfig(content, rpc) {
+  try {
+    const mod = await import("./config/index.js");
+    if (typeof mod.mountConfigPanel !== "function") {
+      content.appendChild(
+        emptyBlock("配置扩展未提供 mountConfigPanel；请确认 include_config 与资源物化。"),
+      );
+      return;
+    }
+    mod.mountConfigPanel(content, rpc);
+  } catch (err) {
+    content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">${escapeHtml(SimpleRpc.formatError(err))}</div></div>`;
+  }
+}
+
+async function renderTopology(content, rpc, go) {
+  const [pluginsBody, runners, sources] = await Promise.all([
+    rpc.read("control", "plugin_list"),
+    rpc.read("control", "runner_list"),
+    rpc.read("control", "event_source_list"),
+  ]);
+  const plugins = pluginsBody?.plugins || [];
+  const runnerList = runners || [];
+  const sourceList = sources || [];
+
+  if (!plugins.length && !runnerList.length && !sourceList.length) {
+    content.appendChild(emptyBlock("暂无拓扑数据"));
+    return;
+  }
+
+  const byPlugin = new Map();
+  for (const plugin of plugins) {
+    byPlugin.set(plugin.plugin_id, {
+      plugin,
+      runners: [],
+      sources: [],
+    });
+  }
+  for (const runner of runnerList) {
+    const bucket = byPlugin.get(runner.plugin_id) || {
+      plugin: { plugin_id: runner.plugin_id },
+      runners: [],
+      sources: [],
+    };
+    bucket.runners.push(runner);
+    byPlugin.set(runner.plugin_id, bucket);
+  }
+  for (const source of sourceList) {
+    const bucket = byPlugin.get(source.plugin_id) || {
+      plugin: { plugin_id: source.plugin_id },
+      runners: [],
+      sources: [],
+    };
+    bucket.sources.push(source);
+    byPlugin.set(source.plugin_id, bucket);
+  }
+
+  const graph = document.createElement("div");
+  graph.className = "topology-graph";
+  for (const [pluginId, node] of byPlugin) {
+    const card = document.createElement("section");
+    card.className = "topology-node card";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "topology-node__plugin ghost";
+    head.innerHTML = `<strong>${escapeHtml(pluginId)}</strong><span class="muted">插件</span>`;
+    head.onclick = () => go("plugins");
+    card.appendChild(head);
+
+    const lanes = document.createElement("div");
+    lanes.className = "topology-node__lanes";
+
+    const runnerLane = document.createElement("div");
+    runnerLane.className = "topology-lane";
+    runnerLane.innerHTML = "<h3>运行器</h3>";
+    if (!node.runners.length) {
+      runnerLane.appendChild(emptyBlock("无"));
+    } else {
+      for (const runner of node.runners) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "topology-chip";
+        btn.innerHTML = `<strong>${escapeHtml(runner.runner_id)}</strong><span class="muted">${escapeHtml(runner.state)}</span>`;
+        btn.onclick = () => go("runtime", "runners");
+        runnerLane.appendChild(btn);
+      }
+    }
+    lanes.appendChild(runnerLane);
+
+    const sourceLane = document.createElement("div");
+    sourceLane.className = "topology-lane";
+    sourceLane.innerHTML = "<h3>事件源</h3>";
+    if (!node.sources.length) {
+      sourceLane.appendChild(emptyBlock("无"));
+    } else {
+      for (const source of node.sources) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "topology-chip";
+        btn.innerHTML = `<strong>${escapeHtml(source.source_id)}</strong><span class="muted">${escapeHtml(source.health || source.state)}</span>`;
+        btn.onclick = () => go("runtime", "events");
+        sourceLane.appendChild(btn);
+      }
+    }
+    lanes.appendChild(sourceLane);
+    card.appendChild(lanes);
+    graph.appendChild(card);
+  }
+  content.appendChild(graph);
+}
+
+async function renderResources(content, rpc) {
+  appendSection(
+    content,
+    "ResourceRef 资源",
+    `<div class="muted capability-gap">Runtime 资源清单控制面尚未暴露（Core 已补 <code>ResourceManager::list_descriptors</code>，待 Host <code>resource_list</code> pin）。此处不展示假列表。</div>`,
+  );
+  try {
+    const body = await rpc.read("control", "resource_list");
+    const resources = body?.resources || body || [];
+    if (!Array.isArray(resources) || !resources.length) {
+      content.appendChild(emptyBlock("暂无已注册 ResourceRef"));
+      return;
+    }
+    for (const item of resources) {
+      const el = document.createElement("div");
+      el.className = "tree-item";
+      el.innerHTML = `<strong>${escapeHtml(item.ref_id || "—")}</strong><div class="muted">${escapeHtml(item.provider_id || "—")} · ${escapeHtml(item.resource_kind || "—")} · v${escapeHtml(String(item.version ?? "—"))}</div>`;
+      content.appendChild(el);
+    }
+  } catch (err) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.textContent = `resource_list 不可用：${SimpleRpc.formatError(err)}`;
+    content.appendChild(note);
+  }
+}
+
+async function renderDatabase(content, rpc, app, builtinDatabases) {
+  const databases = (builtinDatabases || []).filter((item) => item && item.path);
+  if (!databases.length) {
+    appendSection(
+      content,
+      "内置数据库",
+      `<div class="muted capability-gap">产品未声明内置 SQLite 路径（console-options.builtinDatabases）。禁止任意路径浏览；请在产品装配中提供 allowlist。</div>`,
+    );
+    return;
+  }
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "toolbar";
+  const select = document.createElement("select");
+  select.id = "db-select";
+  for (const db of databases) {
+    const opt = document.createElement("option");
+    opt.value = db.path;
+    opt.textContent = db.label || db.path;
+    select.appendChild(opt);
+  }
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "ghost";
+  refreshBtn.textContent = "列出表";
+  toolbar.append(select, refreshBtn);
+  content.appendChild(toolbar);
+
+  const output = document.createElement("div");
+  content.appendChild(output);
+
+  async function submitDbQuery(path, sql) {
+    const allowlist = databases.map((item) => item.path);
+    const batch = {
+      batch: {
+        batch_id: `console-db-${Date.now()}`,
+        tasks: [
+          {
+            task_id: `db-query-${Date.now()}`,
+            protocol_id: "mutsuki.db.query",
+            input: {
+              path,
+              sql,
+              readonly: true,
+              db_path_allowlist: allowlist,
+            },
+          },
+        ],
+      },
+    };
+    return rpc.write("control", "task_submit_batch", batch);
+  }
+
+  refreshBtn.onclick = async () => {
+    output.innerHTML = "<div class='muted'>查询中…</div>";
+    try {
+      const path = select.value;
+      const result = await submitDbQuery(
+        path,
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+      );
+      output.innerHTML = `<div class="card"><h2>表清单</h2><pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre><p class="muted">只读；写入操作默认关闭。结果为 task_submit_batch 句柄，完整行需 Core 运行并等待 outcome。</p></div>`;
+      flash(app, "已提交只读表清单查询");
+    } catch (err) {
+      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+      flash(app, SimpleRpc.formatError(err), true);
+    }
+  };
+}
+
 async function renderRunners(content, rpc, app) {
   const runners = await rpc.read("control", "runner_list");
   if (!runners?.length) {
@@ -626,83 +996,148 @@ function renderTaskRows(tasks) {
     .join("");
 }
 
-async function renderTasks(content, rpc, app) {
+async function renderTasks(content, rpc, app, state) {
   const toolbar = document.createElement("div");
   toolbar.className = "toolbar row-item";
   toolbar.innerHTML = `
     <button type="button" class="ghost" id="tasks-refresh">刷新列表</button>
-    <span class="muted">调试提交需 Core 运行且具备 runtime.write</span>
+    <span class="muted">详情与事件时间线 · 调试提交默认折叠</span>
   `;
   content.appendChild(toolbar);
 
-  const listBody = document.createElement("div");
-  content.appendChild(listBody);
+  const layout = document.createElement("div");
+  layout.className = "tasks-layout";
+  content.appendChild(layout);
 
-  const eventsBody = document.createElement("div");
-  eventsBody.className = "card";
-  eventsBody.innerHTML = `
-    <h2>Task 事件</h2>
-    <div class="toolbar row-item">
+  const tableCard = document.createElement("section");
+  tableCard.className = "card";
+  tableCard.innerHTML = "<h2>任务表</h2>";
+  const tableHost = document.createElement("div");
+  tableCard.appendChild(tableHost);
+  layout.appendChild(tableCard);
+
+  const detailCard = document.createElement("section");
+  detailCard.className = "card";
+  detailCard.innerHTML = "<h2>任务详情</h2><div id='task-detail' class='muted'>选择左侧任务</div>";
+  layout.appendChild(detailCard);
+
+  const timelineCard = document.createElement("section");
+  timelineCard.className = "card";
+  timelineCard.innerHTML = `
+    <h2>事件时间线</h2>
+    <div class="toolbar nested row-item">
       <label>sequence <input id="task-event-seq" type="number" min="0" value="0" /></label>
-      <label>limit <input id="task-event-limit" type="number" min="1" value="16" /></label>
+      <label>limit <input id="task-event-limit" type="number" min="1" value="32" /></label>
       <button type="button" class="ghost" id="task-events-fetch">拉取</button>
     </div>
     <div id="task-events-output" class="muted">尚未拉取</div>
   `;
-  content.appendChild(eventsBody);
+  content.appendChild(timelineCard);
 
-  const submitBody = document.createElement("div");
-  submitBody.className = "card";
-  submitBody.innerHTML = `
-    <h2>submit_batch（调试）</h2>
-    <p class="muted">提交合法 TaskBatch JSON；空 batch 会被 ServiceHost 拒绝。</p>
+  const advanced = document.createElement("details");
+  advanced.className = "card advanced-fold";
+  advanced.innerHTML = `
+    <summary>高级 / 调试 · submit_batch</summary>
+    <p class="muted">提交合法 TaskBatch JSON；空 batch 会被 ServiceHost 拒绝。需要 runtime.write。</p>
     <textarea id="task-submit-json" class="log-block" rows="8">${escapeHtml(DEFAULT_TASK_BATCH_JSON)}</textarea>
-    <div class="toolbar">
+    <div class="toolbar nested">
       <button type="button" class="ghost" id="task-submit-btn">提交 batch</button>
     </div>
     <div id="task-submit-output" class="muted"></div>
   `;
-  content.appendChild(submitBody);
+  content.appendChild(advanced);
 
-  async function loadTasks() {
-    listBody.innerHTML = "<div class='muted'>加载任务…</div>";
-    const tasks = await rpc.read("control", "task_list");
-    listBody.innerHTML = `<h2>任务列表</h2>${renderTaskRows(tasks || [])}`;
-    listBody.querySelectorAll("[data-cancel-task]").forEach((btn) => {
-      btn.onclick = async () => {
-        const id = btn.getAttribute("data-cancel-task");
-        if (!confirmAction(`确认取消任务 ${id}？`)) return;
-        try {
-          await rpc.write("control", "task_cancel", { id });
-          flash(app, `任务 ${id} 取消已提交`);
-          await loadTasks();
-        } catch (err) {
-          flash(app, SimpleRpc.formatError(err), true);
-        }
-      };
-    });
+  function renderDetail(task) {
+    const host = detailCard.querySelector("#task-detail");
+    if (!task) {
+      host.className = "muted";
+      host.textContent = "选择左侧任务";
+      return;
+    }
+    host.className = "";
+    host.innerHTML = `<ul class="kv">
+      <li><span>task_id</span><span class="mono">${escapeHtml(task.task_id)}</span></li>
+      <li><span>protocol</span><span>${escapeHtml(task.protocol_id)}</span></li>
+      <li><span>status</span><span>${escapeHtml(task.status)}</span></li>
+      <li><span>runner_hint</span><span>${escapeHtml(task.runner_hint || "—")}</span></li>
+      <li><span>owner_runner</span><span>${escapeHtml(task.owner_runner || "—")}</span></li>
+      <li><span>correlation</span><span>${escapeHtml(task.correlation_id || "—")}</span></li>
+      <li><span>trace</span><span>${escapeHtml(task.trace_id || "—")}</span></li>
+    </ul>
+    <div class="toolbar nested">
+      <button type="button" class="ghost" data-cancel-selected>取消任务</button>
+    </div>`;
+    host.querySelector("[data-cancel-selected]").onclick = async () => {
+      if (!confirmAction(`确认取消任务 ${task.task_id}？`)) return;
+      try {
+        await rpc.write("control", "task_cancel", { id: task.task_id });
+        flash(app, `任务 ${task.task_id} 取消已提交`);
+        await loadTasks();
+      } catch (err) {
+        flash(app, SimpleRpc.formatError(err), true);
+      }
+    };
   }
 
-  toolbar.querySelector("#tasks-refresh").onclick = () => loadTasks().catch((err) => {
-    flash(app, SimpleRpc.formatError(err), true);
-  });
+  async function loadTasks() {
+    tableHost.innerHTML = "<div class='muted'>加载任务…</div>";
+    const tasks = (await rpc.read("control", "task_list")) || [];
+    if (!tasks.length) {
+      tableHost.innerHTML = "<div class='muted'>暂无任务</div>";
+      renderDetail(null);
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "data-table";
+    table.innerHTML = `<thead><tr><th>任务</th><th>协议</th><th>状态</th><th>运行器</th></tr></thead>`;
+    const tbody = document.createElement("tbody");
+    for (const task of tasks) {
+      const tr = document.createElement("tr");
+      if (state.selectedTaskId === task.task_id) tr.classList.add("is-selected");
+      tr.innerHTML = `<td class="mono">${escapeHtml(task.task_id)}</td><td>${escapeHtml(task.protocol_id)}</td><td>${escapeHtml(task.status)}</td><td>${escapeHtml(task.runner_hint || "—")}</td>`;
+      tr.onclick = () => {
+        state.selectedTaskId = task.task_id;
+        loadTasks();
+      };
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    tableHost.innerHTML = "";
+    tableHost.appendChild(table);
+    const selected = tasks.find((item) => item.task_id === state.selectedTaskId) || tasks[0];
+    state.selectedTaskId = selected.task_id;
+    renderDetail(selected);
+  }
 
-  eventsBody.querySelector("#task-events-fetch").onclick = async () => {
-    const sequence = Number(eventsBody.querySelector("#task-event-seq").value || 0);
-    const limit = Number(eventsBody.querySelector("#task-event-limit").value || 16);
-    const output = eventsBody.querySelector("#task-events-output");
+  toolbar.querySelector("#tasks-refresh").onclick = () =>
+    loadTasks().catch((err) => flash(app, SimpleRpc.formatError(err), true));
+
+  timelineCard.querySelector("#task-events-fetch").onclick = async () => {
+    const sequence = Number(timelineCard.querySelector("#task-event-seq").value || 0);
+    const limit = Number(timelineCard.querySelector("#task-event-limit").value || 32);
+    const output = timelineCard.querySelector("#task-events-output");
     output.textContent = "拉取中…";
     try {
       const page = await rpc.read("control", "task_events_after", { sequence, limit });
-      output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
+      const events = page?.events || page?.items || [];
+      if (Array.isArray(events) && events.length) {
+        output.innerHTML = `<ol class="event-timeline">${events
+          .map(
+            (event) =>
+              `<li><strong>${escapeHtml(String(event.sequence ?? event.kind ?? "event"))}</strong><div class="muted mono">${escapeHtml(JSON.stringify(event))}</div></li>`,
+          )
+          .join("")}</ol>`;
+      } else {
+        output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
+      }
     } catch (err) {
       output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
     }
   };
 
-  submitBody.querySelector("#task-submit-btn").onclick = async () => {
-    const raw = submitBody.querySelector("#task-submit-json").value;
-    const output = submitBody.querySelector("#task-submit-output");
+  advanced.querySelector("#task-submit-btn").onclick = async () => {
+    const raw = advanced.querySelector("#task-submit-json").value;
+    const output = advanced.querySelector("#task-submit-output");
     if (!confirmAction("确认提交 TaskBatch？此操作会进入 Core 调度。")) return;
     try {
       const payload = JSON.parse(raw);
@@ -892,7 +1327,7 @@ function upgradeStatusClass(status) {
   }
 }
 
-async function renderUpgrade(content, rpc, app, state) {
+async function renderUpgrade(content, rpc, app, state, go) {
   const toolbar = document.createElement("div");
   toolbar.className = "toolbar row-item";
   toolbar.innerHTML = `
@@ -1021,19 +1456,13 @@ async function renderUpgrade(content, rpc, app, state) {
       }
     });
     detailBody.querySelector("#goto-plugins")?.addEventListener("click", () => {
-      state.page = navigate("plugins");
-      const nav = app.querySelector(".nav");
-      if (nav) {
-        nav.querySelectorAll(".sb-tree__row").forEach((btn) => {
-          const isPlugins = btn.dataset.page === "plugins";
-          btn.classList.toggle("is-active", isPlugins);
-          if (isPlugins) btn.dataset.liliaSelected = "true";
-          else delete btn.dataset.liliaSelected;
-        });
+      if (typeof go === "function") go("plugins");
+      else {
+        state.page = navigate("plugins").page;
+        const contentEl = app.querySelector("#content");
+        contentEl.innerHTML = "";
+        renderPlugins(contentEl, rpc, app);
       }
-      const contentEl = app.querySelector("#content");
-      contentEl.innerHTML = "";
-      renderPlugins(contentEl, rpc, app);
     });
   }
 
@@ -1090,7 +1519,11 @@ export function mountConsole(el, rpc, options = {}) {
   const includeUpgrade =
     options.includeUpgrade === true ||
     globalThis.__MUTSUKI_CONSOLE__?.includeUpgrade === true;
-  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade }));
+  const builtinDatabases =
+    options.builtinDatabases ||
+    globalThis.__MUTSUKI_CONSOLE__?.builtinDatabases ||
+    [];
+  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, builtinDatabases }));
 }
 
 export default {

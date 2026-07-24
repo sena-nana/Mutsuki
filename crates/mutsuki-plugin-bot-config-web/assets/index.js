@@ -444,7 +444,8 @@ function buildForm(schema, draft, onChange) {
   return root;
 }
 
-function createConsoleApp(rpc) {
+/** Embeddable config panel (no outer console shell). Used by the unified overview shell. */
+export function mountConfigPanel(host, rpc) {
   const state = {
     providers: [],
     selected: null,
@@ -455,35 +456,10 @@ function createConsoleApp(rpc) {
     conflict: null,
   };
 
-  const app = document.createElement("div");
-  app.className = "mutsuki-console lilia-workspace";
-  app.dataset.liliaSurfaceMode = "solid";
-  app.dataset.liliaSurfaceLevel = "base";
-  app.innerHTML = `
-    <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
-      <div class="secondary-panel">
-        <div class="secondary-panel__top">
-          <div class="brand">Mutsuki</div>
-        </div>
-        <nav class="secondary-panel__body sb-section nav" aria-label="控制台">
-          <a class="sb-tree__row lilia-interactive-item" href="?page=overview"><span class="sb-tree__name">概览</span></a>
-          <button type="button" data-route="config" class="sb-tree__row lilia-interactive-item is-active" aria-current="page" data-lilia-selected="true"><span class="sb-tree__name">配置</span></button>
-        </nav>
-        <div class="secondary-panel__footer sidebar-footer">Bot 控制台</div>
-      </div>
-    </aside>
-    <main class="lilia-workspace-region" data-region="main">
-      <div class="lilia-workspace-region__content page-scroll">
-        <div class="page-header">
-          <div>
-            <h1>配置</h1>
-            <p>由 ConfigDescriptor 自动生成表单</p>
-          </div>
-        </div>
-        <section id="content" class="page-body"></section>
-      </div>
-    </main>
-  `;
+  const root = document.createElement("div");
+  root.className = "config-panel";
+  host.innerHTML = "";
+  host.appendChild(root);
 
   async function refreshProviders() {
     const list = await rpc.call("config", "providers.list", { capabilities: ["*"] });
@@ -509,12 +485,11 @@ function createConsoleApp(rpc) {
   }
 
   function render() {
-    const content = app.querySelector("#content");
-    content.innerHTML = "";
+    root.innerHTML = "";
     if (!state.selected) {
       const card = document.createElement("section");
       card.className = "card";
-      card.innerHTML = "<h2>Providers</h2>";
+      card.innerHTML = "<h2>配置提供者</h2>";
       const list = document.createElement("div");
       list.className = "provider-list";
       for (const id of state.providers) {
@@ -528,7 +503,7 @@ function createConsoleApp(rpc) {
         list.textContent = "暂无 ConfigProvider。";
       }
       card.appendChild(list);
-      content.appendChild(card);
+      root.appendChild(card);
       return;
     }
 
@@ -631,7 +606,7 @@ function createConsoleApp(rpc) {
     msg.className = "message";
     msg.textContent = state.message;
     card.appendChild(msg);
-    content.appendChild(card);
+    root.appendChild(card);
 
     function renderMessage() {
       const el = card.querySelector("#message");
@@ -655,6 +630,40 @@ function createConsoleApp(rpc) {
   }
 
   refreshProviders();
+  return root;
+}
+
+function createConsoleApp(rpc) {
+  const app = document.createElement("div");
+  app.className = "mutsuki-console lilia-workspace";
+  app.dataset.liliaSurfaceMode = "solid";
+  app.dataset.liliaSurfaceLevel = "base";
+  app.innerHTML = `
+    <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
+      <div class="secondary-panel">
+        <div class="secondary-panel__top">
+          <div class="brand">Mutsuki</div>
+        </div>
+        <nav class="secondary-panel__body sb-section nav" aria-label="控制台">
+          <a class="sb-tree__row lilia-interactive-item" href="?page=overview"><span class="sb-tree__name">概览</span></a>
+          <button type="button" data-route="config" class="sb-tree__row lilia-interactive-item is-active" aria-current="page" data-lilia-selected="true"><span class="sb-tree__name">配置</span></button>
+        </nav>
+        <div class="secondary-panel__footer sidebar-footer">Bot 控制台</div>
+      </div>
+    </aside>
+    <main class="lilia-workspace-region" data-region="main">
+      <div class="lilia-workspace-region__content page-scroll">
+        <div class="page-header">
+          <div>
+            <h1>配置</h1>
+            <p>由 ConfigDescriptor 自动生成表单</p>
+          </div>
+        </div>
+        <section id="content" class="page-body"></section>
+      </div>
+    </main>
+  `;
+  mountConfigPanel(app.querySelector("#content"), rpc);
   return app;
 }
 

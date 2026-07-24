@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use mutsuki_service_control::{
     ControlError, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
-    CoreDrainResponse, EventSourceStatus, HealthReport, LogTailResponse, PluginListResponse,
-    PluginReloadResponse, RunnerStatus, RuntimeStatisticsView, ServiceStatus, TaskEventPage,
-    TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchResponse,
+    CoreDrainResponse, EventSourceStatus, HealthReport, HostMetrics, LogTailResponse,
+    PluginListResponse, PluginReloadResponse, RunnerStatus, RuntimeStatisticsView, ServiceStatus,
+    TaskEventPage, TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchResponse,
 };
 use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
 use mutsuki_web_protocol::{
@@ -79,6 +79,11 @@ impl ControlRpcCaller {
 
     pub fn runtime_statistics(&self) -> Result<RuntimeStatisticsView, ExtensionError> {
         serde_json::from_value(self.invoke(ControlMethod::RuntimeStatistics, Value::Null)?)
+            .map_err(|e| ExtensionError::Registration(e.to_string()))
+    }
+
+    pub fn host_metrics(&self) -> Result<HostMetrics, ExtensionError> {
+        serde_json::from_value(self.invoke(ControlMethod::HostMetrics, Value::Null)?)
             .map_err(|e| ExtensionError::Registration(e.to_string()))
     }
 
@@ -184,6 +189,13 @@ impl WebExtension for ControlWebExtension {
             move |_params| {
                 require_runtime_read(&_params)?;
                 Ok(serde_json::to_value(caller.runtime_statistics()?).unwrap_or_default())
+            }
+        });
+        ctx.register("host_metrics", {
+            let caller = caller.clone();
+            move |_params| {
+                require_runtime_read(&_params)?;
+                Ok(serde_json::to_value(caller.host_metrics()?).unwrap_or_default())
             }
         });
         ctx.register("log_tail", {
@@ -540,6 +552,12 @@ impl ControlHandler for FixtureControlHandler {
                         })
                     }
                 }
+                ControlMethod::HostMetrics => ControlResponse::ok(HostMetrics {
+                    pid: 4242,
+                    uptime_ms: 90_000,
+                    rss_bytes: Some(64 * 1024 * 1024),
+                    cpu_time_ms: Some(1_200),
+                }),
                 ControlMethod::LogTail => ControlResponse::ok(LogTailResponse {
                     cursor: 2,
                     entries: vec![

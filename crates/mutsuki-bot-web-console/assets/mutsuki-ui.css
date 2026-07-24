@@ -1680,3 +1680,146 @@ button:disabled {
   }
 }
 
+.mutsuki-console .metric-card--link {
+  cursor: pointer;
+  text-align: left;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+}
+
+.mutsuki-console .metric-card--link:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
+
+.mutsuki-console .tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .tab-bar__item {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mutsuki-console .tab-bar__item.is-active {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.mutsuki-console .tab-panel {
+  min-width: 0;
+}
+
+.mutsuki-console .topology-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mutsuki-console .topology-node__plugin {
+  width: 100%;
+  justify-content: space-between;
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.mutsuki-console .topology-node__lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mutsuki-console .topology-lane h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mutsuki-console .topology-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mutsuki-console .topology-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.mutsuki-console .tasks-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.mutsuki-console .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mutsuki-console .data-table th,
+.mutsuki-console .data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--divider-soft);
+  text-align: left;
+}
+
+.mutsuki-console .data-table tr {
+  cursor: pointer;
+}
+
+.mutsuki-console .data-table tr.is-selected,
+.mutsuki-console .data-table tr:hover {
+  background: var(--bg-hover);
+}
+
+.mutsuki-console .advanced-fold > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.mutsuki-console .event-timeline {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mutsuki-console .capability-gap {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .mutsuki-console .tasks-layout,
+  .mutsuki-console .topology-node__lanes {
+    grid-template-columns: 1fr;
+  }
+}
+

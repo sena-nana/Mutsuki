@@ -78,10 +78,19 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(js.contains("overview-dashboard"));
     assert!(js.contains("metric-grid"));
     assert!(js.contains("运行时间"));
+    assert!(js.contains("主机资源"));
     assert!(js.contains("健康组件"));
     assert!(js.contains("密钥状态"));
+    assert!(js.contains("运行时"));
+    assert!(js.contains("topology-graph"));
+    assert!(js.contains("advanced-fold"));
+    assert!(js.contains("mountConfigPanel"));
+    assert!(!js.contains("label: \"Runners\""));
+    assert!(!js.contains("label: \"EventSources\""));
     assert!(css.contains(".mutsuki-console .overview-dashboard"));
     assert!(css.contains(".mutsuki-console .metric-grid"));
+    assert!(css.contains(".mutsuki-console .tab-bar"));
+    assert!(css.contains(".mutsuki-console .topology-graph"));
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
@@ -124,6 +133,10 @@ async fn embedded_console_reads_overview_and_control() {
 
     let summary = ws_rpc(&addr, "overview", "summary").await.unwrap();
     assert_eq!(summary["service"]["instance_id"], "demo");
+    assert_eq!(summary["host"]["unavailable"], false);
+    assert_eq!(summary["host"]["available"], true);
+    assert_eq!(summary["host"]["pid"], 4242);
+    assert!(summary["host"]["rss_bytes"].as_u64().unwrap() > 0);
 
     let health = ws_rpc(&addr, "control", "health").await.unwrap();
     assert_eq!(health["service"], "ok");
@@ -168,6 +181,20 @@ async fn embedded_console_with_config_shell() {
     .await
     .unwrap();
     assert_eq!(providers.as_array().unwrap().len(), 0);
+
+    let addr = host.listen_addr().unwrap().to_string();
+    let bootstrap = http_get_body(&addr, "/console-bootstrap-config.js").await;
+    assert!(
+        bootstrap.contains("mountConsole"),
+        "config-enabled console must stay on the overview shell"
+    );
+    assert!(
+        !bootstrap.contains("page === \"config\""),
+        "config must not remount a separate shell via ?page=config"
+    );
+    let config_js = http_get_body(&addr, "/config/index.js").await;
+    assert!(config_js.contains("export function mountConfigPanel"));
+
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

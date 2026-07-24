@@ -105,6 +105,10 @@ async fn overview_summary() {
     assert_eq!(summary["service"]["instance_id"], "demo");
     assert_eq!(summary["counts"]["runners"], 1);
     assert_eq!(summary["counts"]["tasks"]["running"], 2);
+    assert_eq!(summary["host"]["unavailable"], false);
+    assert_eq!(summary["host"]["available"], true);
+    assert_eq!(summary["host"]["pid"], 4242);
+    assert_eq!(summary["host"]["rss_bytes"], 64 * 1024 * 1024);
     assert!(
         summary["plugins"]["plugins"]
             .as_array()
