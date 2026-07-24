@@ -1218,14 +1218,7 @@ button:disabled {
 }
 
 /* —— console.css —— */
-/* Mutsuki Console product chrome.
- *
- * Sits on top of @lilia/theme (tokens + reset + form controls) and the Lilia
- * layout language: workspace regions, `.secondary-panel` + `.sb-tree__row`
- * navigation, `.page-header`, `.card`, `.kv`, `.settings-row`.
- * This file only carries product-specific bits (workspace sizing, brand,
- * console buttons, status pills, log/secret rows); it never re-declares tokens,
- * fonts or base surfaces owned by the theme. */
+/* Mutsuki Console product chrome on @lilia/theme. Product-only; no token/font redeclarations. */
 
 #app,
 #root {
@@ -1233,13 +1226,7 @@ button:disabled {
   min-height: 0;
 }
 
-/* —— Workspace shell ——
-   Elevated workspace surface with a base-surface main region: the surface
-   contrast (not a border grid) carries the Lilia structure. */
-/* Product chrome owns the two-column template. Theme `.lilia-workspace` only
-   sets `display:grid` (Vue shells inject columns via inline style); without
-   these columns the regions stack vertically — sidebar on top. Keep `display`
-   here too so a partial theme bundle cannot drop the grid formatting context. */
+/* Theme workspace only sets display:grid; product owns the two-column template. */
 .mutsuki-console.lilia-workspace {
   display: grid;
   --mutsuki-nav-width: 232px;
@@ -1257,9 +1244,7 @@ button:disabled {
   border-inline-start: 1px solid var(--border-soft);
 }
 
-/* —— Navigation region (Lilia secondary-panel) ——
-   Theme `.secondary-panel` uses `grid-area: secondary` for AppShell. Console
-   nests the panel inside a workspace region, so clear the named area. */
+/* Nested secondary-panel is not AppShell's named grid area. */
 .mutsuki-console .secondary-panel {
   grid-area: auto;
   gap: 8px;
@@ -1283,7 +1268,6 @@ button:disabled {
   gap: 2px;
 }
 
-/* Nav rows reuse the theme `.sb-tree__row`; only wire keyboard focus here. */
 .mutsuki-console .sb-tree__row:focus-visible {
   outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
   outline-offset: -2px;
@@ -1301,7 +1285,6 @@ button:disabled {
   color: var(--text-muted);
 }
 
-/* —— Main region: page scroll + Lilia page header —— */
 .mutsuki-console .page-scroll {
   display: flex;
   flex-direction: column;
@@ -1321,14 +1304,15 @@ button:disabled {
   flex-shrink: 0;
 }
 
-/* —— Console buttons —— stable 32px height from theme base controls. */
-.mutsuki-console .ghost,
-.mutsuki-console .provider-item,
-.mutsuki-console .actions button,
-.mutsuki-console .secret-row button,
-.mutsuki-console .array-editor button,
-.mutsuki-console .map-editor button,
-.mutsuki-console .conflict button {
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  .actions button,
+  .secret-row button,
+  .array-editor button,
+  .map-editor button,
+  .conflict button
+) {
   height: 32px;
   padding: 0 12px;
   border: 1px solid var(--border);
@@ -1338,24 +1322,28 @@ button:disabled {
   font-weight: 500;
 }
 
-.mutsuki-console .ghost:hover:not(:disabled),
-.mutsuki-console .provider-item:hover:not(:disabled),
-.mutsuki-console .actions button:hover:not(:disabled),
-.mutsuki-console .secret-row button:hover:not(:disabled),
-.mutsuki-console .array-editor button:hover:not(:disabled),
-.mutsuki-console .map-editor button:hover:not(:disabled),
-.mutsuki-console .conflict button:hover:not(:disabled) {
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  .actions button,
+  .secret-row button,
+  .array-editor button,
+  .map-editor button,
+  .conflict button
+):hover:not(:disabled) {
   background: var(--bg-hover);
   border-color: var(--border-strong);
 }
 
-.mutsuki-console .ghost:focus-visible,
-.mutsuki-console .provider-item:focus-visible,
-.mutsuki-console button:focus-visible,
-.mutsuki-console .field input:focus-visible,
-.mutsuki-console .field textarea:focus-visible,
-.mutsuki-console .field select:focus-visible,
-.mutsuki-console input[type="search"]:focus-visible {
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  button,
+  .field input,
+  .field textarea,
+  .field select,
+  input[type="search"]
+):focus-visible {
   outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
   outline-offset: 1px;
 }
@@ -1366,7 +1354,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Primary action: filled accent. */
 .mutsuki-console .actions .primary,
 .mutsuki-console .primary {
   background: var(--accent);
@@ -1380,7 +1367,6 @@ button:disabled {
   border-color: var(--accent-strong);
 }
 
-/* Danger action: neutral until hover / confirm, per DESIGN §7. */
 .mutsuki-console .ghost.danger,
 .mutsuki-console .secret-row .danger {
   color: var(--text);
@@ -1393,7 +1379,6 @@ button:disabled {
   color: var(--err);
 }
 
-/* —— Provider list (config landing) —— */
 .mutsuki-console .provider-list {
   display: flex;
   flex-direction: column;
@@ -1409,7 +1394,6 @@ button:disabled {
   text-align: left;
 }
 
-/* —— Fields (config auto-form) — Lilia stacked settings language —— */
 .mutsuki-console .field {
   display: flex;
   flex-direction: column;
@@ -1489,7 +1473,6 @@ button:disabled {
   font-size: 13px;
 }
 
-/* —— Lists / rows (overview, plugins, runners, events) —— */
 .mutsuki-console .tree-item {
   padding: 12px 0;
   border-bottom: 1px solid var(--divider-soft);
@@ -1510,23 +1493,6 @@ button:disabled {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.mutsuki-console .section {
-  margin: 20px 0 0;
-}
-
-.mutsuki-console .section:first-child {
-  margin-top: 0;
-}
-
-.mutsuki-console .section > h2 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .mutsuki-console .section.nested {
@@ -1558,7 +1524,7 @@ button:disabled {
   margin-top: 4px;
 }
 
-/* —— Status semantics: warn ≠ accent —— */
+/* warn ≠ accent */
 .mutsuki-console .status-ok {
   color: var(--ok);
 }
@@ -1608,7 +1574,6 @@ button:disabled {
   color: var(--err);
 }
 
-/* —— Banners —— */
 .mutsuki-console .conflict,
 .mutsuki-console .error-banner {
   margin-bottom: 16px;
@@ -1645,7 +1610,6 @@ button:disabled {
   color: var(--err);
 }
 
-/* —— Dense / mono blocks —— */
 .mutsuki-console .log-block,
 .mutsuki-console .mono,
 .mutsuki-console .log-view {

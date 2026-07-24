@@ -152,9 +152,7 @@ pub(crate) fn base_builder(
     secrets: &WebConsoleSecrets,
     asset_dirs: &ConsoleAssetDirs,
 ) -> MutsukiWebHostBuilder {
-    // Application shell root is the materialized overview assets (source).
-    // WebHost shell_dir must be a separate path — copying a directory onto itself
-    // truncates files to empty via std::fs::copy(src, src).
+    // shell_dir must differ from overview_assets (self-copy truncates files).
     let shell = WebShellAssets {
         root_dir: asset_dirs.overview_assets.clone(),
         index_file: "index.html".into(),
@@ -194,8 +192,7 @@ impl ConsoleAssetDirs {
         let overview_assets = materialize_overview_assets(overview_dir.path())
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
-        // Config assets must exist before shell materialize so bootstrap imports
-        // can be content-hash cache-busted against the real config/index.js bytes.
+        // Config assets first so shell ?v= stamps match real config/index.js bytes.
         let (config_dir, config_assets) = if include_config {
             let dir = tempfile::tempdir()
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -224,7 +221,6 @@ impl ConsoleAssetDirs {
     }
 }
 
-/// Short content stamp for `?v=` cache busting (stable names + long-lived caches).
 fn asset_version_stamp(bytes: &[u8]) -> String {
     content_hash(bytes)
         .strip_prefix("sha256:")

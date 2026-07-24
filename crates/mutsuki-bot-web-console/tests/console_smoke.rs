@@ -80,21 +80,14 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(js.contains("Secret 状态"));
 
     let html = http_get_body(&addr, "/").await;
-    assert!(
-        html.contains("mutsuki-ui.css?v="),
-        "index must cache-bust stable CSS URL so immutable browser caches cannot stick on a broken shell"
-    );
+    assert!(html.contains("mutsuki-ui.css?v="));
     assert!(
         html.contains("console-bootstrap-overview.js?v=")
-            || html.contains("console-bootstrap-config.js?v="),
-        "index must cache-bust bootstrap URL"
+            || html.contains("console-bootstrap-config.js?v=")
     );
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap-overview.js").await;
-    assert!(
-        bootstrap.contains("index.js?v="),
-        "bootstrap must cache-bust index.js module import"
-    );
+    assert!(bootstrap.contains("index.js?v="));
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;

@@ -15,9 +15,3 @@ do
   { echo "$BANNER"; cat "$SRC"; } > "$dest"
   echo "wrote $dest"
 done
-# remove legacy forks
-rm -f \
-  "$ROOT/crates/mutsuki-bot-web-console/assets/lilia-tokens.css" \
-  "$ROOT/crates/mutsuki-plugin-bot-overview-web/assets/lilia-tokens.css" \
-  "$ROOT/crates/mutsuki-plugin-bot-config-web/assets/lilia-tokens.css"
-echo "removed legacy lilia-tokens.css forks"

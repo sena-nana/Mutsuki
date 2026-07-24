@@ -255,47 +255,39 @@ async function renderOverview(content, rpc) {
   const h = d.health || {};
   const c = d.counts || {};
   const tasks = c.tasks || {};
-
-  const healthCard = document.createElement("section");
-  healthCard.className = "card";
-  healthCard.innerHTML = "<h2>系统状态</h2>";
-  const healthKv = document.createElement("ul");
-  healthKv.className = "kv";
-  for (const [label, value] of [
-    ["Service", h.service],
-    ["Core", h.core],
-    ["Plugins", h.plugins],
-    ["Runners", h.runners],
-    ["EventSources", h.event_sources],
-  ]) {
-    const cls = healthClass(value);
-    healthKv.innerHTML += `<li><span>${label}</span><span class="status-${cls || "muted"}">${escapeHtml(value || "—")}</span></li>`;
-  }
-  healthCard.appendChild(healthKv);
-  content.appendChild(healthCard);
-
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
-  const metricsCard = document.createElement("section");
-  metricsCard.className = "card";
-  metricsCard.innerHTML = "<h2>运行指标</h2>";
-  const metricsKv = document.createElement("ul");
-  metricsKv.className = "kv";
-  for (const [label, value] of [
+
+  appendKvCard(content, "系统状态", [
+    ["Service", h.service, true],
+    ["Core", h.core, true],
+    ["Plugins", h.plugins, true],
+    ["Runners", h.runners, true],
+    ["EventSources", h.event_sources, true],
+  ]);
+  appendKvCard(content, "运行指标", [
     ["Uptime", formatDuration(d.uptime_ms)],
     ["Tasks", String(active)],
     ["Submitted", String(tasks.submitted_total ?? "—")],
     ["Plugins", String(c.plugins ?? 0)],
     ["Runners", String(c.runners ?? 0)],
     ["EventSources", String(c.event_sources ?? 0)],
-  ]) {
-    metricsKv.innerHTML += `<li><span>${label}</span><span>${escapeHtml(String(value))}</span></li>`;
-  }
-  metricsCard.appendChild(metricsKv);
-  content.appendChild(metricsCard);
-
+  ]);
   appendSection(content, "Health 组件", renderComponents(d.components || {}));
   await renderSecretStatusSection(content, rpc);
+}
+
+/** @param {[string, unknown, boolean?][]} rows */
+function appendKvCard(content, title, rows) {
+  const items = rows
+    .map(([label, value, asHealth]) => {
+      const text = escapeHtml(value == null || value === "" ? "—" : String(value));
+      const cls = asHealth ? healthClass(value) || "muted" : null;
+      const right = cls ? `<span class="status-${cls}">${text}</span>` : `<span>${text}</span>`;
+      return `<li><span>${label}</span>${right}</li>`;
+    })
+    .join("");
+  appendSection(content, title, `<ul class="kv">${items}</ul>`);
 }
 
 async function renderSecretStatusSection(content, rpc) {
@@ -437,7 +429,7 @@ function renderCandidateRow(pluginId, candidate, rpc, app) {
   row.className = "tree-item row-item candidate-row";
   const linkNote = candidate.runner_link
     ? ` · link=${candidate.runner_link}`
-    : " · link=—"; // TODO(standalone-link): surface Link health when Standalone Link ships.
+    : " · link=—";
   row.innerHTML = `
     <div>
       <strong>${escapeHtml(candidate.deployment)}</strong>
