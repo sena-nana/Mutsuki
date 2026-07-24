@@ -86,19 +86,10 @@ export function mountBilibiliPanel(host, rpc) {
       kv("后端", status.backend || "—"),
       kv("管理可用", status.available ? "是" : "否"),
       kv("Cookie 密钥", status.cookie_secret_key || "—"),
-      kv(
-        "Cookie 状态",
-        status.cookie_secret_state || status.oauth_secret_state || "—",
-      ),
+      kv("Cookie 状态", status.cookie_secret_state || "—"),
       kv("内存凭据", status.credential_loaded ? "已加载" : "未加载"),
       kv("订阅数", String(status.subscription_count ?? 0)),
     );
-    if (status.oauth_expires_at != null) {
-      statusBox.append(
-        kv("OAuth 过期", String(status.oauth_expires_at)),
-        kv("Scopes", (status.oauth_scopes || []).join(", ") || "—"),
-      );
-    }
     if (status.reason) {
       const hint = document.createElement("p");
       hint.className = "hint muted";

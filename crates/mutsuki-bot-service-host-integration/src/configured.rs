@@ -139,14 +139,6 @@ impl BilibiliConfigStore for HostBilibiliConfigStore {
     }
 }
 
-struct RejectBilibiliConfigStore;
-
-impl BilibiliConfigStore for RejectBilibiliConfigStore {
-    fn replace(&self, _config: &BilibiliConfig) -> Result<(), String> {
-        Err("Host configured-plugin persistence is unavailable".into())
-    }
-}
-
 struct HostSecretPresence(HostSecretStore);
 
 impl BilibiliSecretPresence for HostSecretPresence {
@@ -182,8 +174,13 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     .into(),
             );
         }
-        if config.management.enabled && !host_secret_store.rotation_available() {
-            return Err("Bilibili management requires a Host security.secret_file".into());
+        if config.management.enabled {
+            if !matches!(config.backend, BilibiliBackendConfig::WebCookie { .. }) {
+                return Err("Bilibili management requires backend.type = web_cookie".into());
+            }
+            if !host_secret_store.rotation_available() {
+                return Err("Bilibili management requires a Host security.secret_file".into());
+            }
         }
         let configured_plugin_store = if config.management.enabled {
             Some(configured_plugin_store.ok_or_else(|| {
@@ -233,64 +230,26 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         ));
 
         BilibiliConsoleBridge::clear();
-        let management_service = match &runner_config.snapshot().backend {
-            BilibiliBackendConfig::WebCookie { .. } => {
-                let config_store: Arc<dyn BilibiliConfigStore> =
-                    if let Some(store) = configured_plugin_store.clone() {
-                        Arc::new(HostBilibiliConfigStore(store))
-                    } else {
-                        Arc::new(RejectBilibiliConfigStore)
-                    };
-                let service = Arc::new(BilibiliManagementService::new(
-                    runner_config.clone(),
+        let management_service = if let Some(store) = configured_plugin_store {
+            let service = Arc::new(BilibiliManagementService::new(
+                runner_config.clone(),
+                web_credential.clone(),
+                Box::new(ReqwestBilibiliTransport::new(
                     web_credential.clone(),
-                    Box::new(ReqwestBilibiliTransport::new(
-                        web_credential.clone(),
-                        Duration::from_secs(15),
-                    )),
-                    repository.clone(),
-                    Arc::new(HostBilibiliCredentialStore {
-                        host: host_secret_store.clone(),
-                        shared: web_credential.clone(),
-                    }),
-                    config_store,
-                    Arc::new(HostSecretPresence(host_secret_store.clone())),
-                ));
-                BilibiliConsoleBridge::publish(service.clone());
-                Some(service)
-            }
-            BilibiliBackendConfig::OpenPlatform {
-                client_id,
-                oauth_credential_key,
-                authorized_uid,
-                ..
-            } => {
-                let service = Arc::new(BilibiliManagementService::new(
-                    runner_config.clone(),
-                    oauth_credential.clone(),
-                    Box::new(ReqwestBilibiliOpenPlatformTransport::new(
-                        client_id,
-                        *authorized_uid,
-                        app_secret.clone(),
-                        oauth_credential.clone(),
-                        oauth_credential_key,
-                        Arc::new(HostBilibiliCredentialStore {
-                            host: host_secret_store.clone(),
-                            shared: oauth_credential.clone(),
-                        }),
-                        Duration::from_secs(15),
-                    )),
-                    repository.clone(),
-                    Arc::new(HostBilibiliCredentialStore {
-                        host: host_secret_store.clone(),
-                        shared: oauth_credential.clone(),
-                    }),
-                    Arc::new(RejectBilibiliConfigStore),
-                    Arc::new(HostSecretPresence(host_secret_store.clone())),
-                ));
-                BilibiliConsoleBridge::publish(service.clone());
-                Some(service)
-            }
+                    Duration::from_secs(15),
+                )),
+                repository.clone(),
+                Arc::new(HostBilibiliCredentialStore {
+                    host: host_secret_store.clone(),
+                    shared: web_credential.clone(),
+                }),
+                Arc::new(HostBilibiliConfigStore(store)),
+                Arc::new(HostSecretPresence(host_secret_store.clone())),
+            ));
+            BilibiliConsoleBridge::publish(service.clone());
+            Some(service)
+        } else {
+            None
         };
 
         Ok(builder

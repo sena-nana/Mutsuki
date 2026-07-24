@@ -1054,11 +1054,16 @@ impl BilibiliRunner {
             )),
             "login" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let (text, png) = management
-                    .chat_login_start_png(actor_id)
+                let started = management
+                    .login_start(actor_id)
                     .map_err(|error| bili_error(task, error))?;
-                let image = self.qr_resource_from_png(png, task)?;
-                Ok(self.command_reply(task, &command, text, Some(image)))
+                let image = self.qr_resource_from_png(started.qr_png, task)?;
+                Ok(self.command_reply(
+                    task,
+                    &command,
+                    "请使用 Bilibili App 扫码确认，然后发送 /bili login-status；二维码不会把 Cookie 写入聊天或 Task payload。",
+                    Some(image),
+                ))
             }
             "login-status" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
@@ -1145,13 +1150,22 @@ impl BilibiliRunner {
                 ))
             }
             "preview" => {
-                match management.preview_as_card(
+                match management.preview(
                     actor_id,
                     is_admin,
                     command.args.get(1).map(String::as_str),
                 ) {
                     Ok(card) => {
-                        let message = self.card_message(command.source.target.clone(), card, task)?;
+                        let message = self.card_message(
+                            command.source.target.clone(),
+                            ResolvedLinkCard {
+                                url: card.url,
+                                title: card.title,
+                                description: card.description,
+                                image_url: card.image_url,
+                            },
+                            task,
+                        )?;
                         Ok(command_outbound_result(
                             task,
                             message,
@@ -1199,10 +1213,26 @@ impl BilibiliRunner {
             }
             "subscribe" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let text = management
-                    .chat_subscribe(&command.args, command.source.target.clone())
+                let subscription_id = required_arg(&command.args, 1, "subscription id")
                     .map_err(|error| bili_error(task, error))?;
-                Ok(self.command_reply(task, &command, text, None))
+                let uid = parse_uid(command.args.get(2)).map_err(|error| bili_error(task, error))?;
+                let notifications = parse_notifications(command.args.get(3))
+                    .map_err(|error| bili_error(task, error))?;
+                management
+                    .subscribe(
+                        subscription_id.clone(),
+                        uid,
+                        notifications,
+                        command.source.target.clone(),
+                        config.management.self_binding_outbound_binding.clone(),
+                    )
+                    .map_err(|error| bili_error(task, error))?;
+                Ok(self.command_reply(
+                    task,
+                    &command,
+                    &format!("订阅 {subscription_id} 已写入产品配置。"),
+                    None,
+                ))
             }
             "unsubscribe" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;

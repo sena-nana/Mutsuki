@@ -29,9 +29,8 @@ Host `security.secret_file`. The product config stores only
 file stores the value. Environment-backed secrets are intentionally read-only and cannot be
 rotated by QR login.
 
-Full Web Console management requires `backend.type = web_cookie` and `management.enabled = true`.
-`open_platform` exposes a read-only status summary (OAuth expiry/scopes/secret presence) without
-QR login or subscription writes.
+Full Web Console and chat management require `backend.type = web_cookie` and
+`management.enabled = true`. `open_platform` is poll/push only and rejects management.
 
 ## Commands
 
@@ -51,8 +50,9 @@ QR login or subscription writes.
 
 ## Web Console
 
-When Bilibili is assembled, `BilibiliConsoleBridge` publishes the management service and the
-embedded console mounts the `bilibili` WebExtension plus an overview nav entry **B站推送**.
+When Bilibili management is assembled (`web_cookie` + `management.enabled`),
+`BilibiliConsoleBridge` publishes the management service and the embedded console mounts the
+`bilibili` WebExtension plus an overview nav entry **B站推送**.
 
 Auth:
 
@@ -62,7 +62,7 @@ Auth:
 - Web `subscribe` requires explicit `target` and `outbound_binding` (chat still uses the current
   conversation target and `self_binding_outbound_binding`).
 - Web `preview` returns card JSON only; it does not submit an outbound Bot message.
-- Cookie/OAuth secret values never enter RPC responses, logs, or frontend markup. QR confirmation
+- Cookie secret values never enter RPC responses, logs, or frontend markup. QR confirmation
   returns a base64 PNG only.
 
 RPC surface (`bilibili` namespace):

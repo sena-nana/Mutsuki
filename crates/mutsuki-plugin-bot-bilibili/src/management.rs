@@ -2,7 +2,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use mutsuki_bot_link_parser::ResolvedLinkCard;
 use mutsuki_bot_protocol::BotTarget;
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +9,8 @@ use crate::{
     BilibiliBackendConfig, BilibiliBackendKind, BilibiliConfig, BilibiliConfigStore,
     BilibiliCredentialStore, BilibiliError, BilibiliPollKind, BilibiliQrStatus,
     BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository, binding_code, parse_notifications, parse_uid, render_qr_png,
-    required_arg, select_subscription, self_subscription_id_for,
+    SqliteBilibiliRepository, binding_code, render_qr_png, select_subscription,
+    self_subscription_id_for,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,12 +33,8 @@ pub struct ManagementStatus {
     pub management_enabled: bool,
     pub allow_self_binding: bool,
     pub cookie_secret_key: Option<String>,
-    pub oauth_credential_key: Option<String>,
     pub cookie_secret_state: Option<CredentialSecretState>,
-    pub oauth_secret_state: Option<CredentialSecretState>,
     pub credential_loaded: bool,
-    pub oauth_expires_at: Option<i64>,
-    pub oauth_scopes: Vec<String>,
     pub subscription_count: usize,
     pub reason: Option<String>,
 }
@@ -49,6 +44,8 @@ pub struct ManagementStatus {
 pub struct LoginStartResult {
     pub url: String,
     pub key: String,
+    #[serde(skip)]
+    pub qr_png: Vec<u8>,
     pub qr_png_base64: String,
 }
 
@@ -137,36 +134,13 @@ impl BilibiliManagementService {
             BilibiliBackendKind::OpenPlatform => "open_platform",
         }
         .into();
-        let (cookie_secret_key, oauth_credential_key, cookie_secret_state, oauth_secret_state) =
-            match &snapshot.backend {
-                BilibiliBackendConfig::WebCookie { cookie_secret_key } => (
-                    Some(cookie_secret_key.clone()),
-                    None,
-                    Some(self.secret_presence.inspect(cookie_secret_key)),
-                    None,
-                ),
-                BilibiliBackendConfig::OpenPlatform {
-                    oauth_credential_key,
-                    ..
-                } => (
-                    None,
-                    Some(oauth_credential_key.clone()),
-                    None,
-                    Some(self.secret_presence.inspect(oauth_credential_key)),
-                ),
-            };
-        let (oauth_expires_at, oauth_scopes) =
-            if matches!(snapshot.backend.kind(), BilibiliBackendKind::OpenPlatform) {
-                match self.credential.raw() {
-                    Some(raw) => match crate::BilibiliOpenPlatformCredential::parse(&raw) {
-                        Ok(credential) => (Some(credential.expires_at), credential.scopes),
-                        Err(_) => (None, Vec::new()),
-                    },
-                    None => (None, Vec::new()),
-                }
-            } else {
-                (None, Vec::new())
-            };
+        let (cookie_secret_key, cookie_secret_state) = match &snapshot.backend {
+            BilibiliBackendConfig::WebCookie { cookie_secret_key } => (
+                Some(cookie_secret_key.clone()),
+                Some(self.secret_presence.inspect(cookie_secret_key)),
+            ),
+            BilibiliBackendConfig::OpenPlatform { .. } => (None, None),
+        };
         let management_enabled = snapshot.management.enabled;
         let available =
             management_enabled && matches!(snapshot.backend.kind(), BilibiliBackendKind::WebCookie);
@@ -183,12 +157,8 @@ impl BilibiliManagementService {
             management_enabled,
             allow_self_binding: snapshot.management.allow_self_binding,
             cookie_secret_key,
-            oauth_credential_key,
             cookie_secret_state,
-            oauth_secret_state,
             credential_loaded: self.credential.is_loaded(),
-            oauth_expires_at,
-            oauth_scopes,
             subscription_count: snapshot.subscriptions.len(),
             reason,
         }
@@ -209,6 +179,7 @@ impl BilibiliManagementService {
             url: qr.url,
             key: qr.key,
             qr_png_base64: base64_encode(&png),
+            qr_png: png,
         })
     }
 
@@ -491,58 +462,6 @@ impl BilibiliManagementService {
         Ok(true)
     }
 
-    /// Chat-oriented helpers that mirror `/bili` argument parsing.
-    pub fn chat_subscribe(
-        &self,
-        args: &[String],
-        target: BotTarget,
-    ) -> Result<String, BilibiliError> {
-        self.require_web_management()?;
-        let subscription_id = required_arg(args, 1, "subscription id")?;
-        let uid = parse_uid(args.get(2))?;
-        let notifications = parse_notifications(args.get(3))?;
-        let outbound_binding = self
-            .config
-            .snapshot()
-            .management
-            .self_binding_outbound_binding;
-        self.subscribe(
-            subscription_id.clone(),
-            uid,
-            notifications,
-            target,
-            outbound_binding,
-        )?;
-        Ok(format!("订阅 {subscription_id} 已写入产品配置。"))
-    }
-
-    pub fn chat_login_start_png(&self, actor_id: &str) -> Result<(String, Vec<u8>), BilibiliError> {
-        let started = self.login_start(actor_id)?;
-        let png = base64_decode(&started.qr_png_base64).ok_or_else(|| {
-            BilibiliError::InvalidResponse("failed to decode QR png payload".into())
-        })?;
-        Ok((
-            "请使用 Bilibili App 扫码确认，然后发送 /bili login-status；二维码不会把 Cookie 写入聊天或 Task payload。"
-                .into(),
-            png,
-        ))
-    }
-
-    pub fn preview_as_card(
-        &self,
-        actor_id: &str,
-        is_admin: bool,
-        selector: Option<&str>,
-    ) -> Result<ResolvedLinkCard, BilibiliError> {
-        let preview = self.preview(actor_id, is_admin, selector)?;
-        Ok(ResolvedLinkCard {
-            url: preview.url,
-            title: preview.title,
-            description: preview.description,
-            image_url: preview.image_url,
-        })
-    }
-
     fn persist(&self, next: BilibiliConfig) -> Result<(), BilibiliError> {
         next.validate()
             .map_err(BilibiliError::ManagementUnavailable)?;
@@ -605,38 +524,4 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
         }
     }
     out
-}
-
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    fn value(byte: u8) -> Option<u8> {
-        match byte {
-            b'A'..=b'Z' => Some(byte - b'A'),
-            b'a'..=b'z' => Some(byte - b'a' + 26),
-            b'0'..=b'9' => Some(byte - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let bytes = input.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for chunk in bytes.chunks(4) {
-        let (a, b, c, d) = (chunk[0], chunk[1], chunk[2], chunk[3]);
-        let av = value(a)?;
-        let bv = value(b)?;
-        let cv = if c == b'=' { 0 } else { value(c)? };
-        let dv = if d == b'=' { 0 } else { value(d)? };
-        let triple = ((av as u32) << 18) | ((bv as u32) << 12) | ((cv as u32) << 6) | (dv as u32);
-        out.push(((triple >> 16) & 0xff) as u8);
-        if c != b'=' {
-            out.push(((triple >> 8) & 0xff) as u8);
-        }
-        if d != b'=' {
-            out.push((triple & 0xff) as u8);
-        }
-    }
-    Some(out)
 }
