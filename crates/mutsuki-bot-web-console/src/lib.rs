@@ -31,6 +31,7 @@ use mutsuki_plugin_bot_overview_web::{
 };
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
 use mutsuki_service_control::ControlHandler;
+use mutsuki_web_extension::content_hash;
 use mutsuki_web_host::{
     MinimalWebApplication, MutsukiWebHost, MutsukiWebHostBuilder, WebHostResult,
 };
@@ -192,9 +193,9 @@ impl ConsoleAssetDirs {
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let overview_assets = materialize_overview_assets(overview_dir.path())
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-        materialize_console_shell(&overview_assets, include_config, include_upgrade)
-            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
+        // Config assets must exist before shell materialize so bootstrap imports
+        // can be content-hash cache-busted against the real config/index.js bytes.
         let (config_dir, config_assets) = if include_config {
             let dir = tempfile::tempdir()
                 .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -206,6 +207,9 @@ impl ConsoleAssetDirs {
         } else {
             (None, PathBuf::new())
         };
+
+        materialize_console_shell(&overview_assets, include_config, include_upgrade)
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
         let shell_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -220,12 +224,22 @@ impl ConsoleAssetDirs {
     }
 }
 
+/// Short content stamp for `?v=` cache busting (stable names + long-lived caches).
+fn asset_version_stamp(bytes: &[u8]) -> String {
+    content_hash(bytes)
+        .strip_prefix("sha256:")
+        .unwrap_or_default()
+        .chars()
+        .take(12)
+        .collect()
+}
+
 pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
     include_upgrade: bool,
 ) -> std::io::Result<()> {
-    let (index, bootstrap_name, bootstrap) = if include_config {
+    let (index_template, bootstrap_name, bootstrap_template) = if include_config {
         (
             include_str!("../assets/console-shell-config.html"),
             "console-bootstrap-config.js",
@@ -238,12 +252,36 @@ pub(crate) fn materialize_console_shell(
             include_str!("../assets/console-bootstrap-overview.js"),
         )
     };
+
+    let css = include_str!("../assets/mutsuki-ui.css");
+    let css_v = asset_version_stamp(css.as_bytes());
+
+    let index_js = std::fs::read(out_dir.join("index.js")).unwrap_or_default();
+    let index_v = asset_version_stamp(&index_js);
+    let config_js = std::fs::read(out_dir.join("config").join("index.js")).unwrap_or_default();
+    let config_v = asset_version_stamp(&config_js);
+
+    let bootstrap = bootstrap_template
+        .replace(
+            "from \"./index.js\"",
+            &format!("from \"./index.js?v={index_v}\""),
+        )
+        .replace(
+            "import(\"./config/index.js\")",
+            &format!("import(\"./config/index.js?v={config_v}\")"),
+        );
+    let bootstrap_v = asset_version_stamp(bootstrap.as_bytes());
+
+    let index = index_template
+        .replace("./mutsuki-ui.css", &format!("./mutsuki-ui.css?v={css_v}"))
+        .replace(
+            &format!("./{bootstrap_name}"),
+            &format!("./{bootstrap_name}?v={bootstrap_v}"),
+        );
+
     std::fs::write(out_dir.join("index.html"), index)?;
     std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
-    std::fs::write(
-        out_dir.join("mutsuki-ui.css"),
-        include_str!("../assets/mutsuki-ui.css"),
-    )?;
+    std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
     std::fs::write(
         out_dir.join("console-options.json"),
         serde_json::to_string(&json!({

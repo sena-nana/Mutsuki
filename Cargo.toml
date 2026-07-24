@@ -51,10 +51,10 @@ mutsuki-plugin-bot-overview-web = { path = "crates/mutsuki-plugin-bot-overview-w
 mutsuki-plugin-bot-upgrade-web = { path = "crates/mutsuki-plugin-bot-upgrade-web" }
 mutsuki-plugin-catalog = { path = "crates/mutsuki-plugin-catalog" }
 mutsuki-bot-web-console = { path = "crates/mutsuki-bot-web-console" }
-mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "d460b6f4dab3767ff27ce2bea1a277e78cec2b82" }
-mutsuki-web-extension = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "d460b6f4dab3767ff27ce2bea1a277e78cec2b82" }
-mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "d460b6f4dab3767ff27ce2bea1a277e78cec2b82" }
-mutsuki-web-bridge = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "d460b6f4dab3767ff27ce2bea1a277e78cec2b82" }
+mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "1634e31b2bbb1ffccc0cf94afa648d14358a3d59" }
+mutsuki-web-extension = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "1634e31b2bbb1ffccc0cf94afa648d14358a3d59" }
+mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "1634e31b2bbb1ffccc0cf94afa648d14358a3d59" }
+mutsuki-web-bridge = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "1634e31b2bbb1ffccc0cf94afa648d14358a3d59" }
 parking_lot = "0.12"
 async-trait = "0.1"
 mutsuki-plugin-bot-adapter-qqbot = { path = "crates/mutsuki-plugin-bot-adapter-qqbot" }
