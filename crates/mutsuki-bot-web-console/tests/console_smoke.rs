@@ -68,7 +68,16 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     assert!(js.contains("mutsuki-console lilia-workspace"));
     assert!(js.contains("secondary-panel"));
     assert!(js.contains("page-header"));
-    assert!(js.contains("card card--flat"));
+    assert!(js.contains("className = \"card\""));
+    assert!(
+        !js.contains("card--flat"),
+        "overview content groups must use raised Lilia .card, not transparent card--flat"
+    );
+    assert!(js.contains("<ul class=\"kv\">") || js.contains("className = \"kv\""));
+    assert!(js.contains("系统状态"));
+    assert!(js.contains("运行指标"));
+    assert!(js.contains("Health 组件"));
+    assert!(js.contains("Secret 状态"));
 
     let html = http_get_body(&addr, "/").await;
     assert!(

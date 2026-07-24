@@ -512,6 +512,9 @@ function createConsoleApp(rpc) {
     const content = app.querySelector("#content");
     content.innerHTML = "";
     if (!state.selected) {
+      const card = document.createElement("section");
+      card.className = "card";
+      card.innerHTML = "<h2>Providers</h2>";
       const list = document.createElement("div");
       list.className = "provider-list";
       for (const id of state.providers) {
@@ -524,15 +527,21 @@ function createConsoleApp(rpc) {
       if (!state.providers.length) {
         list.textContent = "暂无 ConfigProvider。";
       }
-      content.appendChild(list);
+      card.appendChild(list);
+      content.appendChild(card);
       return;
     }
 
-    const panel = document.createElement("div");
+    const card = document.createElement("section");
+    card.className = "card";
+    const title = document.createElement("h2");
+    title.textContent = state.selected;
+    card.appendChild(title);
+
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${state.selected} · revision ${state.snapshot?.revision ?? "-"}`;
-    panel.appendChild(meta);
+    meta.textContent = `revision ${state.snapshot?.revision ?? "-"}`;
+    card.appendChild(meta);
 
     if (state.conflict) {
       const banner = document.createElement("div");
@@ -542,7 +551,7 @@ function createConsoleApp(rpc) {
       reload.textContent = "重新加载";
       reload.onclick = () => openProvider(state.selected);
       banner.appendChild(reload);
-      panel.appendChild(banner);
+      card.appendChild(banner);
     }
 
     const formHost = document.createElement("div");
@@ -551,7 +560,7 @@ function createConsoleApp(rpc) {
       formHost.appendChild(buildForm(state.schema, state.draft, rebuild));
     };
     rebuild();
-    panel.appendChild(formHost);
+    card.appendChild(formHost);
 
     const actions = document.createElement("div");
     actions.className = "actions";
@@ -616,16 +625,16 @@ function createConsoleApp(rpc) {
       render();
     };
     actions.append(backBtn, validateBtn, applyBtn);
-    panel.appendChild(actions);
+    card.appendChild(actions);
     const msg = document.createElement("div");
     msg.id = "message";
     msg.className = "message";
     msg.textContent = state.message;
-    panel.appendChild(msg);
-    content.appendChild(panel);
+    card.appendChild(msg);
+    content.appendChild(card);
 
     function renderMessage() {
-      const el = panel.querySelector("#message");
+      const el = card.querySelector("#message");
       if (el) el.textContent = state.message;
     }
   }

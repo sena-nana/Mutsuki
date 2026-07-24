@@ -257,7 +257,7 @@ async function renderOverview(content, rpc) {
   const tasks = c.tasks || {};
 
   const healthCard = document.createElement("section");
-  healthCard.className = "card card--flat";
+  healthCard.className = "card";
   healthCard.innerHTML = "<h2>系统状态</h2>";
   const healthKv = document.createElement("ul");
   healthKv.className = "kv";
@@ -277,7 +277,7 @@ async function renderOverview(content, rpc) {
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
   const metricsCard = document.createElement("section");
-  metricsCard.className = "card card--flat";
+  metricsCard.className = "card";
   metricsCard.innerHTML = "<h2>运行指标</h2>";
   const metricsKv = document.createElement("ul");
   metricsKv.className = "kv";
@@ -310,13 +310,14 @@ async function renderSecretStatusSection(content, rpc) {
 }
 
 function renderSecretRows(secrets) {
-  return secrets
+  return `<ul class="kv">${secrets
     .map((item) => {
       const state = String(item.state || "absent");
       const label = secretStateLabel(state);
-      return `<div class="tree-item row-item"><div><strong>${escapeHtml(item.key)}</strong><div class="muted">Host secret key</div></div><span class="pill ${secretStateClass(state)}">${label}</span></div>`;
+      const cls = secretStateClass(state);
+      return `<li><span>${escapeHtml(item.key)}</span><span class="status-${cls}">${label}</span></li>`;
     })
-    .join("");
+    .join("")}</ul>`;
 }
 
 function secretStateLabel(state) {
@@ -591,7 +592,7 @@ async function renderTasks(content, rpc, app) {
   content.appendChild(listBody);
 
   const eventsBody = document.createElement("div");
-  eventsBody.className = "card card--flat";
+  eventsBody.className = "card";
   eventsBody.innerHTML = `
     <h2>Task 事件</h2>
     <div class="toolbar row-item">
@@ -604,7 +605,7 @@ async function renderTasks(content, rpc, app) {
   content.appendChild(eventsBody);
 
   const submitBody = document.createElement("div");
-  submitBody.className = "card card--flat";
+  submitBody.className = "card";
   submitBody.innerHTML = `
     <h2>submit_batch（调试）</h2>
     <p class="muted">提交合法 TaskBatch JSON；空 batch 会被 ServiceHost 拒绝。</p>
@@ -686,13 +687,13 @@ const DEFAULT_TASK_BATCH_JSON = `{
 
 async function renderLifecycle(content, rpc, app) {
   content.innerHTML = `
-    <div class="card card--flat">
+    <div class="card">
       <h2>Core drain</h2>
       <p class="muted">停止接受新 Task 并进入 draining。需要 runtime.write 与二次确认。</p>
       <button type="button" class="ghost" id="core-drain-btn">开始 Core drain</button>
       <div id="core-drain-output" class="muted"></div>
     </div>
-    <div class="card card--flat">
+    <div class="card">
       <h2>Service shutdown</h2>
       <p class="muted">触发 ServiceHost 优雅关闭。需要 runtime.write 与输入 SHUTDOWN 确认。</p>
       <button type="button" class="ghost danger" id="service-shutdown-btn">关闭 Service</button>
@@ -732,18 +733,20 @@ async function renderLifecycle(content, rpc, app) {
 function renderComponents(comps) {
   const ids = Object.keys(comps);
   if (!ids.length) return "<div class='muted'>暂无</div>";
-  return ids
+  return `<ul class="kv">${ids
     .map((id) => {
       const snap = comps[id] || {};
       const started = snap.started_at_unix_ms ?? snap.connected_since_unix_ms;
-      return `<div class="tree-item"><strong>${escapeHtml(id)}</strong><div class="muted">status=${snap.status ?? "—"} · uptime=${formatDuration(elapsed(started))}</div></div>`;
+      const status = snap.status ?? "—";
+      const cls = healthClass(status);
+      return `<li><span>${escapeHtml(id)}</span><span class="status-${cls || "muted"}">${escapeHtml(String(status))} · ${formatDuration(elapsed(started))}</span></li>`;
     })
-    .join("");
+    .join("")}</ul>`;
 }
 
 function appendSection(content, title, html) {
   const el = document.createElement("section");
-  el.className = "card card--flat";
+  el.className = "card";
   el.innerHTML = `<h2>${title}</h2>${html}`;
   content.appendChild(el);
 }
@@ -867,7 +870,7 @@ async function renderUpgrade(content, rpc, app, state) {
     const releaseSet = body?.release_set || "—";
     const updateCount = body?.update_count ?? 0;
     summaryBody.innerHTML = `
-      <div class="card card--flat">
+      <div class="card">
         <h2>Release set · ${escapeHtml(releaseSet)}</h2>
         <div class="toolbar nested">
           <span class="pill ${updateCount > 0 ? "warn" : "ok"}">${updateCount} 个模块可升级</span>
@@ -906,7 +909,7 @@ async function renderUpgrade(content, rpc, app, state) {
   }
 
   async function openPlan(moduleId, targetRevision) {
-    detailBody.innerHTML = "<div class='card card--flat'><h2>升级计划</h2><div class='muted'>生成中…</div></div>";
+    detailBody.innerHTML = "<div class='card'><h2>升级计划</h2><div class='muted'>生成中…</div></div>";
     const params = { module_id: moduleId };
     if (targetRevision) params.target_revision = targetRevision;
     const body = await rpc.read("upgrade", "plan", params);
@@ -914,12 +917,12 @@ async function renderUpgrade(content, rpc, app, state) {
     const steps = plan.steps || [];
     const cliCommand = body?.cli_command || "";
     detailBody.innerHTML = `
-      <div class="card card--flat">
+      <div class="card">
         <h2>${escapeHtml(moduleId)}</h2>
         <div class="muted">目标 revision · ${escapeHtml(plan.target_revision || "—")}</div>
         <div class="muted">当前 pin · ${escapeHtml(plan.pinned_revision || "—")}</div>
       </div>
-      <div class="card card--flat">
+      <div class="card">
         <h3>升级步骤（CLI 执行）</h3>
         ${steps
           .map(
