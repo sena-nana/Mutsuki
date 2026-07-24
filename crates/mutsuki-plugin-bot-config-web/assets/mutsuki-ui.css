@@ -1236,7 +1236,12 @@ button:disabled {
 /* —— Workspace shell ——
    Elevated workspace surface with a base-surface main region: the surface
    contrast (not a border grid) carries the Lilia structure. */
+/* Product chrome owns the two-column template. Theme `.lilia-workspace` only
+   sets `display:grid` (Vue shells inject columns via inline style); without
+   these columns the regions stack vertically — sidebar on top. Keep `display`
+   here too so a partial theme bundle cannot drop the grid formatting context. */
 .mutsuki-console.lilia-workspace {
+  display: grid;
   --mutsuki-nav-width: 232px;
   grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -1252,8 +1257,11 @@ button:disabled {
   border-inline-start: 1px solid var(--border-soft);
 }
 
-/* —— Navigation region (Lilia secondary-panel) —— */
+/* —— Navigation region (Lilia secondary-panel) ——
+   Theme `.secondary-panel` uses `grid-area: secondary` for AppShell. Console
+   nests the panel inside a workspace region, so clear the named area. */
 .mutsuki-console .secondary-panel {
+  grid-area: auto;
   gap: 8px;
   padding: 12px 10px;
 }

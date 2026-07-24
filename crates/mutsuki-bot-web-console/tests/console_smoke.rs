@@ -12,7 +12,70 @@ use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 use mutsuki_web_host::WebHost;
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
+
+#[test]
+fn console_css_declares_two_column_workspace() {
+    let css = include_str!("../assets/mutsuki-ui.css");
+    assert!(
+        !css.contains("@import"),
+        "mutsuki-ui.css must fully inline @import for static include_str serving"
+    );
+    assert!(css.contains(".mutsuki-console.lilia-workspace"));
+    assert!(css.contains("--mutsuki-nav-width: 232px"));
+    assert!(css.contains("grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr)"));
+    assert!(css.contains("display: grid"));
+    assert!(css.contains(".lilia-workspace"));
+    assert!(css.contains(".secondary-panel"));
+    assert!(css.contains(".page-header"));
+    assert!(css.contains(".page-scroll"));
+    assert!(css.contains(".card"));
+    assert!(css.contains(".kv"));
+}
+
+#[tokio::test]
+async fn embedded_console_serves_workspace_css_and_shell_markup() {
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        include_config: false,
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, _dirs) = build_console_host(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let css = http_get_body(&addr, "/mutsuki-ui.css").await;
+    assert!(css.contains("grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr)"));
+    assert!(css.contains(".mutsuki-console.lilia-workspace"));
+    assert!(!css.contains("@import"));
+
+    let js = http_get_body(&addr, "/index.js").await;
+    assert!(js.contains("mutsuki-console lilia-workspace"));
+    assert!(js.contains("secondary-panel"));
+    assert!(js.contains("page-header"));
+    assert!(js.contains("card card--flat"));
+
+    let html = http_get_body(&addr, "/").await;
+    assert!(html.contains("mutsuki-ui.css"));
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
 
 #[tokio::test]
 async fn embedded_console_reads_overview_and_control() {
@@ -209,6 +272,24 @@ async fn embedded_console_secret_status_is_read_only() {
     assert_eq!(secrets[1]["state"], "absent");
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+async fn http_get_body(addr: &str, path: &str) -> String {
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).await.unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    let (_, body) = text
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("HTTP response missing body separator: {text}"));
+    assert!(
+        text.starts_with("HTTP/1.1 200") || text.starts_with("HTTP/1.0 200"),
+        "expected 200 for {path}, got: {}",
+        text.lines().next().unwrap_or("")
+    );
+    body.to_string()
 }
 
 async fn ws_rpc(addr: &str, namespace: &str, method: &str) -> Result<serde_json::Value, String> {

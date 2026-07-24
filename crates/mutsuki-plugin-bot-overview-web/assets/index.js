@@ -257,7 +257,7 @@ async function renderOverview(content, rpc) {
   const tasks = c.tasks || {};
 
   const healthCard = document.createElement("section");
-  healthCard.className = "section";
+  healthCard.className = "card card--flat";
   healthCard.innerHTML = "<h2>系统状态</h2>";
   const healthKv = document.createElement("ul");
   healthKv.className = "kv";
@@ -277,7 +277,7 @@ async function renderOverview(content, rpc) {
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
   const metricsCard = document.createElement("section");
-  metricsCard.className = "section";
+  metricsCard.className = "card card--flat";
   metricsCard.innerHTML = "<h2>运行指标</h2>";
   const metricsKv = document.createElement("ul");
   metricsKv.className = "kv";
@@ -591,7 +591,7 @@ async function renderTasks(content, rpc, app) {
   content.appendChild(listBody);
 
   const eventsBody = document.createElement("div");
-  eventsBody.className = "section";
+  eventsBody.className = "card card--flat";
   eventsBody.innerHTML = `
     <h2>Task 事件</h2>
     <div class="toolbar row-item">
@@ -604,7 +604,7 @@ async function renderTasks(content, rpc, app) {
   content.appendChild(eventsBody);
 
   const submitBody = document.createElement("div");
-  submitBody.className = "section";
+  submitBody.className = "card card--flat";
   submitBody.innerHTML = `
     <h2>submit_batch（调试）</h2>
     <p class="muted">提交合法 TaskBatch JSON；空 batch 会被 ServiceHost 拒绝。</p>
@@ -686,13 +686,13 @@ const DEFAULT_TASK_BATCH_JSON = `{
 
 async function renderLifecycle(content, rpc, app) {
   content.innerHTML = `
-    <div class="section">
+    <div class="card card--flat">
       <h2>Core drain</h2>
       <p class="muted">停止接受新 Task 并进入 draining。需要 runtime.write 与二次确认。</p>
       <button type="button" class="ghost" id="core-drain-btn">开始 Core drain</button>
       <div id="core-drain-output" class="muted"></div>
     </div>
-    <div class="section">
+    <div class="card card--flat">
       <h2>Service shutdown</h2>
       <p class="muted">触发 ServiceHost 优雅关闭。需要 runtime.write 与输入 SHUTDOWN 确认。</p>
       <button type="button" class="ghost danger" id="service-shutdown-btn">关闭 Service</button>
@@ -743,7 +743,7 @@ function renderComponents(comps) {
 
 function appendSection(content, title, html) {
   const el = document.createElement("section");
-  el.className = "section";
+  el.className = "card card--flat";
   el.innerHTML = `<h2>${title}</h2>${html}`;
   content.appendChild(el);
 }
@@ -867,7 +867,7 @@ async function renderUpgrade(content, rpc, app, state) {
     const releaseSet = body?.release_set || "—";
     const updateCount = body?.update_count ?? 0;
     summaryBody.innerHTML = `
-      <div class="section">
+      <div class="card card--flat">
         <h2>Release set · ${escapeHtml(releaseSet)}</h2>
         <div class="toolbar nested">
           <span class="pill ${updateCount > 0 ? "warn" : "ok"}">${updateCount} 个模块可升级</span>
@@ -906,7 +906,7 @@ async function renderUpgrade(content, rpc, app, state) {
   }
 
   async function openPlan(moduleId, targetRevision) {
-    detailBody.innerHTML = "<div class='section'><h2>升级计划</h2><div class='muted'>生成中…</div></div>";
+    detailBody.innerHTML = "<div class='card card--flat'><h2>升级计划</h2><div class='muted'>生成中…</div></div>";
     const params = { module_id: moduleId };
     if (targetRevision) params.target_revision = targetRevision;
     const body = await rpc.read("upgrade", "plan", params);
@@ -914,12 +914,12 @@ async function renderUpgrade(content, rpc, app, state) {
     const steps = plan.steps || [];
     const cliCommand = body?.cli_command || "";
     detailBody.innerHTML = `
-      <div class="section">
+      <div class="card card--flat">
         <h2>${escapeHtml(moduleId)}</h2>
         <div class="muted">目标 revision · ${escapeHtml(plan.target_revision || "—")}</div>
         <div class="muted">当前 pin · ${escapeHtml(plan.pinned_revision || "—")}</div>
       </div>
-      <div class="section">
+      <div class="card card--flat">
         <h3>升级步骤（CLI 执行）</h3>
         ${steps
           .map(
