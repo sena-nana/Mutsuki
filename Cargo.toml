@@ -10,25 +10,25 @@ license = "MIT"
 [workspace.dependencies]
 mutsuki-distributed-contracts = { git = "https://github.com/sena-nana/MutsukiDistributedHost.git", rev = "ba8c7150195312377ca3d6a30d22f3468c9ced8c" }
 mutsuki-distributed-control-client = { git = "https://github.com/sena-nana/MutsukiDistributedHost.git", rev = "ba8c7150195312377ca3d6a30d22f3468c9ced8c" }
-mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6eeaba59a136261a27270ee5faebc9c1e79adbc8" }
-mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6eeaba59a136261a27270ee5faebc9c1e79adbc8", default-features = false }
-mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6eeaba59a136261a27270ee5faebc9c1e79adbc8" }
-mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6eeaba59a136261a27270ee5faebc9c1e79adbc8" }
-mutsuki-service-plugin-loader = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "6eeaba59a136261a27270ee5faebc9c1e79adbc8" }
-mutsuki-plugin-bot-adapter-qqbot = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "43a00c7733a593374cd0d28b0c9e3af82c887836" }
-mutsuki-plugin-bot-command = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "43a00c7733a593374cd0d28b0c9e3af82c887836" }
-mutsuki-bot-service-host-integration = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "43a00c7733a593374cd0d28b0c9e3af82c887836" }
-mutsuki-bot-web-console = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "43a00c7733a593374cd0d28b0c9e3af82c887836" }
-mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "5abf0bc5d257f330655ab531775714d3bce8a638" }
-mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "5abf0bc5d257f330655ab531775714d3bce8a638" }
-mutsuki-bot-testkit = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "43a00c7733a593374cd0d28b0c9e3af82c887836" }
+mutsuki-service-config = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "1cbf7362226cb6a358e4cdc2ec33d151a69d3aa0" }
+mutsuki-service-runtime = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "1cbf7362226cb6a358e4cdc2ec33d151a69d3aa0", default-features = false }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "1cbf7362226cb6a358e4cdc2ec33d151a69d3aa0" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "1cbf7362226cb6a358e4cdc2ec33d151a69d3aa0" }
+mutsuki-service-plugin-loader = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "1cbf7362226cb6a358e4cdc2ec33d151a69d3aa0" }
+mutsuki-plugin-bot-adapter-qqbot = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "141a5453c5de8f7377d04127b4d7de532811977b" }
+mutsuki-plugin-bot-command = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "141a5453c5de8f7377d04127b4d7de532811977b" }
+mutsuki-bot-service-host-integration = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "141a5453c5de8f7377d04127b4d7de532811977b" }
+mutsuki-bot-web-console = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "141a5453c5de8f7377d04127b4d7de532811977b" }
+mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "f24a1325684d55aacdf409cd668b0b68f3cf787d" }
+mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "f24a1325684d55aacdf409cd668b0b68f3cf787d" }
+mutsuki-bot-testkit = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "141a5453c5de8f7377d04127b4d7de532811977b" }
 mutsuki-std-plugins = { git = "https://github.com/sena-nana/MutsukiStdPlugins.git", rev = "b5efab36e619fc1a007cde1a0708b170ebb9afb8" }
 mutsuki-agent-bundle = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "75d5aa574696922c0fa679ef515491e6e73be441" }
 mutsuki-agent-protocol = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "75d5aa574696922c0fa679ef515491e6e73be441" }
 mutsuki-agent-sdk = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "75d5aa574696922c0fa679ef515491e6e73be441" }
 mutsuki-plugin-agent-model-gateway = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "75d5aa574696922c0fa679ef515491e6e73be441" }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "0e07be963aee996283d5ae702e3a8153de1e417b" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
