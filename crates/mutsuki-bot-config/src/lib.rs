@@ -27,7 +27,7 @@ pub use error::{
     ValidationSeverity, capability,
 };
 pub use expr::ConfigExpr;
-pub use lifecycle::{ConfigLifecycle, NoopConfigLifecycle};
+pub use lifecycle::ConfigLifecycle;
 pub use memory::MemoryConfigProvider;
 pub use metrics::{ConfigMetrics, ConfigMetricsSnapshot};
 pub use migrate::{MigrationPlan, MigrationStep, migrate, require_migration};
@@ -50,7 +50,7 @@ pub use secret::{SecretState, SecretUpdate, SecretValue};
 pub use service::ConfigService;
 pub use validate::{validate_structure, validate_structure_with_budgets};
 pub use value::{ConfigKey, ConfigPath, ConfigValue};
-pub use watch::{ConfigWatchHub, RevisionChangedEvent, RevisionChangedListener};
+pub use watch::{RevisionChangedEvent, RevisionChangedListener};
 
 /// Re-export derive macro.
 pub use mutsuki_bot_config_derive::MutsukiConfig;

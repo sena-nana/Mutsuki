@@ -5,7 +5,6 @@ use std::sync::Arc;
 use mutsuki_bot_config::{ConfigAction, ConfigError, ConfigLifecycle, RestartPolicy};
 use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
 
-/// Executes `PluginReload` through the Host control plane after config apply.
 pub struct ControlPluginReloadLifecycle {
     control: Arc<dyn ControlHandler>,
     token: String,

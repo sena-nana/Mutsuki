@@ -1,7 +1,4 @@
 //! Product TOML ConfigProvider for Console `include_config` assembly.
-//!
-//! Apply goes through Host `ConfiguredPluginStore` atomic writes. Demo/memory-only
-//! providers stay test-only.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -26,14 +23,12 @@ pub enum ProductConfigError {
     Register(String),
 }
 
-/// Options for assembling the product ConfigService.
 #[derive(Default)]
 pub struct ProductConfigOptions {
     pub store: Option<ConfiguredPluginStore>,
     pub lifecycle: Option<Arc<dyn ConfigLifecycle>>,
 }
 
-/// Build a ConfigService backed by the product TOML surface (not an empty registry).
 pub fn product_config_service(
     product_config_path: &Path,
 ) -> Result<Arc<ConfigService>, ProductConfigError> {
@@ -116,7 +111,7 @@ impl ConfigPersistSink for ProductSurfacePersist {
             "include_config",
         ] {
             if let Some(field) = map.get(key) {
-                fields.insert(key.to_string(), config_value_to_json(field)?);
+                fields.insert(key.to_string(), field.to_json());
             }
         }
         self.store
@@ -139,7 +134,7 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
         value: &ConfigValue,
         _secrets: &HashMap<String, String>,
     ) -> Result<(), ConfigError> {
-        let json = config_value_to_json(value)?;
+        let json = value.to_json();
         if self.plugin_id == BOT_COMMAND_PLUGIN_ID {
             let decoded: BotCommandConfig =
                 serde_json::from_value(json.clone()).map_err(|error| {
@@ -159,59 +154,6 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
     }
 }
 
-fn config_value_to_json(value: &ConfigValue) -> Result<serde_json::Value, ConfigError> {
-    Ok(match value {
-        ConfigValue::Null => serde_json::Value::Null,
-        ConfigValue::Bool(v) => serde_json::Value::Bool(*v),
-        ConfigValue::Integer(v) => serde_json::json!(*v),
-        ConfigValue::Float(v) => serde_json::json!(*v),
-        ConfigValue::String(v) => serde_json::Value::String(v.clone()),
-        ConfigValue::Array(items) => serde_json::Value::Array(
-            items
-                .iter()
-                .map(config_value_to_json)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        ConfigValue::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (key, child) in map {
-                out.insert(key.clone(), config_value_to_json(child)?);
-            }
-            serde_json::Value::Object(out)
-        }
-        ConfigValue::Secret(_) => {
-            return Err(ConfigError::PersistenceFailed {
-                reason: "secret values must not be serialized into product TOML".into(),
-            });
-        }
-    })
-}
-
-fn json_to_config_value(value: &serde_json::Value) -> ConfigValue {
-    match value {
-        serde_json::Value::Null => ConfigValue::Null,
-        serde_json::Value::Bool(v) => ConfigValue::Bool(*v),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                ConfigValue::Integer(i)
-            } else if let Some(u) = n.as_u64() {
-                ConfigValue::Integer(i64::try_from(u).unwrap_or(i64::MAX))
-            } else {
-                ConfigValue::Float(n.as_f64().unwrap_or_default())
-            }
-        }
-        serde_json::Value::String(s) => ConfigValue::String(s.clone()),
-        serde_json::Value::Array(items) => {
-            ConfigValue::Array(items.iter().map(json_to_config_value).collect())
-        }
-        serde_json::Value::Object(map) => ConfigValue::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), json_to_config_value(v)))
-                .collect(),
-        ),
-    }
-}
-
 fn command_defaults_from_product(product: &toml::Value) -> Option<ConfigValue> {
     let configured = product
         .get("plugins")
@@ -226,30 +168,10 @@ fn command_defaults_from_product(product: &toml::Value) -> Option<ConfigValue> {
             .get("config")
             .cloned()
             .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
-        let json = toml_to_json(&config);
-        return Some(json_to_config_value(&json));
+        let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+        return Some(ConfigValue::from_json(&json));
     }
     None
-}
-
-fn toml_to_json(value: &toml::Value) -> serde_json::Value {
-    match value {
-        toml::Value::String(v) => serde_json::Value::String(v.clone()),
-        toml::Value::Integer(v) => serde_json::json!(*v),
-        toml::Value::Float(v) => serde_json::json!(*v),
-        toml::Value::Boolean(v) => serde_json::Value::Bool(*v),
-        toml::Value::Datetime(v) => serde_json::Value::String(v.to_string()),
-        toml::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(toml_to_json).collect())
-        }
-        toml::Value::Table(map) => {
-            let mut out = serde_json::Map::new();
-            for (key, child) in map {
-                out.insert(key.clone(), toml_to_json(child));
-            }
-            serde_json::Value::Object(out)
-        }
-    }
 }
 
 fn product_descriptor() -> ConfigDescriptor {

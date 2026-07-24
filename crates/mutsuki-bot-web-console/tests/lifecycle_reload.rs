@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_config::{
     ConfigAction, ConfigApplyMode, ConfigApplyRequest, ConfigContext, ConfigError, ConfigLifecycle,
-    ConfigProviderRegistry, ConfigRevision, ConfigService, ConfigValue, MemoryConfigProvider,
-    MutsukiConfigSchema, RestartPolicy,
+    ConfigProviderRegistry, ConfigService, ConfigValue, MemoryConfigProvider, MutsukiConfigSchema,
+    RestartPolicy,
 };
 use mutsuki_bot_web_console::ControlPluginReloadLifecycle;
 use mutsuki_plugin_bot_command::BotCommandConfig;
@@ -135,5 +135,4 @@ async fn control_lifecycle_invokes_real_plugin_reload() {
             .iter()
             .any(|item| item == "plugin_reload")
     );
-    let _ = ConfigRevision(1);
 }

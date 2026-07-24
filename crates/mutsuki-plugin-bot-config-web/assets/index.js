@@ -1,7 +1,5 @@
 /**
- * Default config WebExtension + standalone console.
- * Koishi-like sidebar layout; LiliaUI tokens via lilia-tokens.css.
- * Level 1 auto-form + Level 2 format renderer registry (vanilla JS).
+ * Default config WebExtension — Level 1 auto-form + Level 2 format renderer registry.
  */
 
 const rendererRegistry = new Map();
@@ -749,22 +747,12 @@ html,body,#app{height:100%;margin:0;background:var(--bg);color:var(--text);font-
 export default {
   id: "config",
   setup(ctx) {
-    if (ctx.config?.renderers?.register) {
-      // Host may expose Level-2 registry; keep local registry in sync.
-      const original = ctx.config.renderers.register.bind(ctx.config.renderers);
-      ctx.config.renderers.register = (entry) => {
+    ctx.config = ctx.config || {};
+    ctx.config.renderers = {
+      register(entry) {
         registerConfigRenderer(entry.format, entry.component || entry.render);
-        return original(entry);
-      };
-    } else {
-      ctx.config = ctx.config || {};
-      ctx.config.renderers = {
-        register(entry) {
-          registerConfigRenderer(entry.format, entry.component || entry.render);
-        },
-      };
-    }
-    // Built-in Level-2 sample: cron-expression → textarea with hint.
+      },
+    };
     ctx.config.renderers.register({
       format: "cron-expression",
       render({ value, setValue, host }) {

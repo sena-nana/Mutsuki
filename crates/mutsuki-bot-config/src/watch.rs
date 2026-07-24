@@ -33,8 +33,4 @@ impl ConfigWatchHub {
             listener(event.clone());
         }
     }
-
-    pub fn listener_count(&self) -> usize {
-        self.listeners.lock().len()
-    }
 }

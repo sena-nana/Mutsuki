@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::error::{ConfigError, capability};
 use crate::lifecycle::ConfigLifecycle;
 use crate::metrics::ConfigMetricsSnapshot;
-use crate::provider::{ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigSnapshot};
+use crate::provider::{ConfigApplyRequest, ConfigApplyResult, ConfigSnapshot};
 use crate::registry::ConfigProviderRegistry;
 use crate::schema::ConfigDescriptor;
 use crate::scope::{ConfigContext, ConfigProviderId};
@@ -36,10 +36,6 @@ impl ConfigService {
 
     pub fn registry(&self) -> &ConfigProviderRegistry {
         &self.registry
-    }
-
-    pub fn watch_hub(&self) -> Arc<ConfigWatchHub> {
-        self.watch.clone()
     }
 
     pub fn subscribe_revision_changed(&self, listener: RevisionChangedListener) {
@@ -142,16 +138,6 @@ impl ConfigService {
                     if !result.actions.contains(action) {
                         result.actions.push(action.clone());
                     }
-                }
-                // Reconfigure without an explicit action still counts as done when lifecycle
-                // reports success with an empty completed set but pending had Reconfigured.
-                if completed.is_empty()
-                    && result
-                        .pending_actions
-                        .iter()
-                        .any(|action| matches!(action, ConfigAction::Reconfigured))
-                {
-                    // leave pending — lifecycle chose not to handle it
                 }
             }
         }

@@ -1,4 +1,4 @@
-//! Minimal ConfigService for embedded console demos when no product providers are registered.
+//! Minimal in-memory ConfigService for console smoke tests.
 
 use std::sync::Arc;
 
