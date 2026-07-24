@@ -18,6 +18,17 @@ impl ResourceManager {
             .ok_or_else(|| resource_not_found(format!("resource.open.{ref_id}")))
     }
 
+    /// Read-only inventory of currently registered resource descriptors.
+    pub fn list_descriptors(&self) -> Vec<ResourceRef> {
+        let mut descriptors: Vec<_> = self
+            .hub
+            .entries()
+            .map(|entry| entry.descriptor.clone())
+            .collect();
+        descriptors.sort_by(|left, right| left.ref_id.cmp(&right.ref_id));
+        descriptors
+    }
+
     pub fn register_resource_descriptor(
         &mut self,
         descriptor: ResourceRef,

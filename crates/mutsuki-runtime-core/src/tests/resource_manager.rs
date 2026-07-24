@@ -35,6 +35,11 @@ fn resource_manager_supports_value_refs_descriptors_and_write_lease_fencing() {
         ))
         .unwrap();
     assert_eq!(resources.open_resource(&resource.ref_id).unwrap(), resource);
+    let inventory = resources.list_descriptors();
+    assert!(
+        inventory.iter().any(|item| item.ref_id == resource.ref_id),
+        "list_descriptors should include registered resources"
+    );
     assert_eq!(
         resources
             .register_resource_descriptor(resource.clone())
