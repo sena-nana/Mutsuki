@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_bot_web_console::{
-    ConsoleAssetDirs, SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths,
-    WebConsoleSecrets, build_console_host, product_config_service,
+    ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver,
+    SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
+    attach_revision_changed_bridge, build_console_host, product_config_service_with_options,
 };
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
@@ -37,15 +38,23 @@ impl WebConsoleGuard {
         let product = load_product_toml(product_config_path)?;
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config, &product);
-        // Product path registers a real product.toml ConfigProvider (not demo, not empty).
+        // Product path registers real Host-persisted ConfigProviders (not demo, not empty).
         // `demo_config_service` stays in BotPlugins for tests only.
         let config_service = if config.include_config {
             Some(
-                product_config_service(product_config_path).map_err(|error| {
-                    WebConsoleError::Config {
-                        code: "web.console.product_config_provider",
-                        message: error.to_string(),
-                    }
+                product_config_service_with_options(
+                    product_config_path,
+                    ProductConfigOptions {
+                        store: service.configured_plugin_store(),
+                        lifecycle: Some(Arc::new(ControlPluginReloadLifecycle::new(
+                            runtime.control_handler(),
+                            runtime.control_token(),
+                        ))),
+                    },
+                )
+                .map_err(|error| WebConsoleError::Config {
+                    code: "web.console.product_config_provider",
+                    message: error.to_string(),
                 })?,
             )
         } else {
@@ -56,12 +65,15 @@ impl WebConsoleGuard {
             &secrets,
             runtime.control_handler(),
             runtime.control_token(),
-            config_service,
+            config_service.clone(),
             secret_monitor,
             &WebConsolePaths::resolve(&product_root(product_config_path), &config),
         )?;
         let mut host = host;
         host.start().await?;
+        if let Some(service) = &config_service {
+            attach_revision_changed_bridge(&host, service);
+        }
         Ok(Some(Self {
             host,
             _assets: assets,

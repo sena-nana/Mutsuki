@@ -17,7 +17,7 @@ kind = "rust"
 [[repositories]]
 id = "service_host"
 url = "https://github.com/sena-nana/MutsukiServiceHost.git"
-revision = "5abf3a3f4a455a365a18f4883b81e959994d34f2"
+revision = "6eeaba59a136261a27270ee5faebc9c1e79adbc8"
 kind = "rust"
 
 [[repositories]]
@@ -29,7 +29,7 @@ kind = "rust"
 [[repositories]]
 id = "std_plugins"
 url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
-revision = "109e3cdb70f5997559fe09bc84d519cc265c16cd"
+revision = "b5efab36e619fc1a007cde1a0708b170ebb9afb8"
 kind = "rust"
 
 [[repositories]]
@@ -41,7 +41,7 @@ kind = "rust"
 [[repositories]]
 id = "bot_plugins"
 url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
-revision = "09bb313c8a46d0a3d168b21f3888ebf3742a5623"
+revision = "2cb807e74eb8301fa776cd7f45956ec2fe1489a7"
 kind = "rust"
 
 [[repositories]]
