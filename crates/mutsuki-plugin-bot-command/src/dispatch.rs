@@ -15,7 +15,7 @@ use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult}
 use mutsuki_runtime_sdk::{
     AbiHostClient, AbiHostClientV2, LoadedPlugin, PluginBuilder, map_work_batch_entries,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{CommandParseError, CommandParser, message_text};
@@ -23,9 +23,20 @@ use crate::{CommandParseError, CommandParser, message_text};
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, mutsuki_bot_config::MutsukiConfig)]
+#[config(
+    provider_id = "mutsuki.bot.command",
+    title = "Bot Command",
+    schema_version = 1,
+    value_version = 1
+)]
 #[serde(deny_unknown_fields)]
 pub struct BotCommandConfig {
+    #[config(
+        title = "指令前缀",
+        description = "触发命令解析的前缀列表",
+        restart = "plugin_reload"
+    )]
     pub prefixes: Vec<String>,
 }
 

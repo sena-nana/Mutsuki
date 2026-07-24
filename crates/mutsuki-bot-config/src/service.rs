@@ -4,25 +4,46 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::error::{ConfigError, capability};
+use crate::lifecycle::ConfigLifecycle;
 use crate::metrics::ConfigMetricsSnapshot;
-use crate::provider::{ConfigApplyRequest, ConfigApplyResult, ConfigSnapshot};
+use crate::provider::{ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigSnapshot};
 use crate::registry::ConfigProviderRegistry;
 use crate::schema::ConfigDescriptor;
 use crate::scope::{ConfigContext, ConfigProviderId};
 use crate::value::ConfigValue;
+use crate::watch::{ConfigWatchHub, RevisionChangedEvent, RevisionChangedListener};
 
 #[derive(Clone)]
 pub struct ConfigService {
     registry: Arc<ConfigProviderRegistry>,
+    lifecycle: Option<Arc<dyn ConfigLifecycle>>,
+    watch: Arc<ConfigWatchHub>,
 }
 
 impl ConfigService {
     pub fn new(registry: Arc<ConfigProviderRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            lifecycle: None,
+            watch: Arc::new(ConfigWatchHub::default()),
+        }
+    }
+
+    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn ConfigLifecycle>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
     }
 
     pub fn registry(&self) -> &ConfigProviderRegistry {
         &self.registry
+    }
+
+    pub fn watch_hub(&self) -> Arc<ConfigWatchHub> {
+        self.watch.clone()
+    }
+
+    pub fn subscribe_revision_changed(&self, listener: RevisionChangedListener) {
+        self.watch.subscribe(listener);
     }
 
     pub fn list_providers(&self, caps: &[String]) -> Result<Vec<ConfigProviderId>, ConfigError> {
@@ -85,9 +106,10 @@ impl ConfigService {
         if candidate_writes_secret(&request.candidate) {
             require_cap(caps, capability::SECRET_WRITE)?;
         }
+        let dry_run = request.dry_run;
         let entry = self.registry.ensure_scope(provider_id, context.scope)?;
         let started = Instant::now();
-        let result = entry.provider.apply(request, context).await;
+        let result = entry.provider.apply(request, context.clone()).await;
         self.registry
             .metrics()
             .observe_apply(started.elapsed().as_millis() as u64);
@@ -102,7 +124,38 @@ impl ConfigService {
             }
             Ok(_) => {}
         }
-        result
+        let mut result = result?;
+        if !dry_run && result.applied {
+            self.watch.notify(RevisionChangedEvent {
+                provider_id: ConfigProviderId::new(provider_id),
+                revision: result.revision,
+                context,
+            });
+            if let Some(lifecycle) = &self.lifecycle {
+                let completed = lifecycle.execute(
+                    provider_id,
+                    result.restart_policy,
+                    &result.pending_actions,
+                )?;
+                for action in &completed {
+                    result.pending_actions.retain(|pending| pending != action);
+                    if !result.actions.contains(action) {
+                        result.actions.push(action.clone());
+                    }
+                }
+                // Reconfigure without an explicit action still counts as done when lifecycle
+                // reports success with an empty completed set but pending had Reconfigured.
+                if completed.is_empty()
+                    && result
+                        .pending_actions
+                        .iter()
+                        .any(|action| matches!(action, ConfigAction::Reconfigured))
+                {
+                    // leave pending — lifecycle chose not to handle it
+                }
+            }
+        }
+        Ok(result)
     }
 
     pub fn metrics_snapshot(&self) -> ConfigMetricsSnapshot {

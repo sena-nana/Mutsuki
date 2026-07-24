@@ -6,9 +6,11 @@
 mod budgets;
 mod error;
 mod expr;
+mod lifecycle;
 mod memory;
 mod metrics;
 mod migrate;
+mod persist;
 mod provider;
 mod registry;
 mod schema;
@@ -17,6 +19,7 @@ mod secret;
 mod service;
 mod validate;
 mod value;
+mod watch;
 
 pub use budgets::{ConfigBudgets, DEFAULT_BUDGETS};
 pub use error::{
@@ -24,9 +27,11 @@ pub use error::{
     ValidationSeverity, capability,
 };
 pub use expr::ConfigExpr;
+pub use lifecycle::{ConfigLifecycle, NoopConfigLifecycle};
 pub use memory::MemoryConfigProvider;
 pub use metrics::{ConfigMetrics, ConfigMetricsSnapshot};
 pub use migrate::{MigrationPlan, MigrationStep, migrate, require_migration};
+pub use persist::ConfigPersistSink;
 pub use provider::{
     ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigProvider, ConfigRegistration,
     ConfigRevision, ConfigSnapshot, ConfigSource,
@@ -45,6 +50,7 @@ pub use secret::{SecretState, SecretUpdate, SecretValue};
 pub use service::ConfigService;
 pub use validate::{validate_structure, validate_structure_with_budgets};
 pub use value::{ConfigKey, ConfigPath, ConfigValue};
+pub use watch::{ConfigWatchHub, RevisionChangedEvent, RevisionChangedListener};
 
 /// Re-export derive macro.
 pub use mutsuki_bot_config_derive::MutsukiConfig;

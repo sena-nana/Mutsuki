@@ -278,7 +278,12 @@ async fn expression_and_restart_policy_on_apply() {
         .await
         .unwrap();
     assert_eq!(result.restart_policy, RestartPolicy::PluginReload);
-    assert!(result.actions.contains(&ConfigAction::PluginReloaded));
+    assert!(
+        result
+            .pending_actions
+            .contains(&ConfigAction::PluginReloaded)
+    );
+    assert!(!result.actions.contains(&ConfigAction::PluginReloaded));
 }
 
 #[tokio::test]

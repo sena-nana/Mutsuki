@@ -4,15 +4,22 @@
 //! Does not embed business pages into WebHost Recovery.
 
 mod config_demo;
+mod lifecycle;
 mod product_config;
 mod secret_status;
+mod watch_bridge;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
-pub use product_config::{ProductConfigError, product_config_service};
+pub use lifecycle::ControlPluginReloadLifecycle;
+pub use product_config::{
+    ProductConfigError, ProductConfigOptions, product_config_service,
+    product_config_service_with_options,
+};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
+pub use watch_bridge::attach_revision_changed_bridge;
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
 use mutsuki_plugin_bot_config_web::{

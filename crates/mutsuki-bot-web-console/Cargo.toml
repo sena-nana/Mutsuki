@@ -7,10 +7,12 @@ description = "Embedded Bot admin console assembly: WebHost + control/overview/c
 
 [dependencies]
 mutsuki-bot-config = { workspace = true }
+mutsuki-plugin-bot-command = { workspace = true }
 mutsuki-plugin-bot-config-web = { workspace = true }
 mutsuki-plugin-bot-control-web = { workspace = true }
 mutsuki-plugin-bot-upgrade-web = { workspace = true }
 mutsuki-plugin-bot-overview-web = { workspace = true }
+mutsuki-service-config = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-host = { workspace = true }
 mutsuki-web-extension = { workspace = true }
@@ -19,6 +21,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 toml = { workspace = true }
 
 [dev-dependencies]

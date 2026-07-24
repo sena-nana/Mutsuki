@@ -345,6 +345,9 @@ fn type_to_value_type(ty: &syn::Type, attr: &FieldAttr) -> syn::Result<proc_macr
     if attr.secret || ty_str == "SecretValue" {
         return Ok(quote!(::mutsuki_bot_config::ConfigValueType::Secret));
     }
+    if ty_str == "PathBuf" || ty_str == "std::path::PathBuf" {
+        return Ok(quote!(::mutsuki_bot_config::ConfigValueType::FileRef));
+    }
     Ok(match ty_str.as_str() {
         "bool" => quote!(::mutsuki_bot_config::ConfigValueType::Bool),
         "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize" | "isize" => {
@@ -354,6 +357,22 @@ fn type_to_value_type(ty: &syn::Type, attr: &FieldAttr) -> syn::Result<proc_macr
         "String" => {
             let multiline = attr.multiline;
             quote!(::mutsuki_bot_config::ConfigValueType::String { multiline: #multiline })
+        }
+        other if other.starts_with("Vec<") => {
+            let inner = &other[4..other.len() - 1];
+            let item = match inner {
+                "String" => {
+                    quote!(::mutsuki_bot_config::ConfigValueType::String { multiline: false })
+                }
+                "bool" => quote!(::mutsuki_bot_config::ConfigValueType::Bool),
+                "u32" | "i32" | "u64" | "i64" | "usize" => {
+                    quote!(::mutsuki_bot_config::ConfigValueType::Integer)
+                }
+                _ => quote!(::mutsuki_bot_config::ConfigValueType::String { multiline: false }),
+            };
+            quote!(::mutsuki_bot_config::ConfigValueType::Array {
+                item: ::std::boxed::Box::new(#item)
+            })
         }
         other if other.starts_with("Option<") => {
             // Optional wrapper — underlying required=false.
@@ -366,6 +385,9 @@ fn type_to_value_type(ty: &syn::Type, attr: &FieldAttr) -> syn::Result<proc_macr
                 "bool" => quote!(::mutsuki_bot_config::ConfigValueType::Bool),
                 "u32" | "i32" | "u64" | "i64" => {
                     quote!(::mutsuki_bot_config::ConfigValueType::Integer)
+                }
+                "PathBuf" | "std::path::PathBuf" => {
+                    quote!(::mutsuki_bot_config::ConfigValueType::FileRef)
                 }
                 _ => quote!(::mutsuki_bot_config::ConfigValueType::String { multiline: false }),
             }

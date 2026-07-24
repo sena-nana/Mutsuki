@@ -1,11 +1,13 @@
 //! In-memory ConfigProvider used by tests and MVP demo plugins.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use crate::error::{ConfigError, FieldDiff, ValidationResult};
+use crate::persist::ConfigPersistSink;
 use crate::provider::{
     ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigProvider, ConfigRevision,
     ConfigSnapshot, ConfigSource,
@@ -22,6 +24,7 @@ struct Stored {
     secrets: HashMap<String, String>,
     revision: ConfigRevision,
     value_version: u32,
+    persisted: bool,
 }
 
 pub struct MemoryConfigProvider {
@@ -29,6 +32,7 @@ pub struct MemoryConfigProvider {
     apply_mode: ConfigApplyMode,
     store: Mutex<HashMap<String, Stored>>,
     defaults: ConfigValue,
+    persist: Option<Arc<dyn ConfigPersistSink>>,
 }
 
 impl MemoryConfigProvider {
@@ -42,7 +46,13 @@ impl MemoryConfigProvider {
             apply_mode,
             store: Mutex::new(HashMap::new()),
             defaults,
+            persist: None,
         }
+    }
+
+    pub fn with_persist(mut self, sink: Arc<dyn ConfigPersistSink>) -> Self {
+        self.persist = Some(sink);
+        self
     }
 
     pub fn from_schema<T: crate::schema::MutsukiConfigSchema>(
@@ -199,15 +209,17 @@ fn actions_for(
     policy: RestartPolicy,
     mode: ConfigApplyMode,
 ) -> (Vec<ConfigAction>, Vec<ConfigAction>) {
+    // Persistence is claimed only after durable/memory commit succeeds.
+    // Hot-reload side effects stay pending until ConfigLifecycle executes them.
     let mut done = vec![ConfigAction::Persisted];
     let mut pending = Vec::new();
     match (policy, mode) {
         (RestartPolicy::None, _) => done.push(ConfigAction::None),
         (RestartPolicy::Reconfigure, ConfigApplyMode::HotReload) => {
-            done.push(ConfigAction::Reconfigured);
+            pending.push(ConfigAction::Reconfigured);
         }
         (RestartPolicy::PluginReload, ConfigApplyMode::HotReload) => {
-            done.push(ConfigAction::PluginReloaded);
+            pending.push(ConfigAction::PluginReloaded);
         }
         (RestartPolicy::BotRestart, _) => pending.push(ConfigAction::BotRestartScheduled),
         (RestartPolicy::HostRestart, _) => pending.push(ConfigAction::HostRestartScheduled),
@@ -239,7 +251,11 @@ impl ConfigProvider for MemoryConfigProvider {
                 revision: stored.revision,
                 schema_version: self.descriptor.schema_version,
                 value_version: stored.value_version,
-                source: ConfigSource::Memory,
+                source: if stored.persisted {
+                    ConfigSource::Persisted
+                } else {
+                    ConfigSource::Memory
+                },
             })
         } else {
             Ok(ConfigSnapshot {
@@ -322,6 +338,13 @@ impl ConfigProvider for MemoryConfigProvider {
             });
         }
 
+        let persisted = if let Some(sink) = &self.persist {
+            sink.persist(&context, &merged, &secrets)?;
+            true
+        } else {
+            false
+        };
+
         guard.insert(
             key,
             Stored {
@@ -333,6 +356,7 @@ impl ConfigProvider for MemoryConfigProvider {
                     ConfigRevision(1)
                 },
                 value_version: self.descriptor.value_version,
+                persisted,
             },
         );
 
