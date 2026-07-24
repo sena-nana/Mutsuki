@@ -38,8 +38,6 @@ impl WebConsoleGuard {
         let product = load_product_toml(product_config_path)?;
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config, &product);
-        // Product path registers real Host-persisted ConfigProviders (not demo, not empty).
-        // `demo_config_service` stays in BotPlugins for tests only.
         let config_service = if config.include_config {
             Some(
                 product_config_service_with_options(
