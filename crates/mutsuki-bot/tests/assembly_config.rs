@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use mutsuki_bot::assemble_service;
+use mutsuki_bot_service_host_integration::BilibiliConsoleBridge;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use tempfile::tempdir;
 
@@ -124,6 +125,9 @@ management = {{ enabled = true, allow_self_binding = true, command = "bili", adm
         .start()
         .await
         .unwrap();
+    let bridge = BilibiliConsoleBridge::get().expect("bilibili console bridge published");
+    assert!(bridge.status().available);
+    assert_eq!(bridge.status().backend, "web_cookie");
     runtime.shutdown().await;
 
     let product = std::fs::read_to_string(&config_path).unwrap();
