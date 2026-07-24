@@ -152,9 +152,7 @@ async fn serve_file(path: &std::path::Path, is_index: bool) -> Response {
             )
                 .into_response();
             if !is_index {
-                // `immutable` is only safe for content-addressed filenames. Stable names
-                // like `mutsuki-ui.css` / `index.js` must revalidate — otherwise a prior
-                // broken shell stays stuck in the browser for up to a year.
+                // Only content-addressed names may be immutable; stable names revalidate.
                 let cache = if is_content_addressed_asset(path) {
                     HeaderValue::from_static("public, max-age=31536000, immutable")
                 } else {
