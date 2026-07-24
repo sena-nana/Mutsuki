@@ -41,13 +41,13 @@ kind = "rust"
 [[repositories]]
 id = "bot_plugins"
 url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
-revision = "9e1fbc490afb8b85af3e62283d29ec55ef479218"
+revision = "275ca0098288477d55910d815bfff1ac7e27965a"
 kind = "rust"
 
 [[repositories]]
 id = "web_host"
 url = "https://github.com/sena-nana/MutsukiWebHost.git"
-revision = "1634e31b2bbb1ffccc0cf94afa648d14358a3d59"
+revision = "245769b1189b89a93f6dd237c34ac7a333a61e85"
 kind = "rust"
 
 [[repositories]]
