@@ -20,7 +20,7 @@ export const ConsoleShell = defineComponent({
   name: "MutsukiConsoleShell",
   props: {
     brand: { type: String, default: "Mutsuki" },
-    footer: { type: String, default: "bot console" },
+    footer: { type: String, default: "Bot 控制台" },
     title: { type: String, default: "" },
     subtitle: { type: String, default: "" },
     navItems: {
@@ -56,7 +56,7 @@ export const ConsoleShell = defineComponent({
                     "nav",
                     {
                       class: "secondary-panel__body sb-section nav",
-                      "aria-label": "Console",
+                      "aria-label": "控制台",
                     },
                     props.navItems.map((item) => {
                       const className = [
@@ -146,8 +146,8 @@ export function createConsoleShellElement(options: {
         <div class="secondary-panel__top">
           <div class="brand">${escapeHtml(options.brand ?? "Mutsuki")}</div>
         </div>
-        <nav class="secondary-panel__body sb-section nav" aria-label="Console"></nav>
-        <div class="secondary-panel__footer sidebar-footer">${escapeHtml(options.footer ?? "bot console")}</div>
+        <nav class="secondary-panel__body sb-section nav" aria-label="控制台"></nav>
+        <div class="secondary-panel__footer sidebar-footer">${escapeHtml(options.footer ?? "Bot 控制台")}</div>
       </div>
     </aside>
     <main class="lilia-workspace-region" data-region="main">
