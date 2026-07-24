@@ -145,9 +145,14 @@ function createShell(rpc, options = {}) {
       if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `nav-item${state.page === page.id ? " active" : ""}`;
-      if (state.page === page.id) btn.setAttribute("aria-current", "page");
-      btn.textContent = page.label;
+      const active = state.page === page.id;
+      btn.className = `sb-tree__row lilia-interactive-item${active ? " is-active" : ""}`;
+      btn.dataset.page = page.id;
+      if (active) {
+        btn.setAttribute("aria-current", "page");
+        btn.dataset.liliaSelected = "true";
+      }
+      btn.innerHTML = `<span class="sb-tree__name">${escapeHtml(page.label)}</span>`;
       btn.onclick = () => {
         state.page = navigate(page.id);
         renderNav();
@@ -156,11 +161,11 @@ function createShell(rpc, options = {}) {
       nav.appendChild(btn);
     }
     if (includeConfig) {
-      const btn = document.createElement("a");
-      btn.className = "nav-item nav-link";
-      btn.href = "?page=config";
-      btn.textContent = "配置";
-      nav.appendChild(btn);
+      const link = document.createElement("a");
+      link.className = "sb-tree__row lilia-interactive-item";
+      link.href = "?page=config";
+      link.innerHTML = `<span class="sb-tree__name">配置</span>`;
+      nav.appendChild(link);
     }
   }
 
@@ -194,21 +199,21 @@ function createShell(rpc, options = {}) {
 
   app.innerHTML = `
     <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
-      <div class="lilia-workspace-region__content">
-        <div class="brand">Mutsuki</div>
-        <nav class="nav" aria-label="Console"></nav>
-        <div class="sidebar-footer">bot console</div>
+      <div class="secondary-panel">
+        <div class="secondary-panel__top">
+          <div class="brand">Mutsuki</div>
+        </div>
+        <nav class="secondary-panel__body sb-section nav" aria-label="Console"></nav>
+        <div class="secondary-panel__footer sidebar-footer">bot console</div>
       </div>
     </aside>
     <main class="lilia-workspace-region" data-region="main">
-      <div class="lilia-workspace-region__content">
-        <header class="workspace-header">
-          <div class="header-row">
-            <div><h1 id="page-title">概览</h1><p id="page-subtitle"></p></div>
-            <button type="button" id="refresh" class="ghost">刷新</button>
-          </div>
-        </header>
-        <section id="content" class="workspace-content">加载中…</section>
+      <div class="lilia-workspace-region__content page-scroll">
+        <div class="page-header">
+          <div><h1 id="page-title">概览</h1><p id="page-subtitle"></p></div>
+          <div class="page-actions"><button type="button" id="refresh" class="ghost">刷新</button></div>
+        </div>
+        <section id="content" class="page-body">加载中…</section>
       </div>
     </main>
   `;
@@ -252,7 +257,7 @@ async function renderOverview(content, rpc) {
   const tasks = c.tasks || {};
 
   const healthCard = document.createElement("section");
-  healthCard.className = "card card--flat";
+  healthCard.className = "section";
   healthCard.innerHTML = "<h2>系统状态</h2>";
   const healthKv = document.createElement("ul");
   healthKv.className = "kv";
@@ -272,7 +277,7 @@ async function renderOverview(content, rpc) {
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
   const metricsCard = document.createElement("section");
-  metricsCard.className = "card card--flat";
+  metricsCard.className = "section";
   metricsCard.innerHTML = "<h2>运行指标</h2>";
   const metricsKv = document.createElement("ul");
   metricsKv.className = "kv";
@@ -738,7 +743,7 @@ function renderComponents(comps) {
 
 function appendSection(content, title, html) {
   const el = document.createElement("section");
-  el.className = "card card--flat";
+  el.className = "section";
   el.innerHTML = `<h2>${title}</h2>${html}`;
   content.appendChild(el);
 }
@@ -767,7 +772,8 @@ function flash(app, message, isError = false) {
   if (!banner) {
     banner = document.createElement("div");
     banner.className = "flash-banner";
-    app.querySelector(".workspace").prepend(banner);
+    const host = app.querySelector(".page-scroll") || app.querySelector("#content");
+    host?.prepend(banner);
   }
   banner.className = `flash-banner${isError ? " error" : ""}`;
   banner.textContent = message;
@@ -967,8 +973,11 @@ async function renderUpgrade(content, rpc, app, state) {
       state.page = navigate("plugins");
       const nav = app.querySelector(".nav");
       if (nav) {
-        nav.querySelectorAll(".nav-item").forEach((btn) => {
-          btn.classList.toggle("active", btn.textContent === "插件");
+        nav.querySelectorAll(".sb-tree__row").forEach((btn) => {
+          const isPlugins = btn.dataset.page === "plugins";
+          btn.classList.toggle("is-active", isPlugins);
+          if (isPlugins) btn.dataset.liliaSelected = "true";
+          else delete btn.dataset.liliaSelected;
         });
       }
       const contentEl = app.querySelector("#content");

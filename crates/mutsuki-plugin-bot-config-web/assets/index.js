@@ -461,25 +461,26 @@ function createConsoleApp(rpc) {
   app.dataset.liliaSurfaceLevel = "base";
   app.innerHTML = `
     <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
-      <div class="lilia-workspace-region__content">
-        <div class="brand">Mutsuki</div>
-        <nav class="nav" aria-label="Console">
-          <button data-route="config" class="nav-item active" aria-current="page">配置</button>
+      <div class="secondary-panel">
+        <div class="secondary-panel__top">
+          <div class="brand">Mutsuki</div>
+        </div>
+        <nav class="secondary-panel__body sb-section nav" aria-label="Console">
+          <a class="sb-tree__row lilia-interactive-item" href="?page=overview"><span class="sb-tree__name">概览</span></a>
+          <button type="button" data-route="config" class="sb-tree__row lilia-interactive-item is-active" aria-current="page" data-lilia-selected="true"><span class="sb-tree__name">配置</span></button>
         </nav>
-        <div class="sidebar-footer">bot console</div>
+        <div class="secondary-panel__footer sidebar-footer">bot console</div>
       </div>
     </aside>
     <main class="lilia-workspace-region" data-region="main">
-      <div class="lilia-workspace-region__content">
-        <header class="workspace-header">
-          <div class="header-row">
-            <div>
-              <h1>配置</h1>
-              <p>由 ConfigDescriptor 自动生成表单</p>
-            </div>
+      <div class="lilia-workspace-region__content page-scroll">
+        <div class="page-header">
+          <div>
+            <h1>配置</h1>
+            <p>由 ConfigDescriptor 自动生成表单</p>
           </div>
-        </header>
-        <section id="content" class="workspace-content"></section>
+        </div>
+        <section id="content" class="page-body"></section>
       </div>
     </main>
   `;
