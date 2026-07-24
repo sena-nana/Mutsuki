@@ -33,8 +33,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
+mod management;
 mod open_platform;
 
+pub use management::{
+    BilibiliManagementService, BilibiliSecretPresence, BindChallengeResult, BindVerifyResult,
+    CredentialSecretState, LoginPollResult, LoginStartResult, ManagementStatus, PreviewCardView,
+    SubscriptionView,
+};
 pub use open_platform::{
     BilibiliOpenPlatformCredential, BilibiliOpenPlatformHttpClient,
     BilibiliOpenPlatformHttpRequest, BilibiliOpenPlatformHttpResponse,
@@ -344,7 +350,7 @@ impl SharedBilibiliConfig {
         self.0.read().expect("Bilibili config read lock").clone()
     }
 
-    fn replace(&self, config: BilibiliConfig) {
+    pub fn replace(&self, config: BilibiliConfig) {
         *self.0.write().expect("Bilibili config write lock") = config;
     }
 }
@@ -373,21 +379,28 @@ impl SharedBilibiliCredential {
         *self.0.lock().expect("credential mutex") = None;
     }
 
-    fn get(&self) -> Result<String, BilibiliError> {
+    pub fn is_loaded(&self) -> bool {
         self.0
             .lock()
             .expect("credential mutex")
-            .clone()
-            .filter(|cookie| !cookie.trim().is_empty())
-            .ok_or(BilibiliError::CookieExpired)
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
     }
 
-    fn get_named(&self, name: &str) -> Result<String, BilibiliError> {
+    pub fn raw(&self) -> Option<String> {
         self.0
             .lock()
             .expect("credential mutex")
             .clone()
             .filter(|value| !value.trim().is_empty())
+    }
+
+    fn get(&self) -> Result<String, BilibiliError> {
+        self.raw().ok_or(BilibiliError::CookieExpired)
+    }
+
+    fn get_named(&self, name: &str) -> Result<String, BilibiliError> {
+        self.raw()
             .ok_or_else(|| BilibiliError::OpenPlatformCredentialUnavailable(name.into()))
     }
 }
@@ -776,7 +789,7 @@ impl SqliteBilibiliRepository {
         Ok(true)
     }
 
-    fn set_qr_session(&self, actor_id: &str, key: &str) -> Result<(), rusqlite::Error> {
+    pub fn set_qr_session(&self, actor_id: &str, key: &str) -> Result<(), rusqlite::Error> {
         self.connection.lock().expect("sqlite mutex").execute(
             "INSERT INTO qr_session(actor_id,qr_key) VALUES(?1,?2) ON CONFLICT(actor_id) DO UPDATE SET qr_key=excluded.qr_key",
             params![actor_id, key],
@@ -784,7 +797,7 @@ impl SqliteBilibiliRepository {
         Ok(())
     }
 
-    fn qr_session(&self, actor_id: &str) -> Result<Option<String>, rusqlite::Error> {
+    pub fn qr_session(&self, actor_id: &str) -> Result<Option<String>, rusqlite::Error> {
         self.connection
             .lock()
             .expect("sqlite mutex")
@@ -796,7 +809,7 @@ impl SqliteBilibiliRepository {
             .optional()
     }
 
-    fn clear_qr_session(&self, actor_id: &str) -> Result<(), rusqlite::Error> {
+    pub fn clear_qr_session(&self, actor_id: &str) -> Result<(), rusqlite::Error> {
         self.connection
             .lock()
             .expect("sqlite mutex")
@@ -804,7 +817,7 @@ impl SqliteBilibiliRepository {
         Ok(())
     }
 
-    fn set_binding_challenge(
+    pub fn set_binding_challenge(
         &self,
         actor_id: &str,
         uid: u64,
@@ -817,7 +830,10 @@ impl SqliteBilibiliRepository {
         Ok(())
     }
 
-    fn binding_challenge(&self, actor_id: &str) -> Result<Option<(u64, String)>, rusqlite::Error> {
+    pub fn binding_challenge(
+        &self,
+        actor_id: &str,
+    ) -> Result<Option<(u64, String)>, rusqlite::Error> {
         self.connection
             .lock()
             .expect("sqlite mutex")
@@ -829,7 +845,7 @@ impl SqliteBilibiliRepository {
             .optional()
     }
 
-    fn clear_binding_challenge(&self, actor_id: &str) -> Result<(), rusqlite::Error> {
+    pub fn clear_binding_challenge(&self, actor_id: &str) -> Result<(), rusqlite::Error> {
         self.connection.lock().expect("sqlite mutex").execute(
             "DELETE FROM binding_challenge WHERE actor_id = ?1",
             [actor_id],
@@ -846,8 +862,7 @@ pub struct BilibiliRunner {
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
     managed_config: Option<SharedBilibiliConfig>,
-    credential_store: Option<Arc<dyn BilibiliCredentialStore>>,
-    config_store: Option<Arc<dyn BilibiliConfigStore>>,
+    management: Option<Arc<BilibiliManagementService>>,
 }
 
 impl BilibiliRunner {
@@ -881,21 +896,14 @@ impl BilibiliRunner {
             resources,
             media_provider_id: media_provider_id.into(),
             managed_config: None,
-            credential_store: None,
-            config_store: None,
+            management: None,
         }
     }
 
-    pub fn with_management(
-        mut self,
-        config: SharedBilibiliConfig,
-        credential_store: Arc<dyn BilibiliCredentialStore>,
-        config_store: Arc<dyn BilibiliConfigStore>,
-    ) -> Self {
+    pub fn with_management(mut self, management: Arc<BilibiliManagementService>) -> Self {
         self.descriptor = runner_descriptor(true, false, self.backend_kind);
-        self.managed_config = Some(config);
-        self.credential_store = Some(credential_store);
-        self.config_store = Some(config_store);
+        self.managed_config = Some(management.config().clone());
+        self.management = Some(management);
         self
     }
 
@@ -1014,10 +1022,10 @@ impl BilibiliRunner {
 
     fn run_command(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
         let command: BotCommandEvent = decode(task)?;
-        let Some(shared) = self.managed_config.clone() else {
+        let Some(management) = self.management.clone() else {
             return Ok(RunnerResult::completed(task.task_id.clone()));
         };
-        let config = shared.snapshot();
+        let config = management.config().snapshot();
         if !config.management.enabled
             || !command
                 .name
@@ -1046,242 +1054,123 @@ impl BilibiliRunner {
             )),
             "login" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let qr = self
-                    .transport
-                    .qr_start()
+                let (text, png) = management
+                    .chat_login_start_png(actor_id)
                     .map_err(|error| bili_error(task, error))?;
-                self.repository
-                    .set_qr_session(actor_id, &qr.key)
-                    .map_err(|error| {
-                        bili_error(task, BilibiliError::Transport(error.to_string()))
-                    })?;
-                let image = self.qr_resource(&qr.url, task)?;
-                Ok(self.command_reply(
-                    task,
-                    &command,
-                    "请使用 Bilibili App 扫码确认，然后发送 /bili login-status；二维码不会把 Cookie 写入聊天或 Task payload。",
-                    Some(image),
-                ))
+                let image = self.qr_resource_from_png(png, task)?;
+                Ok(self.command_reply(task, &command, text, Some(image)))
             }
             "login-status" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let key = self
-                    .repository
-                    .qr_session(actor_id)
-                    .map_err(|error| {
-                        bili_error(task, BilibiliError::Transport(error.to_string()))
-                    })?
-                    .ok_or_else(|| {
-                        bili_error(
-                            task,
-                            BilibiliError::ManagementUnavailable(
-                                "no active QR login; run login first".into(),
-                            ),
-                        )
-                    })?;
-                let polled = self
-                    .transport
-                    .qr_poll(&key)
+                let polled = management
+                    .login_poll(actor_id)
                     .map_err(|error| bili_error(task, error))?;
-                let text = match polled.status {
-                    BilibiliQrStatus::Pending => "等待扫码。",
-                    BilibiliQrStatus::Scanned => "已扫码，等待在 App 中确认。",
-                    BilibiliQrStatus::Expired => {
-                        self.repository.clear_qr_session(actor_id).map_err(|error| {
-                            bili_error(task, BilibiliError::Transport(error.to_string()))
-                        })?;
-                        "二维码已过期，请重新执行 login。"
-                    }
-                    BilibiliQrStatus::Confirmed => {
-                        let credential = polled.credential.ok_or_else(|| {
-                            bili_error(
-                                task,
-                                BilibiliError::InvalidResponse(
-                                    "confirmed QR login omitted credential".into(),
-                                ),
-                            )
-                        })?;
-                        let store = self.credential_store.as_ref().ok_or_else(|| {
-                            bili_error(
-                                task,
-                                BilibiliError::ManagementUnavailable(
-                                    "Host secret rotation boundary is unavailable".into(),
-                                ),
-                            )
-                        })?;
-                        let cookie_secret_key = config.backend.cookie_secret_key().ok_or_else(|| {
-                            bili_error(
-                                task,
-                                BilibiliError::ManagementUnavailable(
-                                    "Cookie backend is not selected".into(),
-                                ),
-                            )
-                        })?;
-                        store
-                            .rotate(cookie_secret_key, credential.clone())
-                            .map_err(|detail| {
-                                bili_error(task, BilibiliError::ManagementUnavailable(detail))
-                            })?;
-                        self.repository.clear_qr_session(actor_id).map_err(|error| {
-                            bili_error(task, BilibiliError::Transport(error.to_string()))
-                        })?;
-                        "登录成功，凭据已通过 Host secret backend 原子轮换。"
-                    }
-                };
-                Ok(self.command_reply(task, &command, text, None))
+                Ok(self.command_reply(task, &command, polled.message, None))
             }
             "bind" => {
-                if !config.management.allow_self_binding {
-                    return Err(bili_error(task, BilibiliError::Forbidden));
-                }
                 let uid = parse_uid(command.args.get(1)).map_err(|error| bili_error(task, error))?;
-                let profile = self
-                    .transport
-                    .profile(uid)
+                let challenge = management
+                    .bind_start(actor_id, uid, &task.task_id)
                     .map_err(|error| bili_error(task, error))?;
-                let code = binding_code(actor_id, uid, &task.task_id);
-                self.repository
-                    .set_binding_challenge(actor_id, uid, &code)
-                    .map_err(|error| {
-                        bili_error(task, BilibiliError::Transport(error.to_string()))
-                    })?;
                 Ok(self.command_reply(
                     task,
                     &command,
                     &format!(
-                        "已为 {} ({uid}) 创建验证。请临时把 {code} 加入 Bilibili 个性签名，然后发送 /{} verify。",
-                        profile.name, config.management.command
+                        "已为 {} ({}) 创建验证。请临时把 {} 加入 Bilibili 个性签名，然后发送 /{} verify。",
+                        challenge.name, challenge.uid, challenge.code, config.management.command
                     ),
                     None,
                 ))
             }
             "verify" => {
-                if !config.management.allow_self_binding {
-                    return Err(bili_error(task, BilibiliError::Forbidden));
-                }
-                let (uid, code) = self
-                    .repository
-                    .binding_challenge(actor_id)
-                    .map_err(|error| {
-                        bili_error(task, BilibiliError::Transport(error.to_string()))
-                    })?
-                    .ok_or_else(|| {
-                        bili_error(
-                            task,
-                            BilibiliError::ManagementUnavailable(
-                                "no binding challenge; run bind first".into(),
-                            ),
-                        )
-                    })?;
-                let profile = self
-                    .transport
-                    .profile(uid)
-                    .map_err(|error| bili_error(task, error))?;
-                if !profile.signature.contains(&code) {
-                    return Ok(self.command_reply(
+                match management
+                    .bind_verify(
+                        actor_id,
+                        command.source.platform.as_str(),
+                        command.source.target.clone(),
+                    )
+                    .map_err(|error| bili_error(task, error))?
+                {
+                    BindVerifyResult::Verified(subscription) => Ok(self.command_reply(
+                        task,
+                        &command,
+                        &format!(
+                            "验证成功，已绑定 UID {} 并写入产品配置。",
+                            subscription.uid
+                        ),
+                        None,
+                    )),
+                    BindVerifyResult::SignatureMismatch { code } => Ok(self.command_reply(
                         task,
                         &command,
                         &format!("验证未通过：个性签名中尚未找到 {code}。"),
                         None,
-                    ));
+                    )),
                 }
-                let mut next = config.clone();
-                let subscription_id = self_subscription_id(&command, actor_id);
-                next.subscriptions.retain(|subscription| {
-                    subscription.owner_user_id.as_deref() != Some(actor_id)
-                });
-                next.subscriptions.push(BilibiliSubscription {
-                    subscription_id,
-                    uid,
-                    notifications: next.management.self_binding_notifications.clone(),
-                    target: command.source.target.clone(),
-                    outbound_binding: next.management.self_binding_outbound_binding.clone(),
-                    paused: false,
-                    owner_user_id: Some(actor_id.into()),
-                });
-                self.persist_config(task, &shared, next)?;
-                self.repository
-                    .clear_binding_challenge(actor_id)
-                    .map_err(|error| {
-                        bili_error(task, BilibiliError::Transport(error.to_string()))
-                    })?;
+            }
+            "unbind" => {
+                let removed = management
+                    .unbind(actor_id)
+                    .map_err(|error| bili_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!("验证成功，已绑定 {} ({uid}) 并写入产品配置。", profile.name),
+                    if removed {
+                        "已解除绑定并更新产品配置。"
+                    } else {
+                        "当前没有自助绑定。"
+                    },
                     None,
                 ))
             }
-            "unbind" => {
-                let mut next = config.clone();
-                let before = next.subscriptions.len();
-                next.subscriptions.retain(|subscription| {
-                    subscription.owner_user_id.as_deref() != Some(actor_id)
-                });
-                if next.subscriptions.len() == before {
-                    return Ok(self.command_reply(task, &command, "当前没有自助绑定。", None));
-                }
-                self.persist_config(task, &shared, next)?;
-                Ok(self.command_reply(task, &command, "已解除绑定并更新产品配置。", None))
-            }
             "pause" | "resume" => {
                 let paused = action == "pause";
-                let mut next = config.clone();
-                let index = select_subscription(
-                    &next,
-                    actor_id,
-                    is_admin,
-                    command.args.get(1).map(String::as_str),
-                )
-                .map_err(|error| bili_error(task, error))?;
-                let id = next.subscriptions[index].subscription_id.clone();
-                next.subscriptions[index].paused = paused;
-                self.persist_config(task, &shared, next)?;
+                let view = management
+                    .set_paused(
+                        actor_id,
+                        is_admin,
+                        command.args.get(1).map(String::as_str),
+                        paused,
+                    )
+                    .map_err(|error| bili_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!("订阅 {id} 已{}。", if paused { "暂停" } else { "恢复" }),
+                    &format!(
+                        "订阅 {} 已{}。",
+                        view.subscription_id,
+                        if paused { "暂停" } else { "恢复" }
+                    ),
                     None,
                 ))
             }
             "preview" => {
-                let index = select_subscription(
-                    &config,
+                match management.preview_as_card(
                     actor_id,
                     is_admin,
                     command.args.get(1).map(String::as_str),
-                )
-                .map_err(|error| bili_error(task, error))?;
-                let subscription = &config.subscriptions[index];
-                let item = self
-                    .transport
-                    .poll(&BilibiliPollKind::Dynamic, subscription.uid)
-                    .map_err(|error| bili_error(task, error))?
-                    .into_iter()
-                    .next();
-                let Some(item) = item else {
-                    return Ok(self.command_reply(task, &command, "该账号暂无可预览动态。", None));
-                };
-                let card = ResolvedLinkCard {
-                    url: item.url,
-                    title: item.title,
-                    description: "通知预览（不会推进轮询 cursor）".into(),
-                    image_url: item.image_url,
-                };
-                let message = self.card_message(command.source.target.clone(), card, task)?;
-                Ok(command_outbound_result(
-                    task,
-                    message,
-                    Some(&config.management.self_binding_outbound_binding),
-                ))
+                ) {
+                    Ok(card) => {
+                        let message = self.card_message(command.source.target.clone(), card, task)?;
+                        Ok(command_outbound_result(
+                            task,
+                            message,
+                            Some(&config.management.self_binding_outbound_binding),
+                        ))
+                    }
+                    Err(BilibiliError::ManagementUnavailable(message))
+                        if message.contains("暂无可预览") =>
+                    {
+                        Ok(self.command_reply(task, &command, message, None))
+                    }
+                    Err(error) => Err(bili_error(task, error)),
+                }
             }
             "list" => {
-                let lines = config
-                    .subscriptions
-                    .iter()
-                    .filter(|subscription| {
-                        is_admin || subscription.owner_user_id.as_deref() == Some(actor_id)
-                    })
+                let lines = management
+                    .list(actor_id, is_admin)
+                    .map_err(|error| bili_error(task, error))?
+                    .into_iter()
                     .map(|subscription| {
                         format!(
                             "{} -> UID {} [{}]{}",
@@ -1310,48 +1199,18 @@ impl BilibiliRunner {
             }
             "subscribe" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let subscription_id = required_arg(&command.args, 1, "subscription id")
+                let text = management
+                    .chat_subscribe(&command.args, command.source.target.clone())
                     .map_err(|error| bili_error(task, error))?;
-                let uid = parse_uid(command.args.get(2)).map_err(|error| bili_error(task, error))?;
-                let notifications = parse_notifications(command.args.get(3))
-                    .map_err(|error| bili_error(task, error))?;
-                let mut next = config.clone();
-                next.subscriptions
-                    .retain(|subscription| subscription.subscription_id != subscription_id);
-                next.subscriptions.push(BilibiliSubscription {
-                    subscription_id: subscription_id.clone(),
-                    uid,
-                    notifications,
-                    target: command.source.target.clone(),
-                    outbound_binding: next.management.self_binding_outbound_binding.clone(),
-                    paused: false,
-                    owner_user_id: None,
-                });
-                self.persist_config(task, &shared, next)?;
-                Ok(self.command_reply(
-                    task,
-                    &command,
-                    &format!("订阅 {subscription_id} 已写入产品配置。"),
-                    None,
-                ))
+                Ok(self.command_reply(task, &command, text, None))
             }
             "unsubscribe" => {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
                 let subscription_id = required_arg(&command.args, 1, "subscription id")
                     .map_err(|error| bili_error(task, error))?;
-                let mut next = config.clone();
-                let before = next.subscriptions.len();
-                next.subscriptions
-                    .retain(|subscription| subscription.subscription_id != subscription_id);
-                if next.subscriptions.len() == before {
-                    return Err(bili_error(
-                        task,
-                        BilibiliError::ManagementUnavailable(format!(
-                            "subscription {subscription_id} was not found"
-                        )),
-                    ));
-                }
-                self.persist_config(task, &shared, next)?;
+                management
+                    .unsubscribe(&subscription_id)
+                    .map_err(|error| bili_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1363,48 +1222,16 @@ impl BilibiliRunner {
         }
     }
 
-    fn persist_config(
+    fn qr_resource_from_png(
         &self,
-        task: &Task,
-        shared: &SharedBilibiliConfig,
-        next: BilibiliConfig,
-    ) -> Result<(), RuntimeError> {
-        next.validate()
-            .map_err(|detail| bili_error(task, BilibiliError::ManagementUnavailable(detail)))?;
-        let store = self.config_store.as_ref().ok_or_else(|| {
-            bili_error(
-                task,
-                BilibiliError::ManagementUnavailable(
-                    "Host configured-plugin persistence is unavailable".into(),
-                ),
-            )
-        })?;
-        store
-            .replace(&next)
-            .map_err(|detail| bili_error(task, BilibiliError::ManagementUnavailable(detail)))?;
-        shared.replace(next);
-        Ok(())
-    }
-
-    fn qr_resource(
-        &self,
-        value: &str,
+        bytes: Vec<u8>,
         task: &Task,
     ) -> Result<mutsuki_runtime_contracts::ResourceRef, RuntimeError> {
-        let image = QrCode::new(value.as_bytes())
-            .map_err(|error| bili_error(task, BilibiliError::InvalidResponse(error.to_string())))?
-            .render::<image::Luma<u8>>()
-            .min_dimensions(256, 256)
-            .build();
-        let mut bytes = Cursor::new(Vec::new());
-        image::DynamicImage::ImageLuma8(image)
-            .write_to(&mut bytes, ImageFormat::Png)
-            .map_err(|error| bili_error(task, BilibiliError::InvalidResponse(error.to_string())))?;
         self.resources
             .create_blob_resource(
                 &self.media_provider_id,
                 "mutsuki.bot.image.qrcode.png.v1",
-                bytes.into_inner(),
+                bytes,
             )
             .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))
     }
@@ -1809,7 +1636,11 @@ fn require_admin(is_admin: bool) -> Result<(), BilibiliError> {
     is_admin.then_some(()).ok_or(BilibiliError::Forbidden)
 }
 
-fn required_arg(args: &[String], index: usize, name: &str) -> Result<String, BilibiliError> {
+pub(crate) fn required_arg(
+    args: &[String],
+    index: usize,
+    name: &str,
+) -> Result<String, BilibiliError> {
     args.get(index)
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
@@ -1817,7 +1648,7 @@ fn required_arg(args: &[String], index: usize, name: &str) -> Result<String, Bil
         .ok_or_else(|| BilibiliError::InvalidResponse(format!("missing {name}")))
 }
 
-fn parse_uid(value: Option<&String>) -> Result<u64, BilibiliError> {
+pub(crate) fn parse_uid(value: Option<&String>) -> Result<u64, BilibiliError> {
     value
         .ok_or_else(|| BilibiliError::InvalidResponse("missing Bilibili UID".into()))?
         .parse::<u64>()
@@ -1826,7 +1657,9 @@ fn parse_uid(value: Option<&String>) -> Result<u64, BilibiliError> {
         .ok_or_else(|| BilibiliError::InvalidResponse("invalid Bilibili UID".into()))
 }
 
-fn parse_notifications(value: Option<&String>) -> Result<Vec<BilibiliPollKind>, BilibiliError> {
+pub(crate) fn parse_notifications(
+    value: Option<&String>,
+) -> Result<Vec<BilibiliPollKind>, BilibiliError> {
     let values = value
         .map(|value| value.split(',').collect::<Vec<_>>())
         .unwrap_or_else(|| vec!["live", "dynamic", "video"]);
@@ -1854,20 +1687,17 @@ fn parse_notifications(value: Option<&String>) -> Result<Vec<BilibiliPollKind>, 
     Ok(notifications)
 }
 
-fn binding_code(actor_id: &str, uid: u64, task_id: &str) -> String {
+pub(crate) fn binding_code(actor_id: &str, uid: u64, task_id: &str) -> String {
     let digest = format!("{:x}", md5::compute(format!("{actor_id}:{uid}:{task_id}")));
     format!("mutsuki-{}", &digest[..8])
 }
 
-fn self_subscription_id(command: &BotCommandEvent, actor_id: &str) -> String {
-    let digest = format!(
-        "{:x}",
-        md5::compute(format!("{}:{actor_id}", command.source.platform.as_str()))
-    );
+pub(crate) fn self_subscription_id_for(platform: &str, actor_id: &str) -> String {
+    let digest = format!("{:x}", md5::compute(format!("{platform}:{actor_id}")));
     format!("self-{}", &digest[..12])
 }
 
-fn select_subscription(
+pub(crate) fn select_subscription(
     config: &BilibiliConfig,
     actor_id: &str,
     is_admin: bool,
@@ -1896,6 +1726,19 @@ fn select_subscription(
             "subscription selector is ambiguous".into(),
         )),
     }
+}
+
+pub(crate) fn render_qr_png(value: &str) -> Result<Vec<u8>, BilibiliError> {
+    let image = QrCode::new(value.as_bytes())
+        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?
+        .render::<image::Luma<u8>>()
+        .min_dimensions(256, 256)
+        .build();
+    let mut bytes = Cursor::new(Vec::new());
+    image::DynamicImage::ImageLuma8(image)
+        .write_to(&mut bytes, ImageFormat::Png)
+        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
+    Ok(bytes.into_inner())
 }
 
 fn outbound_task(parent: &Task, message: BotMessage, binding: &str, index: usize) -> Task {
@@ -2729,20 +2572,26 @@ mod tests {
     fn management_flow_rotates_secret_persists_verified_binding_and_previews_without_cursor() {
         let state = Arc::new(Mutex::new(FakeTransportState::default()));
         let config = SharedBilibiliConfig::new(managed_config());
+        let credential = SharedBilibiliCredential::default();
         let credential_store = Arc::new(RecordingCredentialStore::default());
         let config_store = Arc::new(RecordingConfigStore::default());
         let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let management = Arc::new(BilibiliManagementService::new(
+            config.clone(),
+            credential,
+            Box::new(FakeTransport(state.clone())),
+            repository.clone(),
+            credential_store.clone(),
+            config_store.clone(),
+            Arc::new(AlwaysPresentSecrets),
+        ));
         let mut runner = BilibiliRunner::new(
             Box::new(FakeTransport(state.clone())),
             repository.clone(),
             Arc::new(UnusedResources),
             "memory",
         )
-        .with_management(
-            config.clone(),
-            credential_store.clone(),
-            config_store.clone(),
-        );
+        .with_management(management);
 
         repository.set_qr_session("admin", "qr-key").unwrap();
         let login = runner
@@ -2793,6 +2642,62 @@ mod tests {
             .unwrap();
         assert_eq!(preview.tasks.len(), 1);
         assert!(repository.cursor("Dynamic:42").unwrap().is_none());
+    }
+
+    #[test]
+    fn management_service_web_subscribe_and_clear_never_echo_cookie() {
+        let config = SharedBilibiliConfig::new(managed_config());
+        let credential = SharedBilibiliCredential::default();
+        credential.set("SESSDATA=secret-cookie".into());
+        let credential_store = Arc::new(RecordingCredentialStore::default());
+        let config_store = Arc::new(RecordingConfigStore::default());
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let management = BilibiliManagementService::new(
+            config.clone(),
+            credential.clone(),
+            Box::new(FakeTransport(Arc::new(Mutex::new(
+                FakeTransportState::default(),
+            )))),
+            repository,
+            credential_store.clone(),
+            config_store.clone(),
+            Arc::new(AlwaysPresentSecrets),
+        );
+        let status = management.status();
+        assert!(status.available);
+        assert!(status.credential_loaded);
+        assert!(
+            !serde_json::to_string(&status)
+                .unwrap()
+                .contains("secret-cookie")
+        );
+
+        let view = management
+            .subscribe(
+                "sub-1".into(),
+                7,
+                vec![BilibiliPollKind::Live],
+                BotTarget::Group {
+                    group_id: "g1".into(),
+                },
+                "qq-main".into(),
+            )
+            .unwrap();
+        assert_eq!(view.subscription_id, "sub-1");
+        assert_eq!(config.snapshot().subscriptions.len(), 1);
+        assert_eq!(config_store.0.lock().unwrap().len(), 1);
+
+        management.credential_clear().unwrap();
+        assert!(!credential.is_loaded());
+        assert_eq!(credential_store.0.lock().unwrap().last().unwrap().1, "");
+    }
+
+    struct AlwaysPresentSecrets;
+
+    impl BilibiliSecretPresence for AlwaysPresentSecrets {
+        fn inspect(&self, _key: &str) -> CredentialSecretState {
+            CredentialSecretState::Present
+        }
     }
 
     fn managed_config() -> BilibiliConfig {

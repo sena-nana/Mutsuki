@@ -19,6 +19,7 @@ const PAGES = [
   { id: "tasks", label: "任务" },
   { id: "resources", label: "资源" },
   { id: "database", label: "数据库" },
+  { id: "bilibili", label: "B站推送", optional: true },
   { id: "config", label: "配置", optional: true },
   { id: "upgrade", label: "自动升级", optional: true },
   { id: "ops", label: "运维" },
@@ -215,6 +216,7 @@ export class SimpleRpc {
 function createShell(rpc, options = {}) {
   const includeConfig = options.includeConfig === true;
   const includeUpgrade = options.includeUpgrade === true;
+  const includeBilibili = options.includeBilibili === true;
   const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
   const route = parseRoute();
   const state = {
@@ -246,6 +248,7 @@ function createShell(rpc, options = {}) {
     for (const page of PAGES) {
       if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
       if (page.optional === true && page.id === "config" && !includeConfig) continue;
+      if (page.optional === true && page.id === "bilibili" && !includeBilibili) continue;
       const btn = document.createElement("button");
       btn.type = "button";
       const active = state.page === page.id;
@@ -285,6 +288,7 @@ function createShell(rpc, options = {}) {
       else if (state.page === "resources") await renderResources(content, rpc);
       else if (state.page === "database") await renderDatabase(content, rpc, app, builtinDatabases);
       else if (state.page === "config") await renderConfig(content, rpc);
+      else if (state.page === "bilibili") await renderBilibili(content, rpc);
       else if (state.page === "ops") await renderOps(content, rpc, app, state, go);
       else await renderOverview(content, rpc, { go });
     } catch (err) {
@@ -347,6 +351,8 @@ function pageSubtitle(page, tab) {
       return "产品内置 SQLite 只读浏览（经 task_submit_batch / mutsuki.db.*）";
     case "config":
       return "由 ConfigDescriptor 自动生成表单";
+    case "bilibili":
+      return "B 站推送登陆态、扫码登录与订阅管理";
     case "ops":
       return tab === "logs" ? "运行时日志尾部" : "Core drain 与 Service 关闭（强确认 + runtime.write）";
     default:
@@ -702,6 +708,21 @@ async function renderConfig(content, rpc) {
     mod.mountConfigPanel(content, rpc);
   } catch (err) {
     content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">${escapeHtml(SimpleRpc.formatError(err))}</div></div>`;
+  }
+}
+
+async function renderBilibili(content, rpc) {
+  try {
+    const mod = await import("./bilibili/index.js");
+    if (typeof mod.mountBilibiliPanel !== "function") {
+      content.appendChild(
+        emptyBlock("B站推送扩展未提供 mountBilibiliPanel；请确认 bilibili 插件已装配。"),
+      );
+      return;
+    }
+    mod.mountBilibiliPanel(content, rpc);
+  } catch (err) {
+    content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">${escapeHtml(SimpleRpc.formatError(err))}</div></div>`;
   }
 }
 
@@ -1519,11 +1540,14 @@ export function mountConsole(el, rpc, options = {}) {
   const includeUpgrade =
     options.includeUpgrade === true ||
     globalThis.__MUTSUKI_CONSOLE__?.includeUpgrade === true;
+  const includeBilibili =
+    options.includeBilibili === true ||
+    globalThis.__MUTSUKI_CONSOLE__?.includeBilibili === true;
   const builtinDatabases =
     options.builtinDatabases ||
     globalThis.__MUTSUKI_CONSOLE__?.builtinDatabases ||
     [];
-  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, builtinDatabases }));
+  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, includeBilibili, builtinDatabases }));
 }
 
 export default {

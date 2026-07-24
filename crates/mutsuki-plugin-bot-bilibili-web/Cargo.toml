@@ -1,0 +1,18 @@
+[package]
+name = "mutsuki-plugin-bot-bilibili-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bilibili push plugin WebExtension: login state and subscription management for the console."
+
+[dependencies]
+mutsuki-bot-protocol = { workspace = true }
+mutsuki-plugin-bot-bilibili = { workspace = true }
+mutsuki-plugin-bot-control-web = { workspace = true }
+mutsuki-web-extension = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -22,6 +22,10 @@ pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtensi
 pub use watch_bridge::attach_revision_changed_bridge;
 
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
+use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
+use mutsuki_plugin_bot_bilibili_web::{
+    BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
+};
 use mutsuki_plugin_bot_config_web::{
     ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
 };
@@ -99,7 +103,7 @@ impl Default for WebConsolePaths {
     }
 }
 
-/// Build an embedded WebHost pre-wired with control + overview (+ optional config/upgrade) extensions.
+/// Build an embedded WebHost pre-wired with control + overview (+ optional config/upgrade/bilibili) extensions.
 pub fn build_console_host(
     config: &WebConsoleConfig,
     secrets: &WebConsoleSecrets,
@@ -108,6 +112,7 @@ pub fn build_console_host(
     config_service: Option<Arc<ConfigService>>,
     secret_monitor: Option<SecretMonitor>,
     paths: &WebConsolePaths,
+    bilibili: Option<Arc<BilibiliManagementService>>,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     if !config.enabled {
         return Err(mutsuki_web_host::WebHostError::InvalidConfig(
@@ -118,6 +123,7 @@ pub fn build_console_host(
     let asset_dirs = ConsoleAssetDirs::materialize(
         config.include_config && config_service.is_some(),
         paths.release_set.is_some(),
+        bilibili.is_some(),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -142,6 +148,11 @@ pub fn build_console_host(
         })?;
         builder = builder.extension(
             ConfigWebExtension::new(service).with_frontend_assets(&asset_dirs.config_assets),
+        );
+    }
+    if let Some(service) = bilibili {
+        builder = builder.extension(
+            BilibiliWebExtension::new(service).with_frontend_assets(&asset_dirs.bilibili_assets),
         );
     }
     Ok((builder.build()?, asset_dirs))
@@ -179,14 +190,20 @@ pub(crate) fn base_builder(
 pub struct ConsoleAssetDirs {
     pub _overview_dir: tempfile::TempDir,
     pub _config_dir: Option<tempfile::TempDir>,
+    pub _bilibili_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
     pub config_assets: PathBuf,
+    pub bilibili_assets: PathBuf,
     pub shell_root: PathBuf,
 }
 
 impl ConsoleAssetDirs {
-    fn materialize(include_config: bool, include_upgrade: bool) -> WebHostResult<Self> {
+    fn materialize(
+        include_config: bool,
+        include_upgrade: bool,
+        include_bilibili: bool,
+    ) -> WebHostResult<Self> {
         let overview_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         let overview_assets = materialize_overview_assets(overview_dir.path())
@@ -205,17 +222,36 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
-        materialize_console_shell(&overview_assets, include_config, include_upgrade)
-            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+        let (bilibili_dir, bilibili_assets) = if include_bilibili {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_bilibili_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("bilibili"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
+
+        materialize_console_shell(
+            &overview_assets,
+            include_config,
+            include_upgrade,
+            include_bilibili,
+        )
+        .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
         let shell_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         Ok(Self {
             overview_assets: overview_assets.clone(),
             config_assets,
+            bilibili_assets,
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _config_dir: config_dir,
+            _bilibili_dir: bilibili_dir,
             _shell_dir: shell_dir,
         })
     }
@@ -234,6 +270,7 @@ pub(crate) fn materialize_console_shell(
     out_dir: &Path,
     include_config: bool,
     include_upgrade: bool,
+    include_bilibili: bool,
 ) -> std::io::Result<()> {
     let (index_template, bootstrap_name, bootstrap_template) = if include_config {
         (
@@ -283,6 +320,7 @@ pub(crate) fn materialize_console_shell(
         serde_json::to_string(&json!({
             "includeConfig": include_config,
             "includeUpgrade": include_upgrade,
+            "includeBilibili": include_bilibili,
         }))?,
     )?;
     Ok(())

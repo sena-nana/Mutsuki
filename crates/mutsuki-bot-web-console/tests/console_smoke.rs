@@ -54,6 +54,7 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
         None,
         None,
         &WebConsolePaths::default(),
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -126,6 +127,7 @@ async fn embedded_console_reads_overview_and_control() {
         None,
         None,
         &WebConsolePaths::default(),
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -170,6 +172,7 @@ async fn embedded_console_with_config_shell() {
         Some(empty_config_service()),
         None,
         &WebConsolePaths::default(),
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -219,6 +222,7 @@ async fn embedded_console_demo_config_provider_is_usable() {
         Some(demo_config_service()),
         None,
         &WebConsolePaths::default(),
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -263,6 +267,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         None,
         None,
         &paths,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -307,6 +312,7 @@ async fn embedded_console_secret_status_is_read_only() {
         None,
         Some(monitor),
         &WebConsolePaths::default(),
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
