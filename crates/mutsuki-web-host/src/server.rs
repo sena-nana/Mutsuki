@@ -152,14 +152,46 @@ async fn serve_file(path: &std::path::Path, is_index: bool) -> Response {
             )
                 .into_response();
             if !is_index {
-                response.headers_mut().insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("public, max-age=31536000, immutable"),
-                );
+                // `immutable` is only safe for content-addressed filenames. Stable names
+                // like `mutsuki-ui.css` / `index.js` must revalidate — otherwise a prior
+                // broken shell stays stuck in the browser for up to a year.
+                let cache = if is_content_addressed_asset(path) {
+                    HeaderValue::from_static("public, max-age=31536000, immutable")
+                } else {
+                    HeaderValue::from_static("no-cache")
+                };
+                response.headers_mut().insert(header::CACHE_CONTROL, cache);
             }
             response
         }
         Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+/// True when the file stem ends with `.<hex≥8>` (e.g. `app.a1b2c3d4e5f6.js`).
+fn is_content_addressed_asset(path: &std::path::Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some((_, hash)) = stem.rsplit_once('.') else {
+        return false;
+    };
+    hash.len() >= 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_content_addressed_asset;
+    use std::path::Path;
+
+    #[test]
+    fn detects_content_addressed_filenames() {
+        assert!(is_content_addressed_asset(Path::new(
+            "assets/app.a1b2c3d4e5f67890.js"
+        )));
+        assert!(!is_content_addressed_asset(Path::new("mutsuki-ui.css")));
+        assert!(!is_content_addressed_asset(Path::new("index.js")));
+        assert!(!is_content_addressed_asset(Path::new("foo.bar.js")));
     }
 }
 
