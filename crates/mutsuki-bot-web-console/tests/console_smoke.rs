@@ -75,9 +75,13 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     );
     assert!(js.contains("<ul class=\"kv\">") || js.contains("className = \"kv\""));
     assert!(js.contains("系统状态"));
-    assert!(js.contains("运行指标"));
-    assert!(js.contains("Health 组件"));
-    assert!(js.contains("Secret 状态"));
+    assert!(js.contains("overview-dashboard"));
+    assert!(js.contains("metric-grid"));
+    assert!(js.contains("运行时间"));
+    assert!(js.contains("健康组件"));
+    assert!(js.contains("密钥状态"));
+    assert!(css.contains(".mutsuki-console .overview-dashboard"));
+    assert!(css.contains(".mutsuki-console .metric-grid"));
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));

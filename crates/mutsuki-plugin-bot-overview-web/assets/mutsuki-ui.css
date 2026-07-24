@@ -1628,3 +1628,55 @@ button:disabled {
   max-height: 340px;
 }
 
+/* Overview dashboard */
+.mutsuki-console .overview-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mutsuki-console .metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 12px;
+}
+
+.mutsuki-console .metric-card {
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.mutsuki-console .metric-card .metric-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.mutsuki-console .metric-card .metric-value {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.mutsuki-console .overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.mutsuki-console .overview-grid > .card {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .mutsuki-console .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

@@ -22,9 +22,9 @@ function formatDuration(ms) {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  if (m > 0) return `${m} 分 ${s} 秒`;
+  return `${s} 秒`;
 }
 
 function elapsed(startedAt) {
@@ -38,6 +38,37 @@ function healthClass(value) {
   if (v === "degraded") return "warn";
   if (v === "unhealthy" || v === "stopped" || v === "failed") return "err";
   return "";
+}
+
+function healthLabel(value) {
+  if (value == null || value === "") return "—";
+  const v = String(value).toLowerCase();
+  switch (v) {
+    case "ok":
+    case "healthy":
+      return "正常";
+    case "degraded":
+      return "降级";
+    case "unhealthy":
+      return "异常";
+    case "stopped":
+      return "已停止";
+    case "failed":
+      return "失败";
+    default:
+      return String(value);
+  }
+}
+
+function componentLabel(id) {
+  switch (id) {
+    case "distribution":
+      return "分发";
+    case "worker_pools":
+      return "工作池";
+    default:
+      return id;
+  }
 }
 
 function currentPage() {
@@ -176,6 +207,7 @@ function createShell(rpc, options = {}) {
     const pageMeta = PAGES.find((p) => p.id === state.page) || PAGES[0];
     title.textContent = pageMeta.label;
     subtitle.textContent = pageSubtitle(state.page);
+    content.className = "page-body";
     content.innerHTML = "";
     state.error = "";
     state.busy = true;
@@ -203,8 +235,8 @@ function createShell(rpc, options = {}) {
         <div class="secondary-panel__top">
           <div class="brand">Mutsuki</div>
         </div>
-        <nav class="secondary-panel__body sb-section nav" aria-label="Console"></nav>
-        <div class="secondary-panel__footer sidebar-footer">bot console</div>
+        <nav class="secondary-panel__body sb-section nav" aria-label="控制台"></nav>
+        <div class="secondary-panel__footer sidebar-footer">Bot 控制台</div>
       </div>
     </aside>
     <main class="lilia-workspace-region" data-region="main">
@@ -251,6 +283,7 @@ function pageSubtitle(page) {
 }
 
 async function renderOverview(content, rpc) {
+  content.className = "page-body overview-dashboard";
   const d = await rpc.read("overview", "summary");
   const h = d.health || {};
   const c = d.counts || {};
@@ -258,33 +291,55 @@ async function renderOverview(content, rpc) {
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
 
-  appendKvCard(content, "系统状态", [
-    ["Service", h.service, true],
-    ["Core", h.core, true],
-    ["Plugins", h.plugins, true],
-    ["Runners", h.runners, true],
-    ["EventSources", h.event_sources, true],
+  appendMetricGrid(content, [
+    ["运行时间", formatDuration(d.uptime_ms)],
+    ["任务", String(active)],
+    ["已提交", String(tasks.submitted_total ?? "—")],
+    ["插件", String(c.plugins ?? 0)],
+    ["运行器", String(c.runners ?? 0)],
+    ["事件源", String(c.event_sources ?? 0)],
   ]);
-  appendKvCard(content, "运行指标", [
-    ["Uptime", formatDuration(d.uptime_ms)],
-    ["Tasks", String(active)],
-    ["Submitted", String(tasks.submitted_total ?? "—")],
-    ["Plugins", String(c.plugins ?? 0)],
-    ["Runners", String(c.runners ?? 0)],
-    ["EventSources", String(c.event_sources ?? 0)],
+
+  const grid = document.createElement("div");
+  grid.className = "overview-grid";
+  content.appendChild(grid);
+
+  appendKvCard(grid, "系统状态", [
+    ["服务", h.service, true],
+    ["核心", h.core, true],
+    ["插件", h.plugins, true],
+    ["运行器", h.runners, true],
+    ["事件源", h.event_sources, true],
   ]);
-  appendSection(content, "Health 组件", renderComponents(d.components || {}));
-  await renderSecretStatusSection(content, rpc);
+  appendSection(grid, "健康组件", renderComponents(d.components || {}));
+  await renderSecretStatusSection(grid, rpc);
+}
+
+function appendMetricGrid(content, metrics) {
+  const grid = document.createElement("div");
+  grid.className = "metric-grid";
+  grid.innerHTML = metrics
+    .map(
+      ([label, value]) =>
+        `<div class="metric-card"><div class="metric-label">${escapeHtml(label)}</div><div class="metric-value">${escapeHtml(value)}</div></div>`,
+    )
+    .join("");
+  content.appendChild(grid);
 }
 
 /** @param {[string, unknown, boolean?][]} rows */
 function appendKvCard(content, title, rows) {
   const items = rows
     .map(([label, value, asHealth]) => {
-      const text = escapeHtml(value == null || value === "" ? "—" : String(value));
+      const display = asHealth
+        ? healthLabel(value)
+        : value == null || value === ""
+          ? "—"
+          : String(value);
+      const text = escapeHtml(display);
       const cls = asHealth ? healthClass(value) || "muted" : null;
       const right = cls ? `<span class="status-${cls}">${text}</span>` : `<span>${text}</span>`;
-      return `<li><span>${label}</span>${right}</li>`;
+      return `<li><span>${escapeHtml(label)}</span>${right}</li>`;
     })
     .join("");
   appendSection(content, title, `<ul class="kv">${items}</ul>`);
@@ -295,7 +350,7 @@ async function renderSecretStatusSection(content, rpc) {
     const body = await rpc.read("secret", "status");
     const secrets = body?.secrets || [];
     if (!secrets.length) return;
-    appendSection(content, "Secret 状态", renderSecretRows(secrets));
+    appendSection(content, "密钥状态", renderSecretRows(secrets));
   } catch {
     // Secret monitor not configured for this console build.
   }
@@ -731,7 +786,7 @@ function renderComponents(comps) {
       const started = snap.started_at_unix_ms ?? snap.connected_since_unix_ms;
       const status = snap.status ?? "—";
       const cls = healthClass(status);
-      return `<li><span>${escapeHtml(id)}</span><span class="status-${cls || "muted"}">${escapeHtml(String(status))} · ${formatDuration(elapsed(started))}</span></li>`;
+      return `<li><span>${escapeHtml(componentLabel(id))}</span><span class="status-${cls || "muted"}">${escapeHtml(healthLabel(status))} · ${formatDuration(elapsed(started))}</span></li>`;
     })
     .join("")}</ul>`;
 }
@@ -741,6 +796,7 @@ function appendSection(content, title, html) {
   el.className = "card";
   el.innerHTML = `<h2>${title}</h2>${html}`;
   content.appendChild(el);
+  return el;
 }
 
 function emptyBlock(text) {

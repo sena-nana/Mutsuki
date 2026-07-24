@@ -465,11 +465,11 @@ function createConsoleApp(rpc) {
         <div class="secondary-panel__top">
           <div class="brand">Mutsuki</div>
         </div>
-        <nav class="secondary-panel__body sb-section nav" aria-label="Console">
+        <nav class="secondary-panel__body sb-section nav" aria-label="控制台">
           <a class="sb-tree__row lilia-interactive-item" href="?page=overview"><span class="sb-tree__name">概览</span></a>
           <button type="button" data-route="config" class="sb-tree__row lilia-interactive-item is-active" aria-current="page" data-lilia-selected="true"><span class="sb-tree__name">配置</span></button>
         </nav>
-        <div class="secondary-panel__footer sidebar-footer">bot console</div>
+        <div class="secondary-panel__footer sidebar-footer">Bot 控制台</div>
       </div>
     </aside>
     <main class="lilia-workspace-region" data-region="main">
