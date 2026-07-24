@@ -152,7 +152,7 @@ async fn config_rpc_list_schema_read_validate_apply() {
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).await.unwrap();
     let body = String::from_utf8_lossy(&buf);
-    assert!(body.contains("Mutsuki Console") || body.contains("lilia-tokens"));
+    assert!(body.contains("Mutsuki Console") || body.contains("mutsuki-ui"));
 
     let providers = ws_rpc(
         &addr,

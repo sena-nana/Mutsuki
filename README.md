@@ -57,7 +57,7 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 ## MVP Crates
 
 - `mutsuki-bot-config` / `mutsuki-bot-config-derive`: Schema-first ConfigDescriptor + `#[derive(MutsukiConfig)]`
-- `mutsuki-plugin-bot-config-web`: 默认 Web 配置插件（Koishi 风格控制台 + LiliaUI tokens）
+- `mutsuki-plugin-bot-config-web`: 默认 Web 配置插件（Lilia Workspace 壳 + `@mutsuki/ui` styles）
 - `mutsuki-plugin-bot-control-web`: ServiceHost ControlMethod 的 `control.*` Web RPC 代理（`runtime.read` / `runtime.write` 门禁；含 task 调试与 lifecycle drain/shutdown）
 - `mutsuki-plugin-bot-overview-web`: Web 概览（`overview.summary`：经 control-web 聚合状态/结构/计数/uptime）
 - `mutsuki-bot-web-console`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）。产品路径仅 Embedded；不提供 Standalone / 分进程 Console 装配。

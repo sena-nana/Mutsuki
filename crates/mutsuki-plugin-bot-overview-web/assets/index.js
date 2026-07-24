@@ -134,7 +134,9 @@ function createShell(rpc, options = {}) {
   const state = { page: currentPage(), error: "", busy: false, upgradeDetail: null, upgradeQuery: "" };
 
   const app = document.createElement("div");
-  app.className = "mutsuki-console";
+  app.className = "mutsuki-console lilia-workspace";
+  app.dataset.liliaSurfaceMode = "solid";
+  app.dataset.liliaSurfaceLevel = "base";
 
   function renderNav() {
     const nav = app.querySelector(".nav");
@@ -144,6 +146,7 @@ function createShell(rpc, options = {}) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = `nav-item${state.page === page.id ? " active" : ""}`;
+      if (state.page === page.id) btn.setAttribute("aria-current", "page");
       btn.textContent = page.label;
       btn.onclick = () => {
         state.page = navigate(page.id);
@@ -190,19 +193,23 @@ function createShell(rpc, options = {}) {
   }
 
   app.innerHTML = `
-    <aside class="sidebar">
-      <div class="brand">Mutsuki</div>
-      <nav class="nav"></nav>
-      <div class="sidebar-footer">bot console</div>
+    <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
+      <div class="lilia-workspace-region__content">
+        <div class="brand">Mutsuki</div>
+        <nav class="nav" aria-label="Console"></nav>
+        <div class="sidebar-footer">bot console</div>
+      </div>
     </aside>
-    <main class="workspace">
-      <header class="workspace-header">
-        <div class="header-row">
-          <div><h1 id="page-title">概览</h1><p id="page-subtitle"></p></div>
-          <button type="button" id="refresh" class="ghost">刷新</button>
-        </div>
-      </header>
-      <section id="content" class="workspace-content">加载中…</section>
+    <main class="lilia-workspace-region" data-region="main">
+      <div class="lilia-workspace-region__content">
+        <header class="workspace-header">
+          <div class="header-row">
+            <div><h1 id="page-title">概览</h1><p id="page-subtitle"></p></div>
+            <button type="button" id="refresh" class="ghost">刷新</button>
+          </div>
+        </header>
+        <section id="content" class="workspace-content">加载中…</section>
+      </div>
     </main>
   `;
 
@@ -244,8 +251,11 @@ async function renderOverview(content, rpc) {
   const c = d.counts || {};
   const tasks = c.tasks || {};
 
-  const status = document.createElement("div");
-  status.className = "card-grid";
+  const healthCard = document.createElement("section");
+  healthCard.className = "card card--flat";
+  healthCard.innerHTML = "<h2>系统状态</h2>";
+  const healthKv = document.createElement("ul");
+  healthKv.className = "kv";
   for (const [label, value] of [
     ["Service", h.service],
     ["Core", h.core],
@@ -253,14 +263,19 @@ async function renderOverview(content, rpc) {
     ["Runners", h.runners],
     ["EventSources", h.event_sources],
   ]) {
-    status.innerHTML += `<div class="status-card ${healthClass(value)}"><div class="label">${label}</div><div class="value">${value || "—"}</div></div>`;
+    const cls = healthClass(value);
+    healthKv.innerHTML += `<li><span>${label}</span><span class="status-${cls || "muted"}">${escapeHtml(value || "—")}</span></li>`;
   }
-  content.appendChild(status);
+  healthCard.appendChild(healthKv);
+  content.appendChild(healthCard);
 
   const active =
     (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
-  const metrics = document.createElement("div");
-  metrics.className = "card-grid";
+  const metricsCard = document.createElement("section");
+  metricsCard.className = "card card--flat";
+  metricsCard.innerHTML = "<h2>运行指标</h2>";
+  const metricsKv = document.createElement("ul");
+  metricsKv.className = "kv";
   for (const [label, value] of [
     ["Uptime", formatDuration(d.uptime_ms)],
     ["Tasks", String(active)],
@@ -269,9 +284,10 @@ async function renderOverview(content, rpc) {
     ["Runners", String(c.runners ?? 0)],
     ["EventSources", String(c.event_sources ?? 0)],
   ]) {
-    metrics.innerHTML += `<div class="metric-card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+    metricsKv.innerHTML += `<li><span>${label}</span><span>${escapeHtml(String(value))}</span></li>`;
   }
-  content.appendChild(metrics);
+  metricsCard.appendChild(metricsKv);
+  content.appendChild(metricsCard);
 
   appendSection(content, "Health 组件", renderComponents(d.components || {}));
   await renderSecretStatusSection(content, rpc);
@@ -721,8 +737,8 @@ function renderComponents(comps) {
 }
 
 function appendSection(content, title, html) {
-  const el = document.createElement("div");
-  el.className = "section";
+  const el = document.createElement("section");
+  el.className = "card card--flat";
   el.innerHTML = `<h2>${title}</h2>${html}`;
   content.appendChild(el);
 }
@@ -975,15 +991,39 @@ async function renderUpgrade(content, rpc, app, state) {
   await loadCheck();
 }
 
-export function mountConsole(el, rpc, options = {}) {
-  el.innerHTML = "";
+export function applyConsoleTheme(preferred) {
+  const theme =
+    preferred === "light" || preferred === "dark"
+      ? preferred
+      : document.documentElement.dataset.theme === "light"
+        ? "light"
+        : "dark";
+  if (theme === "light") document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+  document.documentElement.style.colorScheme = theme;
+}
+
+function ensureMutsukiUiStylesheet() {
+  if (document.querySelector('link[data-mutsuki-ui="1"]')) return;
+  const existing = [...document.styleSheets].some((sheet) => {
+    try {
+      return sheet.href && sheet.href.includes("mutsuki-ui.css");
+    } catch {
+      return false;
+    }
+  });
+  if (existing || document.querySelector('link[href$="mutsuki-ui.css"]')) return;
   const link = document.createElement("link");
   link.rel = "stylesheet";
-  link.href = "./lilia-tokens.css";
+  link.href = "./mutsuki-ui.css";
+  link.dataset.mutsukiUi = "1";
   document.head.appendChild(link);
-  const style = document.createElement("style");
-  style.textContent = CSS;
-  document.head.appendChild(style);
+}
+
+export function mountConsole(el, rpc, options = {}) {
+  el.innerHTML = "";
+  applyConsoleTheme(options.theme);
+  ensureMutsukiUiStylesheet();
   const includeConfig =
     options.includeConfig === true ||
     globalThis.__MUTSUKI_CONSOLE__?.includeConfig === true;
@@ -992,54 +1032,6 @@ export function mountConsole(el, rpc, options = {}) {
     globalThis.__MUTSUKI_CONSOLE__?.includeUpgrade === true;
   el.appendChild(createShell(rpc, { includeConfig, includeUpgrade }));
 }
-
-const CSS = `
-html,body,#app{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans)}
-.mutsuki-console{display:flex;height:100%}
-.sidebar{width:200px;background:var(--bg-elev);border-right:1px solid var(--border-soft);display:flex;flex-direction:column}
-.brand{font-size:1.2rem;font-weight:700;padding:1rem;color:var(--accent)}
-.nav{padding:.5rem;display:flex;flex-direction:column;gap:.25rem}
-.nav-item{background:transparent;border:0;color:var(--text-muted);text-align:left;padding:.55rem .75rem;border-radius:6px;width:100%;cursor:pointer;text-decoration:none;display:block}
-.nav-item.active,.nav-item:hover{background:var(--accent-soft);color:var(--text)}
-.sidebar-footer{margin-top:auto;padding:1rem;color:var(--text-faint);font-size:.75rem}
-.workspace{flex:1;display:flex;flex-direction:column;min-width:0}
-.workspace-header{padding:1rem 1.3rem;border-bottom:1px solid var(--border-soft)}
-.header-row{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start}
-.workspace-header h1{margin:0;font-size:1.1rem}
-.workspace-header p{margin:.3rem 0 0;color:var(--text-muted);font-size:.85rem}
-.workspace-content{padding:1.1rem 1.3rem;overflow:auto}
-.ghost{background:var(--bg-subtle);border:1px solid var(--border);color:var(--text);padding:.4rem .7rem;border-radius:6px;cursor:pointer}
-.ghost.danger{border-color:color-mix(in oklch,var(--err) 40%,var(--border));color:var(--err)}
-.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:.7rem;margin-bottom:1rem}
-.status-card,.metric-card{background:var(--bg-elev);border:1px solid var(--border-soft);border-radius:8px;padding:.8rem}
-.status-card.ok{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft))}
-.status-card.warn{border-color:color-mix(in oklch,var(--accent) 40%,var(--border-soft))}
-.status-card.err{border-color:color-mix(in oklch,var(--err) 40%,var(--border-soft))}
-.label{font-size:.75rem;color:var(--text-muted);margin-bottom:.3rem}
-.value{font-size:1.05rem;font-weight:600}
-.section{margin:1.2rem 0}.section h2{margin:0 0 .6rem;font-size:.95rem}
-.section.nested{margin:.6rem 0 0}.section.nested h3{margin:0 0 .45rem;font-size:.85rem;color:var(--text-muted);font-weight:600}
-.plugin-card{margin-bottom:.8rem}
-.candidate-row{margin-top:.35rem}
-.pill{display:inline-flex;align-items:center;padding:.2rem .55rem;border-radius:999px;font-size:.75rem;border:1px solid var(--border-soft);background:var(--bg-subtle)}
-.pill.ok{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft));color:var(--ok)}
-.pill.warn{border-color:color-mix(in oklch,var(--accent) 40%,var(--border-soft));color:var(--accent)}
-.pill.err{border-color:color-mix(in oklch,var(--err) 40%,var(--border-soft));color:var(--err)}
-.mono{font-family:var(--font-mono, ui-monospace, monospace)}
-.err-text{color:var(--err)}
-.toolbar.nested{margin-top:.45rem}
-.tree-item{background:var(--bg-elev);border:1px solid var(--border-soft);border-radius:8px;padding:.7rem .85rem;margin-bottom:.45rem}
-.row-item{display:flex;justify-content:space-between;gap:1rem;align-items:center}
-.row-actions{display:flex;gap:.4rem;flex-shrink:0}
-.muted{color:var(--text-muted);font-size:.8rem;margin-top:.2rem}
-.toolbar{margin-bottom:.8rem}
-input[type=search]{flex:1;min-width:0;background:var(--bg-subtle);border:1px solid var(--border-soft);color:var(--text);padding:.45rem .6rem;border-radius:6px}
-select{background:var(--bg-subtle);border:1px solid var(--border-soft);color:var(--text);padding:.45rem .6rem;border-radius:6px;margin-top:.35rem}
-.log-block{background:var(--bg-subtle);border:1px solid var(--border-soft);border-radius:8px;padding:.8rem;overflow:auto;max-height:320px;font-size:.78rem;line-height:1.45}
-.error-banner,.flash-banner{background:color-mix(in oklch,var(--err) 16%,var(--bg-elev));border:1px solid var(--err);color:var(--err);padding:.8rem;border-radius:8px;margin:.8rem 1.3rem 0}
-.flash-banner{border-color:color-mix(in oklch,var(--ok) 40%,var(--border-soft));color:var(--text);background:color-mix(in oklch,var(--ok) 12%,var(--bg-elev))}
-.flash-banner.error{border-color:var(--err);color:var(--err);background:color-mix(in oklch,var(--err) 16%,var(--bg-elev))}
-`;
 
 export default {
   id: "overview",

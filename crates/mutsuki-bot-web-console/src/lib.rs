@@ -151,8 +151,11 @@ pub(crate) fn base_builder(
     secrets: &WebConsoleSecrets,
     asset_dirs: &ConsoleAssetDirs,
 ) -> MutsukiWebHostBuilder {
+    // Application shell root is the materialized overview assets (source).
+    // WebHost shell_dir must be a separate path — copying a directory onto itself
+    // truncates files to empty via std::fs::copy(src, src).
     let shell = WebShellAssets {
-        root_dir: asset_dirs.shell_root.clone(),
+        root_dir: asset_dirs.overview_assets.clone(),
         index_file: "index.html".into(),
         import_map: Default::default(),
     };
@@ -204,14 +207,15 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
+        let shell_dir = tempfile::tempdir()
+            .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
         Ok(Self {
             overview_assets: overview_assets.clone(),
             config_assets,
-            shell_root: overview_assets,
+            shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _config_dir: config_dir,
-            _shell_dir: tempfile::tempdir()
-                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?,
+            _shell_dir: shell_dir,
         })
     }
 }
@@ -221,12 +225,25 @@ pub(crate) fn materialize_console_shell(
     include_config: bool,
     include_upgrade: bool,
 ) -> std::io::Result<()> {
-    let index = if include_config {
-        include_str!("../assets/console-shell-config.html")
+    let (index, bootstrap_name, bootstrap) = if include_config {
+        (
+            include_str!("../assets/console-shell-config.html"),
+            "console-bootstrap-config.js",
+            include_str!("../assets/console-bootstrap-config.js"),
+        )
     } else {
-        include_str!("../assets/console-shell-overview.html")
+        (
+            include_str!("../assets/console-shell-overview.html"),
+            "console-bootstrap-overview.js",
+            include_str!("../assets/console-bootstrap-overview.js"),
+        )
     };
     std::fs::write(out_dir.join("index.html"), index)?;
+    std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
+    std::fs::write(
+        out_dir.join("mutsuki-ui.css"),
+        include_str!("../assets/mutsuki-ui.css"),
+    )?;
     std::fs::write(
         out_dir.join("console-options.json"),
         serde_json::to_string(&json!({

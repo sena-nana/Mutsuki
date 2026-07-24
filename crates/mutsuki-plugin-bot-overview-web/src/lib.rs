@@ -136,15 +136,18 @@ fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
-    let css = include_str!("../assets/lilia-tokens.css");
+    let bootstrap = include_str!("../assets/bootstrap.js");
+    let css = include_str!("../assets/mutsuki-ui.css");
     let shell = include_str!("../assets/shell.html");
     std::fs::write(out_dir.join("index.js"), js)?;
-    std::fs::write(out_dir.join("lilia-tokens.css"), css)?;
+    std::fs::write(out_dir.join("bootstrap.js"), bootstrap)?;
+    std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
     std::fs::write(out_dir.join("shell.html"), shell)?;
     std::fs::write(out_dir.join("index.html"), shell)?;
     let assets = [
         ("index.js", js.as_bytes()),
-        ("lilia-tokens.css", css.as_bytes()),
+        ("bootstrap.js", bootstrap.as_bytes()),
+        ("mutsuki-ui.css", css.as_bytes()),
         ("shell.html", shell.as_bytes()),
     ]
     .into_iter()

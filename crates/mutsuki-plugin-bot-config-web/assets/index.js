@@ -456,21 +456,31 @@ function createConsoleApp(rpc) {
   };
 
   const app = document.createElement("div");
-  app.className = "mutsuki-console";
+  app.className = "mutsuki-console lilia-workspace";
+  app.dataset.liliaSurfaceMode = "solid";
+  app.dataset.liliaSurfaceLevel = "base";
   app.innerHTML = `
-    <aside class="sidebar">
-      <div class="brand">Mutsuki</div>
-      <nav class="nav">
-        <button data-route="config" class="nav-item active">配置</button>
-      </nav>
-      <div class="sidebar-footer">LiliaUI · Schema-first</div>
+    <aside class="lilia-workspace-region" data-region="navigation" data-region-separator="inline">
+      <div class="lilia-workspace-region__content">
+        <div class="brand">Mutsuki</div>
+        <nav class="nav" aria-label="Console">
+          <button data-route="config" class="nav-item active" aria-current="page">配置</button>
+        </nav>
+        <div class="sidebar-footer">bot console</div>
+      </div>
     </aside>
-    <main class="workspace">
-      <header class="workspace-header">
-        <h1>配置</h1>
-        <p>由 ConfigDescriptor 自动生成表单</p>
-      </header>
-      <section id="content" class="workspace-content"></section>
+    <main class="lilia-workspace-region" data-region="main">
+      <div class="lilia-workspace-region__content">
+        <header class="workspace-header">
+          <div class="header-row">
+            <div>
+              <h1>配置</h1>
+              <p>由 ConfigDescriptor 自动生成表单</p>
+            </div>
+          </div>
+        </header>
+        <section id="content" class="workspace-content"></section>
+      </div>
     </main>
   `;
 
@@ -702,47 +712,32 @@ export class SimpleRpc {
   }
 }
 
-export function mountConfigConsole(el, rpc) {
-  el.innerHTML = "";
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = "./lilia-tokens.css";
-  document.head.appendChild(link);
-  const style = document.createElement("style");
-  style.textContent = CONSOLE_CSS;
-  document.head.appendChild(style);
-  el.appendChild(createConsoleApp(rpc));
+export function applyConsoleTheme(preferred) {
+  const theme =
+    preferred === "light" || preferred === "dark"
+      ? preferred
+      : document.documentElement.dataset.theme === "light"
+        ? "light"
+        : "dark";
+  if (theme === "light") document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+  document.documentElement.style.colorScheme = theme;
 }
 
-const CONSOLE_CSS = `
-html,body,#app{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans)}
-.mutsuki-console{display:flex;height:100%}
-.sidebar{width:220px;background:var(--bg-elev);border-right:1px solid var(--border-soft);display:flex;flex-direction:column}
-.brand{font-size:1.25rem;font-weight:700;padding:1rem 1.1rem;color:var(--accent)}
-.nav{display:flex;flex-direction:column;gap:.25rem;padding:.5rem}
-.nav-item{background:transparent;border:0;color:var(--text-muted);text-align:left;padding:.55rem .75rem;border-radius:6px;cursor:pointer}
-.nav-item.active{background:var(--accent-soft);color:var(--text)}
-.sidebar-footer{margin-top:auto;padding:1rem;color:var(--text-faint);font-size:.75rem}
-.workspace{flex:1;display:flex;flex-direction:column;min-width:0}
-.workspace-header{padding:1.1rem 1.4rem;border-bottom:1px solid var(--border-soft)}
-.workspace-header h1{margin:0;font-size:1.15rem}
-.workspace-header p{margin:.35rem 0 0;color:var(--text-muted);font-size:.85rem}
-.workspace-content{padding:1.2rem 1.4rem;overflow:auto}
-.provider-list{display:flex;flex-direction:column;gap:.5rem;max-width:420px}
-.provider-item,.actions button,.secret-row button,.array-editor button,.map-editor button,.conflict button{background:var(--bg-subtle);border:1px solid var(--border);color:var(--text);padding:.55rem .8rem;border-radius:6px;cursor:pointer}
-.actions{display:flex;gap:.5rem;margin-top:1rem}
-.actions .primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
-.field{display:flex;flex-direction:column;gap:.35rem;margin-bottom:1rem;max-width:560px}
-.field.nested{margin-left:.75rem;border-left:2px solid var(--border-soft);padding-left:.75rem}
-.field-title{font-size:.9rem}
-.field-help,.field-restart,.field-format{color:var(--text-muted);font-size:.75rem}
-.field input,.field textarea,.field select{background:var(--bg-subtle);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:.45rem .6rem}
-.secret-row,.array-row,.map-row,.enum-multi{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
-.secret-row .danger{color:var(--err)}
-.meta{color:var(--text-muted);font-size:.8rem;margin-bottom:1rem}
-.message{margin-top:1rem;color:var(--ok)}
-.conflict{margin-bottom:1rem;padding:.75rem;border:1px solid var(--err);border-radius:6px;color:var(--err);display:flex;gap:.75rem;align-items:center;flex-wrap:wrap}
-`;
+function ensureMutsukiUiStylesheet() {
+  if (document.querySelector('link[href$="mutsuki-ui.css"]')) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = "./mutsuki-ui.css";
+  document.head.appendChild(link);
+}
+
+export function mountConfigConsole(el, rpc) {
+  el.innerHTML = "";
+  applyConsoleTheme();
+  ensureMutsukiUiStylesheet();
+  el.appendChild(createConsoleApp(rpc));
+}
 
 export default {
   id: "config",

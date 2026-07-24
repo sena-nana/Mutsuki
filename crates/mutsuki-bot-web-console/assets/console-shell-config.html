@@ -4,31 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'" />
+        content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'" />
   <title>Mutsuki Console</title>
-  <link rel="stylesheet" href="./lilia-tokens.css" />
+  <link rel="stylesheet" href="./mutsuki-ui.css" />
 </head>
 <body>
   <div id="app"></div>
-  <script>window.__MUTSUKI_CONSOLE__ = { includeConfig: true };</script>
-  <script type="module">
-    const params = new URLSearchParams(location.search);
-    const page = params.get("page") || "overview";
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    if (page === "config") {
-      const { SimpleRpc, mountConfigConsole } = await import("./config/index.js");
-      const rpc = new SimpleRpc(`${proto}://${location.host}/ws`);
-      await rpc.connect();
-      mountConfigConsole(document.getElementById("app"), rpc);
-    } else {
-      const { SimpleRpc, mountConsole, loadConsoleOptions } = await import("./index.js");
-      const rpc = new SimpleRpc(`${proto}://${location.host}/ws`, {
-        capabilities: ["runtime.read", "runtime.write", "*"],
-      });
-      await rpc.connect();
-      const options = await loadConsoleOptions();
-      mountConsole(document.getElementById("app"), rpc, { includeConfig: true, ...options });
-    }
-  </script>
+  <script type="module" src="./console-bootstrap-config.js"></script>
 </body>
 </html>
