@@ -29,7 +29,6 @@ mutsuki-agent-protocol = { git = "https://github.com/sena-nana/MutsukiAgentKit.g
 mutsuki-agent-sdk = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-plugin-agent-model-gateway = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 serde = { version = "1", features = ["derive"] }

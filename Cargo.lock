@@ -1505,7 +1505,6 @@ dependencies = [
  "mutsuki-agent-protocol",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts 0.1.0 (git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67)",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "serde",

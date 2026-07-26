@@ -214,9 +214,7 @@ fn run_sample(
         ),
     )?;
     wait_running(reference, &append)?;
-    if reference.route(BotReferenceWorkload::GatewayStatus)?
-        == reference.route(BotReferenceWorkload::AgentSessionAppend)?
-    {
+    if reference.is_single_domain() {
         wait_running(reference, &context)?;
     }
 
@@ -239,12 +237,11 @@ fn ensure_completed(
     reference: &BotRuntimeDomainReference,
     handle: &DomainTaskHandle,
     timeout: Duration,
-) -> Result<Value, String> {
+) -> Result<(), String> {
     match reference.wait_outcome(handle, timeout)? {
         Some(TaskOutcome::Completed {
-            output: Some(output),
-            ..
-        }) => Ok(output),
+            output: Some(_), ..
+        }) => Ok(()),
         other => Err(format!(
             "task {} did not complete with business output: {other:?}",
             handle.task.task_id

@@ -170,12 +170,11 @@ fn collect_secret_key_refs_inner(value: &toml::Value, keys: &mut BTreeSet<String
     match value {
         toml::Value::Table(table) => {
             for (key, child) in table {
-                if key.ends_with("_key") {
-                    if let toml::Value::String(reference) = child {
-                        if is_secret_reference(reference) {
-                            keys.insert(reference.clone());
-                        }
-                    }
+                if key.ends_with("_key")
+                    && let toml::Value::String(reference) = child
+                    && is_secret_reference(reference)
+                {
+                    keys.insert(reference.clone());
                 }
                 collect_secret_key_refs_inner(child, keys);
             }

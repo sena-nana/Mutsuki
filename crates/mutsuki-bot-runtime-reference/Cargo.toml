@@ -13,7 +13,6 @@ path = "src/bin/bot_runtime_domain_bench.rs"
 mutsuki-agent-protocol.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-core.workspace = true
 mutsuki-runtime-host.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
