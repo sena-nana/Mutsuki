@@ -1,0 +1,47 @@
+{
+  "schema": "mutsuki.bot.runtime-domain-reference.v1",
+  "business_purpose": "query QQ gateway status while Agent session and context contract work are saturated",
+  "workload": {
+    "agent_work": [
+      "round-trip the owner AgentSessionAppendRequest contract",
+      "round-trip the owner AgentContextBuildRequest contract"
+    ],
+    "bot_agent_domain_threads": {
+      "agent": 1,
+      "bot": 1
+    },
+    "bot_work": "deserialize the owner QqBotGatewayStatusRequest contract and return status",
+    "calibrated": {
+      "context_build_iterations": 32768,
+      "session_append_iterations": 32768
+    },
+    "calibration_attempts_per_step": 3,
+    "calibration_safety_factor": 2,
+    "measurement": "gateway status submit to terminal outcome",
+    "minimum_background_work_ms": 20,
+    "percentile_method": "nearest-rank",
+    "runtime_lifecycle": "reuse one warmed long-lived runtime per topology",
+    "same_protocols_runners_payloads_and_outputs": true,
+    "same_total_worker_budget": 2,
+    "sample_order": "alternate single-domain-first and bot-agent-first paired samples",
+    "samples": 300,
+    "single_domain_threads": 2
+  },
+  "single_domain": {
+    "samples": 300,
+    "p50_ms": 60.181,
+    "p95_ms": 82.18939999999999,
+    "p99_ms": 118.3443,
+    "max_ms": 147.5293
+  },
+  "bot_agent_domains": {
+    "samples": 300,
+    "p50_ms": 0.1422,
+    "p95_ms": 0.2144,
+    "p99_ms": 0.5301,
+    "max_ms": 3.115
+  },
+  "p99_improvement_percent": 99.55206968142953,
+  "expected_minimum_improvement_percent": 50.0,
+  "passed": true
+}
