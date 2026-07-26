@@ -985,6 +985,8 @@ mod tests {
             trace_id: None,
             correlation_id: None,
             idempotency_key: None,
+            target_binding_id: None,
+            runner_hint: None,
             input_refs: Vec::new(),
             priority: 0,
             context: Default::default(),

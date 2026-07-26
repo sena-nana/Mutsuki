@@ -20,6 +20,8 @@ export interface FrontendTaskRequest<TPayload = JsonValue> {
   trace_id?: string;
   correlation_id?: string;
   idempotency_key?: string;
+  target_binding_id?: string;
+  runner_hint?: string;
   input_refs?: string[];
   priority?: number;
   context?: FrontendContext;
