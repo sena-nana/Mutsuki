@@ -4,7 +4,7 @@ use std::sync::Arc;
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, HandlerBinding, HostExtensionDescriptor,
     HostExtensionKind, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor,
-    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolDescriptor,
+    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass, ProtocolDescriptor,
     ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
@@ -186,6 +186,14 @@ impl PluginBuilder {
 
     pub fn protocol_descriptor(mut self, descriptor: ProtocolDescriptor) -> Self {
         self.provides.protocols.push(descriptor);
+        self
+    }
+
+    /// 声明协议的调度语义，使 runner purity 与安装清单保持一致。
+    pub fn protocol_class(mut self, protocol_id: impl Into<String>, class: ProtocolClass) -> Self {
+        self.provides
+            .protocol_classes
+            .insert(protocol_id.into(), class);
         self
     }
 
