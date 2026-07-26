@@ -12,6 +12,8 @@ import type {
   LogFrontendEvent,
   MutsukiFrontendEvent,
   PluginFrontendEvent,
+  PluginReloadRequest,
+  PluginReloadResult,
   PluginSummary,
   PreviewHandle,
   ResourceChunk,
@@ -72,6 +74,7 @@ export interface ApprovalApi {
 
 export interface PluginApi {
   list(): Promise<PluginSummary[]>;
+  reload(request?: PluginReloadRequest): Promise<PluginReloadResult>;
 }
 
 export interface RunnerApi {
@@ -210,6 +213,8 @@ export function createMutsukiClient(): MutsukiClient {
     approvals,
     plugins: {
       list: () => invoke<PluginSummary[]>("mutsuki_plugins_list"),
+      reload: (request = {}) =>
+        invoke<PluginReloadResult>("mutsuki_plugins_reload", { request }),
     },
     runners: {
       list: () => invoke<RunnerSummary[]>("mutsuki_runners_list"),

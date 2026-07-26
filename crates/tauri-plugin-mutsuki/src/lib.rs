@@ -1,11 +1,14 @@
 use mutsuki_runtime_contracts::ResourceRef;
 use mutsuki_tauri_bridge::{
     ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
-    FrontendTaskResult, FrontendTaskRun, HostStatus, PluginSummary, PreviewHandle, ResourceBytes,
-    ResourceChunk, ResourceText, RunnerSummary, TaskCancelRequest, TaskResultRequest,
+    FrontendTaskResult, FrontendTaskRun, HostStatus, PluginReloadRequest, PluginReloadResult,
+    PluginSummary, PreviewHandle, ResourceBytes, ResourceChunk, ResourceText, RunnerSummary,
+    TaskCancelRequest, TaskResultRequest,
 };
-use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder};
+use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder, PluginSelection};
+use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
@@ -32,6 +35,7 @@ where
             mutsuki_cancel_task,
             mutsuki_status,
             mutsuki_plugins_list,
+            mutsuki_plugins_reload,
             mutsuki_runners_list,
             mutsuki_resource_import_file,
             mutsuki_resource_read_bytes,
@@ -123,6 +127,33 @@ fn mutsuki_status(host: State<'_, Arc<MutsukiTauriHost>>) -> HostStatus {
 #[tauri::command]
 fn mutsuki_plugins_list(host: State<'_, Arc<MutsukiTauriHost>>) -> Vec<PluginSummary> {
     host.plugins()
+}
+
+#[tauri::command]
+async fn mutsuki_plugins_reload(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: PluginReloadRequest,
+) -> Result<PluginReloadResult, FrontendError> {
+    let host = host.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let selection = PluginSelection {
+            enabled_plugin_ids: request
+                .enabled_plugin_ids
+                .map(|plugin_ids| plugin_ids.into_iter().collect::<BTreeSet<_>>()),
+            configs: request.configs,
+        };
+        host.reload_plugins(
+            selection,
+            Duration::from_millis(request.drain_timeout_ms.max(1)),
+        )
+        .map_err(FrontendError::from)?;
+        Ok(PluginReloadResult {
+            plugins: host.plugins(),
+            runners: host.runners(),
+        })
+    })
+    .await
+    .map_err(|error| FrontendError::new("plugin.reload.join_failed", error.to_string()))?
 }
 
 #[tauri::command]

@@ -2,21 +2,24 @@ use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
 use crate::host::{HostComponents, MutsukiTauriHost};
+use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_runner::{
-    loaded_builtin_plugin_summary, loaded_builtin_runner_summary, scan_plugin_runners,
+    BuiltinRunnerFactory, register_builtin_runners, register_discovered_plugins,
+    scan_plugin_runners,
 };
-use mutsuki_runtime_contracts::{PluginDeploymentKind, RuntimeProfile, RuntimeProfileMode};
+use mutsuki_runtime_contracts::{RuntimeProfile, RuntimeProfileMode};
 use mutsuki_runtime_core::Runner;
-use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, runner_manifest};
+use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper};
 use mutsuki_tauri_bridge::EventHub;
 use mutsuki_tauri_resource::TauriResourceStore;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub struct MutsukiTauriHostBuilder {
     config: MutsukiTauriConfig,
     runtime_config: HostRuntimeConfig,
     runners: Vec<Box<dyn Runner>>,
+    runner_factories: Vec<BuiltinRunnerFactory>,
 }
 
 impl MutsukiTauriHostBuilder {
@@ -28,6 +31,7 @@ impl MutsukiTauriHostBuilder {
                 ..HostRuntimeConfig::default()
             },
             runners: Vec::new(),
+            runner_factories: Vec::new(),
         }
     }
 
@@ -49,8 +53,18 @@ impl MutsukiTauriHostBuilder {
         self
     }
 
+    /// 注册仅用于首个 generation 的 runner；需要插件 reload 时使用 `runner_factory`。
     pub fn runner(mut self, runner: Box<dyn Runner>) -> Self {
         self.runners.push(runner);
+        self
+    }
+
+    /// 注册可为每个 runtime generation 创建新实例的内建 runner。
+    pub fn runner_factory<F>(mut self, factory: F) -> Self
+    where
+        F: Fn() -> Box<dyn Runner> + Send + Sync + 'static,
+    {
+        self.runner_factories.push(Arc::new(factory));
         self
     }
 
@@ -68,84 +82,33 @@ impl MutsukiTauriHostBuilder {
         let event_buffer = self.config.event_buffer;
         let events = Arc::new(EventHub::new(event_buffer));
         let health = Arc::new(HostHealthState::default());
-        let mut loaded = scan_plugin_runners(&self.config, events.clone(), health.clone())?;
+        let abi_host = Arc::new(DeferredPluginHost::default());
+        let mut loaded = scan_plugin_runners(
+            &self.config,
+            events.clone(),
+            health.clone(),
+            abi_host.clone(),
+        )?;
         let mut bootstrapper = RuntimeBootstrapper::new();
-        let runners = self.runners;
-        let descriptors = runners
-            .iter()
-            .map(|runner| runner.descriptor().clone())
-            .collect::<Vec<_>>();
-        let mut plugin_runners: BTreeMap<String, Vec<_>> = BTreeMap::new();
-        for descriptor in &descriptors {
-            plugin_runners
-                .entry(descriptor.plugin_id.clone())
-                .or_default()
-                .push(descriptor.clone());
-        }
-        let mut enabled_plugins = BTreeSet::new();
-        let mut plugin_deployments = BTreeMap::new();
-        let mut active_protocols = BTreeSet::new();
-
-        for manifest in loaded.manifests {
-            active_protocols.extend(
-                manifest
-                    .provides
-                    .runners
-                    .iter()
-                    .flat_map(|runner| runner.accepted_protocol_ids.iter().cloned()),
-            );
-            enabled_plugins.insert(manifest.plugin_id.clone());
-            plugin_deployments.insert(manifest.plugin_id.clone(), PluginDeploymentKind::Process);
-            bootstrapper.register_manifest(manifest);
-        }
-        for runner in loaded.process_runners {
-            bootstrapper.register_external_runner(PluginDeploymentKind::Process, runner);
-        }
-
-        let mut loaded_plugin_ids = enabled_plugins.clone();
-        for (plugin_id, descriptors) in plugin_runners {
-            if loaded_plugin_ids.contains(&plugin_id) {
-                return Err(HostError::Config(format!(
-                    "builtin runner plugin id conflicts with discovered plugin: {plugin_id}"
-                )));
-            }
-            let manifest = runner_manifest(&plugin_id, descriptors.clone());
-            loaded
-                .plugins
-                .push(loaded_builtin_plugin_summary(&manifest));
-            for descriptor in &descriptors {
-                active_protocols.extend(descriptor.accepted_protocol_ids.iter().cloned());
-                loaded
-                    .runners
-                    .push(loaded_builtin_runner_summary(descriptor));
-            }
-            enabled_plugins.insert(plugin_id.clone());
-            plugin_deployments.insert(plugin_id.clone(), PluginDeploymentKind::Builtin);
-            loaded_plugin_ids.insert(plugin_id.clone());
-            bootstrapper.register_manifest(manifest);
-        }
-        for runner in runners {
-            bootstrapper.register_builtin_runner(runner);
-        }
-        loaded
-            .plugins
-            .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
-        loaded
-            .runners
-            .sort_by(|left, right| left.runner_id.cmp(&right.runner_id));
+        let reload_blocked_by_builtin_runners = !self.runners.is_empty();
+        let mut runners = self.runners;
+        runners.extend(self.runner_factories.iter().map(|factory| factory()));
+        let mut discovered = register_discovered_plugins(&mut loaded, &mut bootstrapper);
+        register_builtin_runners(&mut loaded, &mut bootstrapper, runners, &mut discovered)?;
+        let observability = self
+            .runtime_config
+            .observability
+            .clone()
+            .unwrap_or_default();
         let profile = RuntimeProfile {
             profile_id: self.config.profile_id.clone(),
             mode: RuntimeProfileMode::FullDev,
-            enabled_plugins: enabled_plugins.iter().cloned().collect(),
+            enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
             bindings: BTreeMap::new(),
-            plugin_deployments,
-            observability: self
-                .runtime_config
-                .observability
-                .clone()
-                .unwrap_or_default(),
+            plugin_deployments: discovered.plugin_deployments,
+            observability: observability.clone(),
             allow_dynamic_registration: false,
-            allow_hot_reload: false,
+            allow_hot_reload: true,
         };
         let runtime = bootstrapper.into_host_runtime_with_config(
             profile,
@@ -154,6 +117,7 @@ impl MutsukiTauriHostBuilder {
                 resource_store.provider(),
             ),
         )?;
+        abi_host.bind(&runtime).map_err(HostError::Config)?;
         Ok(MutsukiTauriHost::new(
             self.config,
             HostComponents {
@@ -163,7 +127,12 @@ impl MutsukiTauriHostBuilder {
                 health,
                 plugins: loaded.plugins,
                 runners: loaded.runners,
-                active_protocols,
+                packages: loaded.packages,
+                active_protocols: discovered.active_protocols,
+                reload_blocked_by_builtin_runners,
+                builtin_runner_factories: self.runner_factories,
+                observability,
+                abi_host,
             },
         ))
     }

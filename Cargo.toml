@@ -5,6 +5,7 @@ members = [
     "crates/mutsuki-tauri-host",
     "crates/mutsuki-tauri-benchmarks",
     "crates/tauri-plugin-mutsuki",
+    "fixtures/abi-plugin",
     "fixtures/jsonl-runner",
 ]
 resolver = "2"
@@ -17,6 +18,7 @@ version = "0.1.0"
 [workspace.dependencies]
 dirs = "6.0"
 cpu-time = "1.0"
+hex = "0.4"
 mime_guess = "2.0"
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
@@ -28,11 +30,13 @@ time = "=0.3.47"
 tokio = { version = "1.38", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
+mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
 mutsuki-link-local = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 mutsuki-link-core = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 

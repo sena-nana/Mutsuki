@@ -18,6 +18,8 @@ export type {
   LogFrontendEvent,
   MutsukiFrontendEvent,
   PluginFrontendEvent,
+  PluginReloadRequest,
+  PluginReloadResult,
   PluginSummary,
   PreviewHandle,
   ResourceBytes,

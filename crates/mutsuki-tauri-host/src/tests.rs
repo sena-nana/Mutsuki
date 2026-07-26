@@ -55,7 +55,7 @@ fn explicit_echo_runner_still_runs_task() {
     let workspace = TestWorkspace::new("explicit-echo");
     let host = MutsukiTauriHost::builder()
         .config(workspace.config())
-        .runner(Box::new(EchoRunner::new()))
+        .runner_factory(|| Box::new(EchoRunner::new()))
         .build()
         .expect("host builds");
 
@@ -93,6 +93,22 @@ fn explicit_echo_runner_still_runs_task() {
             .events
             .iter()
             .all(|event| event.name != "task.submit")
+    );
+    host.reload_plugins(Default::default(), Duration::from_secs(1))
+        .expect("reload preserves factory-backed builtin runner");
+    assert!(
+        host.call(FrontendTaskRequest {
+            protocol_id: ECHO_PROTOCOL_ID.into(),
+            payload: json!({ "text": "after reload" }),
+            task_id: Some("task:test:echo:reloaded".into()),
+            trace_id: None,
+            correlation_id: None,
+            idempotency_key: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .is_ok()
     );
 }
 
@@ -1458,6 +1474,7 @@ fn plugin_manifest(
             artifact_type,
             path: "process".into(),
             sha256: "sha256:test".into(),
+            companion_artifacts: Vec::new(),
         },
         provides: PluginProvides {
             runners,
