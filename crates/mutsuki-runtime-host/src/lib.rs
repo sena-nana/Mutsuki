@@ -1,3 +1,4 @@
+mod abi_plugin;
 mod abi_transport;
 mod actor;
 mod async_executor;
@@ -21,6 +22,7 @@ mod runtime_context;
 mod scheduler;
 mod worker;
 
+pub use abi_plugin::{AbiPluginLoadRequest, load_abi_plugin_v2};
 pub use abi_transport::{
     TransportJsonlRunner, TransportResourceProvider, TransportRunner, TypedRequestTransport,
 };

@@ -511,10 +511,21 @@ Core 只消费 `RuntimeLoadPlan`：
 enabled plugin 的部署形态写入 `RuntimeLoadPlan.plugin_deployments`，并校验部署形态与
 artifact 类型兼容。部署形态属于 host 执行面约束，不得进入插件业务代码分支。
 
+`PluginArtifact.companion_artifacts` 可声明与主 artifact 同包分发的辅助文件。每项使用
+包内相对 `path`、`sha256`、`executable` 和可选领域中立 `role` 描述；产品 Host 负责路径
+越界、哈希、平台执行权限和 staging 校验，Core 不解释 role、不提取安装包。空列表为旧清单
+的 serde 默认值。
+
 `PluginManifest::business_surface` 是跨 deployment 的业务等价判断权威。它忽略 artifact、
 lifecycle、Host extension、plugin backend、codec 和 bridge，只比较领域无关的业务契约。
 ABI bridge v2 必须先执行 `plugin.initialize({ config })`，且 guest 返回的 manifest 必须与
 安装清单一致；未初始化连接不得调用 Runner 或 Resource 方法。
+
+`mutsuki-runtime-host::load_abi_plugin_v2` 是领域中立的已验证动态库连接入口：Host 注入
+安装清单、初始化配置、`TaskSubmitter` 与 `ResourcePlanGateway`，连接必须校验 ABI v2
+入口、Wire 握手、guest manifest 和 resource-provider surface，并将现有
+`TransportRunner` / `TransportResourceProvider` 组装成 `LoadedPlugin`。目录发现、包解压、
+哈希校验、运行缓存和 reload generation 仍由具体产品 Host 负责。
 
 `RuntimeProfile.mode` 描述发行形态：
 
@@ -558,9 +569,10 @@ Host 执行面必须把部署形态限制在后端实现中：
   provider 缺少实例必须结构化失败，不能静默退回 core 兼容 store。
 - ABI 插件通过 `AbiTaskClient`、`AbiResourceClient` 将同一 `Task` / resource plan
   wire shape 编码到 bridge。
-- ABI 动态库入口只承载版本化 connection 与 UTF-8 JSONL bytes request/response；guest-side
-  shim 必须把这些 bytes 映射回上述既有 batch-first runner/task/resource 方法，禁止再定义
-  一套按语言对象、Rust trait 或 native pointer 展开的插件 ABI。
+- ABI 动态库入口只承载版本化 connection 与约定 codec 的 bytes request/response；ABI v2
+  固定使用 typed MessagePack，guest-side shim 必须把这些 bytes 映射回上述既有 batch-first
+  runner/task/resource 方法，禁止再定义一套按语言对象、Rust trait 或 native pointer 展开的
+  插件 ABI。
 - 两条路径不得向插件业务代码暴露 `Arc<T>`、`&T`、`&mut T`、`downcast` 或
   `with_native_*` 之类 builtin-only 能力。
 - `ReadPlan` 的 collect / snapshot / stream open、`WritePlan` 的 commit，以及

@@ -19,6 +19,7 @@ fn plugin_business_surface_ignores_deployment_transport() {
             artifact_type: ArtifactType::Native,
             path: "native".into(),
             sha256: "sha256:native".into(),
+            companion_artifacts: Vec::new(),
         },
         provides: PluginProvides::default(),
         requires: vec!["cap.input".into()],
@@ -51,6 +52,12 @@ fn plugin_business_surface_ignores_deployment_transport() {
         artifact_type: ArtifactType::Abi,
         path: "plugin-a.dll".into(),
         sha256: "sha256:abi".into(),
+        companion_artifacts: vec![CompanionArtifact {
+            path: "helpers/plugin-a-helper.exe".into(),
+            sha256: "sha256:helper".into(),
+            executable: true,
+            role: Some("document_converter".into()),
+        }],
     };
     abi.lifecycle.reload_policy = "drain_and_swap".into();
     abi.provides.plugin_backends[0].backend_id = "plugin.backend.plugin-a.abi".into();
@@ -65,6 +72,37 @@ fn plugin_business_surface_ignores_deployment_transport() {
     assert_eq!(builtin.business_surface(), abi.business_surface());
     abi.requires.push("cap.extra".into());
     assert_ne!(builtin.business_surface(), abi.business_surface());
+}
+
+#[test]
+fn plugin_artifact_defaults_missing_companion_artifacts() {
+    let legacy = serde_json::json!({
+        "artifact_type": "abi",
+        "path": "plugin-a.dll",
+        "sha256": "sha256:abi"
+    });
+    let artifact: PluginArtifact = serde_json::from_value(legacy).unwrap();
+    assert!(artifact.companion_artifacts.is_empty());
+    assert_eq!(
+        serde_json::to_value(&artifact).unwrap(),
+        serde_json::json!({
+            "artifact_type": "abi",
+            "path": "plugin-a.dll",
+            "sha256": "sha256:abi"
+        })
+    );
+
+    let companion = CompanionArtifact {
+        path: "helpers/plugin-a-helper".into(),
+        sha256: "sha256:helper".into(),
+        executable: true,
+        role: Some("converter".into()),
+    };
+    assert_eq!(
+        serde_json::from_value::<CompanionArtifact>(serde_json::to_value(&companion).unwrap())
+            .unwrap(),
+        companion
+    );
 }
 
 fn resource_ref(ref_id: &str, kind_id: &str, semantic: ResourceSemantic) -> ResourceRef {
@@ -495,6 +533,7 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
                 artifact_type: ArtifactType::Native,
                 path: "native".into(),
                 sha256: "sha256:native".into(),
+                companion_artifacts: Vec::new(),
             },
             provides,
             requires: Vec::new(),

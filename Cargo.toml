@@ -7,6 +7,7 @@ members = [
     "crates/mutsuki-runtime-sdk-macros",
     "crates/mutsuki-runtime-wire",
     "crates/mutsuki-runtime-benchmarks",
+    "crates/mutsuki-runtime-host/fixtures/abi-v2-plugin",
 ]
 resolver = "2"
 exclude = ["fuzz"]
@@ -21,6 +22,7 @@ futures-util = "0.3"
 futures-channel = "0.3"
 csv = "1.4"
 libc = "0.2"
+libloading = "0.8"
 mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
 mutsuki-runtime-wire = { path = "crates/mutsuki-runtime-wire" }

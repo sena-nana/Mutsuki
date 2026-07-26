@@ -989,6 +989,7 @@ fn capability_plan() -> RuntimeLoadPlan {
                 artifact_type: ArtifactType::Native,
                 path: "native".into(),
                 sha256: "sha256:native".into(),
+                companion_artifacts: Vec::new(),
             },
             provides: mutsuki_runtime_contracts::PluginProvides {
                 host_extensions: vec![host_extension],
