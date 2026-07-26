@@ -557,6 +557,8 @@ impl ControlHandler for FixtureControlHandler {
                     uptime_ms: 90_000,
                     rss_bytes: Some(64 * 1024 * 1024),
                     cpu_time_ms: Some(1_200),
+                    core: None,
+                    execution_domains: Vec::new(),
                 }),
                 ControlMethod::LogTail => ControlResponse::ok(LogTailResponse {
                     cursor: 2,
