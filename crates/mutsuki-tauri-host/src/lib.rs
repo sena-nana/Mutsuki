@@ -7,6 +7,9 @@ mod echo;
 mod error;
 mod health;
 mod host;
+mod plugin_abi;
+mod plugin_package;
+mod plugin_path;
 mod plugin_runner;
 
 pub use app_delivery::{
@@ -19,10 +22,11 @@ pub use app_delivery::{
 };
 pub use approval::{ApprovalBridge, PendingApproval};
 pub use builder::MutsukiTauriHostBuilder;
-pub use config::{HostMode, MutsukiTauriConfig, PathsConfig, SecurityConfig};
+pub use config::{HostMode, MutsukiTauriConfig, PathsConfig, PluginSelection, SecurityConfig};
 pub use error::{HostError, HostResult};
 pub use host::{MAX_RESOURCE_INVOKE_BYTES, MutsukiTauriHost};
 pub use mutsuki_runtime_contracts::{CapabilityDescriptor, DeliveryReceipt};
+pub use plugin_package::{PluginPackageRecord, StagedCompanionArtifact};
 
 #[cfg(test)]
 mod tests;

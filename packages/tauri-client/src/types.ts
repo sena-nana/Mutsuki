@@ -197,6 +197,17 @@ export interface PluginSummary {
   error?: string | null;
 }
 
+export interface PluginReloadRequest {
+  enabled_plugin_ids?: string[] | null;
+  configs?: Record<string, JsonValue>;
+  drain_timeout_ms?: number;
+}
+
+export interface PluginReloadResult {
+  plugins: PluginSummary[];
+  runners: RunnerSummary[];
+}
+
 export interface RunnerSummary {
   runner_id: string;
   plugin_id: string;

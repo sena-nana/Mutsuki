@@ -56,6 +56,13 @@ Large resources use bounded 64 KiB invoke chunks. Preview/object URLs are backed
 `mutsuki-resource` protocol and can be explicitly released; a 1 MiB or 64 MiB body is never embedded
 in command/event JSON.
 
+Executable desktop plugins may be installed as `.momoplug` ZIP archives under `plugins_dir`.
+Each archive has one root directory with the product `manifest.json` and a Mutsuki `plugin.toml`;
+their plugin IDs and versions must match. The Host validates every ZIP path and declared SHA-256,
+then stages only the primary artifact and companion artifacts below the content-addressed cache.
+Use `client.plugins.reload({ enabled_plugin_ids, configs, drain_timeout_ms })` to rescan and perform
+Core drain-and-swap; a failed reload leaves the active generation unchanged.
+
 The unified benchmark covers 1, 100 and 1000 active Waiting tasks, executable command/event
 serialization, bounded frontend retention and 1 MiB/64 MiB ResourceRef paths:
 

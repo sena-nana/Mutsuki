@@ -1,13 +1,18 @@
 use crate::config::MutsukiTauriConfig;
 use crate::error::{HostError, HostResult};
 use crate::health::HostHealthState;
+use crate::plugin_abi::{DeferredPluginHost, connect_packaged_plugin};
+use crate::plugin_package::{PluginPackageRecord, scan_momoplug_packages};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, HostExtensionDescriptor, HostExtensionKind,
     PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, RunnerDescriptor, RuntimeError,
     ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
-use mutsuki_runtime_host::{ProcessRunnerSpec, SpawnedJsonlRunner};
+use mutsuki_runtime_host::{
+    ProcessRunnerSpec, RuntimeBootstrapper, SpawnedJsonlRunner, runner_manifest,
+};
+use mutsuki_runtime_sdk::LoadedPlugin;
 use mutsuki_tauri_bridge::{
     EventHub, FrontendLogRecord, MutsukiFrontendEvent, PluginSummary, RunnerSummary,
     redact_log_record,
@@ -26,10 +31,20 @@ use uuid::Uuid;
 
 pub(crate) struct PluginRunnerLoad {
     pub(crate) manifests: Vec<PluginManifest>,
+    pub(crate) loaded_plugins: Vec<LoadedPlugin>,
     pub(crate) process_runners: Vec<Box<dyn Runner>>,
     pub(crate) plugins: Vec<PluginSummary>,
     pub(crate) runners: Vec<RunnerSummary>,
+    pub(crate) packages: Vec<PluginPackageRecord>,
 }
+
+pub(crate) struct DiscoveredPluginState {
+    pub(crate) enabled_plugins: BTreeSet<String>,
+    pub(crate) plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
+    pub(crate) active_protocols: BTreeSet<String>,
+}
+
+pub(crate) type BuiltinRunnerFactory = Arc<dyn Fn() -> Box<dyn Runner> + Send + Sync + 'static>;
 
 #[derive(Clone, Debug, Deserialize)]
 struct RunnerLaunchSpec {
@@ -56,6 +71,7 @@ pub(crate) fn scan_plugin_runners(
     config: &MutsukiTauriConfig,
     events: Arc<EventHub>,
     health: Arc<HostHealthState>,
+    abi_host: Arc<DeferredPluginHost>,
 ) -> HostResult<PluginRunnerLoad> {
     let plugin_files = find_named_files(&config.paths.plugins_dir, "plugin.toml")?;
     let runner_files = find_named_files(&config.paths.runners_dir, "runner.toml")?;
@@ -64,6 +80,63 @@ pub(crate) fn scan_plugin_runners(
     let mut runners = Vec::new();
     let mut manifests_by_id = BTreeMap::new();
     let mut seen_plugin_ids = BTreeSet::new();
+    let packages = scan_momoplug_packages(config)?;
+    let mut loaded_plugins = Vec::new();
+    for package in &packages {
+        if let Some(error) = package.error.as_deref() {
+            plugins.push(failed_plugin_with_deployment(
+                package.plugin_id.clone(),
+                package.version.clone(),
+                "package",
+                error,
+            ));
+            continue;
+        }
+        if !package.executable {
+            continue;
+        }
+        if !seen_plugin_ids.insert(package.plugin_id.clone()) {
+            plugins.push(failed_plugin_with_deployment(
+                package.plugin_id.clone(),
+                package.version.clone(),
+                "package",
+                "duplicate plugin id",
+            ));
+            continue;
+        }
+        if !package.selected {
+            plugins.push(disabled_plugin(package));
+            continue;
+        }
+        match connect_packaged_plugin(package, abi_host.clone()) {
+            Ok(plugin) => {
+                let deployment = PluginDeploymentKind::default_for_artifact(
+                    &plugin.manifest.artifact.artifact_type,
+                );
+                plugins.push(loaded_plugin_summary(&plugin.manifest, deployment.clone()));
+                runners.extend(plugin.manifest.provides.runners.iter().map(|descriptor| {
+                    loaded_runner_summary(descriptor, deployment_label(&deployment))
+                }));
+                loaded_plugins.push(plugin);
+            }
+            Err(error) => {
+                let deployment = package
+                    .runtime_manifest
+                    .as_ref()
+                    .map(|manifest| {
+                        PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type)
+                    })
+                    .map(|deployment| deployment_label(&deployment))
+                    .unwrap_or("package");
+                plugins.push(failed_plugin_with_deployment(
+                    package.plugin_id.clone(),
+                    package.version.clone(),
+                    deployment,
+                    error,
+                ));
+            }
+        }
+    }
     for path in plugin_files {
         match read_plugin_manifest(&path) {
             Ok(manifest) if !seen_plugin_ids.insert(manifest.plugin_id.clone()) => {
@@ -117,9 +190,11 @@ pub(crate) fn scan_plugin_runners(
     let mut claimed_runner_specs = BTreeSet::new();
     let mut load = PluginRunnerLoad {
         manifests: Vec::new(),
+        loaded_plugins,
         process_runners: Vec::new(),
         plugins,
         runners,
+        packages,
     };
 
     for (plugin_id, (manifest, manifest_path)) in manifests_by_id {
@@ -235,6 +310,93 @@ pub(crate) fn scan_plugin_runners(
 
 pub(crate) fn loaded_builtin_plugin_summary(manifest: &PluginManifest) -> PluginSummary {
     loaded_plugin_summary(manifest, PluginDeploymentKind::Builtin)
+}
+
+pub(crate) fn register_discovered_plugins(
+    load: &mut PluginRunnerLoad,
+    bootstrapper: &mut RuntimeBootstrapper,
+) -> DiscoveredPluginState {
+    let mut enabled_plugins = BTreeSet::new();
+    let mut plugin_deployments = BTreeMap::new();
+    let mut active_protocols = BTreeSet::new();
+    for plugin in std::mem::take(&mut load.loaded_plugins) {
+        let deployment =
+            PluginDeploymentKind::default_for_artifact(&plugin.manifest.artifact.artifact_type);
+        active_protocols.extend(
+            plugin
+                .manifest
+                .provides
+                .runners
+                .iter()
+                .flat_map(|runner| runner.accepted_protocol_ids.iter().cloned()),
+        );
+        enabled_plugins.insert(plugin.manifest.plugin_id.clone());
+        plugin_deployments.insert(plugin.manifest.plugin_id.clone(), deployment);
+        bootstrapper.register_loaded_plugin(plugin);
+    }
+    for manifest in std::mem::take(&mut load.manifests) {
+        active_protocols.extend(
+            manifest
+                .provides
+                .runners
+                .iter()
+                .flat_map(|runner| runner.accepted_protocol_ids.iter().cloned()),
+        );
+        enabled_plugins.insert(manifest.plugin_id.clone());
+        plugin_deployments.insert(manifest.plugin_id.clone(), PluginDeploymentKind::Process);
+        bootstrapper.register_manifest(manifest);
+    }
+    for runner in std::mem::take(&mut load.process_runners) {
+        bootstrapper.register_external_runner(PluginDeploymentKind::Process, runner);
+    }
+    DiscoveredPluginState {
+        enabled_plugins,
+        plugin_deployments,
+        active_protocols,
+    }
+}
+
+pub(crate) fn register_builtin_runners(
+    load: &mut PluginRunnerLoad,
+    bootstrapper: &mut RuntimeBootstrapper,
+    runners: Vec<Box<dyn Runner>>,
+    state: &mut DiscoveredPluginState,
+) -> HostResult<()> {
+    let mut plugin_runners: BTreeMap<String, Vec<_>> = BTreeMap::new();
+    for descriptor in runners.iter().map(|runner| runner.descriptor().clone()) {
+        plugin_runners
+            .entry(descriptor.plugin_id.clone())
+            .or_default()
+            .push(descriptor);
+    }
+    for (plugin_id, descriptors) in plugin_runners {
+        if state.enabled_plugins.contains(&plugin_id) {
+            return Err(HostError::Config(format!(
+                "builtin runner plugin id conflicts with discovered plugin: {plugin_id}"
+            )));
+        }
+        let manifest = runner_manifest(&plugin_id, descriptors.clone());
+        load.plugins.push(loaded_builtin_plugin_summary(&manifest));
+        for descriptor in &descriptors {
+            state
+                .active_protocols
+                .extend(descriptor.accepted_protocol_ids.iter().cloned());
+            load.runners.push(loaded_builtin_runner_summary(descriptor));
+        }
+        state.enabled_plugins.insert(plugin_id.clone());
+        state
+            .plugin_deployments
+            .insert(plugin_id, PluginDeploymentKind::Builtin);
+        bootstrapper.register_manifest(manifest);
+    }
+    for runner in runners {
+        bootstrapper.register_builtin_runner(runner);
+    }
+    load.plugins
+        .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
+    load.runners
+        .sort_by(|left, right| left.runner_id.cmp(&right.runner_id));
+    Ok(())
 }
 
 pub(crate) fn loaded_builtin_runner_summary(descriptor: &RunnerDescriptor) -> RunnerSummary {
@@ -366,6 +528,25 @@ fn failed_plugin_with_deployment(
         deployment: deployment.into(),
         status: "failed".into(),
         error: Some(error.into()),
+    }
+}
+
+fn disabled_plugin(package: &PluginPackageRecord) -> PluginSummary {
+    let deployment = package
+        .runtime_manifest
+        .as_ref()
+        .map(|manifest| {
+            PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type)
+        })
+        .map(|deployment| deployment_label(&deployment))
+        .unwrap_or("package");
+    PluginSummary {
+        plugin_id: package.plugin_id.clone(),
+        version: package.version.clone(),
+        enabled: false,
+        deployment: deployment.into(),
+        status: "disabled".into(),
+        error: None,
     }
 }
 

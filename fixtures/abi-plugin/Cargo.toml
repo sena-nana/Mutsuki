@@ -1,10 +1,15 @@
 [package]
-name = "mutsuki-tauri-jsonl-fixture"
+name = "mutsuki-tauri-abi-fixture"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-runtime-wire.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
 serde_json.workspace = true

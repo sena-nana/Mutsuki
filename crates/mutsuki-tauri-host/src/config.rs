@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +57,29 @@ impl Default for SecurityConfig {
     }
 }
 
+/// 桌面 Host 对已安装插件的启用选择与初始化配置。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginSelection {
+    /// `None` 表示启用所有可执行插件；`Some` 仅启用集合中的插件。
+    #[serde(default)]
+    pub enabled_plugin_ids: Option<BTreeSet<String>>,
+    /// 仅在 ABI 初始化边界传递，不写入解压缓存或前端状态。
+    #[serde(default)]
+    pub configs: BTreeMap<String, Value>,
+}
+
+impl PluginSelection {
+    pub fn is_enabled(&self, plugin_id: &str) -> bool {
+        self.enabled_plugin_ids
+            .as_ref()
+            .is_none_or(|enabled| enabled.contains(plugin_id))
+    }
+
+    pub fn config_for(&self, plugin_id: &str) -> Value {
+        self.configs.get(plugin_id).cloned().unwrap_or(Value::Null)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutsukiTauriConfig {
     pub app_name: String,
@@ -70,6 +95,8 @@ pub struct MutsukiTauriConfig {
     #[serde(default = "default_frontend_event_batch_size")]
     pub frontend_event_batch_size: usize,
     pub preview_ttl_secs: u64,
+    #[serde(default)]
+    pub plugin_selection: PluginSelection,
     pub paths: PathsConfig,
     pub security: SecurityConfig,
 }
@@ -87,6 +114,7 @@ impl MutsukiTauriConfig {
             task_event_capacity_total: default_task_event_capacity_total(),
             frontend_event_batch_size: default_frontend_event_batch_size(),
             preview_ttl_secs: 300,
+            plugin_selection: PluginSelection::default(),
             paths: PathsConfig::for_app(&app_name),
             security: SecurityConfig::default(),
             app_name,

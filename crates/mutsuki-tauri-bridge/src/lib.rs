@@ -226,6 +226,26 @@ pub struct RunnerSummary {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginReloadRequest {
+    #[serde(default)]
+    pub enabled_plugin_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub configs: BTreeMap<String, Value>,
+    #[serde(default = "default_plugin_reload_timeout_ms")]
+    pub drain_timeout_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginReloadResult {
+    pub plugins: Vec<PluginSummary>,
+    pub runners: Vec<RunnerSummary>,
+}
+
+const fn default_plugin_reload_timeout_ms() -> u64 {
+    5_000
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthComponent {
     pub healthy: bool,

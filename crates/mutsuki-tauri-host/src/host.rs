@@ -1,15 +1,22 @@
 use crate::approval::ApprovalBridge;
-use crate::config::MutsukiTauriConfig;
+use crate::config::{MutsukiTauriConfig, PluginSelection};
 use crate::error::{HostError, HostResult};
 use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_snapshots};
-use mutsuki_runtime_contracts::{
-    ERR_RUNNER_NOT_FOUND, ObservabilityPage, RuntimeError, RuntimeEvent, RuntimeEventKind,
-    ScalarValue, Task, TaskBatch, TaskHandle, TaskStatus, TraceSpan,
+use crate::plugin_abi::DeferredPluginHost;
+use crate::plugin_package::PluginPackageRecord;
+use crate::plugin_runner::{
+    BuiltinRunnerFactory, register_builtin_runners, register_discovered_plugins,
+    scan_plugin_runners,
 };
-use mutsuki_runtime_core::RuntimeFailure;
+use mutsuki_runtime_contracts::{
+    ERR_RUNNER_NOT_FOUND, ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent,
+    RuntimeEventKind, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task, TaskBatch, TaskHandle,
+    TaskStatus, TraceSpan,
+};
+use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure};
 use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot, HostTaskState,
-    TaskCompletionSubscription,
+    RuntimeBootstrapper, TaskCompletionSubscription,
 };
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
@@ -19,11 +26,12 @@ use mutsuki_tauri_bridge::{
     redact_runtime_event,
 };
 use mutsuki_tauri_resource::TauriResourceStore;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -37,8 +45,20 @@ pub struct MutsukiTauriHost {
     tasks: Arc<TaskSupervisor>,
     approvals: ApprovalBridge,
     health: Arc<HostHealthState>,
+    plugin_state: RwLock<DesktopPluginState>,
+    plugin_generation: AtomicU64,
+    reload_guard: Mutex<()>,
+    reload_blocked_by_builtin_runners: bool,
+    builtin_runner_factories: Vec<BuiltinRunnerFactory>,
+    observability: ObservabilityProfile,
+    abi_host: Arc<DeferredPluginHost>,
+}
+
+struct DesktopPluginState {
+    selection: PluginSelection,
     plugins: Vec<PluginSummary>,
     runners: Vec<RunnerSummary>,
+    packages: Vec<PluginPackageRecord>,
     active_protocols: BTreeSet<String>,
 }
 
@@ -49,7 +69,12 @@ pub(crate) struct HostComponents {
     pub health: Arc<HostHealthState>,
     pub plugins: Vec<PluginSummary>,
     pub runners: Vec<RunnerSummary>,
+    pub packages: Vec<PluginPackageRecord>,
     pub active_protocols: BTreeSet<String>,
+    pub reload_blocked_by_builtin_runners: bool,
+    pub builtin_runner_factories: Vec<BuiltinRunnerFactory>,
+    pub observability: ObservabilityProfile,
+    pub abi_host: Arc<DeferredPluginHost>,
 }
 
 #[derive(Debug)]
@@ -404,13 +429,19 @@ impl MutsukiTauriHost {
             health,
             plugins,
             runners,
+            packages,
             active_protocols,
+            reload_blocked_by_builtin_runners,
+            builtin_runner_factories,
+            observability,
+            abi_host,
         } = components;
         health.record_summary_failures(&plugins, &runners);
         let tasks = Arc::new(TaskSupervisor::new(
             config.task_event_capacity_per_task,
             config.task_event_capacity_total,
         ));
+        let selection = config.plugin_selection.clone();
         Self {
             config,
             runtime: Arc::new(Mutex::new(runtime)),
@@ -419,9 +450,19 @@ impl MutsukiTauriHost {
             tasks,
             approvals: ApprovalBridge::default(),
             health,
-            plugins,
-            runners,
-            active_protocols,
+            plugin_state: RwLock::new(DesktopPluginState {
+                selection,
+                plugins,
+                runners,
+                packages,
+                active_protocols,
+            }),
+            plugin_generation: AtomicU64::new(1),
+            reload_guard: Mutex::new(()),
+            reload_blocked_by_builtin_runners,
+            builtin_runner_factories,
+            observability,
+            abi_host,
         }
     }
 
@@ -447,7 +488,9 @@ impl MutsukiTauriHost {
         let plugins = self.plugins_with_runner_state(&runners);
         let host = health_component(true, "running", None);
         let plugins_health = health_component(
-            plugins.iter().all(|plugin| plugin.status == "loaded"),
+            plugins
+                .iter()
+                .all(|plugin| matches!(plugin.status.as_str(), "loaded" | "disabled")),
             "ok",
             first_plugin_error(&plugins),
         );
@@ -479,7 +522,9 @@ impl MutsukiTauriHost {
     }
 
     pub fn runners(&self) -> Vec<RunnerSummary> {
-        self.runners
+        self.plugin_state
+            .read()
+            .runners
             .iter()
             .cloned()
             .map(|mut runner| {
@@ -507,7 +552,9 @@ impl MutsukiTauriHost {
     }
 
     fn plugins_with_runner_state(&self, runners: &[RunnerSummary]) -> Vec<PluginSummary> {
-        self.plugins
+        self.plugin_state
+            .read()
+            .plugins
             .iter()
             .cloned()
             .map(|mut plugin| {
@@ -583,7 +630,12 @@ impl MutsukiTauriHost {
     }
 
     fn ensure_protocol_available(&self, protocol_id: &str) -> HostResult<()> {
-        if self.active_protocols.contains(protocol_id) {
+        if self
+            .plugin_state
+            .read()
+            .active_protocols
+            .contains(protocol_id)
+        {
             return Ok(());
         }
         let mut error = RuntimeError::new(
@@ -626,6 +678,86 @@ impl MutsukiTauriHost {
 
     pub fn runtime_metrics(&self) -> mutsuki_runtime_host::HostRuntimeMetricsSnapshot {
         self.runtime.lock().metrics()
+    }
+
+    /// 返回最近一次启动/重载扫描得到的 `.momoplug` inventory。
+    pub fn plugin_packages(&self) -> Vec<PluginPackageRecord> {
+        self.plugin_state.read().packages.clone()
+    }
+
+    pub fn plugin_selection(&self) -> PluginSelection {
+        self.plugin_state.read().selection.clone()
+    }
+
+    /// 重新扫描桌面插件并通过 Core 的 drain-and-swap 原子切换 generation。
+    pub fn reload_plugins(
+        &self,
+        selection: PluginSelection,
+        drain_timeout: Duration,
+    ) -> HostResult<ReloadDecision> {
+        let _reload = self.reload_guard.lock();
+        if self.reload_blocked_by_builtin_runners {
+            return Err(HostError::Unsupported(
+                "plugin reload requires reloadable builtin runner factories".into(),
+            ));
+        }
+        let mut scan_config = self.config.clone();
+        scan_config.plugin_selection = selection.clone();
+        let mut loaded = scan_plugin_runners(
+            &scan_config,
+            self.events.clone(),
+            self.health.clone(),
+            self.abi_host.clone(),
+        )?;
+        if let Some(plugin) = loaded
+            .plugins
+            .iter()
+            .find(|plugin| plugin.status == "failed")
+        {
+            return Err(HostError::Config(format!(
+                "plugin reload validation failed for {}: {}",
+                plugin.plugin_id,
+                plugin.error.as_deref().unwrap_or("unknown error")
+            )));
+        }
+        let mut bootstrapper = RuntimeBootstrapper::new();
+        let mut discovered = register_discovered_plugins(&mut loaded, &mut bootstrapper);
+        let builtin_runners = self
+            .builtin_runner_factories
+            .iter()
+            .map(|factory| factory())
+            .collect();
+        register_builtin_runners(
+            &mut loaded,
+            &mut bootstrapper,
+            builtin_runners,
+            &mut discovered,
+        )?;
+        let profile = RuntimeProfile {
+            profile_id: self.config.profile_id.clone(),
+            mode: RuntimeProfileMode::FullDev,
+            enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
+            bindings: BTreeMap::new(),
+            plugin_deployments: discovered.plugin_deployments,
+            observability: self.observability.clone(),
+            allow_dynamic_registration: false,
+            allow_hot_reload: true,
+        };
+        let generation = self.plugin_generation.load(Ordering::Acquire) + 1;
+        let prepared = bootstrapper.prepare_reload(profile, generation)?;
+        let decision = self.runtime.lock().reload(prepared, drain_timeout)?;
+
+        self.health
+            .record_summary_failures(&loaded.plugins, &loaded.runners);
+        *self.plugin_state.write() = DesktopPluginState {
+            selection,
+            plugins: loaded.plugins,
+            runners: loaded.runners,
+            packages: loaded.packages,
+            active_protocols: discovered.active_protocols,
+        };
+        self.plugin_generation.store(generation, Ordering::Release);
+        Ok(decision)
     }
 
     pub fn execution_domain_metrics(
@@ -1051,7 +1183,7 @@ fn health_component(healthy: bool, healthy_status: &str, error: Option<String>) 
 fn first_plugin_error(plugins: &[PluginSummary]) -> Option<String> {
     plugins
         .iter()
-        .find(|plugin| plugin.status != "loaded")
+        .find(|plugin| !matches!(plugin.status.as_str(), "loaded" | "disabled"))
         .and_then(|plugin| {
             plugin
                 .error
