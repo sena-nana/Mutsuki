@@ -76,6 +76,10 @@ pub struct FrontendTaskRequest {
     pub correlation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_binding_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_hint: Option<String>,
     #[serde(default)]
     pub input_refs: Vec<String>,
     #[serde(default)]
@@ -93,6 +97,8 @@ impl FrontendTaskRequest {
         task.trace_id = self.trace_id;
         task.correlation_id = self.correlation_id;
         task.idempotency_key = self.idempotency_key;
+        task.target_binding_id = self.target_binding_id;
+        task.runner_hint = self.runner_hint;
         task.input_refs = self.input_refs;
         task.priority = self.priority;
         task
@@ -550,7 +556,25 @@ fn is_sensitive_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventHub, MutsukiFrontendEvent};
+    use super::{EventHub, FrontendTaskRequest, MutsukiFrontendEvent};
+
+    #[test]
+    fn frontend_task_request_preserves_explicit_binding_target() {
+        let request: FrontendTaskRequest = serde_json::from_value(serde_json::json!({
+            "protocol_id": "fixture.route",
+            "target_binding_id": "binding:fixture.plugin:fixture.route",
+            "runner_hint": "fixture.plugin.runner"
+        }))
+        .expect("request should deserialize");
+
+        let task = request.into_task();
+
+        assert_eq!(
+            task.target_binding_id.as_deref(),
+            Some("binding:fixture.plugin:fixture.route")
+        );
+        assert_eq!(task.runner_hint.as_deref(), Some("fixture.plugin.runner"));
+    }
 
     #[test]
     fn emit_batch_uses_one_bounded_hub_message_for_multiple_frontend_events() {
