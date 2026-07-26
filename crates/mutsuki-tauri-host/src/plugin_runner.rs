@@ -5,14 +5,14 @@ use crate::plugin_abi::{DeferredPluginHost, connect_packaged_plugin};
 use crate::plugin_package::{PluginPackageRecord, scan_momoplug_packages};
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, HostExtensionDescriptor, HostExtensionKind,
-    PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, RunnerDescriptor, RuntimeError,
-    ScalarValue, WorkBatch,
+    PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass,
+    RunnerDescriptor, RuntimeError, ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_host::{
     ProcessRunnerSpec, RuntimeBootstrapper, SpawnedJsonlRunner, runner_manifest,
 };
-use mutsuki_runtime_sdk::LoadedPlugin;
+use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder};
 use mutsuki_tauri_bridge::{
     EventHub, FrontendLogRecord, MutsukiFrontendEvent, PluginSummary, RunnerSummary,
     redact_log_record,
@@ -354,6 +354,53 @@ pub(crate) fn register_discovered_plugins(
         plugin_deployments,
         active_protocols,
     }
+}
+
+/// 将已启用且完成包校验的插件声明权限注册为本 generation 的桌面授权能力。
+pub(crate) fn declared_permission_grant_manifest(
+    load: &PluginRunnerLoad,
+) -> Option<PluginManifest> {
+    let effects = load
+        .loaded_plugins
+        .iter()
+        .map(|plugin| &plugin.manifest)
+        .chain(load.manifests.iter())
+        .flat_map(|manifest| manifest.permissions.effects.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    if effects.is_empty() {
+        return None;
+    }
+    let provides = PluginProvides {
+        protocol_classes: effects
+            .iter()
+            .cloned()
+            .map(|effect| (effect, ProtocolClass::Effect))
+            .collect(),
+        effects: effects.into_iter().collect(),
+        ..PluginProvides::default()
+    };
+    Some(
+        PluginBuilder::new("mutsuki.tauri.approved-permissions")
+            .provides(provides)
+            .build()
+            .manifest,
+    )
+}
+
+/// 把桌面授权能力加入 load plan；它不作为用户插件显示或执行。
+pub(crate) fn register_permission_grants(
+    manifest: Option<PluginManifest>,
+    bootstrapper: &mut RuntimeBootstrapper,
+    state: &mut DiscoveredPluginState,
+) {
+    let Some(manifest) = manifest else {
+        return;
+    };
+    state.enabled_plugins.insert(manifest.plugin_id.clone());
+    state
+        .plugin_deployments
+        .insert(manifest.plugin_id.clone(), PluginDeploymentKind::Builtin);
+    bootstrapper.register_manifest(manifest);
 }
 
 pub(crate) fn register_builtin_runners(

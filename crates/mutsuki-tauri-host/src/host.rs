@@ -5,8 +5,8 @@ use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_
 use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_package::PluginPackageRecord;
 use crate::plugin_runner::{
-    BuiltinRunnerFactory, register_builtin_runners, register_discovered_plugins,
-    scan_plugin_runners,
+    BuiltinRunnerFactory, declared_permission_grant_manifest, register_builtin_runners,
+    register_discovered_plugins, register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{
     ERR_RUNNER_NOT_FOUND, ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent,
@@ -721,7 +721,9 @@ impl MutsukiTauriHost {
             )));
         }
         let mut bootstrapper = RuntimeBootstrapper::new();
+        let permission_grants = declared_permission_grant_manifest(&loaded);
         let mut discovered = register_discovered_plugins(&mut loaded, &mut bootstrapper);
+        register_permission_grants(permission_grants, &mut bootstrapper, &mut discovered);
         let builtin_runners = self
             .builtin_runner_factories
             .iter()
