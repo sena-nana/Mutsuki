@@ -12,19 +12,27 @@ use mutsuki_runtime_contracts::{
     RunnerDescriptor, RunnerPurity, RunnerResult, RuntimeDomainId, RuntimeError, RuntimeProfile,
     RuntimeProfileMode, Task, TaskOutcome,
 };
-use mutsuki_runtime_core::RuntimeFailure;
 use mutsuki_runtime_host::{
     ExecutionDomainConfig, HostRuntime, HostRuntimeConfig, NativeRunner, RuntimeBootstrapper,
     RuntimeGroupHost, runner_manifest,
 };
-use mutsuki_runtime_sdk::HostServiceRegistry;
+use mutsuki_runtime_sdk::{HostServiceRegistry, RuntimeFailure};
 use serde_json::Value;
 
-pub const BOT_DOMAIN_ID: &str = "bot-domain";
-pub const AGENT_DOMAIN_ID: &str = "agent-domain";
-pub const SHARED_DOMAIN_ID: &str = "bot-agent-shared-domain";
-
+const BOT_DOMAIN_ID: &str = "bot-domain";
+const AGENT_DOMAIN_ID: &str = "agent-domain";
+const SHARED_DOMAIN_ID: &str = "bot-agent-shared-domain";
 const REFERENCE_PLUGIN_ID: &str = "mutsuki.bot.runtime-domains.reference";
+const ALL_WORKLOADS: &[BotReferenceWorkload] = &[
+    BotReferenceWorkload::GatewayStatus,
+    BotReferenceWorkload::AgentSessionAppend,
+    BotReferenceWorkload::AgentContextBuild,
+];
+const BOT_WORKLOADS: &[BotReferenceWorkload] = &[BotReferenceWorkload::GatewayStatus];
+const AGENT_WORKLOADS: &[BotReferenceWorkload] = &[
+    BotReferenceWorkload::AgentSessionAppend,
+    BotReferenceWorkload::AgentContextBuild,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotRuntimeTopology {
@@ -73,52 +81,20 @@ impl BotRuntimeDomainReference {
         let shared_services = Arc::new(HostServiceRegistry::new());
         shared_services.freeze();
         let mut group = RuntimeGroupHost::with_defaults(shared_services.clone());
-
-        match topology {
-            BotRuntimeTopology::SingleDomain => {
-                group
-                    .insert_domain(
-                        domain_id(SHARED_DOMAIN_ID)?,
-                        build_runtime(
-                            shared_services,
-                            SHARED_DOMAIN_ID,
-                            &[
-                                BotReferenceWorkload::GatewayStatus,
-                                BotReferenceWorkload::AgentSessionAppend,
-                                BotReferenceWorkload::AgentContextBuild,
-                            ],
-                            2,
-                        )?,
-                    )
-                    .map_err(|error| error.to_string())?;
-            }
-            BotRuntimeTopology::BotAgentDomains => {
-                group
-                    .insert_domain(
-                        domain_id(BOT_DOMAIN_ID)?,
-                        build_runtime(
-                            shared_services.clone(),
-                            BOT_DOMAIN_ID,
-                            &[BotReferenceWorkload::GatewayStatus],
-                            1,
-                        )?,
-                    )
-                    .map_err(|error| error.to_string())?;
-                group
-                    .insert_domain(
-                        domain_id(AGENT_DOMAIN_ID)?,
-                        build_runtime(
-                            shared_services,
-                            AGENT_DOMAIN_ID,
-                            &[
-                                BotReferenceWorkload::AgentSessionAppend,
-                                BotReferenceWorkload::AgentContextBuild,
-                            ],
-                            1,
-                        )?,
-                    )
-                    .map_err(|error| error.to_string())?;
-            }
+        let domains: &[(&str, &[BotReferenceWorkload], usize)] = match topology {
+            BotRuntimeTopology::SingleDomain => &[(SHARED_DOMAIN_ID, ALL_WORKLOADS, 2)],
+            BotRuntimeTopology::BotAgentDomains => &[
+                (BOT_DOMAIN_ID, BOT_WORKLOADS, 1),
+                (AGENT_DOMAIN_ID, AGENT_WORKLOADS, 1),
+            ],
+        };
+        for &(id, workloads, threads) in domains {
+            group
+                .insert_domain(
+                    domain_id(id)?,
+                    build_runtime(shared_services.clone(), id, workloads, threads)?,
+                )
+                .map_err(|error| error.to_string())?;
         }
 
         Ok(Self { topology, group })
@@ -158,7 +134,7 @@ impl BotRuntimeDomainReference {
             .map_err(|error| error.to_string())
     }
 
-    pub fn route(&self, workload: BotReferenceWorkload) -> Result<RuntimeDomainId, String> {
+    fn route(&self, workload: BotReferenceWorkload) -> Result<RuntimeDomainId, String> {
         let id = match self.topology {
             BotRuntimeTopology::SingleDomain => SHARED_DOMAIN_ID,
             BotRuntimeTopology::BotAgentDomains => match workload {
@@ -168,6 +144,10 @@ impl BotRuntimeDomainReference {
             },
         };
         domain_id(id)
+    }
+
+    pub fn is_single_domain(&self) -> bool {
+        self.topology == BotRuntimeTopology::SingleDomain
     }
 
     pub fn group(&self) -> &RuntimeGroupHost {

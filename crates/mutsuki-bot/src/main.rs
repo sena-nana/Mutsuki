@@ -23,10 +23,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _monitor = distribution.start_monitor();
     let runtime = builder.start().await?;
     let console = WebConsoleGuard::start(&config_path, &service, &runtime).await?;
-    if let Some(console) = &console {
-        if let Some(addr) = console.listen_addr() {
-            eprintln!("Mutsuki Web Console listening on http://{addr}");
-        }
+    if let Some(console) = &console
+        && let Some(addr) = console.listen_addr()
+    {
+        eprintln!("Mutsuki Web Console listening on http://{addr}");
     }
     let result = runtime.run_foreground().await;
     if let Some(console) = console {
