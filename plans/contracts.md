@@ -643,7 +643,17 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 | `capability.exhausted` | lease/capability 容量耗尽 |
 | `runtime.host_failed` | host/runner 无法归类的失败 |
 
-## 10. Crate 对应
+## 10. Runtime Domain
+
+- `RuntimeDomainId` 是 Host 一致性域的稳定标识。
+- `DomainTaskHandle` 将普通 `TaskHandle` 与所属 RuntimeDomain 绑定，不能脱离 domain 使用。
+- `CrossDomainTaskRequest` 必须显式包含 source/target domain、普通 Task、非空 request /
+  idempotency key、正 timeout 与最大尝试次数。相同 idempotency key 只可重放同一请求事实；
+  shape 不同必须结构化冲突。
+- RuntimeDomain 之间不传递 TaskRecord、TaskLease、continuation、可变 StateStore 或
+  ResourceManager 内部对象。Gateway 只在目标域创建普通 Task。
+
+## 11. Crate 对应
 
 - `crates/mutsuki-runtime-contracts`：本文件协议对象。
 - `crates/mutsuki-runtime-core`：CoreRuntime、TaskPool、RunnerRegistry、ResourceManager。

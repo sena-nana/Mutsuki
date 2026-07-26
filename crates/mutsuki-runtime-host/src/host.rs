@@ -17,7 +17,7 @@ use mutsuki_runtime_sdk::{
     HostTaskSnapshot, ResourceProviderGateway,
 };
 
-use crate::actor::{CoreActorMsg, core_actor_loop};
+use crate::actor::{ActorSender, CoreActorMsg, actor_channel, core_actor_loop};
 use crate::async_executor::{AsyncEventSink, AsyncExecutor};
 use crate::bootstrapper::PreparedRuntimeReload;
 use crate::capabilities::HostCapabilityRegistry;
@@ -216,13 +216,106 @@ pub struct HostRuntimeMetricsSnapshot {
     pub task_status_queries: u64,
     pub task_state_batch_queries: u64,
     pub completion_notifications: u64,
+    pub control_mailbox_depth: usize,
+    pub data_mailbox_depth: usize,
+    pub control_oldest_message_age: Duration,
+    pub data_oldest_message_age: Duration,
+    pub submit_to_dispatch_samples: u64,
+    pub submit_to_dispatch_total_ns: u64,
+    pub submit_to_dispatch_max_ns: u64,
+    pub cancel_propagation_samples: u64,
+    pub cancel_propagation_total_ns: u64,
+    pub cancel_propagation_max_ns: u64,
+    pub completion_route_samples: u64,
+    pub completion_route_total_ns: u64,
+    pub completion_route_max_ns: u64,
+    pub scheduler_passes: u64,
+    pub scheduler_total_ns: u64,
+    pub scheduler_max_ns: u64,
+    pub lane_starvation_events: u64,
+    pub reserved_capacity_uses: u64,
 }
 
 #[derive(Debug, Default)]
-struct HostRuntimeMetrics {
+#[doc(hidden)]
+pub struct HostRuntimeMetrics {
     actor_commands: AtomicU64,
     task_status_queries: AtomicU64,
     task_state_batch_queries: AtomicU64,
+    submit_to_dispatch_samples: AtomicU64,
+    submit_to_dispatch_total_ns: AtomicU64,
+    submit_to_dispatch_max_ns: AtomicU64,
+    cancel_propagation_samples: AtomicU64,
+    cancel_propagation_total_ns: AtomicU64,
+    cancel_propagation_max_ns: AtomicU64,
+    completion_route_samples: AtomicU64,
+    completion_route_total_ns: AtomicU64,
+    completion_route_max_ns: AtomicU64,
+    scheduler_passes: AtomicU64,
+    scheduler_total_ns: AtomicU64,
+    scheduler_max_ns: AtomicU64,
+    lane_starvation_events: AtomicU64,
+    reserved_capacity_uses: AtomicU64,
+}
+
+impl HostRuntimeMetrics {
+    pub(crate) fn record_submit_to_dispatch(&self, elapsed: Duration) {
+        record_latency(
+            elapsed,
+            &self.submit_to_dispatch_samples,
+            &self.submit_to_dispatch_total_ns,
+            &self.submit_to_dispatch_max_ns,
+        );
+    }
+
+    pub(crate) fn record_cancel_propagation(&self, elapsed: Duration) {
+        record_latency(
+            elapsed,
+            &self.cancel_propagation_samples,
+            &self.cancel_propagation_total_ns,
+            &self.cancel_propagation_max_ns,
+        );
+    }
+
+    pub(crate) fn record_completion_route(&self, elapsed: Duration) {
+        record_latency(
+            elapsed,
+            &self.completion_route_samples,
+            &self.completion_route_total_ns,
+            &self.completion_route_max_ns,
+        );
+    }
+
+    pub(crate) fn record_scheduler_pass(&self, elapsed: Duration) {
+        record_latency(
+            elapsed,
+            &self.scheduler_passes,
+            &self.scheduler_total_ns,
+            &self.scheduler_max_ns,
+        );
+    }
+
+    pub(crate) fn record_lane_starvation(&self, count: usize) {
+        self.lane_starvation_events
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_reserved_capacity_use(&self, count: usize) {
+        self.reserved_capacity_uses
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+}
+
+fn record_latency(
+    elapsed: Duration,
+    samples: &AtomicU64,
+    total_ns: &AtomicU64,
+    max_ns: &AtomicU64,
+) {
+    let nanos = elapsed.as_nanos().min(u128::from(u64::MAX)) as u64;
+    samples.fetch_add(1, Ordering::Relaxed);
+    total_ns.fetch_add(nanos, Ordering::Relaxed);
+    max_ns.fetch_max(nanos, Ordering::Relaxed);
 }
 
 #[derive(Clone)]
@@ -240,6 +333,12 @@ pub struct HostRuntimeConfig {
     pub pool_queue_limit: usize,
     pub pool_max_inflight_bytes: usize,
     pub max_isolated_workers: usize,
+    /// Configured physical execution domains. An empty list preserves the
+    /// legacy compute/blocking topology.
+    pub execution_domains: Vec<crate::ExecutionDomainConfig>,
+    pub actor_control_queue_limit: usize,
+    pub actor_data_queue_limit: usize,
+    pub actor_control_quota: usize,
     pub default_runner_limits: RunnerLimits,
     pub runner_limits: BTreeMap<String, RunnerLimits>,
     pub scheduler_policy: Arc<dyn SchedulerPolicy>,
@@ -256,6 +355,8 @@ pub struct HostRuntimeConfig {
     pub worker_health_timeout: Option<Duration>,
     pub observability: Option<ObservabilityProfile>,
     pub task_history_retention: Option<TaskHistoryRetention>,
+    #[doc(hidden)]
+    pub actor_metrics: Arc<HostRuntimeMetrics>,
 }
 
 impl HostRuntimeConfig {
@@ -297,6 +398,10 @@ impl fmt::Debug for HostRuntimeConfig {
             .field("pool_queue_limit", &self.pool_queue_limit)
             .field("pool_max_inflight_bytes", &self.pool_max_inflight_bytes)
             .field("max_isolated_workers", &self.max_isolated_workers)
+            .field("execution_domains", &self.execution_domains)
+            .field("actor_control_queue_limit", &self.actor_control_queue_limit)
+            .field("actor_data_queue_limit", &self.actor_data_queue_limit)
+            .field("actor_control_quota", &self.actor_control_quota)
             .field("default_runner_limits", &self.default_runner_limits)
             .field("runner_limits", &self.runner_limits)
             .field("scheduler_policy", &self.scheduler_policy)
@@ -338,6 +443,10 @@ impl Default for HostRuntimeConfig {
             pool_queue_limit: 1024,
             pool_max_inflight_bytes: 64 * 1024 * 1024,
             max_isolated_workers: 2,
+            execution_domains: Vec::new(),
+            actor_control_queue_limit: 1_024,
+            actor_data_queue_limit: 4_096,
+            actor_control_quota: 32,
             default_runner_limits: RunnerLimits::default(),
             runner_limits: BTreeMap::new(),
             scheduler_policy: Arc::new(DefaultScheduler),
@@ -350,12 +459,14 @@ impl Default for HostRuntimeConfig {
             worker_health_timeout: None,
             observability: None,
             task_history_retention: None,
+            actor_metrics: Arc::new(HostRuntimeMetrics::default()),
         }
     }
 }
 
 pub struct HostRuntime {
-    tx: mpsc::Sender<CoreActorMsg>,
+    tx: ActorSender,
+    data_tx: ActorSender,
     actor: Option<thread::JoinHandle<()>>,
     capabilities: Arc<HostCapabilityRegistry>,
     context: SdkHostContext,
@@ -383,9 +494,22 @@ impl HostRuntime {
             core.configure_observability(observability);
         }
         core.configure_task_history_retention(config.task_history_retention);
-        let (tx, rx) = mpsc::channel();
-        let actor_tx = tx.clone();
-        let async_event_tx = tx.clone();
+        if config.actor_control_queue_limit == 0
+            || config.actor_data_queue_limit == 0
+            || config.actor_control_quota == 0
+        {
+            return Err(host_failure(
+                "host.actor.config",
+                "actor queue limits and control quota must be positive",
+            ));
+        }
+        let metrics = Arc::new(HostRuntimeMetrics::default());
+        config.actor_metrics = metrics.clone();
+        let (wake_tx, wake_rx) = mpsc::channel();
+        let (tx, control_rx) = actor_channel(config.actor_control_queue_limit, wake_tx.clone());
+        let (data_tx, data_rx) = actor_channel(config.actor_data_queue_limit, wake_tx);
+        let actor_tx = data_tx.clone();
+        let async_event_tx = data_tx.clone();
         config.async_event_sink = Some(Arc::new(move |event| {
             let _ = async_event_tx.send(CoreActorMsg::AsyncEvent(event));
         }));
@@ -400,7 +524,16 @@ impl HostRuntime {
         let actor = thread::Builder::new()
             .name("mutsuki-core-actor".into())
             .spawn(move || {
-                core_actor_loop(core, config, rx, pools, management, actor_completion_hub)
+                core_actor_loop(
+                    core,
+                    config,
+                    control_rx,
+                    data_rx,
+                    wake_rx,
+                    pools,
+                    management,
+                    actor_completion_hub,
+                )
             })
             .map_err(|error| host_failure("host.actor.spawn", error.to_string()))?;
         let capabilities = Arc::new(capabilities);
@@ -413,11 +546,12 @@ impl HostRuntime {
         );
         Ok(Self {
             tx,
+            data_tx,
             actor: Some(actor),
             capabilities,
             context,
             completion_hub,
-            metrics: Arc::new(HostRuntimeMetrics::default()),
+            metrics,
         })
     }
 
@@ -434,7 +568,7 @@ impl HostRuntime {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(CoreActorMsg::Command(command, reply_tx))
-            .map_err(|error| host_failure("host.actor.command", error.to_string()))?;
+            .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
         reply_rx
             .recv()
             .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
@@ -563,6 +697,48 @@ impl HostRuntime {
                 .task_state_batch_queries
                 .load(Ordering::Relaxed),
             completion_notifications: self.completion_hub.notifications(),
+            control_mailbox_depth: self.tx.depth(),
+            data_mailbox_depth: self.data_tx.depth(),
+            control_oldest_message_age: self.tx.oldest_age(),
+            data_oldest_message_age: self.data_tx.oldest_age(),
+            submit_to_dispatch_samples: self
+                .metrics
+                .submit_to_dispatch_samples
+                .load(Ordering::Relaxed),
+            submit_to_dispatch_total_ns: self
+                .metrics
+                .submit_to_dispatch_total_ns
+                .load(Ordering::Relaxed),
+            submit_to_dispatch_max_ns: self
+                .metrics
+                .submit_to_dispatch_max_ns
+                .load(Ordering::Relaxed),
+            cancel_propagation_samples: self
+                .metrics
+                .cancel_propagation_samples
+                .load(Ordering::Relaxed),
+            cancel_propagation_total_ns: self
+                .metrics
+                .cancel_propagation_total_ns
+                .load(Ordering::Relaxed),
+            cancel_propagation_max_ns: self
+                .metrics
+                .cancel_propagation_max_ns
+                .load(Ordering::Relaxed),
+            completion_route_samples: self
+                .metrics
+                .completion_route_samples
+                .load(Ordering::Relaxed),
+            completion_route_total_ns: self
+                .metrics
+                .completion_route_total_ns
+                .load(Ordering::Relaxed),
+            completion_route_max_ns: self.metrics.completion_route_max_ns.load(Ordering::Relaxed),
+            scheduler_passes: self.metrics.scheduler_passes.load(Ordering::Relaxed),
+            scheduler_total_ns: self.metrics.scheduler_total_ns.load(Ordering::Relaxed),
+            scheduler_max_ns: self.metrics.scheduler_max_ns.load(Ordering::Relaxed),
+            lane_starvation_events: self.metrics.lane_starvation_events.load(Ordering::Relaxed),
+            reserved_capacity_uses: self.metrics.reserved_capacity_uses.load(Ordering::Relaxed),
         }
     }
 

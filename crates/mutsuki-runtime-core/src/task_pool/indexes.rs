@@ -2,12 +2,14 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
-use mutsuki_runtime_contracts::{RunnerDescriptor, TaskId, TaskStatus};
+use mutsuki_runtime_contracts::{DispatchLane, RunnerDescriptor, TaskId, TaskStatus};
 
 use super::{TaskPool, TaskRecord};
 
-type ReadyQueues = HashMap<String, HashMap<ReadySelector, BTreeSet<ReadyKey>>>;
-type ReadyCounts = HashMap<String, HashMap<ReadySelector, BTreeMap<(u64, u64), usize>>>;
+type ReadyQueues =
+    HashMap<String, HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeSet<ReadyKey>>>>;
+type ReadyCounts =
+    HashMap<String, HashMap<ReadySelector, BTreeMap<DispatchLane, BTreeMap<(u64, u64), usize>>>>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) struct ReadySelector {
@@ -78,7 +80,31 @@ impl TaskPool {
                     continue;
                 };
                 for selector in selectors {
-                    if let Some(queue) = by_selector.get(selector) {
+                    if let Some(by_lane) = by_selector.get(selector) {
+                        queues.extend(by_lane.values());
+                    }
+                }
+            }
+        });
+        queues
+    }
+
+    pub(super) fn ready_dispatch_queues_for_lane(
+        &self,
+        runner: &RunnerDescriptor,
+        lane: &DispatchLane,
+    ) -> Vec<&BTreeSet<ReadyKey>> {
+        let mut queues = Vec::new();
+        self.with_ready_selectors(&runner.runner_id, |selectors| {
+            for protocol_id in &runner.accepted_protocol_ids {
+                let Some(by_selector) = self.indexes.ready_by_protocol.get(protocol_id) else {
+                    continue;
+                };
+                for selector in selectors {
+                    if let Some(queue) = by_selector
+                        .get(selector)
+                        .and_then(|by_lane| by_lane.get(lane))
+                    {
                         queues.push(queue);
                     }
                 }
@@ -103,6 +129,38 @@ impl TaskPool {
                         .iter()
                         .filter_map(|selector| by_selector.get(selector))
                 })
+                .flat_map(|by_lane| by_lane.values())
+                .flat_map(|by_step| by_step.iter())
+                .filter(|((ready_at_step, task_generation), _count)| {
+                    *ready_at_step <= current_step
+                        && (registry_generation == 0
+                            || *task_generation == 0
+                            || *task_generation == registry_generation)
+                })
+                .map(|(_key, count)| count)
+                .copied()
+                .sum()
+        })
+    }
+
+    pub(super) fn ready_dispatch_count_for_lane(
+        &self,
+        runner: &RunnerDescriptor,
+        current_step: u64,
+        registry_generation: u64,
+        lane: &DispatchLane,
+    ) -> usize {
+        self.with_ready_selectors(&runner.runner_id, |selectors| {
+            runner
+                .accepted_protocol_ids
+                .iter()
+                .filter_map(|protocol_id| self.indexes.ready_counts_by_protocol.get(protocol_id))
+                .flat_map(|by_selector| {
+                    selectors
+                        .iter()
+                        .filter_map(|selector| by_selector.get(selector))
+                })
+                .filter_map(|by_lane| by_lane.get(lane))
                 .flat_map(|by_step| by_step.iter())
                 .filter(|((ready_at_step, task_generation), _count)| {
                     *ready_at_step <= current_step
@@ -245,6 +303,7 @@ impl TaskIndexes {
                     &mut self.ready_by_protocol,
                     &record.task.protocol_id,
                     &selector,
+                    &record.task.dispatch_lane,
                     &ready_key,
                     present,
                 );
@@ -252,6 +311,7 @@ impl TaskIndexes {
                     &mut self.ready_counts_by_protocol,
                     &record.task.protocol_id,
                     &selector,
+                    &record.task.dispatch_lane,
                     ready_at_step,
                     record.task.registry_generation,
                     present,
@@ -345,6 +405,7 @@ fn set_ready(
     index: &mut ReadyQueues,
     protocol_id: &str,
     selector: &ReadySelector,
+    lane: &DispatchLane,
     key: &ReadyKey,
     present: bool,
 ) {
@@ -354,13 +415,21 @@ fn set_ready(
             .or_default()
             .entry(selector.clone())
             .or_default()
+            .entry(lane.clone())
+            .or_default()
             .insert(key.clone());
         return;
     }
     let remove_protocol = index.get_mut(protocol_id).is_some_and(|by_selector| {
-        let remove_selector = by_selector.get_mut(selector).is_some_and(|queue| {
-            queue.remove(key);
-            queue.is_empty()
+        let remove_selector = by_selector.get_mut(selector).is_some_and(|by_lane| {
+            let remove_lane = by_lane.get_mut(lane).is_some_and(|queue| {
+                queue.remove(key);
+                queue.is_empty()
+            });
+            if remove_lane {
+                by_lane.remove(lane);
+            }
+            by_lane.is_empty()
         });
         if remove_selector {
             by_selector.remove(selector);
@@ -376,6 +445,7 @@ fn set_ready_count(
     index: &mut ReadyCounts,
     protocol_id: &str,
     selector: &ReadySelector,
+    lane: &DispatchLane,
     ready_at_step: u64,
     registry_generation: u64,
     present: bool,
@@ -387,20 +457,28 @@ fn set_ready_count(
             .or_default()
             .entry(selector.clone())
             .or_default()
+            .entry(lane.clone())
+            .or_default()
             .entry(bucket)
             .or_default() += 1;
         return;
     }
     let remove_protocol = index.get_mut(protocol_id).is_some_and(|by_selector| {
-        let remove_selector = by_selector.get_mut(selector).is_some_and(|by_bucket| {
-            let remove_bucket = by_bucket.get_mut(&bucket).is_some_and(|count| {
-                *count = count.saturating_sub(1);
-                *count == 0
+        let remove_selector = by_selector.get_mut(selector).is_some_and(|by_lane| {
+            let remove_lane = by_lane.get_mut(lane).is_some_and(|by_bucket| {
+                let remove_bucket = by_bucket.get_mut(&bucket).is_some_and(|count| {
+                    *count = count.saturating_sub(1);
+                    *count == 0
+                });
+                if remove_bucket {
+                    by_bucket.remove(&bucket);
+                }
+                by_bucket.is_empty()
             });
-            if remove_bucket {
-                by_bucket.remove(&bucket);
+            if remove_lane {
+                by_lane.remove(lane);
             }
-            by_bucket.is_empty()
+            by_lane.is_empty()
         });
         if remove_selector {
             by_selector.remove(selector);

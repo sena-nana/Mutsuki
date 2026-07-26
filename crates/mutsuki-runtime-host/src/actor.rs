@@ -1,14 +1,15 @@
 mod cancellation;
 
 use futures_channel::oneshot;
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::Ordering as AtomicOrdering;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::{
-    AsyncInvocation, AsyncInvocationHandle, CancelPolicy, CompletionBatch, ExecutionClass,
-    InvocationMode, TaskHandle, TaskStatus, WorkBatch,
+    AsyncInvocation, AsyncInvocationHandle, CancelPolicy, CompletionBatch, DispatchLane,
+    ExecutionClass, InvocationMode, TaskHandle, TaskStatus, WorkBatch,
 };
 use mutsuki_runtime_core::{
     CoreRuntime, ReloadDecision, Runner, RunnerCompletion, RunnerDispatchTarget, RunnerIsolation,
@@ -23,7 +24,7 @@ use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState, TaskCompletionHub};
 use crate::management::ManagementExecutor;
 use crate::resource_router;
-use crate::scheduler::decide_schedule;
+use crate::scheduler::{apply_lane_qos, decide_schedule};
 use crate::worker::{WorkerDispatchError, WorkerExited, WorkerPools, WorkerStarted};
 
 use self::cancellation::{queue_management_retry, request_running_cancel};
@@ -49,6 +50,160 @@ pub(crate) enum CoreActorMsg {
         invocation_id: String,
     },
     Shutdown,
+}
+
+#[derive(Clone)]
+pub(crate) struct ActorSender {
+    tx: mpsc::SyncSender<CoreActorMsg>,
+    wake: mpsc::Sender<()>,
+    depth: Arc<AtomicUsize>,
+    enqueued_at: Arc<Mutex<VecDeque<Instant>>>,
+}
+
+pub(crate) struct ActorReceiver {
+    rx: mpsc::Receiver<CoreActorMsg>,
+    depth: Arc<AtomicUsize>,
+    enqueued_at: Arc<Mutex<VecDeque<Instant>>>,
+}
+
+pub(crate) fn actor_channel(
+    capacity: usize,
+    wake: mpsc::Sender<()>,
+) -> (ActorSender, ActorReceiver) {
+    let (tx, rx) = mpsc::sync_channel(capacity);
+    let depth = Arc::new(AtomicUsize::new(0));
+    let enqueued_at = Arc::new(Mutex::new(VecDeque::new()));
+    (
+        ActorSender {
+            tx,
+            wake,
+            depth: depth.clone(),
+            enqueued_at: enqueued_at.clone(),
+        },
+        ActorReceiver {
+            rx,
+            depth,
+            enqueued_at,
+        },
+    )
+}
+
+impl ActorSender {
+    pub(crate) fn send(&self, message: CoreActorMsg) -> Result<(), ()> {
+        self.depth.fetch_add(1, AtomicOrdering::AcqRel);
+        self.enqueued_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_back(Instant::now());
+        if self.tx.send(message).is_err() {
+            self.depth.fetch_sub(1, AtomicOrdering::AcqRel);
+            self.enqueued_at
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_back();
+            return Err(());
+        }
+        self.wake.send(()).map_err(|_| ())
+    }
+
+    pub(crate) fn depth(&self) -> usize {
+        self.depth.load(AtomicOrdering::Acquire)
+    }
+
+    pub(crate) fn oldest_age(&self) -> Duration {
+        self.enqueued_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .front()
+            .map(Instant::elapsed)
+            .unwrap_or_default()
+    }
+}
+
+impl ActorReceiver {
+    fn received(&self, message: CoreActorMsg) -> CoreActorMsg {
+        self.depth.fetch_sub(1, AtomicOrdering::AcqRel);
+        self.enqueued_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front();
+        message
+    }
+
+    fn try_recv(&self) -> Result<CoreActorMsg, mpsc::TryRecvError> {
+        self.rx.try_recv().map(|message| self.received(message))
+    }
+
+    fn recv_timeout(&self, timeout: Duration) -> Result<CoreActorMsg, mpsc::RecvTimeoutError> {
+        self.rx
+            .recv_timeout(timeout)
+            .map(|message| self.received(message))
+    }
+}
+
+fn receive_actor_message(
+    control_rx: &ActorReceiver,
+    data_rx: &ActorReceiver,
+    wake_rx: &mpsc::Receiver<()>,
+    timeout: Option<Duration>,
+    control_quota: usize,
+    control_burst: &mut usize,
+) -> Result<CoreActorMsg, mpsc::RecvTimeoutError> {
+    let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
+    loop {
+        if *control_burst >= control_quota.max(1)
+            && let Ok(message) = data_rx.try_recv()
+        {
+            *control_burst = 0;
+            return Ok(message);
+        }
+        match control_rx.try_recv() {
+            Ok(message) => {
+                *control_burst = control_burst.saturating_add(1);
+                return Ok(message);
+            }
+            Err(mpsc::TryRecvError::Disconnected)
+                if data_rx.depth.load(AtomicOrdering::Acquire) == 0 =>
+            {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Err(_) => {}
+        }
+        match data_rx.try_recv() {
+            Ok(message) => {
+                *control_burst = 0;
+                return Ok(message);
+            }
+            Err(mpsc::TryRecvError::Disconnected)
+                if control_rx.depth.load(AtomicOrdering::Acquire) == 0 =>
+            {
+                return Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Err(_) => {}
+        }
+        match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(mpsc::RecvTimeoutError::Timeout);
+                }
+                match wake_rx.recv_timeout(remaining) {
+                    Ok(()) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        return Err(mpsc::RecvTimeoutError::Timeout);
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(mpsc::RecvTimeoutError::Disconnected);
+                    }
+                }
+            }
+            None => {
+                if wake_rx.recv().is_err() {
+                    return Err(mpsc::RecvTimeoutError::Disconnected);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -167,7 +322,9 @@ fn next_required_tick(
 pub(crate) fn core_actor_loop(
     mut core: CoreRuntime,
     config: HostRuntimeConfig,
-    rx: mpsc::Receiver<CoreActorMsg>,
+    control_rx: ActorReceiver,
+    data_rx: ActorReceiver,
+    wake_rx: mpsc::Receiver<()>,
     mut pools: WorkerPools,
     management: ManagementExecutor,
     completion_hub: std::sync::Arc<TaskCompletionHub>,
@@ -177,6 +334,8 @@ pub(crate) fn core_actor_loop(
     let mut draining_invocations: BTreeMap<String, DrainingInvocation> = BTreeMap::new();
     let mut driver = DriverState::default();
     let mut terminal_revision = terminal_revision(&core);
+    let mut control_burst = 0usize;
+    let mut submitted_at: BTreeMap<String, Instant> = BTreeMap::new();
     loop {
         driver.refresh_scheduled_tick(
             next_required_tick(&core, &running_batches_by_task),
@@ -186,10 +345,14 @@ pub(crate) fn core_actor_loop(
         let wait = driver
             .next_wake_deadline(&config, &running_batches_by_task)
             .map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        let received = match wait {
-            Some(wait) => rx.recv_timeout(wait),
-            None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
-        };
+        let received = receive_actor_message(
+            &control_rx,
+            &data_rx,
+            &wake_rx,
+            wait,
+            config.actor_control_quota,
+            &mut control_burst,
+        );
         let msg = match received {
             Ok(msg) => msg,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -231,21 +394,40 @@ pub(crate) fn core_actor_loop(
             &mut draining_invocations,
         );
         let shutdown = match msg {
-            CoreActorMsg::Command(command, reply_tx) => send_command_reply(
-                handle_command(
+            CoreActorMsg::Command(command, reply_tx) => {
+                match &command {
+                    HostRuntimeCommand::SubmitTask(task) => {
+                        submitted_at.insert(task.task_id.clone(), Instant::now());
+                    }
+                    HostRuntimeCommand::SubmitBatch(batch) => {
+                        let submitted = Instant::now();
+                        for task in &batch.tasks {
+                            submitted_at.insert(task.task_id.clone(), submitted);
+                        }
+                    }
+                    _ => {}
+                }
+                let cancel_started =
+                    matches!(&command, HostRuntimeCommand::CancelTask(_)).then(Instant::now);
+                let result = handle_command(
                     command,
                     &mut core,
                     &config,
                     &mut pools,
                     &management,
-                    &rx,
+                    &data_rx,
                     &mut pending_cancels,
                     &mut running_batches_by_task,
                     &mut draining_invocations,
                     &driver,
-                ),
-                reply_tx,
-            ),
+                );
+                if let Some(started) = cancel_started {
+                    config
+                        .actor_metrics
+                        .record_cancel_propagation(started.elapsed());
+                }
+                send_command_reply(result, reply_tx)
+            }
             CoreActorMsg::AsyncResourceCommand(command, reply_tx) => {
                 start_async_resource_command(command, reply_tx, &config);
                 false
@@ -255,10 +437,18 @@ pub(crate) fn core_actor_loop(
                 false
             }
             CoreActorMsg::WorkerStarted(started) => {
+                for task_id in &started.task_ids {
+                    if let Some(submitted) = submitted_at.remove(task_id) {
+                        config
+                            .actor_metrics
+                            .record_submit_to_dispatch(submitted.elapsed());
+                    }
+                }
                 mark_worker_started(started, &mut running_batches_by_task);
                 false
             }
             CoreActorMsg::WorkerCompleted(completion) => {
+                let route_started = Instant::now();
                 let _ = handle_worker_completion(
                     completion,
                     &mut core,
@@ -268,6 +458,9 @@ pub(crate) fn core_actor_loop(
                 );
                 let _ =
                     schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
+                config
+                    .actor_metrics
+                    .record_completion_route(route_started.elapsed());
                 false
             }
             CoreActorMsg::AsyncEvent(event) => {
@@ -347,7 +540,7 @@ fn handle_command(
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
-    rx: &mpsc::Receiver<CoreActorMsg>,
+    rx: &ActorReceiver,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
@@ -606,7 +799,7 @@ fn reload_runtime(
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
-    rx: &mpsc::Receiver<CoreActorMsg>,
+    rx: &ActorReceiver,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
@@ -636,7 +829,7 @@ fn drain_for_reload(
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
-    rx: &mpsc::Receiver<CoreActorMsg>,
+    rx: &ActorReceiver,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
@@ -809,7 +1002,7 @@ fn drain_worker_completions(
     config: &HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
-    rx: &mpsc::Receiver<CoreActorMsg>,
+    rx: &ActorReceiver,
     pending_cancels: &mut BTreeMap<String, Vec<String>>,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
@@ -1382,8 +1575,27 @@ fn schedule_ready_at(
     pools: &mut WorkerPools,
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
 ) -> RuntimeResult<RunnerLoopReport> {
-    let mut compute_reservations = 0usize;
-    let mut blocking_reservations = 0usize;
+    let scheduler_started = Instant::now();
+    let mut domain_lane_demand: BTreeMap<String, BTreeMap<DispatchLane, usize>> = BTreeMap::new();
+    for (descriptor, load) in core.runner_load_snapshot() {
+        let async_invocation = matches!(
+            descriptor.invocation_mode,
+            InvocationMode::AsyncReentrant | InvocationMode::AsyncExclusive
+        );
+        let domain_id = if async_invocation {
+            "async".to_string()
+        } else {
+            pools
+                .domain_id(&descriptor.execution_class)
+                .unwrap_or("control")
+                .to_string()
+        };
+        let demand = domain_lane_demand.entry(domain_id).or_default();
+        for (lane, count) in load.queued_by_lane {
+            *demand.entry(lane).or_default() += count;
+        }
+    }
+    let mut domain_reservations: BTreeMap<String, usize> = BTreeMap::new();
     let mut async_reservations = 0usize;
     let (report, dispatches) = core.claim_ready_dispatches_at_step(
         target_step,
@@ -1399,21 +1611,23 @@ fn schedule_ready_at(
             let reservations = if async_invocation {
                 &mut async_reservations
             } else {
-                match descriptor.execution_class {
-                    ExecutionClass::Orchestration | ExecutionClass::Cpu => {
-                        &mut compute_reservations
-                    }
-                    ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
-                        &mut blocking_reservations
-                    }
-                    ExecutionClass::Control => {
-                        return Ok(mutsuki_runtime_core::ScheduleDecision::new(
-                            "host.default",
-                            0,
-                            "control.inline",
-                        ));
-                    }
+                if descriptor.execution_class == ExecutionClass::Control {
+                    return Ok(mutsuki_runtime_core::ScheduleDecision::new(
+                        "host.default",
+                        0,
+                        "control.inline",
+                    ));
                 }
+                let domain_id = pools
+                    .domain_id(&descriptor.execution_class)
+                    .ok_or_else(|| {
+                        host_failure(
+                            "host.execution_domain.class_missing",
+                            format!("execution_class.{:?}", descriptor.execution_class),
+                        )
+                    })?
+                    .to_string();
+                domain_reservations.entry(domain_id).or_default()
             };
             let (pool_slots, mut pool_capacity) = if async_invocation {
                 if let Some(executor) = &config.async_executor {
@@ -1453,7 +1667,7 @@ fn schedule_ready_at(
                 pool_capacity.queued_batches.saturating_add(*reservations);
             let running_batches =
                 running_batch_count_for_runner(running_batches_by_task, &descriptor.runner_id);
-            let decision = decide_schedule(
+            let mut decision = decide_schedule(
                 descriptor,
                 load,
                 current_step,
@@ -1464,6 +1678,39 @@ fn schedule_ready_at(
                 running_batches,
                 config.scheduler_policy.as_ref(),
             )?;
+            if !async_invocation
+                && let Some(domain_id) = pools.domain_id(&descriptor.execution_class)
+                && let Some(policies) = pools.lane_policies(&descriptor.execution_class)
+                && let Some(demand) = domain_lane_demand.get(domain_id)
+            {
+                decision = apply_lane_qos(decision, load, demand, policies);
+                let starvation = demand
+                    .iter()
+                    .filter(|(lane, count)| {
+                        **count > 0
+                            && decision
+                                .budget
+                                .lane_budget
+                                .get(*lane)
+                                .is_some_and(|budget| budget.max_entries == 0)
+                    })
+                    .count();
+                config.actor_metrics.record_lane_starvation(starvation);
+                let reserved_uses = [DispatchLane::Control, DispatchLane::Interactive]
+                    .into_iter()
+                    .filter(|lane| {
+                        demand.get(lane).copied().unwrap_or_default() > 0
+                            && decision
+                                .budget
+                                .lane_budget
+                                .get(lane)
+                                .is_some_and(|budget| budget.max_entries > 0)
+                    })
+                    .count();
+                config
+                    .actor_metrics
+                    .record_reserved_capacity_use(reserved_uses);
+            }
             if decision.dispatch_limit > 0 && decision.budget.max_batches > 0 {
                 *reservations = (*reservations).saturating_add(decision.budget.max_batches);
             }
@@ -1656,10 +1903,14 @@ fn schedule_ready_at(
             );
         }
     }
-    Ok(RunnerLoopReport {
+    let report = RunnerLoopReport {
         claimed_tasks: report.claimed_tasks.saturating_sub(deferred_entries),
         completed_tasks: report.completed_tasks.saturating_add(rejected_entries),
-    })
+    };
+    config
+        .actor_metrics
+        .record_scheduler_pass(scheduler_started.elapsed());
+    Ok(report)
 }
 
 #[cfg(test)]

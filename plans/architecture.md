@@ -489,3 +489,18 @@ Contract surface 兼容性：
 
 业务对象不是 runtime 实例，而是上层 Store 中的数据聚合。Rust core 中不得出现领域或
 产品专用执行分支。
+
+## 11. RuntimeDomain、ExecutionDomain 与 Lane QoS
+
+- 一个 `CoreRuntime` 是一个 RuntimeDomain，独占 TaskPool、TaskLease、ResourceManager、
+  StateStore、registry generation、tick 与 lifecycle。
+- `RuntimeGroupHost` 只在 Host 层聚合多个 RuntimeDomain。跨域请求必须使用
+  `CrossDomainTaskRequest` 显式选择目标域，并携带 timeout、idempotency 与 trace facts；
+  禁止 Core 根据 protocol id 隐式转发。
+- 单个 RuntimeDomain 的物理执行由配置驱动 `ExecutionDomainConfig` 管理。
+  `ExecutionClass` 到 domain 的映射必须完整且唯一；Control 不进入普通 worker domain。
+- `DispatchLane` 在 TaskPool 中拥有独立 ready 索引。Host 将 lane weight、保留 entry、
+  最大占用、queue entry 与 inflight byte 预算转换为每轮 `DispatchBudget`，Core 以
+  round-robin 候选选择执行公平性，Background/Bulk 在交互需求存在时不能消费保留容量。
+- Core Actor 使用独立有界 control/data mailbox；control burst quota 保证完成洪峰不会
+  淹没 submit/query/cancel，同时避免 data mailbox 永久饥饿。

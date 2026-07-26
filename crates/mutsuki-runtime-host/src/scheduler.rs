@@ -1,11 +1,14 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{ExecutionClass, RunnerDescriptor, RuntimeError, ScalarValue};
+use mutsuki_runtime_contracts::{
+    DispatchLane, ExecutionClass, RunnerDescriptor, RuntimeError, ScalarValue,
+};
 use mutsuki_runtime_core::{
-    DispatchBudget, RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision,
+    DispatchBudget, LaneBudget, RunnerLoad, RuntimeFailure, RuntimeResult, ScheduleDecision,
 };
 
-use crate::worker::PoolCapacitySnapshot;
+use crate::worker::{LaneExecutionPolicy, PoolCapacitySnapshot};
 
 #[derive(Clone, Debug)]
 pub struct RunnerLimits {
@@ -133,6 +136,80 @@ pub(crate) fn decide_schedule(
             .saturating_sub(pool_capacity.inflight_bytes),
     );
     Ok(decision)
+}
+
+pub(crate) fn apply_lane_qos(
+    mut decision: ScheduleDecision,
+    load: &RunnerLoad,
+    domain_demand: &BTreeMap<DispatchLane, usize>,
+    policies: &BTreeMap<DispatchLane, LaneExecutionPolicy>,
+) -> ScheduleDecision {
+    if decision.dispatch_limit == 0 || load.queued_count == 0 {
+        return decision;
+    }
+    let max_entries = decision.budget.max_entries.min(decision.dispatch_limit);
+    let demanded_lanes = domain_demand.values().filter(|count| **count > 0).count();
+    let total_weight: usize = domain_demand
+        .iter()
+        .filter(|(_, count)| **count > 0)
+        .filter_map(|(lane, _)| policies.get(lane))
+        .map(|policy| policy.weight)
+        .sum::<usize>()
+        .max(1);
+    let protected_entries: usize = [DispatchLane::Control, DispatchLane::Interactive]
+        .into_iter()
+        .filter(|lane| domain_demand.get(lane).copied().unwrap_or_default() > 0)
+        .filter_map(|lane| policies.get(&lane))
+        .map(|policy| policy.reserved_entries)
+        .sum();
+    let lower_priority_capacity = max_entries.saturating_sub(protected_entries);
+    let mut lane_budget = BTreeMap::new();
+    for lane in DispatchLane::ALL {
+        let demand = load.queued_by_lane.get(&lane).copied().unwrap_or_default();
+        if demand == 0 {
+            lane_budget.insert(lane, LaneBudget { max_entries: 0 });
+            continue;
+        }
+        let policy = policies
+            .get(&lane)
+            .cloned()
+            .unwrap_or_else(|| LaneExecutionPolicy::for_lane(&lane));
+        let only_active_lane = demanded_lanes <= 1;
+        let mut allowance = if only_active_lane && policy.allow_idle_borrow {
+            max_entries
+        } else {
+            let weighted = max_entries
+                .saturating_mul(policy.weight)
+                .div_ceil(total_weight)
+                .max(1);
+            let share = max_entries
+                .saturating_mul(usize::from(policy.max_share_percent))
+                .div_ceil(100)
+                .max(1);
+            weighted.min(share).max(policy.reserved_entries)
+        };
+        if matches!(lane, DispatchLane::Background | DispatchLane::Bulk) && protected_entries > 0 {
+            allowance = allowance.min(lower_priority_capacity);
+        }
+        lane_budget.insert(
+            lane,
+            LaneBudget {
+                max_entries: allowance.min(demand),
+            },
+        );
+    }
+    let qos_entries = lane_budget
+        .values()
+        .map(|budget| budget.max_entries)
+        .sum::<usize>()
+        .min(max_entries);
+    decision.budget.lane_budget = lane_budget;
+    decision.budget.max_entries = qos_entries;
+    decision.dispatch_limit = decision.dispatch_limit.min(qos_entries);
+    if qos_entries == 0 {
+        decision.budget.max_batches = 0;
+    }
+    decision
 }
 
 fn host_capacity(
@@ -288,6 +365,7 @@ mod tests {
             running_count: 0,
             waiting_count: 0,
             queued_count: 1_024,
+            queued_by_lane: Default::default(),
             pending_weight: 1_024,
         };
         let limits = RunnerLimits {
@@ -308,6 +386,7 @@ mod tests {
             running_count: 1,
             waiting_count: 1,
             queued_count: 1,
+            queued_by_lane: Default::default(),
             pending_weight: 3,
         };
         let limits = RunnerLimits {
@@ -328,6 +407,7 @@ mod tests {
             running_count: 4,
             waiting_count: 0,
             queued_count: 4,
+            queued_by_lane: Default::default(),
             pending_weight: 8,
         };
 

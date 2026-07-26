@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
@@ -105,6 +105,7 @@ pub struct RunnerLoad {
     pub running_count: usize,
     pub waiting_count: usize,
     pub queued_count: usize,
+    pub queued_by_lane: BTreeMap<mutsuki_runtime_contracts::DispatchLane, usize>,
     pub pending_weight: usize,
 }
 
