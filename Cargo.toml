@@ -32,11 +32,11 @@ toml = "0.9"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
-mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "e587216773d25153a10ba0488ba522050da07430" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "b47bc9656c0990be3444af5975a203c7cb57825b" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "b47bc9656c0990be3444af5975a203c7cb57825b" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "b47bc9656c0990be3444af5975a203c7cb57825b" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "b47bc9656c0990be3444af5975a203c7cb57825b" }
+mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "b47bc9656c0990be3444af5975a203c7cb57825b" }
 mutsuki-link-local = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 mutsuki-link-core = { git = "https://github.com/sena-nana/MutsukiLink.git", rev = "26c66311e0e90ddb28d37e886bdda699f8662439" }
 
