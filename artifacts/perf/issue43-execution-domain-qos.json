@@ -1,0 +1,32 @@
+{
+  "schema": "mutsuki.execution-domain-qos.v1",
+  "business_purpose": "complete one interactive request while the same background operation is running",
+  "workload": {
+    "background_block_ms": 20,
+    "interactive_work": "deterministic no-op completion",
+    "measurement": "interactive submit to terminal outcome",
+    "multi_path_threads": {
+      "background": 1,
+      "interactive": 1
+    },
+    "samples": 30,
+    "single_path_threads": 1
+  },
+  "single_path": {
+    "samples": 30,
+    "p50_ms": 20.4466,
+    "p95_ms": 22.0452,
+    "p99_ms": 22.55,
+    "max_ms": 22.55
+  },
+  "multi_path": {
+    "samples": 30,
+    "p50_ms": 0.12760000000000002,
+    "p95_ms": 0.3767,
+    "p99_ms": 0.9093,
+    "max_ms": 0.9093
+  },
+  "p99_improvement_percent": 95.96762749445678,
+  "expected_minimum_improvement_percent": 50.0,
+  "passed": true
+}

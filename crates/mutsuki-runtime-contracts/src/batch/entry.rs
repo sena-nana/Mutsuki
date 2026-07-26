@@ -12,6 +12,16 @@ pub enum DispatchLane {
     Bulk,
 }
 
+impl DispatchLane {
+    pub const ALL: [Self; 5] = [
+        Self::Control,
+        Self::Interactive,
+        Self::Normal,
+        Self::Background,
+        Self::Bulk,
+    ];
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OrderingRequirement {

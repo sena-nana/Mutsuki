@@ -122,6 +122,59 @@ fn claim_ready_dispatches_applies_lane_budget_before_batch_build() {
 }
 
 #[test]
+fn qos_selection_round_robins_lanes_before_filling_bulk_capacity() {
+    let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
+    worker.batch.max_batch_entries = 3;
+    worker.batch.preferred_batch_size = 3;
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    for index in 0..4 {
+        let mut task = Task::new(format!("bulk-{index}"), "runtime.schedule.input", json!({}));
+        task.priority = 100;
+        task.dispatch_lane = DispatchLane::Bulk;
+        runtime.submit_task(task).unwrap();
+    }
+    let mut interactive = Task::new("interactive", "runtime.schedule.input", json!({}));
+    interactive.priority = -100;
+    interactive.dispatch_lane = DispatchLane::Interactive;
+    runtime.submit_task(interactive).unwrap();
+
+    let (_, dispatches) = runtime
+        .claim_ready_dispatches(
+            |descriptor, _, _, _| {
+                if descriptor.runner_id != "worker" {
+                    return Ok(ScheduleDecision::new("test.qos", 0, "skip"));
+                }
+                Ok(
+                    ScheduleDecision::new("test.qos", 3, "fair").with_budget(DispatchBudget {
+                        max_entries: 3,
+                        max_batches: 1,
+                        max_bytes: usize::MAX,
+                        lane_budget: BTreeMap::from([
+                            (DispatchLane::Interactive, LaneBudget { max_entries: 1 }),
+                            (DispatchLane::Bulk, LaneBudget { max_entries: 2 }),
+                        ]),
+                    }),
+                )
+            },
+            None,
+        )
+        .unwrap();
+    let task_ids = dispatches[0]
+        .batch
+        .entries
+        .iter()
+        .map(|entry| entry.task_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(task_ids[0], "interactive");
+    assert_eq!(
+        task_ids.iter().filter(|id| id.starts_with("bulk-")).count(),
+        2
+    );
+}
+
+#[test]
 fn claim_ready_dispatches_clamps_to_runner_max_batch_entries() {
     let mut worker = runner_descriptor("worker", "runtime.schedule.input", RunnerPurity::Pure);
     worker.batch.max_batch_entries = 2;

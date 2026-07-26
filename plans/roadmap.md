@@ -305,6 +305,19 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   policy。后续重点是 backend / bridge / codec 的长期连接监督、drain、replacement 与
   workflow 实例状态资源化。
 
+## Issue #43 多通路运行基线
+
+- `TaskPool` 已按 DispatchLane 建立 ready 索引与计数，QoS 预算使用跨 lane round-robin
+  候选选择。
+- `mutsuki-runtime-host` 已把固定 compute/blocking 池泛化为配置驱动 ExecutionDomain，
+  并暴露 domain/lane queue、running 与 inflight byte snapshot。
+- Core Actor 已拆分有界 control/data mailbox，并暴露 mailbox、submit-to-dispatch、
+  cancel、completion route、scheduler、starvation 与 reserved-capacity 指标。
+- `RuntimeGroupHost` 提供多 RuntimeDomain lifecycle、health snapshot、共享 Host services、
+  typed client、显式跨域 request/cancel/wait、幂等冲突与独立 reload/abort。
+- 固定机基准 `execution_domain_qos` 使用相同后台阻塞与交互请求，对比单共享通路和
+  interactive/background 双通路；验收门槛为多通路 p99 至少降低 50%。
+
 ## 红线
 
 - 不引入实例私有收件队列作为核心事实源。
