@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use mutsuki_bot::assemble_service;
+use mutsuki_bot::{apply_product_runtime_profile, assemble_service};
 use mutsuki_bot_service_host_integration::BilibiliConsoleBridge;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use tempfile::tempdir;
@@ -13,6 +13,31 @@ async fn empty_external_config_starts_and_stops_neutral_runtime() {
     let config_path = root.path().join("product.toml");
     std::fs::write(&config_path, service_toml(root.path(), "")).unwrap();
     let service = load(&config_path);
+
+    let runtime = assemble_service(service).unwrap().start().await.unwrap();
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn bot_profile_starts_with_isolated_execution_paths() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let mut product = service_toml(root.path(), "");
+    product = product.replacen("profile = \"test\"", "profile = \"bot\"", 1);
+    std::fs::write(&config_path, product).unwrap();
+    let mut service = load(&config_path);
+    apply_product_runtime_profile(&mut service);
+
+    let domains = &service.core.execution_domains;
+    assert_eq!(domains.len(), 4);
+    assert!(domains.iter().any(|domain| domain.id == "bot-control"));
+    assert!(domains.iter().any(|domain| domain.id == "network-io"));
+    assert!(
+        domains
+            .iter()
+            .any(|domain| domain.id == "blocking-adapters")
+    );
+    assert!(domains.iter().any(|domain| domain.id == "agent-compute"));
 
     let runtime = assemble_service(service).unwrap().start().await.unwrap();
     runtime.shutdown().await;
