@@ -389,6 +389,7 @@ fn event_task(source_task_id: &str, event: DomainEvent, generation: u64) -> Task
         "core.event.append",
         serde_json::to_value(event).expect("DomainEvent serializes"),
     );
+    task.correlation_id = Some(source_task_id.to_string());
     task.registry_generation = generation;
     task
 }
