@@ -1499,6 +1499,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-runtime-reference"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-agent-protocol",
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts 0.1.0 (git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67)",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-host",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-bot-service-host-integration"
 version = "0.1.0"
 source = "git+https://github.com/sena-nana/MutsukiBotPlugins.git?rev=c9152c8e8e05f313343cc836985d118732785374#c9152c8e8e05f313343cc836985d118732785374"

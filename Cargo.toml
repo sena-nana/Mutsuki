@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mutsuki-bot"]
+members = ["crates/mutsuki-bot", "crates/mutsuki-bot-runtime-reference"]
 resolver = "2"
 
 [workspace.package]
@@ -22,12 +22,15 @@ mutsuki-bot-web-console = { git = "https://github.com/sena-nana/MutsukiBotPlugin
 mutsuki-web-host = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "f24a1325684d55aacdf409cd668b0b68f3cf787d" }
 mutsuki-web-protocol = { git = "https://github.com/sena-nana/MutsukiWebHost.git", rev = "f24a1325684d55aacdf409cd668b0b68f3cf787d" }
 mutsuki-bot-testkit = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "c9152c8e8e05f313343cc836985d118732785374" }
+mutsuki-bot-protocol = { git = "https://github.com/sena-nana/MutsukiBotPlugins.git", rev = "c9152c8e8e05f313343cc836985d118732785374" }
 mutsuki-std-plugins = { git = "https://github.com/sena-nana/MutsukiStdPlugins.git", rev = "382b6984129fc09b10cc8e5f3af3649fd353f9ea" }
 mutsuki-agent-bundle = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-agent-protocol = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-agent-sdk = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-plugin-agent-model-gateway = { git = "https://github.com/sena-nana/MutsukiAgentKit.git", rev = "6a8b6d90f02fa06c68067dd29d795a382ec4b7a0" }
 mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"
