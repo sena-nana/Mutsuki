@@ -4,8 +4,8 @@ use crate::health::HostHealthState;
 use crate::host::{HostComponents, MutsukiTauriHost};
 use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_runner::{
-    BuiltinRunnerFactory, register_builtin_runners, register_discovered_plugins,
-    scan_plugin_runners,
+    BuiltinRunnerFactory, declared_permission_grant_manifest, register_builtin_runners,
+    register_discovered_plugins, register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{RuntimeProfile, RuntimeProfileMode};
 use mutsuki_runtime_core::Runner;
@@ -93,7 +93,9 @@ impl MutsukiTauriHostBuilder {
         let reload_blocked_by_builtin_runners = !self.runners.is_empty();
         let mut runners = self.runners;
         runners.extend(self.runner_factories.iter().map(|factory| factory()));
+        let permission_grants = declared_permission_grant_manifest(&loaded);
         let mut discovered = register_discovered_plugins(&mut loaded, &mut bootstrapper);
+        register_permission_grants(permission_grants, &mut bootstrapper, &mut discovered);
         register_builtin_runners(&mut loaded, &mut bootstrapper, runners, &mut discovered)?;
         let observability = self
             .runtime_config
