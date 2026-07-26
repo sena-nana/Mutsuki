@@ -613,7 +613,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "serde",
  "serde_json",
@@ -622,7 +622,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -632,11 +632,12 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "crossbeam-channel",
  "futures-channel",
  "futures-util",
+ "libloading",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -649,7 +650,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -662,7 +663,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -672,7 +673,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-wire"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=e587216773d25153a10ba0488ba522050da07430#e587216773d25153a10ba0488ba522050da07430"
 dependencies = [
  "mutsuki-runtime-contracts",
  "rmp-serde",
@@ -842,7 +843,6 @@ dependencies = [
  "cpu-time",
  "futures",
  "libc",
- "libloading",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",

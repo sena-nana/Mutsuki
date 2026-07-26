@@ -330,20 +330,12 @@ pub struct AbiContract {
     pub transport_version: u32,
 }
 
-pub const HOST_ABI_INVENTORY: &[AbiContract] = &[
-    AbiContract {
-        codec_id: "mutsuki.codec.typed-jsonl.v1",
-        bridge_id: "mutsuki.bridge.abi.jsonl.v1",
-        entry_symbol: "mutsuki_plugin_abi_v1",
-        transport_version: 1,
-    },
-    AbiContract {
-        codec_id: "mutsuki.codec.typed-msgpack.v1",
-        bridge_id: "mutsuki.bridge.abi.binary.v2",
-        entry_symbol: "mutsuki_plugin_abi_v2",
-        transport_version: 2,
-    },
-];
+pub const HOST_ABI_INVENTORY: &[AbiContract] = &[AbiContract {
+    codec_id: "mutsuki.codec.typed-msgpack.v1",
+    bridge_id: "mutsuki.bridge.abi.binary.v2",
+    entry_symbol: "mutsuki_plugin_abi_v2",
+    transport_version: 2,
+}];
 
 /// Resolve the declared ABI backend to a host inventory entry.
 pub fn resolve_abi_contract(manifest: &PluginManifest) -> PluginLoaderResult<AbiContract> {
@@ -551,7 +543,7 @@ mod tests {
                 "test.abi",
                 artifact.file_name().unwrap().to_string_lossy().as_ref(),
                 &hash,
-                HOST_ABI_INVENTORY[1],
+                HOST_ABI_INVENTORY[0],
             ),
         );
 
@@ -569,7 +561,7 @@ mod tests {
         );
         assert_eq!(
             resolve_abi_contract(&catalog.records[0].manifest).unwrap(),
-            HOST_ABI_INVENTORY[1]
+            HOST_ABI_INVENTORY[0]
         );
     }
 
@@ -585,7 +577,7 @@ mod tests {
             "test.abi.bad",
             artifact.file_name().unwrap().to_string_lossy().as_ref(),
             &hash,
-            HOST_ABI_INVENTORY[1],
+            HOST_ABI_INVENTORY[0],
         );
         bad.provides.plugin_backends[0].codec_id = Some("mutsuki.codec.unknown".into());
         write_plugin(&plugin_dir, bad);
@@ -620,7 +612,7 @@ mod tests {
                 "test.abi",
                 artifact.file_name().unwrap().to_string_lossy().as_ref(),
                 &format!("sha256:{}", "0".repeat(64)),
-                HOST_ABI_INVENTORY[1],
+                HOST_ABI_INVENTORY[0],
             ),
         );
         let inventory = PluginInventory::scan(
@@ -708,6 +700,7 @@ mod tests {
                 artifact_type,
                 path: path.into(),
                 sha256: sha256.into(),
+                companion_artifacts: Vec::new(),
             },
             provides: PluginProvides::default(),
             requires: Vec::new(),

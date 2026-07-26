@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         artifact_type: ArtifactType::Native,
         path: "<builtin>".into(),
         sha256: "sha256:benchmark-service-builtin".into(),
+        companion_artifacts: Vec::new(),
     });
     let descriptor = manifest.provides.runners[0].clone();
     let runtime = ServiceRuntimeBuilder::new(config.clone())
