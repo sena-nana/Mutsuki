@@ -41,11 +41,11 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 windows-service = "0.8.1"
 
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
-mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ea1ef651e3357925a238c1aa7ce64b381c5735aa" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
+mutsuki-runtime-wire = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
 
 mutsuki-service-config = { path = "crates/mutsuki-service-config" }
 mutsuki-service-plugin-loader = { path = "crates/mutsuki-service-plugin-loader" }

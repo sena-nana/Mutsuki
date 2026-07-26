@@ -192,6 +192,58 @@ pub struct HostMetrics {
     /// Cumulative process CPU time in milliseconds when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_time_ms: Option<u64>,
+    /// Core runtime scheduling and mailbox metrics. Absent when Core is stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<CoreRuntimeMetrics>,
+    /// Physical execution-domain capacity and lane pressure.
+    #[serde(default)]
+    pub execution_domains: Vec<ExecutionDomainMetrics>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoreRuntimeMetrics {
+    pub control_mailbox_depth: usize,
+    pub data_mailbox_depth: usize,
+    pub control_oldest_message_age_ns: u64,
+    pub data_oldest_message_age_ns: u64,
+    pub submit_to_dispatch_samples: u64,
+    pub submit_to_dispatch_total_ns: u64,
+    pub submit_to_dispatch_max_ns: u64,
+    pub cancel_propagation_samples: u64,
+    pub cancel_propagation_total_ns: u64,
+    pub cancel_propagation_max_ns: u64,
+    pub completion_route_samples: u64,
+    pub completion_route_total_ns: u64,
+    pub completion_route_max_ns: u64,
+    pub scheduler_passes: u64,
+    pub scheduler_total_ns: u64,
+    pub scheduler_max_ns: u64,
+    pub lane_starvation_events: u64,
+    pub reserved_capacity_uses: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionDomainMetrics {
+    pub domain_id: String,
+    pub execution_classes: Vec<String>,
+    pub configured_threads: usize,
+    pub active_threads: usize,
+    pub queued_entries: usize,
+    pub running_entries: usize,
+    pub inflight_bytes: usize,
+    pub max_inflight_bytes: usize,
+    pub degraded: bool,
+    pub lanes: Vec<ExecutionLaneMetrics>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionLaneMetrics {
+    pub lane: String,
+    pub queued_entries: usize,
+    pub running_entries: usize,
+    pub inflight_bytes: usize,
+    pub queue_entry_limit: usize,
+    pub max_inflight_bytes: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

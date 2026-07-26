@@ -479,6 +479,12 @@ pub struct CoreSection {
     pub runner_wall_clock_timeout_ms: Option<u64>,
     pub cancel_grace_period_ms: Option<u64>,
     pub worker_health_timeout_ms: Option<u64>,
+    /// Optional physical execution topology. Empty preserves the legacy
+    /// compute/blocking worker pools selected by `worker_profile`.
+    pub execution_domains: Vec<ExecutionDomainSection>,
+    pub actor_control_queue_limit: Option<usize>,
+    pub actor_data_queue_limit: Option<usize>,
+    pub actor_control_quota: Option<usize>,
 }
 
 impl Default for CoreSection {
@@ -495,8 +501,70 @@ impl Default for CoreSection {
             runner_wall_clock_timeout_ms: None,
             cancel_grace_period_ms: Some(30_000),
             worker_health_timeout_ms: None,
+            execution_domains: Vec::new(),
+            actor_control_queue_limit: None,
+            actor_data_queue_limit: None,
+            actor_control_quota: None,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ExecutionDomainSection {
+    pub id: String,
+    pub execution_classes: Vec<ExecutionClassName>,
+    pub threads: usize,
+    pub queue_capacity: usize,
+    pub max_inflight_bytes: usize,
+    pub max_isolated_threads: usize,
+    pub lanes: BTreeMap<DispatchLaneName, LanePolicySection>,
+}
+
+impl Default for ExecutionDomainSection {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            execution_classes: Vec::new(),
+            threads: 1,
+            queue_capacity: 1_024,
+            max_inflight_bytes: 64 * 1024 * 1024,
+            max_isolated_threads: 2,
+            lanes: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionClassName {
+    Orchestration,
+    Io,
+    Cpu,
+    Blocking,
+    Script,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchLaneName {
+    Control,
+    Interactive,
+    Normal,
+    Background,
+    Bulk,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LanePolicySection {
+    pub weight: Option<usize>,
+    pub reserved_entries: Option<usize>,
+    pub max_share_percent: Option<u8>,
+    pub queue_entry_limit: Option<usize>,
+    pub max_inflight_bytes: Option<usize>,
+    pub starvation_steps: Option<u64>,
+    pub allow_idle_borrow: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1204,6 +1272,43 @@ mod tests {
                 max_isolated_workers: 2,
             }
         );
+    }
+
+    #[test]
+    fn execution_domains_and_lane_policies_round_trip_through_toml() {
+        let config: ServiceConfig = toml::from_str(
+            r#"
+                [core]
+                actor_control_queue_limit = 64
+                actor_data_queue_limit = 512
+                actor_control_quota = 8
+
+                [[core.execution_domains]]
+                id = "interactive"
+                execution_classes = ["orchestration", "cpu"]
+                threads = 2
+
+                [core.execution_domains.lanes.interactive]
+                weight = 16
+                reserved_entries = 4
+                max_share_percent = 100
+                allow_idle_borrow = true
+            "#,
+        )
+        .expect("multi-domain config should parse");
+
+        assert_eq!(config.core.execution_domains.len(), 1);
+        let domain = &config.core.execution_domains[0];
+        assert_eq!(domain.id, "interactive");
+        assert_eq!(
+            domain.execution_classes,
+            vec![ExecutionClassName::Orchestration, ExecutionClassName::Cpu,]
+        );
+        assert_eq!(
+            domain.lanes[&DispatchLaneName::Interactive].reserved_entries,
+            Some(4)
+        );
+        assert_eq!(config.core.actor_control_quota, Some(8));
     }
 
     #[test]
