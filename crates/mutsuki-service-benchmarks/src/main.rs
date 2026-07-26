@@ -193,6 +193,7 @@ async fn start_runtime(deployment: Deployment) -> Result<PreparedRuntime, String
                 artifact_type: ArtifactType::Native,
                 path: "<builtin>".into(),
                 sha256: "sha256:benchmark-builtin".into(),
+                companion_artifacts: Vec::new(),
             });
             let descriptor = manifest.provides.runners[0].clone();
             ServiceRuntimeBuilder::new(config.clone())
@@ -274,6 +275,7 @@ fn install_process_plugin(config: &ServiceConfig) -> Result<(), String> {
         artifact_type: ArtifactType::Process,
         path: platform_process_name().into(),
         sha256: "sha256:benchmark-process".into(),
+        companion_artifacts: Vec::new(),
     });
     write_plugin(
         &plugin_dir,
