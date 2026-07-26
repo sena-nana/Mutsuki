@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CommandPlan, ExportPlan, PlanReceipt, PluginDeploymentKind, ReadPlan,
-    ResourceRef, RuntimeProfile, RuntimeProfileMode, SnapshotDescriptor, StreamPlan,
-    SurfaceCompatibility, TaskBatch, TaskHandle, TaskOutcome, TaskStatus, WritePlan,
+    CancelPolicy, CommandPlan, DispatchLane, ExecutionClass, ExportPlan, PlanReceipt,
+    PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeProfile, RuntimeProfileMode,
+    SnapshotDescriptor, StreamPlan, SurfaceCompatibility, TaskBatch, TaskHandle, TaskOutcome,
+    TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
@@ -20,9 +21,9 @@ use mutsuki_runtime_core::{
 #[cfg(test)]
 use mutsuki_runtime_host::JsonlRunner;
 use mutsuki_runtime_host::{
-    HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, HostTaskSnapshot,
-    HostTaskState, ProcessRunnerSpec, RunnerLimits, RuntimeBootstrapper, SpawnedJsonlRunner,
-    TokioAsyncExecutor, resolve_load_plan,
+    ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply,
+    HostTaskSnapshot, HostTaskState, LaneExecutionPolicy, ProcessRunnerSpec, RunnerLimits,
+    RuntimeBootstrapper, SpawnedJsonlRunner, TokioAsyncExecutor, resolve_load_plan,
 };
 use mutsuki_runtime_sdk::{
     LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient, RuntimeClientRef,
@@ -31,11 +32,13 @@ use mutsuki_runtime_sdk::{
 #[cfg(test)]
 use mutsuki_service_config::ConfiguredPluginSelection;
 use mutsuki_service_config::{
-    ConfiguredPluginStore, HostSecretStore, ServiceConfig, filtered_environment,
+    ConfiguredPluginStore, DispatchLaneName, ExecutionClassName, HostSecretStore,
+    LanePolicySection, ServiceConfig, filtered_environment,
 };
 use mutsuki_service_control::{
     ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
-    CoreDrainResponse, CoreStatus, HealthReport, HostMetrics, IdParam, LogTailEntry, LogTailParams,
+    CoreDrainResponse, CoreRuntimeMetrics, CoreStatus, ExecutionDomainMetrics,
+    ExecutionLaneMetrics, HealthReport, HostMetrics, IdParam, LogTailEntry, LogTailParams,
     LogTailResponse, PluginCandidateStatus, PluginDeploymentClearParam, PluginDeploymentParam,
     PluginInventoryDiagnostic, PluginListResponse, PluginReloadChange, PluginReloadResponse,
     PluginStatus, RunnerStatus as ControlRunnerStatus, RuntimeStatisticsView, ServiceStatus,
@@ -956,11 +959,70 @@ impl ServiceRuntimeInner {
     }
 
     fn host_metrics(&self) -> ControlResponse {
+        let host_runtime = self.host_runtime.lock().expect("host runtime mutex");
+        let core = host_runtime.as_ref().map(|runtime| {
+            let metrics = runtime.metrics();
+            CoreRuntimeMetrics {
+                control_mailbox_depth: metrics.control_mailbox_depth,
+                data_mailbox_depth: metrics.data_mailbox_depth,
+                control_oldest_message_age_ns: duration_nanos(metrics.control_oldest_message_age),
+                data_oldest_message_age_ns: duration_nanos(metrics.data_oldest_message_age),
+                submit_to_dispatch_samples: metrics.submit_to_dispatch_samples,
+                submit_to_dispatch_total_ns: metrics.submit_to_dispatch_total_ns,
+                submit_to_dispatch_max_ns: metrics.submit_to_dispatch_max_ns,
+                cancel_propagation_samples: metrics.cancel_propagation_samples,
+                cancel_propagation_total_ns: metrics.cancel_propagation_total_ns,
+                cancel_propagation_max_ns: metrics.cancel_propagation_max_ns,
+                completion_route_samples: metrics.completion_route_samples,
+                completion_route_total_ns: metrics.completion_route_total_ns,
+                completion_route_max_ns: metrics.completion_route_max_ns,
+                scheduler_passes: metrics.scheduler_passes,
+                scheduler_total_ns: metrics.scheduler_total_ns,
+                scheduler_max_ns: metrics.scheduler_max_ns,
+                lane_starvation_events: metrics.lane_starvation_events,
+                reserved_capacity_uses: metrics.reserved_capacity_uses,
+            }
+        });
+        let execution_domains = host_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.worker_pools().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|domain| ExecutionDomainMetrics {
+                domain_id: domain.domain_id,
+                execution_classes: domain
+                    .execution_classes
+                    .into_iter()
+                    .map(|class| format!("{class:?}").to_ascii_lowercase())
+                    .collect(),
+                configured_threads: domain.configured_threads,
+                active_threads: domain.active_threads,
+                queued_entries: domain.queued_entries,
+                running_entries: domain.running_entries,
+                inflight_bytes: domain.inflight_bytes,
+                max_inflight_bytes: domain.max_inflight_bytes,
+                degraded: domain.degraded,
+                lanes: domain
+                    .lanes
+                    .into_iter()
+                    .map(|lane| ExecutionLaneMetrics {
+                        lane: format!("{:?}", lane.lane).to_ascii_lowercase(),
+                        queued_entries: lane.queued_entries,
+                        running_entries: lane.running_entries,
+                        inflight_bytes: lane.inflight_bytes,
+                        queue_entry_limit: lane.queue_entry_limit,
+                        max_inflight_bytes: lane.max_inflight_bytes,
+                    })
+                    .collect(),
+            })
+            .collect();
         ControlResponse::ok(HostMetrics {
             pid: std::process::id(),
             uptime_ms: self.started_at.elapsed().as_millis(),
             rss_bytes: current_rss_bytes(),
             cpu_time_ms: current_cpu_time_ms(),
+            core,
+            execution_domains,
         })
     }
 
@@ -1911,6 +1973,24 @@ async fn boot_core(
             .core
             .worker_health_timeout_ms
             .map(Duration::from_millis),
+        execution_domains: config
+            .core
+            .execution_domains
+            .iter()
+            .map(map_execution_domain)
+            .collect(),
+        actor_control_queue_limit: config
+            .core
+            .actor_control_queue_limit
+            .unwrap_or_else(|| HostRuntimeConfig::default().actor_control_queue_limit),
+        actor_data_queue_limit: config
+            .core
+            .actor_data_queue_limit
+            .unwrap_or_else(|| HostRuntimeConfig::default().actor_data_queue_limit),
+        actor_control_quota: config
+            .core
+            .actor_control_quota
+            .unwrap_or_else(|| HostRuntimeConfig::default().actor_control_quota),
         async_executor: Some(Arc::new(TokioAsyncExecutor::new(
             worker_settings.compute_threads.clamp(1, 4),
             worker_settings.queue_capacity,
@@ -1930,6 +2010,77 @@ async fn boot_core(
     let runtime = bootstrapper.into_host_runtime_with_config(profile, host_config)?;
     write_runtime_lock(config, &lock)?;
     Ok(runtime)
+}
+
+fn map_execution_domain(
+    configured: &mutsuki_service_config::ExecutionDomainSection,
+) -> ExecutionDomainConfig {
+    let mut domain = ExecutionDomainConfig::new(
+        configured.id.clone(),
+        configured
+            .execution_classes
+            .iter()
+            .copied()
+            .map(map_execution_class)
+            .collect(),
+        configured.threads,
+    );
+    domain.queue_capacity = configured.queue_capacity;
+    domain.max_inflight_bytes = configured.max_inflight_bytes;
+    domain.max_isolated_threads = configured.max_isolated_threads;
+    for (lane, configured_policy) in &configured.lanes {
+        let lane = map_dispatch_lane(*lane);
+        let policy = domain
+            .lane_policies
+            .entry(lane.clone())
+            .or_insert_with(|| LaneExecutionPolicy::for_lane(&lane));
+        apply_lane_policy(policy, configured_policy);
+    }
+    domain
+}
+
+fn apply_lane_policy(policy: &mut LaneExecutionPolicy, configured: &LanePolicySection) {
+    if let Some(value) = configured.weight {
+        policy.weight = value;
+    }
+    if let Some(value) = configured.reserved_entries {
+        policy.reserved_entries = value;
+    }
+    if let Some(value) = configured.max_share_percent {
+        policy.max_share_percent = value;
+    }
+    if let Some(value) = configured.queue_entry_limit {
+        policy.queue_entry_limit = value;
+    }
+    if let Some(value) = configured.max_inflight_bytes {
+        policy.max_inflight_bytes = value;
+    }
+    if let Some(value) = configured.starvation_steps {
+        policy.starvation_steps = value;
+    }
+    if let Some(value) = configured.allow_idle_borrow {
+        policy.allow_idle_borrow = value;
+    }
+}
+
+fn map_execution_class(value: ExecutionClassName) -> ExecutionClass {
+    match value {
+        ExecutionClassName::Orchestration => ExecutionClass::Orchestration,
+        ExecutionClassName::Io => ExecutionClass::Io,
+        ExecutionClassName::Cpu => ExecutionClass::Cpu,
+        ExecutionClassName::Blocking => ExecutionClass::Blocking,
+        ExecutionClassName::Script => ExecutionClass::Script,
+    }
+}
+
+fn map_dispatch_lane(value: DispatchLaneName) -> DispatchLane {
+    match value {
+        DispatchLaneName::Control => DispatchLane::Control,
+        DispatchLaneName::Interactive => DispatchLane::Interactive,
+        DispatchLaneName::Normal => DispatchLane::Normal,
+        DispatchLaneName::Background => DispatchLane::Background,
+        DispatchLaneName::Bulk => DispatchLane::Bulk,
+    }
 }
 
 fn write_runtime_lock(
@@ -2383,6 +2534,10 @@ fn task_wait_response(states: Vec<HostTaskState>, timed_out: bool) -> ControlRes
     })
 }
 
+fn duration_nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
 fn current_cpu_time_ms() -> Option<u64> {
     cpu_time::ProcessTime::try_now()
         .ok()
@@ -2452,6 +2607,39 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn service_execution_domains_map_to_core_topology_without_hidden_fallbacks() {
+        let configured = mutsuki_service_config::ExecutionDomainSection {
+            id: "interactive".into(),
+            execution_classes: vec![ExecutionClassName::Orchestration, ExecutionClassName::Cpu],
+            threads: 2,
+            lanes: BTreeMap::from([(
+                DispatchLaneName::Interactive,
+                LanePolicySection {
+                    weight: Some(16),
+                    reserved_entries: Some(4),
+                    max_share_percent: Some(80),
+                    allow_idle_borrow: Some(false),
+                    ..LanePolicySection::default()
+                },
+            )]),
+            ..mutsuki_service_config::ExecutionDomainSection::default()
+        };
+
+        let mapped = map_execution_domain(&configured);
+        assert_eq!(mapped.domain_id, "interactive");
+        assert_eq!(
+            mapped.execution_classes,
+            vec![ExecutionClass::Orchestration, ExecutionClass::Cpu,]
+        );
+        assert_eq!(mapped.threads, 2);
+        let policy = &mapped.lane_policies[&DispatchLane::Interactive];
+        assert_eq!(policy.weight, 16);
+        assert_eq!(policy.reserved_entries, 4);
+        assert_eq!(policy.max_share_percent, 80);
+        assert!(!policy.allow_idle_borrow);
+    }
 
     const TEST_PLUGIN_ID: &str = "test.control.facade";
 
@@ -2876,9 +3064,65 @@ mod tests {
             serde_json::from_value(response.result.expect("result")).expect("host metrics");
         assert_eq!(metrics.pid, std::process::id());
         assert!(metrics.cpu_time_ms.is_some());
+        assert!(metrics.core.is_some());
+        assert!(!metrics.execution_domains.is_empty());
+        assert!(
+            metrics
+                .execution_domains
+                .iter()
+                .all(|domain| !domain.lanes.is_empty())
+        );
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         assert!(metrics.rss_bytes.unwrap_or(0) > 0);
         // uptime_ms may be 0 when the runtime was just started.
+    }
+
+    #[tokio::test]
+    async fn configured_execution_domains_boot_through_the_service_runtime_path() {
+        let dir = tempdir().expect("temp dir");
+        let mut core = mutsuki_service_config::CoreSection::default();
+        core.execution_domains = vec![
+            mutsuki_service_config::ExecutionDomainSection {
+                id: "interactive".into(),
+                execution_classes: vec![ExecutionClassName::Orchestration, ExecutionClassName::Cpu],
+                threads: 1,
+                ..mutsuki_service_config::ExecutionDomainSection::default()
+            },
+            mutsuki_service_config::ExecutionDomainSection {
+                id: "background".into(),
+                execution_classes: vec![
+                    ExecutionClassName::Io,
+                    ExecutionClassName::Blocking,
+                    ExecutionClassName::Script,
+                ],
+                threads: 1,
+                ..mutsuki_service_config::ExecutionDomainSection::default()
+            },
+        ];
+        let inner = test_started_runtime_inner_with_core("token", dir.path(), core).await;
+
+        let response = inner.host_metrics();
+        let metrics: HostMetrics =
+            serde_json::from_value(response.result.expect("result")).expect("host metrics");
+        assert_eq!(metrics.execution_domains.len(), 2);
+        assert!(
+            metrics
+                .execution_domains
+                .iter()
+                .any(|domain| domain.domain_id == "interactive")
+        );
+        assert!(
+            metrics
+                .execution_domains
+                .iter()
+                .any(|domain| domain.domain_id == "background")
+        );
+        assert!(
+            metrics
+                .execution_domains
+                .iter()
+                .all(|domain| domain.active_threads == 1)
+        );
     }
 
     #[tokio::test]
@@ -4028,7 +4272,16 @@ mod tests {
     }
 
     async fn test_started_runtime_inner(token: &str, root: &Path) -> ServiceRuntimeInner {
+        test_started_runtime_inner_with_core(token, root, Default::default()).await
+    }
+
+    async fn test_started_runtime_inner_with_core(
+        token: &str,
+        root: &Path,
+        core: mutsuki_service_config::CoreSection,
+    ) -> ServiceRuntimeInner {
         let mut config = ServiceConfig::default();
+        config.core = core;
         config.ipc.token = Some(token.into());
         config.service.home_dir = root.to_path_buf();
         config.service.data_dir = root.join("data");
