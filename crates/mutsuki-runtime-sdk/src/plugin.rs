@@ -100,6 +100,7 @@ impl PluginBuilder {
                 artifact_type: ArtifactType::Native,
                 path: "native".into(),
                 sha256: "sha256:native".into(),
+                companion_artifacts: Vec::new(),
             },
             provides: PluginProvides::default(),
             requires: Vec::new(),

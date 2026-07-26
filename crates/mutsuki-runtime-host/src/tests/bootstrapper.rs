@@ -227,6 +227,7 @@ fn abi_plugin_runner_requires_active_plugin_backend_descriptor() {
             artifact_type: ArtifactType::Abi,
             path: "plugin-abi.so".into(),
             sha256: "sha256:abi".into(),
+            companion_artifacts: Vec::new(),
         },
         vec![runner_descriptor.clone()],
     );

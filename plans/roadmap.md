@@ -179,6 +179,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - Rust host 覆盖：
   - native plugin host 可解析 `RuntimeProfile + PluginManifest` 为 load plan 并启动
     `CoreRuntime`。
+  - `PluginArtifact` 可用 serde 向后兼容的 companion artifact 描述包内辅助文件；通用
+    ABI v2 loader 接收已验证动态库路径和 Host task/resource gateway，强制初始化及
+    manifest/provider surface 校验后返回 `LoadedPlugin`。包发现、staging 与缓存不进入 Core。
   - resolver 支持 `RuntimeProfile.mode`：`FullDev` / `ExtensibleRuntime` 保守保留
     manifest 声明的系统扩展，`BuiltinOnly` / `LockedBuiltin` 按 enabled plugins、
     deployment 与 manifest `requires` 生成 `RuntimeCapabilityGraph`，并在 Level 1

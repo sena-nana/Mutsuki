@@ -13,6 +13,7 @@ pub fn runner_manifest(plugin_id: &str, runners: Vec<RunnerDescriptor>) -> Plugi
             artifact_type: ArtifactType::Native,
             path: "native".into(),
             sha256: "sha256:native".into(),
+            companion_artifacts: Vec::new(),
         },
         runners,
     )

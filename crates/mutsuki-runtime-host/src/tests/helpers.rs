@@ -70,6 +70,7 @@ pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
             artifact_type: ArtifactType::Abi,
             path: "plugin-abi.so".into(),
             sha256: "sha256:abi".into(),
+            companion_artifacts: Vec::new(),
         },
         vec![runner_descriptor.clone()],
     );
@@ -123,6 +124,7 @@ pub(super) fn host_with_portable_plugin_artifact() -> RuntimeBootstrapper {
             artifact_type: ArtifactType::Native,
             path: "plugin-portable-fixture".into(),
             sha256: "sha256:same-plugin-artifact".into(),
+            companion_artifacts: Vec::new(),
         },
         vec![runner_descriptor.clone()],
     );

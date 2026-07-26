@@ -1,3 +1,4 @@
+mod abi_plugin;
 mod async_resources;
 mod async_runtime;
 mod binary;
