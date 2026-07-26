@@ -628,6 +628,12 @@ impl MutsukiTauriHost {
         self.runtime.lock().metrics()
     }
 
+    pub fn execution_domain_metrics(
+        &self,
+    ) -> HostResult<Vec<mutsuki_runtime_host::WorkerPoolSnapshot>> {
+        self.runtime.lock().worker_pools().map_err(Into::into)
+    }
+
     fn dispatch_submission(&self, command: HostRuntimeCommand) -> HostResult<HostRuntimeReply> {
         let submitted = self.runtime.lock().dispatch(command);
 

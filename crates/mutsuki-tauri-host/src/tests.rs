@@ -11,7 +11,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
-    DefaultScheduler, HostRuntimeConfig, RunnerLimits, ScheduleInput, SchedulerPolicy,
+    DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
+    SchedulerPolicy,
 };
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
@@ -205,6 +206,51 @@ fn native_task_pump_executes_with_single_inflight_slot() {
         result.outcome,
         Some(TaskOutcome::Completed { .. })
     ));
+}
+
+#[test]
+fn desktop_host_boots_and_reports_configured_execution_domains() {
+    let workspace = TestWorkspace::new("execution-domains");
+    let host = MutsukiTauriHost::builder()
+        .config(workspace.config())
+        .runtime_config(HostRuntimeConfig {
+            execution_domains: vec![
+                ExecutionDomainConfig::new(
+                    "interactive",
+                    vec![ExecutionClass::Orchestration, ExecutionClass::Cpu],
+                    1,
+                ),
+                ExecutionDomainConfig::new(
+                    "background",
+                    vec![
+                        ExecutionClass::Io,
+                        ExecutionClass::Blocking,
+                        ExecutionClass::Script,
+                    ],
+                    1,
+                ),
+            ],
+            ..HostRuntimeConfig::default()
+        })
+        .runner(Box::new(EchoRunner::new()))
+        .build()
+        .expect("desktop host builds with execution domains");
+
+    let domains = host
+        .execution_domain_metrics()
+        .expect("execution-domain metrics");
+    assert_eq!(domains.len(), 2);
+    assert!(
+        domains
+            .iter()
+            .any(|domain| domain.domain_id == "interactive")
+    );
+    assert!(
+        domains
+            .iter()
+            .any(|domain| domain.domain_id == "background")
+    );
+    assert!(domains.iter().all(|domain| domain.active_threads == 1));
 }
 
 #[test]
