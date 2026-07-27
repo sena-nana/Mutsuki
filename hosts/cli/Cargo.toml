@@ -1,0 +1,16 @@
+[package]
+name = "mutsuki-cli-host"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = "0.29"
+ratatui = "0.30.2"
+serde = "1.0"
+serde_json = "1.0"
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "time"] }
+mutsuki-service-control = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9fb03856c95027f849753c3b012e87a52f1598e7" }
+mutsuki-service-ipc = { git = "https://github.com/sena-nana/MutsukiServiceHost.git", rev = "9fb03856c95027f849753c3b012e87a52f1598e7" }
