@@ -50,12 +50,7 @@ impl ControlClient {
     pub async fn send(&self, request: ControlRequest) -> IpcResult<ControlResponse> {
         match self.send_with_session(request.clone()).await {
             Ok(response) => Ok(response),
-            Err(error)
-                if matches!(
-                    error,
-                    crate::error::IpcError::Closed | crate::error::IpcError::Io(_)
-                ) =>
-            {
+            Err(crate::error::IpcError::Closed | crate::error::IpcError::Io(_)) => {
                 {
                     let mut guard = self.session.lock().await;
                     *guard = None;

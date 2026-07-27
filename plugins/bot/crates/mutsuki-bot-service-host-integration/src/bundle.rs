@@ -20,7 +20,7 @@ type MediaFactory = Arc<
 >;
 type IdFactory = Arc<dyn Fn() -> Box<dyn QqIdSource> + Send + Sync>;
 
-/// Complete product bundle for `MutsukiServiceHost` assembly.
+/// Complete product bundle for the `hosts/service` assembly.
 ///
 /// The bundle owns only adapter configuration and shared account state. The
 /// client secret is populated by `QqGatewayEventSource` through the Host secret

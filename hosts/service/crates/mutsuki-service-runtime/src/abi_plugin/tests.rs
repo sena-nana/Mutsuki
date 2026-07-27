@@ -31,6 +31,23 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
         .status()
         .expect("build ABI fixture");
     assert!(status.success());
+    let metadata = Command::new(env!("CARGO"))
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(fixture_root.join("Cargo.toml"))
+        .output()
+        .expect("read ABI fixture Cargo metadata");
+    assert!(metadata.status.success());
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&metadata.stdout).expect("parse ABI fixture Cargo metadata");
+    let target_directory = metadata["target_directory"]
+        .as_str()
+        .expect("Cargo metadata target_directory");
     let file_name = if cfg!(target_os = "windows") {
         "mutsuki_service_abi_fixture.dll"
     } else if cfg!(target_os = "macos") {
@@ -38,10 +55,7 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
     } else {
         "libmutsuki_service_abi_fixture.so"
     };
-    let artifact = fixture_root
-        .join("..")
-        .join("..")
-        .join("target")
+    let artifact = std::path::Path::new(target_directory)
         .join("debug")
         .join(file_name);
     assert!(

@@ -1,7 +1,7 @@
 # AgentKit Performance Model v1
 
-该套件实现 MutsukiAgentKit #4，并作为 MutsukiCore #35 统一性能模型的业务层 owner
-workload。`benchmarks/workloads-v1.json` 固定 fixture version、seed、case 与模拟延迟档。
+该套件源自 MutsukiAgentKit #4，并作为 Mutsuki #35 统一性能模型中 `kits/agent` 的业务层
+owner workload。`benchmarks/workloads-v1.json` 固定 fixture version、seed、case 与模拟延迟档。
 
 ## Fixture 与边界
 
@@ -22,13 +22,10 @@ workload。`benchmarks/workloads-v1.json` 固定 fixture version、seed、case �
 ## 运行与 repository revision snapshot
 
 ```text
-python scripts/run-performance-model.py \
+python3 kits/agent/scripts/run-performance-model.py \
   --mode reference \
   --process-runs 3 \
-  --repository MutsukiCore=../MutsukiCore \
-  --repository MutsukiServiceHost=../MutsukiServiceHost \
-  --repository MutsukiStdPlugins=../MutsukiStdPlugins \
-  --output artifacts/performance/issue4-reference.json
+  --output kits/agent/artifacts/performance/issue4-reference.json
 ```
 
 输出包括每进程 raw samples、`mutsuki.performance.report/v1` 与 anomaly analysis。指标包括
@@ -41,6 +38,6 @@ tool route、allocation、CPU/RSS、retained memory 与 post-warmup growth。
 counter 非零时先核对 fixture/harness；只有排除测试实现问题后才标记 framework suspect。
 正确性通过但 MAD 偏高时，仅作为环境或 case-specific noise，不直接归因框架。
 
-本仓库在 `artifacts/performance/` 保留自己的 reference report、analysis、approval 与历史；
-批准使用 MutsukiCore 的精确字节契约和本报告记录的 repository revision snapshot，不自动
-接受新生成结果。
+Agent area 在 `kits/agent/artifacts/performance/` 保留自己的 reference report、analysis、
+approval 与历史；批准使用根性能工具的精确字节契约和报告记录的单一 Mutsuki revision
+snapshot，不自动接受新生成结果。

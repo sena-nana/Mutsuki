@@ -97,13 +97,14 @@ impl FallbackPlan {
         let Some(candidate) = self.pending.pop_front() else {
             return Ok(None);
         };
-        if let Some(strongest) = self.strongest_attempted {
-            if candidate.security < strongest && !self.policy.allow_security_downgrade {
-                return Err(SelectionError::SecurityDowngrade {
-                    attempted: strongest,
-                    candidate: candidate.security,
-                });
-            }
+        if let Some(strongest) = self.strongest_attempted
+            && candidate.security < strongest
+            && !self.policy.allow_security_downgrade
+        {
+            return Err(SelectionError::SecurityDowngrade {
+                attempted: strongest,
+                candidate: candidate.security,
+            });
         }
         self.strongest_attempted = Some(
             self.strongest_attempted

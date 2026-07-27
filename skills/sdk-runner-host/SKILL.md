@@ -1,6 +1,6 @@
 ---
 name: sdk-runner-host
-description: Change MutsukiCore Rust SDK, SDK macros, native runner helpers, RuntimeClient, TaskSubmitter, runner adapters, or JSONL Runner Link host support. Use for generic authoring and connection surfaces, not product hosting.
+description: Change the Mutsuki Rust SDK, SDK macros, native runner helpers, RuntimeClient, TaskSubmitter, runner adapters, or JSONL Runner Link host support. Use for generic authoring and connection surfaces, not product hosting.
 ---
 
 # SDK And Runner Host

@@ -258,10 +258,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn quic_link_control_roundtrip() {
-        let _guard = match crate::LINK_TEST_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = crate::LINK_TEST_LOCK.lock().await;
         let (server_config, client_config) = crypto_configs();
         let options = QuicOptions {
             budget: TransportBudget {
@@ -329,10 +326,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn quic_link_control_server_and_handler() {
-        let _guard = match crate::LINK_TEST_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = crate::LINK_TEST_LOCK.lock().await;
         let (server_config, client_config) = crypto_configs();
         let server = QuicLinkControlServer::start(
             "127.0.0.1:0".parse().unwrap(),

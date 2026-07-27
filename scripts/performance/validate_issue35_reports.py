@@ -18,6 +18,17 @@ EXPECTED_DEPLOYMENTS = {
     "python-jsonl",
     "python-binary",
 }
+RETIRED_IN_TREE_REPOSITORIES = {
+    "MutsukiAgentKit",
+    "MutsukiBotPlugins",
+    "MutsukiCore",
+    "MutsukiDistributedHost",
+    "MutsukiLink",
+    "MutsukiPythonRunnerKit",
+    "MutsukiServiceHost",
+    "MutsukiStdPlugins",
+    "MutsukiTauriHost",
+}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -105,6 +116,13 @@ def main() -> None:
         owner = report["repository_revisions"].get(suite["repository"])
         if owner is None:
             raise SystemExit(f"{suite_id} does not record owner {suite['repository']}")
+        retired = RETIRED_IN_TREE_REPOSITORIES.intersection(
+            report["repository_revisions"]
+        )
+        if retired:
+            raise SystemExit(
+                f"{suite_id} records retired in-tree repositories: {sorted(retired)}"
+            )
         if "MutsukiBenchmarks" in report["repository_revisions"]:
             raise SystemExit(
                 f"{suite_id} still depends on the retired central repository"
@@ -117,10 +135,16 @@ def main() -> None:
             )
         if not report["correctness"]["passed"]:
             raise SystemExit(f"{suite_id} correctness failed")
-        if len(report["cases"]) < suite["minimum_cases"]:
+        minimum_key = (
+            "minimum_smoke_cases"
+            if "-smoke-" in report["report_id"]
+            else "minimum_cases"
+        )
+        minimum_cases = suite[minimum_key]
+        if len(report["cases"]) < minimum_cases:
             raise SystemExit(
                 f"{suite_id} has {len(report['cases'])} cases; "
-                f"expected at least {suite['minimum_cases']}"
+                f"expected at least {minimum_cases}"
             )
         reports[suite_id] = report
         total_cases += len(report["cases"])

@@ -1,22 +1,22 @@
 # DistributedHost performance model for issue 22
 
-This repository owns the distributed placement, durable registry, content-localization and real
+This monorepo area owns the distributed placement, durable registry, content-localization and real
 Controller/Worker process evidence. It does not claim real-network performance. All process tests
 use authenticated MutsukiLink local IPC; every report labels that boundary explicitly.
 
-`scripts/run-performance-model.py` emits `mutsuki.performance.report/v1` and a sibling anomaly
-analysis. The ServiceHost fixture binary and any additional repository revision sources are explicit
-arguments so an independent checkout never relies on sibling paths:
+`hosts/distributed/scripts/run-performance-model.py` emits `mutsuki.performance.report/v1` and a
+sibling anomaly analysis. The ServiceHost fixture binary is an explicit argument so the system lane
+cannot silently substitute the product CLI or an in-process fake:
 
 ```text
-./scripts/run-performance-model.py \
+python3 hosts/distributed/scripts/run-performance-model.py \
   --mode smoke \
-  --service-binary /absolute/path/to/mutsuki-benchmark-service \
-  --repository MutsukiCore=/absolute/path/to/MutsukiCore \
-  --repository MutsukiLink=/absolute/path/to/MutsukiLink \
-  --repository MutsukiServiceHost=/absolute/path/to/MutsukiServiceHost \
-  --output /absolute/path/to/distributed-report.json
+  --service-binary target/release/mutsuki-benchmark-service \
+  --output target/mutsuki-benchmarks/distributed-smoke.json
 ```
+
+The report records the single Mutsuki revision. `--repository NAME=PATH` is reserved for a genuine
+external benchmark dependency and is not used to re-list in-tree areas.
 
 Reference mode expands these fixed dimensions:
 

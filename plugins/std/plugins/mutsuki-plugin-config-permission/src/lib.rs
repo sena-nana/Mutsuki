@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn permission_runner_allows_granted_request_and_denies_missing_grant() {
         let mut runner = ConfigPermissionRunner::new();
-        let tasks = vec![
+        let tasks = [
             Task::new(
                 "permission:allowed",
                 PERMISSION_CHECK_PROTOCOL,

@@ -60,8 +60,8 @@ load-plan 校验和调度事实源。
 
 ## 依赖规则
 
-- 本仓库必须脱离父目录安装、测试和打包；不得引用兄弟仓库本地路径。
-- 跨仓库事实只来自已推送的远端 revision；缺失能力先在 owner 仓库补齐，不复制实现或添加生产 shim。
+- 本 package 必须能从 monorepo 根或自身目录安装、测试和打包；Rust 契约事实来自同一 release revision。
+- 缺失能力先在 owner package 补齐，不复制实现或添加生产 shim；发布 wheel 必须记录对应 Mutsuki tag/commit。
 
 ## 验证
 

@@ -11,8 +11,9 @@ permissions:
 
 jobs:
   rust:
-    name: Rust
+    name: Rust workspace
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
@@ -31,14 +32,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Check distributed zero-intrusion boundary
-        run: bash scripts/check-distributed-boundary.sh
+      - name: Check monorepo boundaries
+        run: python3 skills/monorepo-maintenance/scripts/check_workspace.py
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Check locked workspace
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Test locked workspace
+        run: cargo test --workspace --all-targets --locked
 
       - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Performance smoke gate
         run: cargo bench-smoke
@@ -46,3 +50,74 @@ jobs:
       - name: Print sccache stats
         if: always()
         run: sccache --show-stats
+
+  python:
+    name: Python runner kit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: kits/python-runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run pyright
+      - run: uv run pytest
+
+  frontend:
+    name: Frontend (${{ matrix.owner }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - owner: WebHost
+            directory: hosts/web
+            build: pnpm build
+          - owner: TauriHost
+            directory: hosts/tauri
+            build: pnpm typecheck
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.directory }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: ${{ matrix.build }}
+
+  template-export:
+    name: Bot template export
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Export at current commit
+        run: >-
+          python3 templates/bot/scripts/export_template.py
+          --output "${RUNNER_TEMP}/mutsuki-bot-template"
+          --repository "file://${GITHUB_WORKSPACE}"
+          --rev "${GITHUB_SHA}"
+      - name: Validate exported template
+        working-directory: ${{ runner.temp }}/mutsuki-bot-template
+        run: |
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo fmt --check
+          cargo check --workspace --all-targets --locked
+          cargo test --workspace --all-targets --locked

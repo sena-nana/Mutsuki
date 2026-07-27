@@ -9,15 +9,22 @@ import json
 import os
 import pathlib
 import platform
-import re
 import statistics
 import subprocess
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+def cargo_target_directory() -> pathlib.Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return pathlib.Path(json.loads(metadata)["target_directory"])
 
 
 def run(command: list[str]) -> None:
@@ -68,7 +75,11 @@ def environment(mode: str, warmup: int, samples: int) -> dict[str, object]:
     ram_bytes = int(ram) if ram.isdigit() else 1
     rust_verbose = command_output("rustc", "-vV")
     target = next(
-        (line.removeprefix("host: ") for line in rust_verbose.splitlines() if line.startswith("host: ")),
+        (
+            line.removeprefix("host: ")
+            for line in rust_verbose.splitlines()
+            if line.startswith("host: ")
+        ),
         "unknown",
     )
     return {
@@ -108,8 +119,9 @@ def collect_raw(warmup: int, samples: int) -> tuple[list[dict], list[dict]]:
             "task_pump_benchmark",
         ]
     )
-    pump_binary = ROOT / "target/release/examples/task_pump_benchmark"
-    bridge_binary = ROOT / "target/release/mutsuki-tauri-benchmarks"
+    release_directory = cargo_target_directory() / "release"
+    pump_binary = release_directory / "examples/task_pump_benchmark"
+    bridge_binary = release_directory / "mutsuki-tauri-benchmarks"
     if os.name == "nt":
         pump_binary = pump_binary.with_suffix(".exe")
         bridge_binary = bridge_binary.with_suffix(".exe")
@@ -124,7 +136,10 @@ def collect_raw(warmup: int, samples: int) -> tuple[list[dict], list[dict]]:
                 [str(pump_binary), str(pump_path)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL
             )
             subprocess.run(
-                [str(bridge_binary), str(bridge_path)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL
+                [str(bridge_binary), str(bridge_path)],
+                cwd=ROOT,
+                check=True,
+                stdout=subprocess.DEVNULL,
             )
             if index >= warmup:
                 pump_reports.append(json.loads(pump_path.read_text()))
@@ -291,10 +306,10 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=ROOT / "target/mutsuki-benchmarks/tauri-reference.json",
+        default=cargo_target_directory() / "mutsuki-benchmarks/tauri-reference.json",
     )
     args = parser.parse_args()
-    default_warmup, default_samples = ((0, 1) if args.mode == "smoke" else (1, 5))
+    default_warmup, default_samples = (0, 1) if args.mode == "smoke" else (1, 5)
     warmup = default_warmup if args.warmup is None else args.warmup
     samples = default_samples if args.samples is None else max(1, args.samples)
     pump, bridge = collect_raw(warmup, samples)
@@ -302,18 +317,11 @@ def main() -> None:
     cases = task_pump_cases(pump, failures)
     cases.extend(bridge_resource_cases(bridge, failures))
     revision = command_output("git", "rev-parse", "HEAD")
-    cargo = (ROOT / "Cargo.toml").read_text()
-    core_revision = re.search(r"MutsukiCore\.git\", rev = \"([0-9a-f]{40})", cargo)
     revisions = {
-        "MutsukiTauriHost": {
+        "Mutsuki": {
             "revision": revision,
             "dirty": bool(command_output("git", "status", "--porcelain")),
-            "remote": "https://github.com/sena-nana/MutsukiTauriHost.git",
-        },
-        "MutsukiCore": {
-            "revision": core_revision.group(1) if core_revision else "0" * 40,
-            "dirty": False,
-            "remote": "https://github.com/sena-nana/MutsukiCore.git",
+            "remote": "https://github.com/sena-nana/Mutsuki.git",
         },
     }
     env = environment(args.mode, warmup, samples)

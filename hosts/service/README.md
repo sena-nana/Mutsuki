@@ -1,6 +1,6 @@
 # MutsukiServiceHost
 
-`MutsukiServiceHost` is the headless, long-running host process for `MutsukiCore`.
+The Service area is the headless, long-running host process for Mutsuki.
 
 It owns the operating environment around the core:
 
@@ -17,8 +17,7 @@ It owns the operating environment around the core:
 It deliberately does not implement Agent, Bot, QQBot, model provider, Python SDK, plugin marketplace,
 or GUI/business logic. Those belong in Core, StdPlugins, runner kits, or UI hosts.
 
-Runtime crates are consumed from the sibling `MutsukiCore` workspace (`../MutsukiCore/crates/...`).
-The interactive terminal client lives in the separate `MutsukiCliHost` repository.
+Runtime crates come from the root Workspace. The interactive terminal client lives at `hosts/cli`.
 
 ## Workspace
 

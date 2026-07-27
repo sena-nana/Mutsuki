@@ -324,8 +324,10 @@ mod tests {
 
     #[test]
     fn ping_command_replies_pong_through_standard_message_task() {
-        let mut config = EchoSmokeConfig::default();
-        config.command_text = "/ping".into();
+        let config = EchoSmokeConfig {
+            command_text: "/ping".into(),
+            ..EchoSmokeConfig::default()
+        };
         let report = run_smoke(config).unwrap();
 
         assert_eq!(report.requests.len(), 2);

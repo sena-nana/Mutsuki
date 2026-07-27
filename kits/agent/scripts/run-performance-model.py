@@ -17,6 +17,23 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def workspace_root() -> Path:
+    return Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=ROOT, text=True
+        ).strip()
+    )
+
+
+def cargo_target_directory() -> Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return Path(json.loads(metadata)["target_directory"])
+
+
 def digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -46,7 +63,7 @@ def distribution(samples: list[float], unit: str) -> dict[str, Any]:
 
 
 def revisions(values: list[str]) -> dict[str, Any]:
-    paths = {"MutsukiAgentKit": ROOT}
+    paths = {"Mutsuki": workspace_root()}
     for value in values:
         name, separator, path = value.partition("=")
         if not separator:
@@ -58,16 +75,17 @@ def revisions(values: list[str]) -> dict[str, Any]:
             ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
         ).strip()
         dirty = bool(
-            subprocess.check_output(
-                ["git", "-C", str(path), "status", "--porcelain"], text=True
-            )
+            subprocess.check_output(["git", "-C", str(path), "status", "--porcelain"], text=True)
         )
-        remote = subprocess.run(
-            ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip() or "local-only"
+        remote = (
+            subprocess.run(
+                ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            or "local-only"
+        )
         result[name] = {"revision": revision, "dirty": dirty, "remote": remote}
     return result
 
@@ -118,9 +136,7 @@ def environment(mode: str, process_runs: int) -> dict[str, Any]:
         },
         "release_profile": {"name": "release", "lto": "thin", "codegen_units": 1},
         "power_mode": os.environ.get("MUTSUKI_BENCH_POWER_MODE", "not-recorded"),
-        "virtualization": os.environ.get(
-            "MUTSUKI_BENCH_VIRTUALIZATION", "not-recorded"
-        ),
+        "virtualization": os.environ.get("MUTSUKI_BENCH_VIRTUALIZATION", "not-recorded"),
         "runner_configuration": {
             "mode": mode,
             "process_runs": process_runs,
@@ -177,9 +193,7 @@ def run_benchmark_process(binary: Path, environment_value: dict[str, str]) -> di
         raise ctypes.WinError()
     memory = ProcessMemoryCounters()
     memory.cb = ctypes.sizeof(memory)
-    if not ctypes.windll.psapi.GetProcessMemoryInfo(
-        handle, ctypes.byref(memory), memory.cb
-    ):
+    if not ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
         raise ctypes.WinError()
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, process.args)
@@ -247,7 +261,7 @@ def main() -> None:
             check=True,
         )
     executable = "mutsuki-agent-benchmarks.exe" if os.name == "nt" else "mutsuki-agent-benchmarks"
-    binary = ROOT / "target/release" / executable
+    binary = cargo_target_directory() / "release" / executable
     reports = []
     process_metrics = []
     for process_run in range(process_runs):
@@ -302,9 +316,7 @@ def main() -> None:
                     "latency_ns": distribution(elapsed, "ns"),
                     "agent_orchestration_ns": distribution(orchestration, "ns"),
                     "simulated_execution_wall_ns": distribution(simulated_wall, "ns"),
-                    "simulated_execution_work_ns": distribution(
-                        values("simulated_work_ns"), "ns"
-                    ),
+                    "simulated_execution_work_ns": distribution(values("simulated_work_ns"), "ns"),
                     "core_host_overhead_ns": distribution([0.0] * len(elapsed), "ns"),
                     "throughput_per_second": distribution(
                         [1_000_000_000 / max(1, value) for value in elapsed], "runs/s"
@@ -316,9 +328,7 @@ def main() -> None:
                     "allocations": statistics.median(values("allocations")),
                     "allocated_bytes": statistics.median(values("allocated_bytes")),
                     "retained_memory_bytes": max(values("retained_bytes")),
-                    "post_warmup_growth_bytes": max(
-                        values("post_warmup_growth_bytes")
-                    ),
+                    "post_warmup_growth_bytes": max(values("post_warmup_growth_bytes")),
                 },
                 "correctness": {
                     "passed": len(hashes) == 1 and not any(counters.values()),
@@ -404,9 +414,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")
     analysis_path = output.with_name(output.stem + "-analysis.json")
-    analysis_path.write_text(
-        json.dumps(analyze(cases, dict(counters)), indent=2) + "\n"
-    )
+    analysis_path.write_text(json.dumps(analyze(cases, dict(counters)), indent=2) + "\n")
     print(output)
     print(analysis_path)
 

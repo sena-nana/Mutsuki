@@ -4,75 +4,84 @@
   "suites": [
     {
       "suite_id": "core",
-      "repository": "MutsukiCore",
+      "repository": "Mutsuki",
       "layer": "Core",
       "runner": "core",
       "suite_version": "mutsuki-core/v2",
-      "minimum_cases": 129
+      "minimum_cases": 129,
+      "minimum_smoke_cases": 59
     },
     {
       "suite_id": "service-host",
-      "repository": "MutsukiServiceHost",
+      "repository": "Mutsuki",
       "layer": "Host/Runner",
       "runner": "service-host",
       "suite_version": "service-host-performance/v1",
-      "minimum_cases": 16
+      "minimum_cases": 16,
+      "minimum_smoke_cases": 22
     },
     {
       "suite_id": "tauri-host",
-      "repository": "MutsukiTauriHost",
+      "repository": "Mutsuki",
       "layer": "client/bridge",
       "runner": "tauri-host",
       "suite_version": "tauri-host-performance/v1",
-      "minimum_cases": 36
+      "minimum_cases": 36,
+      "minimum_smoke_cases": 36
     },
     {
       "suite_id": "link",
-      "repository": "MutsukiLink",
+      "repository": "Mutsuki",
       "layer": "Link",
       "runner": "link",
       "suite_version": "link-performance/v1",
-      "minimum_cases": 53
+      "minimum_cases": 53,
+      "minimum_smoke_cases": 53
     },
     {
       "suite_id": "distributed-host",
-      "repository": "MutsukiDistributedHost",
+      "repository": "Mutsuki",
       "layer": "Distributed",
       "runner": "distributed-host",
       "suite_version": "mutsuki-distributed-host-issue22-v1",
-      "minimum_cases": 242
+      "minimum_cases": 242,
+      "minimum_smoke_cases": 84
     },
     {
       "suite_id": "python-runner-kit",
-      "repository": "MutsukiPythonRunnerKit",
+      "repository": "Mutsuki",
       "layer": "Runner",
       "runner": "python-runner-kit",
       "suite_version": "mutsuki-python-runner-kit-issue4-v1",
-      "minimum_cases": 92
+      "minimum_cases": 92,
+      "minimum_smoke_cases": 92
     },
     {
       "suite_id": "std-plugins",
-      "repository": "MutsukiStdPlugins",
+      "repository": "Mutsuki",
       "layer": "workload/Runner",
       "runner": "std-plugins",
       "suite_version": "mutsuki-std-plugins-issue5-v1",
-      "minimum_cases": 18
+      "minimum_cases": 18,
+      "minimum_smoke_cases": 16
     },
     {
       "suite_id": "agent-kit",
-      "repository": "MutsukiAgentKit",
+      "repository": "Mutsuki",
       "layer": "workload/client",
       "runner": "agent-kit",
       "suite_version": "mutsuki-agent-kit-issue4-v1",
-      "minimum_cases": 27
+      "minimum_cases": 27,
+      "minimum_smoke_cases": 13
     },
     {
       "suite_id": "bot-plugins",
-      "repository": "MutsukiBotPlugins",
+      "repository": "Mutsuki",
       "layer": "workload/client",
       "runner": "bot-plugins",
       "suite_version": "mutsuki-bot-plugins-issue10-v1",
-      "minimum_cases": 15
+      "minimum_cases": 15,
+      "minimum_smoke_cases": 15
     }
   ]
 }

@@ -127,14 +127,14 @@ impl HostEventSource for QqGatewayEventSource {
         *self.stopped.lock().expect("QQBot stopped mutex") = Some(stopped_rx);
         let task = tokio::spawn(async move {
             let _stopped = NotifyStoppedOnDrop(Some(stopped_tx));
-            let result = {
+
+            {
                 let _credentials = GatewayCredentialLease {
                     credentials: cleanup_credentials,
                     auth: cleanup_auth,
                 };
                 run_gateway(config, api, health, ctx, stop_rx).await
-            };
-            result
+            }
         });
         *self.abort.lock().expect("QQBot abort mutex") = Some(task.abort_handle());
         Box::pin(async move {

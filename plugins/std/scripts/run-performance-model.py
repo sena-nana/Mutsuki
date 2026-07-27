@@ -17,6 +17,23 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def workspace_root() -> Path:
+    return Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=ROOT, text=True
+        ).strip()
+    )
+
+
+def cargo_target_directory() -> Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return Path(json.loads(metadata)["target_directory"])
+
+
 def digest(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -46,7 +63,7 @@ def distribution(samples: list[float], unit: str) -> dict[str, Any]:
 
 
 def revisions(values: list[str]) -> dict[str, Any]:
-    paths = {"MutsukiStdPlugins": ROOT}
+    paths = {"Mutsuki": workspace_root()}
     for value in values:
         name, separator, path = value.partition("=")
         if not separator:
@@ -58,16 +75,17 @@ def revisions(values: list[str]) -> dict[str, Any]:
             ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
         ).strip()
         dirty = bool(
-            subprocess.check_output(
-                ["git", "-C", str(path), "status", "--porcelain"], text=True
-            )
+            subprocess.check_output(["git", "-C", str(path), "status", "--porcelain"], text=True)
         )
-        remote = subprocess.run(
-            ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip() or "local-only"
+        remote = (
+            subprocess.run(
+                ["git", "-C", str(path), "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            or "local-only"
+        )
         result[name] = {"revision": revision, "dirty": dirty, "remote": remote}
     return result
 
@@ -199,9 +217,7 @@ def run_benchmark_process(binary: Path, environment_value: dict[str, str]) -> di
         raise ctypes.WinError()
     memory = ProcessMemoryCounters()
     memory.cb = ctypes.sizeof(memory)
-    if not ctypes.windll.psapi.GetProcessMemoryInfo(
-        handle, ctypes.byref(memory), memory.cb
-    ):
+    if not ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
         raise ctypes.WinError()
     if process.returncode:
         raise subprocess.CalledProcessError(process.returncode, process.args)
@@ -234,7 +250,7 @@ def main() -> None:
             check=True,
         )
     executable = "mutsuki-std-benchmarks.exe" if os.name == "nt" else "mutsuki-std-benchmarks"
-    binary = ROOT / "target/release" / executable
+    binary = cargo_target_directory() / "release" / executable
     reports = []
     process_metrics = []
     for process_run in range(process_runs):
@@ -243,9 +259,9 @@ def main() -> None:
             run_benchmark_process(
                 binary,
                 {
-                **os.environ,
-                "MUTSUKI_BENCH_MODE": args.mode,
-                "MUTSUKI_BENCH_OUTPUT": str(raw),
+                    **os.environ,
+                    "MUTSUKI_BENCH_MODE": args.mode,
+                    "MUTSUKI_BENCH_OUTPUT": str(raw),
                 },
             )
         )
@@ -287,12 +303,10 @@ def main() -> None:
                     if case_id == "std.io.http-client"
                     else 0.0,
                     "allocations": statistics.median(
-                        float(item["allocations"]) / len(item["samples_ns"])
-                        for item in items
+                        float(item["allocations"]) / len(item["samples_ns"]) for item in items
                     ),
                     "allocated_bytes": statistics.median(
-                        float(item["allocated_bytes"]) / len(item["samples_ns"])
-                        for item in items
+                        float(item["allocated_bytes"]) / len(item["samples_ns"]) for item in items
                     ),
                 },
                 "correctness": {

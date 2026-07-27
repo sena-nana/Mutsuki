@@ -1,6 +1,7 @@
 # Mutsuki Runtime Contracts
 
-根级 Rust contracts 是当前协议事实源。外部 Python runner kit 必须镜像这些 wire shape。
+根级 Rust contracts 是当前协议事实源。`kits/python-runner` 必须镜像同一 release revision
+的这些 wire shape。
 
 Runtime 的封闭跨进程操作由 `mutsuki-runtime-wire` 作为单一 wire registry：稳定
 `Opcode`、request/response 类型关联、协议版本、codec、frame 上限和 checked-in IDL
@@ -166,7 +167,7 @@ cursor；`lost > 0` 表示该 cursor 与返回位置之间存在已淘汰或 dro
 区间，避免消费者永久停留在不可恢复的 cursor。
 
 SDK 层可以把 task 原语包装成语言 awaitable。当前仓库内 issue #5 的 Rust 侧落点是
-Rust SDK；Python runner kit 位于独立仓库。JS/TS SDK 只作为同一
+Rust SDK；Python runner kit 位于 `kits/python-runner`。JS/TS SDK 只作为同一
 `TaskHandle` / `TaskOutcome` wire shape 的后续外部 SDK 目标，不在当前 workspace
 新增占位包。
 
@@ -672,4 +673,4 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 - `crates/mutsuki-runtime-host`：runtime bootstrapper、load-plan resolver、JSONL runner client。
 - `crates/mutsuki-runtime-sdk`：Rust SDK async/task/resource helper，以及 host/plugin
   扩展基础 trait；本次没有新增 wire protocol object。
-- 外部 `MutsukiPythonRunnerKit`：Python mirror、runner backend、stdio bridge、resource manager。
+- `kits/python-runner`：Python mirror、runner backend、stdio bridge、resource manager。

@@ -26,6 +26,15 @@ except ImportError:  # Windows
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def cargo_target_directory() -> pathlib.Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return pathlib.Path(json.loads(metadata)["target_directory"])
+
+
 def output(*command: str) -> str:
     try:
         return subprocess.check_output(command, cwd=ROOT, text=True).strip()
@@ -88,10 +97,7 @@ def case(
         metrics["allocated_bytes"] = allocated_bytes
     metrics.update(extra or {})
     metrics.update(
-        {
-            f"diagnostic_{name}": float(value)
-            for name, value in (correctness_counters or {}).items()
-        }
+        {f"diagnostic_{name}": float(value) for name, value in (correctness_counters or {}).items()}
     )
     return {
         "case_id": case_id,
@@ -162,7 +168,7 @@ def collect(
         check=True,
     )
     suffix = ".exe" if os.name == "nt" else ""
-    example_dir = ROOT / "target/release/examples"
+    example_dir = cargo_target_directory() / "release/examples"
     release = example_dir / f"release_baseline{suffix}"
     mux = example_dir / f"mux_baseline{suffix}"
     raw = example_dir / f"performance_model_raw{suffix}"
@@ -253,7 +259,9 @@ def release_cases(reports: list[dict], failures: list[str]) -> list[dict]:
                     "link.transport.shutdown",
                     dimensions,
                     [value["shutdown_us"] * 1000 for value in values],
-                    extra={"retained_rss_bytes": max(report["_peak_rss_bytes"] for report in reports)},
+                    extra={
+                        "retained_rss_bytes": max(report["_peak_rss_bytes"] for report in reports)
+                    },
                 ),
             ]
         )
@@ -315,9 +323,7 @@ def release_cases(reports: list[dict], failures: list[str]) -> list[dict]:
 
 def mux_cases(reports: list[dict], failures: list[str]) -> list[dict]:
     cases = []
-    matrix_keys = {
-        (entry["channels"], entry["payload_bytes"]) for entry in reports[0]["matrix"]
-    }
+    matrix_keys = {(entry["channels"], entry["payload_bytes"]) for entry in reports[0]["matrix"]}
     for channels, payload_bytes in sorted(matrix_keys):
         entries = [
             next(
@@ -354,9 +360,7 @@ def mux_cases(reports: list[dict], failures: list[str]) -> list[dict]:
     return cases
 
 
-def raw_cases(
-    reports: list[dict], failures: list[str], quic_test_elapsed_ns: float
-) -> list[dict]:
+def raw_cases(reports: list[dict], failures: list[str], quic_test_elapsed_ns: float) -> list[dict]:
     grouped: dict[str, list[dict]] = defaultdict(list)
     for report in reports:
         for item in report["cases"]:
@@ -393,7 +397,9 @@ def raw_cases(
                 [value["latency_ns"] for value in values],
                 allocations=max(value["allocations"] for value in values),
                 allocated_bytes=max(value["allocated_bytes"] for value in values),
-                extra={key: value for key, value in counters.items() if isinstance(value, (int, float))},
+                extra={
+                    key: value for key, value in counters.items() if isinstance(value, (int, float))
+                },
                 passed=passed,
                 correctness_counters={
                     key: value for key, value in counters.items() if isinstance(value, int)
@@ -490,10 +496,10 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=ROOT / "target/mutsuki-benchmarks/link-reference.json",
+        default=cargo_target_directory() / "mutsuki-benchmarks/link-reference.json",
     )
     args = parser.parse_args()
-    default_warmup, default_samples = ((0, 1) if args.mode == "smoke" else (1, 5))
+    default_warmup, default_samples = (0, 1) if args.mode == "smoke" else (1, 5)
     warmup = default_warmup if args.warmup is None else args.warmup
     samples = default_samples if args.samples is None else max(1, args.samples)
     release, mux, raw, quic_test_elapsed_ns = collect(args.mode, warmup, samples)
@@ -502,10 +508,10 @@ def main() -> None:
     cases.extend(mux_cases(mux, failures))
     cases.extend(raw_cases(raw, failures, quic_test_elapsed_ns))
     revisions = {
-        "MutsukiLink": {
+        "Mutsuki": {
             "revision": output("git", "rev-parse", "HEAD"),
             "dirty": bool(output("git", "status", "--porcelain")),
-            "remote": "https://github.com/sena-nana/MutsukiLink.git",
+            "remote": "https://github.com/sena-nana/Mutsuki.git",
         }
     }
     env = environment(args.mode, warmup, samples)
@@ -518,9 +524,7 @@ def main() -> None:
             cpu=process_cpu,
             extra={
                 "peak_rss_bytes": max(item["_peak_rss_bytes"] for item in release + mux + raw),
-                "context_switches": max(
-                    item["_context_switches"] for item in release + mux + raw
-                ),
+                "context_switches": max(item["_context_switches"] for item in release + mux + raw),
             },
             measurement_mode="system",
         )

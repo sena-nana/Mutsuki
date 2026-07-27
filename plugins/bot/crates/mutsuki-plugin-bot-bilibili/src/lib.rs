@@ -1080,7 +1080,7 @@ impl BilibiliRunner {
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!(
+                    format!(
                         "已为 {} ({}) 创建验证。请临时把 {} 加入 Bilibili 个性签名，然后发送 /{} verify。",
                         challenge.name, challenge.uid, challenge.code, config.management.command
                     ),
@@ -1099,7 +1099,7 @@ impl BilibiliRunner {
                     BindVerifyResult::Verified(subscription) => Ok(self.command_reply(
                         task,
                         &command,
-                        &format!(
+                        format!(
                             "验证成功，已绑定 UID {} 并写入产品配置。",
                             subscription.uid
                         ),
@@ -1108,7 +1108,7 @@ impl BilibiliRunner {
                     BindVerifyResult::SignatureMismatch { code } => Ok(self.command_reply(
                         task,
                         &command,
-                        &format!("验证未通过：个性签名中尚未找到 {code}。"),
+                        format!("验证未通过：个性签名中尚未找到 {code}。"),
                         None,
                     )),
                 }
@@ -1141,7 +1141,7 @@ impl BilibiliRunner {
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!(
+                    format!(
                         "订阅 {} 已{}。",
                         view.subscription_id,
                         if paused { "暂停" } else { "恢复" }
@@ -1230,7 +1230,7 @@ impl BilibiliRunner {
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!("订阅 {subscription_id} 已写入产品配置。"),
+                    format!("订阅 {subscription_id} 已写入产品配置。"),
                     None,
                 ))
             }
@@ -1244,7 +1244,7 @@ impl BilibiliRunner {
                 Ok(self.command_reply(
                     task,
                     &command,
-                    &format!("订阅 {subscription_id} 已从产品配置删除。"),
+                    format!("订阅 {subscription_id} 已从产品配置删除。"),
                     None,
                 ))
             }

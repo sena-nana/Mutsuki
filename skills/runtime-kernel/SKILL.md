@@ -1,6 +1,6 @@
 ---
 name: runtime-kernel
-description: Change MutsukiCore task scheduling, TaskPool, RunnerRegistry, batch execution, executor dispatch, ResultRouter, cancellation, continuation, or trace propagation. Use only for domain-neutral runtime mechanics.
+description: Change Mutsuki task scheduling, TaskPool, RunnerRegistry, batch execution, executor dispatch, ResultRouter, cancellation, continuation, or trace propagation. Use only for domain-neutral runtime mechanics.
 ---
 
 # Runtime Kernel

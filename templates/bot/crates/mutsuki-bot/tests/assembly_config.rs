@@ -150,7 +150,7 @@ management = {{ enabled = true, allow_self_binding = true, command = "bili", adm
         .start()
         .await
         .unwrap();
-    let bridge = BilibiliConsoleBridge::get().expect("bilibili console bridge published");
+    let bridge = BilibiliConsoleBridge::get(&runtime).expect("bilibili console bridge published");
     assert!(bridge.status().available);
     assert_eq!(bridge.status().backend, "web_cookie");
     runtime.shutdown().await;

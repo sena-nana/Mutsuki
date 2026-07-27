@@ -179,10 +179,10 @@ impl ReplayGuard {
             ));
         }
         self.order.push_back(hash);
-        if self.order.len() > self.capacity {
-            if let Some(expired) = self.order.pop_front() {
-                self.challenges.remove(&expired);
-            }
+        if self.order.len() > self.capacity
+            && let Some(expired) = self.order.pop_front()
+        {
+            self.challenges.remove(&expired);
         }
         Ok(hash)
     }

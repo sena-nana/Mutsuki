@@ -1,6 +1,6 @@
 ---
 name: resource-state-effects
-description: Change MutsukiCore ResourceRef or ValueRef descriptors, leases, ResourceManager, StateStore, EventLog, StateDelta, EffectRequest, provider commands, or commit semantics.
+description: Change Mutsuki ResourceRef or ValueRef descriptors, leases, ResourceManager, StateStore, EventLog, StateDelta, EffectRequest, provider commands, or commit semantics.
 ---
 
 # Resource, State And Effects

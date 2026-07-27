@@ -1582,8 +1582,8 @@ fn jsonl_fixture_runner() -> PathBuf {
         .get_or_init(|| {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .ancestors()
-                .nth(2)
-                .expect("host crate is inside workspace");
+                .find(|path| path.join("Cargo.toml").is_file() && path.join("Cargo.lock").is_file())
+                .expect("host crate is inside a locked workspace");
             let target = workspace.join("target/test-fixtures");
             let status = Command::new(env!("CARGO"))
                 .args([

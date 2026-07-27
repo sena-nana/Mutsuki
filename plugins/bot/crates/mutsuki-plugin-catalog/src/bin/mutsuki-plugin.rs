@@ -160,9 +160,9 @@ fn print_usage() {
       [--workspace-root <path>] [--workspace <path>] [--skip-fetch] [--skip-build] [--skip-abi] [--skip-pin]
 
 Examples:
-  mutsuki-plugin check --release-set releases/mutsuki-0.1-alpha-3.toml --fixture-remote
-  mutsuki-plugin plan --release-set releases/mutsuki-0.1-alpha-3.toml --module core --target-rev <sha>
-  mutsuki-plugin execute --release-set releases/mutsuki-0.1-alpha-3.toml --module core --dry-run --workspace ../MutsukiCore"
+  mutsuki-plugin check --release-set release.toml --fixture-remote
+  mutsuki-plugin plan --release-set release.toml --module mutsuki --target-rev <sha>
+  mutsuki-plugin execute --release-set release.toml --module mutsuki --dry-run --workspace ../Mutsuki"
     );
 }
 
@@ -192,7 +192,7 @@ mod cli_tests {
         let report = execute_module_upgrade(
             &release_set,
             &release_set_path,
-            "core",
+            "mutsuki",
             Some("bbbb2222"),
             &UpgradeExecuteOptions {
                 dry_run: true,

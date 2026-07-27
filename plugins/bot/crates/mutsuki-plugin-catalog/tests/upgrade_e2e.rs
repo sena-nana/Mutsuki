@@ -11,17 +11,12 @@ use mutsuki_plugin_catalog::{
 fn check_fixture_remote_reports_updates() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let release_set = load_release_set(&root.join("tests/fixtures/release-set.toml")).unwrap();
-    let remote = FixtureRemoteHeadProvider::default()
-        .with_head(
-            "https://github.com/sena-nana/MutsukiCore.git",
-            "bbbb2222cccc3333dddd4444",
-        )
-        .with_head(
-            "https://github.com/sena-nana/MutsukiBotPlugins.git",
-            "dddd4444eeee5555ffff6666",
-        );
+    let remote = FixtureRemoteHeadProvider::default().with_head(
+        "https://github.com/sena-nana/Mutsuki.git",
+        "bbbb2222cccc3333dddd4444",
+    );
     let modules = check_module_updates(&release_set, &remote).unwrap();
-    assert_eq!(modules.len(), 2);
+    assert_eq!(modules.len(), 1);
     assert!(
         modules
             .iter()
@@ -36,7 +31,7 @@ fn execute_dry_run_emits_structured_report() {
     let report = execute_module_upgrade(
         &release_set,
         &root.join("tests/fixtures/release-set.toml"),
-        "core",
+        "mutsuki",
         Some("bbbb2222"),
         &UpgradeExecuteOptions {
             dry_run: true,

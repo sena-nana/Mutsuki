@@ -177,22 +177,6 @@ fn is_content_addressed_asset(path: &std::path::Path) -> bool {
     hash.len() >= 8 && hash.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::is_content_addressed_asset;
-    use std::path::Path;
-
-    #[test]
-    fn detects_content_addressed_filenames() {
-        assert!(is_content_addressed_asset(Path::new(
-            "assets/app.a1b2c3d4e5f67890.js"
-        )));
-        assert!(!is_content_addressed_asset(Path::new("mutsuki-ui.css")));
-        assert!(!is_content_addressed_asset(Path::new("index.js")));
-        assert!(!is_content_addressed_asset(Path::new("foo.bar.js")));
-    }
-}
-
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     let current = state.connections.load(Ordering::Relaxed) as usize;
     if current >= state.budgets_max_connections {
@@ -252,16 +236,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if let WireMessage::HelloAck { session, .. } = &reply {
                     session_id = Some(session.session_id);
                 }
-                if let Ok(bytes) = reply.encode() {
-                    if sender
+                if let Ok(bytes) = reply.encode()
+                    && sender
                         .send(Message::Text(
                             String::from_utf8_lossy(&bytes).into_owned().into(),
                         ))
                         .await
                         .is_err()
-                    {
-                        break;
-                    }
+                {
+                    break;
                 }
             }
             Ok(HandleOutcome::Subscribed(_)) | Ok(HandleOutcome::Unsubscribed(_)) => {}
@@ -285,16 +268,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             let events = state.bridge.take_events(sid);
             state.bridge.set_ws_queue_depth(events.len() as u64);
             for event in events {
-                if let Ok(bytes) = WireMessage::Event(event).encode() {
-                    if sender
+                if let Ok(bytes) = WireMessage::Event(event).encode()
+                    && sender
                         .send(Message::Text(
                             String::from_utf8_lossy(&bytes).into_owned().into(),
                         ))
                         .await
                         .is_err()
-                    {
-                        break;
-                    }
+                {
+                    break;
                 }
             }
         }
@@ -307,4 +289,20 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     state
         .bridge
         .set_connections(state.connections.load(Ordering::Relaxed));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_content_addressed_asset;
+    use std::path::Path;
+
+    #[test]
+    fn detects_content_addressed_filenames() {
+        assert!(is_content_addressed_asset(Path::new(
+            "assets/app.a1b2c3d4e5f67890.js"
+        )));
+        assert!(!is_content_addressed_asset(Path::new("mutsuki-ui.css")));
+        assert!(!is_content_addressed_asset(Path::new("index.js")));
+        assert!(!is_content_addressed_asset(Path::new("foo.bar.js")));
+    }
 }

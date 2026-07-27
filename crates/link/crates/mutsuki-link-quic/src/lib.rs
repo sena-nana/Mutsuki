@@ -121,13 +121,13 @@ impl DatagramReceiveState {
                 .received_bytes
                 .saturating_add(payload.len().saturating_sub(REALTIME_DATAGRAM_HEADER_LEN) as u64);
         }
-        if self.queue.len() >= self.capacity {
-            if let Some(dropped) = self.queue.pop_front() {
-                self.overflow = self.overflow.saturating_add(1);
-                if let Some(flow) = realtime_flow_from_wire(&dropped.payload) {
-                    let stats = self.flow_stats.entry(flow).or_default();
-                    stats.receive_queue_overflow = stats.receive_queue_overflow.saturating_add(1);
-                }
+        if self.queue.len() >= self.capacity
+            && let Some(dropped) = self.queue.pop_front()
+        {
+            self.overflow = self.overflow.saturating_add(1);
+            if let Some(flow) = realtime_flow_from_wire(&dropped.payload) {
+                let stats = self.flow_stats.entry(flow).or_default();
+                stats.receive_queue_overflow = stats.receive_queue_overflow.saturating_add(1);
             }
         }
         self.queue.push_back(RawReceivedDatagram {

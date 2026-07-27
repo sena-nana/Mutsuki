@@ -1,0 +1,4 @@
+interface:
+  display_name: "Distributed Runtime"
+  short_description: "Maintain optional distributed sidecar boundaries"
+  default_prompt: "Use $distributed-runtime to change distributed execution while preserving Core isolation."

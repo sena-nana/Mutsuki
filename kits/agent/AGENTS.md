@@ -13,7 +13,7 @@ Python Runner SDK 或具体产品装配。
 - `skills/plugins/SKILL.md`：AgentLoop、context/session、tool/memory/model/prompt 插件。
 - `skills/testkit/SKILL.md`：conformance、fake provider/tool、bundle、模板和示例。
 
-涉及 runtime contract 时同时读取 `../MutsukiCore/AGENTS.md`。
+涉及 runtime contract 时同时读取 `../../AGENTS.md`。
 
 ## Hard Rules
 
@@ -24,10 +24,10 @@ Python Runner SDK 或具体产品装配。
 5. 不实现 Bot Adapter、Host 控制面、Core TaskPool 或 Python Runner backend。
 6. manifest、schema、SDK marker 和真实 Runner 必须同步；缺失 backend/capability 时 fail loud。
 7. 禁止占位公开能力、复制上游实现、生产 fallback 或兼容 shim。
-8. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
+8. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 9. effectful 模型 Provider 只能由模型 effect Runner 调用；普通 ModelGateway inline API 必须拒绝网络 Provider。
 
 ## 验证
 
 Rust 改动运行 `cargo fmt --check`、`cargo check` 和 `cargo test`。协议或插件 surface
-改动补充行为测试和 conformance；最终报告实际命令与远端 revision。
+改动补充行为测试和 conformance；最终报告实际命令与统一 release revision。

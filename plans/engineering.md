@@ -1,14 +1,15 @@
 # Mutsuki 工程实现规则
 
-根目录当前是 Rust-first 极薄 Tick-first / Batch-first runtime framework。Python runner kit 已拆分
-到独立仓库；本仓库只保留 Rust core、contracts、host 和 Rust SDK。
+根目录是 Mutsuki Framework 单仓库兼容性基线。Rust Workspace 同时包含 runtime、Link、
+Host、Agent、Bot 和标准插件 package；Python Runner Kit 与前端 package 位于同仓但保留
+各自包管理边界。仓库合并不改变 Core 的极薄 Tick-first / Batch-first 职责。
 
 ## 1. 技术栈
 
 - Rust 2024 + Cargo workspace。
 - serde / serde_json 用于纯协议序列化。
 - thiserror 用于 runtime failure wrapper。
-- Python 3.13+ + uv 用于独立的 `MutsukiPythonRunnerKit` 仓库。
+- Python 3.13+ + uv 用于 `kits/python-runner`。
 
 Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、外部服务 provider 或领域语义。
 
@@ -16,14 +17,13 @@ Rust crates 禁止依赖 Python、PyO3、产品协议 SDK、外部服务 provide
 
 ```text
 Mutsuki/
-  Cargo.toml
-  crates/
-    mutsuki-runtime-contracts/  # Task / TaskLease / Runner / Resource / Plugin load-plan protocol
-    mutsuki-runtime-core/       # CoreRuntime / TaskPool / TaskLease / Executor dispatch / ResourceManager
-    mutsuki-runtime-host/       # runtime bootstrapper / worker pools / async executor / JSONL runner client
-    mutsuki-runtime-sdk/        # Rust SDK async/await wrapper over TaskHandle
-    mutsuki-runtime-sdk-macros/ # Rust SDK proc-macro authoring DSL
-  plans/
+  Cargo.toml / Cargo.lock
+  crates/                       # runtime crates and Link
+  hosts/                        # CLI, service, Tauri, Web, distributed
+  kits/                         # AgentKit and Python Runner Kit
+  plugins/                      # Bot and standard plugins
+  templates/bot/                # canonical template source
+  plans/ / docs/ / performance/
 ```
 
 ## 3. Crate 边界
@@ -52,7 +52,7 @@ Mutsuki/
 - `mutsuki-runtime-sdk-macros`：只为 Rust 插件作者生成 `SdkProtocol`、
   `ResourceKind` / descriptor 和 async runner adapter glue；宏展开不得引入本地直调、
   workflow runtime、隐式调度或绕过 `TaskPool` 的执行路径。
-- 外部 `MutsukiPythonRunnerKit`：镜像协议，提供 Python runner backend、stdio runner
+- `kits/python-runner`：镜像协议，提供 Python runner backend、stdio runner
   server、Python ResourceManager 测试实现、runner-side async adapter 和 typed public API；
   本仓库不包含该 Python 包源码。
 
@@ -77,7 +77,7 @@ revision snapshot、环境指纹和 correctness counters。公共 CI 的 smoke �
 必须有显式 approval 文件且匹配 report SHA-256、repository revision snapshot hash 和
 environment id。
 
-改动外部 Python backend kit 时，在 `MutsukiPythonRunnerKit` 仓库运行其 `uv` 验证命令。
+改动 Python backend kit 时，在 `kits/python-runner` 运行其 `uv` 验证命令。
 
 不得用部分检查宣称成功。
 
@@ -166,7 +166,7 @@ environment id。
   parallelism_limit；Host/SDK adapter 只能在资源计划、runner capability、HostCapacity
   和 scheduler budget 均允许时并行执行 scalar entries。
 - JS/TS SDK 不在当前 workspace；不得添加未接 runtime driver 的占位 API。Python
-  runner-side task-await adapter 位于独立 Python runner kit 仓库，不作为 Core 内置业务 SDK，
+  runner-side task-await adapter 位于 `kits/python-runner`，不作为 Core 内置业务 SDK，
   也不承诺调度任意 `asyncio` future。
 - registry boot 后 freeze；能力变化必须走新 registry generation。
 - 错误必须结构化，不能吞异常返回默认值。

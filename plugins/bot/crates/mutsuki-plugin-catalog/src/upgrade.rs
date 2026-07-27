@@ -68,10 +68,7 @@ fn summarize_repo(
     repo: &ReleaseSetRepository,
     remote: &dyn RemoteHeadProvider,
 ) -> CatalogResult<ModuleUpgradeSummary> {
-    let remote_revision = match remote.resolve_head(&repo.url) {
-        Ok(head) => Some(head),
-        Err(_) => None,
-    };
+    let remote_revision = remote.resolve_head(&repo.url).ok();
     let status = match remote_revision.as_deref() {
         None => UpgradeStatus::Unknown,
         Some(head) if head.starts_with(&repo.revision) || repo.revision.starts_with(head) => {
@@ -103,11 +100,7 @@ pub fn plan_module_upgrade(
         .map(str::to_string)
         .unwrap_or_else(|| repo.revision.clone());
     let steps = plan_steps(repo, &release_set.release, &target);
-    let reload_hint = if repo.kind == "rust" && repo.id == "bot_plugins" {
-        Some("control.plugin_reload".into())
-    } else {
-        None
-    };
+    let reload_hint = None;
     Ok(UpgradePlan {
         module_id: repo.id.clone(),
         release_set: release_set.release.clone(),
@@ -129,14 +122,12 @@ fn plan_steps(
             id: "check".into(),
             title: "检查模块升级".into(),
             detail: format!(
-                "对照 release set `{release_set}` 中 `{id}` 的 pin `{pinned}` 与 Git 远端 `{target}`",
+                "对照 release `{release_set}` 中 `{id}` 的 pin `{pinned}` 与 Mutsuki 远端 `{target}`",
                 id = repo.id,
                 pinned = repo.revision,
                 target = target_revision,
             ),
-            cli_hint: Some(format!(
-                "mutsuki-plugin check --release-set releases/{release_set}.toml"
-            )),
+            cli_hint: Some("mutsuki-plugin check --release-set <product-release.toml>".to_string()),
         },
         UpgradeStep {
             id: "fetch".into(),
@@ -152,83 +143,41 @@ fn plan_steps(
             )),
         },
     ];
-    match repo.kind.as_str() {
-        "python" => {
-            steps.push(UpgradeStep {
-                id: "validate".into(),
-                title: "更新 release set pin 并验证".into(),
-                detail: format!(
-                    "更新 `{release_set}` 中 `{id}` 的 revision，运行 release_set validate/report",
-                    id = repo.id,
-                ),
-                cli_hint: Some(format!(
-                    "python3 scripts/release_set.py --manifest releases/{release_set}.toml sync --workspace-root .."
-                )),
-            });
-        }
-        _ => {
-            steps.push(UpgradeStep {
-                id: "build".into(),
-                title: "编译模块".into(),
-                detail: format!(
-                    "在 `{workspace}` 运行 `cargo build --release`（或仓库 release 脚本）；失败必须结构化退出",
-                    workspace = workspace_hint,
-                ),
-                cli_hint: Some(format!(
-                    "cargo build --release --manifest-path {workspace}/Cargo.toml",
-                    workspace = workspace_hint,
-                )),
-            });
-            if repo.id == "bot_plugins" || repo.id.ends_with("_plugins") {
-                steps.push(UpgradeStep {
-                    id: "abi".into(),
-                    title: "ABI artifact 与 sha256".into(),
-                    detail: "将编译产物写入 `plugins/installed/<plugin_id>/`，生成含 sha256 的 plugin.toml，供 LoadPlan 校验"
-                        .into(),
-                    cli_hint: None,
-                });
-            }
-            steps.push(UpgradeStep {
-                id: "pin".into(),
-                title: "更新 Git rev pin".into(),
-                detail: format!(
-                    "更新 release set / Cargo Git pin 到 `{target}`，运行 `cargo metadata --locked`",
-                    target = target_revision,
-                ),
-                cli_hint: Some(format!(
-                    "python3 scripts/release_set.py --manifest releases/{release_set}.toml sync --workspace-root .."
-                )),
-            });
-        }
-    }
+    steps.push(UpgradeStep {
+        id: "build".into(),
+        title: "验证统一仓库".into(),
+        detail: format!(
+            "在 `{workspace}` 运行锁定的 Mutsuki Workspace 构建与测试；失败必须结构化退出",
+            workspace = workspace_hint,
+        ),
+        cli_hint: Some(format!(
+            "cargo test --workspace --all-targets --locked --manifest-path {workspace}/Cargo.toml",
+            workspace = workspace_hint,
+        )),
+    });
+    steps.push(UpgradeStep {
+        id: "pin".into(),
+        title: "更新统一 Git pin".into(),
+        detail: format!(
+            "把产品中所有 Mutsuki package 同时更新到 `{target}`，重新生成 lockfile 并运行 `cargo metadata --locked`",
+            target = target_revision,
+        ),
+        cli_hint: Some("cargo update && cargo metadata --locked".into()),
+    });
     steps.push(UpgradeStep {
         id: "reload".into(),
         title: "重载或重启".into(),
-        detail: if repo.id == "bot_plugins" {
-            "Bot 插件 ABI 更新后在 Console 插件页或 CLI 执行 PluginReload；核心模块 pin 更新需重启 Runtime"
-                .into()
-        } else {
-            "核心模块 pin 更新后重启 ServiceRuntime 并验证 health".into()
-        },
-        cli_hint: repo
-            .id
-            .eq("bot_plugins")
-            .then(|| "control.plugin_reload".into()),
+        detail:
+            "统一 Mutsuki revision 更新后重启 ServiceRuntime，并验证 health、配置装配和插件库存"
+                .into(),
+        cli_hint: None,
     });
     steps
 }
 
 pub(crate) fn sibling_checkout_hint(module_id: &str) -> String {
     match module_id {
-        "core" => "../MutsukiCore".into(),
-        "service_host" => "../MutsukiServiceHost".into(),
-        "link" => "../MutsukiLink".into(),
-        "std_plugins" => "../MutsukiStdPlugins".into(),
-        "agent_kit" => "../MutsukiAgentKit".into(),
-        "bot_plugins" => "../MutsukiBotPlugins".into(),
-        "distributed_host" => "../MutsukiDistributedHost".into(),
-        "tauri_host" => "../MutsukiTauriHost".into(),
-        "python_runner_kit" => "../MutsukiPythonRunnerKit".into(),
+        "mutsuki" => "../Mutsuki".into(),
         other => format!("../{other}"),
     }
 }
@@ -258,14 +207,9 @@ impl RemoteHeadProvider for FixtureRemoteHeadProvider {
     }
 }
 
+#[derive(Default)]
 pub struct ReqwestRemoteHeadProvider {
     token: Option<String>,
-}
-
-impl Default for ReqwestRemoteHeadProvider {
-    fn default() -> Self {
-        Self { token: None }
-    }
 }
 
 impl RemoteHeadProvider for ReqwestRemoteHeadProvider {
@@ -325,8 +269,8 @@ mod tests {
 
     fn sample_repo() -> ReleaseSetRepository {
         ReleaseSetRepository {
-            id: "core".into(),
-            url: "https://github.com/sena-nana/MutsukiCore.git".into(),
+            id: "mutsuki".into(),
+            url: "https://github.com/sena-nana/Mutsuki.git".into(),
             revision: "aaaa1111".into(),
             kind: "rust".into(),
         }
@@ -335,7 +279,7 @@ mod tests {
     #[test]
     fn detects_update_available() {
         let remote = FixtureRemoteHeadProvider::default().with_head(
-            "https://github.com/sena-nana/MutsukiCore.git",
+            "https://github.com/sena-nana/Mutsuki.git",
             "bbbb2222cccc3333",
         );
         let summary = summarize_repo(&sample_repo(), &remote).unwrap();
@@ -346,7 +290,7 @@ mod tests {
     #[test]
     fn detects_up_to_date_prefix_match() {
         let remote = FixtureRemoteHeadProvider::default().with_head(
-            "https://github.com/sena-nana/MutsukiCore.git",
+            "https://github.com/sena-nana/Mutsuki.git",
             "aaaa1111deadbeef",
         );
         let summary = summarize_repo(&sample_repo(), &remote).unwrap();
@@ -357,7 +301,7 @@ mod tests {
     fn plan_includes_fetch_build_pin_reload() {
         let release_set = ReleaseSetInfo {
             schema_version: 1,
-            release: "mutsuki-0.1-alpha-3".into(),
+            release: "v0.1.0".into(),
             status: "active".into(),
             contracts_api: "0.1.0".into(),
             runtime_wire_schema: "mutsuki.runtime.wire/1.3.0".into(),
@@ -365,7 +309,7 @@ mod tests {
             unsupported_deployments: vec![],
             repositories: vec![sample_repo()],
         };
-        let plan = plan_module_upgrade(&release_set, "core", Some("bbbb2222")).unwrap();
+        let plan = plan_module_upgrade(&release_set, "mutsuki", Some("bbbb2222")).unwrap();
         assert_eq!(plan.target_revision, "bbbb2222");
         assert!(plan.steps.iter().any(|step| step.id == "fetch"));
         assert!(plan.steps.iter().any(|step| step.id == "build"));

@@ -304,7 +304,7 @@ fn register_write(
 ) {
     ctx.register(method_name, move |params| {
         require_runtime_write(&params)?;
-        Ok(caller.invoke(method, control_params(&params))?)
+        caller.invoke(method, control_params(&params))
     });
 }
 

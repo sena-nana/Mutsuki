@@ -1,12 +1,20 @@
 # MutsukiBotTemplate
 
-当前兼容组合由 [Mutsuki Release Set](docs/release-sets.md) 管理；机器可读 active manifest 位于
-`releases/mutsuki-0.1-alpha-3.toml`。构建前可运行
-`python3 scripts/release_set.py validate --root .`，确认所有直接/传递依赖只解析到 active Core revision。
-
 配置驱动、实现中立的 Mutsuki Bot 产品装配器。`mutsuki-bot` 只加载 ServiceHost 配置、
 注册 owner 提供的插件 factory catalog 并启动 Runtime；它不实现命令、回复、Agent 流程或
 任何具体业务 Bot。
+
+本目录是 Mutsuki monorepo 内的规范源，直接使用根 Workspace 的 package。发布给独立产品时，
+必须从仓库根执行导出脚本，使所有 Mutsuki package 固定到同一个 release tag 或 commit，并
+生成独立 `Cargo.lock`：
+
+```powershell
+python templates/bot/scripts/export_template.py `
+  --output ../MutsukiBotTemplate-export `
+  --tag v0.1.0
+```
+
+导出结果不依赖兄弟仓库、根 Workspace 或已归档的旧框架仓库。
 
 ## Run
 
@@ -99,7 +107,7 @@ BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"repl
 ```
 
 完整配置、scope 和错误模型见
-[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/MutsukiBotPlugins/blob/0feead21eab479d2944225648f62002cd216af79/docs/bilibili-open-platform.md)。
+[BotPlugins 官方开放平台 backend](../../plugins/bot/docs/bilibili-open-platform.md)。
 
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
 Provider），并让 QQ 的 `media_provider_id` 与业务插件一致。米画师还需显式选择
@@ -146,11 +154,13 @@ cargo test -p mutsuki-bot --test qqbot_real_smoke -- --ignored --nocapture
 ## Verification
 
 ```powershell
-cargo metadata --locked
+cargo metadata --locked --format-version 1
 cargo fmt --check
 cargo check --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo test --workspace --all-targets --locked
+python -m unittest discover -s templates/bot/scripts -p "test_*.py"
 ```
 
-跨仓库职责见 [docs/repository-boundaries.md](docs/repository-boundaries.md)。
+package 职责见 [docs/repository-boundaries.md](docs/repository-boundaries.md)，统一发布与兼容性见
+[根发布规范](../../docs/release-train.md)。

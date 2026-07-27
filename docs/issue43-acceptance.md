@@ -1,6 +1,6 @@
 # Issue #43 acceptance
 
-Issue: <https://github.com/sena-nana/MutsukiCore/issues/43>
+Issue: <https://github.com/sena-nana/Mutsuki/issues/43>
 
 ## Performance question
 

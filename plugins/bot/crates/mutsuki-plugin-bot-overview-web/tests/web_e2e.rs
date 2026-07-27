@@ -18,8 +18,10 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
-    let mut fixture = FixtureControlHandler::default();
-    fixture.fail_statistics = fail_statistics;
+    let fixture = FixtureControlHandler {
+        fail_statistics,
+        ..FixtureControlHandler::default()
+    };
     let extension =
         OverviewWebExtension::new(ControlRpcCaller::new(Arc::new(fixture), "local-dev"))
             .with_frontend_assets(&assets);

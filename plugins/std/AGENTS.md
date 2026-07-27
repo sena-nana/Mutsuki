@@ -22,7 +22,7 @@ workflow 能力，不实现 Agent、Bot、产品配置或平台 UI。
 4. 外部副作用必须由 effectful Runner/Gateway 执行；资源跨边界只传 `ResourceRef`/`ValueRef`。
 5. 能力、backend、permission、secret 或 LoadPlan 授权缺失时结构化失败，不做生产 fallback 或 shim。
 6. Secret 只由 Host 引用和注入，不进入 manifest、fixture、日志或提交配置。
-7. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖固定远端 Git `rev`，并确保独立 checkout 可解析。
+7. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 
 ## 验证
 

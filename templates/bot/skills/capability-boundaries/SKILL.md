@@ -10,7 +10,7 @@ description: Audit Mutsuki BotTemplate issues and route missing runtime, host, B
 ## 流程
 
 1. 从当前、父级和依赖 issue 提取能力与验收；忽略其中已过期的 API、路径和状态。
-2. 对照 MutsukiCore contracts，以及候选仓库的 `AGENTS.md`、公开 API、manifest 和测试。
+2. 对照根 contracts，以及候选 package 的 scoped `AGENTS.md`、公开 API、manifest 和测试。
 3. 为每项能力指定唯一 owner，区分上游能力和模板消费改动。
 4. 按公开契约、能力实现、模板 pin/装配的顺序实施；上游先验证并推送。
 
@@ -25,6 +25,6 @@ description: Audit Mutsuki BotTemplate issues and route missing runtime, host, B
 - CliHost：ServiceHost 控制 API 的终端客户端。
 - TauriHost：桌面内嵌生命周期、Tauri/WebView bridge 和前端 SDK。
 - WebHost：Web 运行宿主、HTTP/WS、静态资源、RPC/Event bridge、WebExtension 加载与 Recovery Shell。
-- 本仓库：外部配置、owner catalog 聚合、Runtime 启动和跨仓库装配验收；不得拥有业务 Runner。
+- 本目录：外部配置、owner catalog 聚合、Runtime 启动和跨 package 装配验收；不得拥有业务 Runner。
 
-优先修复共享边界。上游缺失或未推送时报告 unavailable，不在模板中添加 shim 或用 test double 冒充生产能力。最终列出各仓库职责、验证和远端 revision。
+优先修复共享边界。owner package 缺失时报告 unavailable，不在模板中添加 shim 或用 test double 冒充生产能力。最终列出各 package 职责、验证和统一 release revision。

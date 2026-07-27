@@ -1,130 +1,117 @@
 # Mutsuki
 
-> A domain-neutral batch-first runtime kernel implemented as a Rust framework.
+Mutsuki is a domain-neutral, batch-first runtime framework maintained as one monorepo with
+independently consumable packages. The repository contains the Rust runtime and Link layers,
+product Hosts, Agent and Python kits, Bot and standard plugins, canonical templates, integration
+tests, performance models, and one release compatibility baseline.
 
-**Current boundary: Rust-first batch-first runtime kernel**
+Repository consolidation does not create an all-in-one crate. Products depend only on the packages
+they need:
 
-The root workspace is the Rust framework surface. It provides serializable
-runtime contracts, the reusable `CoreRuntime` kernel, and native/JSONL runner
-host helpers. Language kits, including the Python runner kit, live in separate
-repositories and mirror the contracts exposed here.
-
-The runtime shape is:
-
-```text
-RuntimeProfile + PluginManifest
-  -> RuntimeLoadPlan / RuntimeLock
-  -> CoreRuntime
-  -> TaskPool + TaskLease + RunnerRegistry + Executor dispatch + ResultRouter
-  -> StateStore + ResourceManager / ResourceCell + EventLog + TraceLog
+```toml
+[dependencies]
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
+mutsuki-link = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
+mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "v0.1.0" }
 ```
 
-The current runner execution model is deliberately single-instance: one
-logical `runner_id` can have at most one active `WorkBatch`. A batch may still
-contain multiple entries and use the runner's declared batch-internal entry
-parallelism. Configurations that request multiple active batches for one
-runner are rejected during startup.
+## Package groups
 
-## Crates
+| Path | Packages |
+| --- | --- |
+| `crates/mutsuki-runtime-*` | Contracts, wire, CoreRuntime, Host helpers, Rust SDK and benchmarks |
+| `crates/link/` | Link protocol, discovery, pairing, Local/TCP/QUIC and runtime adapters |
+| `hosts/` | CLI, service, Tauri, Web and optional distributed Hosts |
+| `kits/` | AgentKit and Python Runner Kit |
+| `plugins/` | Bot packages and domain-neutral standard protocols/plugins |
+| `templates/bot/` | Canonical Bot template source and export tooling |
 
-- `crates/mutsuki-runtime-contracts` - pure serializable contracts:
-  Task, TaskLease, Runner, StateDelta, EffectRequest, ValueRef, ResourceRef,
-  ResourceCellRef, ResourceLease, PluginManifest, RuntimeLoadPlan,
-  ContractSurface, trace, events, and errors.
-- `crates/mutsuki-runtime-core` - runtime mechanics:
-  CoreRuntime, TaskPool, TaskLease, RunnerRegistry, Executor dispatch,
-  ResultRouter, StateStore, ResourceManager, reload surface checks, event log,
-  and trace log.
-- `crates/mutsuki-runtime-host` - native Rust host helper:
-  runtime bootstrapper, deterministic load-plan resolver, stdio JSONL runner client,
-  and policy-free process runner transport.
-## Standard Plugin Naming
+The full ownership and dependency map is in
+[Monorepo architecture](docs/architecture/monorepo.md). Public runtime contracts remain
+batch-first and preserve TaskPool, TaskLease, TaskHandle, ResourceRef, LoadPlan and structured
+failure boundaries.
 
-The first standard plugin batch follows GitHub issue #8:
+## Development
 
-- distributable plugin packages use `mutsuki-plugin-<domain>-<name>`;
-- protocol packages use `mutsuki-protocol-<domain>`;
-- standard runtime plugin ids reserve the `mutsuki.std.<domain>.<name>` prefix;
-- protocol ids use `mutsuki.<domain>.<action>` and do not include `plugin`.
+Rust packages share the root `Cargo.toml` and `Cargo.lock`:
 
-The implementations live in `MutsukiStdPlugins`; Core owns none of these domain protocols or
-providers.
-
-## Verification
-
-```powershell
+```bash
+python3 skills/monorepo-maintenance/scripts/check_workspace.py
 cargo metadata --locked --format-version 1
-cargo fmt --check
-cargo test
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
 bash scripts/check-distributed-boundary.sh
 ```
 
-Python runner kit checks are run in the split `MutsukiPythonRunnerKit`
-repository.
+Python Runner Kit:
 
-## Performance baseline
-
-Core benchmark v2 separates headline timing from allocator instrumentation and
-uses the Mutsuki Performance Model v1 report envelope:
-
-```powershell
-cargo bench-smoke
-cargo bench-full
-cargo bench-reference
+```bash
+cd kits/python-runner
+uv run ruff check src tests
+uv run pyright src tests
+uv run pytest
 ```
 
-`cargo bench-smoke` is the public-CI catastrophic-regression gate. `cargo bench-full`
-runs stable in-process sampling with the system allocator. `cargo bench-reference`
-runs warmup plus multiple samples across independent time-lane processes, then runs
-the tracking allocator in a separate process and writes a merged report and anomaly
-analysis under `target/mutsuki-benchmarks/`. The accepted owner-local Epic #35
-Windows x64 reference run is under `artifacts/perf/reference-windows-x64/`;
-macOS ARM64 observations remain an optional environment-specific lane.
+Web and Tauri frontend packages retain their package-level scripts and lockfiles under
+`hosts/web` and `hosts/tauri`. Run their typecheck/build commands when those surfaces change.
 
-The full matrix covers 1k/10k/100k tasks, 1/16/128 runners, 0/1/50/100% ready
-ratios, batch sizes 1/32/256, protocol/hint/continuation routing, bounded
-long-running behavior, resource planning, completion routing, and Host-facing
-actor APIs. It also includes typed local builtin dispatch at 1/16/256 entries.
-Reports include median/p95/p99/MAD/min/max, CPU time, allocation,
-peak RSS, context switches, complete environment fingerprints, revision/dirty state,
-sampling counts and correctness counters. Fixture construction is outside each
-headline measurement window.
+## Performance
 
-The 2026-07-15 local baseline was captured on macOS aarch64 with 10 logical
-CPUs and Rust 1.97.0 in the release profile. It measured:
+Each owner boundary retains its workload, raw samples and anomaly analysis. Root Core smoke:
 
-| Case | Current measured baseline |
-| --- | ---: |
-| Equivalent 24-hour idle run (8.64m ticks) | 20.1 ns/tick |
-| 100k tasks / 128 runners / 1% ready / batch 32 | 1.26 us/claimed entry |
-| 100k tasks / 16 runners / 100% ready / batch 32 | 22.6 us/claimed entry |
-| 256-entry resource-plan construction, no resources | 2.23 us/entry |
-| 256-entry completion validation and routing | 8.20 us/entry |
-| Host actor statistics round trip | 3.93 us/command |
-| 1m task lifecycle retained growth in the second half | 0 bytes |
+```bash
+cargo bench-smoke
+```
 
-These historical values are environment-specific evidence, not universal performance
-claims. `artifacts/perf/issue28-baseline.json` remains a legacy Issue #28 record and is
-not an approved v1 baseline. Public CI only runs broad absolute smoke gates. A release
-baseline requires a separate `mutsuki.performance.baseline-approval/v1` record whose
-SHA-256, repository-revision snapshot and environment fingerprint match the report; caches and the
-latest run can never update it automatically. The detailed boundary and anomaly rules
-are documented in [Core benchmark v2](docs/core-performance-model-v1.md), the shared contracts in
-[performance/README.md](performance/README.md), and the full cross-owner audit in
+Owner smoke entrypoints:
+
+```bash
+python3 crates/link/scripts/run-performance-model.py \
+  --mode smoke --output target/mutsuki-benchmarks/link-smoke.json
+python3 hosts/service/crates/mutsuki-service-benchmarks/scripts/run-reference.py \
+  --mode smoke --warmup 0 --samples 1 \
+  --output target/mutsuki-benchmarks/service-host-smoke.json
+python3 hosts/tauri/crates/mutsuki-tauri-benchmarks/scripts/run-reference.py \
+  --mode smoke --warmup 0 --samples 1 \
+  --output target/mutsuki-benchmarks/tauri-smoke.json
+python3 hosts/distributed/scripts/run-performance-model.py \
+  --mode smoke --service-binary target/release/mutsuki-benchmark-service \
+  --output target/mutsuki-benchmarks/distributed-smoke.json
+python3 kits/agent/scripts/run-performance-model.py \
+  --mode smoke --output target/mutsuki-benchmarks/agent-smoke.json
+python3 plugins/bot/scripts/run-performance-model.py \
+  --mode smoke --output target/mutsuki-benchmarks/bot-smoke.json
+python3 plugins/std/scripts/run-performance-model.py \
+  --mode smoke --output target/mutsuki-benchmarks/std-smoke.json
+uv run --directory kits/python-runner python benchmarks/performance_model.py \
+  --mode smoke --output ../../target/mutsuki-benchmarks/python-runner-smoke.json
+```
+
+Local/public runs are environment-specific evidence. A release baseline requires an explicit
+approval whose report hash, revision snapshot and environment fingerprint match. See
+[performance/README.md](performance/README.md) and
 [Epic #35 acceptance](docs/issue35-acceptance.md).
 
-Issue #36 keeps the synchronous one-entry path under a stricter release comparison: median
-latency and throughput may regress by at most 5% (with the existing three-MAD noise allowance
-for latency). Async I/O throughput is validated separately by the Host executor acceptance tests.
+## Release and migration
 
-## Reading Order
+- [Release train](docs/release-train.md)
+- [v0.1.0 compatibility matrix](docs/compatibility/v0.1.0.md)
+- [Issue #44 migration ledger](docs/migration/issue-44-ledger.md)
+- [Monorepo decision](docs/decisions/0001-mutsuki-monorepo.md)
 
-- [AGENTS.md](AGENTS.md)
-- [plans/roadmap.md](plans/roadmap.md)
-- [plans/architecture.md](plans/architecture.md)
-- [plans/engineering.md](plans/engineering.md)
-- [plans/contracts.md](plans/contracts.md)
+Business products such as Lilia and Nana remain in their own repositories and pin this repository
+at a tag or commit. The independent Bot GitHub Template is generated from `templates/bot`; it is
+not a second source of framework behavior.
+
+## Reading order
+
+1. [AGENTS.md](AGENTS.md)
+2. [plans/roadmap.md](plans/roadmap.md)
+3. [plans/architecture.md](plans/architecture.md)
+4. [plans/engineering.md](plans/engineering.md)
+5. [plans/contracts.md](plans/contracts.md)
 
 ## License
 
-See [LICENSE](LICENSE).
+[MIT](LICENSE)

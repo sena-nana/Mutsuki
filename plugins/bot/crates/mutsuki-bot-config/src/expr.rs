@@ -123,7 +123,7 @@ impl ConfigExpr {
                 right: Box::new(parse_atom(right.trim())?),
             });
         }
-        Ok(parse_atom(trimmed)?)
+        parse_atom(trimmed)
     }
 }
 

@@ -23,17 +23,10 @@ async fn start() -> MutsukiWebHost {
         .join("tests")
         .join("fixtures")
         .join("release-set.toml");
-    let remote = Arc::new(
-        FixtureRemoteHeadProvider::default()
-            .with_head(
-                "https://github.com/sena-nana/MutsukiCore.git",
-                "bbbb2222cccc3333dddd4444",
-            )
-            .with_head(
-                "https://github.com/sena-nana/MutsukiBotPlugins.git",
-                "cccc3333dddd4444eeee5555",
-            ),
-    );
+    let remote = Arc::new(FixtureRemoteHeadProvider::default().with_head(
+        "https://github.com/sena-nana/Mutsuki.git",
+        "bbbb2222cccc3333dddd4444",
+    ));
     let extension = UpgradeWebExtension::new(&release_set)
         .unwrap()
         .with_remote_provider(remote);
@@ -71,18 +64,18 @@ async fn upgrade_check_and_plan_use_fixture_remote() {
     let addr = host.listen_addr().unwrap().to_string();
 
     let check = ws_rpc(&addr, "check", json!({})).await.unwrap();
-    assert_eq!(check["release_set"], "mutsuki-0.1-alpha-3");
-    assert!(check["modules"].as_array().unwrap().len() >= 2);
+    assert_eq!(check["release_set"], "v0.1.0");
+    assert_eq!(check["modules"].as_array().unwrap().len(), 1);
     assert!(check["update_count"].as_u64().unwrap() >= 1);
 
     let plan = ws_rpc(
         &addr,
         "plan",
-        json!({"module_id": "core", "target_revision": "bbbb2222cccc3333dddd4444"}),
+        json!({"module_id": "mutsuki", "target_revision": "bbbb2222cccc3333dddd4444"}),
     )
     .await
     .unwrap();
-    assert_eq!(plan["module_id"], "core");
+    assert_eq!(plan["module_id"], "mutsuki");
     assert!(plan["plan"]["steps"].as_array().unwrap().len() >= 4);
     assert_eq!(plan["reload"]["method"], "plugin_reload");
 
@@ -98,7 +91,7 @@ async fn upgrade_execute_dry_run_via_web() {
     let report = ws_rpc(
         &addr,
         "execute",
-        json!({"module_id": "core", "target_revision": "bbbb2222cccc3333dddd4444", "dry_run": true}),
+        json!({"module_id": "mutsuki", "target_revision": "bbbb2222cccc3333dddd4444", "dry_run": true}),
     )
     .await
     .unwrap();

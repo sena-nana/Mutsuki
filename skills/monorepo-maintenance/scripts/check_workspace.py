@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+LEGACY_REPOSITORIES = (
+    "MutsukiCore",
+    "MutsukiLink",
+    "MutsukiCliHost",
+    "MutsukiServiceHost",
+    "MutsukiTauriHost",
+    "MutsukiWebHost",
+    "MutsukiDistributedHost",
+    "MutsukiAgentKit",
+    "MutsukiBotPlugins",
+    "MutsukiStdPlugins",
+    "MutsukiPythonRunnerKit",
+    "MutsukiBotTemplate",
+)
+REQUIRED_PATHS = (
+    "AGENTS.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/link",
+    "hosts/cli",
+    "hosts/service",
+    "hosts/tauri",
+    "hosts/web",
+    "hosts/distributed",
+    "kits/agent",
+    "kits/python-runner",
+    "plugins/bot",
+    "plugins/std",
+    "templates/bot",
+    "docs/architecture/monorepo.md",
+    "docs/decisions/0001-mutsuki-monorepo.md",
+    "docs/migration/issue-44-ledger.md",
+)
+
+
+def fail(message: str) -> None:
+    print(f"workspace boundary check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def cargo_metadata() -> dict[str, object]:
+    result = subprocess.run(
+        [
+            "cargo",
+            "metadata",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        fail(result.stderr.strip() or "cargo metadata failed")
+    return json.loads(result.stdout)
+
+
+def check_required_paths() -> None:
+    missing = [path for path in REQUIRED_PATHS if not (ROOT / path).exists()]
+    if missing:
+        fail(f"missing required paths: {', '.join(missing)}")
+
+
+def check_single_workspace() -> None:
+    locks = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.rglob("Cargo.lock")
+        if ".git" not in path.parts and "target" not in path.parts
+    )
+    allowed = {"Cargo.lock", "fuzz/Cargo.lock"}
+    unexpected = [path for path in locks if path not in allowed]
+    if unexpected:
+        fail(f"nested Cargo.lock files: {', '.join(unexpected)}")
+
+    nested = []
+    for manifest in ROOT.rglob("Cargo.toml"):
+        if manifest == ROOT / "Cargo.toml" or "target" in manifest.parts:
+            continue
+        with manifest.open("rb") as handle:
+            if "workspace" in tomllib.load(handle):
+                nested.append(manifest.relative_to(ROOT).as_posix())
+    if nested:
+        fail(f"nested Cargo workspaces: {', '.join(sorted(nested))}")
+
+
+def check_metadata(metadata: dict[str, object]) -> None:
+    workspace_root = Path(str(metadata["workspace_root"])).resolve()
+    if workspace_root != ROOT:
+        fail(f"cargo workspace root is {workspace_root}, expected {ROOT}")
+
+    packages = metadata["packages"]
+    names = [package["name"] for package in packages]
+    if len(names) != len(set(names)):
+        fail("package names are not unique")
+
+    for package in packages:
+        manifest = Path(package["manifest_path"]).resolve()
+        if not manifest.is_relative_to(ROOT):
+            fail(f"package is outside the repository: {manifest}")
+        for dependency in package["dependencies"]:
+            source = dependency.get("source") or ""
+            if dependency["name"].startswith("mutsuki-") and source.startswith("git+"):
+                fail(
+                    f"{package['name']} uses Git for internal dependency "
+                    f"{dependency['name']}: {source}"
+                )
+
+
+def check_manifest_urls() -> None:
+    for manifest in ROOT.rglob("Cargo.toml"):
+        if "target" in manifest.parts:
+            continue
+        content = manifest.read_text(encoding="utf-8")
+        for repository in LEGACY_REPOSITORIES:
+            legacy = f"github.com/sena-nana/{repository}.git"
+            if legacy in content:
+                fail(
+                    f"legacy internal repository URL remains in "
+                    f"{manifest.relative_to(ROOT)}: {legacy}"
+                )
+
+
+def main() -> None:
+    check_required_paths()
+    check_single_workspace()
+    metadata = cargo_metadata()
+    check_metadata(metadata)
+    check_manifest_urls()
+    print(
+        "workspace boundary check passed: "
+        f"{len(metadata['packages'])} Rust packages, one root workspace, no internal Git pins"
+    )
+
+
+if __name__ == "__main__":
+    main()
