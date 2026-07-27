@@ -57,6 +57,9 @@ pub(super) fn fail_runner_dispatch(
     task_lease: &mutsuki_runtime_contracts::TaskLease,
     failure: RuntimeError,
 ) -> RuntimeResult<usize> {
+    if let Some(completed) = finalize_requested_cancellation(runtime, task_lease)? {
+        return Ok(completed);
+    }
     if runtime
         .tasks
         .fail(task_lease, runtime.current_step, failure.clone())
@@ -71,6 +74,21 @@ pub(super) fn fail_runner_dispatch(
         return Ok(1);
     }
     Ok(0)
+}
+
+pub(super) fn finalize_requested_cancellation(
+    runtime: &mut CoreRuntime,
+    task_lease: &TaskLease,
+) -> RuntimeResult<Option<usize>> {
+    let Some(pending) = runtime
+        .tasks
+        .finalize_requested_cancellation(task_lease, runtime.current_step)?
+    else {
+        return Ok(None);
+    };
+    runtime.record_task_terminal_event(&task_lease.task_id, "task.cancelled", pending.failure);
+    runtime.wake_tasks_waiting_on(&task_lease.task_id)?;
+    Ok(Some(1))
 }
 
 pub(super) fn fail_runner_dispatches(

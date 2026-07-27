@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ContractSurface, ContractSurfaceKind, EntryCompletion, PluginDeploymentKind,
-    PluginManifest, RunnerDescriptor, RunnerResult, RuntimeLoadPlan, RuntimeProfile, Task,
-    WorkBatch,
+    CompletionBatch, ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginManifest,
+    RunnerDescriptor, RuntimeLoadPlan, RuntimeProfile, WorkBatch,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, AsyncCompletionFuture, CoreKernelRunner, CoreRuntime, Runner, RunnerContext,
@@ -24,123 +23,6 @@ use crate::error::{
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
 use crate::scheduler::{DefaultScheduler, SchedulerPolicy};
-
-pub type NativeEntryHandler =
-    Box<dyn FnMut(RunnerContext, Task) -> RuntimeResult<RunnerResult> + Send>;
-pub type BorrowedNativeEntryHandler =
-    Box<dyn FnMut(&RunnerContext, &Task) -> RuntimeResult<RunnerResult> + Send>;
-
-enum NativeHandler {
-    Owned(NativeEntryHandler),
-    Borrowed(BorrowedNativeEntryHandler),
-}
-
-pub struct NativeRunner {
-    descriptor: RunnerDescriptor,
-    handler: NativeHandler,
-    cancelled: Vec<String>,
-    disposed: bool,
-}
-
-impl NativeRunner {
-    pub fn new(
-        descriptor: RunnerDescriptor,
-        handler: impl FnMut(RunnerContext, Task) -> RuntimeResult<RunnerResult> + Send + 'static,
-    ) -> Self {
-        Self {
-            descriptor,
-            handler: NativeHandler::Owned(Box::new(handler)),
-            cancelled: Vec::new(),
-            disposed: false,
-        }
-    }
-
-    /// Creates a builtin runner whose entry handler borrows typed local tasks.
-    ///
-    /// This is the allocation-free in-process path. Wire-backed payloads are
-    /// still decoded to an owned temporary by `BatchPayload::task_at`.
-    pub fn new_borrowed(
-        descriptor: RunnerDescriptor,
-        handler: impl FnMut(&RunnerContext, &Task) -> RuntimeResult<RunnerResult> + Send + 'static,
-    ) -> Self {
-        Self {
-            descriptor,
-            handler: NativeHandler::Borrowed(Box::new(handler)),
-            cancelled: Vec::new(),
-            disposed: false,
-        }
-    }
-}
-
-impl Runner for NativeRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        let mut results = Vec::with_capacity(batch.entries.len());
-        for entry in &batch.entries {
-            let task = match batch.payload_task(entry.payload_index) {
-                Ok(task) if task.task_id == entry.task_id => task,
-                Ok(_) => {
-                    results.push(EntryCompletion {
-                        entry_id: entry.entry_id.clone(),
-                        task_id: entry.task_id.clone(),
-                        result: None,
-                        error: Some(mutsuki_runtime_contracts::RuntimeError::new(
-                            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
-                            "native_runner",
-                            format!("batch.entry.{}.payload_task_id", entry.entry_id),
-                        )),
-                    });
-                    continue;
-                }
-                Err(error) => {
-                    results.push(EntryCompletion {
-                        entry_id: entry.entry_id.clone(),
-                        task_id: entry.task_id.clone(),
-                        result: None,
-                        error: Some(error),
-                    });
-                    continue;
-                }
-            };
-            let result = match &mut self.handler {
-                NativeHandler::Owned(handler) => handler(ctx.clone(), task.into_owned()),
-                NativeHandler::Borrowed(handler) => handler(&ctx, task.as_ref()),
-            };
-            match result {
-                Ok(result) => results.push(EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: Some(result),
-                    error: None,
-                }),
-                Err(failure) => results.push(EntryCompletion {
-                    entry_id: entry.entry_id.clone(),
-                    task_id: entry.task_id.clone(),
-                    result: None,
-                    error: Some(failure.error().clone()),
-                }),
-            }
-        }
-        Ok(CompletionBatch::from_results(&batch, results))
-    }
-
-    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
-        self.cancelled.push(invocation_id.to_string());
-        Ok(())
-    }
-
-    fn dispose(&mut self) -> RuntimeResult<()> {
-        self.disposed = true;
-        Ok(())
-    }
-}
 
 #[derive(Default)]
 pub struct RuntimeBootstrapper {
@@ -522,6 +404,18 @@ impl Runner for GenerationRunner {
 
     fn dispose(&mut self) -> RuntimeResult<()> {
         self.inner.dispose()
+    }
+
+    fn isolation(&self) -> mutsuki_runtime_core::RunnerIsolation {
+        self.inner.isolation()
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn mutsuki_runtime_core::RunnerManagementHandle>> {
+        self.inner.management_handle()
+    }
+
+    fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {
+        self.inner.recover_after_hard_termination()
     }
 }
 

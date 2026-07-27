@@ -214,7 +214,9 @@ impl CoreRuntime {
             .insert("reason".into(), ScalarValue::String(reason.clone()));
         let aborted = self.tasks.abort_all(self.current_step, failure.clone());
         for task_id in &aborted {
-            self.record_task_terminal_event(task_id, "task.cancelled", Some(failure.clone()));
+            if !self.tasks.cancellation_requested(task_id) {
+                self.record_task_terminal_event(task_id, "task.cancelled", Some(failure.clone()));
+            }
         }
         self.events.record(
             RuntimeEventKind::Lifecycle,

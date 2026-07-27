@@ -112,6 +112,7 @@ pub struct RunnerLoad {
 #[derive(Clone, Debug, Default)]
 pub struct TaskPool {
     tasks: HashMap<TaskId, TaskRecord>,
+    pending_cancellations: HashMap<TaskId, PendingCancellation>,
     waits_by_child: HashMap<TaskId, Vec<TaskAwait>>,
     waits_by_parent: HashMap<TaskId, Vec<TaskAwait>>,
     indexes: TaskIndexes,
@@ -123,6 +124,11 @@ pub struct TaskPool {
     history_retention: Option<TaskHistoryRetention>,
     next_sequence: u64,
     statistics: TaskPoolStatistics,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PendingCancellation {
+    pub failure: Option<RuntimeError>,
 }
 
 const READY_SELECTOR_CACHE_CAPACITY: usize = 1024;
@@ -484,6 +490,27 @@ impl TaskPool {
         )
     }
 
+    pub(crate) fn request_cancel_by_core(
+        &mut self,
+        task_id: &str,
+        current_step: u64,
+        failure: Option<RuntimeError>,
+    ) -> RuntimeResult<bool> {
+        transitions::request_cancel_by_core(self, task_id, current_step, failure)
+    }
+
+    pub(crate) fn cancellation_requested(&self, task_id: &str) -> bool {
+        self.pending_cancellations.contains_key(task_id)
+    }
+
+    pub(crate) fn finalize_requested_cancellation(
+        &mut self,
+        lease: &TaskLease,
+        current_step: u64,
+    ) -> RuntimeResult<Option<PendingCancellation>> {
+        transitions::finalize_requested_cancellation(self, lease, current_step)
+    }
+
     pub fn expire_by_core(
         &mut self,
         task_id: &str,
@@ -620,6 +647,7 @@ impl TaskPool {
                 .expect("terminal history referenced a missing task record");
             self.remove_record_indexes(&task_id);
             self.tasks.remove(&task_id);
+            self.pending_cancellations.remove(&task_id);
             self.payload_wire_bytes.remove(&task_id);
             self.statistics
                 .record_status_transition(Some(&status), None);

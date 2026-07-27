@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::{
 use crate::{RuntimeFailure, RuntimeResult};
 use serde_json::Value;
 
-use super::{TaskPool, TaskRecord};
+use super::{PendingCancellation, TaskPool, TaskRecord};
 
 pub(super) fn complete(
     task_pool: &mut TaskPool,
@@ -22,6 +22,7 @@ pub(super) fn complete(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Completed));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     task_pool.record_terminal_task(&lease.task_id);
     Ok(())
@@ -41,6 +42,7 @@ pub(super) fn fail(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Failed));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     task_pool.record_terminal_task(&lease.task_id);
     Ok(())
@@ -62,6 +64,7 @@ pub(super) fn wait(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Waiting));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
@@ -82,6 +85,7 @@ pub(super) fn defer_leased(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
@@ -100,6 +104,7 @@ pub(super) fn block(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Blocked));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     Ok(())
 }
@@ -214,6 +219,7 @@ pub(super) fn cancel_running_invocation(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Ready));
+    task_pool.pending_cancellations.remove(&task_id);
     1
 }
 
@@ -230,10 +236,73 @@ pub(super) fn cancel_task(
     task_pool
         .statistics
         .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Cancelled));
+    task_pool.pending_cancellations.remove(&lease.task_id);
     record_attempt_finished(task_pool, lease, current_step);
     crate::task_pool::awaits::remove_waits_for_parent(task_pool, &lease.task_id);
     task_pool.record_terminal_task(&lease.task_id);
     Ok(())
+}
+
+pub(super) fn request_cancel_by_core(
+    task_pool: &mut TaskPool,
+    task_id: &str,
+    current_step: u64,
+    failure: Option<RuntimeError>,
+) -> RuntimeResult<bool> {
+    if let Some(pending) = task_pool.pending_cancellations.get_mut(task_id) {
+        if failure.is_some() {
+            pending.failure = failure;
+        }
+        return Ok(false);
+    }
+    let status = task_pool.record(task_id)?.status.clone();
+    if status == TaskStatus::Running {
+        task_pool
+            .pending_cancellations
+            .insert(task_id.to_string(), PendingCancellation { failure });
+        return Ok(false);
+    }
+    terminal_by_core(
+        task_pool,
+        task_id,
+        TaskStatus::Cancelled,
+        failure,
+        "cancel",
+        current_step,
+    )?;
+    Ok(true)
+}
+
+pub(super) fn finalize_requested_cancellation(
+    task_pool: &mut TaskPool,
+    lease: &TaskLease,
+    current_step: u64,
+) -> RuntimeResult<Option<PendingCancellation>> {
+    let Some(pending) = task_pool.pending_cancellations.get(&lease.task_id).cloned() else {
+        return Ok(None);
+    };
+    task_pool.mutate_record_indexed(&lease.task_id, |record| {
+        let matches_active = record.status == TaskStatus::Running
+            && record.claimed_by.as_deref() == Some(lease.runner_id.as_str())
+            && record.lease.as_ref() == Some(lease);
+        if !matches_active {
+            return Err(crate::runtime_failure(
+                ERR_TASK_CLAIM_CONFLICT,
+                "runtime.task_pool",
+                format!("task.cancel_finalize.{}", lease.task_id),
+            ));
+        }
+        mark_terminal_record(record, TaskStatus::Cancelled, pending.failure.clone());
+        Ok(())
+    })?;
+    task_pool.pending_cancellations.remove(&lease.task_id);
+    task_pool
+        .statistics
+        .record_status_transition(Some(&TaskStatus::Running), Some(&TaskStatus::Cancelled));
+    record_attempt_finished(task_pool, lease, current_step);
+    crate::task_pool::awaits::remove_waits_for_parent(task_pool, &lease.task_id);
+    task_pool.record_terminal_task(&lease.task_id);
+    Ok(Some(pending))
 }
 
 pub(super) fn terminal_by_core(
@@ -260,6 +329,7 @@ pub(super) fn terminal_by_core(
     task_pool
         .statistics
         .record_status_transition(Some(&previous_status), Some(&status));
+    task_pool.pending_cancellations.remove(task_id);
     if let Some(lease) = active_lease {
         record_attempt_finished(task_pool, &lease, current_step);
     }
@@ -285,6 +355,9 @@ pub(super) fn reclaim_expired_task_leases(
     let task_ids = task_pool.take_expired_lease_tasks(current_step);
     let mut reclaimed = Vec::new();
     for task_id in task_ids {
+        if task_pool.pending_cancellations.contains_key(&task_id) {
+            continue;
+        }
         let lease = task_pool
             .tasks
             .get(&task_id)
@@ -320,26 +393,41 @@ pub(super) fn abort_all(
 ) -> Vec<String> {
     let mut aborted = Vec::new();
     let mut finished_leases = Vec::new();
+    let mut pending = Vec::new();
+    let mut finalized = Vec::new();
     for record in task_pool.tasks.values_mut() {
         if is_terminal_status(&record.status) {
+            continue;
+        }
+        aborted.push(record.task.task_id.clone());
+        if record.status == TaskStatus::Running {
+            pending.push(record.task.task_id.clone());
             continue;
         }
         if let Some(lease) = record.lease.clone() {
             finished_leases.push(lease);
         }
-        aborted.push(record.task.task_id.clone());
+        finalized.push(record.task.task_id.clone());
         let previous_status = record.status.clone();
         mark_terminal_record(record, TaskStatus::Cancelled, Some(failure.clone()));
         task_pool
             .statistics
             .record_status_transition(Some(&previous_status), Some(&TaskStatus::Cancelled));
     }
+    for task_id in pending {
+        task_pool.pending_cancellations.insert(
+            task_id,
+            PendingCancellation {
+                failure: Some(failure.clone()),
+            },
+        );
+    }
     task_pool.rebuild_indexes();
     for lease in &finished_leases {
         record_attempt_finished(task_pool, lease, current_step);
     }
     aborted.sort();
-    for task_id in &aborted {
+    for task_id in &finalized {
         crate::task_pool::awaits::remove_waits_for_parent(task_pool, task_id);
         task_pool.record_terminal_task(task_id);
     }

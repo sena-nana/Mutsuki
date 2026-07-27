@@ -258,8 +258,13 @@ SDK 同时提供 Host / Plugin 扩展基础抽象，但这些抽象只服务于 
 runner inflight，用于 backpressure，防止等待中的父 task 无限堆积。
 
 HostRuntime cancel 是控制面消息，不中断 CoreActor。对于正在 worker 中运行的 task，
-CoreActor 先将 task 标记为 cancelled，并记录 runner 级 pending cancel；worker 返回
-`RunnerCompletion` 时，host 在归还 runner 前通过 `Runner.cancel(invocation_id)` 投递。
+Core 先记录不释放 `TaskLease` 的 pending cancellation，Host 再通过
+`Runner.cancel(invocation_id)` 或 management handle 投递协作式取消。只有 worker 退出
+`run_batch` 并返回 `RunnerCompletion` 后，Core 才丢弃该 invocation 的结果并原子发布
+`Cancelled`、terminal event 和 completion revision；取消命令成功只表示请求已接收。
+本地 `NativeRunner` 可向同步 entry handler 提供 host-local `CancellationProbe`，领域代码
+必须在不可逆副作用前和长循环中查询。该 probe 不进入 `RunnerContext`、Runner ABI 或 wire
+schema；忽略 probe 的 native 代码不能被 Rust 安全强杀。
 `RunnerLimits.deadline_ticks` 可为 invocation 生成 tick deadline，超期时走同一
 cancel propagation 路径。Host-only wall-clock deadline、取消宽限和 worker health
 timeout 不改变 `RunnerContext` wire shape；它们由 actor 监督 running invocation。

@@ -1172,10 +1172,18 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
         .expect("runner starts");
 
     let cancelled_task = host
-        .cancel_task_handle(handle)
+        .cancel_task_handle(handle.clone())
         .expect("task cancels while runner is running");
     assert_eq!(cancelled_task.task_id, "stream-cancel");
+    assert_eq!(host.task_status(&handle.task_id), Some(TaskStatus::Running));
+    assert!(
+        cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .is_empty()
+    );
 
+    release_tx.send(()).expect("runner releases");
     let result = host
         .task_result(mutsuki_tauri_bridge::TaskResultRequest {
             task_id: "stream-cancel".into(),
@@ -1196,14 +1204,6 @@ fn streaming_task_can_be_cancelled_while_runner_is_still_running() {
             .iter()
             .all(|event| event.name != "task.submit")
     );
-    assert!(
-        cancelled
-            .lock()
-            .expect("cancelled mutex poisoned")
-            .is_empty()
-    );
-
-    release_tx.send(()).expect("runner releases");
     let envelopes = collect_events(&mut rx);
     assert!(envelopes.iter().any(|event| {
         matches!(

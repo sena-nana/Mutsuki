@@ -28,6 +28,7 @@ pub enum AsyncExecutorEvent {
     },
     TimedOut(AsyncInvocation),
     Panicked(AsyncInvocation),
+    Cancelled(AsyncInvocation),
     ResourceCompleted {
         invocation: AsyncInvocation,
         reply: oneshot::Sender<RuntimeResult<HostRuntimeReply>>,
@@ -44,6 +45,50 @@ pub enum AsyncExecutorEvent {
 }
 
 pub type AsyncEventSink = Arc<dyn Fn(AsyncExecutorEvent) + Send + Sync + 'static>;
+
+struct AsyncCancellationGuard {
+    invocation: Option<AsyncInvocation>,
+    state: Arc<AsyncExecutorState>,
+    events: AsyncEventSink,
+}
+
+impl AsyncCancellationGuard {
+    fn new(
+        invocation: AsyncInvocation,
+        state: Arc<AsyncExecutorState>,
+        events: AsyncEventSink,
+    ) -> Self {
+        Self {
+            invocation: Some(invocation),
+            state,
+            events,
+        }
+    }
+
+    fn disarm(&mut self) {
+        if let Some(invocation) = self.invocation.take() {
+            self.state
+                .handles
+                .lock()
+                .expect("async executor handle lock poisoned")
+                .remove(&invocation.invocation_id);
+        }
+    }
+}
+
+impl Drop for AsyncCancellationGuard {
+    fn drop(&mut self) {
+        let Some(invocation) = self.invocation.take() else {
+            return;
+        };
+        self.state
+            .handles
+            .lock()
+            .expect("async executor handle lock poisoned")
+            .remove(&invocation.invocation_id);
+        (self.events)(AsyncExecutorEvent::Cancelled(invocation));
+    }
+}
 
 enum ResourceFutureOutcome {
     Completed(Box<RuntimeResult<HostRuntimeReply>>),
@@ -217,6 +262,8 @@ impl AsyncExecutor for TokioAsyncExecutor {
         let reservation = self.reserve(&invocation)?;
         let state = self.state.clone();
         let invocation_for_task = invocation.clone();
+        let mut cancellation =
+            AsyncCancellationGuard::new(invocation.clone(), state.clone(), events.clone());
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let task = self.runtime().spawn(async move {
             let _ = start_rx.await;
@@ -243,11 +290,7 @@ impl AsyncExecutor for TokioAsyncExecutor {
             .catch_unwind()
             .await
             .unwrap_or_else(|_| AsyncExecutorEvent::Panicked(invocation_for_task.clone()));
-            state
-                .handles
-                .lock()
-                .expect("async executor handle lock poisoned")
-                .remove(&invocation_for_task.invocation_id);
+            cancellation.disarm();
             events(outcome);
         });
         self.state
