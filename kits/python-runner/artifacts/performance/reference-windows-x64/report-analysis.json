@@ -1,0 +1,21 @@
+{
+  "schema_version": "mutsuki.performance.analysis/v1",
+  "classification": "no-obvious-anomaly",
+  "correctness_counters": {
+    "malformed_frames_accepted": 0,
+    "oversized_frames_accepted": 0,
+    "pipe_response_errors": 0,
+    "response_id_mismatches": 0,
+    "cancel_response_mismatches": 0,
+    "cpu_fixture_failures": 0,
+    "resource_fixture_failures": 0,
+    "pressure_failures": 0,
+    "dispose_failures": 0,
+    "crash_fixture_failures": 0
+  },
+  "noisy_cases": [],
+  "limitations": [
+    "ServiceHost end-to-end is intentionally not measured by this owner runner.",
+    "Use benchmarks/fixture_process.py as the python-jsonl/python-binary deployment entrypoint."
+  ]
+}

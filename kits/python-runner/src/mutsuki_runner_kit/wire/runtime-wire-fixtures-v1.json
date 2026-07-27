@@ -1,0 +1,303 @@
+{
+  "fixtures": [
+    {
+      "type": "ProtocolHello",
+      "value": {
+        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "feature_flags": [
+          "typed_requests",
+          "out_of_order_responses",
+          "resource_ref_required_for_large_bytes"
+        ],
+        "management_channel": true,
+        "management_reserved_requests": 8,
+        "max_frame_bytes": 8388608,
+        "max_in_flight_requests": 64,
+        "max_payload_bytes": 4194304,
+        "protocol": {
+          "major": 1,
+          "minor": 2
+        },
+        "schema_revision": "mutsuki.runtime.wire/1.3.0"
+      }
+    },
+    {
+      "type": "InitializeRequest",
+      "value": {
+        "config": {
+          "mode": "fixture"
+        },
+        "hello": {
+          "codec_id": "mutsuki.codec.typed-jsonl.v1",
+          "feature_flags": [
+            "typed_requests",
+            "out_of_order_responses",
+            "resource_ref_required_for_large_bytes"
+          ],
+          "management_channel": true,
+          "management_reserved_requests": 8,
+          "max_frame_bytes": 8388608,
+          "max_in_flight_requests": 64,
+          "max_payload_bytes": 4194304,
+          "protocol": {
+            "major": 1,
+            "minor": 2
+          },
+          "schema_revision": "mutsuki.runtime.wire/1.3.0"
+        }
+      }
+    },
+    {
+      "type": "ProtocolHelloAck",
+      "value": {
+        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "feature_flags": [
+          "typed_requests",
+          "out_of_order_responses",
+          "resource_ref_required_for_large_bytes"
+        ],
+        "management_channel": true,
+        "management_reserved_requests": 8,
+        "max_frame_bytes": 8388608,
+        "max_in_flight_requests": 64,
+        "max_payload_bytes": 4194304,
+        "protocol": {
+          "major": 1,
+          "minor": 2
+        },
+        "schema_revision": "mutsuki.runtime.wire/1.3.0"
+      }
+    },
+    {
+      "type": "RunBatchRequest",
+      "value": {
+        "batch": {
+          "batch_id": "batch-wire-1",
+          "batch_key": "fixture.runner",
+          "entries": [
+            {
+              "cancel_index": 0,
+              "deadline_tick": 20,
+              "entry_id": "entry-wire-1",
+              "lane": "normal",
+              "ordering": {
+                "type": "none"
+              },
+              "parent_id": null,
+              "payload_index": 0,
+              "priority": 0,
+              "resource_requirement_indices": [],
+              "task_id": "task-wire-1",
+              "trace_id": "trace-wire-1"
+            }
+          ],
+          "payload": {
+            "layout": "row",
+            "payload": {
+              "rows": [
+                {
+                  "continuation_ref": null,
+                  "correlation_id": "corr-wire-1",
+                  "created_sequence": 0,
+                  "dispatch_lane": "normal",
+                  "expected_versions": [],
+                  "idempotency_key": null,
+                  "input_refs": [],
+                  "lease_id": "lease-wire-1",
+                  "ordering": {
+                    "type": "none"
+                  },
+                  "output_ref": null,
+                  "payload": {
+                    "message": "hello"
+                  },
+                  "priority": 0,
+                  "protocol_id": "mutsuki.fixture.echo",
+                  "ready_at_step": null,
+                  "registry_generation": 7,
+                  "required_surfaces": [],
+                  "resource_requirements": [],
+                  "runner_hint": null,
+                  "target_binding_id": null,
+                  "task_id": "task-wire-1",
+                  "trace_id": "trace-wire-1"
+                }
+              ]
+            }
+          },
+          "resource_plan": {
+            "conflict_entries": [],
+            "deferred_writes": [],
+            "parallel_groups": [],
+            "parallelism_limit": 1,
+            "read_views": [],
+            "serial_groups": [],
+            "version_checks": [],
+            "write_locks": []
+          },
+          "task_leases": [
+            {
+              "acquired_at_step": 11,
+              "attempt_generation": 1,
+              "executor_id": "executor:fixture",
+              "expires_at_step": 21,
+              "lease_id": "lease-wire-1",
+              "registry_generation": 7,
+              "runner_id": "fixture.runner",
+              "task_id": "task-wire-1"
+            }
+          ],
+          "tick_id": "tick-11"
+        },
+        "ctx": {
+          "batch_id": "batch-wire-1",
+          "cancel_requested": false,
+          "cancel_token": "invocation-wire-1",
+          "current_step": 11,
+          "deadline_after_ms": null,
+          "deadline_tick": 20,
+          "entry_count": 1,
+          "executor_id": "executor:fixture",
+          "invocation_id": "invocation-wire-1",
+          "registry_generation": 7,
+          "task_lease_ids": [
+            "lease-wire-1"
+          ],
+          "tick_id": "tick-11"
+        },
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "CompletionBatch",
+      "value": {
+        "batch_id": "batch-wire-1",
+        "metadata": [],
+        "results": [
+          {
+            "entry_id": "entry-wire-1",
+            "error": null,
+            "result": {
+              "deltas": [],
+              "effects": [],
+              "events": [],
+              "output": null,
+              "resources": [],
+              "status": "completed",
+              "task_await": null,
+              "task_id": "task-wire-1",
+              "tasks": [],
+              "values": []
+            },
+            "task_id": "task-wire-1"
+          }
+        ],
+        "tick_id": "tick-11"
+      }
+    },
+    {
+      "type": "CancelRunnerRequest",
+      "value": {
+        "invocation_id": "invocation-wire-1",
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "DisposeRunnerRequest",
+      "value": {
+        "runner_id": "fixture.runner"
+      }
+    },
+    {
+      "type": "SubmitTaskBatchRequest",
+      "value": {
+        "batch": {
+          "batch_id": "submit-wire-1",
+          "resource_plan": null,
+          "tasks": [
+            {
+              "continuation_ref": null,
+              "correlation_id": "corr-wire-1",
+              "created_sequence": 0,
+              "dispatch_lane": "normal",
+              "expected_versions": [],
+              "idempotency_key": null,
+              "input_refs": [],
+              "lease_id": "lease-wire-1",
+              "ordering": {
+                "type": "none"
+              },
+              "output_ref": null,
+              "payload": {
+                "message": "hello"
+              },
+              "priority": 0,
+              "protocol_id": "mutsuki.fixture.echo",
+              "ready_at_step": null,
+              "registry_generation": 7,
+              "required_surfaces": [],
+              "resource_requirements": [],
+              "runner_hint": null,
+              "target_binding_id": null,
+              "task_id": "task-wire-1",
+              "trace_id": "trace-wire-1"
+            }
+          ],
+          "tick_id": null
+        }
+      }
+    },
+    {
+      "type": "TaskHandle",
+      "value": {
+        "cancel_policy": "cascade",
+        "correlation_id": "corr-wire-1",
+        "protocol_id": "mutsuki.fixture.echo",
+        "target_binding_id": null,
+        "task_id": "task-wire-1",
+        "trace_id": "trace-wire-1"
+      }
+    },
+    {
+      "type": "ResourceRef",
+      "value": {
+        "access": {
+          "key": "blob-wire-1",
+          "store_id": "fixture.store",
+          "type": "blob"
+        },
+        "content_hash": "sha256:fixture",
+        "generation": 7,
+        "lease": null,
+        "lifetime": "persistent",
+        "provider_id": "fixture.provider",
+        "ref_id": "resource-wire-1",
+        "resource_id": {
+          "generation": 7,
+          "kind_id": "fixture.bytes",
+          "slot_id": "slot-wire-1",
+          "version": 3
+        },
+        "resource_kind": "fixture.bytes",
+        "schema": "fixture.bytes.v1",
+        "seal_state": "sealed",
+        "semantic": "frozen_value",
+        "size_hint": 1048576,
+        "version": 3
+      }
+    },
+    {
+      "type": "RuntimeError",
+      "value": {
+        "cause": null,
+        "code": "runtime.host_failed",
+        "evidence": {},
+        "lost_capability": null,
+        "recovery": null,
+        "route": "fixture.route",
+        "source": "fixture"
+      }
+    }
+  ],
+  "schema_revision": "mutsuki.runtime.wire/1.3.0"
+}

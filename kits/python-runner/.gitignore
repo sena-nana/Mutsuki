@@ -1,0 +1,29 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build outputs
+build/
+dist/
+/target/
+*.egg-info/
+
+# Local env
+.env
+.envrc
+.pypirc
+
+# Codex/codegraph local index
+.codegraph/
+/artifacts/performance/issue4-macos-arm64-provisional/
+/artifacts/performance/reference-*/

@@ -1,0 +1,22 @@
+{
+  "schema_revision":"mutsuki.runtime.wire/1.0.0",
+  "core_revision":"d605333516753a797ca7e9971d097ac3e0de0c59",
+  "python":"3.14.3",
+  "platform":"darwin",
+  "codec_results":[
+    {"codec":"typed_jsonl","batch_size":1,"payload_bytes_per_entry":1024,"iterations":100,"frame_bytes":2616,"encode_us_p50":148.98167,"decode_us_p50":194.29166,"encode_mib_s":16.7457648429,"decode_mib_s":12.8405512193,"encode_peak_bytes":19749,"decode_peak_bytes":26149},
+    {"codec":"typed_jsonl","batch_size":32,"payload_bytes_per_entry":1024,"iterations":30,"frame_bytes":61095,"encode_us_p50":2080.881933,"decode_us_p50":3404.104167,"encode_mib_s":28.0000183708,"decode_mib_s":17.1160251003,"encode_peak_bytes":250410,"decode_peak_bytes":312119},
+    {"codec":"typed_jsonl","batch_size":256,"payload_bytes_per_entry":1024,"iterations":8,"frame_bytes":485636,"encode_us_p50":15936.52075,"decode_us_p50":26914.84375,"encode_mib_s":29.0614612554,"decode_mib_s":17.2075522572,"encode_peak_bytes":1944526,"decode_peak_bytes":2440914},
+    {"codec":"typed_jsonl","batch_size":1,"payload_bytes_per_entry":65536,"iterations":30,"frame_bytes":67128,"encode_us_p50":354.3889,"decode_us_p50":336.094433,"encode_mib_s":180.644059427,"decode_mib_s":190.476970644,"encode_peak_bytes":286474,"decode_peak_bytes":290934},
+    {"codec":"typed_jsonl","batch_size":1,"payload_bytes_per_entry":1048576,"iterations":8,"frame_bytes":1050169,"encode_us_p50":3609.833375,"decode_us_p50":2556.53125,"encode_mib_s":277.441947909,"decode_mib_s":391.749251329,"encode_peak_bytes":4463701,"decode_peak_bytes":4468343},
+    {"codec":"typed_msgpack","batch_size":1,"payload_bytes_per_entry":1024,"iterations":100,"frame_bytes":2218,"encode_us_p50":194.06167,"decode_us_p50":302.32333,"encode_mib_s":10.8998837008,"decode_mib_s":6.996647046,"encode_peak_bytes":269058,"decode_peak_bytes":12764},
+    {"codec":"typed_msgpack","batch_size":32,"payload_bytes_per_entry":1024,"iterations":30,"frame_bytes":55018,"encode_us_p50":3654.3375,"decode_us_p50":6247.020833,"encode_mib_s":14.3580754487,"decode_mib_s":8.3990841298,"encode_peak_bytes":381618,"decode_peak_bytes":283682},
+    {"codec":"typed_msgpack","batch_size":256,"payload_bytes_per_entry":1024,"iterations":8,"frame_bytes":438288,"encode_us_p50":28755.86975,"decode_us_p50":48627.651,"encode_mib_s":14.5356065535,"decode_mib_s":8.5956035341,"encode_peak_bytes":1405626,"decode_peak_bytes":2237986},
+    {"codec":"typed_msgpack","batch_size":1,"payload_bytes_per_entry":65536,"iterations":30,"frame_bytes":66732,"encode_us_p50":193.695833,"decode_us_p50":309.6514,"encode_mib_s":328.559439753,"decode_mib_s":205.523354593,"encode_peak_bytes":398086,"decode_peak_bytes":206304},
+    {"codec":"typed_msgpack","batch_size":1,"payload_bytes_per_entry":1048576,"iterations":8,"frame_bytes":1049772,"encode_us_p50":279.90625,"decode_us_p50":370.177125,"encode_mib_s":3576.69967885,"decode_mib_s":2704.49070694,"encode_peak_bytes":4199800,"decode_peak_bytes":3154912}
+  ],
+  "cancel_latency":{"iterations":30,"p50_ms":0.1757085,"p95_ms":0.215292,"max_ms":1.399584},
+  "process_startup":{"iterations":20,"p50_ms":15.0547295,"p95_ms":15.234125,"max_ms":15.666458},
+  "runner_reuse":{"iterations":100,"p50_ms":0.009,"p95_ms":0.00975,"max_ms":0.033125},
+  "resource_descriptor":{"referenced_resource_bytes":1048576,"json_descriptor_bytes":441,"msgpack_descriptor_bytes":360,"json_copy_ratio":0.0004205704,"msgpack_copy_ratio":0.0003433228}
+}

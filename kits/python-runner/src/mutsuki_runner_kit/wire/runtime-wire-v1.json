@@ -1,0 +1,155 @@
+{
+  "codecs": [
+    "mutsuki.codec.typed-jsonl.v1",
+    "mutsuki.codec.typed-msgpack.v1"
+  ],
+  "limits": {
+    "management_reserved_requests": 8,
+    "max_frame_bytes": 8388608,
+    "max_in_flight_requests": 64,
+    "max_jsonl_line_bytes": 8388608,
+    "max_payload_bytes": 4194304
+  },
+  "operations": [
+    {
+      "management": true,
+      "method": "plugin.initialize",
+      "opcode": 1,
+      "request": "InitializeRequest",
+      "response": "ProtocolHelloAck"
+    },
+    {
+      "management": false,
+      "method": "runner.run_batch",
+      "opcode": 4097,
+      "request": "RunBatchRequest",
+      "response": "CompletionBatch"
+    },
+    {
+      "management": true,
+      "method": "runner.cancel",
+      "opcode": 4098,
+      "request": "CancelRunnerRequest",
+      "response": "Unit"
+    },
+    {
+      "management": true,
+      "method": "runner.dispose",
+      "opcode": 4099,
+      "request": "DisposeRunnerRequest",
+      "response": "Unit"
+    },
+    {
+      "management": false,
+      "method": "task.submit_batch",
+      "opcode": 8193,
+      "request": "SubmitTaskBatchRequest",
+      "response": "TaskHandle[]"
+    },
+    {
+      "management": false,
+      "method": "task.cancel",
+      "opcode": 8194,
+      "request": "CancelTaskRequest",
+      "response": "Unit"
+    },
+    {
+      "management": false,
+      "method": "task.outcome",
+      "opcode": 8195,
+      "request": "TaskOutcomeRequest",
+      "response": "TaskOutcome?"
+    },
+    {
+      "management": false,
+      "method": "resource.read.collect",
+      "opcode": 12289,
+      "request": "CollectReadPlanRequest",
+      "response": "Bytes"
+    },
+    {
+      "management": false,
+      "method": "resource.read.snapshot",
+      "opcode": 12290,
+      "request": "SnapshotReadPlanRequest",
+      "response": "SnapshotDescriptor"
+    },
+    {
+      "management": false,
+      "method": "resource.stream.open",
+      "opcode": 12291,
+      "request": "OpenStreamPlanRequest",
+      "response": "StreamPlan"
+    },
+    {
+      "management": false,
+      "method": "resource.export",
+      "opcode": 12292,
+      "request": "ExportPlanRequest",
+      "response": "PlanReceipt"
+    },
+    {
+      "management": false,
+      "method": "resource.write.commit",
+      "opcode": 12293,
+      "request": "CommitWritePlanRequest",
+      "response": "PlanReceipt"
+    },
+    {
+      "management": false,
+      "method": "resource.command",
+      "opcode": 12294,
+      "request": "CommandPlanRequest",
+      "response": "PlanReceipt"
+    },
+    {
+      "management": false,
+      "method": "resource.command_batch",
+      "opcode": 12295,
+      "request": "CommandBatchRequest",
+      "response": "PlanReceipt[]"
+    },
+    {
+      "management": false,
+      "method": "resource.saga",
+      "opcode": 12296,
+      "request": "SagaPlanRequest",
+      "response": "PlanReceipt[]"
+    },
+    {
+      "management": false,
+      "method": "resource.create_blob",
+      "opcode": 12297,
+      "request": "CreateBlobRequest",
+      "response": "ResourceRef"
+    },
+    {
+      "management": false,
+      "method": "resource.create_cow_state",
+      "opcode": 12298,
+      "request": "CreateCowStateRequest",
+      "response": "ResourceRef"
+    },
+    {
+      "management": false,
+      "method": "resource.create_capability",
+      "opcode": 12299,
+      "request": "CreateCapabilityRequest",
+      "response": "ResourceRef"
+    }
+  ],
+  "protocol": {
+    "compatibility": {
+      "opcode_policy": "append_only_never_reuse",
+      "removed_or_changed_required_fields": "major_breaking",
+      "unknown_additive_fields": "ignore"
+    },
+    "major": 1,
+    "minor": 2
+  },
+  "resource_policy": {
+    "inline_limit_bytes": 65536,
+    "large_bytes": "ResourceRef_or_stream_descriptor"
+  },
+  "schema_revision": "mutsuki.runtime.wire/1.3.0"
+}
