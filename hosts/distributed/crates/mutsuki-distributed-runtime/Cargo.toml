@@ -1,0 +1,39 @@
+[package]
+name = "mutsuki-distributed-runtime"
+description = "Reference models and local-observation runtime for Mutsuki distributed execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+localization-testkit = []
+
+[dependencies]
+mutsuki-distributed-contracts.workspace = true
+mutsuki-distributed-host-adapter.workspace = true
+mutsuki-link-core.workspace = true
+mutsuki-link.workspace = true
+mutsuki-runtime-contracts.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mutsuki-distributed-control-client.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "placement_profitability"
+harness = false
+
+[[bench]]
+name = "persistent_registry_stress"
+harness = false
