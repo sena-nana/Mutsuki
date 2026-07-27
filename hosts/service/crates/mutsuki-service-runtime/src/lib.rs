@@ -62,6 +62,7 @@ use tokio::sync::oneshot;
 
 mod abi_plugin;
 mod event_source;
+mod process_metrics;
 
 use event_source::EventSourceSupervisor;
 pub use event_source::{
@@ -69,6 +70,7 @@ pub use event_source::{
     HostEventSourceError, HostEventSourceFuture, HostEventSourceHealth, HostEventSourceLogger,
     HostShutdownToken,
 };
+use process_metrics::current_rss_bytes;
 
 type NativeRunnerFactory = Arc<dyn Fn() -> Result<Box<dyn Runner>, String> + Send + Sync>;
 type AsyncHandlerFactory =
@@ -2556,43 +2558,6 @@ fn current_cpu_time_ms() -> Option<u64> {
         .map(|time| u64::try_from(time.as_duration().as_millis()).unwrap_or(u64::MAX))
 }
 
-fn current_rss_bytes() -> Option<u64> {
-    #[cfg(target_os = "linux")]
-    {
-        let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
-        let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
-        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        if page_size <= 0 {
-            return None;
-        }
-        Some(pages.saturating_mul(page_size as u64))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        use std::mem::MaybeUninit;
-        let mut info = MaybeUninit::<libc::mach_task_basic_info>::uninit();
-        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
-        #[allow(deprecated)]
-        let kr = unsafe {
-            libc::task_info(
-                libc::mach_task_self(),
-                libc::MACH_TASK_BASIC_INFO,
-                info.as_mut_ptr().cast(),
-                &mut count,
-            )
-        };
-        if kr != libc::KERN_SUCCESS {
-            return None;
-        }
-        let info = unsafe { info.assume_init() };
-        Some(info.resident_size)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        None
-    }
-}
-
 fn drain_blocking_stderr(runner_id: String, stderr: std::process::ChildStderr) {
     let reader = BufReader::new(stderr);
     for line in reader.lines().map_while(Result::ok) {
@@ -3084,7 +3049,7 @@ mod tests {
                 .iter()
                 .all(|domain| !domain.lanes.is_empty())
         );
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         assert!(metrics.rss_bytes.unwrap_or(0) > 0);
         // uptime_ms may be 0 when the runtime was just started.
     }

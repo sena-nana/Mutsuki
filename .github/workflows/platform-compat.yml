@@ -39,3 +39,20 @@ jobs:
       - run: bash scripts/check-distributed-boundary.sh
       - run: cargo check --locked
       - run: cargo test --locked
+
+  windows-host-metrics:
+    name: Windows HostMetrics
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component rustfmt
+      - run: cargo metadata --locked --format-version 1
+      - run: cargo fmt --check
+      - run: cargo check --locked -p mutsuki-service-control -p mutsuki-service-runtime
+      - run: cargo test --locked -p mutsuki-service-control -p mutsuki-service-runtime
