@@ -1,0 +1,1078 @@
+{
+  "schema_version": "mutsuki.agent.performance.raw/v1",
+  "workload_version": "mutsuki.performance.agent-workloads/v1",
+  "fixture_version": "mutsuki.agent.benchmark-fixtures/v1",
+  "mode": "smoke",
+  "fixed_seed": 1297435713,
+  "network_boundary": "no-network",
+  "cases": [
+    {
+      "case_id": "agent.single-turn",
+      "dimensions": {
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        737834,
+        88541,
+        70708
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        737834,
+        88541,
+        70708
+      ],
+      "tasks": [
+        2,
+        2,
+        2
+      ],
+      "continuations": [
+        2,
+        2,
+        2
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        549,
+        549,
+        549
+      ],
+      "allocated_bytes": [
+        58545,
+        58545,
+        58545
+      ],
+      "output_hash": "09533935aade1183666b504afeae214f508e70167275c9610b133d043ea45261"
+    },
+    {
+      "case_id": "agent.tool-once",
+      "dimensions": {
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        225125,
+        126292,
+        116875
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        225125,
+        126292,
+        116875
+      ],
+      "tasks": [
+        6,
+        6,
+        6
+      ],
+      "continuations": [
+        6,
+        6,
+        6
+      ],
+      "tool_routes": [
+        1,
+        1,
+        1
+      ],
+      "max_tool_inflight": [
+        1,
+        1,
+        1
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        1438,
+        1438,
+        1438
+      ],
+      "allocated_bytes": [
+        164626,
+        164626,
+        164626
+      ],
+      "output_hash": "3b23885f7ae9e929390169fcf4c769d556dc56ce422e5ccb3742306594384877"
+    },
+    {
+      "case_id": "agent.tool-chain-8",
+      "dimensions": {
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        896542,
+        974042,
+        1082041
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        896542,
+        974042,
+        1082041
+      ],
+      "tasks": [
+        34,
+        34,
+        34
+      ],
+      "continuations": [
+        34,
+        34,
+        34
+      ],
+      "tool_routes": [
+        8,
+        8,
+        8
+      ],
+      "max_tool_inflight": [
+        1,
+        1,
+        1
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        9184,
+        9184,
+        9184
+      ],
+      "allocated_bytes": [
+        1209912,
+        1209912,
+        1209912
+      ],
+      "output_hash": "cfaa594ea097804bf3196c8f5c21d295b635333dda7d9889426eebb8128c9264"
+    },
+    {
+      "case_id": "agent.parallel-tools-8",
+      "dimensions": {
+        "execution": "real-tool-router-batch",
+        "requested_parallelism": 8,
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        328375,
+        216708,
+        223375
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        328375,
+        216708,
+        223375
+      ],
+      "tasks": [
+        18,
+        18,
+        18
+      ],
+      "continuations": [
+        8,
+        8,
+        8
+      ],
+      "tool_routes": [
+        8,
+        8,
+        8
+      ],
+      "max_tool_inflight": [
+        8,
+        8,
+        8
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        1545,
+        1545,
+        1545
+      ],
+      "allocated_bytes": [
+        215995,
+        215995,
+        215995
+      ],
+      "output_hash": "01b9e802bd032181dbd91aca3f8d0bc645f054831bc0324ad4e53dc76107e3f0"
+    },
+    {
+      "case_id": "agent.wait-resume",
+      "dimensions": {
+        "extra_empty_poll": 1,
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        119542,
+        45625,
+        37750
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        119542,
+        45625,
+        37750
+      ],
+      "tasks": [
+        2,
+        2,
+        2
+      ],
+      "continuations": [
+        3,
+        3,
+        3
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        602,
+        602,
+        602
+      ],
+      "allocated_bytes": [
+        62415,
+        62415,
+        62415
+      ],
+      "output_hash": "09533935aade1183666b504afeae214f508e70167275c9610b133d043ea45261"
+    },
+    {
+      "case_id": "agent.failure-retry",
+      "dimensions": {
+        "failures": [
+          "retryable",
+          "non-retryable"
+        ],
+        "simulated_latency": "0us"
+      },
+      "elapsed_ns": [
+        123042,
+        91291,
+        91584
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        123042,
+        91291,
+        91584
+      ],
+      "tasks": [
+        6,
+        6,
+        6
+      ],
+      "continuations": [
+        6,
+        6,
+        6
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        1464,
+        1464,
+        1464
+      ],
+      "allocated_bytes": [
+        151085,
+        151085,
+        151085
+      ],
+      "output_hash": "1cea82e444540f9bce3845695eb144d10fe054ed597c2b73247d65e3e24bbf0b"
+    },
+    {
+      "case_id": "agent.session-100-turns",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "turns": 100
+      },
+      "elapsed_ns": [
+        31801917
+      ],
+      "simulated_wall_ns": [
+        0
+      ],
+      "simulated_work_ns": [
+        0
+      ],
+      "orchestration_ns": [
+        31801917
+      ],
+      "tasks": [
+        400
+      ],
+      "continuations": [
+        400
+      ],
+      "tool_routes": [
+        0
+      ],
+      "max_tool_inflight": [
+        0
+      ],
+      "retained_bytes": [
+        14232
+      ],
+      "post_warmup_growth_bytes": [
+        11971
+      ],
+      "allocations": [
+        883043
+      ],
+      "allocated_bytes": [
+        126672427
+      ],
+      "output_hash": "ea48e108840eeb5ad07ed0379d5bb8f52955dc596a28b9da62f29c13f91e38dd"
+    },
+    {
+      "case_id": "agent.context-small",
+      "dimensions": {
+        "token_like_bytes": 4096
+      },
+      "elapsed_ns": [
+        5208,
+        1458,
+        459
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        5208,
+        1458,
+        459
+      ],
+      "tasks": [
+        0,
+        0,
+        0
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        4561,
+        4561,
+        4561
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        29,
+        29,
+        29
+      ],
+      "allocated_bytes": [
+        15167,
+        15167,
+        15167
+      ],
+      "output_hash": "89a0e09de8d9d459ff4d19d501b3bb356e9fb07f0d60374e86899878479a656a"
+    },
+    {
+      "case_id": "agent.context-medium",
+      "dimensions": {
+        "token_like_bytes": 65536
+      },
+      "elapsed_ns": [
+        625,
+        417,
+        333
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        625,
+        417,
+        333
+      ],
+      "tasks": [
+        0,
+        0,
+        0
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        66001,
+        66001,
+        66001
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        29,
+        29,
+        29
+      ],
+      "allocated_bytes": [
+        199488,
+        199488,
+        199488
+      ],
+      "output_hash": "c4ffa8217b981fea0aeea97718ae949611420a873880a4771a9fa6a796a775ca"
+    },
+    {
+      "case_id": "agent.context-large",
+      "dimensions": {
+        "token_like_bytes": 1048576
+      },
+      "elapsed_ns": [
+        500,
+        1125,
+        667
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        500,
+        1125,
+        667
+      ],
+      "tasks": [
+        0,
+        0,
+        0
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        1049041,
+        1049041,
+        1049041
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        29,
+        29,
+        29
+      ],
+      "allocated_bytes": [
+        3148607,
+        3148607,
+        3148607
+      ],
+      "output_hash": "441f094e2f988ee187ef6749c01aae1cc0c88f685b4a402aa5c381c2e032c219"
+    },
+    {
+      "case_id": "agent.lsp-query-100",
+      "dimensions": {
+        "queries": 100,
+        "transport": "in-memory-json-rpc"
+      },
+      "elapsed_ns": [
+        146875,
+        132292,
+        193833
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        146875,
+        132292,
+        193833
+      ],
+      "tasks": [
+        100,
+        100,
+        100
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        100,
+        100,
+        100
+      ],
+      "max_tool_inflight": [
+        1,
+        1,
+        1
+      ],
+      "retained_bytes": [
+        153,
+        153,
+        153
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        6300,
+        6300,
+        6300
+      ],
+      "allocated_bytes": [
+        1133600,
+        1133600,
+        1133600
+      ],
+      "output_hash": "2b93ed4a9c9a86707d8509f7eded62b6245ae2cde1d2bfdfed6755b4cce24cd4"
+    },
+    {
+      "case_id": "agent.client-link-query-100",
+      "dimensions": {
+        "queries": 100,
+        "transport": "mutsuki-link-memory-control-stream"
+      },
+      "elapsed_ns": [
+        620833,
+        377875,
+        378792
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        620833,
+        377875,
+        378792
+      ],
+      "tasks": [
+        100,
+        100,
+        100
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        1,
+        1,
+        1
+      ],
+      "retained_bytes": [
+        39,
+        39,
+        39
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        6136,
+        5655,
+        5729
+      ],
+      "allocated_bytes": [
+        390112,
+        381454,
+        382786
+      ],
+      "output_hash": "615055e4328e0f53c1c019fe644bd5a18407b2b643c537414cf553ee576bfa38"
+    },
+    {
+      "case_id": "agent.distributed-placement-100",
+      "dimensions": {
+        "placements": 100,
+        "scheduler": "mutsuki-distributed"
+      },
+      "elapsed_ns": [
+        8292,
+        7791,
+        7833
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        8292,
+        7791,
+        7833
+      ],
+      "tasks": [
+        100,
+        100,
+        100
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        1087,
+        1087,
+        1087
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        400,
+        400,
+        400
+      ],
+      "allocated_bytes": [
+        7000,
+        7000,
+        7000
+      ],
+      "output_hash": "92405ca93c2cfe89b47aa2ddbd57119bc95cd887d278484d865a0874525444e0"
+    },
+    {
+      "case_id": "agent.checkpoint-codec-100",
+      "dimensions": {
+        "checkpoint": "full-durable-session",
+        "roundtrips": 100
+      },
+      "elapsed_ns": [
+        415209,
+        365000,
+        363209
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        415209,
+        365000,
+        363209
+      ],
+      "tasks": [
+        100,
+        100,
+        100
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        1590,
+        1590,
+        1590
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        3600,
+        3600,
+        3600
+      ],
+      "allocated_bytes": [
+        628500,
+        628500,
+        628500
+      ],
+      "output_hash": "e24e481f5e78bb94d3027c168b7daea4a9dc92b0de95dd9439a91b6072840e3c"
+    },
+    {
+      "case_id": "agent.memory-route",
+      "dimensions": {
+        "candidates": 128,
+        "selected": 8
+      },
+      "elapsed_ns": [
+        57958,
+        42209,
+        39750
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        57958,
+        42209,
+        39750
+      ],
+      "tasks": [
+        0,
+        0,
+        0
+      ],
+      "continuations": [
+        0,
+        0,
+        0
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        7638,
+        7638,
+        7638
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        1426,
+        1426,
+        1426
+      ],
+      "allocated_bytes": [
+        213644,
+        213644,
+        213644
+      ],
+      "output_hash": "ef7fe5524dc473cc05637991848673fc113d6f3905afa4863b5b9410c870f44e"
+    },
+    {
+      "case_id": "agent.cancel",
+      "dimensions": {
+        "phase": "waiting-model-result"
+      },
+      "elapsed_ns": [
+        32208,
+        6958,
+        5417
+      ],
+      "simulated_wall_ns": [
+        0,
+        0,
+        0
+      ],
+      "simulated_work_ns": [
+        0,
+        0,
+        0
+      ],
+      "orchestration_ns": [
+        32208,
+        6958,
+        5417
+      ],
+      "tasks": [
+        2,
+        2,
+        2
+      ],
+      "continuations": [
+        2,
+        2,
+        2
+      ],
+      "tool_routes": [
+        0,
+        0,
+        0
+      ],
+      "max_tool_inflight": [
+        0,
+        0,
+        0
+      ],
+      "retained_bytes": [
+        0,
+        0,
+        0
+      ],
+      "post_warmup_growth_bytes": [
+        0,
+        0,
+        0
+      ],
+      "allocations": [
+        215,
+        215,
+        215
+      ],
+      "allocated_bytes": [
+        28407,
+        28407,
+        28407
+      ],
+      "output_hash": "787305e8435fd00f36abf2fe60a3bc202edaed8cf129caae1c847bdf7e2dca0b"
+    }
+  ],
+  "correctness": {
+    "duplicate_tool_results": 0,
+    "hash_mismatches": 0,
+    "public_network_requests": 0,
+    "unexpected_errors": 0,
+    "wrong_routes": 0
+  }
+}

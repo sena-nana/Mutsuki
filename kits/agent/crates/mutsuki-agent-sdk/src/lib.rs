@@ -23,6 +23,6 @@ pub use resource::*;
 pub use task::*;
 pub use tool_builder::*;
 
+pub use mutsuki_agent_contracts as protocol_types;
 pub use mutsuki_agent_macros::{agent_profile, agent_tool};
-pub use mutsuki_agent_protocol as protocol_types;
 pub use mutsuki_runtime_sdk::{RuntimeClient, SdkProtocol, TaskSubmitter};

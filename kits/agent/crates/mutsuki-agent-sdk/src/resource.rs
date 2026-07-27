@@ -1,6 +1,6 @@
 //! Constructors for provider-backed Agent resource handles.
 
-use mutsuki_agent_protocol::{ResourceCellRef, ResourceRef};
+use mutsuki_agent_contracts::{ResourceCellRef, ResourceRef};
 use mutsuki_runtime_sdk::contracts::{
     ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
 };

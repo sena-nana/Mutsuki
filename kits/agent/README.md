@@ -4,19 +4,21 @@ MutsukiAgentKit 是面向 MutsukiCore-style runtime 的 Rust-native Agent 协议
 
 本仓库不含 Python Agent SDK。
 
-## 当前成熟度
+## 当前能力范围
 
-当前是 **protocol/runtime MVP**，不是完整 Agent framework。已落地的黄金路径是 Core task
-上的 model result、tool call、tool output 回灌与最终 typed result；长期 memory 策略、审批
-产品体验、多 Provider 发行包和持久 session 治理仍需由对应 owner/产品继续完善。
+当前 AgentKit `v0.1` package 能力基线（随 Mutsuki `v0.2.0` release train 发布）提供
+Contracts / Runtime / Adapter / Plugin 四类 package：
+session/turn 状态机、上下文计划、模型 continuation、并行工具、审批绑定、budget、流式结果、
+ResourceRef 大结果、MutsukiLink client、数据库 checkpoint 与分布式任务适配均通过公开
+Mutsuki contract 工作。产品仍负责 Provider 实例、Secret、Persona、UI 和具体工作区能力。
 
-## 分层边界
+## 三领域边界
 
 ```text
 MutsukiCore       TaskPool / scheduler / ResultRouter
 Product Host      process supervision / plugin discovery / configuration
 Platform adapters product-specific ingress and egress
-MutsukiAgentKit   Agent protocols + SDK + workflow plugins
+MutsukiAgentKit   Runtime + Adapter + Plugin
 ```
 
 ## 承担 / 不拥有
@@ -34,7 +36,11 @@ MutsukiAgentKit   Agent protocols + SDK + workflow plugins
 
 ## Workspace
 
-- `crates/mutsuki-agent-protocol` · `mutsuki-agent-sdk` · `mutsuki-agent-macros`
+- `crates/mutsuki-agent-contracts` · `mutsuki-agent-runtime`
+- `crates/mutsuki-agent-adapter-api` · `mutsuki-agent-adapter-openai`
+- `crates/mutsuki-agent-plugin-api` · `mutsuki-agent-plugin-conformance`
+- `crates/mutsuki-agent-client` · `mutsuki-agent-distributed-integration`
+- `crates/mutsuki-agent-sdk` · `mutsuki-agent-macros`
 - `crates/mutsuki-plugin-agent-*` · `mutsuki-agent-testkit`
 - `crates/mutsuki-agent-bundle` · Host-neutral Agent services 与 manifest 集合
 - `schemas/` · `manifests/` · `examples/` · `templates/` · `docs/`
@@ -53,13 +59,20 @@ Model gateway 是 provider-neutral `AsyncBatchHandler`。真实 HTTP provider fu
 运行参数与 credential。AgentKit 不读取或管理配置，credential 不进入 task、trace 或普通日志。stream 正文保存在
 provider 资源存储，runtime task 只携带 `ResourceRef`。
 
-详见 [`docs/architecture.md`](docs/architecture.md)、[`docs/protocol.md`](docs/protocol.md)。
+生产 `AgentPluginBundle::default()` 不注册 fake/mock Provider。产品必须显式构造 Provider
+实例并注入凭据引用和传输实现；测试 Provider 只存在于 testkit 或测试代码。
+
+详见 [`docs/architecture.md`](docs/architecture.md)、
+[`docs/runtime-profile.md`](docs/runtime-profile.md)、
+[`docs/adapter-authoring.md`](docs/adapter-authoring.md)、
+[`docs/plugin-authoring.md`](docs/plugin-authoring.md) 和
+[`docs/host-service-boundaries.md`](docs/host-service-boundaries.md)。
 
 ## Crate 边界与实际调用方
 
 | crate | 独立边界 | 当前调用方 |
 | --- | --- | --- |
-| `mutsuki-agent-protocol` | Agent wire DTO / schema / protocol id | SDK 与全部 Agent runner |
+| `mutsuki-agent-contracts` | Agent wire DTO / schema / protocol id | SDK 与全部 Agent runner |
 | `mutsuki-agent-sdk` / `mutsuki-agent-macros` | Rust typed client、builder 与编译期 metadata | plugin crates、Rust tool/provider examples |
 | `mutsuki-plugin-agent-loop` | `agent/run@1` 状态机 | `mutsuki-agent-bundle` / 产品 Host |
 | context / session / memory-router / prompt | 各自协议的可选 state/resource service | `mutsuki-agent-bundle` 按产品选择注册 |
@@ -71,17 +84,20 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 这些 plugin crate 保留独立 manifest、runner 与可选装配边界；它们不是第二套 runtime，产品
 可只注册实际选择的能力。
 
-## Performance Model v1
+## Performance Model
 
-Issue #4 的确定性 Agent workload 使用 `mutsuki-agent-testkit` 中版本化的 fake model/tool，
+确定性 Agent workload 使用 `mutsuki-agent-testkit` 中版本化的 fake model/tool，
 固定 seed 且禁止网络。smoke 只运行 0 μs 档；reference 运行 0 μs、1 ms、10 ms，并将
 simulated model/tool time 与 AgentKit orchestration、Core/Host overhead 分开报告。
 
 ```text
-python scripts/run-performance-model.py --mode smoke --output artifacts/performance/issue4-smoke.json
-python scripts/run-performance-model.py --mode reference --process-runs 3 --output artifacts/performance/issue4-reference.json
+python3 kits/agent/scripts/run-performance-model.py --mode smoke \
+  --output artifacts/performance/issue101-smoke.json
+python3 kits/agent/scripts/run-performance-model.py --mode reference --process-runs 3 \
+  --output artifacts/performance/issue101-reference.json
 ```
 
 覆盖 single-turn、tool-once、chain-8、真实 batched parallel-8、session-100、三档 context、
-memory route、wait/resume、cancel 与 failure/retry。详见
-[`docs/performance-model-issue4.md`](docs/performance-model-issue4.md)。
+memory route、wait/resume、cancel、failure/retry、LSP、Link、checkpoint 与 distributed
+placement。详见 [`docs/performance-model-issue4.md`](docs/performance-model-issue4.md) 和
+[`docs/performance-issue101.md`](docs/performance-issue101.md)。

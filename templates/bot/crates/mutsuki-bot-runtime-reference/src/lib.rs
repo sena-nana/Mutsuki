@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AGENT_CONTEXT_BUILD_PROTOCOL, AGENT_SESSION_APPEND_PROTOCOL, AgentContextBuildRequest,
     AgentSessionAppendRequest,
 };
@@ -311,7 +311,7 @@ fn domain_id(value: &str) -> Result<RuntimeDomainId, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_agent_protocol::AgentMessage;
+    use mutsuki_agent_contracts::AgentMessage;
     use serde_json::json;
 
     fn payload(workload: BotReferenceWorkload) -> Value {

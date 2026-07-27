@@ -1,0 +1,60 @@
+{
+  "schema_version": "mutsuki.performance.analysis/v1",
+  "classification": "environmental-noise",
+  "correctness_counters": {
+    "duplicate_tool_results": 0,
+    "hash_mismatches": 0,
+    "public_network_requests": 0,
+    "unexpected_errors": 0,
+    "wrong_routes": 0
+  },
+  "noisy_cases": [
+    {
+      "case_id": "agent.cancel",
+      "dimensions": {
+        "phase": "waiting-model-result",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.2707509881422925
+    },
+    {
+      "case_id": "agent.context-medium",
+      "dimensions": {
+        "token_like_bytes": 65536,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.10933333333333334
+    },
+    {
+      "case_id": "agent.context-small",
+      "dimensions": {
+        "token_like_bytes": 4096,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.8359598853868195
+    },
+    {
+      "case_id": "agent.parallel-tools-8",
+      "dimensions": {
+        "execution": "real-tool-router-batch",
+        "requested_parallelism": 8,
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.2673745928338762
+    },
+    {
+      "case_id": "agent.single-turn",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.2000366871503256
+    }
+  ],
+  "limitations": [
+    "Agent workload is deterministic business-layer budget evidence, not a Core or ServiceHost baseline.",
+    "Core and Host overhead are explicitly zero because this owner suite excludes those boundaries.",
+    "Simulated sleep scheduling excess remains in Agent orchestration time."
+  ]
+}

@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::AgentError;
+use mutsuki_agent_contracts::AgentError;
 use mutsuki_runtime_sdk::contracts::{
     DomainEvent, ExecutionClass, OrderingRequirement, PayloadLayout, RunnerBatchCapability,
     RunnerControlCapability, RunnerMode, RunnerOrderingCapability, RunnerPayloadCapability,
@@ -39,7 +39,7 @@ pub fn service_result_event<Request, Response>(
     source: &'static str,
     task: &Task,
     event_kind: impl Into<String>,
-    service: impl FnOnce(Request) -> mutsuki_agent_protocol::AgentResult<Response>,
+    service: impl FnOnce(Request) -> mutsuki_agent_contracts::AgentResult<Response>,
 ) -> RuntimeResult<RunnerResult>
 where
     Request: DeserializeOwned,

@@ -1,9 +1,9 @@
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
-    AgentModelGenerateProtocol, AgentModelStreamProtocol, AgentRunProtocol,
-    AgentSessionAppendProtocol, AgentSessionGetProtocol, AgentToolExecuteProtocol,
-    completed_output, orchestration_runner, result_event, runtime_failure, task_payload,
-    unsupported_protocol,
+    AgentContextBuildProtocol, AgentModelGenerateProtocol, AgentModelStreamProtocol,
+    AgentRunProtocol, AgentSessionAppendProtocol, AgentSessionGetProtocol,
+    AgentToolExecuteProtocol, AgentToolListProtocol, completed_output, orchestration_runner,
+    result_event, runtime_failure, task_payload, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::AsyncRunnerContext;
 use mutsuki_runtime_sdk::contracts::{RunnerResult, ScalarValue, Task};
@@ -95,6 +95,28 @@ async fn execute(
         0
     };
 
+    let outcome = ctx
+        .call::<AgentContextBuildProtocol>(AgentContextBuildRequest {
+            profile_id: request.profile_id.clone(),
+            messages: request.messages.clone(),
+            session_id: request.session_id.clone(),
+            max_context_tokens: request.budget.max_total_tokens,
+            metadata: request.metadata.clone(),
+        })
+        .await
+        .map_err(runtime_agent_error)?;
+    let context: AgentContext =
+        completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
+    request.messages = context.messages;
+    if let Some(prompt) = context.rendered_prompt
+        && !request
+            .messages
+            .iter()
+            .any(|message| message.role == AgentRole::System && message.content == prompt)
+    {
+        request.messages.insert(0, AgentMessage::system(prompt));
+    }
+
     let result = execute_run(model, &ctx, &request).await?;
     if let Some(session_id) = &request.session_id {
         let outcome = ctx
@@ -132,7 +154,47 @@ async fn execute_run(
         ));
     }
 
-    for step_index in 0..request.max_steps {
+    let mut first_model_step = 0;
+    if let Some((tool_calls, pending)) = pending_tool_batch(&messages)? {
+        match resolve_approvals(&pending, &request.permission_decisions)? {
+            ApprovalResolution::Waiting => {
+                return Ok(waiting_approval_result(
+                    messages,
+                    steps,
+                    usage,
+                    cost_microunits,
+                    output_resource,
+                    pending,
+                ));
+            }
+            ApprovalResolution::Stopped(status) => {
+                return Ok(run_result(
+                    status,
+                    messages,
+                    steps,
+                    usage,
+                    cost_microunits,
+                    output_resource,
+                ));
+            }
+            ApprovalResolution::Ready(approvals) => {
+                execute_tool_batch(
+                    ctx,
+                    request,
+                    tool_calls,
+                    approvals,
+                    &mut messages,
+                    &mut steps,
+                    0,
+                )
+                .await?;
+                first_model_step = 1;
+            }
+        }
+    }
+
+    for model_step in 0..request.max_steps {
+        let step_index = first_model_step + model_step;
         let model_request = AgentModelGenerateRequest {
             model: model.clone(),
             messages: messages.clone(),
@@ -243,40 +305,49 @@ async fn execute_run(
             ));
         }
 
-        for tool_call in generated.tool_calls {
-            let outcome = ctx
-                .call::<AgentToolExecuteProtocol>(AgentToolExecuteRequest {
-                    call_id: Some(tool_call.call_id.clone()),
-                    name: tool_call.name.clone(),
-                    input: tool_call.input,
-                    session_id: request.session_id.clone(),
-                })
-                .await
-                .map_err(runtime_agent_error)?;
-            let tool_result: AgentToolExecuteResult =
-                completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
-            let content = tool_result
-                .output
-                .as_ref()
-                .map(serde_json::Value::to_string)
-                .unwrap_or_default();
-            messages.push(AgentMessage {
-                role: AgentRole::Tool,
-                content,
-                name: Some(tool_result.name.clone()),
-                metadata: Some(serde_json::json!({
-                    "call_id": tool_result.call_id,
-                    "output_ref": tool_result.output_ref,
-                })),
-            });
-            steps.push(AgentStepRecord {
-                step_index,
-                kind: "tool_execute".into(),
-                detail: Some(serde_json::json!({
-                    "call_id": tool_call.call_id,
-                    "name": tool_result.name,
-                })),
-            });
+        let tool_calls = generated.tool_calls;
+        let pending = approval_requests(ctx, request, &messages, &tool_calls).await?;
+        match resolve_approvals(&pending, &request.permission_decisions)? {
+            ApprovalResolution::Waiting => {
+                attach_pending_approvals(&mut messages, &pending)?;
+                steps.push(AgentStepRecord {
+                    step_index,
+                    kind: "approval_requested".into(),
+                    detail: Some(serde_json::json!({
+                        "actions": pending.iter().map(|request| &request.action_id).collect::<Vec<_>>()
+                    })),
+                });
+                return Ok(waiting_approval_result(
+                    messages,
+                    steps,
+                    usage,
+                    cost_microunits,
+                    output_resource,
+                    pending,
+                ));
+            }
+            ApprovalResolution::Stopped(status) => {
+                return Ok(run_result(
+                    status,
+                    messages,
+                    steps,
+                    usage,
+                    cost_microunits,
+                    output_resource,
+                ));
+            }
+            ApprovalResolution::Ready(approvals) => {
+                execute_tool_batch(
+                    ctx,
+                    request,
+                    tool_calls,
+                    approvals,
+                    &mut messages,
+                    &mut steps,
+                    step_index,
+                )
+                .await?;
+            }
         }
     }
 
@@ -288,6 +359,225 @@ async fn execute_run(
         cost_microunits,
         output_resource,
     ))
+}
+
+enum ApprovalResolution {
+    Ready(std::collections::BTreeMap<String, AgentToolApproval>),
+    Waiting,
+    Stopped(AgentRunStatus),
+}
+
+async fn approval_requests(
+    ctx: &AsyncRunnerContext,
+    request: &AgentRunRequest,
+    messages: &[AgentMessage],
+    tool_calls: &[AgentToolCall],
+) -> AgentResult<Vec<PermissionRequest>> {
+    let outcome = ctx
+        .call::<AgentToolListProtocol>(AgentToolListRequest {
+            profile_id: Some(request.profile_id.clone()),
+        })
+        .await
+        .map_err(runtime_agent_error)?;
+    let listed: AgentToolListResult =
+        completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
+    let descriptors = listed
+        .tools
+        .into_iter()
+        .map(|descriptor| (descriptor.name.clone(), descriptor))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let session_id = request.session_id.as_deref();
+    let transcript_version = messages.len() as u64;
+    let mut pending = Vec::new();
+    for call in tool_calls {
+        let descriptor = descriptors
+            .get(&call.name)
+            .ok_or_else(|| AgentError::not_found(format!("tool `{}` not registered", call.name)))?;
+        if descriptor.requires_approval {
+            let session_id = session_id.ok_or_else(|| {
+                AgentError::new(
+                    "agent.approval.session_required",
+                    "approval-bound tools require a durable session",
+                )
+            })?;
+            pending.push(PermissionRequest {
+                session_id: session_id.into(),
+                turn_id: format!("turn:{session_id}:{transcript_version}"),
+                action_id: call.call_id.clone(),
+                tool: call.name.clone(),
+                side_effect: descriptor.side_effect.clone(),
+                summary: format!("Allow `{}` for this coding action", descriptor.name),
+                version: transcript_version,
+            });
+        }
+    }
+    Ok(pending)
+}
+
+fn resolve_approvals(
+    pending: &[PermissionRequest],
+    decisions: &[PermissionDecision],
+) -> AgentResult<ApprovalResolution> {
+    let mut approvals = std::collections::BTreeMap::new();
+    for request in pending {
+        let exact = decisions.iter().find(|decision| {
+            decision.session_id == request.session_id
+                && decision.turn_id == request.turn_id
+                && decision.action_id == request.action_id
+                && decision.version == request.version
+        });
+        let Some(decision) = exact else {
+            if decisions
+                .iter()
+                .any(|decision| decision.action_id == request.action_id)
+            {
+                return Err(AgentError::new(
+                    "agent.approval.stale",
+                    "approval decision does not match the pending session, turn or version",
+                ));
+            }
+            return Ok(ApprovalResolution::Waiting);
+        };
+        match decision.decision {
+            PermissionDecisionKind::Approved => {
+                approvals.insert(
+                    request.action_id.clone(),
+                    AgentToolApproval {
+                        request: request.clone(),
+                        decision: decision.clone(),
+                    },
+                );
+            }
+            PermissionDecisionKind::Cancelled => {
+                return Ok(ApprovalResolution::Stopped(AgentRunStatus::Cancelled));
+            }
+            PermissionDecisionKind::Rejected | PermissionDecisionKind::TimedOut => {
+                return Ok(ApprovalResolution::Stopped(AgentRunStatus::Failed));
+            }
+        }
+    }
+    Ok(ApprovalResolution::Ready(approvals))
+}
+
+fn attach_pending_approvals(
+    messages: &mut [AgentMessage],
+    pending: &[PermissionRequest],
+) -> AgentResult<()> {
+    let message = messages
+        .last_mut()
+        .filter(|message| message.role == AgentRole::Assistant)
+        .ok_or_else(|| AgentError::invalid_input("approval requires an assistant tool call"))?;
+    let metadata = message
+        .metadata
+        .get_or_insert_with(|| serde_json::json!({}));
+    let object = metadata
+        .as_object_mut()
+        .ok_or_else(|| AgentError::invalid_input("assistant metadata must be an object"))?;
+    object.insert(
+        "pending_approvals".into(),
+        serde_json::to_value(pending)
+            .map_err(|error| AgentError::invalid_input(error.to_string()))?,
+    );
+    Ok(())
+}
+
+fn pending_tool_batch(
+    messages: &[AgentMessage],
+) -> AgentResult<Option<(Vec<AgentToolCall>, Vec<PermissionRequest>)>> {
+    let Some(metadata) = messages
+        .last()
+        .filter(|message| message.role == AgentRole::Assistant)
+        .and_then(|message| message.metadata.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(pending) = metadata.get("pending_approvals") else {
+        return Ok(None);
+    };
+    let pending = serde_json::from_value::<Vec<PermissionRequest>>(pending.clone())
+        .map_err(|error| AgentError::invalid_input(error.to_string()))?;
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let calls = metadata
+        .get("tool_calls")
+        .cloned()
+        .ok_or_else(|| AgentError::invalid_input("pending approval is missing tool calls"))
+        .and_then(|calls| {
+            serde_json::from_value::<Vec<AgentToolCall>>(calls)
+                .map_err(|error| AgentError::invalid_input(error.to_string()))
+        })?;
+    Ok(Some((calls, pending)))
+}
+
+async fn execute_tool_batch(
+    ctx: &AsyncRunnerContext,
+    request: &AgentRunRequest,
+    tool_calls: Vec<AgentToolCall>,
+    mut approvals: std::collections::BTreeMap<String, AgentToolApproval>,
+    messages: &mut Vec<AgentMessage>,
+    steps: &mut Vec<AgentStepRecord>,
+    step_index: u32,
+) -> AgentResult<()> {
+    let outcomes = ctx
+        .call_batch::<AgentToolExecuteProtocol, _>(tool_calls.iter().map(|tool_call| {
+            AgentToolExecuteRequest {
+                call_id: Some(tool_call.call_id.clone()),
+                name: tool_call.name.clone(),
+                input: tool_call.input.clone(),
+                session_id: request.session_id.clone(),
+                approval: approvals.remove(&tool_call.call_id),
+            }
+        }))
+        .await
+        .map_err(runtime_agent_error)?;
+    for (tool_call, outcome) in tool_calls.into_iter().zip(outcomes) {
+        let tool_result: AgentToolExecuteResult =
+            completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
+        let content = tool_result
+            .output
+            .as_ref()
+            .map(serde_json::Value::to_string)
+            .unwrap_or_default();
+        messages.push(AgentMessage {
+            role: AgentRole::Tool,
+            content,
+            name: Some(tool_result.name.clone()),
+            metadata: Some(serde_json::json!({
+                "call_id": tool_result.call_id,
+                "output_ref": tool_result.output_ref,
+            })),
+        });
+        steps.push(AgentStepRecord {
+            step_index,
+            kind: "tool_execute".into(),
+            detail: Some(serde_json::json!({
+                "call_id": tool_call.call_id,
+                "name": tool_result.name,
+            })),
+        });
+    }
+    Ok(())
+}
+
+fn waiting_approval_result(
+    messages: Vec<AgentMessage>,
+    steps: Vec<AgentStepRecord>,
+    usage: AgentUsage,
+    cost_microunits: u64,
+    output_resource: Option<ResourceRef>,
+    pending_approvals: Vec<PermissionRequest>,
+) -> AgentRunResult {
+    let mut result = run_result(
+        AgentRunStatus::WaitingApproval,
+        messages,
+        steps,
+        usage,
+        cost_microunits,
+        output_resource,
+    );
+    result.pending_approvals = pending_approvals;
+    result
 }
 
 fn budget_exhausted_for_followup(
@@ -327,6 +617,7 @@ fn run_result(
         usage,
         cost_microunits,
         output_resource,
+        pending_approvals: Vec::new(),
     }
 }
 

@@ -10,7 +10,7 @@ name = "bot-runtime-domain-bench"
 path = "src/bin/bot_runtime_domain_bench.rs"
 
 [dependencies]
-mutsuki-agent-protocol.workspace = true
+mutsuki-agent-contracts.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-host.workspace = true

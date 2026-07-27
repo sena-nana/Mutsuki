@@ -15,7 +15,7 @@
 ```powershell
 python templates/bot/scripts/export_template.py `
   --output ../MutsukiBotTemplate-export `
-  --tag v0.1.0
+  --tag v0.2.0
 ```
 
 导出结果不依赖兄弟仓库、根 Workspace 或已归档的旧框架仓库。

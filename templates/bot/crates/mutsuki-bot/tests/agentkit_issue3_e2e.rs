@@ -3,12 +3,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_agent_bundle::{AgentLoop, AgentPluginBundle, AgentRuntimeRunner, ModelGateway};
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AGENT_RUN_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL, AGENT_SESSION_GET_PROTOCOL, AgentError,
     AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult, AgentModelStopReason,
     AgentRole, AgentRunBudget, AgentRunRequest, AgentRunResult, AgentRunStatus, AgentSession,
     AgentSessionCreateRequest, AgentSessionGetRequest, AgentToolCall, AgentToolDescriptor,
-    AgentUsage,
+    AgentUsage, PermissionDecision, PermissionDecisionKind, ToolSideEffect,
 };
 use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
 use mutsuki_bot::assemble_service;
@@ -112,7 +112,13 @@ impl ScriptedProvider {
                 AgentModelStopReason::ToolCalls,
                 vec![AgentToolCall {
                     call_id: format!("call-{user}"),
-                    name: "echo".into(),
+                    name: match user.as_str() {
+                        "first" => "git.status",
+                        "second" => "lsp.hover",
+                        value if value.starts_with("approved-") => "filesystem.write",
+                        _ => "echo",
+                    }
+                    .into(),
                     input,
                 }],
             )
@@ -199,6 +205,31 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
             "Returns its structured input",
         ))
         .unwrap();
+    for name in ["git.status", "lsp.hover"] {
+        bundle
+            .tools
+            .register(AgentToolDescriptor::new(
+                name,
+                ECHO_PROTOCOL,
+                "Returns the public coding-service result",
+            ))
+            .unwrap();
+    }
+    let mut workspace_write = AgentToolDescriptor::new(
+        "filesystem.write",
+        ECHO_PROTOCOL,
+        "Writes the approved value to the test workspace",
+    );
+    workspace_write.side_effect = ToolSideEffect::WorkspaceWrite;
+    workspace_write.requires_approval = true;
+    workspace_write.permissions = vec!["workspace.write".into()];
+    bundle.tools.register(workspace_write).unwrap();
+    bundle
+        .context
+        .set_tools(bundle.tools.list(Default::default()).tools);
+    bundle
+        .context
+        .set_system_prompt("Use product-provided coding context and public tools.");
 
     let mut builder = assemble_service(service.clone()).unwrap();
     for manifest in bundle.manifests() {
@@ -279,6 +310,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     let first =
         submit_and_wait::<AgentRunResult>(&client, "agent-first", AGENT_RUN_PROTOCOL, &first).await;
     assert_eq!(first.status, AgentRunStatus::Completed);
+    assert_eq!(first.messages[0].role, AgentRole::System);
     assert_eq!(
         first.messages.last().unwrap().content,
         "final users=1 tool={\"value\":\"first\"}"
@@ -313,6 +345,47 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     .await;
     assert_eq!(snapshot.turn_count, 2);
     assert_eq!(snapshot.messages, second.messages);
+
+    for (index, user) in ["approved-first", "approved-second"]
+        .into_iter()
+        .enumerate()
+    {
+        let before = tool_executions.load(Ordering::SeqCst);
+        let mut request = AgentRunRequest::new("test.profile", vec![AgentMessage::user(user)]);
+        request.session_id = Some(snapshot.session_id.clone());
+        let waiting = submit_and_wait::<AgentRunResult>(
+            &client,
+            &format!("agent-approval-{index}"),
+            AGENT_RUN_PROTOCOL,
+            &request,
+        )
+        .await;
+        assert_eq!(waiting.status, AgentRunStatus::WaitingApproval);
+        assert_eq!(waiting.pending_approvals.len(), 1);
+        assert_eq!(waiting.pending_approvals[0].tool, "filesystem.write");
+        assert_eq!(tool_executions.load(Ordering::SeqCst), before);
+
+        let pending = waiting.pending_approvals[0].clone();
+        let mut resume = AgentRunRequest::new("test.profile", Vec::new());
+        resume.session_id = Some(snapshot.session_id.clone());
+        resume.permission_decisions = vec![PermissionDecision {
+            session_id: pending.session_id,
+            turn_id: pending.turn_id,
+            action_id: pending.action_id,
+            version: pending.version,
+            decision: PermissionDecisionKind::Approved,
+        }];
+        let completed = submit_and_wait::<AgentRunResult>(
+            &client,
+            &format!("agent-approval-resume-{index}"),
+            AGENT_RUN_PROTOCOL,
+            &resume,
+        )
+        .await;
+        assert_eq!(completed.status, AgentRunStatus::Completed);
+        assert_eq!(tool_executions.load(Ordering::SeqCst), before + 1);
+        assert!(completed.messages.last().unwrap().content.contains(user));
+    }
 
     let mut streamed = AgentRunRequest::new("test.profile", vec![AgentMessage::user("stream")]);
     streamed.stream = true;

@@ -267,6 +267,82 @@ fn task_await_runner_adapter_suspends_and_resumes_call() {
 }
 
 #[test]
+fn task_await_runner_adapter_submits_independent_calls_as_one_batch() {
+    let client = Arc::new(ManualClient {
+        outcomes: Mutex::new(HashMap::new()),
+    });
+    let mut adapter = TaskAwaitRunnerAdapter::new(
+        async_descriptor(),
+        client.clone(),
+        Box::new(|ctx, task| {
+            Box::pin(async move {
+                let outcomes = ctx
+                    .call_batch::<ChildWork, _>([
+                        json!({"index": 0}),
+                        json!({"index": 1}),
+                        json!({"index": 2}),
+                    ])
+                    .await?;
+                assert_eq!(outcomes.len(), 3);
+                Ok(RunnerResult::completed(task.task_id))
+            })
+        }),
+    );
+    let context = |step| {
+        RunnerContext::new(
+            1,
+            step,
+            "executor:test",
+            Some(format!("lease:test:{step}")),
+            format!("invocation:test:{step}"),
+        )
+    };
+
+    let first = adapter
+        .run_one_for_test(
+            context(1),
+            Task::new("parent-batch", "parent.work", json!({})),
+        )
+        .unwrap();
+    assert_eq!(first.status, RunnerStatus::Waiting);
+    assert_eq!(first.tasks.len(), 3);
+    assert_eq!(
+        first
+            .tasks
+            .iter()
+            .map(|task| task.task_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "parent-batch:call:1",
+            "parent-batch:call:2",
+            "parent-batch:call:3"
+        ]
+    );
+
+    let mut outcomes = client.outcomes.lock().expect("outcomes mutex poisoned");
+    for index in 1..=3 {
+        let task_id = format!("parent-batch:call:{index}");
+        outcomes.insert(
+            task_id.clone(),
+            TaskOutcome::Completed {
+                task_id,
+                output: None,
+                output_ref: None,
+            },
+        );
+    }
+    drop(outcomes);
+
+    let second = adapter
+        .run_one_for_test(
+            context(2),
+            Task::new("parent-batch", "parent.work", json!({})),
+        )
+        .unwrap();
+    assert_eq!(second.status, RunnerStatus::Completed);
+}
+
+#[test]
 fn task_await_runner_adapter_cancel_removes_invocation_by_invocation_id() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),

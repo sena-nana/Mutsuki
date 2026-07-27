@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
     AgentSessionAppendProtocol, AgentSessionCreateProtocol, AgentSessionGetProtocol,
     AgentSessionSnapshotProtocol, orchestration_runner, service_result_event, unsupported_protocol,

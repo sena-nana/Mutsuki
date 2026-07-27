@@ -1,0 +1,2111 @@
+{
+  "schema_version": "mutsuki.performance.report/v1",
+  "suite_version": "mutsuki-agent-kit-issue4-v1",
+  "workload_version": "mutsuki.performance.agent-workloads/v1",
+  "report_id": "agent-kit-smoke-2026-07-27T09:44:18.172928Z",
+  "generated_at": "2026-07-27T09:44:18.172928Z",
+  "revision_lock_hash": "8853565d1f6c9c8df89b6003fb821988ecafa0ddf9de6af1a8ec341f6a8998ea",
+  "repository_revisions": {
+    "Mutsuki": {
+      "revision": "0f8ab8a3f2124a94c6da4d6b75a017ab47db0795",
+      "dirty": true,
+      "remote": "https://github.com/sena-nana/Mutsuki.git"
+    }
+  },
+  "environment_id": "f2d5f0282ab89d0ee7c7c8b03bc30055404e9e4f4aeb19d1e7d8400d6e717beb",
+  "environment": {
+    "cpu_model": "Apple M4",
+    "cpu_topology": "logical=10",
+    "ram_bytes": 17179869184,
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "kernel": "25.5.0",
+    "architecture": "arm64",
+    "target_triple": "arm64-darwin",
+    "toolchains": {
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "python": "3.14.3"
+    },
+    "release_profile": {
+      "name": "release",
+      "lto": "thin",
+      "codegen_units": 1
+    },
+    "power_mode": "not-recorded",
+    "virtualization": "not-recorded",
+    "runner_configuration": {
+      "mode": "smoke",
+      "process_runs": 1,
+      "fixed_seed": 1297435713,
+      "network": "forbidden"
+    },
+    "network": {
+      "scope": "none",
+      "public_requests": false
+    }
+  },
+  "feature_set": [
+    "agent-loop",
+    "model-gateway",
+    "tool-router",
+    "session",
+    "context",
+    "memory"
+  ],
+  "deployment": "deterministic AgentKit owner runners and services without network",
+  "measurement_boundary": "AgentKit business-layer orchestration; simulated model/tool time separated; Core and ServiceHost excluded",
+  "sampling": {
+    "process_runs": 1,
+    "samples_per_process": 1,
+    "regular_samples_per_process": 3,
+    "session_samples_per_process": 1,
+    "warmup_iterations": 0
+  },
+  "cases": [
+    {
+      "case_id": "agent.cancel",
+      "measurement_mode": "time",
+      "dimensions": {
+        "phase": "waiting-model-result",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 7000.0,
+          "p95": 26917.0,
+          "p99": 26917.0,
+          "mad": 1125.0,
+          "min": 5875.0,
+          "max": 26917.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            5875.0,
+            7000.0,
+            26917.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 7000.0,
+          "p95": 26917.0,
+          "p99": 26917.0,
+          "mad": 1125.0,
+          "min": 5875.0,
+          "max": 26917.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            5875.0,
+            7000.0,
+            26917.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 142857.14285714287,
+          "p95": 170212.7659574468,
+          "p99": 170212.7659574468,
+          "mad": 27355.62310030393,
+          "min": 37151.24270906862,
+          "max": 170212.7659574468,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            37151.24270906862,
+            142857.14285714287,
+            170212.7659574468
+          ]
+        },
+        "task_count": 2.0,
+        "continuation_count": 2.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 215.0,
+        "allocated_bytes": 27327.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "787305e8435fd00f36abf2fe60a3bc202edaed8cf129caae1c847bdf7e2dca0b",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.checkpoint-codec-100",
+      "measurement_mode": "time",
+      "dimensions": {
+        "checkpoint": "full-durable-session",
+        "roundtrips": 100,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 360292.0,
+          "p95": 404083.0,
+          "p99": 404083.0,
+          "mad": 2625.0,
+          "min": 357667.0,
+          "max": 404083.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            357667.0,
+            360292.0,
+            404083.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 360292.0,
+          "p95": 404083.0,
+          "p99": 404083.0,
+          "mad": 2625.0,
+          "min": 357667.0,
+          "max": 404083.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            357667.0,
+            360292.0,
+            404083.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 2775.526517380347,
+          "p95": 2795.8967419415267,
+          "p99": 2795.8967419415267,
+          "mad": 20.37022456117984,
+          "min": 2474.739100630316,
+          "max": 2795.8967419415267,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            2474.739100630316,
+            2775.526517380347,
+            2795.8967419415267
+          ]
+        },
+        "task_count": 100.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 3600.0,
+        "allocated_bytes": 628500.0,
+        "retained_memory_bytes": 1590.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "e24e481f5e78bb94d3027c168b7daea4a9dc92b0de95dd9439a91b6072840e3c",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.client-link-query-100",
+      "measurement_mode": "time",
+      "dimensions": {
+        "queries": 100,
+        "transport": "mutsuki-link-memory-control-stream",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 356792.0,
+          "p95": 625625.0,
+          "p99": 625625.0,
+          "mad": 25500.0,
+          "min": 331292.0,
+          "max": 625625.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            331292.0,
+            356792.0,
+            625625.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 356792.0,
+          "p95": 625625.0,
+          "p99": 625625.0,
+          "mad": 25500.0,
+          "min": 331292.0,
+          "max": 625625.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            331292.0,
+            356792.0,
+            625625.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 2802.753424964685,
+          "p95": 3018.485203385533,
+          "p99": 3018.485203385533,
+          "mad": 215.73177842084806,
+          "min": 1598.4015984015984,
+          "max": 3018.485203385533,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            1598.4015984015984,
+            2802.753424964685,
+            3018.485203385533
+          ]
+        },
+        "task_count": 100.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 1.0,
+        "allocations": 5656.0,
+        "allocated_bytes": 381472.0,
+        "retained_memory_bytes": 39.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "615055e4328e0f53c1c019fe644bd5a18407b2b643c537414cf553ee576bfa38",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.context-large",
+      "measurement_mode": "time",
+      "dimensions": {
+        "token_like_bytes": 1048576,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 458.0,
+          "p95": 583.0,
+          "p99": 583.0,
+          "mad": 41.0,
+          "min": 417.0,
+          "max": 583.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            417.0,
+            458.0,
+            583.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 458.0,
+          "p95": 583.0,
+          "p99": 583.0,
+          "mad": 41.0,
+          "min": 417.0,
+          "max": 583.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            417.0,
+            458.0,
+            583.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 2183406.113537118,
+          "p95": 2398081.5347721823,
+          "p99": 2398081.5347721823,
+          "mad": 214675.4212350645,
+          "min": 1715265.8662092625,
+          "max": 2398081.5347721823,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            1715265.8662092625,
+            2183406.113537118,
+            2398081.5347721823
+          ]
+        },
+        "task_count": 0.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 29.0,
+        "allocated_bytes": 3148607.0,
+        "retained_memory_bytes": 1049041.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "441f094e2f988ee187ef6749c01aae1cc0c88f685b4a402aa5c381c2e032c219",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.context-medium",
+      "measurement_mode": "time",
+      "dimensions": {
+        "token_like_bytes": 65536,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 417.0,
+          "p95": 500.0,
+          "p99": 500.0,
+          "mad": 42.0,
+          "min": 375.0,
+          "max": 500.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            375.0,
+            417.0,
+            500.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 417.0,
+          "p95": 500.0,
+          "p99": 500.0,
+          "mad": 42.0,
+          "min": 375.0,
+          "max": 500.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            375.0,
+            417.0,
+            500.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 2398081.5347721823,
+          "p95": 2666666.6666666665,
+          "p99": 2666666.6666666665,
+          "mad": 268585.13189448416,
+          "min": 2000000.0,
+          "max": 2666666.6666666665,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            2000000.0,
+            2398081.5347721823,
+            2666666.6666666665
+          ]
+        },
+        "task_count": 0.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 29.0,
+        "allocated_bytes": 199488.0,
+        "retained_memory_bytes": 66001.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "c4ffa8217b981fea0aeea97718ae949611420a873880a4771a9fa6a796a775ca",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.context-small",
+      "measurement_mode": "time",
+      "dimensions": {
+        "token_like_bytes": 4096,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 2834.0,
+          "p95": 2875.0,
+          "p99": 2875.0,
+          "mad": 41.0,
+          "min": 458.0,
+          "max": 2875.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            458.0,
+            2834.0,
+            2875.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 2834.0,
+          "p95": 2875.0,
+          "p99": 2875.0,
+          "mad": 41.0,
+          "min": 458.0,
+          "max": 2875.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            458.0,
+            2834.0,
+            2875.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 352858.15102328866,
+          "p95": 2183406.113537118,
+          "p99": 2183406.113537118,
+          "mad": 5032.064066766936,
+          "min": 347826.0869565217,
+          "max": 2183406.113537118,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            347826.0869565217,
+            352858.15102328866,
+            2183406.113537118
+          ]
+        },
+        "task_count": 0.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 29.0,
+        "allocated_bytes": 15167.0,
+        "retained_memory_bytes": 4561.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "89a0e09de8d9d459ff4d19d501b3bb356e9fb07f0d60374e86899878479a656a",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.distributed-placement-100",
+      "measurement_mode": "time",
+      "dimensions": {
+        "placements": 100,
+        "scheduler": "mutsuki-distributed",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 12792.0,
+          "p95": 14958.0,
+          "p99": 14958.0,
+          "mad": 333.0,
+          "min": 12459.0,
+          "max": 14958.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            12459.0,
+            12792.0,
+            14958.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 12792.0,
+          "p95": 14958.0,
+          "p99": 14958.0,
+          "mad": 333.0,
+          "min": 12459.0,
+          "max": 14958.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            12459.0,
+            12792.0,
+            14958.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 78173.85866166354,
+          "p95": 80263.26350429408,
+          "p99": 80263.26350429408,
+          "mad": 2089.404842630538,
+          "min": 66853.85746757589,
+          "max": 80263.26350429408,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            66853.85746757589,
+            78173.85866166354,
+            80263.26350429408
+          ]
+        },
+        "task_count": 100.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 700.0,
+        "allocated_bytes": 39800.0,
+        "retained_memory_bytes": 1113.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "23f00df4650754333f741afbffdf353bb6d2e75a41655362d279658616abc9d3",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.failure-retry",
+      "measurement_mode": "time",
+      "dimensions": {
+        "failures": [
+          "retryable",
+          "non-retryable"
+        ],
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 28417.0,
+          "p95": 30333.0,
+          "p99": 30333.0,
+          "mad": 542.0,
+          "min": 27875.0,
+          "max": 30333.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            27875.0,
+            28417.0,
+            30333.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 28417.0,
+          "p95": 30333.0,
+          "p99": 30333.0,
+          "mad": 542.0,
+          "min": 27875.0,
+          "max": 30333.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            27875.0,
+            28417.0,
+            30333.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 35190.20304747159,
+          "p95": 35874.439461883405,
+          "p99": 35874.439461883405,
+          "mad": 684.2364144118183,
+          "min": 32967.39524610161,
+          "max": 35874.439461883405,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            32967.39524610161,
+            35190.20304747159,
+            35874.439461883405
+          ]
+        },
+        "task_count": 3.0,
+        "continuation_count": 3.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 862.0,
+        "allocated_bytes": 92888.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "0beece23b86dff6736380e66c9c0b329990340537dac1e56d64384c927ff7ee0",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.lsp-query-100",
+      "measurement_mode": "time",
+      "dimensions": {
+        "queries": 100,
+        "transport": "in-memory-json-rpc",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 144583.0,
+          "p95": 144917.0,
+          "p99": 144917.0,
+          "mad": 334.0,
+          "min": 142750.0,
+          "max": 144917.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            142750.0,
+            144583.0,
+            144917.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 144583.0,
+          "p95": 144917.0,
+          "p99": 144917.0,
+          "mad": 334.0,
+          "min": 142750.0,
+          "max": 144917.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            142750.0,
+            144583.0,
+            144917.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 6916.442458656965,
+          "p95": 7005.253940455342,
+          "p99": 7005.253940455342,
+          "mad": 15.940792185812825,
+          "min": 6900.501666471152,
+          "max": 7005.253940455342,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            6900.501666471152,
+            6916.442458656965,
+            7005.253940455342
+          ]
+        },
+        "task_count": 100.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 100.0,
+        "max_tool_inflight": 1.0,
+        "allocations": 6300.0,
+        "allocated_bytes": 1133600.0,
+        "retained_memory_bytes": 153.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "2b93ed4a9c9a86707d8509f7eded62b6245ae2cde1d2bfdfed6755b4cce24cd4",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.memory-route",
+      "measurement_mode": "time",
+      "dimensions": {
+        "candidates": 128,
+        "selected": 8,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 39250.0,
+          "p95": 46750.0,
+          "p99": 46750.0,
+          "mad": 625.0,
+          "min": 38625.0,
+          "max": 46750.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            38625.0,
+            39250.0,
+            46750.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 39250.0,
+          "p95": 46750.0,
+          "p99": 46750.0,
+          "mad": 625.0,
+          "min": 38625.0,
+          "max": 46750.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            38625.0,
+            39250.0,
+            46750.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 25477.707006369426,
+          "p95": 25889.967637540452,
+          "p99": 25889.967637540452,
+          "mad": 412.26063117102603,
+          "min": 21390.374331550804,
+          "max": 25889.967637540452,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            21390.374331550804,
+            25477.707006369426,
+            25889.967637540452
+          ]
+        },
+        "task_count": 0.0,
+        "continuation_count": 0.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 1426.0,
+        "allocated_bytes": 213644.0,
+        "retained_memory_bytes": 7638.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "ef7fe5524dc473cc05637991848673fc113d6f3905afa4863b5b9410c870f44e",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.parallel-tools-8",
+      "measurement_mode": "time",
+      "dimensions": {
+        "execution": "real-tool-router-batch",
+        "requested_parallelism": 8,
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 127250.0,
+          "p95": 181834.0,
+          "p99": 181834.0,
+          "mad": 17958.0,
+          "min": 109292.0,
+          "max": 181834.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            109292.0,
+            127250.0,
+            181834.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 127250.0,
+          "p95": 181834.0,
+          "p99": 181834.0,
+          "mad": 17958.0,
+          "min": 109292.0,
+          "max": 181834.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            109292.0,
+            127250.0,
+            181834.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 7858.546168958743,
+          "p95": 9149.800534348351,
+          "p99": 9149.800534348351,
+          "mad": 1291.2543653896082,
+          "min": 5499.521541625879,
+          "max": 9149.800534348351,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            5499.521541625879,
+            7858.546168958743,
+            9149.800534348351
+          ]
+        },
+        "task_count": 18.0,
+        "continuation_count": 8.0,
+        "tool_route_count": 8.0,
+        "max_tool_inflight": 8.0,
+        "allocations": 1545.0,
+        "allocated_bytes": 214203.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "01b9e802bd032181dbd91aca3f8d0bc645f054831bc0324ad4e53dc76107e3f0",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.session-100-turns",
+      "measurement_mode": "time",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "turns": 100,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 16851208.0,
+          "p95": 16851208.0,
+          "p99": 16851208.0,
+          "mad": 0.0,
+          "min": 16851208.0,
+          "max": 16851208.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            16851208.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 16851208.0,
+          "p95": 16851208.0,
+          "p99": 16851208.0,
+          "mad": 0.0,
+          "min": 16851208.0,
+          "max": 16851208.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            16851208.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 59.342926631728716,
+          "p95": 59.342926631728716,
+          "p99": 59.342926631728716,
+          "mad": 0.0,
+          "min": 59.342926631728716,
+          "max": 59.342926631728716,
+          "unit": "runs/s",
+          "sample_count": 1,
+          "samples": [
+            59.342926631728716
+          ]
+        },
+        "task_count": 300.0,
+        "continuation_count": 300.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 605024.0,
+        "allocated_bytes": 86267037.0,
+        "retained_memory_bytes": 14232.0,
+        "post_warmup_growth_bytes": 11971.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "53889636802b69da0648be5028e137e1ba962ed7b83ecbaf69401645e3b09031",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.single-turn",
+      "measurement_mode": "time",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 33917.0,
+          "p95": 420292.0,
+          "p99": 420292.0,
+          "mad": 9500.0,
+          "min": 24417.0,
+          "max": 420292.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            24417.0,
+            33917.0,
+            420292.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 33917.0,
+          "p95": 420292.0,
+          "p99": 420292.0,
+          "mad": 9500.0,
+          "min": 24417.0,
+          "max": 420292.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            24417.0,
+            33917.0,
+            420292.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 29483.739717545774,
+          "p95": 40955.07228570258,
+          "p99": 40955.07228570258,
+          "mad": 11471.33256815681,
+          "min": 2379.2982022022784,
+          "max": 40955.07228570258,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            2379.2982022022784,
+            29483.739717545774,
+            40955.07228570258
+          ]
+        },
+        "task_count": 1.0,
+        "continuation_count": 1.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 346.0,
+        "allocated_bytes": 39754.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "4a86e6727bcb3712e63df0621a011fb4bf62f842f5e5c5c92e1ec0ce47b540e0",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.tool-chain-8",
+      "measurement_mode": "time",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 265292.0,
+          "p95": 298083.0,
+          "p99": 298083.0,
+          "mad": 5167.0,
+          "min": 260125.0,
+          "max": 298083.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            260125.0,
+            265292.0,
+            298083.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 265292.0,
+          "p95": 298083.0,
+          "p99": 298083.0,
+          "mad": 5167.0,
+          "min": 260125.0,
+          "max": 298083.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            260125.0,
+            265292.0,
+            298083.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 3769.4314189647635,
+          "p95": 3844.3056222969726,
+          "p99": 3844.3056222969726,
+          "mad": 74.87420333220916,
+          "min": 3354.770315650339,
+          "max": 3844.3056222969726,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            3354.770315650339,
+            3769.4314189647635,
+            3844.3056222969726
+          ]
+        },
+        "task_count": 25.0,
+        "continuation_count": 25.0,
+        "tool_route_count": 8.0,
+        "max_tool_inflight": 1.0,
+        "allocations": 7092.0,
+        "allocated_bytes": 983411.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "1c9025b280683b527c2e4c924f21d97cdb582d60fe5d0226004963a4986a4464",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.tool-once",
+      "measurement_mode": "time",
+      "dimensions": {
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 44458.0,
+          "p95": 77333.0,
+          "p99": 77333.0,
+          "mad": 5167.0,
+          "min": 39291.0,
+          "max": 77333.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            39291.0,
+            44458.0,
+            77333.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 44458.0,
+          "p95": 77333.0,
+          "p99": 77333.0,
+          "mad": 5167.0,
+          "min": 39291.0,
+          "max": 77333.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            39291.0,
+            44458.0,
+            77333.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 22493.13959242431,
+          "p95": 25451.12112188542,
+          "p99": 25451.12112188542,
+          "mad": 2957.981529461107,
+          "min": 12931.090220216467,
+          "max": 25451.12112188542,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            12931.090220216467,
+            22493.13959242431,
+            25451.12112188542
+          ]
+        },
+        "task_count": 4.0,
+        "continuation_count": 4.0,
+        "tool_route_count": 1.0,
+        "max_tool_inflight": 1.0,
+        "allocations": 999.0,
+        "allocated_bytes": 120188.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "564583cc0be6406495c85c18c19b94dc7ef78c614d282838da61dbb2d884358a",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.wait-resume",
+      "measurement_mode": "time",
+      "dimensions": {
+        "extra_empty_poll": 1,
+        "simulated_latency": "0us",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 14459.0,
+          "p95": 33458.0,
+          "p99": 33458.0,
+          "mad": 2793.0,
+          "min": 11666.0,
+          "max": 33458.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            11666.0,
+            14459.0,
+            33458.0
+          ]
+        },
+        "agent_orchestration_ns": {
+          "median": 14459.0,
+          "p95": 33458.0,
+          "p99": 33458.0,
+          "mad": 2793.0,
+          "min": 11666.0,
+          "max": 33458.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            11666.0,
+            14459.0,
+            33458.0
+          ]
+        },
+        "simulated_execution_wall_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "simulated_execution_work_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "core_host_overhead_ns": {
+          "median": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "mad": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "unit": "ns",
+          "sample_count": 3,
+          "samples": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "throughput_per_second": {
+          "median": 69161.07614634484,
+          "p95": 85719.18395336876,
+          "p99": 85719.18395336876,
+          "mad": 16558.107807023916,
+          "min": 29888.218064439,
+          "max": 85719.18395336876,
+          "unit": "runs/s",
+          "sample_count": 3,
+          "samples": [
+            29888.218064439,
+            69161.07614634484,
+            85719.18395336876
+          ]
+        },
+        "task_count": 1.0,
+        "continuation_count": 2.0,
+        "tool_route_count": 0.0,
+        "max_tool_inflight": 0.0,
+        "allocations": 398.0,
+        "allocated_bytes": 43137.0,
+        "retained_memory_bytes": 0.0,
+        "post_warmup_growth_bytes": 0.0
+      },
+      "correctness": {
+        "passed": true,
+        "output_hash": "4a86e6727bcb3712e63df0621a011fb4bf62f842f5e5c5c92e1ec0ce47b540e0",
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      },
+      "stage_breakdown": {
+        "simulated_business_fraction": 0.0,
+        "agentkit_orchestration_fraction": 1.0,
+        "core_host_fraction": 0.0
+      }
+    },
+    {
+      "case_id": "agent.system.process",
+      "measurement_mode": "system",
+      "dimensions": {
+        "boundary": "whole benchmark child process"
+      },
+      "metrics": {
+        "latency_ns": {
+          "median": 32736000.0,
+          "p95": 32736000.0,
+          "p99": 32736000.0,
+          "mad": 0.0,
+          "min": 32736000.0,
+          "max": 32736000.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            32736000.0
+          ]
+        },
+        "cpu_time_ns": {
+          "median": 32736000.0,
+          "p95": 32736000.0,
+          "p99": 32736000.0,
+          "mad": 0.0,
+          "min": 32736000.0,
+          "max": 32736000.0,
+          "unit": "ns",
+          "sample_count": 1,
+          "samples": [
+            32736000.0
+          ]
+        },
+        "peak_rss_bytes": 30179328
+      },
+      "correctness": {
+        "passed": true,
+        "counters": {
+          "duplicate_tool_results": 0,
+          "hash_mismatches": 0,
+          "public_network_requests": 0,
+          "unexpected_errors": 0,
+          "wrong_routes": 0
+        }
+      }
+    }
+  ],
+  "correctness": {
+    "passed": true,
+    "counters": {
+      "duplicate_tool_results": 0,
+      "hash_mismatches": 0,
+      "public_network_requests": 0,
+      "unexpected_errors": 0,
+      "wrong_routes": 0
+    }
+  },
+  "metadata": {
+    "fixture_manifest": "benchmarks/workloads-v1.json",
+    "fixture_version": "mutsuki.agent.benchmark-fixtures/v1",
+    "contract_validation": "MutsukiCore performance model v1"
+  }
+}

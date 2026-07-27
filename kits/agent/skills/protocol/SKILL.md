@@ -5,7 +5,7 @@ description: Change Agent protocol DTOs, protocol identifiers, JSON schemas, err
 
 # Agent Protocol
 
-- Keep all Agent wire DTOs and protocol IDs in `mutsuki-agent-protocol`.
+- Keep all Agent wire DTOs and protocol IDs in `mutsuki-agent-contracts`.
 - Mirror each callable protocol with typed SDK markers and update schemas plus manifests together.
 - Reuse Core task, batch, resource, effect, trace and error semantics.
 - Keep DTOs independent of Provider clients, Host services and language objects.

@@ -210,6 +210,53 @@ impl AsyncRunnerContext {
         self.call_with_cancel_policy::<P>(input, CancelPolicy::Cascade)
     }
 
+    /// Submits independent typed calls together before awaiting their outcomes.
+    ///
+    /// Core remains the execution and routing fact source: the future only
+    /// emits the child tasks as one continuation and then observes their
+    /// `TaskOutcome`s in input order.
+    pub fn call_batch<P, T>(&self, inputs: impl IntoIterator<Item = T>) -> BatchCallFuture
+    where
+        P: SdkProtocol,
+        T: Serialize,
+    {
+        let mut tasks = Vec::new();
+        let mut handles = Vec::new();
+        for input in inputs {
+            let payload = match serde_json::to_value(input) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    return BatchCallFuture::failed(
+                        self.client.clone(),
+                        self.parent_task_id.clone(),
+                        self.pending.clone(),
+                        serialize_error(error),
+                    );
+                }
+            };
+            let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
+            let task_id = format!("{}:call:{call_index}", self.parent_task_id);
+            let mut task = Task::new(task_id.clone(), P::PROTOCOL_ID, payload);
+            task.trace_id = self.trace_id.clone();
+            task.correlation_id = self.correlation_id.clone();
+            handles.push(TaskHandle {
+                task_id,
+                protocol_id: P::PROTOCOL_ID.into(),
+                target_binding_id: None,
+                cancel_policy: CancelPolicy::Cascade,
+                trace_id: self.trace_id.clone(),
+                correlation_id: self.correlation_id.clone(),
+            });
+            tasks.push(task);
+        }
+        BatchCallFuture {
+            client: self.client.clone(),
+            parent_task_id: self.parent_task_id.clone(),
+            pending: self.pending.clone(),
+            state: BatchCallState::Init { tasks, handles },
+        }
+    }
+
     pub fn call_with_cancel_policy<P>(
         &self,
         input: impl Serialize,
@@ -450,6 +497,101 @@ impl Future for CallFuture {
     }
 }
 
+pub struct BatchCallFuture {
+    client: RuntimeClientRef,
+    parent_task_id: String,
+    pending: Arc<Mutex<Option<PendingAwait>>>,
+    state: BatchCallState,
+}
+
+enum BatchCallState {
+    Init {
+        tasks: Vec<Task>,
+        handles: Vec<TaskHandle>,
+    },
+    Submitted {
+        handles: Vec<TaskHandle>,
+        outcomes: Vec<Option<TaskOutcome>>,
+    },
+    Failed(Option<RuntimeFailure>),
+    Done,
+}
+
+impl BatchCallFuture {
+    fn failed(
+        client: RuntimeClientRef,
+        parent_task_id: String,
+        pending: Arc<Mutex<Option<PendingAwait>>>,
+        error: RuntimeFailure,
+    ) -> Self {
+        Self {
+            client,
+            parent_task_id,
+            pending,
+            state: BatchCallState::Failed(Some(error)),
+        }
+    }
+}
+
+impl Future for BatchCallFuture {
+    type Output = RuntimeResult<Vec<TaskOutcome>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let state = std::mem::replace(&mut self.state, BatchCallState::Done);
+        match state {
+            BatchCallState::Init { tasks, handles } => {
+                let Some(first) = handles.first().cloned() else {
+                    return Poll::Ready(Ok(Vec::new()));
+                };
+                let outcomes = (0..handles.len()).map(|_| None).collect();
+                *self.pending.lock().expect("pending await mutex poisoned") =
+                    Some(PendingAwait::new_batch(
+                        self.parent_task_id.clone(),
+                        first,
+                        tasks,
+                        CancelPolicy::Cascade,
+                    ));
+                self.state = BatchCallState::Submitted { handles, outcomes };
+                Poll::Pending
+            }
+            BatchCallState::Submitted {
+                handles,
+                mut outcomes,
+            } => {
+                for (index, handle) in handles.iter().enumerate() {
+                    if outcomes[index].is_some() {
+                        continue;
+                    }
+                    match self.client.task_outcome(handle) {
+                        Ok(Some(outcome)) => outcomes[index] = Some(outcome),
+                        Ok(None) => {
+                            *self.pending.lock().expect("pending await mutex poisoned") =
+                                Some(PendingAwait::new(
+                                    self.parent_task_id.clone(),
+                                    handle.clone(),
+                                    None,
+                                    handle.cancel_policy.clone(),
+                                ));
+                            self.client.register_waker(handle, cx.waker());
+                            self.state = BatchCallState::Submitted { handles, outcomes };
+                            return Poll::Pending;
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+                Poll::Ready(Ok(outcomes
+                    .into_iter()
+                    .map(|outcome| outcome.expect("all batch outcomes completed"))
+                    .collect()))
+            }
+            BatchCallState::Failed(mut error) => {
+                Poll::Ready(Err(error.take().expect("failed future contains error")))
+            }
+            BatchCallState::Done => panic!("BatchCallFuture polled after completion"),
+        }
+    }
+}
+
 fn serialize_error(error: serde_json::Error) -> RuntimeFailure {
     RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
         "sdk.serialize_failed",
@@ -459,7 +601,7 @@ fn serialize_error(error: serde_json::Error) -> RuntimeFailure {
 }
 
 struct PendingAwait {
-    task: Option<Task>,
+    tasks: Vec<Task>,
     task_await: TaskAwait,
 }
 
@@ -470,8 +612,22 @@ impl PendingAwait {
         task: Option<Task>,
         cancel_policy: CancelPolicy,
     ) -> Self {
+        Self::new_batch(
+            parent_task_id,
+            child,
+            task.into_iter().collect(),
+            cancel_policy,
+        )
+    }
+
+    fn new_batch(
+        parent_task_id: String,
+        child: TaskHandle,
+        tasks: Vec<Task>,
+        cancel_policy: CancelPolicy,
+    ) -> Self {
         Self {
-            task,
+            tasks,
             task_await: TaskAwait {
                 parent_task_id: parent_task_id.clone(),
                 child,
@@ -681,7 +837,7 @@ impl TaskAwaitRunnerAdapter {
                         output: None,
                         deltas: Vec::new(),
                         events: Vec::new(),
-                        tasks: pending.task.into_iter().collect(),
+                        tasks: pending.tasks,
                         effects: Vec::new(),
                         values: Vec::new(),
                         resources: Vec::new(),

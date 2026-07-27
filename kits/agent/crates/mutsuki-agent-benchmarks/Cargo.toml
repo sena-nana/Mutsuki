@@ -6,9 +6,12 @@ license.workspace = true
 publish = false
 
 [dependencies]
-mutsuki-agent-protocol.workspace = true
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-client.workspace = true
+mutsuki-agent-distributed-integration.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
+mutsuki-agent-plugin-lsp.workspace = true
 mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
 mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
 mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
@@ -18,6 +21,8 @@ mutsuki-plugin-agent-tool-router = { path = "../mutsuki-plugin-agent-tool-router
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
+mutsuki-link-core.workspace = true
+mutsuki-distributed-contracts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

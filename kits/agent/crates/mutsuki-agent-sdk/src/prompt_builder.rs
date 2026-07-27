@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use mutsuki_agent_protocol::AgentPromptRenderRequest;
+use mutsuki_agent_contracts::AgentPromptRenderRequest;
 
 #[derive(Clone, Debug)]
 pub struct PromptBuilder {

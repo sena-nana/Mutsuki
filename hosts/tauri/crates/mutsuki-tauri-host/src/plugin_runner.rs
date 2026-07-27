@@ -8,11 +8,13 @@ use mutsuki_runtime_contracts::{
     PluginBackendDescriptor, PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass,
     RunnerDescriptor, RuntimeError, ScalarValue, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_core::{
+    AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
+};
 use mutsuki_runtime_host::{
     ProcessRunnerSpec, RuntimeBootstrapper, SpawnedJsonlRunner, runner_manifest,
 };
-use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder};
+use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeClientRef};
 use mutsuki_tauri_bridge::{
     EventHub, FrontendLogRecord, MutsukiFrontendEvent, PluginSummary, RunnerSummary,
     redact_log_record,
@@ -45,6 +47,10 @@ pub(crate) struct DiscoveredPluginState {
 }
 
 pub(crate) type BuiltinRunnerFactory = Arc<dyn Fn() -> Box<dyn Runner> + Send + Sync + 'static>;
+pub(crate) type RuntimeClientRunnerFactory =
+    Arc<dyn Fn(RuntimeClientRef) -> Box<dyn Runner> + Send + Sync + 'static>;
+pub(crate) type BuiltinAsyncHandlerFactory =
+    Arc<dyn Fn() -> Arc<dyn AsyncBatchHandler> + Send + Sync + 'static>;
 
 #[derive(Clone, Debug, Deserialize)]
 struct RunnerLaunchSpec {
@@ -403,14 +409,23 @@ pub(crate) fn register_permission_grants(
     bootstrapper.register_manifest(manifest);
 }
 
-pub(crate) fn register_builtin_runners(
+pub(crate) fn register_builtin_runtime(
     load: &mut PluginRunnerLoad,
     bootstrapper: &mut RuntimeBootstrapper,
     runners: Vec<Box<dyn Runner>>,
+    async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     state: &mut DiscoveredPluginState,
 ) -> HostResult<()> {
     let mut plugin_runners: BTreeMap<String, Vec<_>> = BTreeMap::new();
-    for descriptor in runners.iter().map(|runner| runner.descriptor().clone()) {
+    for descriptor in runners
+        .iter()
+        .map(|runner| runner.descriptor().clone())
+        .chain(
+            async_handlers
+                .iter()
+                .map(|handler| handler.descriptor().clone()),
+        )
+    {
         plugin_runners
             .entry(descriptor.plugin_id.clone())
             .or_default()
@@ -438,6 +453,9 @@ pub(crate) fn register_builtin_runners(
     }
     for runner in runners {
         bootstrapper.register_builtin_runner(runner);
+    }
+    for handler in async_handlers {
+        bootstrapper.register_async_handler(handler);
     }
     load.plugins
         .sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));

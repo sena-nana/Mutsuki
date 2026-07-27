@@ -1,0 +1,15 @@
+[package]
+name = "mutsuki-agent-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true
+mutsuki-link-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+mutsuki-link-local.workspace = true
+mutsuki-runtime-contracts.workspace = true
+tokio.workspace = true

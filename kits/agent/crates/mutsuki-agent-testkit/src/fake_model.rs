@@ -1,6 +1,6 @@
 pub use mutsuki_plugin_agent_model_gateway::{ModelGateway, ModelProvider};
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult, AgentModelStopReason,
     AgentResult, AgentRole, AgentUsage,
 };

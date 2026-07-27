@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult, AgentResult, AgentUsage,
 };
 use mutsuki_plugin_agent_model_gateway::ModelProvider;

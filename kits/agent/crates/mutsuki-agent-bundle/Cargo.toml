@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
-mutsuki-agent-protocol.workspace = true
+mutsuki-agent-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
@@ -16,3 +16,8 @@ mutsuki-plugin-agent-model-gateway = { path = "../mutsuki-plugin-agent-model-gat
 mutsuki-plugin-agent-prompt = { path = "../mutsuki-plugin-agent-prompt" }
 mutsuki-plugin-agent-session = { path = "../mutsuki-plugin-agent-session" }
 mutsuki-plugin-agent-tool-router = { path = "../mutsuki-plugin-agent-tool-router" }
+
+[dev-dependencies]
+mutsuki-agent-sdk.workspace = true
+mutsuki-runtime-host.workspace = true
+serde_json.workspace = true

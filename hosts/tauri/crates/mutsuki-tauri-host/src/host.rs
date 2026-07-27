@@ -5,8 +5,9 @@ use crate::health::{HostHealthState, failed_runtime_health, runtime_health_from_
 use crate::plugin_abi::DeferredPluginHost;
 use crate::plugin_package::PluginPackageRecord;
 use crate::plugin_runner::{
-    BuiltinRunnerFactory, declared_permission_grant_manifest, register_builtin_runners,
-    register_discovered_plugins, register_permission_grants, scan_plugin_runners,
+    BuiltinAsyncHandlerFactory, BuiltinRunnerFactory, RuntimeClientRunnerFactory,
+    declared_permission_grant_manifest, register_builtin_runtime, register_discovered_plugins,
+    register_permission_grants, scan_plugin_runners,
 };
 use mutsuki_runtime_contracts::{
     ERR_RUNNER_NOT_FOUND, ObservabilityPage, ObservabilityProfile, RuntimeError, RuntimeEvent,
@@ -18,6 +19,7 @@ use mutsuki_runtime_host::{
     HostRuntime, HostRuntimeCommand, HostRuntimeReply, HostTaskSnapshot, HostTaskState,
     RuntimeBootstrapper, TaskCompletionSubscription,
 };
+use mutsuki_runtime_sdk::RuntimeClientRef;
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalRequest, ApprovalResponse, FrontendContext, FrontendLogRecord,
     FrontendTaskRequest, FrontendTaskResult, FrontendTaskRun, HealthComponent, HostStatus,
@@ -50,6 +52,9 @@ pub struct MutsukiTauriHost {
     reload_guard: Mutex<()>,
     reload_blocked_by_builtin_runners: bool,
     builtin_runner_factories: Vec<BuiltinRunnerFactory>,
+    runtime_client_runner_factories: Vec<RuntimeClientRunnerFactory>,
+    async_handler_factories: Vec<BuiltinAsyncHandlerFactory>,
+    runtime_client: RuntimeClientRef,
     observability: ObservabilityProfile,
     abi_host: Arc<DeferredPluginHost>,
 }
@@ -73,6 +78,9 @@ pub(crate) struct HostComponents {
     pub active_protocols: BTreeSet<String>,
     pub reload_blocked_by_builtin_runners: bool,
     pub builtin_runner_factories: Vec<BuiltinRunnerFactory>,
+    pub runtime_client_runner_factories: Vec<RuntimeClientRunnerFactory>,
+    pub async_handler_factories: Vec<BuiltinAsyncHandlerFactory>,
+    pub runtime_client: RuntimeClientRef,
     pub observability: ObservabilityProfile,
     pub abi_host: Arc<DeferredPluginHost>,
 }
@@ -433,6 +441,9 @@ impl MutsukiTauriHost {
             active_protocols,
             reload_blocked_by_builtin_runners,
             builtin_runner_factories,
+            runtime_client_runner_factories,
+            async_handler_factories,
+            runtime_client,
             observability,
             abi_host,
         } = components;
@@ -461,6 +472,9 @@ impl MutsukiTauriHost {
             reload_guard: Mutex::new(()),
             reload_blocked_by_builtin_runners,
             builtin_runner_factories,
+            runtime_client_runner_factories,
+            async_handler_factories,
+            runtime_client,
             observability,
             abi_host,
         }
@@ -727,12 +741,24 @@ impl MutsukiTauriHost {
         let builtin_runners = self
             .builtin_runner_factories
             .iter()
+            .map(|factory| factory());
+        let runtime_client_runners = self
+            .runtime_client_runner_factories
+            .iter()
+            .map(|factory| factory(self.runtime_client.clone()));
+        let async_handlers = self
+            .async_handler_factories
+            .iter()
             .map(|factory| factory())
             .collect();
-        register_builtin_runners(
+        register_builtin_runtime(
             &mut loaded,
             &mut bootstrapper,
-            builtin_runners,
+            builtin_runners
+                .into_iter()
+                .chain(runtime_client_runners)
+                .collect(),
+            async_handlers,
             &mut discovered,
         )?;
         let profile = RuntimeProfile {
