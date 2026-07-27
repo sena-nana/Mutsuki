@@ -1,0 +1,35 @@
+{
+  "schema_version": "mutsuki.performance.analysis/v1",
+  "classification": "case-specific-noise",
+  "correctness_counters": {
+    "duplicate_executions": 0,
+    "hash_mismatches": 0,
+    "public_network_requests": 0,
+    "unexpected_errors": 0,
+    "wrong_routes": 0
+  },
+  "noisy_cases": [
+    {
+      "case_id": "bot.command-hit",
+      "dimensions": {
+        "prefix": "/",
+        "boundary": "botplugins-owner-pipeline-and-loopback-fakes"
+      },
+      "mad_to_median": 0.21386430678466076
+    },
+    {
+      "case_id": "bot.connection-idle",
+      "dimensions": {
+        "connection": "loopback-websocket-after-resume",
+        "idle_window_ms": 1000,
+        "boundary": "botplugins-owner-pipeline-and-loopback-fakes"
+      },
+      "mad_to_median": 0.26872666613710383
+    }
+  ],
+  "limitations": [
+    "Bot workload is a business-layer budget and does not replace Core or ServiceHost baselines.",
+    "Only the reconnect case includes a real ServiceRuntime deployment.",
+    "Platform latency is deterministic fake delay and makes no public-network claim."
+  ]
+}

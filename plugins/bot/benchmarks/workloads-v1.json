@@ -1,0 +1,21 @@
+{
+  "schema_version": "mutsuki.performance.bot-workloads/v1",
+  "fixture_version": "mutsuki.bot.benchmark-fixtures/v1",
+  "seed": 1297435713,
+  "network_policy": "loopback-fake-only",
+  "cases": [
+    {"case_id": "bot.event-single", "events": 1},
+    {"case_id": "bot.event-burst-100", "events": 100},
+    {"case_id": "bot.event-burst-10k", "events": 10000},
+    {"case_id": "bot.multi-adapter", "adapters": [4, 16], "events": 1024},
+    {"case_id": "bot.command-hit"},
+    {"case_id": "bot.command-miss"},
+    {"case_id": "bot.link-parse"},
+    {"case_id": "bot.handler-wait-resume", "extra_empty_poll": 1},
+    {"case_id": "bot.rate-limit", "retry_after_ms": 1},
+    {"case_id": "bot.reconnect", "connections": 2, "resume": true},
+    {"case_id": "bot.connection-idle", "smoke_idle_ms": 250, "reference_idle_ms": 1000},
+    {"case_id": "bot.duplicate-event", "duplicate_tolerance": 0},
+    {"case_id": "bot.long-run", "smoke_events": 10000, "reference_events": 100000}
+  ]
+}

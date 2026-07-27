@@ -1,0 +1,9 @@
+{
+  "approved_at": "2026-07-19T07:49:03.392569Z",
+  "approved_by": "sena-nana",
+  "environment_id": "c300bc6b4eaf2873db63813784a273b8f43f6fa4f7603249a795be4f9f69b967",
+  "reason": "fixed Windows x64 reference",
+  "report_sha256": "cd2d9e5d6ca436075ec800ef4690dcbd1b1007263fccddaabdf96f7d70e739c9",
+  "revision_lock_hash": "fdc2bfc26126347220fcee617af9102f52d770182023ac1a05419feddeb9914b",
+  "schema_version": "mutsuki.performance.baseline-approval/v1"
+}

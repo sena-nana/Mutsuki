@@ -1,0 +1,32 @@
+[package]
+name = "mutsuki-bot-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+bot-echo.workspace = true
+mutsuki-bot-link-parser.workspace = true
+mutsuki-bot-protocol.workspace = true
+mutsuki-bot-service-host-integration.workspace = true
+mutsuki-bot-testkit.workspace = true
+mutsuki-plugin-bot-adapter-qqbot.workspace = true
+mutsuki-plugin-bot-command.workspace = true
+mutsuki-plugin-bot-event-router.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+mutsuki-service-config.workspace = true
+mutsuki-service-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

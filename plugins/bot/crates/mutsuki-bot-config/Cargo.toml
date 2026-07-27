@@ -1,0 +1,22 @@
+[package]
+name = "mutsuki-bot-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Schema-first Bot/plugin configuration protocol (ConfigDescriptor, ConfigProvider, revision)."
+
+[dependencies]
+mutsuki-bot-config-derive = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "config_perf"
+harness = false

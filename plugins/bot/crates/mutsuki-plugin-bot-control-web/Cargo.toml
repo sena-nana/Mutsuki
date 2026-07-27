@@ -1,0 +1,24 @@
+[package]
+name = "mutsuki-plugin-bot-control-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web control proxy: ServiceHost ControlMethod as control.* RPC with capability gating."
+
+[dependencies]
+mutsuki-service-control = { workspace = true }
+mutsuki-web-protocol = { workspace = true }
+mutsuki-web-extension = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+futures-executor = "0.3"
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+
+[dev-dependencies]
+mutsuki-web-host = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+uuid = { version = "1", features = ["v4"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+futures-util = { workspace = true }

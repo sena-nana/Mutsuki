@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mutsuki BotEvent v1",
+  "type": "object",
+  "required": ["event_id", "platform", "bot", "kind", "time_ms", "target", "ext"],
+  "additionalProperties": true
+}
