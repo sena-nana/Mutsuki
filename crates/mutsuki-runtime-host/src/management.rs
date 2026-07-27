@@ -20,7 +20,7 @@ impl ManagementExecutor {
     pub(crate) fn new(
         thread_count: usize,
         queue_limit: usize,
-        actor: std::sync::mpsc::Sender<CoreActorMsg>,
+        actor: crate::actor::ActorSender,
     ) -> RuntimeResult<Self> {
         if thread_count == 0 || queue_limit == 0 {
             return Err(host_failure(

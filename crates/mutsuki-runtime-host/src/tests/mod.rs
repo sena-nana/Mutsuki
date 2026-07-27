@@ -1,3 +1,4 @@
+mod abi_plugin;
 mod async_resources;
 mod async_runtime;
 mod binary;
@@ -8,6 +9,7 @@ mod jsonl;
 mod management;
 mod multiplexer;
 mod resolver;
+mod runtime_group;
 mod scheduler;
 mod task_clients;
 mod transport_failures;

@@ -181,7 +181,19 @@ environment id。
   stale cache/partial result；画像只能使用固定容量窗口/直方图或标量，并由 Host 显式记录，
   不得接入每 tick 事件或后台采样。
 
-## 6. Git 与范围
+## 6. 多通路性能验收
+
+`mutsuki-runtime-benchmarks --bin execution_domain_qos` 必须在 release 模式运行。单通路与
+多通路必须使用相同 Task、Runner 和后台工作，只允许 ExecutionDomain topology 不同；
+报告同时保存 p50/p95/p99/max 与明确门槛，不以线程吞吐替代交互尾延迟。
+
+```powershell
+cargo run -p mutsuki-runtime-benchmarks --release --bin execution_domain_qos -- `
+  --samples 30 --background-ms 20 `
+  --output artifacts/perf/issue43-execution-domain-qos.json
+```
+
+## 7. Git 与范围
 
 - 公共协议、core runtime、ResourceManager、RuntimeBootstrapper、热重载或目录边界变化，提交前必须检查 diff 范围。
 - 不覆盖用户或其他 Agent 的已有改动。

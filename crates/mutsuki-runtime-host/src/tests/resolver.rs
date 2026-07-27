@@ -107,6 +107,7 @@ fn resolver_records_builtin_and_abi_plugin_deployments() {
             artifact_type: ArtifactType::Abi,
             path: "plugin-b.abi".into(),
             sha256: "sha256:abi".into(),
+            companion_artifacts: Vec::new(),
         },
         vec![abi_descriptor],
     );

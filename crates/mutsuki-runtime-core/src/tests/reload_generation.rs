@@ -75,7 +75,10 @@ fn reload_with_runners_swaps_registry_generation_and_rebinds_ready_tasks() {
         2
     );
     assert!(runtime.events().iter().any(|event| {
-        event.name == "runner.v2.handled" && event.subject_id.as_deref() == Some("handled-by-v2")
+        event.name == "runner.v2.handled"
+            && event.subject_id.as_deref() == Some("task-before-reload")
+            && event.attributes.get("domain_event_id")
+                == Some(&ScalarValue::String("handled-by-v2".into()))
     }));
 }
 

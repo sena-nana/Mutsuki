@@ -148,6 +148,7 @@ pub struct RuntimeBootstrapper {
     runners: Vec<RegisteredRunner>,
     async_handlers: Vec<RegisteredAsyncHandler>,
     host_services: Vec<RuntimeBootstrapperService>,
+    shared_services: Option<Arc<HostServiceRegistry>>,
     resource_providers: Vec<RegisteredResourceProvider>,
     async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
 }
@@ -184,6 +185,17 @@ impl RuntimeBootstrapper {
 
     pub fn register_manifest(&mut self, manifest: PluginManifest) {
         self.manifests.push(manifest);
+    }
+
+    pub fn use_shared_services(&mut self, services: Arc<HostServiceRegistry>) -> RuntimeResult<()> {
+        if self.shared_services.is_some() || !self.host_services.is_empty() {
+            return Err(crate::error::host_failure(
+                "host.services.duplicate_registry",
+                "runtime bootstrapper already owns host services",
+            ));
+        }
+        self.shared_services = Some(services);
+        Ok(())
     }
 
     pub fn register_loaded_plugin(&mut self, plugin: LoadedPlugin) {
@@ -384,7 +396,16 @@ impl RuntimeBootstrapper {
             &self.resource_providers,
             &self.async_resource_providers,
         )?;
-        let services = build_host_service_registry(self.host_services)?;
+        let services = match self.shared_services {
+            Some(services) if self.host_services.is_empty() => services,
+            Some(_) => {
+                return Err(crate::error::host_failure(
+                    "host.services.mixed_registry",
+                    "shared and domain-local host services cannot be mixed",
+                ));
+            }
+            None => build_host_service_registry(self.host_services)?,
+        };
         let runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()

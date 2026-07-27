@@ -265,6 +265,7 @@ pub(crate) fn core_manifest(runner: RunnerDescriptor) -> PluginManifest {
             artifact_type: ArtifactType::Native,
             path: "core".into(),
             sha256: "sha256:core".into(),
+            companion_artifacts: Vec::new(),
         },
         provides: PluginProvides {
             runners: vec![runner],

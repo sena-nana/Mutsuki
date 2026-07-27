@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, ContractSurface, ContractSurfaceKind,
     DomainEvent, HostExtensionDescriptor, HostExtensionKind, LifecyclePolicy, PermissionGrant,
-    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, ResourceAccessMode,
-    ResourceRequirement, ResourceSlice, RunnerBatchCapability, RunnerPayloadCapability,
-    RuntimeCapabilityGraph, RuntimeEvent, RuntimeEventKind, RuntimeLoadPlan, RuntimeProfileMode,
-    SchedulerPolicyDescriptor, WorkflowDescriptor,
+    PluginArtifact, PluginBackendDescriptor, PluginDeploymentKind, ProtocolClass,
+    ResourceAccessMode, ResourceRequirement, ResourceSlice, RunnerBatchCapability,
+    RunnerPayloadCapability, RuntimeCapabilityGraph, RuntimeEvent, RuntimeEventKind,
+    RuntimeLoadPlan, RuntimeProfileMode, SchedulerPolicyDescriptor, WorkflowDescriptor,
 };
 use mutsuki_runtime_contracts::{
     BatchPayload, ColumnPayload, ExecutionClass, InvocationMode, PayloadLayout, RunnerConcurrency,
@@ -543,6 +543,7 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
     let descriptor = async_descriptor();
     let plugin = PluginBuilder::new("plugin-a")
         .version("1.2.3")
+        .protocol_class("macro.echo", ProtocolClass::Effect)
         .protocol_handler(MacroEchoInput::descriptor(), "macro.echo.runner", "default")
         .resource_type::<MacroTextBuffer>()
         .runner(Box::new(TestRunner {
@@ -553,6 +554,10 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
 
     assert_eq!(plugin.manifest.plugin_id, "plugin-a");
     assert_eq!(plugin.manifest.version, "1.2.3");
+    assert_eq!(
+        plugin.manifest.provides.protocol_classes.get("macro.echo"),
+        Some(&ProtocolClass::Effect)
+    );
     assert_eq!(plugin.manifest.provides.runners, vec![descriptor]);
     assert_eq!(plugin.manifest.provides.host_extensions.len(), 1);
     assert_eq!(plugin.manifest.provides.plugin_backends.len(), 1);
@@ -989,6 +994,7 @@ fn capability_plan() -> RuntimeLoadPlan {
                 artifact_type: ArtifactType::Native,
                 path: "native".into(),
                 sha256: "sha256:native".into(),
+                companion_artifacts: Vec::new(),
             },
             provides: mutsuki_runtime_contracts::PluginProvides {
                 host_extensions: vec![host_extension],

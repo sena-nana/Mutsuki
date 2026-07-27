@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use mutsuki_runtime_contracts::{
-    ProtocolClass, RunnerDescriptor, SurfaceOccupancy, Task, TaskStatus,
+    DispatchLane, ProtocolClass, RunnerDescriptor, SurfaceOccupancy, Task, TaskStatus,
 };
 
 use super::claiming;
@@ -16,10 +16,24 @@ pub(super) fn runner_load(
     let running_count = task_pool.running_count_for_runner(&runner.runner_id);
     let waiting_count = task_pool.waiting_count_for_runner(&runner.runner_id);
     let queued_count = claiming::queued_count(task_pool, runner, step, registry_generation);
+    let queued_by_lane = DispatchLane::ALL
+        .into_iter()
+        .filter_map(|lane| {
+            let count = claiming::queued_count_for_lane(
+                task_pool,
+                runner,
+                step,
+                registry_generation,
+                &lane,
+            );
+            (count > 0).then_some((lane, count))
+        })
+        .collect();
     RunnerLoad {
         running_count,
         waiting_count,
         queued_count,
+        queued_by_lane,
         pending_weight: running_count + waiting_count + queued_count,
     }
 }
