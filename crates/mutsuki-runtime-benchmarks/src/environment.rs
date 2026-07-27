@@ -52,7 +52,7 @@ pub fn capture() -> (String, Environment) {
 
 pub fn repository_revisions() -> BTreeMap<String, RepositoryRevision> {
     BTreeMap::from([(
-        "MutsukiCore".into(),
+        "Mutsuki".into(),
         RepositoryRevision {
             revision: command_output("git", &["rev-parse", "HEAD"]),
             dirty: repository_is_dirty(),

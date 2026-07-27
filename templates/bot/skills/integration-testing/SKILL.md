@@ -21,6 +21,6 @@ description: Validate Mutsuki BotTemplate through real ServiceRuntime assembly, 
 2. 验证 transport/EventSource、重连或恢复，以及 stop 后 socket、worker、IPC 和后台任务释放。
 3. 验证缺失配置、secret、capability、artifact 和 deployment 在启动阶段失败。
 4. 验证 health/控制面真实，日志和 trace 不泄露 secret。
-5. 在独立 checkout 验证远端依赖、构建和测试。
+5. 在独立导出目录验证统一 release 依赖、构建和测试。
 
 断言协议流和外部行为；报告实际测试层级，未执行真实 smoke 时不得用 mock 代替。

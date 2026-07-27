@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mutsuki Monorepo Maintenance"
+  short_description: "Maintain package boundaries, releases, and migrations"
+  default_prompt: "Use $monorepo-maintenance to update the Mutsuki workspace without breaking package boundaries."

@@ -82,11 +82,7 @@ impl ConfigMetrics {
     pub fn snapshot(&self) -> ConfigMetricsSnapshot {
         let avg = |total: &AtomicU64, count: &AtomicU64| {
             let c = count.load(Ordering::Relaxed);
-            if c == 0 {
-                0
-            } else {
-                total.load(Ordering::Relaxed) / c
-            }
+            total.load(Ordering::Relaxed).checked_div(c).unwrap_or(0)
         };
         ConfigMetricsSnapshot {
             config_provider_count: self.inner.provider_count.load(Ordering::Relaxed),

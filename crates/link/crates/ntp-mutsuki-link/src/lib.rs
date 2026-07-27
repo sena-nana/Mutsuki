@@ -667,7 +667,7 @@ impl<C: Connection> Publisher<C> {
         let cadence_due = self
             .config
             .geometry_cadence
-            .is_some_and(|cadence| result.sequence % cadence == 0);
+            .is_some_and(|cadence| result.sequence.is_multiple_of(cadence));
         let send_geometry = self.geometry_requested || cadence_due;
         let geometry_wire = if send_geometry {
             self.geometry_requested = false;
@@ -1263,13 +1263,12 @@ impl<C: Connection> Subscriber<C> {
                 if result.generation != generation || result.sequence != sequence {
                     return Err(BindingError::InvalidFragment);
                 }
-                if let Some(cache) = &self.geometry_cache {
-                    if cache.session_id == result.session_id
-                        && cache.generation == result.generation
-                        && cache.sequence <= result.sequence
-                    {
-                        result.geometry.face_landmarks.clone_from(&cache.landmarks);
-                    }
+                if let Some(cache) = &self.geometry_cache
+                    && cache.session_id == result.session_id
+                    && cache.generation == result.generation
+                    && cache.sequence <= result.sequence
+                {
+                    result.geometry.face_landmarks.clone_from(&cache.landmarks);
                 }
                 let age = clock.now_ns().saturating_sub(result.capture_timestamp_ns);
                 if age

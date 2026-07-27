@@ -13,6 +13,7 @@ pub fn derive_mutsuki_config(input: TokenStream) -> TokenStream {
     }
 }
 
+#[derive(Default)]
 struct FieldAttr {
     title: Option<String>,
     description: Option<String>,
@@ -35,34 +36,6 @@ struct FieldAttr {
     provider_id: Option<String>,
     schema_version: Option<u32>,
     value_version: Option<u32>,
-}
-
-impl Default for FieldAttr {
-    fn default() -> Self {
-        Self {
-            title: None,
-            description: None,
-            secret: false,
-            required: false,
-            default: None,
-            unit: None,
-            min: None,
-            max: None,
-            min_length: None,
-            max_length: None,
-            pattern: None,
-            visible_if: None,
-            enabled_if: None,
-            restart: None,
-            format: None,
-            multiline: false,
-            group: None,
-            order: 0,
-            provider_id: None,
-            schema_version: None,
-            value_version: None,
-        }
-    }
 }
 
 fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {

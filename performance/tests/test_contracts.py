@@ -56,7 +56,7 @@ def report() -> dict:
         "report_id": "fixture-report",
         "generated_at": "2026-07-17T00:00:00Z",
         "revision_lock_hash": "0" * 64,
-        "repository_revisions": {"MutsukiCore": {"revision": "2" * 40, "dirty": False}},
+        "repository_revisions": {"Mutsuki": {"revision": "2" * 40, "dirty": False}},
         "environment_id": canonical_sha256(environment),
         "environment": environment,
         "feature_set": [],
@@ -175,7 +175,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "report_sha256"):
             validate_baseline_approval(approval, report_bytes + b" ", value)
         dirty = report()
-        dirty["repository_revisions"]["MutsukiCore"]["dirty"] = True
+        dirty["repository_revisions"]["Mutsuki"]["dirty"] = True
         dirty["revision_lock_hash"] = canonical_sha256(dirty["repository_revisions"])
         dirty_bytes = (json.dumps(dirty, sort_keys=True) + "\n").encode()
         dirty_approval = dict(approval)
@@ -185,11 +185,11 @@ class ContractTests(unittest.TestCase):
             validate_baseline_approval(dirty_approval, dirty_bytes, dirty)
 
     def test_owner_repository_snapshot_is_hashed_and_contains_owner(self) -> None:
-        repositories = {"MutsukiCore": {"revision": "2" * 40, "dirty": False}}
+        repositories = {"Mutsuki": {"revision": "2" * 40, "dirty": False}}
         snapshot = {
             "schema_version": "mutsuki.performance.repository-snapshot/v1",
             "snapshot_version": "fixture/v1",
-            "owner_repository": "MutsukiCore",
+            "owner_repository": "Mutsuki",
             "snapshot_hash": canonical_sha256(repositories),
             "repositories": repositories,
         }

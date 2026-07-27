@@ -1,6 +1,6 @@
 ---
 name: load-plan-reload
-description: Change MutsukiCore plugin manifests, capability resolution, RuntimeProfile, RuntimeLoadPlan, RuntimeLock, registry generations, contract surfaces, or hot-reload compatibility checks.
+description: Change Mutsuki plugin manifests, capability resolution, RuntimeProfile, RuntimeLoadPlan, RuntimeLock, registry generations, contract surfaces, or hot-reload compatibility checks.
 ---
 
 # Load Plan And Reload

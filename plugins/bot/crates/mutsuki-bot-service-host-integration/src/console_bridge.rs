@@ -1,27 +1,16 @@
-//! Process-local bridge from Bilibili configured-plugin prepare to the embedded Web Console.
+//! Runtime-local bridge from Bilibili configured-plugin services to the embedded Web Console.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::Arc;
 
 use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
+use mutsuki_service_runtime::ServiceRuntime;
 
-static BRIDGE: OnceLock<RwLock<Option<Arc<BilibiliManagementService>>>> = OnceLock::new();
-
-fn slot() -> &'static RwLock<Option<Arc<BilibiliManagementService>>> {
-    BRIDGE.get_or_init(|| RwLock::new(None))
-}
+pub const BILIBILI_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.bilibili.management";
 
 pub struct BilibiliConsoleBridge;
 
 impl BilibiliConsoleBridge {
-    pub fn clear() {
-        *slot().write().expect("bilibili console bridge write") = None;
-    }
-
-    pub fn publish(service: Arc<BilibiliManagementService>) {
-        *slot().write().expect("bilibili console bridge write") = Some(service);
-    }
-
-    pub fn get() -> Option<Arc<BilibiliManagementService>> {
-        slot().read().expect("bilibili console bridge read").clone()
+    pub fn get(runtime: &ServiceRuntime) -> Option<Arc<BilibiliManagementService>> {
+        runtime.host_service(BILIBILI_MANAGEMENT_SERVICE_ID).ok()
     }
 }

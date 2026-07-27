@@ -1,7 +1,7 @@
 # BotPlugins Performance Model v1
 
-This suite implements MutsukiBotPlugins #10 and is the Bot business-layer owner workload for the
-MutsukiCore #35 performance model. `benchmarks/workloads-v1.json` fixes the workload schema,
+This suite originated in MutsukiBotPlugins #10 and is the `plugins/bot` business-layer owner
+workload for the Mutsuki #35 performance model. `benchmarks/workloads-v1.json` fixes the workload schema,
 fixture version, seed, network policy, and case dimensions.
 
 ## Fixture and measurement boundary
@@ -29,18 +29,14 @@ cases intentionally include a real ServiceRuntime deployment.
 ## Running and repository revision snapshot
 
 ```text
-python scripts/run-performance-model.py \
+python3 plugins/bot/scripts/run-performance-model.py \
   --mode reference \
   --process-runs 3 \
-  --repository MutsukiCore=../MutsukiCore \
-  --repository MutsukiServiceHost=../MutsukiServiceHost \
-  --repository MutsukiStdPlugins=../MutsukiStdPlugins \
-  --repository MutsukiAgentKit=../MutsukiAgentKit \
-  --output artifacts/performance/issue10-reference.json
+  --output plugins/bot/artifacts/performance/issue10-reference.json
 ```
 
 The command retains every child-process raw report, emits `mutsuki.performance.report/v1`, records
-the dirty state and revision of every named repository, and writes a sibling anomaly-analysis file.
+the dirty state and revision of the Mutsuki repository, and writes an adjacent anomaly-analysis file.
 Metrics include latency p50/p95/p99/MAD, event throughput, event-to-handler/result, queue depth,
 dropped/deferred/retried counts, adapter fairness, duplicate executions, CPU/RSS, allocations,
 bounded retention, and idle long-connection CPU.
@@ -56,6 +52,6 @@ repository revision snapshot after excluding fixture, measurement-boundary, and 
 errors.
 
 Reference artifact approval and history comparison across the fixed macOS ARM64 and Windows x64
-environments are owned by this repository under `artifacts/performance/`. Exact-byte approval uses
-the shared MutsukiCore performance contract and never promotes a newly generated result
+environments are owned by the Bot area under `plugins/bot/artifacts/performance/`. Exact-byte
+approval uses the root Mutsuki performance contract and never promotes a newly generated result
 automatically.

@@ -7,6 +7,9 @@ use crate::{RuntimeError, Task, TaskHandle};
 pub struct RuntimeDomainId(String);
 
 impl RuntimeDomainId {
+    // RuntimeError is a stable serialized contract; boxing this one return path would change the
+    // public API and wire-facing error shape solely to optimize an uncommon validation failure.
+    #[allow(clippy::result_large_err)]
     pub fn new(value: impl Into<String>) -> Result<Self, RuntimeError> {
         let value = value.into();
         if value.trim().is_empty() {
@@ -48,6 +51,8 @@ pub struct CrossDomainTaskRequest {
 }
 
 impl CrossDomainTaskRequest {
+    // Keep the same stable RuntimeError contract as the other validation surfaces.
+    #[allow(clippy::result_large_err)]
     pub fn validate(&self) -> Result<(), RuntimeError> {
         if self.request_id.trim().is_empty()
             || self.idempotency_key.trim().is_empty()

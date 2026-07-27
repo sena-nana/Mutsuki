@@ -555,10 +555,10 @@ fn build_report(
     let revision = command_output("git", &["rev-parse", "HEAD"]);
     let dirty = !command_output("git", &["status", "--porcelain"]).is_empty();
     let revisions = json!({
-        "MutsukiServiceHost": {
+        "Mutsuki": {
             "revision": revision,
             "dirty": dirty,
-            "remote": "https://github.com/sena-nana/MutsukiServiceHost.git"
+            "remote": "https://github.com/sena-nana/Mutsuki.git"
         }
     });
     let revision_lock_hash = canonical_hash(&revisions);

@@ -135,15 +135,14 @@ impl ConfigValue {
             }
             serde_json::Value::Object(map) => {
                 // Secret wire shape: { "state": "configured"|"absent"|"unavailable"|"keep"|"set"|"clear", ... }
-                if let Some(state) = map.get("state").and_then(|v| v.as_str()) {
-                    if matches!(
+                if let Some(state) = map.get("state").and_then(|v| v.as_str())
+                    && matches!(
                         state,
                         "configured" | "absent" | "unavailable" | "keep" | "set" | "clear"
-                    ) {
-                        if let Ok(secret) = serde_json::from_value::<SecretState>(value.clone()) {
-                            return Self::Secret(secret);
-                        }
-                    }
+                    )
+                    && let Ok(secret) = serde_json::from_value::<SecretState>(value.clone())
+                {
+                    return Self::Secret(secret);
                 }
                 let mut out = BTreeMap::new();
                 for (k, v) in map {

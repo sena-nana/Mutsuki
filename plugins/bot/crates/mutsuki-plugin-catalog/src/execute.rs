@@ -103,14 +103,12 @@ pub fn execute_module_upgrade(
         steps.push(skipped_step("fetch", "已跳过 Git 获取"));
     }
 
-    if !matches_repo_kind(release_set, &plan.module_id, "python") {
-        if !options.skip_build {
-            let step = run_build_step(&workspace, options.dry_run)?;
-            success &= step.status != StepStatus::Failed;
-            steps.push(step);
-        } else {
-            steps.push(skipped_step("build", "已跳过编译"));
-        }
+    if !options.skip_build {
+        let step = run_build_step(&workspace, options.dry_run)?;
+        success &= step.status != StepStatus::Failed;
+        steps.push(step);
+    } else {
+        steps.push(skipped_step("build", "已跳过编译"));
     }
 
     if should_run_abi(release_set, &plan.module_id) && !options.skip_abi {
@@ -138,14 +136,10 @@ pub fn execute_module_upgrade(
             detail: format!(
                 "pin 同步未自动执行；{}",
                 pin_guidance.clone().unwrap_or_else(|| {
-                    "请按指引更新 release set 并运行 release_set sync".into()
+                    "请按指引统一更新所有 Mutsuki package pin".into()
                 })
             ),
-            command: Some(format!(
-                "python3 scripts/release_set.py --manifest {} sync --workspace-root {}",
-                shell_quote(release_set_path),
-                shell_quote(options.workspace_root.as_deref().unwrap_or(Path::new("..")))
-            )),
+            command: Some("cargo update && cargo metadata --locked".into()),
         });
     }
 
@@ -174,14 +168,6 @@ pub fn execute_module_upgrade(
             options,
         ),
     })
-}
-
-fn matches_repo_kind(release_set: &ReleaseSetInfo, module_id: &str, kind: &str) -> bool {
-    release_set
-        .repositories
-        .iter()
-        .find(|repo| repo.id == module_id)
-        .is_some_and(|repo| repo.kind == kind)
 }
 
 fn should_run_abi(release_set: &ReleaseSetInfo, module_id: &str) -> bool {
@@ -470,7 +456,7 @@ fn pin_guidance_text(
     let workspace_root = options.workspace_root.as_deref().unwrap_or(Path::new(".."));
     match repo {
         Some(repo) => format!(
-            "更新 release set `{}` 中 `{}` 的 revision 为 `{}`，运行 release_set sync，并在产品仓库执行 `cargo metadata --locked`。manifest: {}",
+            "更新 release `{}` 中 `{}` 的 revision 为 `{}`，把产品中所有 Mutsuki package 设为同一 tag/commit，重新生成 lockfile 并执行 `cargo metadata --locked`。manifest: {}",
             release_set.release,
             repo.id,
             plan.target_revision,
@@ -563,15 +549,15 @@ mod tests {
     fn sample_release_set() -> ReleaseSetInfo {
         ReleaseSetInfo {
             schema_version: 1,
-            release: "mutsuki-0.1-alpha-3".into(),
+            release: "v0.1.0".into(),
             status: "active".into(),
             contracts_api: "0.1.0".into(),
             runtime_wire_schema: "mutsuki.runtime.wire/1.3.0".into(),
             supported_deployments: vec![],
             unsupported_deployments: vec![],
             repositories: vec![ReleaseSetRepository {
-                id: "core".into(),
-                url: "https://github.com/sena-nana/MutsukiCore.git".into(),
+                id: "mutsuki".into(),
+                url: "https://github.com/sena-nana/Mutsuki.git".into(),
                 revision: "aaaa1111".into(),
                 kind: "rust".into(),
             }],
@@ -583,8 +569,8 @@ mod tests {
         let release_set = sample_release_set();
         let report = execute_module_upgrade(
             &release_set,
-            Path::new("releases/mutsuki-0.1-alpha-3.toml"),
-            "core",
+            Path::new("release.toml"),
+            "mutsuki",
             Some("bbbb2222"),
             &UpgradeExecuteOptions {
                 dry_run: true,
@@ -606,8 +592,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let report = execute_module_upgrade(
             &release_set,
-            Path::new("releases/mutsuki-0.1-alpha-3.toml"),
-            "core",
+            Path::new("release.toml"),
+            "mutsuki",
             Some("bbbb2222"),
             &UpgradeExecuteOptions {
                 dry_run: false,

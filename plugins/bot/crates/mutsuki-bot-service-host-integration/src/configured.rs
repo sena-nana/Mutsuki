@@ -6,6 +6,7 @@ use mutsuki_plugin_bot_command::{
 use mutsuki_plugin_bot_event_router::{
     BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
 };
+use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
@@ -14,7 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    BilibiliConsoleBridge, BilibiliPollingCredentials, BilibiliPollingEventSource,
+    BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliPollingCredentials, BilibiliPollingEventSource,
     QqBotPluginBundle,
 };
 use mutsuki_plugin_bot_bilibili::{
@@ -229,7 +230,6 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             runner_config.snapshot().media_provider_id
         ));
 
-        BilibiliConsoleBridge::clear();
         let management_service = if let Some(store) = configured_plugin_store {
             let service = Arc::new(BilibiliManagementService::new(
                 runner_config.clone(),
@@ -246,14 +246,32 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 Arc::new(HostBilibiliConfigStore(store)),
                 Arc::new(HostSecretPresence(host_secret_store.clone())),
             ));
-            BilibiliConsoleBridge::publish(service.clone());
             Some(service)
         } else {
             None
         };
 
+        let builder = if let Some(service) = management_service.clone() {
+            let loaded_manifest = manifest.clone();
+            builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService {
+                        service_id: BILIBILI_MANAGEMENT_SERVICE_ID.into(),
+                        capability: None,
+                        service: service.clone(),
+                    }],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                })
+            })
+        } else {
+            builder.register_builtin_plugin(manifest)
+        };
+
         Ok(builder
-            .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |client, resources| {
                 let snapshot = runner_config.snapshot();
                 let transport: Box<dyn mutsuki_plugin_bot_bilibili::BilibiliTransport> =

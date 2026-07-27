@@ -174,10 +174,6 @@ pub fn encode_jsonl_response<T: Serialize>(
     )
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "the public wire API returns the structured RuntimeError contract unchanged"
-)]
 pub fn decode_jsonl_response<R: WireRequest>(
     line: &[u8],
     expected_request_id: u64,

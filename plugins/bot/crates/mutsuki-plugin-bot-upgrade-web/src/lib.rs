@@ -222,5 +222,5 @@ fn map_catalog_error(err: mutsuki_plugin_catalog::CatalogError) -> ExtensionErro
 }
 
 pub fn default_release_set_path(repo_root: &Path) -> PathBuf {
-    repo_root.join("releases").join("mutsuki-0.1-alpha-3.toml")
+    repo_root.join("release.toml")
 }

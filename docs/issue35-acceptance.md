@@ -1,4 +1,4 @@
-# MutsukiCore Epic #35 acceptance evidence
+# Mutsuki Epic #35 acceptance evidence
 
 This document is the requirement-by-requirement audit for Epic #35 and its nine owner issues. On
 2026-07-19 the repository owner accepted the completed physical Windows x64 fixed-reference lane as
@@ -8,17 +8,18 @@ lane and is not a closure gate.
 ## Ownership decision
 
 On 2026-07-17 the user explicitly rejected a separate remote `MutsukiBenchmarks` repository and
-required every performance test to live in the repository that owns the measured boundary. The
-accepted replacement preserves the technical requirements without a tenth repository:
+required every performance test to live with the code that owns the measured boundary. Issue #44
+subsequently migrated those owners into one repository without changing their ownership boundaries:
 
-- MutsukiCore owns the versioned report/workload/approval contracts and a read-only Epic validator;
+- the root Core area owns the versioned report/workload/approval contracts and a read-only Epic
+  validator;
 - ServiceHost owns builtin, ABI and Rust-process deployment fixtures and the canonical executable
   six-fixture manifest;
 - PythonRunnerKit mirrors the manifest and owns Python JSONL/binary measurements;
 - TauriHost, Link, DistributedHost, StdPlugins, AgentKit and BotPlugins own their own workloads;
 - every owner retains reports, anomaly analysis, approvals and reference history in its own
   `artifacts/performance/` directory (`artifacts/perf/` in Core);
-- the Epic validator accepts report paths but never launches or owns another repository's test.
+- the Epic validator accepts report paths but never launches or owns another area's test.
 
 There is no central revision-lock file. The original versioned lock requirement is implemented as
 `repository-snapshot-v1`, scoped to one owner and its actual dependencies. Report v1's
@@ -46,11 +47,11 @@ dependencies, environment fingerprint and measurement boundary, and passes corre
 
 | Epic #35 requirement | Evidence | Status |
 | --- | --- | --- |
-| Performance tests have an authoritative home | Nine owner repositories contain their own benchmark code, workflow and artifacts; no central repository is required | Pass locally |
+| Performance tests have an authoritative home | Nine owner areas contain their own benchmark code and artifacts; the root workflow aggregates them without changing ownership | Pass locally |
 | Version report/workload/repository-snapshot/approval contracts | Four schemas and seven Core contract tests under `performance/` | Pass locally |
 | Parse every owner report | `scripts/performance/validate_issue35_reports.py` validates 9 reports and 628 cases | Pass locally |
 | Same Runner fixture across five deployments | ServiceHost manifest plus builtin, ABI, Rust process, Python JSONL and Python binary hashes are exact | Pass locally |
-| Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently in their owner repositories | Pass locally |
+| Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently from their owner areas | Pass locally |
 | Optional macOS ARM64 reference history | Every owner workflow can target `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Not required for closure; waived by owner |
 | Fixed Windows x64 reference history | Physical Ryzen 7 5800X Windows x64 run retained in all nine owners; 628 clean cases and nine exact-byte approvals pass aggregate validation | Pass |
 | Baseline update requires explicit approval | Core tooling validates exact report bytes, revision snapshot and environment; no workflow auto-promotes output | Pass locally |
@@ -100,8 +101,8 @@ On 2026-07-19 all nine owner suites ran on a physical AMD Ryzen 7 5800X Windows 
 `artifacts/performance/reference-windows-x64/` (`artifacts/perf/reference-windows-x64/` in Core).
 
 The Core aggregate validator reports `9 reports, 628 cases, clean_required=true`. All owner
-correctness gates pass, the canonical five-deployment Runner fixture hashes match, every recorded
-repository revision is clean, and each approval is bound to the exact report bytes, environment ID
+correctness gates pass, the canonical five-deployment Runner fixture hashes match, the recorded
+Mutsuki revision is clean, and each approval is bound to the exact report bytes, environment ID
 and revision snapshot. The reports classify broad timing variance as environmental noise; they do
 not make a regression claim without same-machine history.
 
@@ -144,27 +145,27 @@ evidence and do not support macOS performance claims.
 
 ## Local aggregate validation
 
-Run from MutsukiCore after every owner has produced its own report:
+Run from the Mutsuki repository root after every owner area has produced its own report:
 
 ```text
 python scripts/performance/validate_issue35_reports.py \
-  --fixture-manifest ../MutsukiServiceHost/fixtures/performance/runner-fixtures-v1.json \
+  --fixture-manifest hosts/service/fixtures/performance/runner-fixtures-v1.json \
   --report core=artifacts/perf/reference-windows-x64/report.json \
-  --report service-host=../MutsukiServiceHost/artifacts/performance/reference-windows-x64/report.json \
-  --report tauri-host=../MutsukiTauriHost/artifacts/performance/reference-windows-x64/report.json \
-  --report link=../MutsukiLink/artifacts/performance/reference-windows-x64/report.json \
-  --report distributed-host=../MutsukiDistributedHost/artifacts/performance/reference-windows-x64/report.json \
-  --report python-runner-kit=../MutsukiPythonRunnerKit/artifacts/performance/reference-windows-x64/report.json \
-  --report std-plugins=../MutsukiStdPlugins/artifacts/performance/reference-windows-x64/report.json \
-  --report agent-kit=../MutsukiAgentKit/artifacts/performance/reference-windows-x64/report.json \
-  --report bot-plugins=../MutsukiBotPlugins/artifacts/performance/reference-windows-x64/report.json \
+  --report service-host=hosts/service/artifacts/performance/reference-windows-x64/report.json \
+  --report tauri-host=hosts/tauri/artifacts/performance/reference-windows-x64/report.json \
+  --report link=crates/link/artifacts/performance/reference-windows-x64/report.json \
+  --report distributed-host=hosts/distributed/artifacts/performance/reference-windows-x64/report.json \
+  --report python-runner-kit=kits/python-runner/artifacts/performance/reference-windows-x64/report.json \
+  --report std-plugins=plugins/std/artifacts/performance/reference-windows-x64/report.json \
+  --report agent-kit=kits/agent/artifacts/performance/reference-windows-x64/report.json \
+  --report bot-plugins=plugins/bot/artifacts/performance/reference-windows-x64/report.json \
   --require-clean
 ```
 
 ## Required closure sequence
 
-1. Review, commit and push each owner repository after user confirmation.
-2. Retain the completed physical Windows x64 fixed-reference artifacts in all nine owners.
+1. Review, commit and push the unified Mutsuki revision after user confirmation.
+2. Retain the completed physical Windows x64 fixed-reference artifacts in all nine owner areas.
 3. Validate the exact-byte approvals for every clean Windows report.
 4. Run the Core validator with `--require-clean` and re-audit every required row.
 5. Push this final acceptance record, then close the child issues and Epic #35 in that order.

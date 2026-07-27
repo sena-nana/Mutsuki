@@ -570,9 +570,10 @@ fn validate_deployment(
     require(
         deployment.distributed_host_release == DISTRIBUTED_HOST_RELEASE
             && deployment.external_service.artifact == "mutsuki-distributed-host"
-            && deployment.external_service.revision == DISTRIBUTED_HOST_REVISION,
+            && (deployment.external_service.revision == DISTRIBUTED_HOST_REVISION
+                || deployment.external_service.revision == "workspace"),
         "distribution.revision_mismatch",
-        "deployment release and revision must match the pinned DistributedHost",
+        "deployment release and revision must match the unified Mutsuki revision",
     )?;
     require(
         maturity_rank(deployment.capability_level) >= maturity_rank(CapabilityMaturity::Deployable),

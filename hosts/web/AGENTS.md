@@ -10,7 +10,7 @@ Axum/HTTP internals 作为稳定 ABI。
 ## 阅读顺序
 
 1. 当前及关联 issue，确认目标、依赖和验收场景。
-2. `../MutsukiCore/AGENTS.md`、`../MutsukiLink/AGENTS.md`（若改动 Link/standalone）。
+2. `../../AGENTS.md`、`../../crates/link/AGENTS.md`（若改动 Link/standalone）。
 3. 本文件路由的相关技能，再检查当前实现、远端 commit 和 lockfile。
 
 Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时，定位代码先用 CodeGraph。
@@ -37,9 +37,9 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 | `@mutsuki/ui` | LiliaUI token/layout 包装（styles + ConsoleShell）；视觉基座来自 pinned `@lilia/theme`，构建期由 `bundle-css.mjs` 打进 `dist/mutsuki-ui.css` |
 | `@mutsuki/web-build` | Vue/TS/CSS 标准构建工具（运行时不调用） |
 
-跨仓库：`MutsukiCore`（仅通用协议缺口）、`MutsukiLink`（standalone 桥接）、
-`MutsukiServiceHost`/Bot（嵌入宿主）、`MutsukiBotPlugins`（Schema-first；默认 Web
-配置插件不在本仓库）、`MutsukiTauriHost`（同层对齐，不复制实现）。
+跨 package：Core（仅通用协议缺口）、Link（standalone 桥接）、ServiceHost/Bot
+（嵌入宿主）、BotPlugins（Schema-first；默认 Web 配置插件不在本目录）、TauriHost
+（同层对齐，不复制实现）。
 
 ## Hard Rules
 
@@ -52,7 +52,7 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 7. 扩展失败由 Error Boundary / Recovery Shell 隔离，单个扩展不得拖垮整个 Shell。
 8. 所有连接、队列、payload、静态缓存均有明确预算；缺失预算必须结构化失败。
 9. 本机默认只监听 loopback；非 loopback 必须有明确 TLS/远程认证策略。
-10. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库 Git 依赖固定 `rev`。
+10. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 11. 不向插件暴露 Axum/Hyper 类型作为稳定 ABI。
 12. 不在本仓库实现数据库、日志、指标、市场或 Bot 管理业务页面。
 

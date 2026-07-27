@@ -8,8 +8,16 @@ import json
 import pathlib
 import subprocess
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+def cargo_target_directory() -> pathlib.Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return pathlib.Path(json.loads(metadata)["target_directory"])
 
 
 def main() -> None:
@@ -20,9 +28,11 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=ROOT / "target/mutsuki-benchmarks/service-host-reference.json",
+        default=cargo_target_directory() / "mutsuki-benchmarks/service-host-reference.json",
     )
     args = parser.parse_args()
+    args.output = args.output.resolve()
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
             "cargo",
@@ -48,7 +58,7 @@ def main() -> None:
         check=True,
     )
     command = [
-        str(ROOT / "target/release/mutsuki-service-benchmarks"),
+        str(cargo_target_directory() / "release/mutsuki-service-benchmarks"),
         "--mode",
         args.mode,
         "--output",

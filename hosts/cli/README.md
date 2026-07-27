@@ -11,7 +11,7 @@ Mutsuki 的独立命令行与终端 UI Host。它连接正在运行的 `MutsukiS
 先启动 ServiceHost，然后运行：
 
 ```powershell
-cargo run -- --home ../MutsukiServiceHost/.mutsuki-dev --token dev-token
+cargo run -p mutsuki-cli-host -- --home hosts/service/.mutsuki-dev --token dev-token
 ```
 
 - `R`：立即刷新状态、健康和日志
@@ -20,5 +20,5 @@ cargo run -- --home ../MutsukiServiceHost/.mutsuki-dev --token dev-token
 CLI 不加载 ServiceHost profile 或配置文件。也可以直接指定公开控制 endpoint：
 
 ```powershell
-cargo run -- --transport named-pipe --endpoint mutsuki --token dev-token
+cargo run -p mutsuki-cli-host -- --transport named-pipe --endpoint mutsuki --token dev-token
 ```

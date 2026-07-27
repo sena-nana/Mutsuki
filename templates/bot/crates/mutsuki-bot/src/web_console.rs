@@ -67,7 +67,7 @@ impl WebConsoleGuard {
             config_service.clone(),
             secret_monitor,
             &WebConsolePaths::resolve(&product_root(product_config_path), &config),
-            BilibiliConsoleBridge::get(),
+            BilibiliConsoleBridge::get(runtime),
         )?;
         let mut host = host;
         host.start().await?;

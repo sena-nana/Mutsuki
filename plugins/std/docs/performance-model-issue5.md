@@ -1,7 +1,7 @@
 # Standard Plugins Performance Model v1
 
-该套件实现 MutsukiStdPlugins #5，并作为 MutsukiCore #35 统一性能模型的 owner
-基准之一。fixture manifest 固定在 `benchmarks/workloads-v1.json`，seed 为
+该套件源自 MutsukiStdPlugins #5，并作为 Mutsuki #35 统一性能模型中 `plugins/std` 的
+owner 基准之一。fixture manifest 固定在 `benchmarks/workloads-v1.json`，seed 为
 `1297435713`。
 
 ## 测量边界
@@ -23,12 +23,10 @@ Win32 process counters，Unix 使用单进程 `wait4` resource usage。
 ## 运行
 
 ```text
-python scripts/run-performance-model.py \
+python3 plugins/std/scripts/run-performance-model.py \
   --mode reference \
   --process-runs 3 \
-  --repository MutsukiCore=../MutsukiCore \
-  --repository MutsukiServiceHost=../MutsukiServiceHost \
-  --output artifacts/performance/issue5-reference.json
+  --output plugins/std/artifacts/performance/issue5-reference.json
 ```
 
 输出同时生成 `*-raw/`、统一 v1 report 与 `*-analysis.json`。reference 默认每个
@@ -42,5 +40,6 @@ counter 非零时分类为 `framework-suspect`，必须先判断 fixture/harness
 通过后，高 MAD 仅分类为环境或 case-specific noise，不能直接归因于框架。
 
 本报告不能代替 Core 或 ServiceHost 基准，也不声称 loopback HTTP 等同于公网性能。
-本仓库在 `artifacts/performance/` 保留自己的 macOS ARM64/Windows x64 report、analysis、
-approval 与历史；批准使用 MutsukiCore 的精确字节契约，不自动接受新生成结果。
+Std area 在 `plugins/std/artifacts/performance/` 保留自己的 macOS ARM64/Windows x64
+report、analysis、approval 与历史；批准使用根 Mutsuki 性能工具的精确字节契约，不自动接受
+新生成结果。

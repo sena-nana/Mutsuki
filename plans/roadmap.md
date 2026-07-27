@@ -1,12 +1,13 @@
 # Mutsuki 路线图
 
-Mutsuki 当前目标是 **极薄 Tick-first / Batch-first runtime + Plugin Runner** 的 Rust-first
-runtime kernel。Core 只保留 TaskPool、RunnerRegistry、Runner dispatch、ResultRouter、
-StateStore、ResourceManager、EventLog 和 TraceLog 等领域中立运行事实。
+Mutsuki 当前是单仓库、多 package 的 Framework。Core 目标仍是 **极薄 Tick-first /
+Batch-first runtime + Plugin Runner**；仓库同时承载 Link、Host、Kit、标准插件与模板，
+但 Core 只保留 TaskPool、RunnerRegistry、Runner dispatch、ResultRouter、StateStore、
+ResourceManager、EventLog 和 TraceLog 等领域中立运行事实。
 
 ## 当前边界
 
-根级 workspace 由四个 crate 组成：
+根级 Workspace 是全部 Rust package 的唯一兼容性基线。Core 运行时组包括：
 
 - `crates/mutsuki-runtime-contracts`：Task、Runner、Resource、Plugin load-plan、
   event/trace/error 等纯协议对象。
@@ -19,8 +20,11 @@ StateStore、ResourceManager、EventLog 和 TraceLog 等领域中立运行事实
   `Future`，提供 `ctx.call(...).await` 语法糖；单 task submit 由 SDK/Host 包装成
   one-entry batch。
 
-Python runner kit 已拆分到独立 `MutsukiPythonRunnerKit` 仓库，镜像新协议并提供 Python
-runner backend、stdio JSONL runner bridge 和测试替身。
+Python Runner Kit 位于 `kits/python-runner`，镜像同一 revision 的协议并提供 Python
+runner backend、stdio JSONL runner bridge 和测试替身；它不是 Rust Workspace member。
+
+Link、Host、AgentKit、Bot、StdPlugins 和 BotTemplate 的 package 组、依赖方向与发布门禁见
+`docs/architecture/monorepo.md` 和 `docs/release-train.md`。
 
 ## 标准插件命名边界
 
@@ -31,7 +35,7 @@ runner backend、stdio JSONL runner bridge 和测试替身。
 - 标准插件运行时 ID 保留 `mutsuki.std.<domain>.<name>`。
 - 协议 ID 使用 `mutsuki.<domain>.<action>`，不带 `plugin`。
 
-标准协议与插件已迁移到独立 `MutsukiStdPlugins` 仓库，包括
+标准协议与插件位于 `plugins/std`，包括
 `mutsuki-plugin-resource-memory`、shared-memory provider、`mutsuki-plugin-dev-mock`、
 `mutsuki-plugin-observe-log`、`mutsuki-plugin-config-permission`、
 `mutsuki-plugin-workflow-linear`、`mutsuki-plugin-workflow-broadcast`、
@@ -233,7 +237,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     和 shutdown controller 组合为 host 扩展基础设施；这些接口复用既有
     `HostRuntimeCommand`、`TaskClient`、`ResourcePlanClient` 与 load-plan descriptor，
     不新增 Core 运行时事实。
-- 外部 Python runner kit 覆盖：
+- `kits/python-runner` 覆盖：
   - 新协议 dataclass mirror 与 JSON roundtrip。
   - `PythonRunnerBackend`、`StdioJsonlBridge`、`PythonResourceManager`。
   - `RunnerContext` 镜像 invocation id、cancel token、deadline tick、deadline-after-ms 与

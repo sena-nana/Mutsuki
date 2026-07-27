@@ -250,7 +250,7 @@ async fn extension_failure_is_isolated_and_recovery_still_works() {
         )) => {
             assert!(result.error.is_none());
             let failures = result.result.unwrap();
-            assert!(failures.as_array().unwrap().len() >= 1);
+            assert!(!failures.as_array().unwrap().is_empty());
         }
         _ => panic!("list failures"),
     }

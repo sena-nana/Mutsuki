@@ -82,6 +82,7 @@ pub fn empty_config_service() -> Arc<ConfigService> {
 }
 
 /// Resolved filesystem paths for optional console features.
+#[derive(Default)]
 pub struct WebConsolePaths {
     pub release_set: Option<PathBuf>,
 }
@@ -94,12 +95,6 @@ impl WebConsolePaths {
                 .as_deref()
                 .map(|relative| product_root.join(relative)),
         }
-    }
-}
-
-impl Default for WebConsolePaths {
-    fn default() -> Self {
-        Self { release_set: None }
     }
 }
 

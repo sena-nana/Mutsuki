@@ -8,33 +8,174 @@ members = [
     "crates/mutsuki-runtime-wire",
     "crates/mutsuki-runtime-benchmarks",
     "crates/mutsuki-runtime-host/fixtures/abi-v2-plugin",
+    "crates/link/crates/*",
+    "hosts/cli",
+    "hosts/service/crates/*",
+    "hosts/service/fixtures/abi-plugin",
+    "hosts/tauri/crates/*",
+    "hosts/tauri/fixtures/jsonl-runner",
+    "hosts/web/crates/*",
+    "hosts/distributed/crates/*",
+    "kits/agent/crates/*",
+    "plugins/bot/crates/*",
+    "plugins/bot/examples/*",
+    "plugins/std/crates/*",
+    "plugins/std/plugins/*",
+    "plugins/std/protocols/*",
+    "templates/bot/crates/*",
 ]
 resolver = "2"
-exclude = ["fuzz"]
+exclude = [
+    "fuzz",
+    "kits/agent/examples/rust-agent-tool",
+    "kits/agent/examples/rust-model-provider",
+    "kits/agent/templates/rust-agent-tool",
+    "kits/agent/templates/rust-model-provider",
+]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
+repository = "https://github.com/sena-nana/Mutsuki"
 
 [workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws"] }
+bot-echo = { path = "plugins/bot/examples/bot-echo" }
+bytes = "1.11.1"
+clap = { version = "4.5", features = ["derive", "env"] }
+cpu-time = "1.0.0"
 crossbeam-channel = "0.5"
-futures-util = "0.3"
-futures-channel = "0.3"
 csv = "1.4"
+dirs = "6.0"
+fastrand = "2.4"
+futures = "0.3"
+futures-channel = "0.3"
+futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
+html-escape = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+interprocess = { version = "2.4.2", default-features = false, features = ["tokio"] }
+keyring = { version = "3.6.3", default-features = false }
 libc = "0.2"
 libloading = "0.8"
+md5 = "0.8"
+mdns-sd = { version = "0.20.1", default-features = false }
+mime_guess = "2.0"
+nana-tracking-protocol = { version = "0.1.0", git = "https://github.com/sena-nana/NanaTracking.git", rev = "919f7f23c246c64c0ea36742a5813899903dadb4", default-features = false, features = ["std"] }
+parking_lot = "0.12"
+plist = "1.7"
+proc-macro2 = "1.0"
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quote = "1.0"
+rcgen = "0.13.2"
+regex = "1.11"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
+rmp-serde = "1.3"
+rusqlite = { version = "0.32", features = ["bundled"] }
+rustls = { version = "0.23.37", default-features = false, features = ["ring", "std"] }
+scraper = "0.23"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["raw_value"] }
+sha2 = "0.10.9"
+socket2 = "0.6.5"
+stats_alloc = "0.1.10"
+syn = { version = "2.0", features = ["full", "parsing"] }
+tauri = { version = "2", default-features = false }
+tempfile = "3.23"
+thiserror = "2.0"
+time = { version = "=0.3.47", features = ["parsing"] }
+tokio = { version = "1.52.3", features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+url = "2.5"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+windows-service = "0.8.1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 mutsuki-runtime-contracts = { path = "crates/mutsuki-runtime-contracts" }
 mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
+mutsuki-runtime-host = { path = "crates/mutsuki-runtime-host" }
+mutsuki-runtime-sdk = { path = "crates/mutsuki-runtime-sdk" }
 mutsuki-runtime-wire = { path = "crates/mutsuki-runtime-wire" }
-rmp-serde = "1.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["raw_value"] }
-sha2 = "0.10"
-thiserror = "2.0"
-proc-macro2 = "1.0"
-quote = "1.0"
-syn = { version = "2.0", features = ["full"] }
-tokio = { version = "1.47", features = ["rt-multi-thread", "sync", "time"] }
+
+mutsuki-link = { path = "crates/link/crates/mutsuki-link", features = ["local"] }
+mutsuki-link-core = { path = "crates/link/crates/mutsuki-link-core" }
+mutsuki-link-local = { path = "crates/link/crates/mutsuki-link-local" }
+mutsuki-link-quic = { path = "crates/link/crates/mutsuki-link-quic" }
+
+mutsuki-service-benchmarks = { path = "hosts/service/crates/mutsuki-service-benchmarks" }
+mutsuki-service-config = { path = "hosts/service/crates/mutsuki-service-config" }
+mutsuki-service-control = { path = "hosts/service/crates/mutsuki-service-control" }
+mutsuki-service-daemon = { path = "hosts/service/crates/mutsuki-service-daemon" }
+mutsuki-service-ipc = { path = "hosts/service/crates/mutsuki-service-ipc" }
+mutsuki-service-link = { path = "hosts/service/crates/mutsuki-service-link" }
+mutsuki-service-observe = { path = "hosts/service/crates/mutsuki-service-observe" }
+mutsuki-service-plugin-loader = { path = "hosts/service/crates/mutsuki-service-plugin-loader" }
+mutsuki-service-runner-supervisor = { path = "hosts/service/crates/mutsuki-service-runner-supervisor" }
+mutsuki-service-runtime = { path = "hosts/service/crates/mutsuki-service-runtime" }
+
+mutsuki-tauri-bridge = { path = "hosts/tauri/crates/mutsuki-tauri-bridge" }
+mutsuki-tauri-host = { path = "hosts/tauri/crates/mutsuki-tauri-host" }
+mutsuki-tauri-resource = { path = "hosts/tauri/crates/mutsuki-tauri-resource" }
+
+mutsuki-web-bridge = { path = "hosts/web/crates/mutsuki-web-bridge" }
+mutsuki-web-extension = { path = "hosts/web/crates/mutsuki-web-extension" }
+mutsuki-web-host = { path = "hosts/web/crates/mutsuki-web-host" }
+mutsuki-web-protocol = { path = "hosts/web/crates/mutsuki-web-protocol" }
+mutsuki-web-recovery = { path = "hosts/web/crates/mutsuki-web-recovery" }
+
+mutsuki-distributed-contracts = { path = "hosts/distributed/crates/mutsuki-distributed-contracts" }
+mutsuki-distributed-control-client = { path = "hosts/distributed/crates/mutsuki-distributed-control-client" }
+mutsuki-distributed-host-adapter = { path = "hosts/distributed/crates/mutsuki-distributed-host-adapter" }
+mutsuki-distributed-runtime = { path = "hosts/distributed/crates/mutsuki-distributed-runtime" }
+
+mutsuki-agent-bundle = { path = "kits/agent/crates/mutsuki-agent-bundle" }
+mutsuki-agent-macros = { path = "kits/agent/crates/mutsuki-agent-macros" }
+mutsuki-agent-protocol = { path = "kits/agent/crates/mutsuki-agent-protocol" }
+mutsuki-agent-sdk = { path = "kits/agent/crates/mutsuki-agent-sdk" }
+mutsuki-plugin-agent-model-gateway = { path = "kits/agent/crates/mutsuki-plugin-agent-model-gateway" }
+
+mutsuki-bot-config = { path = "plugins/bot/crates/mutsuki-bot-config" }
+mutsuki-bot-config-derive = { path = "plugins/bot/crates/mutsuki-bot-config-derive" }
+mutsuki-bot-link-parser = { path = "plugins/bot/crates/mutsuki-bot-link-parser" }
+mutsuki-bot-protocol = { path = "plugins/bot/crates/mutsuki-bot-protocol" }
+mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }
+mutsuki-bot-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-service-host-integration" }
+mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
+mutsuki-bot-web-console = { path = "plugins/bot/crates/mutsuki-bot-web-console" }
+mutsuki-plugin-bot-adapter-qqbot = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-qqbot" }
+mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili" }
+mutsuki-plugin-bot-bilibili-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-web" }
+mutsuki-plugin-bot-bilibili-workshop = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-workshop" }
+mutsuki-plugin-bot-command = { path = "plugins/bot/crates/mutsuki-plugin-bot-command" }
+mutsuki-plugin-bot-config-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-config-web" }
+mutsuki-plugin-bot-control-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-control-web" }
+mutsuki-plugin-bot-event-router = { path = "plugins/bot/crates/mutsuki-plugin-bot-event-router" }
+mutsuki-plugin-bot-mihuashi = { path = "plugins/bot/crates/mutsuki-plugin-bot-mihuashi" }
+mutsuki-plugin-bot-overview-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-overview-web" }
+mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-upgrade-web" }
+mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
+
+mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
+mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }
+mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
 
 [profile.dev]
 debug = "line-tables-only"

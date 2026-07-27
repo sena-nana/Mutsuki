@@ -34,6 +34,14 @@ from mutsuki_runner_kit.wire.protocol import DEFAULT_WIRE_LIMITS, WireProtocolFa
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def workspace_root() -> Path:
+    return Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=ROOT, text=True
+        ).strip()
+    )
+
+
 def canonical_hash(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -464,9 +472,7 @@ def pipe_cases(
                         lambda: [process.receive() for _ in range(inflight)]
                     )
                     expected = {
-                        process.dispatch(
-                            "runner.echo", {"message": "mutsuki"}, sequence + index
-                        )
+                        process.dispatch("runner.echo", {"message": "mutsuki"}, sequence + index)
                         for index in range(inflight)
                     }
                     try:
@@ -690,7 +696,7 @@ async def in_memory_cases(mode: str) -> list[dict[str, Any]]:
 
 
 def repository_revisions(values: list[str]) -> dict[str, Any]:
-    repositories = {"MutsukiPythonRunnerKit": ROOT}
+    repositories = {"Mutsuki": workspace_root()}
     for value in values:
         name, separator, raw_path = value.partition("=")
         if not separator:

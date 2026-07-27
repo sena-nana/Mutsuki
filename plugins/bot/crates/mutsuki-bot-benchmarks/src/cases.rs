@@ -82,7 +82,7 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
     let maximum = adapters.values().copied().max().unwrap_or(1);
     let fairness = minimum as f64 / maximum.max(1) as f64;
     assert_eq!(command_tasks.len(), event_count);
-    assert_eq!(handler_tasks.len(), (event_count + 1) / 2);
+    assert_eq!(handler_tasks.len(), event_count.div_ceil(2));
     Sample {
         elapsed_ns,
         cpu_time_ns: 0,

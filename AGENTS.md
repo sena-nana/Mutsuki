@@ -1,91 +1,78 @@
-# Mutsuki 项目宪法
+# Mutsuki Monorepo 工作规范
 
-Mutsuki 当前是一个 **Rust-first CoreRuntime framework**。根目录只承载领域中立
-runtime kernel、纯协议契约和 native runner host helper；Python runner kit 已拆分到
-独立仓库，只能镜像本仓库暴露的通用 runner 协议。
-
-## 一句话定位
-
-为工程 runner、plugin runner 与 sidecar 能力提供领域中立运行核心。Rust core
-只负责 TaskPool、RunnerRegistry、RunnerLoop、ResultRouter、StateStore、
-ResourceManager、EventLog、TraceLog 和 load-plan 校验；具体业务能力由 host、
-plugin、runner 或 sidecar 组合实现。
+本仓库是 Mutsuki Framework 的唯一主仓。它使用单仓库、多 package 的 Rust Workspace，
+同时承载 Python Runner Kit、前端 SDK/Shell、Bot 模板、跨 package 集成测试、性能模型和
+统一发布资料。仓库合并不等于 package 合并；每个 package 继续拥有清晰职责和可选依赖。
 
 ## 阅读顺序
 
-任何变更前按以下顺序阅读：
+1. 当前及关联 Issue，确认 package owner、依赖和验收场景。
+2. `plans/{roadmap,architecture,engineering,contracts}.md`。
+3. `docs/architecture/monorepo.md` 与改动目录最近的 `AGENTS.md`。
+4. 根技能及 scoped `skills/*/SKILL.md`，再检查实现、测试和发布资料。
 
-1. [plans/roadmap.md](plans/roadmap.md) —— 当前 CoreRuntime 目标、门控、范围。
-2. [plans/architecture.md](plans/architecture.md) —— 分层与领域中立边界。
-3. [plans/engineering.md](plans/engineering.md) —— workspace、crate 边界、验证规则。
-4. [plans/contracts.md](plans/contracts.md) —— Rust runtime 纯协议。
-5. 既有契约、实现、测试。
+Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时，定位代码先用 CodeGraph。
 
-没有契约位置或设计文档归属的新机制，先更新 plans / contracts，再写实现。
+## 根技能路由
 
-## 技能路由
+- `skills/monorepo-maintenance/SKILL.md`：目录、内部依赖、历史/Issue 迁移、Release Train、
+  兼容矩阵、模板导出和归档。
+- `skills/contracts/SKILL.md`：公共 DTO、协议 ID、错误码、序列化与跨语言契约。
+- `skills/runtime-kernel/SKILL.md`：TaskPool、Runner、批处理、路由、取消与 trace。
+- `skills/resource-state-effects/SKILL.md`：资源 descriptor、lease、状态、事件与 effect。
+- `skills/load-plan-reload/SKILL.md`：manifest、LoadPlan、registry generation 与热重载。
+- `skills/sdk-runner-host/SKILL.md`：Rust SDK、宏、Runner host helper 与通用 ABI。
 
-- `skills/contracts/SKILL.md`：公共 DTO、协议 ID、错误码和序列化契约。
-- `skills/runtime-kernel/SKILL.md`：TaskPool、batch-first Runner、Executor 和 ResultRouter。
-- `skills/resource-state-effects/SKILL.md`：ResourceRef、lease、StateStore、event 和 effect。
-- `skills/load-plan-reload/SKILL.md`：manifest、RuntimeLoadPlan、generation 和热重载。
-- `skills/sdk-runner-host/SKILL.md`：Rust SDK、宏、native/JSONL runner host helper。
+跨 package 或目录移动先读 monorepo-maintenance；跨协议边界同时读 contracts。
 
-跨多个方向时先读 contracts，再读具体实现技能。
+## 目录与职责
+
+| 路径 | 职责 |
+| --- | --- |
+| `crates/mutsuki-runtime-*` | 领域中立 contracts、wire、Core、Host helper、Rust SDK 与基准 |
+| `crates/link/` | Link 协议、传输、发现、配对和 runtime adapter |
+| `hosts/cli/` | ServiceHost 控制 API 的 CLI/TUI 客户端 |
+| `hosts/service/` | 常驻服务生命周期、配置/secret、插件加载、Runner 监督、控制面和 health |
+| `hosts/tauri/` | 桌面生命周期、Tauri/WebView bridge、资源与前端 SDK |
+| `hosts/web/` | Web Host、HTTP/WS、WebExtension、Recovery Shell 与 Web 包 |
+| `hosts/distributed/` | 可选分布式 sidecar、持久化、恢复、控制和基准 |
+| `kits/agent/` | Agent 协议、SDK、插件、testkit 与 bundle |
+| `kits/python-runner/` | Python Runner SDK、wire mirror、transport 与 conformance |
+| `plugins/bot/` | Bot 协议、SDK、路由、平台 Adapter、Host integration 与 testkit |
+| `plugins/std/` | 通用协议、资源/provider、effect、workflow 与 observe 插件 |
+| `templates/bot/` | Bot 产品模板规范源、示例、导出与装配验收 |
 
 ## Hard Rules
 
-1. **Task 是一等运行事实**：所有待处理控制消息进入 `TaskPool`；不得引入实例私有队列或多队列调度形态作为核心事实源。
-2. **Runner 是唯一执行单元**：插件通过 `RunnerDescriptor` 声明可处理的 task kind、schema、purity 和 generation；core 只注册、claim、调用和路由结果。
-3. **核心不内置业务概念**：产品、业务协议、应用状态、工具调用和外部服务概念不得进入 Rust core。
-4. **副作用必须 task 化**：Pure runner 只能返回 `Task`、`DomainEvent`、`StateDelta`、`EffectRequest`；外部副作用必须变成 `effect.*` task，由 Effectful runner 执行。
-5. **状态只能通过 Committer 提交**：StateStore/EventLog 只由 `core.commit`、`core.event.append` 等 kernel task 和 Committer runner 修改。
-6. **ResourceRef/ValueRef 是 descriptor**：跨 runtime 边界只能传 ref descriptor、schema、generation、lifetime、lease 和访问方式；不得传 Python object、Rust pointer、Arc、Vec 本体、socket、SDK client、数据库连接或真实 handle。
-7. **共享数据默认 readonly/sealed**：修改生成新 ref；确需原地写必须持有有效 `ExclusiveWriteLease`，lease 过期、generation mismatch、provider 崩溃必须结构化失败。
-8. **LoadPlan 是 registry 权威**：core boot 只消费 resolver 生成的 `RuntimeLoadPlan/RuntimeLock`；runner、task demand、resource、effect descriptor 不得超出 load plan 授权。
-9. **Registry freeze 后禁止动态注册**：运行中新增能力必须生成新的 registry generation 和 load plan。
-10. **热重载不原地替换**：新插件 generation 通过 Identical/Additive/Deprecated/Removed/Breaking surface 比较进入；Deprecated 禁止新增占用，Removed 必须 zero occupancy，Breaking 必须 migration/drain/restart。
-11. **决定性时间与 ID 由 runtime / host 注入**：core 不直接调用全局时间、UUID 或 random 源；资源租约 token 由注入式 ID source 生成。
-12. **结构化错误**：fallback 必须显式记录原因；禁止吞异常返回默认值。
-13. **仓库必须可独立解析**：禁止指向仓库外的 Cargo `path` 或本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
+1. 根 `Cargo.toml` 和 `Cargo.lock` 是唯一 Rust Workspace 与版本基线；禁止新增嵌套
+   Workspace、嵌套 lockfile 或仓库内 Mutsuki Git 依赖。
+2. Core 不依赖具体 Host、Link transport、Agent、Bot、标准插件或产品；Link 不依赖具体
+   Host 和业务插件；Agent/Bot/Std 默认不绑定 Host，显式 integration package 除外。
+3. 不建立默认包含全部能力的巨型 crate，不用根 feature 矩阵替代 package 边界。
+4. TaskPool、batch-first Runner、TaskHandle、ResourceRef、LoadPlan、registry freeze、
+   structured failure 等运行时不变量不得因 monorepo 快捷直调而绕过。
+5. package 间只通过公开 API 和仓内 path 依赖交互；共享类型进入真实 owner，禁止公共杂物包。
+6. Python、TypeScript 和模板必须镜像公开契约，不复制第二套 Core 或生产 fallback/shim。
+7. 业务产品继续位于独立仓库，只依赖所需 package，并固定统一 release tag 或 commit。
+8. 迁移必须保留 Git 历史、有效 Issue、评论和回链；源仓有独占可执行任务时禁止归档。
+9. Secret、账号和本地配置不得进入模板、fixture、日志、manifest 或版本控制。
+10. 修复根因并在 owner package 落地；禁止因同仓而跨层打补丁、隐式耦合或假能力。
+11. 新测试断言行为和协议，不硬匹配日志/文案；无功能变化不添加低价值测试。
+12. 禁止临时分支工作树修改。默认在用户当前分支工作；除非用户明确要求，不创建 PR。
 
-## 工作规程
+## Git 与验证
 
-- 先读相关 crate、契约和测试，再改代码；不要凭文件名猜边界。
-- 跨 contracts / core / host / 外部语言 runner kit 边界的改动，先确认契约位置和测试入口。
-- 不做打补丁式修复；定位根因，在正确层级修正。
-- 优先沿用现有命名、错误码和测试风格。
-- 不覆盖用户或其他 Agent 的已有改动；工作前后用 `git status --short` 或定向 diff 确认范围。
-- 需要长期记录的背景、取舍和未决问题写进 `plans/`。
-
-## Rust / Python 边界
-
-- Root Rust crates 不依赖 Python。
-- Python runner kit 位于独立仓库，必须镜像本仓库的 contracts wire shape。
-- Python sidecar 只能通过 runner step、management cancel/dispose 和 resource broker 纯协议与 Rust runtime 通信。
-- generation key、runner host 失败、资源租约不匹配必须 fail-loud；不能 fallback 到看似可用的 handler。
-
-## Git 提交
-
-- 提交标题用中文短句概括结果。
-- 提交正文按列表简短写具体改动；无必要不写正文。
-- 涉及契约、生命周期、runner trait、资源治理或目录重组时，提交前必须检查 diff 范围。
-
-## 验证
-
-- 不得以部分检查宣称成功。最终说明必须报告精确执行的验证命令与结果。
-- Rust runtime / contracts / host 改动必须运行：
-  - `cargo fmt --check`
-  - `cargo test`
-- 改动外部 Python runner kit 时，在该独立仓库运行它的 `uv` 验证命令。
-- 涉及公共契约、RunnerRegistry、ResultRouter、ResourceManager、trace、StateStore、
-  load plan 或 hot reload 的改动必须补充定向测试或说明现有测试覆盖点。
-
-## 技术栈
-
-- Rust 2024 + Cargo workspace 是根级主框架。
-- serde / serde_json 用于纯协议序列化。
-- thiserror 用于 runtime failure wrapper。
-- Python runner kit 使用 Python 3.13 + uv，但不再位于本仓库。
-
-详见 [plans/engineering.md](plans/engineering.md)。
+- 工作前后检查 `git status --short`；保留用户已有修改。
+- 提交标题用中文短句概括结果；目录迁移、公共契约和生命周期变更提交前检查 diff 范围。
+- 根 Rust 门禁：
+  - `python3 skills/monorepo-maintenance/scripts/check_workspace.py`
+  - `cargo metadata --locked --format-version 1`
+  - `cargo fmt --all -- --check`
+  - `cargo check --workspace --all-targets --locked`
+  - `cargo test --workspace --all-targets --locked`
+  - `bash scripts/check-distributed-boundary.sh`
+  - `cargo bench-smoke`
+- Python、前端、集成和 owner 性能测试按 scoped AGENTS/SKILL 执行。
+- 依赖、模板或发布改动必须在无兄弟仓库的独立 clone 验证。
+- 最终说明列出实际命令、结果、性能产物、release revision 与未执行的外部 smoke；不得以
+  部分检查宣称成功。

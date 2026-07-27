@@ -173,7 +173,7 @@ fn random_fail_result(
         .get("seed")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let failed = stable_hash(&format!("{seed}:{}", task.task_id)) % modulus == 0;
+    let failed = stable_hash(&format!("{seed}:{}", task.task_id)).is_multiple_of(modulus);
     if failed {
         let mut error = RuntimeError::new(
             "mutsuki.dev.random_fail",
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn dev_runner_echo_sleep_fail_and_random_fail_are_batch_entries() {
         let mut runner = DevMockRunner::new();
-        let tasks = vec![
+        let tasks = [
             Task::new("task:echo", ECHO_PROTOCOL, json!({"value": 1})),
             Task::new("task:sleep", SLEEP_PROTOCOL, json!({"duration_ms": 25})),
             Task::new("task:fail", FAIL_PROTOCOL, json!({"reason": "expected"})),

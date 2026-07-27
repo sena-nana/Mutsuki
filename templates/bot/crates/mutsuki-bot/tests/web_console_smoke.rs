@@ -37,16 +37,27 @@ secret_file = "{secret_path}"
 enabled = true
 listen = "127.0.0.1:0"
 auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
-release_set = "releases/mutsuki-0.1-alpha-3.toml"
+release_set = "release.toml"
 "#
             ),
         ),
     )
     .unwrap();
-    std::fs::create_dir_all(root.path().join("releases")).unwrap();
-    std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../releases/mutsuki-0.1-alpha-3.toml"),
-        root.path().join("releases/mutsuki-0.1-alpha-3.toml"),
+    std::fs::write(
+        root.path().join("release.toml"),
+        r#"
+schema_version = 1
+release = "v0.1.0"
+status = "active"
+contracts_api = "0.1.0"
+runtime_wire_schema = "mutsuki.runtime.wire/1.3.0"
+
+[[repositories]]
+id = "mutsuki"
+url = "https://github.com/sena-nana/Mutsuki.git"
+revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+kind = "monorepo"
+"#,
     )
     .unwrap();
 

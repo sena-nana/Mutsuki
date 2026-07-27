@@ -251,7 +251,6 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         auth_token_key: None,
         include_config: false,
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
-        ..Default::default()
     };
     let secrets = WebConsoleSecrets {
         auth_token: "local-dev".into(),

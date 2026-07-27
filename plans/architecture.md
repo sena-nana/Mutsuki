@@ -39,7 +39,7 @@ RuntimeProfile + PluginManifest
 - `host` 依赖 `core + contracts`，提供 `HostRuntime` 控制面门面、runtime bootstrapper
   和 JSONL runner client。
 - `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
-- 外部 Python runner kit 镜像 contracts，提供 Python runner backend 和 stdio runner
+- `kits/python-runner` 镜像 contracts，提供 Python runner backend 和 stdio runner
   server；Rust crates 不依赖 Python。
 
 分布式部署的零侵入依赖方向、禁止类型、Worker 本地化和旧插件 `LocalOnly` 默认行为由
@@ -292,7 +292,7 @@ EventLog 与 TraceLog 都由 `RuntimeProfile.observability` / `RuntimeLoadPlan.o
 容器，lazy record closure 不执行。retained/dropped event/trace 统计只描述观察面，不能参与
 Task 正确性。
 
-外部 Python runner kit 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side
+`kits/python-runner` 的 `await ctx.call_raw(...)` 使用同一 wire shape：runner-side
 adapter 只在 coroutine yield 出 Mutsuki `TaskAwait` 时暂停并返回
 `RunnerStatus::Waiting`。它不把 `asyncio` event loop、任意 Python awaitable 或调度器
 语义写入 Core。

@@ -15,7 +15,7 @@ median, p95, p99 and MAD, and label the exact measurement boundary and deploymen
 Run a fast contract check with:
 
 ```sh
-python3 crates/mutsuki-service-benchmarks/scripts/run-reference.py \
+python3 hosts/service/crates/mutsuki-service-benchmarks/scripts/run-reference.py \
   --mode smoke --warmup 0 --samples 1 \
   --output target/mutsuki-benchmarks/service-host-smoke.json
 ```
@@ -23,18 +23,19 @@ python3 crates/mutsuki-service-benchmarks/scripts/run-reference.py \
 Capture a local reference run with:
 
 ```sh
-python3 crates/mutsuki-service-benchmarks/scripts/run-reference.py \
+python3 hosts/service/crates/mutsuki-service-benchmarks/scripts/run-reference.py \
   --mode reference \
   --output artifacts/performance/issue15-macos-arm64-provisional/report.json
 ```
 
 The sibling `.analysis.json` classifies structural/correctness failures as a benchmark
-implementation error and high relative MAD as environmental noise. `fixtures/performance/` is the
-authority for the executable six-fixture manifest; PythonRunnerKit mirrors it. This repository owns
-the builtin, ABI and Rust-process reports and retains their local/fixed-machine history under
-`artifacts/performance/`. Promotion requires a clean repository-revision snapshot, matching
-environment fingerprint and an exact-byte approval created with MutsukiCore's performance contract
-tooling. A new CI artifact is never promoted automatically.
+implementation error and high relative MAD as environmental noise.
+`hosts/service/fixtures/performance/` is the authority for the executable six-fixture manifest;
+`kits/python-runner` mirrors it. The Service area owns the builtin, ABI and Rust-process reports and
+retains their local/fixed-machine history under `hosts/service/artifacts/performance/`. Promotion
+requires a clean Mutsuki revision snapshot, matching environment fingerprint and an exact-byte
+approval created with the root performance tooling. A new CI artifact is never promoted
+automatically.
 
 ## Control IPC (Issue #16)
 

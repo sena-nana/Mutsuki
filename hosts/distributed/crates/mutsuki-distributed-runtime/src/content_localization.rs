@@ -255,13 +255,16 @@ async fn send_manifest(
     .await
 }
 
+type LocalizationFlight = OnceCell<Result<(), DistributedError>>;
+type InFlightLocalizations = BTreeMap<String, Weak<LocalizationFlight>>;
+
 pub struct LinkResourceLocalizer {
     worker_node: NodeId,
     secret: Arc<[u8]>,
     destination: PathBuf,
     timeout: Duration,
     io: LocalizationIoRuntime,
-    in_flight: Mutex<BTreeMap<String, Weak<OnceCell<Result<(), DistributedError>>>>>,
+    in_flight: Mutex<InFlightLocalizations>,
 }
 
 impl LinkResourceLocalizer {

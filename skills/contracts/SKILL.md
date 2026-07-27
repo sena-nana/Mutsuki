@@ -1,6 +1,6 @@
 ---
 name: contracts
-description: Evolve MutsukiCore public runtime DTOs, protocol identifiers, error codes, serialization shapes, and contract documentation. Use before changes that cross crate, host, plugin, runner, language, or process boundaries.
+description: Evolve Mutsuki public runtime DTOs, protocol identifiers, error codes, serialization shapes, and contract documentation. Use before changes that cross crate, host, plugin, runner, language, or process boundaries.
 ---
 
 # Contracts

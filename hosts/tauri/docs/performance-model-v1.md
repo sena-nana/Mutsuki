@@ -3,7 +3,7 @@
 The local entry point is:
 
 ```sh
-python3 crates/mutsuki-tauri-benchmarks/scripts/run-reference.py \
+python3 hosts/tauri/crates/mutsuki-tauri-benchmarks/scripts/run-reference.py \
   --mode reference \
   --output artifacts/performance/issue4-macos-arm64-provisional/report.json
 ```
@@ -23,7 +23,7 @@ and release, and asserts that only `ResourceRef`, preview handles, or bounded 64
 JSON. The custom `mutsuki-resource` protocol serves preview bytes outside invoke/event JSON and
 preview tokens are revocable.
 
-Public CI runs one correctness smoke. This repository owns and retains its report/analysis history
-under `artifacts/performance/`. Baseline promotion belongs to a fixed machine and requires a clean
-repository-revision snapshot, matching environment fingerprint and exact-byte approval through the
-MutsukiCore performance contract tooling.
+Public CI runs one correctness smoke. The Tauri area owns and retains its report/analysis history
+under `hosts/tauri/artifacts/performance/`. Baseline promotion belongs to a fixed machine and
+requires a clean Mutsuki revision snapshot, matching environment fingerprint and exact-byte
+approval through the root performance contract tooling.

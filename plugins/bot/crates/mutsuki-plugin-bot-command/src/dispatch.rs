@@ -64,6 +64,7 @@ pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
             artifact_type: ArtifactType::Abi,
             path: path.into(),
             sha256: sha256.into(),
+            companion_artifacts: Vec::new(),
         },
     )
     .manifest
@@ -101,6 +102,7 @@ fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
             artifact_type: ArtifactType::Abi,
             path: "plugin".into(),
             sha256: "sha256:plugin".into(),
+            companion_artifacts: Vec::new(),
         },
     ))
 }

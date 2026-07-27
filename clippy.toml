@@ -1,0 +1,7 @@
+# Mutsuki public runner contracts carry a structured, serializable RuntimeError.
+# Its 152-byte value is intentional and remains below this workspace ceiling.
+large-error-threshold = 192
+
+# Runtime actor and worker construction each bind one complete set of eight
+# lifecycle dependencies. Keep the ceiling explicit so larger signatures still fail CI.
+too-many-arguments-threshold = 8

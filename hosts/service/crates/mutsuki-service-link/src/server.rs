@@ -148,10 +148,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn link_control_round_trip_and_auth() {
-        let _guard = match crate::LINK_TEST_LOCK.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let _guard = crate::LINK_TEST_LOCK.lock().await;
         let dir = tempdir().unwrap();
         let _server =
             LinkControlServer::start(dir.path(), "test-instance", Arc::new(HealthHandler)).unwrap();
@@ -223,10 +220,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn link_control_from_separate_runtime_thread() {
-        let _guard = match crate::LINK_TEST_LOCK.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let _guard = crate::LINK_TEST_LOCK.lock().await;
         let dir = tempdir().unwrap();
         let _server =
             LinkControlServer::start(dir.path(), "test-instance", Arc::new(HealthHandler)).unwrap();

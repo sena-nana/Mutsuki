@@ -216,10 +216,12 @@ async fn control_write_deployment_and_event_source_restart() {
     )
     .await
     .unwrap();
-    let mutations = handler.mutations.lock().unwrap();
-    assert!(mutations.contains(&"plugin_deployment_set".to_string()));
-    assert!(mutations.contains(&"plugin_deployment_clear".to_string()));
-    assert!(mutations.contains(&"event_source_restart".to_string()));
+    {
+        let mutations = handler.mutations.lock().unwrap();
+        assert!(mutations.contains(&"plugin_deployment_set".to_string()));
+        assert!(mutations.contains(&"plugin_deployment_clear".to_string()));
+        assert!(mutations.contains(&"event_source_restart".to_string()));
+    }
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
@@ -319,11 +321,13 @@ async fn control_task_debug_and_lifecycle_methods() {
     .await
     .unwrap();
 
-    let mutations = handler.mutations.lock().unwrap();
-    assert!(mutations.contains(&"core_begin_drain".to_string()));
-    assert!(mutations.contains(&"service_shutdown".to_string()));
-    assert!(mutations.contains(&"task_submit_batch".to_string()));
-    assert!(mutations.contains(&"task_cancel".to_string()));
+    {
+        let mutations = handler.mutations.lock().unwrap();
+        assert!(mutations.contains(&"core_begin_drain".to_string()));
+        assert!(mutations.contains(&"service_shutdown".to_string()));
+        assert!(mutations.contains(&"task_submit_batch".to_string()));
+        assert!(mutations.contains(&"task_cancel".to_string()));
+    }
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;

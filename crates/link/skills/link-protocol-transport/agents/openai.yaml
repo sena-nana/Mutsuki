@@ -1,0 +1,4 @@
+interface:
+  display_name: "Link Protocol and Transport"
+  short_description: "Maintain Link contracts, transports, and security"
+  default_prompt: "Use $link-protocol-transport to change Mutsuki Link without weakening protocol or transport boundaries."

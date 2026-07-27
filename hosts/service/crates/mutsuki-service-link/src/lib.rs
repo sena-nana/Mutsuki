@@ -26,4 +26,4 @@ pub use server::{LinkControlServer, LinkControlServerError};
 pub use tls_identity::{TlsIdentityError, client_config_from_ca_pem, server_config_from_pem};
 
 #[cfg(test)]
-pub(crate) static LINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static LINK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

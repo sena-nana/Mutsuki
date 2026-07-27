@@ -1,0 +1,4 @@
+interface:
+  display_name: "Distributed Recovery and Performance"
+  short_description: "Validate persistence, recovery, and performance gates"
+  default_prompt: "Use $distributed-recovery-performance to verify distributed durability and performance."

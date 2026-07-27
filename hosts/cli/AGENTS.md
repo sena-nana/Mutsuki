@@ -10,7 +10,7 @@
 - `skills/terminal-ui/SKILL.md`：ratatui/crossterm 界面、输入和会话生命周期。
 - `skills/integration-testing/SKILL.md`：真实 ServiceHost 控制面、错误和断线验收。
 
-控制协议变更先读取 `../MutsukiServiceHost/AGENTS.md` 及其 control-api 技能。
+控制协议变更先读取 `../service/AGENTS.md` 及其 control-api 技能。
 
 ## Hard Rules
 
@@ -20,7 +20,7 @@
 4. task 取消和 outcome 使用控制协议中的 `TaskHandle` 语义，不建立并行业务路径。
 5. 不实现 Agent、Bot、Provider、会话模拟、业务插件、生产 fallback 或兼容 shim。
 6. token 只用于认证，不进入界面、普通日志或错误文本。
-7. 禁止仓库外 Cargo `path`/本地 `[patch]`；跨仓库依赖使用远端 Git URL 和固定 `rev`。
+7. 仓内 Mutsuki 依赖必须继承根 Workspace 的 path；禁止内部 Git pin、仓库外 Cargo `path` 和本地 `[patch]`。
 8. CLI 只构造公开 `ControlClient`；不得加载或复用服务端 `ServiceConfig`、profile 和 secret backend。
 
 ## 验证

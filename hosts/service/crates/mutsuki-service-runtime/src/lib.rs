@@ -26,8 +26,8 @@ use mutsuki_runtime_host::{
     RuntimeBootstrapper, SpawnedJsonlRunner, TokioAsyncExecutor, resolve_load_plan,
 };
 use mutsuki_runtime_sdk::{
-    LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient, RuntimeClientRef,
-    TaskSubmitter, TaskSubmitterRuntimeClient,
+    HostService, LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient,
+    RuntimeClientRef, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
 #[cfg(test)]
 use mutsuki_service_config::ConfiguredPluginSelection;
@@ -862,6 +862,18 @@ impl ServiceRuntime {
 
     pub fn control_token(&self) -> &str {
         self.inner.config.control_token()
+    }
+
+    /// Resolves a Host service from this Runtime's frozen service registry.
+    pub fn host_service<T>(&self, service_id: &str) -> ServiceRuntimeResult<Arc<T>>
+    where
+        T: HostService,
+    {
+        let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+        let runtime = runtime
+            .as_ref()
+            .ok_or(ServiceRuntimeError::AlreadyStarted)?;
+        Ok(runtime.host_context().services().require(service_id)?)
     }
 }
 
@@ -3080,25 +3092,30 @@ mod tests {
     #[tokio::test]
     async fn configured_execution_domains_boot_through_the_service_runtime_path() {
         let dir = tempdir().expect("temp dir");
-        let mut core = mutsuki_service_config::CoreSection::default();
-        core.execution_domains = vec![
-            mutsuki_service_config::ExecutionDomainSection {
-                id: "interactive".into(),
-                execution_classes: vec![ExecutionClassName::Orchestration, ExecutionClassName::Cpu],
-                threads: 1,
-                ..mutsuki_service_config::ExecutionDomainSection::default()
-            },
-            mutsuki_service_config::ExecutionDomainSection {
-                id: "background".into(),
-                execution_classes: vec![
-                    ExecutionClassName::Io,
-                    ExecutionClassName::Blocking,
-                    ExecutionClassName::Script,
-                ],
-                threads: 1,
-                ..mutsuki_service_config::ExecutionDomainSection::default()
-            },
-        ];
+        let core = mutsuki_service_config::CoreSection {
+            execution_domains: vec![
+                mutsuki_service_config::ExecutionDomainSection {
+                    id: "interactive".into(),
+                    execution_classes: vec![
+                        ExecutionClassName::Orchestration,
+                        ExecutionClassName::Cpu,
+                    ],
+                    threads: 1,
+                    ..mutsuki_service_config::ExecutionDomainSection::default()
+                },
+                mutsuki_service_config::ExecutionDomainSection {
+                    id: "background".into(),
+                    execution_classes: vec![
+                        ExecutionClassName::Io,
+                        ExecutionClassName::Blocking,
+                        ExecutionClassName::Script,
+                    ],
+                    threads: 1,
+                    ..mutsuki_service_config::ExecutionDomainSection::default()
+                },
+            ],
+            ..mutsuki_service_config::CoreSection::default()
+        };
         let inner = test_started_runtime_inner_with_core("token", dir.path(), core).await;
 
         let response = inner.host_metrics();
@@ -3704,10 +3721,6 @@ mod tests {
                 &self.descriptor
             }
 
-            #[expect(
-                clippy::result_large_err,
-                reason = "the Runner contract preserves the structured RuntimeError unchanged"
-            )]
             fn run_batch(
                 &mut self,
                 _ctx: mutsuki_runtime_contracts::RunnerContext,
@@ -4190,10 +4203,6 @@ mod tests {
             &self.descriptor
         }
 
-        #[expect(
-            clippy::result_large_err,
-            reason = "the Runner contract preserves the structured RuntimeError unchanged"
-        )]
         fn run_batch(
             &mut self,
             ctx: mutsuki_runtime_contracts::RunnerContext,

@@ -142,15 +142,15 @@ fn validate_typed(
                 );
             }
             check_length(node, s.len(), path, issues);
-            if let Some(pattern) = &node.constraints.pattern {
-                if regex_is_match(pattern, s).is_err() {
-                    push(
-                        issues,
-                        path,
-                        ValidationCode::PatternMismatch,
-                        "value does not match pattern",
-                    );
-                }
+            if let Some(pattern) = &node.constraints.pattern
+                && regex_is_match(pattern, s).is_err()
+            {
+                push(
+                    issues,
+                    path,
+                    ValidationCode::PatternMismatch,
+                    "value does not match pattern",
+                );
             }
         }
         (ConfigValueType::Secret, ConfigValue::Secret(state)) => {
@@ -231,15 +231,15 @@ fn check_range(
     path: &ConfigPath,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if let Some(min) = node.constraints.min {
-        if value < min {
-            push(issues, path, ValidationCode::OutOfRange, "below minimum");
-        }
+    if let Some(min) = node.constraints.min
+        && value < min
+    {
+        push(issues, path, ValidationCode::OutOfRange, "below minimum");
     }
-    if let Some(max) = node.constraints.max {
-        if value > max {
-            push(issues, path, ValidationCode::OutOfRange, "above maximum");
-        }
+    if let Some(max) = node.constraints.max
+        && value > max
+    {
+        push(issues, path, ValidationCode::OutOfRange, "above maximum");
     }
 }
 
@@ -249,15 +249,15 @@ fn check_length(
     path: &ConfigPath,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if let Some(min) = node.constraints.min_length {
-        if len < min {
-            push(issues, path, ValidationCode::LengthInvalid, "too short");
-        }
+    if let Some(min) = node.constraints.min_length
+        && len < min
+    {
+        push(issues, path, ValidationCode::LengthInvalid, "too short");
     }
-    if let Some(max) = node.constraints.max_length {
-        if len > max {
-            push(issues, path, ValidationCode::LengthInvalid, "too long");
-        }
+    if let Some(max) = node.constraints.max_length
+        && len > max
+    {
+        push(issues, path, ValidationCode::LengthInvalid, "too long");
     }
 }
 
@@ -267,20 +267,20 @@ fn check_items(
     path: &ConfigPath,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    if let Some(min) = node.constraints.min_items {
-        if len < min {
-            push(issues, path, ValidationCode::LengthInvalid, "too few items");
-        }
+    if let Some(min) = node.constraints.min_items
+        && len < min
+    {
+        push(issues, path, ValidationCode::LengthInvalid, "too few items");
     }
-    if let Some(max) = node.constraints.max_items {
-        if len > max {
-            push(
-                issues,
-                path,
-                ValidationCode::LengthInvalid,
-                "too many items",
-            );
-        }
+    if let Some(max) = node.constraints.max_items
+        && len > max
+    {
+        push(
+            issues,
+            path,
+            ValidationCode::LengthInvalid,
+            "too many items",
+        );
     }
 }
 

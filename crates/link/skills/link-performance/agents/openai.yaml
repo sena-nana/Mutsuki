@@ -1,0 +1,4 @@
+interface:
+  display_name: "Link Performance"
+  short_description: "Validate Link latency, fairness, and reconnect gates"
+  default_prompt: "Use $link-performance to benchmark a Mutsuki Link change with reproducible evidence."

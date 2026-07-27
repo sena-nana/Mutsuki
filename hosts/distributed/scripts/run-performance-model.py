@@ -16,8 +16,24 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def workspace_root() -> Path:
+    return Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=ROOT, text=True
+        ).strip()
+    )
+
+
+def cargo_target_directory() -> Path:
+    metadata = subprocess.check_output(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=ROOT,
+        text=True,
+    )
+    return Path(json.loads(metadata)["target_directory"])
 
 
 def command(args: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -61,7 +77,7 @@ def repository_revision(path: Path) -> dict[str, Any]:
 
 
 def parse_repositories(values: list[str]) -> dict[str, dict[str, Any]]:
-    repositories = {"MutsukiDistributedHost": repository_revision(ROOT)}
+    repositories = {"Mutsuki": repository_revision(workspace_root())}
     for value in values:
         if "=" not in value:
             raise SystemExit("--repository must use NAME=PATH")
@@ -176,7 +192,10 @@ def case(
         "measurement_mode": mode,
         "dimensions": dimensions,
         "metrics": result_metrics,
-        "correctness": {"passed": all(value == 0 for value in counters.values()), "counters": counters},
+        "correctness": {
+            "passed": all(value == 0 for value in counters.values()),
+            "counters": counters,
+        },
         **({"stage_breakdown": stages} if stages else {}),
     }
 
@@ -219,7 +238,15 @@ def run_raw(args: argparse.Namespace, raw: Path, process_run: int) -> list[Path]
             output = raw / f"registry-{mutations}-{acceptance}-{process_run}.json"
             if not reusable_raw(args, output):
                 command(
-                    ["cargo", "bench", "--quiet", "-p", "mutsuki-distributed-runtime", "--bench", "persistent_registry_stress"],
+                    [
+                        "cargo",
+                        "bench",
+                        "--quiet",
+                        "-p",
+                        "mutsuki-distributed-runtime",
+                        "--bench",
+                        "persistent_registry_stress",
+                    ],
                     env={
                         "MUTSUKI_REGISTRY_STRESS_MUTATIONS": str(mutations),
                         "MUTSUKI_REGISTRY_ACCEPTANCE": acceptance,
@@ -300,7 +327,12 @@ def merge_system(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, int
             workers = topology["workers"]
             startup[workers].append(float(topology["startup_ns"]))
             shutdown[workers].append(float(topology["shutdown_ns"]))
-            for name in ("non_remote_placements", "unsafe_remote_placements", "stale_results_accepted", "duplicate_commits"):
+            for name in (
+                "non_remote_placements",
+                "unsafe_remote_placements",
+                "stale_results_accepted",
+                "duplicate_commits",
+            ):
                 correctness[name] += int(topology[name])
             if topology["workers_exercised"] != workers:
                 correctness["worker_coverage_failures"] += 1
@@ -311,7 +343,9 @@ def merge_system(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, int
     cases: list[dict[str, Any]] = []
     for workers, samples in sorted(startup.items()):
         cases.append(case("distributed.system.startup", "system", {"workers": workers}, samples))
-        cases.append(case("distributed.system.shutdown", "system", {"workers": workers}, shutdown[workers]))
+        cases.append(
+            case("distributed.system.shutdown", "system", {"workers": workers}, shutdown[workers])
+        )
     for (workers, workload), operations in sorted(grouped.items()):
         latency = [float(item["e2e_ns"]) for item in operations]
         counters = {
@@ -342,8 +376,12 @@ def merge_system(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, int
                     "ipc_bytes": float(sum(item["control_payload_bytes"] for item in operations)),
                 },
                 stages={
-                    "submit_median_ns": statistics.median(float(item["submit_ns"]) for item in operations),
-                    "outcome_median_ns": statistics.median(float(item["outcome_ns"]) for item in operations),
+                    "submit_median_ns": statistics.median(
+                        float(item["submit_ns"]) for item in operations
+                    ),
+                    "outcome_median_ns": statistics.median(
+                        float(item["outcome_ns"]) for item in operations
+                    ),
                 },
             )
         )
@@ -396,7 +434,10 @@ def merge_registry(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, i
             correctness["lost_mutations"] += 1
         if not report["correctness"].get("wal_present_before_compaction", False):
             correctness["missing_pre_compaction_wal"] += 1
-        if not report["correctness"]["first_task_present"] or not report["correctness"]["last_task_present"]:
+        if (
+            not report["correctness"]["first_task_present"]
+            or not report["correctness"]["last_task_present"]
+        ):
             correctness["missing_reopened_tasks"] += 1
     cases = []
     for (acceptance, mutations), items in sorted(grouped.items()):
@@ -422,22 +463,18 @@ def merge_registry(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, i
                     ),
                 },
                 stages={
-                    "compact_median_ns": statistics.median(float(item["compact_ns"]) for item in items),
-                    "reopen_median_ns": statistics.median(float(item["reopen_ns"]) for item in items),
+                    "compact_median_ns": statistics.median(
+                        float(item["compact_ns"]) for item in items
+                    ),
+                    "reopen_median_ns": statistics.median(
+                        float(item["reopen_ns"]) for item in items
+                    ),
                 },
             )
         )
     for (acceptance, mutations), items in sorted(windowed.items()):
-        elapsed = [
-            float(value)
-            for item in items
-            for value in item["mutation_window_ns"]
-        ]
-        counts = [
-            int(value)
-            for item in items
-            for value in item["mutation_window_counts"]
-        ]
+        elapsed = [float(value) for item in items for value in item["mutation_window_ns"]]
+        counts = [int(value) for item in items for value in item["mutation_window_counts"]]
         if not elapsed or len(elapsed) != len(counts) or len(set(counts)) != 1:
             raise ValueError("registry mutation windows must be non-empty and fixed-size")
         cases.append(
@@ -464,9 +501,7 @@ def merge_registry(paths: list[Path]) -> tuple[list[dict[str, Any]], dict[str, i
     return cases, dict(correctness)
 
 
-def merge_content(
-    paths: list[Path], ram_bytes: int
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def merge_content(paths: list[Path], ram_bytes: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
     grouped: dict[
         tuple[str, int, int, int, str],
         list[tuple[dict[str, Any], dict[str, Any]]],
@@ -520,7 +555,9 @@ def merge_content(
                 metrics={
                     "aggregate_bytes_per_sample": float(aggregate),
                     "ipc_bytes": float(first["ipc_bytes_per_sample"]),
-                    "disk_bytes": float(first["disk_read_bytes_per_sample"] + first["disk_write_bytes_per_sample"]),
+                    "disk_bytes": float(
+                        first["disk_read_bytes_per_sample"] + first["disk_write_bytes_per_sample"]
+                    ),
                     "duplicate_bytes_avoided": float(first["duplicate_bytes_avoided_per_sample"]),
                 },
             )
@@ -559,7 +596,13 @@ def analyze(cases: list[dict[str, Any]], counters: dict[str, int]) -> dict[str, 
     for item in cases:
         latency = item["metrics"].get("latency_ns")
         if latency and latency["median"] > 0 and latency["mad"] / latency["median"] > 0.10:
-            noisy.append({"case_id": item["case_id"], "dimensions": item["dimensions"], "mad_ratio": latency["mad"] / latency["median"]})
+            noisy.append(
+                {
+                    "case_id": item["case_id"],
+                    "dimensions": item["dimensions"],
+                    "mad_ratio": latency["mad"] / latency["median"],
+                }
+            )
     fixed_total = {
         item["dimensions"]["concurrency"]: item
         for item in cases
@@ -658,8 +701,13 @@ def analyze(cases: list[dict[str, Any]], counters: dict[str, int]) -> dict[str, 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     result.add_argument("--mode", choices=("smoke", "reference"), default="smoke")
-    result.add_argument("--service-binary", type=Path, required=True)
-    result.add_argument("--output", type=Path, required=True)
+    release_directory = cargo_target_directory() / "release"
+    result.add_argument(
+        "--service-binary",
+        type=Path,
+        default=release_directory / "mutsuki-benchmark-service",
+    )
+    result.add_argument("--output", type=Path)
     result.add_argument("--raw-dir", type=Path)
     result.add_argument("--repository", action="append", default=[], metavar="NAME=PATH")
     result.add_argument("--process-runs", type=int)
@@ -707,17 +755,22 @@ def expected_raw_paths(args: argparse.Namespace) -> list[Path]:
 
 def main() -> None:
     args = parser().parse_args()
-    args.output = args.output.resolve()
-    args.raw_dir = (args.raw_dir or args.output.with_suffix("").with_name(args.output.stem + "-raw")).resolve()
+    args.output = (
+        args.output or cargo_target_directory() / f"mutsuki-benchmarks/distributed-{args.mode}.json"
+    ).resolve()
+    args.raw_dir = (
+        args.raw_dir or args.output.with_suffix("").with_name(args.output.stem + "-raw")
+    ).resolve()
     args.process_runs = args.process_runs or (1 if args.mode == "smoke" else 3)
-    if args.process_runs < 1 or not args.service_binary.resolve().is_file():
-        raise SystemExit("process runs must be positive and --service-binary must exist")
+    if args.process_runs < 1:
+        raise SystemExit("process runs must be positive")
     args.service_binary = args.service_binary.resolve()
-    args.distributed_binary = ROOT / "target/release/mutsuki-distributed-host"
-    args.distributed_benchmark = ROOT / "target/release/mutsuki-distributed-benchmarks"
-    args.placement_binary = ROOT / "target/release/placement_matrix"
-    args.content_binary = ROOT / "target/release/content_localization"
-    args.fault_binary = ROOT / "target/release/durability_faults"
+    release_directory = cargo_target_directory() / "release"
+    args.distributed_binary = release_directory / "mutsuki-distributed-host"
+    args.distributed_benchmark = release_directory / "mutsuki-distributed-benchmarks"
+    args.placement_binary = release_directory / "placement_matrix"
+    args.content_binary = release_directory / "content_localization"
+    args.fault_binary = release_directory / "durability_faults"
     if os.name == "nt":
         args.distributed_binary = args.distributed_binary.with_suffix(".exe")
         args.distributed_benchmark = args.distributed_benchmark.with_suffix(".exe")
@@ -735,20 +788,65 @@ def main() -> None:
             (1_000_000, ("fast",)),
         ]
     )
-    args.content_sizes = [1024 * 1024] if args.mode == "smoke" else [1024 * 1024, 64 * 1024 * 1024, 1024 * 1024 * 1024]
+    args.content_sizes = (
+        [1024 * 1024]
+        if args.mode == "smoke"
+        else [1024 * 1024, 64 * 1024 * 1024, 1024 * 1024 * 1024]
+    )
     args.content_concurrency = [1, 4] if args.mode == "smoke" else [1, 4, 16]
-    args.content_scaling_total_bytes = 64 * 1024 * 1024 if args.mode == "smoke" else 4 * 1024 * 1024 * 1024
+    args.content_scaling_total_bytes = (
+        64 * 1024 * 1024 if args.mode == "smoke" else 4 * 1024 * 1024 * 1024
+    )
     args.content_scaling_concurrency = [4, 16]
     args.content_samples = 2 if args.mode == "smoke" else 5
     args.fault_samples = 3 if args.mode == "smoke" else 20
     args.raw_dir.mkdir(parents=True, exist_ok=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if not args.skip_build:
-        command(["cargo", "build", "--release", "-p", "mutsuki-distributed-host", "-p", "mutsuki-distributed-benchmarks", "--bins"])
-        command(["cargo", "bench", "-p", "mutsuki-distributed-runtime", "--bench", "persistent_registry_stress", "--no-run"])
-    expected = [args.distributed_binary, args.distributed_benchmark, args.placement_binary, args.content_binary, args.fault_binary]
+        command(
+            [
+                "cargo",
+                "build",
+                "--release",
+                "-p",
+                "mutsuki-service-benchmarks",
+                "--bin",
+                "mutsuki-benchmark-service",
+            ]
+        )
+        command(
+            [
+                "cargo",
+                "build",
+                "--release",
+                "-p",
+                "mutsuki-distributed-host",
+                "-p",
+                "mutsuki-distributed-benchmarks",
+                "--bins",
+            ]
+        )
+        command(
+            [
+                "cargo",
+                "bench",
+                "-p",
+                "mutsuki-distributed-runtime",
+                "--bench",
+                "persistent_registry_stress",
+                "--no-run",
+            ]
+        )
+    expected = [
+        args.service_binary,
+        args.distributed_binary,
+        args.distributed_benchmark,
+        args.placement_binary,
+        args.content_binary,
+        args.fault_binary,
+    ]
     if any(not path.is_file() for path in expected):
-        raise SystemExit("one or more release benchmark binaries are missing")
+        raise SystemExit("one or more service/distributed benchmark binaries are missing")
 
     expected_raw = expected_raw_paths(args)
     if args.reuse_raw:
@@ -760,6 +858,7 @@ def main() -> None:
         generated = []
         for process_run in range(args.process_runs):
             generated.extend(run_raw(args, args.raw_dir, process_run))
+
     def by_name(prefix: str) -> list[Path]:
         return sorted(path for path in generated if path.name.startswith(prefix))
 
@@ -793,11 +892,16 @@ def main() -> None:
         "measurement_boundary": "loopback local IPC and real filesystem; no real-network claim",
         "sampling": {
             "warmup_iterations": 1,
-            "samples_per_process": min(len(item["metrics"]["latency_ns"]["samples"]) for item in cases),
+            "samples_per_process": min(
+                len(item["metrics"]["latency_ns"]["samples"]) for item in cases
+            ),
             "process_runs": args.process_runs,
         },
         "cases": cases,
-        "correctness": {"passed": not any(counters.values()), "counters": dict(sorted(counters.items()))},
+        "correctness": {
+            "passed": not any(counters.values()),
+            "counters": dict(sorted(counters.items())),
+        },
         "metadata": {
             "mode": args.mode,
             "raw_directory": args.raw_dir.name or "$OUTPUT_RAW",
@@ -805,7 +909,9 @@ def main() -> None:
     }
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     analysis_path = args.output.with_name(args.output.stem + "-analysis.json")
-    analysis_path.write_text(json.dumps(analyze(cases, dict(counters)), indent=2) + "\n", encoding="utf-8")
+    analysis_path.write_text(
+        json.dumps(analyze(cases, dict(counters)), indent=2) + "\n", encoding="utf-8"
+    )
     print(args.output)
     print(analysis_path)
 
