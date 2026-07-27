@@ -187,6 +187,9 @@ pub struct HostMetrics {
     pub pid: u32,
     pub uptime_ms: u128,
     /// Resident set size in bytes when the platform can report it.
+    ///
+    /// On Windows this is the current process Working Set (`WorkingSetSize`),
+    /// not Commit Size or Private Bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rss_bytes: Option<u64>,
     /// Cumulative process CPU time in milliseconds when available.
@@ -517,4 +520,41 @@ pub struct LogTailEntry {
 pub struct LogTailResponse {
     pub cursor: u64,
     pub entries: Vec<LogTailEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_metrics_rss_remains_optional_across_serialization() {
+        let without_rss = HostMetrics {
+            pid: 42,
+            uptime_ms: 7,
+            rss_bytes: None,
+            cpu_time_ms: None,
+            core: None,
+            execution_domains: Vec::new(),
+        };
+        let encoded = serde_json::to_value(&without_rss).expect("serialize host metrics");
+        assert!(
+            !encoded
+                .as_object()
+                .expect("host metrics object")
+                .contains_key("rss_bytes")
+        );
+        let decoded: HostMetrics =
+            serde_json::from_value(encoded).expect("deserialize host metrics without RSS");
+        assert_eq!(decoded.rss_bytes, None);
+
+        let with_rss = HostMetrics {
+            rss_bytes: Some(123_456),
+            ..without_rss
+        };
+        let encoded = serde_json::to_value(&with_rss).expect("serialize host metrics with RSS");
+        assert_eq!(encoded["rss_bytes"], 123_456);
+        let decoded: HostMetrics =
+            serde_json::from_value(encoded).expect("deserialize host metrics with RSS");
+        assert_eq!(decoded.rss_bytes, Some(123_456));
+    }
 }
