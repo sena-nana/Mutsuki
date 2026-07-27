@@ -1,0 +1,15 @@
+[package]
+name = "mutsuki-plugin-io-browser-chromium"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+headless_chrome = "=1.0.22"
+mutsuki-protocol-browser = { path = "../../protocols/mutsuki-protocol-browser" }
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url = "2.5"

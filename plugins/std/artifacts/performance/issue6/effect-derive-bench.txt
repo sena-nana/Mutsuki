@@ -1,0 +1,68 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling thiserror v2.0.19
+   Compiling libc v0.2.189
+   Compiling zerocopy v0.8.55
+   Compiling cc v1.3.0
+   Compiling fastrand v2.5.0
+   Compiling libsqlite3-sys v0.30.1
+   Compiling syn v3.0.3
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.19
+   Compiling mutsuki-runtime-sdk-macros v0.1.0 (https://github.com/sena-nana/MutsukiCore.git?rev=1d42325107a82f98dda3912097c3c0aefd4907ba#1d423251)
+   Compiling getrandom v0.2.17
+   Compiling errno v0.3.14
+   Compiling nix v0.23.2
+   Compiling getrandom v0.4.3
+   Compiling cpufeatures v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling rustix v1.1.4
+   Compiling sha2 v0.10.9
+   Compiling tempfile v3.27.0
+   Compiling mutsuki-runtime-contracts v0.1.0 (https://github.com/sena-nana/MutsukiCore.git?rev=1d42325107a82f98dda3912097c3c0aefd4907ba#1d423251)
+   Compiling rmp-serde v1.3.1
+   Compiling ahash v0.8.12
+   Compiling ppv-lite86 v0.2.21
+   Compiling hashbrown v0.14.5
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.7
+   Compiling hashlink v0.9.1
+   Compiling shared_memory v0.12.4
+   Compiling mutsuki-runtime-wire v0.1.0 (https://github.com/sena-nana/MutsukiCore.git?rev=1d42325107a82f98dda3912097c3c0aefd4907ba#1d423251)
+   Compiling mutsuki-runtime-core v0.1.0 (https://github.com/sena-nana/MutsukiCore.git?rev=1d42325107a82f98dda3912097c3c0aefd4907ba#1d423251)
+   Compiling mutsuki-std-effect v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/crates/mutsuki-std-effect)
+   Compiling mutsuki-runtime-sdk v0.1.0 (https://github.com/sena-nana/MutsukiCore.git?rev=1d42325107a82f98dda3912097c3c0aefd4907ba#1d423251)
+   Compiling mutsuki-plugin-workflow-linear v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-workflow-linear)
+   Compiling mutsuki-plugin-observe-log v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-observe-log)
+   Compiling mutsuki-plugin-resource-memory v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-resource-memory)
+   Compiling mutsuki-plugin-workflow-broadcast v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-workflow-broadcast)
+   Compiling mutsuki-plugin-resource-shared-memory v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-resource-shared-memory)
+   Compiling mutsuki-plugin-io-http-client v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-io-http-client)
+   Compiling mutsuki-plugin-config-permission v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-config-permission)
+   Compiling mutsuki-plugin-dev-mock v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-dev-mock)
+   Compiling mutsuki-plugin-io-fs v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-io-fs)
+   Compiling rusqlite v0.32.1
+   Compiling mutsuki-plugin-db-sqlite v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/plugins/mutsuki-plugin-db-sqlite)
+   Compiling mutsuki-std-benchmarks v0.1.0 (/Users/zt-c604184/Documents/workspace/MutsukiStdPlugins/crates/mutsuki-std-benchmarks)
+    Finished `release` profile [optimized] target(s) in 27.28s
+     Running `target/release/effect-derive-bench both 30`
+baseline	entries=1	payload=1024	ns_per_entry=2382.0	allocs_per_entry=25.000	bytes_per_entry=4617.0
+baseline	entries=16	payload=1024	ns_per_entry=1746.6	allocs_per_entry=25.000	bytes_per_entry=4618.5
+baseline	entries=256	payload=1024	ns_per_entry=2644.1	allocs_per_entry=25.000	bytes_per_entry=4623.3
+baseline	entries=1	payload=65536	ns_per_entry=4045.8	allocs_per_entry=25.000	bytes_per_entry=69129.0
+baseline	entries=16	payload=65536	ns_per_entry=3886.6	allocs_per_entry=25.000	bytes_per_entry=69130.5
+baseline	entries=256	payload=65536	ns_per_entry=8541.6	allocs_per_entry=25.000	bytes_per_entry=69135.3
+baseline	entries=1	payload=1048576	ns_per_entry=44441.7	allocs_per_entry=25.000	bytes_per_entry=1052169.0
+baseline	entries=16	payload=1048576	ns_per_entry=126428.5	allocs_per_entry=25.000	bytes_per_entry=1052170.5
+optimized	entries=1	payload=1024	ns_per_entry=555.5	allocs_per_entry=9.000	bytes_per_entry=1805.0
+optimized	entries=16	payload=1024	ns_per_entry=523.8	allocs_per_entry=9.000	bytes_per_entry=1806.5
+optimized	entries=256	payload=1024	ns_per_entry=448.9	allocs_per_entry=9.000	bytes_per_entry=1811.3
+optimized	entries=1	payload=65536	ns_per_entry=251.3	allocs_per_entry=9.000	bytes_per_entry=1805.0
+optimized	entries=16	payload=65536	ns_per_entry=512.8	allocs_per_entry=9.000	bytes_per_entry=1806.5
+optimized	entries=256	payload=65536	ns_per_entry=563.1	allocs_per_entry=9.000	bytes_per_entry=1811.3
+optimized	entries=1	payload=1048576	ns_per_entry=555.6	allocs_per_entry=9.000	bytes_per_entry=1805.0
+optimized	entries=16	payload=1048576	ns_per_entry=523.2	allocs_per_entry=9.000	bytes_per_entry=1806.5

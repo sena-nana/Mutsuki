@@ -1,0 +1,10 @@
+[package]
+name = "mutsuki-std-effect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared Effect facade derivation helpers for standard plugins"
+
+[dependencies]
+mutsuki-runtime-contracts.workspace = true
+serde_json.workspace = true
