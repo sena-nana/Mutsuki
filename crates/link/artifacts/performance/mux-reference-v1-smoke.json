@@ -1,0 +1,161 @@
+{
+  "schema": "mutsuki-link-mux-baseline/1.1.0",
+  "smoke_only": true,
+  "claim_boundary": "Local in-memory scheduler benchmark only; not LAN, Wi-Fi, or production transport performance",
+  "operating_system": "macos",
+  "architecture": "aarch64",
+  "logical_cpus": 10,
+  "fixed_multiplexer_bytes": 256,
+  "priority_bands": 8,
+  "control_under_saturated_data": {
+    "p50": 42,
+    "p95": 84,
+    "p99": 84
+  },
+  "matrix": [
+    {
+      "channels": 1,
+      "payload_bytes": 1024,
+      "cycles_per_sample": 4096,
+      "p50_ns_per_frame": 75,
+      "p95_ns_per_frame": 75,
+      "p99_ns_per_frame": 75,
+      "frames_per_second": 13333333,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 1,
+      "payload_bytes": 16384,
+      "cycles_per_sample": 4096,
+      "p50_ns_per_frame": 62,
+      "p95_ns_per_frame": 74,
+      "p99_ns_per_frame": 74,
+      "frames_per_second": 16129032,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 1,
+      "payload_bytes": 65536,
+      "cycles_per_sample": 1024,
+      "p50_ns_per_frame": 62,
+      "p95_ns_per_frame": 63,
+      "p99_ns_per_frame": 63,
+      "frames_per_second": 16129032,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 1,
+      "payload_bytes": 1048576,
+      "cycles_per_sample": 64,
+      "p50_ns_per_frame": 63,
+      "p95_ns_per_frame": 65,
+      "p99_ns_per_frame": 65,
+      "frames_per_second": 15873015,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 16,
+      "payload_bytes": 1024,
+      "cycles_per_sample": 4096,
+      "p50_ns_per_frame": 105,
+      "p95_ns_per_frame": 160,
+      "p99_ns_per_frame": 160,
+      "frames_per_second": 9523809,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 16,
+      "payload_bytes": 16384,
+      "cycles_per_sample": 256,
+      "p50_ns_per_frame": 89,
+      "p95_ns_per_frame": 92,
+      "p99_ns_per_frame": 92,
+      "frames_per_second": 11235955,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 16,
+      "payload_bytes": 65536,
+      "cycles_per_sample": 64,
+      "p50_ns_per_frame": 89,
+      "p95_ns_per_frame": 92,
+      "p99_ns_per_frame": 92,
+      "frames_per_second": 11235955,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 16,
+      "payload_bytes": 1048576,
+      "cycles_per_sample": 4,
+      "p50_ns_per_frame": 89,
+      "p95_ns_per_frame": 90,
+      "p99_ns_per_frame": 90,
+      "frames_per_second": 11235955,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 64,
+      "payload_bytes": 1024,
+      "cycles_per_sample": 1024,
+      "p50_ns_per_frame": 293,
+      "p95_ns_per_frame": 322,
+      "p99_ns_per_frame": 322,
+      "frames_per_second": 3412969,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 64,
+      "payload_bytes": 16384,
+      "cycles_per_sample": 64,
+      "p50_ns_per_frame": 295,
+      "p95_ns_per_frame": 317,
+      "p99_ns_per_frame": 317,
+      "frames_per_second": 3389830,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 64,
+      "payload_bytes": 65536,
+      "cycles_per_sample": 16,
+      "p50_ns_per_frame": 305,
+      "p95_ns_per_frame": 320,
+      "p99_ns_per_frame": 320,
+      "frames_per_second": 3278688,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    },
+    {
+      "channels": 64,
+      "payload_bytes": 1048576,
+      "cycles_per_sample": 4,
+      "p50_ns_per_frame": 286,
+      "p95_ns_per_frame": 296,
+      "p99_ns_per_frame": 296,
+      "frames_per_second": 3496503,
+      "steady_queue_slot_growth": 0,
+      "steady_allocation_calls_per_cycle": 0,
+      "steady_allocated_bytes_per_cycle": 0
+    }
+  ]
+}

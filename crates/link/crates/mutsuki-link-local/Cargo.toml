@@ -1,0 +1,21 @@
+[package]
+name = "mutsuki-link-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Opt-in cross-platform local IPC transport for MutsukiLink"
+
+[dependencies]
+interprocess.workspace = true
+mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
+mutsuki-link-io = { version = "0.1.0", path = "../mutsuki-link-io" }
+sha2.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mutsuki-link-transport-testkit = { version = "0.1.0", path = "../mutsuki-link-transport-testkit" }
+
+[lints]
+workspace = true

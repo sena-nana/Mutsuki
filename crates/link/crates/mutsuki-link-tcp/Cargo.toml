@@ -1,0 +1,20 @@
+[package]
+name = "mutsuki-link-tcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Opt-in TCP transport for MutsukiLink"
+
+[dependencies]
+mutsuki-link-core = { version = "0.1.0", path = "../mutsuki-link-core" }
+mutsuki-link-io = { version = "0.1.0", path = "../mutsuki-link-io" }
+socket2.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mutsuki-link-transport-testkit = { version = "0.1.0", path = "../mutsuki-link-transport-testkit" }
+
+[lints]
+workspace = true

@@ -1,0 +1,110 @@
+{
+  "schema": "mutsuki-link-release-baseline/2.1.0",
+  "smoke_only": true,
+  "claim_boundary": "Local loopback transport smoke only; not LAN, Wi-Fi, or production latency",
+  "operating_system": "macos",
+  "architecture": "aarch64",
+  "logical_cpus": 10,
+  "handshake_us": 47,
+  "idle_tick_ns": 2,
+  "typed_control_frame_bytes": 47,
+  "typed_control_roundtrips_per_second": 14681232,
+  "baselines": [
+    {
+      "transport": "local",
+      "connect_us": 53,
+      "rtt_p50_us": 20,
+      "rtt_p95_us": 35,
+      "rtt_p99_us": 81,
+      "saturated_control_p99_us": 12,
+      "throughput": [
+        {
+          "payload_bytes": 1024,
+          "frames": 1024,
+          "bytes_per_second": 392872236
+        },
+        {
+          "payload_bytes": 16384,
+          "frames": 256,
+          "bytes_per_second": 1909105143
+        },
+        {
+          "payload_bytes": 65536,
+          "frames": 64,
+          "bytes_per_second": 2480369012
+        },
+        {
+          "payload_bytes": 1048576,
+          "frames": 8,
+          "bytes_per_second": 2859102931
+        }
+      ],
+      "fixed_handle_bytes": 544,
+      "shutdown_us": 5
+    },
+    {
+      "transport": "tcp",
+      "connect_us": 199,
+      "rtt_p50_us": 61,
+      "rtt_p95_us": 75,
+      "rtt_p99_us": 94,
+      "saturated_control_p99_us": 66,
+      "throughput": [
+        {
+          "payload_bytes": 1024,
+          "frames": 1024,
+          "bytes_per_second": 160652060
+        },
+        {
+          "payload_bytes": 16384,
+          "frames": 256,
+          "bytes_per_second": 2236962133
+        },
+        {
+          "payload_bytes": 65536,
+          "frames": 64,
+          "bytes_per_second": 4718002249
+        },
+        {
+          "payload_bytes": 1048576,
+          "frames": 8,
+          "bytes_per_second": 6487709203
+        }
+      ],
+      "fixed_handle_bytes": 560,
+      "shutdown_us": 2
+    },
+    {
+      "transport": "quic",
+      "connect_us": 949,
+      "rtt_p50_us": 42,
+      "rtt_p95_us": 59,
+      "rtt_p99_us": 66,
+      "saturated_control_p99_us": 180,
+      "throughput": [
+        {
+          "payload_bytes": 1024,
+          "frames": 1024,
+          "bytes_per_second": 293883408
+        },
+        {
+          "payload_bytes": 16384,
+          "frames": 256,
+          "bytes_per_second": 395390648
+        },
+        {
+          "payload_bytes": 65536,
+          "frames": 64,
+          "bytes_per_second": 437179904
+        },
+        {
+          "payload_bytes": 1048576,
+          "frames": 8,
+          "bytes_per_second": 463177516
+        }
+      ],
+      "fixed_handle_bytes": 1872,
+      "shutdown_us": 43
+    }
+  ]
+}
