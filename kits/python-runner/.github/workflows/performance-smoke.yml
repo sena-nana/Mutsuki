@@ -1,0 +1,74 @@
+name: Performance model smoke
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "3 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v7
+      - name: Install locked Python environment
+        run: uv sync --frozen
+      - name: Run deterministic Python Runner smoke
+        run: >-
+          uv run python benchmarks/performance_model.py
+          --mode smoke
+          --output artifacts/performance/issue4-smoke.json
+      - name: Upload report and analysis
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-runner-kit-performance-${{ matrix.os }}
+          path: artifacts/performance/
+          if-no-files-found: error
+
+  fixed-reference:
+    name: Fixed reference (${{ matrix.name }})
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            labels: [self-hosted, mutsuki-reference, macOS, ARM64]
+          - name: windows-x64
+            labels: [self-hosted, mutsuki-reference, Windows, X64]
+    runs-on: ${{ matrix.labels }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --frozen
+      - name: Run owner reference
+        run: >-
+          uv run python benchmarks/performance_model.py
+          --mode reference
+          --repository MutsukiPythonRunnerKit=.
+          --output artifacts/performance/reference-${{ matrix.name }}/report.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-runner-kit-reference-${{ matrix.name }}-${{ github.run_id }}
+          path: artifacts/performance/reference-${{ matrix.name }}/
+          retention-days: 90
+          if-no-files-found: error

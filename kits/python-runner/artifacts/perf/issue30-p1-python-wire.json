@@ -1,0 +1,86 @@
+{
+  "cancel_latency": {
+    "iterations": 100,
+    "max_ns": 1420083,
+    "p50_ns": 186708,
+    "p95_ns": 325583
+  },
+  "concurrency": [
+    {
+      "concurrency": 1,
+      "elapsed_ns": 57877792,
+      "groups": 100,
+      "peak_bytes": 31144,
+      "peak_bytes_per_request": 31144.0,
+      "requests": 100,
+      "throughput_per_second": 1727.7784197434485
+    },
+    {
+      "concurrency": 16,
+      "elapsed_ns": 257932376,
+      "groups": 30,
+      "peak_bytes": 257753,
+      "peak_bytes_per_request": 16109.5625,
+      "requests": 480,
+      "throughput_per_second": 1860.9528878995786
+    },
+    {
+      "concurrency": 56,
+      "elapsed_ns": 397903832,
+      "groups": 12,
+      "peak_bytes": 865973,
+      "peak_bytes_per_request": 15463.80357142857,
+      "requests": 672,
+      "throughput_per_second": 1688.8502848095216
+    }
+  ],
+  "core_revision": "180d47ea92747065a885aacfbcfd351d20d2170a",
+  "gates": [
+    {
+      "actual": 325583,
+      "limit": 5000000,
+      "name": "p1.python.cancel.p95",
+      "passed": true,
+      "unit": "ns"
+    },
+    {
+      "actual": 1420083,
+      "limit": 20000000,
+      "name": "p1.python.cancel.max",
+      "passed": true,
+      "unit": "ns"
+    },
+    {
+      "actual": 1860.9528878995786,
+      "limit": 1641.389498756276,
+      "name": "p1.python.concurrent-16.throughput-non-collapse",
+      "passed": true,
+      "unit": "requests/s_min"
+    },
+    {
+      "actual": 1688.8502848095216,
+      "limit": 1395.714665924684,
+      "name": "p1.python.concurrent-56.throughput-non-collapse",
+      "passed": true,
+      "unit": "requests/s_min"
+    },
+    {
+      "actual": 15463.80357142857,
+      "limit": 62288.0,
+      "name": "p1.python.concurrent-56.peak-bytes-per-request",
+      "passed": true,
+      "unit": "bytes/request"
+    }
+  ],
+  "issue": 32,
+  "mode": "full",
+  "passed": true,
+  "phase": "p1",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.14.3 (main, Feb  3 2026, 15:32:20) [Clang 17.0.0 (clang-1700.6.3.2)]",
+  "repository": {
+    "dirty": false,
+    "revision": "860b40f4aaa27c1cd98765668511499810ece640"
+  },
+  "schema_revision": "mutsuki.runtime.wire/1.2.0"
+}
