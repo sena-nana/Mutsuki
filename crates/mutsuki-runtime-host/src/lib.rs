@@ -15,6 +15,7 @@ mod jsonl;
 mod management;
 mod manifest;
 mod multiplexer;
+mod native_runner;
 mod process;
 mod resolver;
 mod resource_router;
@@ -31,7 +32,7 @@ pub use async_executor::{
 };
 pub use backend::{HostExtension, PluginBackend};
 pub use binary::{BinaryRunner, BinaryTransport};
-pub use bootstrapper::{NativeRunner, PreparedRuntimeReload, RuntimeBootstrapper};
+pub use bootstrapper::{PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,
@@ -50,6 +51,7 @@ pub use host::{
 pub use jsonl::{JsonlRunner, JsonlTransport};
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
+pub use native_runner::{CancellationProbe, NativeRunner};
 pub use process::{ProcessRunnerSpec, SpawnedJsonlRunner};
 pub use resolver::resolve_load_plan;
 pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};

@@ -257,8 +257,12 @@ impl CoreRuntime {
                 format!("task.cancel.{task_id}"),
             ));
         }
-        self.tasks.cancel_by_core(task_id, self.current_step)?;
-        self.record_task_terminal_event(task_id, "task.cancelled", None);
+        let finalized = self
+            .tasks
+            .request_cancel_by_core(task_id, self.current_step, None)?;
+        if finalized {
+            self.record_task_terminal_event(task_id, "task.cancelled", None);
+        }
         for task_await in awaits {
             if matches!(
                 self.task_status(&task_await.child.task_id),
@@ -273,7 +277,9 @@ impl CoreRuntime {
                 self.cancel_task_by_id(&task_await.child.task_id)?;
             }
         }
-        self.wake_tasks_waiting_on(task_id)?;
+        if finalized {
+            self.wake_tasks_waiting_on(task_id)?;
+        }
         Ok(())
     }
 

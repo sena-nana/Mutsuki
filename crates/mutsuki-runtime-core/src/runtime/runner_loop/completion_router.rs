@@ -168,6 +168,11 @@ fn route_entry_completion(
     lease: &TaskLease,
     completion: EntryCompletion,
 ) -> RuntimeResult<usize> {
+    if let Some(completed) =
+        super::failure_reporting::finalize_requested_cancellation(runtime, lease)?
+    {
+        return Ok(completed);
+    }
     if let Some(error) = completion.error {
         return super::failure_reporting::fail_runner_dispatch(runtime, lease, error);
     }

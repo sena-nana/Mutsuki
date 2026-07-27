@@ -612,25 +612,40 @@ fn handle_command(
         }
         HostRuntimeCommand::CancelTask(handle) => {
             let cancellation_targets = core.task_cancellation_targets(&handle);
+            let running_invocations = cancellation_targets
+                .iter()
+                .filter_map(|(task_id, _runner_id)| {
+                    running_batches_by_task
+                        .get(task_id)
+                        .map(|task| task.invocation_id.clone())
+                })
+                .collect::<BTreeSet<_>>();
+            let co_batch_handles = running_batches_by_task
+                .values()
+                .filter(|task| running_invocations.contains(&task.invocation_id))
+                .map(|task| (task.handle.task_id.clone(), task.handle.clone()))
+                .collect::<BTreeMap<_, _>>();
             core.cancel_task_handle(&handle)?;
-            for (task_id, runner_id) in cancellation_targets {
-                let running_invocation = running_batches_by_task
-                    .get(&task_id)
-                    .map(|task| task.invocation_id.clone());
-                if core.cancel_runner_invocation(&runner_id, &task_id).is_ok() {
+            for co_batch_handle in co_batch_handles.values() {
+                if co_batch_handle.task_id != handle.task_id {
+                    core.cancel_task_handle(co_batch_handle)?;
+                }
+            }
+            for invocation_id in running_invocations {
+                if cancel_async_invocation(&invocation_id, config, running_batches_by_task) {
                     continue;
                 }
-                if let Some(invocation_id) = running_invocation {
-                    if cancel_async_invocation(&invocation_id, config, running_batches_by_task) {
-                        continue;
-                    }
-                    request_running_cancel(
-                        &invocation_id,
-                        management,
-                        running_batches_by_task,
-                        pending_cancels,
-                    );
-                } else {
+                request_running_cancel(
+                    &invocation_id,
+                    management,
+                    running_batches_by_task,
+                    pending_cancels,
+                );
+            }
+            for (task_id, runner_id) in cancellation_targets {
+                if !running_batches_by_task.contains_key(&task_id)
+                    && core.cancel_runner_invocation(&runner_id, &task_id).is_err()
+                {
                     let pending = pending_cancels.entry(runner_id).or_default();
                     if !pending.contains(&task_id) {
                         pending.push(task_id);
@@ -1158,18 +1173,12 @@ fn handle_worker_completion(
             ));
             return core.complete_runner_dispatch(completion);
         }
-        if let Some(runner) = completion.runner.as_mut() {
+        if let Some(mut runner) = completion.runner.take() {
             let _ = runner.cancel(&invocation_id);
             let _ = runner.dispose();
         }
-        if completion.runner.is_none() {
-            remove_running_batch_entries(&completion, running_batches_by_task);
-            return core.complete_runner_dispatch(completion);
-        }
-        return Ok(RunnerLoopReport {
-            claimed_tasks: 0,
-            completed_tasks: 0,
-        });
+        remove_running_batch_entries(&completion, running_batches_by_task);
+        return core.complete_runner_dispatch(completion);
     }
 
     apply_pending_cancels(&mut completion, pending_cancels);
@@ -1312,6 +1321,16 @@ fn handle_async_event(
             );
             (invocation, Err(failure))
         }
+        AsyncExecutorEvent::Cancelled(invocation) => {
+            let failure = host_failure(
+                "host.async_executor.cancelled",
+                format!(
+                    "async invocation {} was cancelled",
+                    invocation.invocation_id
+                ),
+            );
+            (invocation, Err(failure))
+        }
     };
     handle_worker_completion(
         RunnerCompletion {
@@ -1409,7 +1428,6 @@ fn cancel_expired_tick_deadlines(
                 );
             }
         }
-        running_batches_by_task.remove(&task_id);
     }
 }
 
@@ -1454,7 +1472,6 @@ fn isolate_invocation(
         {
             let _ = core.cancel_task_handle(&task.handle);
         }
-        running_batches_by_task.remove(task_id);
     }
     pending_cancels
         .entry(first_task.runner_id.clone())
@@ -1552,9 +1569,6 @@ fn cancel_async_invocation(
         .async_executor
         .as_ref()
         .is_some_and(|executor| executor.cancel(&handle).unwrap_or(false));
-    if cancelled {
-        running_batches_by_task.retain(|_, task| task.invocation_id != invocation_id);
-    }
     cancelled
 }
 

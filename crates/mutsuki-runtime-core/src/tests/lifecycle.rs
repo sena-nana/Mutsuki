@@ -63,10 +63,17 @@ fn same_step_retry_and_generation_switch_reject_the_old_attempt() {
 }
 
 #[test]
-fn cancel_invalidates_the_active_attempt_and_rejects_its_completion() {
+fn cancel_waits_for_active_attempt_and_discards_its_outputs() {
     let worker = runner_descriptor("worker", "runtime.cancel", RunnerPurity::Pure);
     let plan = load_plan(vec![worker.clone()], Vec::new());
-    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(boxed_runner!(worker, |task| {
+        let mut result = RunnerResult::completed(task.task_id.clone());
+        result.output = Some(json!({"should_not_commit": true}));
+        result
+            .tasks
+            .push(Task::new("cancelled-child", "runtime.cancel", json!({})));
+        result
+    }));
     let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
     let handle = runtime
         .submit_task(Task::new("cancel-task", "runtime.cancel", json!({})))
@@ -83,20 +90,86 @@ fn cancel_invalidates_the_active_attempt_and_rejects_its_completion() {
     runtime.cancel_task_handle(&handle).unwrap();
     assert_eq!(
         runtime.task_handle_status(&handle),
-        Some(TaskStatus::Cancelled)
+        Some(TaskStatus::Running)
     );
+    assert!(runtime.task_handle_outcome(&handle).unwrap().is_none());
+    assert_eq!(runtime.statistics().tasks.cancelled, 0);
     let report = runtime
         .complete_runner_dispatch(execute_dispatch(dispatches.pop().unwrap()))
         .unwrap();
 
-    assert_eq!(report.completed_tasks, 0);
-    assert_eq!(runtime.statistics().tasks.stale_results_rejected, 1);
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.statistics().tasks.stale_results_rejected, 0);
     assert_eq!(runtime.statistics().tasks.running, 0);
     assert_eq!(runtime.statistics().tasks.cancelled, 1);
+    assert!(
+        runtime
+            .task_handle_result(&handle)
+            .unwrap()
+            .output
+            .is_none()
+    );
+    assert!(runtime.task_status("cancelled-child").is_none());
     assert_eq!(
         runtime.task_handle_status(&handle),
         Some(TaskStatus::Cancelled)
     );
+}
+
+#[test]
+fn multi_entry_pending_cancellation_finalizes_each_lease_once() {
+    let mut worker = runner_descriptor("worker", "runtime.cancel.batch", RunnerPurity::Pure);
+    worker.batch.preferred_batch_size = 2;
+    worker.batch.max_batch_entries = 2;
+    let plan = load_plan(vec![worker.clone()], Vec::new());
+    let runners: Vec<Box<dyn Runner>> = runners_with_kernel!(completed_runner!(worker));
+    let mut runtime = CoreRuntime::boot(plan, runners).unwrap();
+    let handles = runtime
+        .submit_batch(TaskBatch {
+            batch_id: "cancel-batch".into(),
+            tick_id: None,
+            tasks: vec![
+                Task::new("cancel-batch-a", "runtime.cancel.batch", json!({})),
+                Task::new("cancel-batch-b", "runtime.cancel.batch", json!({})),
+            ],
+            resource_plan: None,
+        })
+        .unwrap();
+    let (_, mut dispatches) = runtime
+        .claim_ready_dispatches(
+            |_descriptor, _load, _step, _generation| {
+                Ok(ScheduleDecision::new("test", 2, "claim").clamp_to(2))
+            },
+            None,
+        )
+        .unwrap();
+    assert_eq!(dispatches.len(), 1);
+
+    for handle in &handles {
+        runtime.cancel_task_handle(handle).unwrap();
+        assert_eq!(
+            runtime.task_handle_status(handle),
+            Some(TaskStatus::Running)
+        );
+    }
+    assert_eq!(runtime.statistics().tasks.cancelled, 0);
+
+    let report = runtime
+        .complete_runner_dispatch(execute_dispatch(dispatches.pop().unwrap()))
+        .unwrap();
+
+    assert_eq!(report.completed_tasks, 2);
+    assert_eq!(runtime.statistics().tasks.cancelled, 2);
+    for handle in &handles {
+        assert_eq!(
+            runtime.task_handle_status(handle),
+            Some(TaskStatus::Cancelled)
+        );
+        assert!(matches!(
+            runtime.task_handle_outcome(handle).unwrap(),
+            Some(TaskOutcome::Cancelled { .. })
+        ));
+    }
 }
 
 #[test]
@@ -140,18 +213,20 @@ fn abort_invalidates_running_work_and_prevents_later_execution() {
 
     assert_eq!(runtime.abort("test abort").unwrap(), 1);
     assert_eq!(runtime.stop_state(), RuntimeStopState::Aborted);
-    assert_eq!(
-        runtime.task_status("abort-task"),
-        Some(TaskStatus::Cancelled)
-    );
+    assert_eq!(runtime.task_status("abort-task"), Some(TaskStatus::Running));
+    assert_eq!(runtime.statistics().tasks.cancelled, 0);
     let report = runtime
         .complete_runner_dispatch(execute_dispatch(dispatches.pop().unwrap()))
         .unwrap();
 
-    assert_eq!(report.completed_tasks, 0);
-    assert_eq!(runtime.statistics().tasks.stale_results_rejected, 1);
+    assert_eq!(report.completed_tasks, 1);
+    assert_eq!(runtime.statistics().tasks.stale_results_rejected, 0);
     assert_eq!(runtime.statistics().tasks.running, 0);
     assert_eq!(runtime.statistics().tasks.cancelled, 1);
+    assert_eq!(
+        runtime.task_status("abort-task"),
+        Some(TaskStatus::Cancelled)
+    );
     assert_eq!(
         runtime
             .submit_task(Task::new("after-abort", "runtime.abort", json!({})))

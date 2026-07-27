@@ -543,10 +543,16 @@ fn event_driven_host_enforces_tick_deadline_without_periodic_polling() {
         ))))
         .unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    wait_for_task_status(&runtime, "timer-deadline-1", TaskStatus::Cancelled);
+    std::thread::sleep(Duration::from_millis(30));
+    runtime.drive_state().unwrap();
+    assert_eq!(
+        runtime.task_status("timer-deadline-1"),
+        Some(TaskStatus::Running)
+    );
     assert!(submitted_at.elapsed() < event_driven_test_deadline());
 
     release_tx.send(()).unwrap();
+    wait_for_task_status(&runtime, "timer-deadline-1", TaskStatus::Cancelled);
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(1)
         && cancelled
@@ -1359,54 +1365,36 @@ fn worker_catches_runner_panic_and_keeps_pool_capacity() {
 }
 
 #[test]
-fn cancel_running_task_is_delivered_when_worker_returns_runner() {
-    struct CancellableRunner {
-        descriptor: RunnerDescriptor,
-        started_tx: mpsc::Sender<()>,
-        release_rx: mpsc::Receiver<()>,
-        cancelled: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl Runner for CancellableRunner {
-        fn descriptor(&self) -> &RunnerDescriptor {
-            &self.descriptor
-        }
-
-        fn run_batch(
-            &mut self,
-            _ctx: RunnerContext,
-            batch: WorkBatch,
-        ) -> mutsuki_runtime_core::RuntimeResult<CompletionBatch> {
-            self.started_tx.send(()).unwrap();
-            self.release_rx.recv().unwrap();
-            scalar_completion_batch(&batch, |task| {
-                Ok(RunnerResult::completed(task.task_id.clone()))
-            })
-        }
-
-        fn cancel(&mut self, invocation_id: &str) -> mutsuki_runtime_core::RuntimeResult<()> {
-            self.cancelled
-                .lock()
-                .expect("cancelled mutex poisoned")
-                .push(invocation_id.to_string());
-            Ok(())
-        }
-    }
-
+fn native_probe_prevents_side_effects_and_delays_cancelled_publication() {
     let runner_descriptor =
         descriptor_with_class("cancellable.runner", "slow.work", ExecutionClass::Blocking);
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
-    let cancelled = Arc::new(Mutex::new(Vec::new()));
+    let side_effects = Arc::new(AtomicUsize::new(0));
+    let observed_side_effects = side_effects.clone();
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let observed_handler_calls = handler_calls.clone();
+    let subsequent_probe_clear = Arc::new(AtomicBool::new(false));
+    let observed_subsequent_probe = subsequent_probe_clear.clone();
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
-    host.register_runner(Box::new(CancellableRunner {
-        descriptor: runner_descriptor,
-        started_tx,
-        release_rx,
-        cancelled: cancelled.clone(),
-    }));
+    host.register_runner(Box::new(NativeRunner::new_cancellable(
+        runner_descriptor,
+        move |_ctx, task, probe| {
+            if observed_handler_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                if !probe.is_cancelled() {
+                    observed_side_effects.fetch_add(1, Ordering::SeqCst);
+                }
+            } else {
+                observed_subsequent_probe.store(!probe.is_cancelled(), Ordering::SeqCst);
+            }
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
     let runtime = host.into_host_runtime(runtime_profile()).unwrap();
+    let completions = runtime.subscribe_task_completions();
 
     let slow_handle = match runtime
         .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
@@ -1422,31 +1410,169 @@ fn cancel_running_task_is_delivered_when_worker_returns_runner() {
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Running));
+    let completion_revision = completions.revision();
 
     assert_eq!(
         runtime
             .dispatch(HostRuntimeCommand::CancelTask(slow_handle.clone()))
             .unwrap(),
-        HostRuntimeReply::TaskCancelled(slow_handle)
+        HostRuntimeReply::TaskCancelled(slow_handle.clone())
     );
-    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
+    let pending_state = runtime.task_states(vec![slow_handle.clone()]).unwrap();
+    assert_eq!(pending_state[0].status, Some(TaskStatus::Running));
+    assert_eq!(pending_state[0].outcome, None);
+    assert_eq!(completions.revision(), completion_revision);
+    assert_eq!(side_effects.load(Ordering::SeqCst), 0);
     assert!(
-        cancelled
-            .lock()
-            .expect("cancelled mutex poisoned")
-            .is_empty()
+        !runtime
+            .events_after(0, 128)
+            .unwrap()
+            .items
+            .iter()
+            .any(|event| {
+                event.name == "task.cancelled" && event.subject_id.as_deref() == Some("slow-1")
+            })
     );
 
     release_tx.send(()).unwrap();
+    assert!(
+        completions
+            .wait_after_timeout(completion_revision, Duration::from_secs(1))
+            .is_some()
+    );
+    let cancelled_state = runtime.task_states(vec![slow_handle]).unwrap();
+    assert_eq!(cancelled_state[0].status, Some(TaskStatus::Cancelled));
+    assert!(matches!(
+        cancelled_state[0].outcome,
+        Some(TaskOutcome::Cancelled { ref task_id, .. }) if task_id == "slow-1"
+    ));
+    assert_eq!(side_effects.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        runtime
+            .events_after(0, 128)
+            .unwrap()
+            .items
+            .iter()
+            .filter(|event| {
+                event.name == "task.cancelled" && event.subject_id.as_deref() == Some("slow-1")
+            })
+            .count(),
+        1
+    );
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "slow-2",
+            "slow.work",
+            json!({}),
+        ))))
+        .unwrap();
     runtime
         .dispatch(HostRuntimeCommand::RunUntilIdle { max_ticks: 4 })
         .unwrap();
 
-    assert_eq!(runtime.task_status("slow-1"), Some(TaskStatus::Cancelled));
+    assert_eq!(runtime.task_status("slow-2"), Some(TaskStatus::Completed));
+    assert!(subsequent_probe_clear.load(Ordering::SeqCst));
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn abort_before_native_worker_start_skips_domain_handler() {
+    let blocker_descriptor =
+        descriptor_with_class("a.blocker", "abort.blocker", ExecutionClass::Blocking);
+    let target_descriptor =
+        descriptor_with_class("b.target", "abort.target", ExecutionClass::Blocking);
+    let (blocker_started_tx, blocker_started_rx) = mpsc::channel();
+    let (release_blocker_tx, release_blocker_rx) = mpsc::channel();
+    let target_handler_calls = Arc::new(AtomicUsize::new(0));
+    let observed_target_handler_calls = target_handler_calls.clone();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest(
+        "plugin-a",
+        vec![blocker_descriptor.clone(), target_descriptor.clone()],
+    ));
+    host.register_runner(Box::new(NativeRunner::new_cancellable(
+        blocker_descriptor,
+        move |_ctx, task, _probe| {
+            blocker_started_tx.send(()).unwrap();
+            release_blocker_rx.recv().unwrap();
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
+    host.register_runner(Box::new(NativeRunner::new_cancellable(
+        target_descriptor,
+        move |_ctx, task, _probe| {
+            observed_target_handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
+    let config = HostRuntimeConfig {
+        blocking_threads: 1,
+        pool_queue_limit: 2,
+        ..HostRuntimeConfig::default()
+    };
+    let runtime = host
+        .into_host_runtime_with_config(runtime_profile(), config)
+        .unwrap();
+
+    let blocker_handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "abort-blocker",
+            "abort.blocker",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("expected task submitted, got {reply:?}"),
+    };
+    let target_handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "abort-target",
+            "abort.target",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("expected task submitted, got {reply:?}"),
+    };
+    runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
+    blocker_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
     assert_eq!(
-        *cancelled.lock().expect("cancelled mutex poisoned"),
-        vec!["batch-1-cancellable.runner-1".to_string()]
+        runtime.task_status("abort-blocker"),
+        Some(TaskStatus::Running)
     );
+    assert_eq!(
+        runtime.task_status("abort-target"),
+        Some(TaskStatus::Running)
+    );
+
+    let completions = runtime.subscribe_task_completions();
+    let completion_revision = completions.revision();
+    assert_eq!(runtime.abort("test abort-before-start").unwrap(), 2);
+    let pending_states = runtime
+        .task_states(vec![blocker_handle.clone(), target_handle.clone()])
+        .unwrap();
+    assert!(
+        pending_states
+            .iter()
+            .all(|state| state.status == Some(TaskStatus::Running) && state.outcome.is_none())
+    );
+    assert_eq!(completions.revision(), completion_revision);
+    assert_eq!(target_handler_calls.load(Ordering::SeqCst), 0);
+
+    release_blocker_tx.send(()).unwrap();
+    let terminal_states = runtime
+        .wait_task_states(vec![blocker_handle, target_handle], Duration::from_secs(1))
+        .unwrap();
+    assert!(terminal_states.iter().all(|state| {
+        state.status == Some(TaskStatus::Cancelled)
+            && matches!(state.outcome, Some(TaskOutcome::Cancelled { .. }))
+    }));
+    assert_eq!(target_handler_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -1521,10 +1647,7 @@ fn host_deadline_cancels_running_invocation_and_propagates_cancel() {
 
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
-    assert_eq!(
-        runtime.task_status("deadline-1"),
-        Some(TaskStatus::Cancelled)
-    );
+    assert_eq!(runtime.task_status("deadline-1"), Some(TaskStatus::Running));
     assert!(
         cancelled
             .lock()
@@ -1604,7 +1727,7 @@ fn wall_clock_deadline_isolates_stuck_worker_and_drains_late_completion() {
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     assert_eq!(
         runtime.task_status("wall-stuck-1"),
-        Some(TaskStatus::Cancelled)
+        Some(TaskStatus::Running)
     );
 
     runtime
@@ -1700,7 +1823,7 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
         .unwrap();
     assert_eq!(
         runtime.task_status("cancel-stuck-1"),
-        Some(TaskStatus::Cancelled)
+        Some(TaskStatus::Running)
     );
 
     std::thread::sleep(Duration::from_millis(60));
@@ -1723,6 +1846,10 @@ fn cancel_grace_isolates_stuck_worker_and_recovers_pool_capacity() {
     release_tx.send(()).unwrap();
     wait_for_dispose(&mut runtime, &disposed);
     wait_for_status(&mut runtime, "cancel-echo-1", TaskStatus::Completed);
+    assert_eq!(
+        runtime.task_status("cancel-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
         vec!["batch-1-stuck.cancel.runner-1".to_string()]
@@ -1785,7 +1912,7 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     runtime.dispatch(HostRuntimeCommand::TickOnce).unwrap();
     assert_eq!(
         runtime.task_status("health-stuck-1"),
-        Some(TaskStatus::Cancelled)
+        Some(TaskStatus::Running)
     );
 
     runtime
@@ -1806,6 +1933,10 @@ fn worker_health_timeout_cancels_stalled_invocation() {
     release_tx.send(()).unwrap();
     wait_for_dispose(&mut runtime, &disposed);
     wait_for_status(&mut runtime, "health-echo-1", TaskStatus::Completed);
+    assert_eq!(
+        runtime.task_status("health-stuck-1"),
+        Some(TaskStatus::Cancelled)
+    );
     assert_eq!(
         *cancelled.lock().expect("cancelled mutex poisoned"),
         vec!["batch-1-stuck.health.runner-1".to_string()]

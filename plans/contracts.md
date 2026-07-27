@@ -147,6 +147,11 @@ task.submit_batch({ batch: TaskBatch }) -> TaskHandle[]
 - `deadline_tick`
 - `cancel_requested`
 
+`RunnerContext.cancel_requested` 是 dispatch 时可序列化的取消快照，不承担运行期共享状态。
+本地 in-process backend 可额外提供不可序列化的 host-local cancellation probe，但不得把
+指针、原子量或 callback 加入 `RunnerContext`，也不得改变 JSONL/MessagePack、Python mirror
+或 schema shape。
+
 Core 记录 `runner.run_batch` trace span 时必须绑定本次 dispatch 的 batch / entry 事实：
 优先使用首个 entry 对应 task descriptor 的 `trace_id`，缺失时使用 deterministic
 `trace-task-<task_id>`；span attributes 必须包含 batch id、tick id、entry count、

@@ -122,7 +122,7 @@ fn management_cancel_runs_while_batch_and_management_response_are_blocked() {
 
     let cancelled_at = Instant::now();
     runtime
-        .dispatch(HostRuntimeCommand::CancelTask(handle))
+        .dispatch(HostRuntimeCommand::CancelTask(handle.clone()))
         .unwrap();
     assert!(cancelled_at.elapsed() < Duration::from_millis(50));
     let invocation_id = cancel_observed_rx
@@ -135,9 +135,13 @@ fn management_cancel_runs_while_batch_and_management_response_are_blocked() {
     assert!(actor_probe.elapsed() < Duration::from_millis(50));
     assert_eq!(
         runtime.task_status("managed-blocking-1"),
-        Some(TaskStatus::Cancelled)
+        Some(TaskStatus::Running)
     );
 
     management_release_tx.send(()).unwrap();
     work_release_tx.send(()).unwrap();
+    let states = runtime
+        .wait_task_states(vec![handle], Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(states[0].status, Some(TaskStatus::Cancelled));
 }

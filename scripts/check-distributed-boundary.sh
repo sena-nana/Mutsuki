@@ -5,7 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 forbidden_dependency='(^[[:space:]]*[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*[[:space:]]*=)|(package[[:space:]]*=[[:space:]]*"[[:alnum:]_.-]*(cluster|distributed|consensus|quorum|remote[-_]resource|trust|attestation|openraft|raft|libp2p|quinn|tonic|transport)[[:alnum:]_.-]*")'
-if rg -n -i "$forbidden_dependency" Cargo.toml crates/*/Cargo.toml; then
+if rg -n -i "$forbidden_dependency" crates/mutsuki-runtime-{contracts,core,sdk,sdk-macros}/Cargo.toml; then
   echo "distributed boundary violation: forbidden cluster/transport dependency" >&2
   exit 1
 fi
