@@ -19,7 +19,7 @@ jobs:
       RUSTC_WRAPPER: ""
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -35,7 +35,7 @@ jobs:
           --output target/mutsuki-benchmarks/core-public-ci-${{ github.run_id }}.json
 
       - name: Upload structured smoke result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: core-public-performance-smoke-${{ github.run_id }}
           path: target/mutsuki-benchmarks/core-public-ci-${{ github.run_id }}.json
@@ -61,9 +61,9 @@ jobs:
     env:
       RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Run owner reference
@@ -71,7 +71,7 @@ jobs:
           python scripts/run-core-reference.py
           --mode full
           --output artifacts/perf/reference-${{ matrix.name }}/report.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: core-reference-${{ matrix.name }}-${{ github.run_id }}
           path: artifacts/perf/reference-${{ matrix.name }}/
