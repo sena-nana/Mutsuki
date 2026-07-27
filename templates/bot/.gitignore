@@ -1,0 +1,9 @@
+/target/
+/run/
+/logs/
+/config/local.toml
+/config/local.secret.toml
+/.mutsuki-qqbot/
+/.env
+*.secret.toml
+__pycache__/
