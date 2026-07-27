@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mutsuki Service Control Request",
+  "type": "object",
+  "required": ["token", "method"],
+  "properties": {
+    "token": { "type": "string" },
+    "method": {
+      "type": "string",
+      "enum": [
+        "service_status",
+        "service_shutdown",
+        "core_status",
+        "plugin_list",
+        "plugin_reload",
+        "runner_list",
+        "runner_restart",
+        "runner_stop",
+        "event_source_list",
+        "event_source_restart",
+        "task_list",
+        "task_cancel",
+        "task_outcome",
+        "health_check",
+        "log_tail"
+      ]
+    },
+    "params": true
+  },
+  "$defs": {
+    "taskListResponse": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/taskSnapshot" }
+    },
+    "taskSnapshot": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "protocol_id",
+        "status",
+        "priority",
+        "ready_at_step",
+        "created_sequence",
+        "registry_generation",
+        "target_binding_id",
+        "runner_hint",
+        "claimed_by",
+        "owner_runner",
+        "lease_id",
+        "trace_id",
+        "correlation_id",
+        "input_refs",
+        "output_ref",
+        "continuation_ref",
+        "required_surfaces",
+        "failure"
+      ],
+      "properties": {
+        "task_id": { "type": "string" },
+        "protocol_id": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": [
+            "created",
+            "ready",
+            "running",
+            "waiting",
+            "blocked",
+            "completed",
+            "failed",
+            "cancelled",
+            "expired",
+            "dead_letter"
+          ]
+        },
+        "priority": { "type": "integer" },
+        "ready_at_step": { "type": ["integer", "null"], "minimum": 0 },
+        "created_sequence": { "type": "integer", "minimum": 0 },
+        "registry_generation": { "type": "integer", "minimum": 0 },
+        "target_binding_id": { "type": ["string", "null"] },
+        "runner_hint": { "type": ["string", "null"] },
+        "claimed_by": { "type": ["string", "null"] },
+        "owner_runner": { "type": ["string", "null"] },
+        "lease_id": { "type": ["string", "null"] },
+        "trace_id": { "type": ["string", "null"] },
+        "correlation_id": { "type": ["string", "null"] },
+        "input_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "output_ref": { "type": ["string", "null"] },
+        "continuation_ref": { "type": ["string", "null"] },
+        "required_surfaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "failure": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/taskFailureSummary" }
+          ]
+        }
+      }
+    },
+    "taskFailureSummary": {
+      "type": "object",
+      "required": ["code", "source", "route"],
+      "properties": {
+        "code": { "type": "string" },
+        "source": { "type": "string" },
+        "route": { "type": "string" }
+      }
+    },
+    "pluginReloadResponse": {
+      "type": "object",
+      "required": [
+        "previous_generation",
+        "registry_generation",
+        "plugin_count",
+        "changes",
+        "runner_errors",
+        "event_sources"
+      ],
+      "properties": {
+        "previous_generation": { "type": "integer", "minimum": 0 },
+        "registry_generation": { "type": "integer", "minimum": 0 },
+        "plugin_count": { "type": "integer", "minimum": 0 },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["surface_id", "compatibility"],
+            "properties": {
+              "surface_id": { "type": "string" },
+              "compatibility": {
+                "type": "string",
+                "enum": ["identical", "additive", "deprecated", "removed", "breaking"]
+              }
+            }
+          }
+        },
+        "runner_errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "event_sources": { "const": "kept" }
+      }
+    },
+    "eventSourceStatus": {
+      "type": "object",
+      "required": [
+        "source_id", "plugin_id", "instance_id", "state", "health",
+        "last_error", "reconnects", "last_event_unix_ms", "started_at_unix_ms"
+      ],
+      "properties": {
+        "source_id": { "type": "string" },
+        "plugin_id": { "type": "string" },
+        "instance_id": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["starting", "running", "failed", "restarting", "stopping", "stopped"]
+        },
+        "health": {
+          "type": "string",
+          "enum": ["unknown", "healthy", "degraded", "unhealthy"]
+        },
+        "last_error": { "type": ["string", "null"] },
+        "reconnects": { "type": "integer", "minimum": 0 },
+        "last_event_unix_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "started_at_unix_ms": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}
