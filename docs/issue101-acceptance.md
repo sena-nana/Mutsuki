@@ -31,8 +31,7 @@ Date: 2026-07-27
 - Distributed boundary: passed.
 - Independent exact working-tree materialization without sibling repositories: locked metadata,
   formatting, workspace/distributed boundaries and template export passed; the full workspace
-  passed 938 tests with 3 ignored and 4 filtered across 183 suites. The reviewed commit still
-  requires a final clean-revision clone run.
+  passed 938 tests with 3 ignored and 4 filtered across 183 suites.
 
 ## Performance gates
 
@@ -40,27 +39,29 @@ Date: 2026-07-27
 with 31 cases. Every case passed. The analysis classification is `environmental-noise` because 9 of
 31 cases exceeded the MAD ratio warning threshold; it is not `framework-suspect`. All five
 correctness counters are zero, including cross-process hash mismatches and public network requests.
+Both smoke and reference reports lock revision
+`6eb4044589896ebe82500c22d0dabcdcdd652dd6` with `dirty=false`.
 
 | New architecture case | p95 | Correctness hash |
 | --- | ---: | --- |
-| checkpoint codec, 100 round trips | 471,958 ns | `e24e481f5e78bb94d3027c168b7daea4a9dc92b0de95dd9439a91b6072840e3c` |
-| Agent Link query, 100 operations | 851,458 ns | `615055e4328e0f53c1c019fe644bd5a18407b2b643c537414cf553ee576bfa38` |
-| distributed placement, 100 tasks | 9,250 ns | `92405ca93c2cfe89b47aa2ddbd57119bc95cd887d278484d865a0874525444e0` |
-| shared LSP query, 100 operations | 262,250 ns | `2b93ed4a9c9a86707d8509f7eded62b6245ae2cde1d2bfdfed6755b4cce24cd4` |
+| checkpoint codec, 100 round trips | 431,833 ns | `e24e481f5e78bb94d3027c168b7daea4a9dc92b0de95dd9439a91b6072840e3c` |
+| Agent Link query, 100 operations | 653,375 ns | `615055e4328e0f53c1c019fe644bd5a18407b2b643c537414cf553ee576bfa38` |
+| distributed placement, 100 tasks | 7,667 ns | `92405ca93c2cfe89b47aa2ddbd57119bc95cd887d278484d865a0874525444e0` |
+| shared LSP query, 100 operations | 373,917 ns | `2b93ed4a9c9a86707d8509f7eded62b6245ae2cde1d2bfdfed6755b4cce24cd4` |
 
 Artifact SHA-256:
 
-- reference report: `243fb73fcd0960c3ba78c8d550ff01cadfad993c09cde8e215dade03d3c6ea90`;
-- reference analysis: `4978b6ead58e747faf03f20d362cd38f10508d47e38073908c4d2b6c8e7618b3`;
-- final smoke report: `b193feb5831b0fdfb749ec7f06e1b82e7709715869ab52cf4c86aeb367229bfd`;
-- final smoke analysis: `7a1444b428f4d1dd0d654d418dc7a74c31782e0edda698d6338bdbc49f5db520`.
+- reference report: `154382c22f0ee9c90d6c358e7d4e0aec06470d3fe87cd75c65c3b5e35db4770c`;
+- reference analysis: `10e3d2394a289c391de1d8a473b527af5965bb21929ff66dc082316fb99301d5`;
+- final smoke report: `46b43a7aa68c61e71faca3a9048ac09aa536c359972c636e2d41f76a8aaf4ba9`;
+- final smoke analysis: `d97d4efa4bdf762942f33ea6ad1c17d9e586ee0acf5af24823da0b5f36d23d59`.
 
 The root Core smoke benchmark also passed 59/59 gates; its report is
 `target/mutsuki-benchmarks/core-smoke-time.json`.
 
 ## Release state
 
-The working tree is ready for review and commit. The repository policy requires user confirmation
-before committing. Issue #101 and its child issues must remain open until the reviewed commit is
-pushed and the clean revision is revalidated. The existing `v0.1.0` tag is immutable and does not
-contain this breaking migration; the candidate release train is `v0.2.0`.
+The implementation is committed at `6eb4044589896ebe82500c22d0dabcdcdd652dd6`.
+Issue #101 and its child issues remain open until the evidence commit is pushed and the final clean
+revision is revalidated. The existing `v0.1.0` tag is immutable and does not contain this breaking
+migration; the candidate release train is `v0.2.0`.
