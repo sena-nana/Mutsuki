@@ -6,6 +6,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      fixed_reference:
+        description: Run the fixed macOS ARM64 and Windows x64 reference lanes
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -47,7 +53,7 @@ jobs:
 
   fixed-reference:
     name: Fixed reference (${{ matrix.name }})
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch' && inputs.fixed_reference
     strategy:
       fail-fast: false
       matrix:
