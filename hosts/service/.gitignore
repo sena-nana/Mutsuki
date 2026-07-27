@@ -1,0 +1,8 @@
+/target/
+/.idea/
+/.vscode/
+*.log
+*.tmp
+/artifacts/performance/issue15-macos-arm64-provisional/
+/artifacts/performance/issue16-*/
+/artifacts/performance/reference-*/

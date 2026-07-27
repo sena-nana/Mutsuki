@@ -1,0 +1,285 @@
+use std::sync::Arc;
+
+use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
+use mutsuki_runtime_contracts::{
+    CommandPlan, ExportPlan, PlanReceipt, PluginArtifact, PluginManifest, ReadPlan, ResourceAccess,
+    ResourceId, ResourceLifetime, ResourceRef, ResourceSealState, ResourceSemantic,
+    RunnerDescriptor, SnapshotDescriptor, StreamPlan, WritePlan,
+};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_sdk::{
+    AbiHostClientV2, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
+    RunnerDescriptorBuilder, map_work_batch_entries,
+};
+use serde_json::{Value, json};
+
+const PLUGIN_ID: &str = "mutsuki.test.abi-fixture";
+const RUNNER_ID: &str = "mutsuki.test.abi-fixture.runner";
+const PROVIDER_ID: &str = "mutsuki.test.abi-fixture.resource";
+const LEGACY_ECHO_PROTOCOL: &str = "mutsuki.test.abi.echo";
+const FIXTURE_PROTOCOLS: [&str; 7] = [
+    LEGACY_ECHO_PROTOCOL,
+    "runner.noop",
+    "runner.echo",
+    "runner.calibrated-cpu",
+    "runner.wait",
+    "runner.resource",
+    "runner.fault",
+];
+
+struct FixtureRunner {
+    descriptor: RunnerDescriptor,
+}
+
+impl FixtureRunner {
+    fn new() -> Self {
+        let mut descriptor = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
+            .accepted_protocol(FIXTURE_PROTOCOLS[0])
+            .build();
+        descriptor.accepted_protocol_ids = FIXTURE_PROTOCOLS
+            .iter()
+            .map(|protocol| (*protocol).to_string())
+            .collect();
+        Self { descriptor }
+    }
+}
+
+impl Runner for FixtureRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    #[expect(
+        clippy::result_large_err,
+        reason = "the public Runner contract preserves the structured RuntimeError unchanged"
+    )]
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: mutsuki_runtime_contracts::WorkBatch,
+    ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
+        map_work_batch_entries(&batch, fixture_result)
+    }
+}
+
+struct FixtureProvider;
+
+impl ResourcePlanGateway for FixtureProvider {
+    fn collect_read_plan(&self, _plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
+        Ok(b"fixture-resource".to_vec())
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        _plan: &ReadPlan,
+        _kind_id: &str,
+        _schema: &str,
+    ) -> RuntimeResult<SnapshotDescriptor> {
+        Err(unsupported("snapshot"))
+    }
+
+    fn open_stream_plan(&self, _plan: &ReadPlan) -> RuntimeResult<StreamPlan> {
+        Err(unsupported("stream"))
+    }
+
+    fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        Ok(receipt(&plan.plan_id, json!("fixture-resource")))
+    }
+
+    fn commit_write_plan(&self, plan: &WritePlan, bytes: Vec<u8>) -> RuntimeResult<PlanReceipt> {
+        Ok(receipt(&plan.plan_id, json!({ "bytes": bytes.len() })))
+    }
+
+    fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        Ok(receipt(
+            &plan.plan_id,
+            json!({ "operation": plan.operation }),
+        ))
+    }
+
+    fn execute_command_batch(&self, _batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        Err(unsupported("command_batch"))
+    }
+
+    fn execute_saga_plan(&self, _saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        Err(unsupported("saga"))
+    }
+}
+
+impl ResourceProviderGateway for FixtureProvider {
+    fn create_blob_resource(&self, schema: &str, bytes: Vec<u8>) -> RuntimeResult<ResourceRef> {
+        Ok(resource_ref("blob", schema, bytes.len() as u64))
+    }
+
+    fn create_cow_state_resource(
+        &self,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> RuntimeResult<ResourceRef> {
+        Ok(resource_ref(kind_id, schema, bytes.len() as u64))
+    }
+
+    fn create_capability_resource(
+        &self,
+        kind_id: &str,
+        schema: &str,
+    ) -> RuntimeResult<ResourceRef> {
+        Ok(resource_ref(kind_id, schema, 0))
+    }
+}
+
+pub fn fixture_manifest(path: &str, sha256: &str) -> PluginManifest {
+    build_plugin(path, sha256, true).manifest
+}
+
+pub fn benchmark_manifest(path: &str, sha256: &str) -> PluginManifest {
+    build_plugin(path, sha256, false).manifest
+}
+
+fn create_plugin_v2(
+    _host: AbiHostClientV2,
+    config: Value,
+) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
+    create_plugin(config)
+}
+
+fn create_plugin(config: Value) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
+    if config.get("fixture").and_then(Value::as_bool) != Some(true) {
+        return Err(RuntimeFailure::new(
+            mutsuki_runtime_contracts::RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                PLUGIN_ID,
+                "fixture.config_required",
+            ),
+        ));
+    }
+    let include_provider =
+        config.get("benchmark_runner_only").and_then(Value::as_bool) != Some(true);
+    Ok(build_plugin("fixture", "sha256:fixture", include_provider))
+}
+
+fn build_plugin(
+    path: &str,
+    sha256: &str,
+    include_provider: bool,
+) -> mutsuki_runtime_sdk::LoadedPlugin {
+    let mut builder = PluginBuilder::new(PLUGIN_ID)
+        .runner(Box::new(FixtureRunner::new()))
+        .artifact(PluginArtifact {
+            artifact_type: mutsuki_runtime_contracts::ArtifactType::Abi,
+            path: path.into(),
+            sha256: sha256.into(),
+            companion_artifacts: Vec::new(),
+        });
+    if include_provider {
+        builder = builder.resource_provider_gateway(PROVIDER_ID, Arc::new(FixtureProvider));
+    }
+    builder.build()
+}
+
+fn fixture_result(
+    task: &mutsuki_runtime_contracts::Task,
+) -> Result<mutsuki_runtime_contracts::RunnerResult, mutsuki_runtime_contracts::RuntimeError> {
+    if task.protocol_id == LEGACY_ECHO_PROTOCOL {
+        return Ok(mutsuki_runtime_contracts::RunnerResult::completed(
+            task.task_id.clone(),
+        ));
+    }
+    let output = match task.protocol_id.as_str() {
+        "runner.noop" => json!({"status": "ok"}),
+        "runner.echo" => json!({"echo": task.payload}),
+        "runner.calibrated-cpu" => {
+            let seed = task
+                .payload
+                .get("seed")
+                .and_then(Value::as_u64)
+                .unwrap_or(1_297_435_713);
+            let iterations = task
+                .payload
+                .get("iterations")
+                .and_then(Value::as_u64)
+                .unwrap_or(4_096);
+            json!({"checksum": calibrated_checksum(seed, iterations)})
+        }
+        "runner.wait" => json!({"resumed": true}),
+        "runner.resource" => json!({
+            "resource_id": task.payload.get("resource_ref").cloned().unwrap_or(Value::Null),
+            "version": task.payload.get("version").cloned().unwrap_or(Value::Null),
+        }),
+        "runner.fault" => {
+            return Err(mutsuki_runtime_contracts::RuntimeError::new(
+                "fixture.failure",
+                PLUGIN_ID,
+                "fixture.requested_failure",
+            ));
+        }
+        protocol => {
+            return Err(mutsuki_runtime_contracts::RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                PLUGIN_ID,
+                format!("fixture.unsupported_protocol.{protocol}"),
+            ));
+        }
+    };
+    let mut result = mutsuki_runtime_contracts::RunnerResult::completed(task.task_id.clone());
+    result.output = Some(output);
+    Ok(result)
+}
+
+fn calibrated_checksum(seed: u64, iterations: u64) -> String {
+    let mut value = seed;
+    for _ in 0..iterations {
+        value = value
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        value ^= value >> 33;
+    }
+    format!("{value:016x}")
+}
+
+fn resource_ref(kind_id: &str, schema: &str, size: u64) -> ResourceRef {
+    ResourceRef {
+        resource_id: ResourceId {
+            kind_id: kind_id.into(),
+            slot_id: "fixture".into(),
+            generation: 1,
+            version: 1,
+        },
+        ref_id: format!("{kind_id}:fixture"),
+        semantic: ResourceSemantic::FrozenValue,
+        provider_id: PROVIDER_ID.into(),
+        resource_kind: kind_id.into(),
+        schema: schema.into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::Inline,
+        size_hint: Some(size),
+        content_hash: None,
+        lifetime: ResourceLifetime::ExternalManaged,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
+}
+
+fn receipt(plan_id: &str, output: Value) -> PlanReceipt {
+    PlanReceipt {
+        plan_id: plan_id.into(),
+        status: "completed".into(),
+        resource_ref: None,
+        snapshot: None,
+        descriptor_updates: Vec::new(),
+        new_version: None,
+        output,
+    }
+}
+
+fn unsupported(route: &str) -> RuntimeFailure {
+    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_RESOURCE_UNSUPPORTED,
+        PLUGIN_ID,
+        route,
+    ))
+}
+
+mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v2!(create_plugin_v2);
