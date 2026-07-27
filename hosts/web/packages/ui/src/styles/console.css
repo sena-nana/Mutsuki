@@ -1,0 +1,604 @@
+/* Mutsuki Console product chrome on @lilia/theme. Product-only; no token/font redeclarations. */
+
+#app,
+#root {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Theme workspace only sets display:grid; product owns the two-column template. */
+.mutsuki-console.lilia-workspace {
+  display: grid;
+  --mutsuki-nav-width: 232px;
+  grid-template-columns: var(--mutsuki-nav-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.mutsuki-console .lilia-workspace-region[data-region="navigation"] {
+  --lilia-region-surface: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.mutsuki-console .lilia-workspace-region[data-region="main"] {
+  --lilia-region-surface: var(--lilia-surface-fill-base, var(--bg));
+  border-inline-start: 1px solid var(--border-soft);
+}
+
+/* Nested secondary-panel is not AppShell's named grid area. */
+.mutsuki-console .secondary-panel {
+  grid-area: auto;
+  gap: 8px;
+  padding: 12px 10px;
+}
+
+.mutsuki-console .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+
+.mutsuki-console .nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mutsuki-console .sb-tree__row:focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: -2px;
+}
+
+.mutsuki-console .sidebar-footer {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: color 0.12s ease;
+}
+
+.mutsuki-console .sidebar-footer:hover,
+.mutsuki-console .sidebar-footer:focus-within {
+  color: var(--text-muted);
+}
+
+.mutsuki-console .page-scroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.mutsuki-console .page-header {
+  align-items: flex-start;
+}
+
+.mutsuki-console .page-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  .actions button,
+  .secret-row button,
+  .array-editor button,
+  .map-editor button,
+  .conflict button
+) {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  .actions button,
+  .secret-row button,
+  .array-editor button,
+  .map-editor button,
+  .conflict button
+):hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.mutsuki-console :is(
+  .ghost,
+  .provider-item,
+  button,
+  .field input,
+  .field textarea,
+  .field select,
+  input[type="search"]
+):focus-visible {
+  outline: 2px solid var(--lilia-state-focus-ring, var(--accent));
+  outline-offset: 1px;
+}
+
+.mutsuki-console .ghost:disabled,
+.mutsuki-console .provider-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mutsuki-console .actions .primary,
+.mutsuki-console .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.mutsuki-console .actions .primary:hover:not(:disabled),
+.mutsuki-console .primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.mutsuki-console .ghost.danger,
+.mutsuki-console .secret-row .danger {
+  color: var(--text);
+}
+
+.mutsuki-console .ghost.danger:hover:not(:disabled),
+.mutsuki-console .secret-row .danger:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--err) 55%, var(--border));
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.mutsuki-console .provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 480px;
+}
+
+.mutsuki-console .provider-item {
+  width: 100%;
+  height: auto;
+  min-height: 34px;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.mutsuki-console .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  max-width: 620px;
+  border-bottom: 1px solid var(--divider-soft);
+}
+
+.mutsuki-console .field:last-child {
+  border-bottom: 0;
+}
+
+.mutsuki-console .field.nested {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-bottom: 0;
+  border-left: 2px solid var(--border-soft);
+}
+
+.mutsuki-console .field-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mutsuki-console .field-help,
+.mutsuki-console .field-restart,
+.mutsuki-console .field-format,
+.mutsuki-console .meta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mutsuki-console .field-restart {
+  color: var(--warn);
+}
+
+.mutsuki-console .field input:not([type="checkbox"]),
+.mutsuki-console .field textarea,
+.mutsuki-console .field select,
+.mutsuki-console input[type="search"] {
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mutsuki-console .field textarea {
+  max-width: 100%;
+  min-height: 78px;
+  height: auto;
+  padding: 8px 10px;
+}
+
+.mutsuki-console .field.is-error input,
+.mutsuki-console .field.is-error textarea,
+.mutsuki-console .field.is-error select {
+  border-color: var(--err);
+}
+
+.mutsuki-console .secret-row,
+.mutsuki-console .array-row,
+.mutsuki-console .map-row,
+.mutsuki-console .enum-multi {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .enum-multi label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.mutsuki-console .tree-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--divider-soft);
+}
+
+.mutsuki-console .tree-item:last-child {
+  border-bottom: 0;
+}
+
+.mutsuki-console .tree-item.row-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.mutsuki-console .row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mutsuki-console .section.nested {
+  margin: 12px 0 0;
+}
+
+.mutsuki-console .section.nested h3,
+.mutsuki-console .section.nested h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.mutsuki-console .toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .toolbar.nested {
+  margin: 8px 0 0;
+}
+
+.mutsuki-console .plugin-card,
+.mutsuki-console .candidate-row {
+  margin-top: 4px;
+}
+
+/* warn ≠ accent */
+.mutsuki-console .status-ok {
+  color: var(--ok);
+}
+
+.mutsuki-console .status-warn {
+  color: var(--warn);
+}
+
+.mutsuki-console .status-err {
+  color: var(--err);
+}
+
+.mutsuki-console .status-muted,
+.mutsuki-console .muted {
+  color: var(--text-muted);
+}
+
+.mutsuki-console .err-text,
+.mutsuki-console .err {
+  color: var(--err);
+}
+
+.mutsuki-console .pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.mutsuki-console .pill.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.mutsuki-console .pill.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.mutsuki-console .pill.err {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.mutsuki-console .conflict,
+.mutsuki-console .error-banner {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in oklch, var(--err) 32%, var(--border));
+  background: var(--err-soft);
+  color: var(--err);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .message {
+  margin-top: 12px;
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.mutsuki-console .flash-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft);
+  background: var(--ok-soft);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.mutsuki-console .flash-banner.error {
+  background: var(--err-soft);
+  border-color: color-mix(in oklch, var(--err) 32%, var(--border));
+  color: var(--err);
+}
+
+.mutsuki-console .log-block,
+.mutsuki-console .mono,
+.mutsuki-console .log-view {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.mutsuki-console .log-block {
+  max-height: 340px;
+}
+
+/* Overview dashboard */
+.mutsuki-console .overview-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mutsuki-console .metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 12px;
+}
+
+.mutsuki-console .metric-card {
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.mutsuki-console .metric-card .metric-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.mutsuki-console .metric-card .metric-value {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.mutsuki-console .overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.mutsuki-console .overview-grid > .card {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .mutsuki-console .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mutsuki-console .metric-card--link {
+  cursor: pointer;
+  text-align: left;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+}
+
+.mutsuki-console .metric-card--link:hover {
+  border-color: var(--border);
+  background: var(--bg-hover);
+}
+
+.mutsuki-console .tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.mutsuki-console .tab-bar__item {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.mutsuki-console .tab-bar__item.is-active {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--lilia-surface-fill-raised, var(--bg-elev));
+}
+
+.mutsuki-console .tab-panel {
+  min-width: 0;
+}
+
+.mutsuki-console .topology-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mutsuki-console .topology-node__plugin {
+  width: 100%;
+  justify-content: space-between;
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.mutsuki-console .topology-node__lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mutsuki-console .topology-lane h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mutsuki-console .topology-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mutsuki-console .topology-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.mutsuki-console .tasks-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.mutsuki-console .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mutsuki-console .data-table th,
+.mutsuki-console .data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--divider-soft);
+  text-align: left;
+}
+
+.mutsuki-console .data-table tr {
+  cursor: pointer;
+}
+
+.mutsuki-console .data-table tr.is-selected,
+.mutsuki-console .data-table tr:hover {
+  background: var(--bg-hover);
+}
+
+.mutsuki-console .advanced-fold > summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.mutsuki-console .event-timeline {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mutsuki-console .capability-gap {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .mutsuki-console .tasks-layout,
+  .mutsuki-console .topology-node__lanes {
+    grid-template-columns: 1fr;
+  }
+}
