@@ -1,0 +1,12 @@
+[package]
+name = "mutsuki-web-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typed WebHost descriptors, RPC/Event protocol and version contracts"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true

@@ -1,0 +1,5 @@
+@import "@lilia/theme/base.css";
+@import "@lilia/theme/styles/workspace.css";
+@import "@lilia/theme/styles/sidebar.css";
+@import "@lilia/theme/styles/page.css";
+@import "./console.css";
