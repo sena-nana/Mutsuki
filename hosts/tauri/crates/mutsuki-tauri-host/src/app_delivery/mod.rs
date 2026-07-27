@@ -1,0 +1,30 @@
+//! Cross-app delivery: activate target Tauri apps, wait until Link/capability ready,
+//! then transmit typed capability requests with idempotent receipts.
+//!
+//! Business apps call [`AppDeliveryService::request_app`] instead of launching
+//! processes, polling sockets, or stuffing payloads into argv.
+
+mod activator;
+mod delivery;
+mod draft;
+mod endpoint;
+mod operation_history;
+mod transport;
+mod types;
+
+#[cfg(test)]
+mod tests;
+
+pub use activator::{ProcessAppActivator, TauriAppActivator};
+pub use delivery::AppDeliveryService;
+pub use draft::{DeliveryDraft, DeliveryDraftStore};
+pub use endpoint::{AppCapabilityEndpoint, EndpointDescriptor};
+pub use operation_history::{OperationHistoryPolicy, OperationHistoryStats};
+pub use transport::{
+    AppLinkSession, AppLinkTransport, CapabilityStatus, InMemoryAppLinkTransport,
+    LinkLocalAppTransport,
+};
+pub use types::{
+    ActivationError, ActivationReceipt, AppDeliveryError, AppDeliveryOptions, AppDescriptor, AppId,
+    AppIdentity, DeliveryPhase, HOST_PROTOCOL_VERSION, desktop_receipt_retention,
+};

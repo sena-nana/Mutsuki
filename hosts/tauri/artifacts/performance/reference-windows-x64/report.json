@@ -1,0 +1,1484 @@
+{
+  "cases": [
+    {
+      "case_id": "tauri.task-pump.idle",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "idle_window_ms": 500,
+        "waiting_tasks": 1
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "actor_commands": 0,
+        "cpu_time_ns": {
+          "mad": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "sample_count": 5,
+          "samples": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 33999.999999940395,
+          "max": 516017300.0,
+          "median": 500438100.0,
+          "min": 500314400.00000006,
+          "p95": 516017300.0,
+          "p99": 516017300.0,
+          "sample_count": 5,
+          "samples": [
+            500314400.00000006,
+            500419599.99999994,
+            500438100.0,
+            500472099.99999994,
+            516017300.0
+          ],
+          "unit": "ns"
+        },
+        "task_state_batch_queries": 0,
+        "task_status_queries": 0
+      }
+    },
+    {
+      "case_id": "tauri.task-pump.waiting-1",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "waiting_tasks": 1
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "actor_commands": 0,
+        "cpu_time_ns": {
+          "mad": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "sample_count": 5,
+          "samples": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 1423700.0,
+          "max": 10042300.0,
+          "median": 2187900.0,
+          "min": 764200.0,
+          "p95": 10042300.0,
+          "p99": 10042300.0,
+          "sample_count": 5,
+          "samples": [
+            764200.0,
+            1540400.0,
+            2187900.0,
+            5880700.0,
+            10042300.0
+          ],
+          "unit": "ns"
+        },
+        "peak_rss_bytes": 17145856
+      }
+    },
+    {
+      "case_id": "tauri.task-pump.waiting-100",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "waiting_tasks": 100
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "actor_commands": 0,
+        "cpu_time_ns": {
+          "mad": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "sample_count": 5,
+          "samples": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 1975500.0,
+          "max": 12342400.0,
+          "median": 6274600.0,
+          "min": 4299100.0,
+          "p95": 12342400.0,
+          "p99": 12342400.0,
+          "sample_count": 5,
+          "samples": [
+            4299100.0,
+            4701000.000000001,
+            6274600.0,
+            8335300.0,
+            12342400.0
+          ],
+          "unit": "ns"
+        },
+        "peak_rss_bytes": 20103168
+      }
+    },
+    {
+      "case_id": "tauri.task-pump.waiting-1000",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "waiting_tasks": 1000
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "actor_commands": 0,
+        "cpu_time_ns": {
+          "mad": 0.0,
+          "max": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "p95": 0.0,
+          "p99": 0.0,
+          "sample_count": 5,
+          "samples": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 13104000.000000015,
+          "max": 117544500.0,
+          "median": 84301400.0,
+          "min": 50658500.0,
+          "p95": 117544500.0,
+          "p99": 117544500.0,
+          "sample_count": 5,
+          "samples": [
+            50658500.0,
+            71197399.99999999,
+            84301400.0,
+            88999700.0,
+            117544500.0
+          ],
+          "unit": "ns"
+        },
+        "peak_rss_bytes": 37294080
+      }
+    },
+    {
+      "case_id": "tauri.task-pump.single-completion",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "waiting_tasks": 1
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "actor_commands": 6,
+        "latency_ns": {
+          "mad": 31300.0,
+          "max": 3276799.9999999995,
+          "median": 349500.0,
+          "min": 318200.0,
+          "p95": 3276799.9999999995,
+          "p99": 3276799.9999999995,
+          "sample_count": 5,
+          "samples": [
+            318200.0,
+            346600.0,
+            349500.0,
+            1293499.9999999998,
+            3276799.9999999995
+          ],
+          "unit": "ns"
+        }
+      }
+    },
+    {
+      "case_id": "tauri.bridge.cancel",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "adapter": "host-command-equivalent",
+        "waiting_tasks": 1
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 31300.0,
+          "max": 3276799.9999999995,
+          "median": 349500.0,
+          "min": 318200.0,
+          "p95": 3276799.9999999995,
+          "p99": 3276799.9999999995,
+          "sample_count": 5,
+          "samples": [
+            318200.0,
+            346600.0,
+            349500.0,
+            1293499.9999999998,
+            3276799.9999999995
+          ],
+          "unit": "ns"
+        }
+      }
+    },
+    {
+      "case_id": "tauri.task-pump.completion-burst",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "completed_tasks": 999,
+        "waiting_tasks": 1000
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 222571900.0,
+          "max": 1561018600.0,
+          "median": 681056300.0,
+          "min": 458484400.0,
+          "p95": 1561018600.0,
+          "p99": 1561018600.0,
+          "sample_count": 5,
+          "samples": [
+            458484400.0,
+            561887200.0,
+            681056300.0,
+            1261169999.9999998,
+            1561018600.0
+          ],
+          "unit": "ns"
+        }
+      }
+    },
+    {
+      "case_id": "tauri.lifecycle.startup",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "host_state": "embedded"
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 1978800.0,
+          "max": 13266800.0,
+          "median": 7388100.0,
+          "min": 5409300.0,
+          "p95": 13266800.0,
+          "p99": 13266800.0,
+          "sample_count": 5,
+          "samples": [
+            5409300.0,
+            7051700.0,
+            7388100.0,
+            10161500.0,
+            13266800.0
+          ],
+          "unit": "ns"
+        }
+      }
+    },
+    {
+      "case_id": "tauri.lifecycle.shutdown",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "host_state": "embedded"
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 28799.999999999985,
+          "max": 317100.0,
+          "median": 109699.99999999999,
+          "min": 80900.0,
+          "p95": 317100.0,
+          "p99": 317100.0,
+          "sample_count": 5,
+          "samples": [
+            80900.0,
+            84700.0,
+            109699.99999999999,
+            139500.0,
+            317100.0
+          ],
+          "unit": "ns"
+        }
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 1,
+        "payload_bytes": 256
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 0,
+          "median": 0,
+          "min": 0,
+          "p95": 0,
+          "p99": 0,
+          "sample_count": 5,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 1870700,
+          "max": 23223400,
+          "median": 3646800,
+          "min": 1668200,
+          "p95": 23223400,
+          "p99": 23223400,
+          "sample_count": 5,
+          "samples": [
+            1668200,
+            1914000,
+            3646800,
+            5517500,
+            23223400
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 436,
+        "response_frame_bytes": 1017
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 1,
+        "payload_bytes": 4096
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 0,
+          "median": 0,
+          "min": 0,
+          "p95": 0,
+          "p99": 0,
+          "sample_count": 5,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 71100,
+          "max": 1985700,
+          "median": 902600,
+          "min": 808400,
+          "p95": 1985700,
+          "p99": 1985700,
+          "sample_count": 5,
+          "samples": [
+            808400,
+            893100,
+            902600,
+            973700,
+            1985700
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 4277,
+        "response_frame_bytes": 4874
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 1,
+        "payload_bytes": 65536
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 0,
+          "median": 0,
+          "min": 0,
+          "p95": 0,
+          "p99": 0,
+          "sample_count": 5,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 50000,
+          "max": 1900500,
+          "median": 1663800,
+          "min": 1326300,
+          "p95": 1900500,
+          "p99": 1900500,
+          "sample_count": 5,
+          "samples": [
+            1326300,
+            1614200,
+            1663800,
+            1713800,
+            1900500
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 65718,
+        "response_frame_bytes": 66321
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 16,
+        "payload_bytes": 256
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 46875000,
+          "median": 0,
+          "min": 0,
+          "p95": 46875000,
+          "p99": 46875000,
+          "sample_count": 5,
+          "samples": [
+            0,
+            0,
+            0,
+            15625000,
+            46875000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 917100,
+          "max": 29926800,
+          "median": 6792300,
+          "min": 4894000,
+          "p95": 29926800,
+          "p99": 29926800,
+          "sample_count": 5,
+          "samples": [
+            4894000,
+            5875200,
+            6792300,
+            7376300,
+            29926800
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 7010,
+        "response_frame_bytes": 16497
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 16,
+        "payload_bytes": 4096
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 31250000,
+          "median": 0,
+          "min": 0,
+          "p95": 31250000,
+          "p99": 31250000,
+          "sample_count": 5,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            31250000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 187300,
+          "max": 7815800,
+          "median": 5551300,
+          "min": 5070800,
+          "p95": 7815800,
+          "p99": 7815800,
+          "sample_count": 5,
+          "samples": [
+            5070800,
+            5550900,
+            5551300,
+            5738600,
+            7815800
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 68466,
+        "response_frame_bytes": 78138
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 16,
+        "payload_bytes": 65536
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 0,
+          "max": 78125000,
+          "median": 15625000,
+          "min": 0,
+          "p95": 78125000,
+          "p99": 78125000,
+          "sample_count": 5,
+          "samples": [
+            0,
+            15625000,
+            15625000,
+            15625000,
+            78125000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 1855900,
+          "max": 36699900,
+          "median": 10693400,
+          "min": 7906400,
+          "p95": 36699900,
+          "p99": 36699900,
+          "sample_count": 5,
+          "samples": [
+            7906400,
+            8837500,
+            10693400,
+            11211200,
+            36699900
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 1051522,
+        "response_frame_bytes": 1061290
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 56,
+        "payload_bytes": 256
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 31250000,
+          "max": 78125000,
+          "median": 46875000,
+          "min": 15625000,
+          "p95": 78125000,
+          "p99": 78125000,
+          "sample_count": 5,
+          "samples": [
+            15625000,
+            15625000,
+            46875000,
+            62500000,
+            78125000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 4423200,
+          "max": 43051400,
+          "median": 18847300,
+          "min": 14424100,
+          "p95": 43051400,
+          "p99": 43051400,
+          "sample_count": 5,
+          "samples": [
+            14424100,
+            18466000,
+            18847300,
+            25166100,
+            43051400
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 24610,
+        "response_frame_bytes": 58165
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 56,
+        "payload_bytes": 4096
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 31250000,
+          "max": 125000000,
+          "median": 46875000,
+          "min": 15625000,
+          "p95": 125000000,
+          "p99": 125000000,
+          "sample_count": 5,
+          "samples": [
+            15625000,
+            15625000,
+            46875000,
+            62500000,
+            125000000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 2346100,
+          "max": 51028000,
+          "median": 23467000,
+          "min": 15427000,
+          "p95": 51028000,
+          "p99": 51028000,
+          "sample_count": 5,
+          "samples": [
+            15427000,
+            21120900,
+            23467000,
+            24548700,
+            51028000
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 239706,
+        "response_frame_bytes": 273658
+      }
+    },
+    {
+      "case_id": "tauri.bridge.command-roundtrip",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "concurrency": 56,
+        "payload_bytes": 65536
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "cpu_time_ns": {
+          "mad": 46875000,
+          "max": 125000000,
+          "median": 78125000,
+          "min": 31250000,
+          "p95": 125000000,
+          "p99": 125000000,
+          "sample_count": 5,
+          "samples": [
+            31250000,
+            62500000,
+            78125000,
+            125000000,
+            125000000
+          ],
+          "unit": "ns"
+        },
+        "latency_ns": {
+          "mad": 627000,
+          "max": 54074400,
+          "median": 33123900,
+          "min": 30681300,
+          "p95": 54074400,
+          "p99": 54074400,
+          "sample_count": 5,
+          "samples": [
+            30681300,
+            32918300,
+            33123900,
+            33750900,
+            54074400
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 3680402,
+        "response_frame_bytes": 3714690
+      }
+    },
+    {
+      "case_id": "tauri.bridge.events-cursor-page",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "page_limit": 56
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 1600,
+          "max": 536700,
+          "median": 87400,
+          "min": 85800,
+          "p95": 536700,
+          "p99": 536700,
+          "sample_count": 5,
+          "samples": [
+            85800,
+            86300,
+            87400,
+            106900,
+            536700
+          ],
+          "unit": "ns"
+        },
+        "response_frame_bytes": 7913
+      }
+    },
+    {
+      "case_id": "tauri.bridge.frontend-notification",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "retention_capacity": 256
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "event_frame_bytes": 945,
+        "latency_ns": {
+          "mad": 71000,
+          "max": 2496900,
+          "median": 637200,
+          "min": 566200,
+          "p95": 2496900,
+          "p99": 2496900,
+          "sample_count": 5,
+          "samples": [
+            566200,
+            586900,
+            637200,
+            945100,
+            2496900
+          ],
+          "unit": "ns"
+        },
+        "retained_events": 2
+      }
+    },
+    {
+      "case_id": "tauri.bridge.submit-batch",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "batch_size": 1
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 41500,
+          "max": 1362400,
+          "median": 777300,
+          "min": 565500,
+          "p95": 1362400,
+          "p99": 1362400,
+          "sample_count": 5,
+          "samples": [
+            565500,
+            743100,
+            777300,
+            818800,
+            1362400
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 526
+      }
+    },
+    {
+      "case_id": "tauri.bridge.submit-batch",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "batch_size": 32
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 480900,
+          "max": 5398800,
+          "median": 3872000,
+          "min": 3180800,
+          "p95": 5398800,
+          "p99": 5398800,
+          "sample_count": 5,
+          "samples": [
+            3180800,
+            3391100,
+            3872000,
+            4314500,
+            5398800
+          ],
+          "unit": "ns"
+        },
+        "request_frame_bytes": 14562
+      }
+    },
+    {
+      "case_id": "tauri.bridge.task-state-batch-refresh",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "tasks": 253
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 20400,
+          "max": 624900,
+          "median": 604500,
+          "min": 451500,
+          "p95": 624900,
+          "p99": 624900,
+          "sample_count": 5,
+          "samples": [
+            451500,
+            461100,
+            604500,
+            611300,
+            624900
+          ],
+          "unit": "ns"
+        },
+        "response_frame_bytes": 34408
+      }
+    },
+    {
+      "case_id": "tauri.bridge.traces-cursor-page",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "page_limit": 56
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "latency_ns": {
+          "mad": 100,
+          "max": 2300,
+          "median": 2100,
+          "min": 2000,
+          "p95": 2300,
+          "p99": 2300,
+          "sample_count": 5,
+          "samples": [
+            2000,
+            2100,
+            2100,
+            2200,
+            2300
+          ],
+          "unit": "ns"
+        },
+        "response_frame_bytes": 124
+      }
+    },
+    {
+      "case_id": "tauri.resource.concurrent-read",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 118700,
+          "max": 2495000,
+          "median": 1505800,
+          "min": 1387100,
+          "p95": 2495000,
+          "p99": 2495000,
+          "sample_count": 5,
+          "samples": [
+            1387100,
+            1477100,
+            1505800,
+            1803200,
+            2495000
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.concurrent-read",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 163200,
+          "max": 1532900,
+          "median": 1233600,
+          "min": 947900,
+          "p95": 1532900,
+          "p99": 1532900,
+          "sample_count": 5,
+          "samples": [
+            947900,
+            1070400,
+            1233600,
+            1316700,
+            1532900
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.create",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 277600,
+          "max": 5668000,
+          "median": 4420800,
+          "min": 4056500,
+          "p95": 5668000,
+          "p99": 5668000,
+          "sample_count": 5,
+          "samples": [
+            4056500,
+            4143200,
+            4420800,
+            4592800,
+            5668000
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.create",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 9562000,
+          "max": 183913900,
+          "median": 161294300,
+          "min": 150866800,
+          "p95": 183913900,
+          "p99": 183913900,
+          "sample_count": 5,
+          "samples": [
+            150866800,
+            151732300,
+            161294300,
+            164097700,
+            183913900
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.open",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 3800,
+          "max": 97300,
+          "median": 36300,
+          "min": 31900,
+          "p95": 97300,
+          "p99": 97300,
+          "sample_count": 5,
+          "samples": [
+            31900,
+            35700,
+            36300,
+            40100,
+            97300
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.open",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 13200,
+          "max": 64900,
+          "median": 51300,
+          "min": 31200,
+          "p95": 64900,
+          "p99": 64900,
+          "sample_count": 5,
+          "samples": [
+            31200,
+            38100,
+            51300,
+            64300,
+            64900
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.preview-protocol",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 44900,
+          "max": 594600,
+          "median": 509800,
+          "min": 463900,
+          "p95": 594600,
+          "p99": 594600,
+          "sample_count": 5,
+          "samples": [
+            463900,
+            465200,
+            509800,
+            554700,
+            594600
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.preview-protocol",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 1122200,
+          "max": 24886700,
+          "median": 22211500,
+          "min": 21089300,
+          "p95": 24886700,
+          "p99": 24886700,
+          "sample_count": 5,
+          "samples": [
+            21089300,
+            22186300,
+            22211500,
+            24435000,
+            24886700
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.read-chunk",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 89400,
+          "max": 993800,
+          "median": 847100,
+          "min": 704200,
+          "p95": 993800,
+          "p99": 993800,
+          "sample_count": 5,
+          "samples": [
+            704200,
+            767000,
+            847100,
+            936500,
+            993800
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.read-chunk",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 162100,
+          "max": 1840900,
+          "median": 806300,
+          "min": 644200,
+          "p95": 1840900,
+          "p99": 1840900,
+          "sample_count": 5,
+          "samples": [
+            644200,
+            689300,
+            806300,
+            1659300,
+            1840900
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.release",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 1048576
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197299,
+        "descriptor_frame_bytes": 623,
+        "latency_ns": {
+          "mad": 100,
+          "max": 3100,
+          "median": 2300,
+          "min": 1900,
+          "p95": 3100,
+          "p99": 3100,
+          "sample_count": 5,
+          "samples": [
+            1900,
+            2200,
+            2300,
+            2400,
+            3100
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    },
+    {
+      "case_id": "tauri.resource.release",
+      "correctness": {
+        "counters": {},
+        "passed": true
+      },
+      "dimensions": {
+        "chunk_bytes": 65536,
+        "resource_bytes": 67108864
+      },
+      "measurement_mode": "time",
+      "metrics": {
+        "chunk_frame_bytes": 197301,
+        "descriptor_frame_bytes": 624,
+        "latency_ns": {
+          "mad": 400,
+          "max": 8000,
+          "median": 6600,
+          "min": 5600,
+          "p95": 8000,
+          "p99": 8000,
+          "sample_count": 5,
+          "samples": [
+            5600,
+            6200,
+            6600,
+            6800,
+            8000
+          ],
+          "unit": "ns"
+        },
+        "preview_frame_bytes": 209
+      }
+    }
+  ],
+  "correctness": {
+    "counters": {
+      "failures": 0
+    },
+    "passed": true
+  },
+  "deployment": "tauri-embedded",
+  "environment": {
+    "architecture": "AMD64",
+    "cpu_model": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
+    "cpu_topology": "logical=16",
+    "kernel": "11",
+    "os": "Windows",
+    "power_mode": "local-unspecified",
+    "ram_bytes": 1,
+    "release_profile": {
+      "codegen_units": 16,
+      "lto": false,
+      "name": "release"
+    },
+    "runner_configuration": {
+      "mode": "reference",
+      "samples": 5,
+      "warmup": 1
+    },
+    "target_triple": "x86_64-pc-windows-msvc",
+    "toolchains": {
+      "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+      "python": "3.14.3",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)"
+    },
+    "virtualization": "local-unspecified",
+    "webview": {
+      "backend": "not-instantiated",
+      "boundary": "executable Tauri command/event adapter; OS WebView IPC excluded"
+    }
+  },
+  "environment_id": "748e438453c8ddd18b74e18a7adfc9674dfc8b2eaf43af77eac7376ac78a865d",
+  "feature_set": [
+    "embedded-host",
+    "task-pump-notification",
+    "executable-command-event-adapter",
+    "bounded-resource-chunks",
+    "preview-protocol"
+  ],
+  "gates": [
+    {
+      "actual": 0,
+      "gate_id": "tauri.correctness-and-no-poller",
+      "limit": 0,
+      "passed": true,
+      "unit": "failures"
+    }
+  ],
+  "generated_at": "2026-07-19T05:59:53.629853Z",
+  "measurement_boundary": "Rust embedded Host plus executable Tauri-equivalent command/event serialization; real OS WebView IPC and rendering excluded",
+  "metadata": {
+    "case_count": 36,
+    "failures": [],
+    "public_runner_gate": "correctness-only",
+    "webview_claim": "No full WebView roundtrip claim is made by this executable fixture"
+  },
+  "report_id": "tauri-host-reference-51912",
+  "repository_revisions": {
+    "MutsukiCore": {
+      "dirty": false,
+      "remote": "https://github.com/sena-nana/MutsukiCore.git",
+      "revision": "94ba3a81d6bf4fb1263007766a64ac8be3fec1ab"
+    },
+    "MutsukiTauriHost": {
+      "dirty": false,
+      "remote": "https://github.com/sena-nana/MutsukiTauriHost.git",
+      "revision": "01eefe0a88ea36388aeacc72dcfe69ff25b1f81f"
+    }
+  },
+  "revision_lock_hash": "547b5c6bc1eb56cdc17788cea05ac95634d5616e64e6da9ef2793c9866f9bdcd",
+  "sampling": {
+    "process_runs": 5,
+    "samples_per_process": 1,
+    "warmup_iterations": 1
+  },
+  "schema_version": "mutsuki.performance.report/v1",
+  "suite_version": "tauri-host-performance/v1",
+  "workload_version": "runner-fixtures/v1"
+}

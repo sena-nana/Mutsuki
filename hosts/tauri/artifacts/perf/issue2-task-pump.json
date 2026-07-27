@@ -1,0 +1,42 @@
+{
+  "schema": "mutsuki.tauri.task_pump_benchmark.v1",
+  "generated_at_unix_ms": 1784113044933,
+  "os": "macos",
+  "arch": "aarch64",
+  "idle_window_ms": 500,
+  "scenarios": [
+    {
+      "active_tasks": 1,
+      "setup_latency_ms": 0.6456660000000001,
+      "idle_wall_ms": 505.0305000000001,
+      "idle_cpu_ms": 0.034,
+      "idle_actor_commands": 0,
+      "idle_task_status_queries": 0,
+      "idle_task_state_batch_queries": 0,
+      "completion_latency_ms": 0.499375,
+      "completion_actor_commands": 6
+    },
+    {
+      "active_tasks": 100,
+      "setup_latency_ms": 4.792791,
+      "idle_wall_ms": 502.970708,
+      "idle_cpu_ms": 0.036000000000000004,
+      "idle_actor_commands": 0,
+      "idle_task_status_queries": 0,
+      "idle_task_state_batch_queries": 0,
+      "completion_latency_ms": 0.354875,
+      "completion_actor_commands": 6
+    },
+    {
+      "active_tasks": 1000,
+      "setup_latency_ms": 32.794584,
+      "idle_wall_ms": 505.021125,
+      "idle_cpu_ms": 0.026,
+      "idle_actor_commands": 0,
+      "idle_task_status_queries": 0,
+      "idle_task_state_batch_queries": 0,
+      "completion_latency_ms": 0.9802089999999999,
+      "completion_actor_commands": 6
+    }
+  ]
+}
