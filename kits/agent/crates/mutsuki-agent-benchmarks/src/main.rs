@@ -4,7 +4,8 @@ mod measurement;
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use harness::{
-    agent_case_sample, cancel_sample, context_sample, failure_retry_sample, memory_route_sample,
+    agent_case_sample, cancel_sample, checkpoint_codec_sample, client_link_sample, context_sample,
+    distributed_placement_sample, failure_retry_sample, lsp_query_sample, memory_route_sample,
     parallel_tools_sample, session_100_sample, wait_resume_sample,
 };
 use measurement::{CountingAllocator, RawCase, raw_case};
@@ -101,6 +102,34 @@ fn main() {
                 .collect(),
         ));
     }
+    cases.push(raw_case(
+        "agent.lsp-query-100",
+        json!({"queries": 100, "transport": "in-memory-json-rpc"}),
+        (0..regular_samples)
+            .map(|_| lsp_query_sample(100))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.client-link-query-100",
+        json!({"queries": 100, "transport": "mutsuki-link-memory-control-stream"}),
+        (0..regular_samples)
+            .map(|_| client_link_sample(100))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.distributed-placement-100",
+        json!({"placements": 100, "scheduler": "mutsuki-distributed"}),
+        (0..regular_samples)
+            .map(|_| distributed_placement_sample(100))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.checkpoint-codec-100",
+        json!({"roundtrips": 100, "checkpoint": "full-durable-session"}),
+        (0..regular_samples)
+            .map(|_| checkpoint_codec_sample(100))
+            .collect(),
+    ));
     cases.push(raw_case(
         "agent.memory-route",
         json!({"candidates": 128, "selected": 8}),

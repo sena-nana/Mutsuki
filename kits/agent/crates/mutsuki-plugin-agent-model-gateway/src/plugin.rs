@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
     AgentModelGenerateProtocol, AgentModelStreamProtocol, orchestration_runner, result_event,
     runtime_failure, task_payload, unsupported_protocol,

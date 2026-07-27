@@ -1,6 +1,6 @@
 use std::{thread, time::Duration};
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentError, AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult,
     AgentModelStopReason, AgentResult, AgentRole, AgentToolCall, AgentToolDescriptor,
     AgentToolExecuteRequest, AgentToolExecuteResult, AgentUsage, ToolSideEffect,

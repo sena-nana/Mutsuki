@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentMemoryActivateRequest, AgentMemoryQueryRequest, AgentMemoryWriteRequest,
 };
 use mutsuki_runtime_sdk::{AsyncRunnerContext, CallFuture};

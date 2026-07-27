@@ -1,5 +1,5 @@
 use crate::ToolRegistry;
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
     AgentToolExecuteProtocol, AgentToolListProtocol, orchestration_runner, result_event,
     runtime_failure, service_result_event, task_payload, unsupported_protocol,
@@ -52,14 +52,8 @@ async fn run_task(
                 .get(&request.name)
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             if descriptor.requires_approval {
-                return Err(runtime_failure(
-                    PLUGIN_ID,
-                    &task.task_id,
-                    AgentError::new(
-                        "agent.approval_required",
-                        format!("tool `{}` requires approval", descriptor.name),
-                    ),
-                ));
+                validate_approval(&request, &descriptor)
+                    .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             }
             let outcome = ctx
                 .call_raw(descriptor.target_protocol_id.clone(), request.input.clone())
@@ -69,6 +63,39 @@ async fn run_task(
         }
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
     }
+}
+
+fn validate_approval(
+    execution: &AgentToolExecuteRequest,
+    descriptor: &AgentToolDescriptor,
+) -> AgentResult<()> {
+    let approval = execution.approval.as_ref().ok_or_else(|| {
+        AgentError::new(
+            "agent.approval_required",
+            format!("tool `{}` requires approval", descriptor.name),
+        )
+    })?;
+    let call_id = execution.call_id.as_deref().unwrap_or_default();
+    let session_id = execution.session_id.as_deref().unwrap_or_default();
+    let request = &approval.request;
+    let decision = &approval.decision;
+    if call_id.is_empty()
+        || session_id.is_empty()
+        || request.session_id != session_id
+        || request.action_id != call_id
+        || request.tool != descriptor.name
+        || decision.session_id != request.session_id
+        || decision.turn_id != request.turn_id
+        || decision.action_id != request.action_id
+        || decision.version != request.version
+        || decision.decision != PermissionDecisionKind::Approved
+    {
+        return Err(AgentError::new(
+            "agent.approval.invalid_binding",
+            "tool approval must be approved and bind the session, turn, action, version and tool",
+        ));
+    }
+    Ok(())
 }
 
 fn tool_result(
@@ -148,5 +175,45 @@ mod tests {
 
         assert!(result.output.is_none());
         assert_eq!(result.output_ref.as_deref(), Some("resource:tool-output"));
+    }
+
+    #[test]
+    fn approval_is_bound_to_the_exact_tool_action() {
+        let descriptor = AgentToolDescriptor {
+            requires_approval: true,
+            ..AgentToolDescriptor::new("write", "workspace.write@1", "write")
+        };
+        let request = PermissionRequest {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            action_id: "call".into(),
+            tool: "write".into(),
+            side_effect: ToolSideEffect::WorkspaceWrite,
+            summary: "write".into(),
+            version: 3,
+        };
+        let execution = AgentToolExecuteRequest {
+            call_id: Some("call".into()),
+            name: "write".into(),
+            input: serde_json::json!({}),
+            session_id: Some("session".into()),
+            approval: Some(AgentToolApproval {
+                request: request.clone(),
+                decision: PermissionDecision {
+                    session_id: "session".into(),
+                    turn_id: "turn".into(),
+                    action_id: "call".into(),
+                    version: 3,
+                    decision: PermissionDecisionKind::Approved,
+                },
+            }),
+        };
+        validate_approval(&execution, &descriptor).unwrap();
+        let mut stale = execution;
+        stale.approval.as_mut().unwrap().decision.version = 2;
+        assert_eq!(
+            validate_approval(&stale, &descriptor).unwrap_err().code,
+            "agent.approval.invalid_binding"
+        );
     }
 }

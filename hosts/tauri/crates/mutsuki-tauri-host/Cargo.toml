@@ -27,4 +27,8 @@ zip.workspace = true
 
 [dev-dependencies]
 cpu-time.workspace = true
+mutsuki-agent-bundle.workspace = true
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-sdk.workspace = true
+mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-tauri-abi-fixture = { path = "../../fixtures/abi-plugin" }

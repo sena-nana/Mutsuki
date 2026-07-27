@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentMemoryQueryRequest, AgentMemoryWriteRequest, AgentMessage, AgentModelGenerateRequest,
     AgentModelStreamRequest, AgentPromptRenderRequest, AgentPromptTemplate,
     AgentSessionAppendRequest, AgentSessionCreateRequest, AgentToolExecuteRequest,
@@ -76,7 +76,7 @@ pub fn session_round_trip() {
         })
         .expect("second session can append independently");
     let first = store
-        .get(mutsuki_agent_protocol::AgentSessionGetRequest {
+        .get(mutsuki_agent_contracts::AgentSessionGetRequest {
             session_id: session.session_id,
         })
         .expect("first session remains readable");
@@ -98,6 +98,7 @@ pub fn tool_round_trip() {
         name: "echo".into(),
         input: serde_json::json!({"value": "hello"}),
         session_id: Some("session-a".into()),
+        approval: None,
     });
     assert_eq!(result.output, Some(serde_json::json!({"value": "hello"})));
     assert!(result.approved);

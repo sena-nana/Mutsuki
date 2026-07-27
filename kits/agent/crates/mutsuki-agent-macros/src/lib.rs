@@ -24,8 +24,8 @@ pub fn agent_tool(args: TokenStream, input: TokenStream) -> TokenStream {
     quote! {
         #function
 
-        #vis fn #descriptor_ident() -> ::mutsuki_agent_protocol::AgentToolDescriptor {
-            let mut descriptor = ::mutsuki_agent_protocol::AgentToolDescriptor::new(
+        #vis fn #descriptor_ident() -> ::mutsuki_agent_contracts::AgentToolDescriptor {
+            let mut descriptor = ::mutsuki_agent_contracts::AgentToolDescriptor::new(
                 #name,
                 #target,
                 #description,
@@ -73,7 +73,7 @@ impl Parse for AgentToolAttrs {
         let mut name = None;
         let mut target = None;
         let mut description = None;
-        let mut side_effect = quote!(::mutsuki_agent_protocol::ToolSideEffect::None);
+        let mut side_effect = quote!(::mutsuki_agent_contracts::ToolSideEffect::None);
         let mut requires_approval = false;
         let mut permissions = Vec::new();
 
@@ -88,18 +88,18 @@ impl Parse for AgentToolAttrs {
                 Some("side_effect") => {
                     let value = string_expr(&pair.value)?;
                     side_effect = match value.as_str() {
-                        "none" => quote!(::mutsuki_agent_protocol::ToolSideEffect::None),
+                        "none" => quote!(::mutsuki_agent_contracts::ToolSideEffect::None),
                         "workspace_read" => {
-                            quote!(::mutsuki_agent_protocol::ToolSideEffect::WorkspaceRead)
+                            quote!(::mutsuki_agent_contracts::ToolSideEffect::WorkspaceRead)
                         }
                         "workspace_write" => {
-                            quote!(::mutsuki_agent_protocol::ToolSideEffect::WorkspaceWrite)
+                            quote!(::mutsuki_agent_contracts::ToolSideEffect::WorkspaceWrite)
                         }
                         "external_read" => {
-                            quote!(::mutsuki_agent_protocol::ToolSideEffect::ExternalRead)
+                            quote!(::mutsuki_agent_contracts::ToolSideEffect::ExternalRead)
                         }
                         "external_write" => {
-                            quote!(::mutsuki_agent_protocol::ToolSideEffect::ExternalWrite)
+                            quote!(::mutsuki_agent_contracts::ToolSideEffect::ExternalWrite)
                         }
                         other => {
                             return Err(syn::Error::new_spanned(

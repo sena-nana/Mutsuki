@@ -1,0 +1,8 @@
+[package]
+name = "mutsuki-agent-adapter-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use mutsuki_agent_protocol::{AgentMessage, AgentRole};
+use mutsuki_agent_contracts::{AgentMessage, AgentRole};
 
 #[derive(Clone, Debug)]
 pub struct MessageBuilder {

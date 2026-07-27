@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use mutsuki_agent_protocol::{AgentToolDescriptor, ToolSideEffect};
+use mutsuki_agent_contracts::{AgentToolDescriptor, ToolSideEffect};
 use mutsuki_runtime_sdk::SdkProtocol;
 
 #[derive(Clone, Debug)]

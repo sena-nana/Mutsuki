@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::{AgentModelGenerateRequest, AgentModelStreamRequest};
+use mutsuki_agent_contracts::{AgentModelGenerateRequest, AgentModelStreamRequest};
 use mutsuki_runtime_sdk::{AsyncRunnerContext, CallFuture};
 
 use crate::{AgentModelGenerateProtocol, AgentModelStreamProtocol};

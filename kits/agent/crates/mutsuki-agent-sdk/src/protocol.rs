@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_contracts::*;
 use mutsuki_runtime_sdk::{ProtocolSpec, SdkProtocol};
 
 macro_rules! protocol_marker {

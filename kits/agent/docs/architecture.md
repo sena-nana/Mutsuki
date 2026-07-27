@@ -1,25 +1,61 @@
-# Architecture
+# AgentKit architecture
 
-MutsukiAgentKit 是 Core 之上的高层 Agent 能力库，不是 Host 补丁。
+AgentKit 是 MutsukiCore 之上的三个一级领域，不是第二套 Core 或产品 Host。
 
 ```text
-Product Host / platform adapters
-  -> AgentKit (protocols · SDK · plugins)
-  -> StdPlugins
-  -> MutsukiCore (batch-first TaskPool)
+Product profile / Persona compiler / UI
+                 |
+       AgentRuntimeProfile
+                 |
+Runtime -------- Adapter -------- Plugin
+ session          protocol         tool/context/hook
+ turn             provider         policy/command/service
+ approval         stream
+ budget
+                 |
+ Mutsuki Task / Runner / Resource / Capability / Plugin lifecycle
+                 |
+ HostRuntime / MutsukiLink / Database service / DistributedHost
 ```
 
-Runtime 路径：orchestration runner 通过 `TaskAwaitRunnerAdapter` 等待子 task；外部 model future 由 Host 通过 `AsyncBatchHandler` 执行。descriptor 声明 batch / payload / resources / ordering / control。
+## Runtime
 
-## 红线
+`mutsuki-agent-runtime` 拥有 session coordinator、turn 状态、approval、budget、checkpoint
+语义和 `AgentRuntimeProfile` validation。昂贵或可取消的步骤由 orchestration runner 通过
+`TaskAwaitRunnerAdapter` 提交回 Core；Runtime 不拥有 scheduler、worker、ResultRouter
+或通用重试器。
 
-- 不复制 scheduler；不接管语言 event loop
-- memory / stream / LLM output 用 `ResourceRef` / `ResourceCellRef`
-- LLM / 工具副作用走 effectful runner 或标准 plugin，不本地直调绕过 TaskPool
-- 只依赖 MutsukiCore runtime contracts/SDK，不依赖产品 Host
-- 不读取配置文件、环境变量或 Secret backend；产品装配层显式构造并注入服务
-- 不声明 Core 内建 Agent 能力
+## Adapter
 
-## 非目标
+`mutsuki-agent-adapter-api` 定义统一请求、流事件、Provider instance descriptor 和错误
+分类。具体协议映射由 Adapter package 实现为 Mutsuki `AsyncBatchHandler`。Provider 品牌、
+端点和凭据是产品注入的实例数据，不进入 Agent 公共 contract。
 
-不实现 Core workflow / actor / TaskGroup；不把商业 LLM 集成声明为 Core 功能。
+## Plugin
+
+`mutsuki-agent-plugin-api` 定义 tool、context provider、hook、policy、command 和 service
+贡献。装载、依赖、权限、generation、drain-and-swap 和 service registry 都由 Mutsuki
+插件生命周期兑现。LSP 是共享 service + Plugin 的参考高级实现，Host 不认识 LSP 语义。
+
+## 状态与基础设施
+
+- 消息、快照、流和大型工具结果使用 `ResourceRef` / `ResourceCellRef`。
+- durable checkpoint 经 `mutsuki-protocol-db` service，不内置数据库。
+- remote task/sub-agent 映射到 DistributedHost placement，不复制选主与 scheduler。
+- client wire 运行在 MutsukiLink control stream，不建立 Agent 专属网络 server。
+- ServiceHost/TauriHost 只提供公开 runner、async handler、service 和 bridge 装配入口。
+
+## 产品边界
+
+产品拥有 workspace/file/selection/cursor、Persona、默认 Provider、Secret、diff preview、
+approval UI、session 列表和业务 command。Persona 可编译为 system instructions、prompt
+fragments、allowlist 和 policy，但 AgentKit 不定义 Persona 类型，也不需要
+`LiliaCodeCore`。
+
+## 不变量
+
+- 不绕过 TaskPool 直调模型或工具。
+- 不复制 scheduler、Host lifecycle、Link transport、数据库引擎或分布式协调器。
+- 不通过字符串前缀承担关键路由；使用 protocol/descriptor/typed DTO。
+- production bundle 不注册 fake/mock Provider 或 fallback。
+- feature flag 不改变同名 contract 的基础语义。

@@ -1,5 +1,5 @@
 pub mod plugin;
-pub mod registry;
 
+#[deprecated(note = "Tool routing moved to mutsuki-agent-runtime")]
+pub use mutsuki_agent_runtime::ToolRegistry;
 pub use plugin::*;
-pub use registry::*;

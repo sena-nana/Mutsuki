@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentError, AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult,
     AgentModelStopReason, AgentModelStreamRequest, AgentModelStreamResult, AgentResult, AgentRole,
     AgentToolCall, AgentUsage,
@@ -90,7 +90,7 @@ impl ModelGateway {
         Ok(self.store_stream(generated))
     }
 
-    pub fn read_stream(&self, stream: &mutsuki_agent_protocol::ResourceRef) -> Option<String> {
+    pub fn read_stream(&self, stream: &mutsuki_agent_contracts::ResourceRef) -> Option<String> {
         self.streams
             .lock()
             .expect("model stream mutex poisoned")

@@ -1,6 +1,14 @@
 use crate::config::{MutsukiTauriConfig, PathsConfig};
 use crate::echo::{ECHO_PROTOCOL_ID, ECHO_RUNNER_ID, EchoRunner};
 use crate::{HostError, MutsukiTauriHost};
+use mutsuki_agent_bundle::{AgentLoop, AgentPluginBundle, AgentRuntimeRunner, ModelGateway};
+use mutsuki_agent_contracts::{
+    AGENT_RUN_PROTOCOL, AgentError, AgentMessage, AgentModelGenerateRequest,
+    AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentRunRequest, AgentToolCall,
+    AgentToolDescriptor, AgentUsage,
+};
+use mutsuki_agent_sdk::orchestration_runner;
+use mutsuki_plugin_agent_model_gateway::{ModelProvider, ModelProviderFuture};
 use mutsuki_runtime_contracts::{
     ArtifactType, CancelPolicy, CompletionBatch, ERR_RUNNER_NOT_FOUND, EntryCompletion,
     ExecutionClass, InvocationMode, LifecyclePolicy, ObservabilityProfile, PermissionGrant,
@@ -14,6 +22,7 @@ use mutsuki_runtime_host::{
     DefaultScheduler, ExecutionDomainConfig, HostRuntimeConfig, RunnerLimits, ScheduleInput,
     SchedulerPolicy,
 };
+use mutsuki_runtime_sdk::{ProtocolSpec, SdkProtocol, TaskAwaitRunnerAdapter};
 use mutsuki_tauri_bridge::{
     ApprovalAttribution, ApprovalDecision, ApprovalResponse, FrontendContext, FrontendTaskRequest,
     MutsukiFrontendEvent,
@@ -114,6 +123,178 @@ fn explicit_echo_runner_still_runs_task() {
         })
         .is_ok()
     );
+}
+
+const TAURI_AGENT_TOOL_PROTOCOL: &str = "mutsuki.tauri.agent.test/tool@1";
+const TAURI_AGENT_TOOL_PLUGIN_ID: &str = "mutsuki.tauri.agent.test";
+const TAURI_AGENT_TOOL_RUNNER_ID: &str = "mutsuki.tauri.agent.test.runner";
+
+#[derive(Clone, Debug)]
+struct TauriAgentToolProtocol;
+
+impl SdkProtocol for TauriAgentToolProtocol {
+    const PROTOCOL_ID: &'static str = TAURI_AGENT_TOOL_PROTOCOL;
+}
+
+impl ProtocolSpec for TauriAgentToolProtocol {}
+
+#[derive(Clone)]
+struct TauriAgentProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ModelProvider for TauriAgentProvider {
+    fn provider_id(&self) -> &str {
+        "tauri-scripted"
+    }
+
+    fn generate(
+        &self,
+        request: AgentModelGenerateRequest,
+    ) -> Result<AgentModelGenerateResult, AgentError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let completed_tool = request
+            .messages
+            .iter()
+            .any(|message| message.role == AgentRole::Tool);
+        Ok(AgentModelGenerateResult {
+            message: AgentMessage::assistant(if completed_tool {
+                "tauri-agent-final"
+            } else {
+                ""
+            }),
+            stop_reason: if completed_tool {
+                AgentModelStopReason::Stop
+            } else {
+                AgentModelStopReason::ToolCalls
+            },
+            tool_calls: if completed_tool {
+                Vec::new()
+            } else {
+                vec![AgentToolCall {
+                    call_id: "tauri-tool-call".into(),
+                    name: "workspace.inspect".into(),
+                    input: json!({"path": "."}),
+                }]
+            },
+            usage: AgentUsage {
+                input_tokens: 2,
+                output_tokens: 1,
+                total_tokens: 3,
+            },
+            cost_microunits: 1,
+            raw: None,
+            output_resource: None,
+        })
+    }
+
+    fn generate_async(&self, request: AgentModelGenerateRequest) -> ModelProviderFuture {
+        let result = self.generate(request);
+        Box::pin(async move { result })
+    }
+}
+
+#[test]
+fn agent_runtime_factories_run_two_stage_loop_and_survive_reload() {
+    let workspace = TestWorkspace::new("agent-runtime");
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let tool_calls = Arc::new(AtomicUsize::new(0));
+    let model = ModelGateway::with_default_provider("tauri-scripted");
+    model.register(Arc::new(TauriAgentProvider {
+        calls: model_calls.clone(),
+    }));
+    let bundle = AgentPluginBundle {
+        agent_loop: AgentLoop::default().with_default_model("tauri-scripted-model"),
+        model,
+        ..Default::default()
+    };
+    bundle
+        .tools
+        .register(AgentToolDescriptor::new(
+            "workspace.inspect",
+            TAURI_AGENT_TOOL_PROTOCOL,
+            "Reads a public workspace view",
+        ))
+        .expect("tool registration succeeds");
+    bundle
+        .context
+        .set_tools(bundle.tools.list(Default::default()).tools);
+    bundle
+        .context
+        .set_system_prompt("Use the public workspace inspection tool.");
+
+    let mut builder = MutsukiTauriHost::builder().config(workspace.config());
+    for kind in AgentRuntimeRunner::ALL {
+        let bundle = bundle.clone();
+        builder = builder
+            .runtime_client_runner_factory(move |client| bundle.runtime_runner(kind, client));
+    }
+    let model_bundle = bundle.clone();
+    builder = builder.async_handler_factory(move || model_bundle.model_async_handler());
+    let tool_descriptor =
+        orchestration_runner(TAURI_AGENT_TOOL_RUNNER_ID, TAURI_AGENT_TOOL_PLUGIN_ID)
+            .accepts::<TauriAgentToolProtocol>()
+            .build();
+    builder = builder.runtime_client_runner_factory({
+        let tool_calls = tool_calls.clone();
+        move |client| {
+            let descriptor = tool_descriptor.clone();
+            let tool_calls = tool_calls.clone();
+            Box::new(TaskAwaitRunnerAdapter::new(
+                descriptor,
+                client,
+                Box::new(move |_ctx, task| {
+                    let tool_calls = tool_calls.clone();
+                    Box::pin(async move {
+                        tool_calls.fetch_add(1, Ordering::SeqCst);
+                        let mut result = RunnerResult::completed(task.task_id);
+                        result.output = Some(json!({"path": task.payload["path"]}));
+                        Ok(result)
+                    })
+                }),
+            ))
+        }
+    });
+    let host = builder.build().expect("Agent-enabled TauriHost builds");
+
+    run_tauri_agent(&host, "task:tauri-agent:first");
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+
+    host.reload_plugins(Default::default(), Duration::from_secs(1))
+        .expect("Agent runtime factories reload");
+    run_tauri_agent(&host, "task:tauri-agent:reloaded");
+    assert_eq!(model_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 2);
+}
+
+fn run_tauri_agent(host: &MutsukiTauriHost, task_id: &str) {
+    let result = host
+        .call(FrontendTaskRequest {
+            protocol_id: AGENT_RUN_PROTOCOL.into(),
+            payload: serde_json::to_value(AgentRunRequest::new(
+                "tauri.agent.profile",
+                vec![AgentMessage::user("inspect the workspace")],
+            ))
+            .expect("request serializes"),
+            task_id: Some(task_id.into()),
+            trace_id: Some(format!("trace:{task_id}")),
+            correlation_id: None,
+            idempotency_key: None,
+            target_binding_id: None,
+            runner_hint: None,
+            input_refs: Vec::new(),
+            priority: 0,
+            context: Default::default(),
+        })
+        .expect("TauriHost Agent run completes");
+    assert!(matches!(
+        result.outcome,
+        Some(TaskOutcome::Completed {
+            task_id: completed,
+            ..
+        }) if completed == task_id
+    ));
 }
 
 #[test]

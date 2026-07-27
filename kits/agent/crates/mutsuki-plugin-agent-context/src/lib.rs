@@ -1,5 +1,5 @@
-pub mod builder;
 pub mod plugin;
 
-pub use builder::*;
+#[deprecated(note = "Context assembly moved to mutsuki-agent-runtime")]
+pub use mutsuki_agent_runtime::ContextBuilder;
 pub use plugin::*;

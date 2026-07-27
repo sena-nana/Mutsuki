@@ -139,9 +139,17 @@ mutsuki-distributed-control-client = { path = "hosts/distributed/crates/mutsuki-
 mutsuki-distributed-host-adapter = { path = "hosts/distributed/crates/mutsuki-distributed-host-adapter" }
 mutsuki-distributed-runtime = { path = "hosts/distributed/crates/mutsuki-distributed-runtime" }
 
+mutsuki-agent-adapter-api = { path = "kits/agent/crates/mutsuki-agent-adapter-api" }
+mutsuki-agent-adapter-openai = { path = "kits/agent/crates/mutsuki-agent-adapter-openai" }
 mutsuki-agent-bundle = { path = "kits/agent/crates/mutsuki-agent-bundle" }
+mutsuki-agent-client = { path = "kits/agent/crates/mutsuki-agent-client" }
+mutsuki-agent-contracts = { path = "kits/agent/crates/mutsuki-agent-contracts" }
+mutsuki-agent-distributed-integration = { path = "kits/agent/crates/mutsuki-agent-distributed-integration" }
 mutsuki-agent-macros = { path = "kits/agent/crates/mutsuki-agent-macros" }
-mutsuki-agent-protocol = { path = "kits/agent/crates/mutsuki-agent-protocol" }
+mutsuki-agent-plugin-api = { path = "kits/agent/crates/mutsuki-agent-plugin-api" }
+mutsuki-agent-plugin-conformance = { path = "kits/agent/crates/mutsuki-agent-plugin-conformance" }
+mutsuki-agent-plugin-lsp = { path = "kits/agent/crates/mutsuki-agent-plugin-lsp" }
+mutsuki-agent-runtime = { path = "kits/agent/crates/mutsuki-agent-runtime" }
 mutsuki-agent-sdk = { path = "kits/agent/crates/mutsuki-agent-sdk" }
 mutsuki-plugin-agent-model-gateway = { path = "kits/agent/crates/mutsuki-plugin-agent-model-gateway" }
 

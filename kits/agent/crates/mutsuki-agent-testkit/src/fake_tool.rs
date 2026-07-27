@@ -1,6 +1,6 @@
 pub use mutsuki_plugin_agent_tool_router::ToolRegistry;
 
-use mutsuki_agent_protocol::{
+use mutsuki_agent_contracts::{
     AgentToolDescriptor, AgentToolExecuteRequest, AgentToolExecuteResult, ToolSideEffect,
 };
 

@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::AgentResult;
+use mutsuki_agent_contracts::AgentResult;
 use mutsuki_agent_sdk::prelude::*;
 use serde::{Deserialize, Serialize};
 

@@ -1,5 +1,5 @@
 pub mod plugin;
-pub mod render;
 
+#[deprecated(note = "Prompt assembly moved to mutsuki-agent-runtime")]
+pub use mutsuki_agent_runtime::PromptRegistry;
 pub use plugin::*;
-pub use render::*;

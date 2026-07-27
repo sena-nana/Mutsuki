@@ -1,6 +1,6 @@
 # Protocol
 
-协议 id 在 `crates/mutsuki-agent-protocol`，SDK marker 在 `crates/mutsuki-agent-sdk/src/protocol.rs`。
+协议 id 在 `crates/mutsuki-agent-contracts`，SDK marker 在 `crates/mutsuki-agent-sdk/src/protocol.rs`。
 
 ## Issue #1 映射
 

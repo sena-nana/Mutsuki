@@ -1,15 +1,20 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-use mutsuki_agent_protocol::*;
+use mutsuki_agent_client::{AgentClient, AgentLinkClient, AgentLinkServer, InProcessAgentService};
+use mutsuki_agent_contracts::*;
+use mutsuki_agent_distributed_integration::{AgentCapabilityResolver, distributed_request};
+use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
 use mutsuki_agent_testkit::{
     BENCHMARK_FIXED_SEED, BENCHMARK_MODEL_ID, BENCHMARK_TOOL_NAME, BENCHMARK_TOOL_PROTOCOL,
     BenchmarkModelProvider, SimulatedLatency, benchmark_tool_descriptor, execute_benchmark_tool,
 };
+use mutsuki_distributed_contracts::{CapabilityBits, NodeId};
+use mutsuki_link_core::{EndpointId, MemoryTransportConfig, memory_transport_pair};
 use mutsuki_plugin_agent_context::ContextBuilder;
 use mutsuki_plugin_agent_loop::AgentLoop;
 use mutsuki_plugin_agent_memory_router::MemoryRouter;
@@ -17,8 +22,9 @@ use mutsuki_plugin_agent_model_gateway::ModelGateway;
 use mutsuki_plugin_agent_session::SessionStore;
 use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerContext,
-    RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome, WorkBatch,
+    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, ResourceAccess,
+    ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic, RunnerContext, RunnerResult,
+    RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome, WorkBatch,
     WorkResourcePlan,
 };
 use mutsuki_runtime_core::Runner;
@@ -76,6 +82,7 @@ struct Harness {
     gateway: ModelGateway,
     tools: ToolRegistry,
     sessions: SessionStore,
+    context: ContextBuilder,
     latency: SimulatedLatency,
 }
 
@@ -92,6 +99,7 @@ impl Harness {
             gateway,
             tools,
             sessions: SessionStore::default(),
+            context: ContextBuilder::default(),
             latency,
         }
     }
@@ -135,6 +143,12 @@ impl Harness {
                             self.dispatch(child, counts);
                         }
                     } else {
+                        let tool_batch = result
+                            .tasks
+                            .iter()
+                            .filter(|task| task.protocol_id == AGENT_TOOL_EXECUTE_PROTOCOL)
+                            .count() as u64;
+                        counts.max_tool_inflight = counts.max_tool_inflight.max(tool_batch);
                         for child in result.tasks {
                             counts.tasks += 1;
                             if delay_pending {
@@ -167,6 +181,8 @@ impl Harness {
         let outcome = match task.protocol_id.as_str() {
             AGENT_MODEL_GENERATE_PROTOCOL => self.immediate_model(task),
             AGENT_TOOL_EXECUTE_PROTOCOL => self.route_tool(task, counts),
+            AGENT_TOOL_LIST_PROTOCOL => self.immediate_tool(task),
+            AGENT_CONTEXT_BUILD_PROTOCOL => self.immediate_context(task),
             AGENT_SESSION_GET_PROTOCOL
             | AGENT_SESSION_APPEND_PROTOCOL
             | AGENT_SESSION_CREATE_PROTOCOL
@@ -216,9 +232,24 @@ impl Harness {
         immediate_outcome(&mut runner, task, mutsuki_plugin_agent_session::RUNNER_ID)
     }
 
+    fn immediate_context(&self, task: Task) -> TaskOutcome {
+        let mut runner =
+            mutsuki_plugin_agent_context::runner(self.client.clone(), self.context.clone());
+        immediate_outcome(&mut runner, task, mutsuki_plugin_agent_context::RUNNER_ID)
+    }
+
+    fn immediate_tool(&self, task: Task) -> TaskOutcome {
+        let mut runner =
+            mutsuki_plugin_agent_tool_router::runner(self.client.clone(), self.tools.clone());
+        immediate_outcome(
+            &mut runner,
+            task,
+            mutsuki_plugin_agent_tool_router::RUNNER_ID,
+        )
+    }
+
     fn route_tool(&self, task: Task, counts: &mut RouteCounts) -> TaskOutcome {
         counts.tool_routes += 1;
-        counts.max_tool_inflight = counts.max_tool_inflight.max(1);
         let task_id = task.task_id.clone();
         let mut runner =
             mutsuki_plugin_agent_tool_router::runner(self.client.clone(), self.tools.clone());
@@ -259,6 +290,7 @@ impl Harness {
                 name: BENCHMARK_TOOL_NAME.into(),
                 input: target.payload.into(),
                 session_id: None,
+                approval: None,
             },
             self.latency,
         );
@@ -326,6 +358,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                     name: call.name.clone(),
                     input: call.input.clone(),
                     session_id: None,
+                    approval: None,
                 })
                 .unwrap(),
             )
@@ -365,6 +398,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                             name: BENCHMARK_TOOL_NAME.into(),
                             input: target.payload.into(),
                             session_id: None,
+                            approval: None,
                         },
                         latency,
                     );
@@ -662,6 +696,371 @@ pub fn context_sample(label: &str, bytes: usize) -> Sample {
         }),
         allocations,
         allocated_bytes,
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkLspFactory;
+
+impl LspProcessFactory for BenchmarkLspFactory {
+    fn spawn(&self, _descriptor: &LspServerDescriptor) -> Result<Box<dyn LspProcess>, AgentError> {
+        Ok(Box::new(BenchmarkLspProcess::default()))
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkLspProcess {
+    pending: VecDeque<Value>,
+}
+
+impl LspProcess for BenchmarkLspProcess {
+    fn send(&mut self, message: &Value) -> Result<(), AgentError> {
+        let Some(id) = message.get("id").and_then(Value::as_u64) else {
+            return Ok(());
+        };
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let result = match method {
+            "textDocument/hover" => {
+                json!({"contents": {"kind": "markdown", "value": "`fn target() -> u32`"}})
+            }
+            _ => Value::Null,
+        };
+        self.pending
+            .push_back(json!({"jsonrpc": "2.0", "id": id, "result": result}));
+        Ok(())
+    }
+
+    fn receive(&mut self, _timeout: Duration) -> Result<Option<Value>, AgentError> {
+        Ok(self.pending.pop_front())
+    }
+
+    fn is_alive(&mut self) -> Result<bool, AgentError> {
+        Ok(true)
+    }
+
+    fn terminate(&mut self) -> Result<(), AgentError> {
+        Ok(())
+    }
+}
+
+pub fn lsp_query_sample(query_count: usize) -> Sample {
+    let workspace = LspWorkspaceId("benchmark".into());
+    let document = LspDocumentId {
+        workspace: workspace.clone(),
+        uri: "file:///benchmark/main.rs".into(),
+    };
+    let service = SharedLspService::new(Arc::new(BenchmarkLspFactory));
+    service
+        .open_workspace(
+            workspace.clone(),
+            LspServerDescriptor {
+                server_id: "benchmark".into(),
+                command: "in-memory".into(),
+                args: Vec::new(),
+                workspace_uri: "file:///benchmark".into(),
+                initialization_options: None,
+            },
+        )
+        .unwrap();
+    service
+        .open_document(LspDocumentSnapshot {
+            document: document.clone(),
+            language_id: "rust".into(),
+            version: 1,
+            text: "fn target() -> u32 { 1 }".into(),
+        })
+        .unwrap();
+    service
+        .hover(
+            &document,
+            LspPosition {
+                line: 0,
+                character: 4,
+            },
+        )
+        .unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = None;
+    for _ in 0..query_count {
+        last = Some(
+            service
+                .hover(
+                    &document,
+                    LspPosition {
+                        line: 0,
+                        character: 4,
+                    },
+                )
+                .unwrap(),
+        );
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let last = last.expect("LSP benchmark executes at least one query");
+    let retained_bytes = serde_json::to_vec(&last).unwrap().len() as u64;
+    service.close_workspace(&workspace).unwrap();
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: query_count as u64,
+        continuations: 0,
+        tool_routes: query_count as u64,
+        max_tool_inflight: 1,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "queries": query_count,
+            "summary": last.summary,
+            "inline": last.inline,
+            "details": last.details,
+            "open_workspaces_after_close": service.active_workspace_count(),
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkAgentService;
+
+impl InProcessAgentService for BenchmarkAgentService {
+    fn dispatch(
+        &mut self,
+        request: AgentWireRequestEnvelope,
+    ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
+        let response = match request.request {
+            AgentWireRequest::ListRuntimeCapabilities => {
+                AgentWireResponse::Capabilities(BTreeMap::from([
+                    ("event-resume".into(), "1".into()),
+                    ("resource-ref".into(), "1".into()),
+                ]))
+            }
+            _ => {
+                return Err(AgentWireError {
+                    code: "agent.benchmark.unsupported".into(),
+                    message: "benchmark service only supports capabilities".into(),
+                    retryable: false,
+                });
+            }
+        };
+        Ok(AgentWireResponseEnvelope {
+            request_id: request.request_id,
+            response: Ok(response),
+        })
+    }
+}
+
+pub fn client_link_sample(query_count: usize) -> Sample {
+    let (client_connection, server_connection) = memory_transport_pair(
+        EndpointId::from_bytes([0x31; 16]),
+        EndpointId::from_bytes([0x32; 16]),
+        MemoryTransportConfig::default(),
+    );
+    let server = thread::spawn(move || {
+        let mut server = AgentLinkServer::new(server_connection, BenchmarkAgentService);
+        let mut handled = 0;
+        while handled < query_count + 1 {
+            if server.serve_once().unwrap() {
+                handled += 1;
+            } else {
+                thread::yield_now();
+            }
+        }
+    });
+    let backend =
+        AgentLinkClient::new(client_connection).with_response_timeout(Duration::from_secs(2));
+    let mut client = AgentClient::new(backend);
+    client.negotiate().unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = BTreeMap::new();
+    for _ in 0..query_count {
+        last = client.runtime_capabilities().unwrap();
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    server.join().unwrap();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let retained_bytes = serde_json::to_vec(&last).unwrap().len() as u64;
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: query_count as u64,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 1,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "queries": query_count,
+            "capabilities": last,
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+struct BenchmarkCapabilityResolver;
+
+impl AgentCapabilityResolver for BenchmarkCapabilityResolver {
+    fn resolve(&self, _capabilities: &[String]) -> Result<CapabilityBits, String> {
+        Ok(CapabilityBits::default())
+    }
+}
+
+pub fn distributed_placement_sample(placement_count: usize) -> Sample {
+    let placement = AgentTaskPlacement {
+        required_capabilities: Vec::new(),
+        affinity: AgentAffinity::Required("benchmark-worker".into()),
+        data_locality: Vec::new(),
+        latency_class: "interactive".into(),
+        cost_class: "standard".into(),
+        remote_execution_allowed: true,
+        migration: AgentMigrationPolicy::ReconcileIdempotent,
+        side_effect: AgentSideEffectClass::Pure,
+        required_resource_refs: Vec::new(),
+    };
+    let resolver = BenchmarkCapabilityResolver;
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = None;
+    for index in 0..placement_count {
+        last = Some(
+            distributed_request(
+                format!("placement-{index}"),
+                "mutsuki.agent/run@1",
+                &placement,
+                &resolver,
+                NodeId("benchmark-local".into()),
+                64 * 1024,
+                8 * 1024,
+                1.0,
+            )
+            .unwrap(),
+        );
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let last = last.expect("distributed placement benchmark executes at least once");
+    let retained_bytes = serde_json::to_vec(&last).unwrap().len() as u64;
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: placement_count as u64,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 0,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: serde_json::to_value(last).unwrap(),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn checkpoint_codec_sample(roundtrips: usize) -> Sample {
+    let resource = benchmark_session_resource();
+    let checkpoint = AgentSessionCheckpoint {
+        session_id: "benchmark-session".into(),
+        profile_id: "coding".into(),
+        version: SessionVersion(42),
+        budget: AgentBudget {
+            max_steps: Some(128),
+            max_total_tokens: Some(1_000_000),
+            max_cost_microunits: Some(10_000_000),
+            deadline_unix_ms: None,
+        },
+        state: resource.clone(),
+        snapshot: SessionSnapshotRef {
+            session_id: "benchmark-session".into(),
+            version: SessionVersion(42),
+            snapshot: resource,
+            base: None,
+            deltas: Vec::new(),
+        },
+        pending_approvals: Vec::new(),
+        plugin_generations: BTreeMap::from([
+            ("lsp".into(), 7),
+            ("model".into(), 11),
+            ("tools".into(), 13),
+        ]),
+        attempts: BTreeMap::from([(
+            "attempt-42".into(),
+            AgentAttemptCheckpoint {
+                attempt_id: "attempt-42".into(),
+                turn_id: "turn-42".into(),
+                step_index: 8,
+                state: "waiting_model".into(),
+                committed_side_effects: vec!["edit-plan-41".into()],
+            },
+        )]),
+        coordinator: Some(CoordinatorLease {
+            session_id: "benchmark-session".into(),
+            node_id: "benchmark-worker".into(),
+            epoch: 4,
+            fencing_token: "benchmark-fence".into(),
+            expires_at_unix_ms: u64::MAX,
+        }),
+        degraded_reason: None,
+    };
+    let encoded = serde_json::to_vec(&checkpoint).unwrap();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut decoded = None;
+    for _ in 0..roundtrips {
+        let value: AgentSessionCheckpoint = serde_json::from_slice(&encoded).unwrap();
+        let reencoded = serde_json::to_vec(&value).unwrap();
+        assert_eq!(reencoded, encoded);
+        decoded = Some(value);
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let decoded = decoded.expect("checkpoint benchmark executes at least once");
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: roundtrips as u64,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 0,
+        retained_bytes: encoded.len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: serde_json::to_value(decoded).unwrap(),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+fn benchmark_session_resource() -> ResourceRef {
+    ResourceRef {
+        ref_id: "resource:benchmark-session:42".into(),
+        resource_id: ResourceId {
+            kind_id: "agent.session".into(),
+            slot_id: "benchmark-session".into(),
+            generation: 1,
+            version: 42,
+        },
+        semantic: ResourceSemantic::FrozenValue,
+        provider_id: "agent.session-store".into(),
+        resource_kind: "agent.session".into(),
+        schema: "mutsuki.agent.session@1".into(),
+        version: 42,
+        generation: 1,
+        access: ResourceAccess::Inline,
+        size_hint: Some(64 * 1024),
+        content_hash: Some("sha256:benchmark-session".into()),
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
     }
 }
 

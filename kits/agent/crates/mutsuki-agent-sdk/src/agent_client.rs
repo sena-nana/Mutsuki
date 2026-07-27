@@ -1,4 +1,4 @@
-use mutsuki_agent_protocol::{AgentMessage, AgentRunRequest};
+use mutsuki_agent_contracts::{AgentMessage, AgentRunRequest};
 use mutsuki_runtime_sdk::{AsyncRunnerContext, CallFuture};
 
 use crate::AgentRunProtocol;

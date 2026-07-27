@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use mutsuki_agent_protocol::AgentMessage;
+use mutsuki_agent_contracts::AgentMessage;
 use mutsuki_bot_runtime_reference::{
     BotReferenceWorkload, BotRuntimeDomainReference, BotRuntimeTopology,
 };

@@ -1,0 +1,23 @@
+[package]
+name = "mutsuki-agent-distributed-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-runtime.workspace = true
+mutsuki-distributed-contracts.workspace = true
+mutsuki-distributed-runtime.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-protocol-db = { path = "../../../../plugins/std/protocols/mutsuki-protocol-db" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+mutsuki-distributed-host-adapter.workspace = true
+mutsuki-plugin-db-sqlite = { path = "../../../../plugins/std/plugins/mutsuki-plugin-db-sqlite" }
+mutsuki-runtime-core.workspace = true
+tempfile.workspace = true

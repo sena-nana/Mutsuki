@@ -1,0 +1,19 @@
+[package]
+name = "mutsuki-agent-plugin-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mutsuki-agent-contracts.workspace = true
+mutsuki-agent-plugin-api.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+mutsuki-runtime-host.workspace = true
