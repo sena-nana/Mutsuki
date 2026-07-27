@@ -1,0 +1,1177 @@
+{
+  "schema": "mutsuki.issue-44.issue-map/v1",
+  "target_repository": "sena-nana/Mutsuki",
+  "generated_at": "2026-07-27T04:53:29.564978+00:00",
+  "issues": [
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 45,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/45",
+      "state": "closed",
+      "title": "[Phase 0] 固化 MutsukiLink 定位、依赖边界与可选 crate 结构"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 46,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/46",
+      "state": "closed",
+      "title": "[Phase 1] 实现 link-core：身份、会话、握手状态机与多路通道抽象"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 47,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/47",
+      "state": "closed",
+      "title": "[Phase 2] 实现可选 Local、TCP 与 QUIC Transport"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 48,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/48",
+      "state": "closed",
+      "title": "[Phase 3] 实现设备发现、配对与持久信任关系"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 49,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/49",
+      "state": "closed",
+      "title": "[Phase 4] 实现认证加密、重连、会话恢复与连接质量管理"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 50,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/50",
+      "state": "closed",
+      "title": "[Phase 5] 提供 LiliaCode 与 MutsukiDistributedHost 的上层协议接入层"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 51,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/51",
+      "state": "closed",
+      "title": "[Phase 6] 建立跨平台测试、故障注入、性能基线与发布验收"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 9,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/9",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 52,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/52",
+      "state": "closed",
+      "title": "实现实时媒体 Datagram 扩展：latest-frame-first、deadline 与拥塞感知发送"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 15,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/15",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 53,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/53",
+      "state": "open",
+      "title": "[Integration] 为 NanaTracking Protocol 提供低延迟远程 Producer 通道"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 16,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/16",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 54,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/54",
+      "state": "closed",
+      "title": "[Performance] 对齐多路复用优先级语义并建立有意义的发布性能回归门禁"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 17,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/17",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 55,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/55",
+      "state": "open",
+      "title": "[Integration/Security] 为 NanaTracking 协商布局提供认证通道、会话绑定与资源防护"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 18,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/18",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 56,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/56",
+      "state": "closed",
+      "title": "[Protocol/Performance] 协商后数据帧仅携带 Session-Local ChannelId，移除逐帧 namespace/version"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 19,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/19",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 57,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/57",
+      "state": "closed",
+      "title": "[Protocol/Control] 将 Link 控制面迁移为 Typed Envelope、稳定 ID 与 Capability Bitset"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiLink",
+      "source_number": 21,
+      "source_url": "https://github.com/sena-nana/MutsukiLink/issues/21",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 58,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/58",
+      "state": "closed",
+      "title": "[Benchmark] 统一 Link transport、控制优先级与重连性能基准"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 59,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/59",
+      "state": "closed",
+      "title": "迁移 ServiceHost 到当前 MutsukiCore HostRuntime / TaskHandle / JSONL Batch API"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 60,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/60",
+      "state": "closed",
+      "title": "Phase 1：增加产品装配与长期事件源生命周期，支持 Bot 运行"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 61,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/61",
+      "state": "closed",
+      "title": "Phase 3：提供 Bot 产品入口并完成真实 ServiceRuntime 端到端验收"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 62,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/62",
+      "state": "closed",
+      "title": "[迁移至 MutsukiDistributedHost#1] [Phase 3] 建立零侵入 Distributed Host Sidecar 与基础远程执行链路"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 63,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/63",
+      "state": "closed",
+      "title": "[迁移至 MutsukiDistributedHost#4] [Phase 4] 实现持久 GlobalTaskRegistry、内容资源副本与输出两阶段提交"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 64,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/64",
+      "state": "closed",
+      "title": "[迁移至 MutsukiDistributedHost#6] [Phase 5] 实现高可用控制面、Leader 接管、任期 fencing 与 quorum 降级"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 65,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/65",
+      "state": "closed",
+      "title": "[迁移至 MutsukiDistributedHost#8] [Phase 6] 实现任务重启、增量检查点、会话迁移与副作用恢复策略"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 8,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/8",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 66,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/66",
+      "state": "closed",
+      "title": "[迁移至 MutsukiDistributedHost#10] [Phase 7] 实现低干扰异构任务调度、资源准入与网络预算"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 9,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/9",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 67,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/67",
+      "state": "closed",
+      "title": "[已迁移至 MutsukiDistributedHost#12] [Phase 8] 建立可选 TrustPlane：节点身份、信任分级、结果验证与安全审计"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 12,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/12",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 68,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/68",
+      "state": "closed",
+      "title": "[Performance] 将固定 10ms Core Pump 改为事件驱动唤醒与下一截止时间调度"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 13,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/13",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 69,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/69",
+      "state": "closed",
+      "title": "[Performance/Isolation] 重构 Host Worker Pool，避免按执行类复制 CPU 线程池并明确不可终止 Runner 的隔离边界"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 15,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/15",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 70,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/70",
+      "state": "closed",
+      "title": "[Benchmark] 建立 Runner 部署矩阵与 ServiceHost 端到端性能基准"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 16,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/16",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 71,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/71",
+      "state": "closed",
+      "title": "为控制 IPC 增加持久连接、受限 framing 与二进制编码路径"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiServiceHost",
+      "source_number": 18,
+      "source_url": "https://github.com/sena-nana/MutsukiServiceHost/issues/18",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 72,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/72",
+      "state": "open",
+      "title": "feat(metrics): 在 Windows 上实现进程 RSS / Working Set 采集"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 73,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/73",
+      "state": "closed",
+      "title": "迁移 TauriHost 到当前 MutsukiCore API 并重整 Resource Provider / Preview 分层"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 74,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/74",
+      "state": "closed",
+      "title": "[Performance] 将逐任务 10ms 轮询 Task Pump 改为批量完成通知和有界观察缓存"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 75,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/75",
+      "state": "closed",
+      "title": "[Benchmark] 统一 TauriHost task pump、Bridge 与 ResourceRef 性能基准"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 76,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/76",
+      "state": "closed",
+      "title": "[Architecture] 实现 Tauri 应用间“先唤醒、再直连传输”的统一通信链路"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 77,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/77",
+      "state": "closed",
+      "title": "fix(app-delivery): replace synthetic readiness with an endpoint handshake"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiTauriHost",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiTauriHost/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 78,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/78",
+      "state": "closed",
+      "title": "perf(app-delivery): bound receipt and operation-history retention"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiWebHost",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiWebHost/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 79,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/79",
+      "state": "closed",
+      "title": "[Epic][Architecture] 建立可扩展 Web Host、WebApplication 与 Vue Extension 运行框架"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 80,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/80",
+      "state": "closed",
+      "title": "[Phase 3] 建立零侵入 Distributed Host Sidecar 与基础远程执行链路"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 81,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/81",
+      "state": "closed",
+      "title": "[重复，见 #1] [Phase 3] 建立零侵入 Distributed Host Sidecar 与基础远程执行链路"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 82,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/82",
+      "state": "closed",
+      "title": "[重复，见 #4] [Phase 4] 实现持久 GlobalTaskRegistry、内容资源副本与输出两阶段提交"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 83,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/83",
+      "state": "closed",
+      "title": "[Phase 4] 实现持久 GlobalTaskRegistry、内容资源副本与输出两阶段提交"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 84,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/84",
+      "state": "closed",
+      "title": "[重复，见 #6] [Phase 5] 实现高可用控制面、Leader 接管、任期 fencing 与 quorum 降级"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 85,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/85",
+      "state": "closed",
+      "title": "[Phase 5] 实现高可用控制面、Leader 接管、任期 fencing 与 quorum 降级"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 86,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/86",
+      "state": "closed",
+      "title": "[重复，见 #8] [Phase 6] 实现任务重启、增量检查点、会话迁移与副作用恢复策略"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 8,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/8",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 87,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/87",
+      "state": "closed",
+      "title": "[Phase 6] 实现任务重启、增量检查点、会话迁移与副作用恢复策略"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 9,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/9",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 88,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/88",
+      "state": "closed",
+      "title": "[重复，见 #10] [Phase 7] 实现低干扰异构任务调度、资源准入与网络预算"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 10,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/10",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 89,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/89",
+      "state": "closed",
+      "title": "[Phase 7] 实现低干扰异构任务调度、资源准入与网络预算"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 11,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/11",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 90,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/90",
+      "state": "closed",
+      "title": "[重复，已合并至 #12] [Phase 8] 建立可选 TrustPlane：节点身份、信任分级、结果验证与安全审计"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 12,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/12",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 91,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/91",
+      "state": "closed",
+      "title": "[Phase 8] 建立可选 TrustPlane：节点身份、信任分级、结果验证与安全审计"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 19,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/19",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 92,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/92",
+      "state": "closed",
+      "title": "[P0 Correctness] 修复 PersistentRegistry WAL 的并发线性化、崩溃一致性、副本回执与压缩恢复"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 20,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/20",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 93,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/93",
+      "state": "closed",
+      "title": "[Stabilization] 收敛 Clustered/HA 能力声明，完成可部署进程装配前禁止伪可用配置"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 22,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/22",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 94,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/94",
+      "state": "closed",
+      "title": "[Benchmark] 建立分布式派发、持久化与故障恢复系统基准"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 23,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/23",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 95,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/95",
+      "state": "closed",
+      "title": "Optimize issue22 performance anomalies from local baseline"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiDistributedHost",
+      "source_number": 24,
+      "source_url": "https://github.com/sena-nana/MutsukiDistributedHost/issues/24",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 96,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/96",
+      "state": "closed",
+      "title": "将内容本地化中的阻塞文件与哈希操作移出 async reactor"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 97,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/97",
+      "state": "closed",
+      "title": "定义 AgentKit 分层边界并规划基于当前 MutsukiCore 的高层能力"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 98,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/98",
+      "state": "closed",
+      "title": "Phase 5：迁移到当前 MutsukiCore 并以 Bot Protocol 接入 Agent 能力"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 99,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/99",
+      "state": "closed",
+      "title": "[Stabilization] 完成真实 Agent 结果闭环并收缩未落地的插件/crate 复杂度"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 100,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/100",
+      "state": "closed",
+      "title": "[Benchmark] 建立 Agent 确定性 workload 与框架附加成本分层基准"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 101,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/101",
+      "state": "open",
+      "title": "[Epic] AgentKit Runtime / Adapter / Plugin 三领域架构与 Mutsuki 原生执行闭环"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 102,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/102",
+      "state": "open",
+      "title": "[P0] 收敛 AgentKit workspace 为 Contracts / Runtime / Adapter / Plugin 边界"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 103,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/103",
+      "state": "open",
+      "title": "[P1] Runtime：基于 MutsukiCore 实现 Session Coordinator 与 Agent 状态机"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 8,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/8",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 104,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/104",
+      "state": "open",
+      "title": "[P2] Adapter：定义协议级模型适配契约并映射为 Mutsuki Runner"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 9,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/9",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 105,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/105",
+      "state": "open",
+      "title": "[P3] Plugin：复用 Mutsuki 插件生命周期并支持 Tool / Context / Policy / Service 注册"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 10,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/10",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 106,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/106",
+      "state": "open",
+      "title": "[P4] Context / Session：基于 ResourceRef 快照、增量与压缩管理上下文"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 11,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/11",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 107,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/107",
+      "state": "open",
+      "title": "[P5] LSP Plugin：通过通用 Capability 提供共享 LspService 与 Agent 工具"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 12,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/12",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 108,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/108",
+      "state": "open",
+      "title": "[P6] Agent Client / Wire：定义领域协议并复用 MutsukiLink 传输"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 13,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/13",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 109,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/109",
+      "state": "open",
+      "title": "[P7] 分布式与恢复：接入任务放置、会话亲和、MutsukiDatabase 持久化"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 14,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/14",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 110,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/110",
+      "state": "open",
+      "title": "[P8] 产品装配与发布：AgentRuntimeProfile、黄金路径 E2E、兼容性与性能门禁"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 15,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/15",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 111,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/111",
+      "state": "open",
+      "title": "[Epic] 补齐中立 Agent 能力集：MCP / Skills / Knowledge / Search / Computer Use / SubAgent"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 16,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/16",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 112,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/112",
+      "state": "open",
+      "title": "[Plugin][MCP] 实现 MCP Client、工具注册与资源/提示词桥接"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 17,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/17",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 113,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/113",
+      "state": "open",
+      "title": "[Plugin][Skills] 建立 Skill 描述、发现、覆盖与按需加载机制"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 18,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/18",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 114,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/114",
+      "state": "open",
+      "title": "[Plugin][Knowledge] 实现知识库摄取、检索、Rerank 与可追溯上下文注入"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 19,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/19",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 115,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/115",
+      "state": "open",
+      "title": "[Plugin][Search] 实现协议中立的 Web Search、页面提取与引用规范化"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 20,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/20",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 116,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/116",
+      "state": "open",
+      "title": "[Plugin][Computer Use] 建立文件、Shell、代码执行与浏览器工具的中立能力层"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 21,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/21",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 117,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/117",
+      "state": "open",
+      "title": "[Runtime][SubAgent] 补齐 Handoff、agent-as-tool、并行委派与结果聚合语义"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 22,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/22",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 118,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/118",
+      "state": "open",
+      "title": "[Plugin][Proactive] 实现 Agent 主动任务计划、到期运行与持久化恢复"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 23,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/23",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 119,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/119",
+      "state": "open",
+      "title": "[Adapter][Media] 定义多模态输入、转写与语音合成的协议级能力契约"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 24,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/24",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 120,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/120",
+      "state": "open",
+      "title": "[Plugin][Memory] 实现分层记忆、机会窗口、检索质量与采纳反馈"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 25,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/25",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 121,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/121",
+      "state": "open",
+      "title": "[Epic][Coding Agent] 将 LiliaCode 通用执行能力收敛为 AgentKit Plugins 与 Runtime Contracts"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 26,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/26",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 122,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/122",
+      "state": "open",
+      "title": "[Plugin][Git] 提供共享 GitService、结构化工具与高风险操作审批"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 27,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/27",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 123,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/123",
+      "state": "open",
+      "title": "[Plugin][Code Index] 实现增量代码索引、符号图、依赖图与语义检索"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 28,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/28",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 124,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/124",
+      "state": "open",
+      "title": "[Contracts][Editor Context] 定义工作区、打开文档、选区与未保存 Buffer 服务契约"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 29,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/29",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 125,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/125",
+      "state": "open",
+      "title": "[Contracts][Coding Events] 统一 Plan / Todo / Command / File Change / Artifact 事件"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 30,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/30",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 126,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/126",
+      "state": "open",
+      "title": "[Bundle][Coding Agent] 建立完全自研 Runtime 的 Native Coding Agent Bundle 与端到端验证"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 31,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/31",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 127,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/127",
+      "state": "open",
+      "title": "[Auth] 建立官方账户登录、Credential Broker 与自研 Runtime 凭据边界"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 32,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/32",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 128,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/128",
+      "state": "open",
+      "title": "[Service][Code Completion] 建立低延迟 Prefix/Suffix 行内补全能力"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiAgentKit",
+      "source_number": 33,
+      "source_url": "https://github.com/sena-nana/MutsukiAgentKit/issues/33",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 129,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/129",
+      "state": "open",
+      "title": "[Plugin][Next Edit] 实现基于近期编辑与诊断的下一处编辑计划"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 130,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/130",
+      "state": "closed",
+      "title": "迁移 Bot 插件 Runner 到 Batch-first Core 协议"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 131,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/131",
+      "state": "closed",
+      "title": "重构 Bot SDK 与插件 manifest 以复用 RuntimeClient / TaskSubmitter / TaskHandle"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 132,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/132",
+      "state": "closed",
+      "title": "[Epic] 打通真实 Bot 的 ServiceHost、QQBot 与模板闭环"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 133,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/133",
+      "state": "closed",
+      "title": "Phase 2：实现 QQBot 真实 HTTP Transport、Gateway 与 ServiceHost EventSource"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 134,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/134",
+      "state": "closed",
+      "title": "Bilibili 账号与订阅管理后续能力"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 135,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/135",
+      "state": "closed",
+      "title": "Bilibili 352 Chromium 风控回退后端"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 136,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/136",
+      "state": "closed",
+      "title": "Bilibili 官方开放平台独立 backend"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 10,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/10",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 137,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/137",
+      "state": "closed",
+      "title": "[Benchmark] 建立 Bot 事件突发、路由与长连接确定性 workload"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 11,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/11",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 138,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/138",
+      "state": "closed",
+      "title": "Optimize idle loopback WS benchmark regression"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 15,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/15",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 139,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/139",
+      "state": "closed",
+      "title": "[Epic][Config] 建立 Schema-first 插件配置协议并接入 WebHost 自动配置界面"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 18,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/18",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 140,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/140",
+      "state": "open",
+      "title": "[Epic][QQ AI Bot] 补齐 QQ 消息管线、AgentKit 桥接、富媒体与主动任务体验"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 19,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/19",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 141,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/141",
+      "state": "open",
+      "title": "[QQ Adapter] 补齐私聊、群聊、频道、引用与媒体消息能力矩阵"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 20,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/20",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 142,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/142",
+      "state": "open",
+      "title": "[Framework] 扩展 Handler / Command / Filter / Permission / Propagation 管线"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 21,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/21",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 143,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/143",
+      "state": "open",
+      "title": "[Conversation] 建立 QQ ConversationRef、会话策略与 Agent Session 绑定"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 22,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/22",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 144,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/144",
+      "state": "open",
+      "title": "[Agent Bridge] 实现 QQ BotEvent 到 AgentKit Run/Stream/Cancel 的桥接插件"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 23,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/23",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 145,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/145",
+      "state": "open",
+      "title": "[Media Bridge] 实现 QQ 富媒体规范化与 AgentKit STT/TTS 资源桥接"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 24,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/24",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 146,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/146",
+      "state": "open",
+      "title": "[Active Delivery] 实现 QQ 主动消息、计划结果投递、去重与回执"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 25,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/25",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 147,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/147",
+      "state": "open",
+      "title": "[Interaction Session] 实现 QQ 多步业务会话、等待下一条消息与超时恢复"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 26,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/26",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 148,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/148",
+      "state": "open",
+      "title": "[Web Console] 增加 QQ 连接、会话规则、命令、Agent 与主动投递管理页"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotPlugins",
+      "source_number": 27,
+      "source_url": "https://github.com/sena-nana/MutsukiBotPlugins/issues/27",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 149,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/149",
+      "state": "open",
+      "title": "fix(web-console): 为 WebSocket RPC 增加超时、断线清理与连接代际隔离"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiStdPlugins",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiStdPlugins/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 150,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/150",
+      "state": "closed",
+      "title": "初始化标准插件能力层并承接 Core 外置基础能力"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiStdPlugins",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiStdPlugins/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 151,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/151",
+      "state": "closed",
+      "title": "[Performance] 明确 SharedMemory Provider 的复制边界并提供真正的映射访问/零复制快照路径"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiStdPlugins",
+      "source_number": 5,
+      "source_url": "https://github.com/sena-nana/MutsukiStdPlugins/issues/5",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 152,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/152",
+      "state": "closed",
+      "title": "[Benchmark] 提供标准插件确定性 workload fixture 与业务层性能预算"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiStdPlugins",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiStdPlugins/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 153,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/153",
+      "state": "closed",
+      "title": "优化标准 Effect facade 的任务派生与 payload 所有权"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiPythonRunnerKit",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiPythonRunnerKit/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 154,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/154",
+      "state": "closed",
+      "title": "迁移到当前 Batch-first Runner Link wire shape"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiPythonRunnerKit",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiPythonRunnerKit/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 155,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/155",
+      "state": "closed",
+      "title": "[Compatibility/Performance] 自动生成 Python wire contracts，并建立 JSONL Runner 大批量与取消一致性基线"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiPythonRunnerKit",
+      "source_number": 4,
+      "source_url": "https://github.com/sena-nana/MutsukiPythonRunnerKit/issues/4",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 156,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/156",
+      "state": "closed",
+      "title": "[Benchmark] 对齐 Python Runner Wire、并发与进程生命周期统一性能模型"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotTemplate",
+      "source_number": 1,
+      "source_url": "https://github.com/sena-nana/MutsukiBotTemplate/issues/1",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 157,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/157",
+      "state": "closed",
+      "title": "更新 Bot 模板到当前 MutsukiCore batch-first / TaskHandle / PluginManifest 写法"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotTemplate",
+      "source_number": 2,
+      "source_url": "https://github.com/sena-nana/MutsukiBotTemplate/issues/2",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 158,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/158",
+      "state": "closed",
+      "title": "Phase 4：实际落地可运行的 Bot 模板与真实 QQBot Echo 示例"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotTemplate",
+      "source_number": 3,
+      "source_url": "https://github.com/sena-nana/MutsukiBotTemplate/issues/3",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 159,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/159",
+      "state": "closed",
+      "title": "[Epic] 分阶段接入低干扰、高可用的 Mutsuki Distributed Host"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotTemplate",
+      "source_number": 6,
+      "source_url": "https://github.com/sena-nana/MutsukiBotTemplate/issues/6",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 160,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/160",
+      "state": "closed",
+      "title": "[Cross-repo] 建立 Mutsuki Release Set，统一 Core/Host/Kit/Plugin 固定 revision 与兼容验证"
+    },
+    {
+      "source_repository": "sena-nana/MutsukiBotTemplate",
+      "source_number": 7,
+      "source_url": "https://github.com/sena-nana/MutsukiBotTemplate/issues/7",
+      "target_repository": "sena-nana/Mutsuki",
+      "target_number": 161,
+      "target_url": "https://github.com/sena-nana/Mutsuki/issues/161",
+      "state": "closed",
+      "title": "[Correctness] 在 DistributedHost Clustered 可部署前拒绝启动 clustered 产品配置"
+    }
+  ]
+}

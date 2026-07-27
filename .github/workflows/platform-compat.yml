@@ -24,6 +24,16 @@ jobs:
         run: |
           rustup set profile minimal
           rustup toolchain install stable --component rustfmt
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
       - run: cargo metadata --locked --format-version 1
       - run: cargo fmt --check
       - run: bash scripts/check-distributed-boundary.sh
