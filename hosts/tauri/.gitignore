@@ -1,0 +1,11 @@
+/target/
+node_modules/
+/dist/
+/.turbo/
+*.log
+/artifacts/performance/issue4-macos-arm64-provisional/
+/artifacts/performance/reference-*/
+
+# Python cache
+__pycache__/
+*.pyc

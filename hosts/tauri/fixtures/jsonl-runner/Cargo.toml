@@ -1,0 +1,10 @@
+[package]
+name = "mutsuki-tauri-jsonl-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-wire.workspace = true
+serde_json.workspace = true
