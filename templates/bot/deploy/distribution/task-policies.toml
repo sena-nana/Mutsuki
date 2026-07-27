@@ -1,0 +1,67 @@
+schema_version = 1
+
+# Existing or frame-bound plugins remain local and do not see NodeId/TrustLevel.
+[[task]]
+name = "local-hard-realtime"
+mobility = "local_only"
+recovery = "ephemeral"
+latency = "hard_realtime"
+acceptance = { mode = "fast" }
+effect = "unsafe"
+quality = { requested_level = 100, minimum_level = 100 }
+cache = "disabled"
+partial_results = "reject"
+fallback = "local_only"
+trust = { sensitivity = "credential", minimum_trust = "managed", verification = { level = "none" }, allow_external_workers = false, allow_persistent_cache = false, require_attestation = false }
+
+[[task]]
+name = "portable-restartable-interactive"
+mobility = "restartable"
+recovery = "restartable"
+latency = "interactive"
+acceptance = { mode = "fast" }
+effect = "idempotent"
+quality = { requested_level = 100, minimum_level = 100 }
+cache = "fresh_only"
+partial_results = "reject"
+fallback = "local_only"
+trust = { sensitivity = "internal", minimum_trust = "restricted", verification = { level = "hash_only" }, allow_external_workers = true, allow_persistent_cache = false, require_attestation = false }
+
+[[task]]
+name = "checkpointed-batch"
+mobility = "checkpointable"
+recovery = "checkpointed"
+latency = "batch"
+acceptance = { mode = "durable" }
+effect = "compensatable"
+quality = { requested_level = 100, minimum_level = 80 }
+cache = { allow_stale = { max_age_ms = 60000 } }
+partial_results = "allow"
+fallback = "reject"
+trust = { sensitivity = "confidential", minimum_trust = "managed", verification = { level = "spot_check", rate_basis_points = 1000 }, allow_external_workers = true, allow_persistent_cache = false, require_attestation = true }
+
+[[task]]
+name = "nonrecoverable-background"
+mobility = "portable"
+recovery = "non_recoverable"
+latency = "background"
+acceptance = { mode = "fast" }
+effect = "unsafe"
+quality = { requested_level = 100, minimum_level = 100 }
+cache = "disabled"
+partial_results = "reject"
+fallback = "reject"
+trust = { sensitivity = "public", minimum_trust = "untrusted", verification = { level = "none" }, allow_external_workers = true, allow_persistent_cache = false, require_attestation = false }
+
+[[task]]
+name = "critical-verifiable"
+mobility = "restartable"
+recovery = "restartable"
+latency = "batch"
+acceptance = { mode = "critical", minimum_replicas = 3 }
+effect = "verifiable"
+quality = { requested_level = 100, minimum_level = 100 }
+cache = "fresh_only"
+partial_results = "reject"
+fallback = "reject"
+trust = { sensitivity = "restricted", minimum_trust = "trusted", verification = { level = "n_of_m", required = 2, total = 3 }, allow_external_workers = false, allow_persistent_cache = false, require_attestation = true }

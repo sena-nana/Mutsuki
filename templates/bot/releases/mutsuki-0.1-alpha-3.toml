@@ -1,0 +1,81 @@
+schema_version = 1
+release = "mutsuki-0.1-alpha-3"
+status = "active"
+contracts_api = "0.1.0"
+runtime_wire_schema = "mutsuki.runtime.wire/1.3.0"
+rust_msrv = "1.88"
+python_min = "3.13"
+supported_deployments = ["service", "desktop", "python-runner", "distributed-disabled", "distributed-local-observable"]
+unsupported_deployments = ["distributed-clustered-production"]
+
+[[repositories]]
+id = "core"
+url = "https://github.com/sena-nana/MutsukiCore.git"
+revision = "0e07be963aee996283d5ae702e3a8153de1e417b"
+kind = "rust"
+
+[[repositories]]
+id = "service_host"
+url = "https://github.com/sena-nana/MutsukiServiceHost.git"
+revision = "6eeaba59a136261a27270ee5faebc9c1e79adbc8"
+kind = "rust"
+
+[[repositories]]
+id = "link"
+url = "https://github.com/sena-nana/MutsukiLink.git"
+revision = "26c66311e0e90ddb28d37e886bdda699f8662439"
+kind = "rust"
+
+[[repositories]]
+id = "std_plugins"
+url = "https://github.com/sena-nana/MutsukiStdPlugins.git"
+revision = "b5efab36e619fc1a007cde1a0708b170ebb9afb8"
+kind = "rust"
+
+[[repositories]]
+id = "agent_kit"
+url = "https://github.com/sena-nana/MutsukiAgentKit.git"
+revision = "75d5aa574696922c0fa679ef515491e6e73be441"
+kind = "rust"
+
+[[repositories]]
+id = "bot_plugins"
+url = "https://github.com/sena-nana/MutsukiBotPlugins.git"
+revision = "275ca0098288477d55910d815bfff1ac7e27965a"
+kind = "rust"
+
+[[repositories]]
+id = "web_host"
+url = "https://github.com/sena-nana/MutsukiWebHost.git"
+revision = "245769b1189b89a93f6dd237c34ac7a333a61e85"
+kind = "rust"
+
+[[repositories]]
+id = "distributed_host"
+url = "https://github.com/sena-nana/MutsukiDistributedHost.git"
+revision = "ba8c7150195312377ca3d6a30d22f3468c9ced8c"
+kind = "rust"
+
+[[repositories]]
+id = "tauri_host"
+url = "https://github.com/sena-nana/MutsukiTauriHost.git"
+revision = "55ff33042f9e08243724b71f9e121f543f9ec564"
+kind = "rust"
+
+[[repositories]]
+id = "python_runner_kit"
+url = "https://github.com/sena-nana/MutsukiPythonRunnerKit.git"
+revision = "c48f4c4a55aacbf76066baf3a9dee945d959de9c"
+kind = "python"
+
+[capabilities]
+core_runtime = "active"
+service_host = "active"
+standard_plugins = "active"
+bot = "active"
+agent = "active"
+desktop = "active"
+python_runner = "active"
+distributed_local_observable = "active"
+distributed_clustered = "candidate"
+distributed_production = "unsupported"

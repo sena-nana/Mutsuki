@@ -1,0 +1,34 @@
+# Copy this neutral product file to config/local.toml.
+# Select only installed or linked owner plugins. Host runtime, directories,
+# IPC, runners and observation use ServiceHost defaults.
+
+[service]
+profile = "bot"
+instance_id = "mutsuki-bot"
+
+[security]
+secret_file = "local.secret.toml"
+
+# Distribution is an external deployment choice. Disabled means this product
+# starts no DistributedHost process, network listener, telemetry or replication.
+[distribution]
+mode = "disabled"
+
+# Optional embedded Web Console (WebHost + control/overview/config/upgrade extensions).
+# Set include_config = true to mount config-web with the product.toml ConfigProvider
+# (provider id `product`). demo_config_service remains test-only.
+# release_set enables the auto-upgrade page (Git→build→ABI/pin; not a marketplace).
+# Paths are relative to the product repository root
+# (when config lives under config/, paths resolve from the parent directory).
+# Copy auth token into local.secret.toml under WEB_CONSOLE_AUTH_TOKEN.
+[web.console]
+enabled = false
+listen = "127.0.0.1:8787"
+auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
+include_config = false
+release_set = "releases/mutsuki-0.1-alpha-3.toml"
+
+# Native owner factories are selected with [[plugins.configured]].
+# External plugin artifacts are discovered from ServiceHost plugin directories.
+# This template intentionally selects no platform, router, command, Agent,
+# Provider or business implementation.
