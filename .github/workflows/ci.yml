@@ -118,6 +118,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      - name: Test template export
+        run: python3 -m unittest discover -s templates/bot/scripts -p 'test_*.py'
       - name: Export at current commit
         run: >-
           python3 templates/bot/scripts/export_template.py
@@ -126,6 +128,8 @@ jobs:
           --rev "${GITHUB_SHA}"
       - name: Validate exported template
         working-directory: ${{ runner.temp }}/mutsuki-bot-template
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/mutsuki-bot-template-target
         run: |
           cargo metadata --locked --format-version 1 >/dev/null
           cargo fmt --check

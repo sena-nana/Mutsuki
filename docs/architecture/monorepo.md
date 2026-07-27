@@ -73,5 +73,9 @@ Workspace locks and remain scoped to their JavaScript build boundaries.
 
 Every former framework repository was merged with its Git history as a parent of the monorepo.
 Issues are transferred to the unified tracker and source repositories receive a migration notice
-before archival. Exact revisions and Issue counts live in
+before archival. `MutsukiBotTemplate` is not an active source repository: it remains unarchived
+only as a generated GitHub Template. Release automation exports `templates/bot`, validates the
+standalone Workspace, performs a byte-for-byte comparison, and publishes the result through a
+write-scoped deploy key. Manual changes and independent Issues belong in this monorepo instead.
+Exact revisions and Issue counts live in
 [`docs/migration/issue-44-ledger.md`](../migration/issue-44-ledger.md).

@@ -7,7 +7,9 @@
 ## 阅读顺序
 
 1. 当前及关联 issue，确认目标、依赖和验收场景。
-2. `../../AGENTS.md` 与 `../../plans/{roadmap,architecture,engineering,contracts}.md`。
+2. 在主仓中读取 `../../AGENTS.md` 与
+   `../../plans/{roadmap,architecture,engineering,contracts}.md`；独立生成仓只回到
+   `sena-nana/Mutsuki` 提交变更。
 3. 候选依赖仓库的 `AGENTS.md`、公开 API、manifest 和测试。
 4. 本文件路由的相关技能，再检查当前实现、远端 commit 和 lockfile。
 
@@ -49,6 +51,8 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 6. RuntimeProfile/RuntimeLoadPlan 是装配权威；registry freeze 后不得动态越权注册。
 7. 缺失 capability、配置、secret、artifact 或 revision 必须结构化失败，禁止假成功和吞错。
 8. 生产入口按 CLI、`MUTSUKI_CONFIG`、仓库 `config/local.toml` 的顺序选择配置；脚手架只公开用户需要修改的产品字段，目录、IPC、Runner 和观测等高级值继承 ServiceHost 默认。生产代码只聚合 owner factory catalog，不默认启用平台、Router、Command、Agent、Provider 或业务插件。零插件配置可以启动为空闲 Runtime；显式选择的能力缺失时必须失败。Mock 仅限测试。
+9. `sena-nana/MutsukiBotTemplate` 只是 release 自动生成的 GitHub Template；禁止在生成仓
+   手工维护实现、规范、Issue 或依赖版本。
 
 ## Git 与验证
 
