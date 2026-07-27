@@ -67,11 +67,21 @@ fn core_runtime_smoke_routes_runner_outputs_through_kernel_and_effect_runner() {
         runtime.state_value("state:smoke").unwrap(),
         &(1, json!({"status": "committed"}))
     );
-    assert!(
-        runtime
-            .events()
-            .iter()
-            .any(|event| { event.kind == RuntimeEventKind::Task && event.name == "domain.smoke" })
+    let domain_event = runtime
+        .events()
+        .iter()
+        .find(|event| event.kind == RuntimeEventKind::Task && event.name == "domain.smoke")
+        .expect("domain event should be observable");
+    assert_eq!(domain_event.subject_id.as_deref(), Some("smoke-1"));
+    assert_eq!(
+        domain_event.attributes.get("domain_event_id"),
+        Some(&ScalarValue::String("domain-1".into()))
+    );
+    assert_eq!(
+        domain_event.attributes.get("payload"),
+        Some(&ScalarValue::String(
+            json!({"task_id": "smoke-1"}).to_string()
+        ))
     );
     assert!(runtime.trace_spans().iter().any(|span| {
         span.name == "runner.run_batch"

@@ -13,13 +13,14 @@ use mutsuki_runtime_sdk::{
     ShutdownController, StaticConfigProvider, TaskSubmitter,
 };
 
+use crate::actor::ActorSender;
 use crate::actor::CoreActorMsg;
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
 
 pub(crate) fn build_host_context(
-    tx: mpsc::Sender<CoreActorMsg>,
+    tx: ActorSender,
     capabilities: Arc<HostCapabilityRegistry>,
     services: Arc<HostServiceRegistry>,
     profile_id: String,
@@ -52,7 +53,7 @@ pub(crate) fn build_host_context(
 }
 
 struct ActorCommandClient {
-    tx: mpsc::Sender<CoreActorMsg>,
+    tx: ActorSender,
 }
 
 impl ActorCommandClient {
@@ -60,7 +61,7 @@ impl ActorCommandClient {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(CoreActorMsg::Command(command, reply_tx))
-            .map_err(|error| host_failure("host.actor.command", error.to_string()))?;
+            .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
         reply_rx
             .recv()
             .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
@@ -71,7 +72,7 @@ impl ActorCommandClient {
         Box::pin(async move {
             let (reply_tx, reply_rx) = futures_channel::oneshot::channel();
             tx.send(CoreActorMsg::AsyncResourceCommand(command, reply_tx))
-                .map_err(|error| host_failure("host.actor.async_command", error.to_string()))?;
+                .map_err(|_| host_failure("host.actor.async_command", "actor mailbox closed"))?;
             reply_rx
                 .await
                 .map_err(|error| host_failure("host.actor.async_reply", error.to_string()))?
@@ -332,7 +333,7 @@ impl ResourceRegistryGateway for ActorCommandClient {
 }
 
 struct ActorShutdownController {
-    tx: mpsc::Sender<CoreActorMsg>,
+    tx: ActorSender,
     requested: AtomicBool,
 }
 
@@ -345,7 +346,7 @@ impl ShutdownController for ActorShutdownController {
         self.requested.store(true, Ordering::SeqCst);
         self.tx
             .send(CoreActorMsg::Shutdown)
-            .map_err(|error| host_failure("host.actor.shutdown", error.to_string()))
+            .map_err(|_| host_failure("host.actor.shutdown", "actor mailbox closed"))
     }
 }
 

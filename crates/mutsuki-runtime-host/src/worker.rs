@@ -1,22 +1,130 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use mutsuki_runtime_contracts::ExecutionClass;
+use mutsuki_runtime_contracts::{DispatchLane, ExecutionClass};
 use mutsuki_runtime_core::{
     RunnerCompletion, RunnerDispatch, RunnerDispatchTarget, RuntimeFailure, RuntimeResult,
 };
 use serde::Serialize;
 
-use crate::actor::CoreActorMsg;
+use crate::actor::{ActorSender, CoreActorMsg};
 use crate::error::host_failure;
 use crate::host::HostRuntimeConfig;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneExecutionPolicy {
+    pub weight: usize,
+    pub reserved_entries: usize,
+    pub max_share_percent: u8,
+    pub queue_entry_limit: usize,
+    pub max_inflight_bytes: usize,
+    pub starvation_steps: u64,
+    pub allow_idle_borrow: bool,
+}
+
+impl LaneExecutionPolicy {
+    pub fn for_lane(lane: &DispatchLane) -> Self {
+        match lane {
+            DispatchLane::Control => Self {
+                weight: 8,
+                reserved_entries: 1,
+                max_share_percent: 100,
+                queue_entry_limit: 1_024,
+                max_inflight_bytes: 16 * 1024 * 1024,
+                starvation_steps: 1,
+                allow_idle_borrow: true,
+            },
+            DispatchLane::Interactive => Self {
+                weight: 8,
+                reserved_entries: 2,
+                max_share_percent: 100,
+                queue_entry_limit: 4_096,
+                max_inflight_bytes: 32 * 1024 * 1024,
+                starvation_steps: 2,
+                allow_idle_borrow: true,
+            },
+            DispatchLane::Normal => Self {
+                weight: 4,
+                reserved_entries: 0,
+                max_share_percent: 100,
+                queue_entry_limit: 8_192,
+                max_inflight_bytes: 64 * 1024 * 1024,
+                starvation_steps: 8,
+                allow_idle_borrow: true,
+            },
+            DispatchLane::Background => Self {
+                weight: 2,
+                reserved_entries: 0,
+                max_share_percent: 50,
+                queue_entry_limit: 8_192,
+                max_inflight_bytes: 64 * 1024 * 1024,
+                starvation_steps: 16,
+                allow_idle_borrow: true,
+            },
+            DispatchLane::Bulk => Self {
+                weight: 1,
+                reserved_entries: 0,
+                max_share_percent: 25,
+                queue_entry_limit: 4_096,
+                max_inflight_bytes: 64 * 1024 * 1024,
+                starvation_steps: 32,
+                allow_idle_borrow: true,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionDomainConfig {
+    pub domain_id: String,
+    pub execution_classes: Vec<ExecutionClass>,
+    pub threads: usize,
+    pub queue_capacity: usize,
+    pub max_inflight_bytes: usize,
+    pub max_isolated_threads: usize,
+    pub lane_policies: BTreeMap<DispatchLane, LaneExecutionPolicy>,
+}
+
+impl ExecutionDomainConfig {
+    pub fn new(
+        domain_id: impl Into<String>,
+        execution_classes: Vec<ExecutionClass>,
+        threads: usize,
+    ) -> Self {
+        Self {
+            domain_id: domain_id.into(),
+            execution_classes,
+            threads,
+            queue_capacity: 1_024,
+            max_inflight_bytes: 64 * 1024 * 1024,
+            max_isolated_threads: 2,
+            lane_policies: DispatchLane::ALL
+                .into_iter()
+                .map(|lane| (lane.clone(), LaneExecutionPolicy::for_lane(&lane)))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LaneWorkerSnapshot {
+    pub lane: DispatchLane,
+    pub queued_batches: usize,
+    pub queued_entries: usize,
+    pub running_batches: usize,
+    pub running_entries: usize,
+    pub inflight_bytes: usize,
+    pub queue_entry_limit: usize,
+    pub max_inflight_bytes: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct WorkerPoolSnapshot {
+    pub domain_id: String,
     pub pool_id: String,
     pub execution_classes: Vec<ExecutionClass>,
     pub configured_threads: usize,
@@ -31,6 +139,7 @@ pub struct WorkerPoolSnapshot {
     pub queue_capacity: usize,
     pub max_isolated_threads: usize,
     pub degraded: bool,
+    pub lanes: Vec<LaneWorkerSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -63,6 +172,8 @@ struct QueuedDispatch {
     dispatch: RunnerDispatch,
     entry_count: usize,
     payload_bytes: usize,
+    lane_entries: BTreeMap<DispatchLane, usize>,
+    lane_bytes: BTreeMap<DispatchLane, usize>,
 }
 
 pub(crate) struct WorkerDispatchError {
@@ -79,7 +190,17 @@ struct WorkerPoolState {
     running_entries: AtomicUsize,
     inflight_bytes: AtomicUsize,
     isolated_workers: Mutex<BTreeSet<String>>,
+    lanes: Mutex<BTreeMap<DispatchLane, LanePoolCounters>>,
     degraded: AtomicBool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LanePoolCounters {
+    queued_batches: usize,
+    queued_entries: usize,
+    running_batches: usize,
+    running_entries: usize,
+    inflight_bytes: usize,
 }
 
 impl Default for WorkerPoolState {
@@ -92,13 +213,14 @@ impl Default for WorkerPoolState {
             running_entries: AtomicUsize::new(0),
             inflight_bytes: AtomicUsize::new(0),
             isolated_workers: Mutex::new(BTreeSet::new()),
+            lanes: Mutex::new(BTreeMap::new()),
             degraded: AtomicBool::new(false),
         }
     }
 }
 
 pub(crate) struct WorkerPool {
-    pool_id: String,
+    domain_id: String,
     execution_classes: Vec<ExecutionClass>,
     sender: Sender<QueuedDispatch>,
     receiver: Receiver<QueuedDispatch>,
@@ -106,20 +228,22 @@ pub(crate) struct WorkerPool {
     max_inflight_bytes: usize,
     max_isolated_threads: usize,
     configured_threads: usize,
-    actor_tx: mpsc::Sender<CoreActorMsg>,
+    lane_policies: BTreeMap<DispatchLane, LaneExecutionPolicy>,
+    actor_tx: ActorSender,
     next_worker_id: Arc<AtomicUsize>,
     state: Arc<WorkerPoolState>,
 }
 
 impl WorkerPool {
     fn new(
-        pool_id: &str,
+        domain_id: &str,
         execution_classes: Vec<ExecutionClass>,
         threads: usize,
         queue_capacity: usize,
         max_inflight_bytes: usize,
         max_isolated_threads: usize,
-        actor_tx: mpsc::Sender<CoreActorMsg>,
+        lane_policies: BTreeMap<DispatchLane, LaneExecutionPolicy>,
+        actor_tx: ActorSender,
     ) -> RuntimeResult<Self> {
         if threads == 0
             || queue_capacity == 0
@@ -129,13 +253,13 @@ impl WorkerPool {
             return Err(host_failure(
                 "host.worker.config",
                 format!(
-                    "pool {pool_id} requires non-zero threads, queue capacity, byte budget and isolation capacity"
+                    "execution domain {domain_id} requires non-zero threads, queue capacity, byte budget and isolation capacity"
                 ),
             ));
         }
         let (sender, receiver) = bounded(queue_capacity);
         let mut pool = Self {
-            pool_id: pool_id.to_string(),
+            domain_id: domain_id.to_string(),
             execution_classes,
             sender,
             receiver,
@@ -143,6 +267,7 @@ impl WorkerPool {
             max_inflight_bytes,
             max_isolated_threads: max_isolated_threads.min(threads),
             configured_threads: threads,
+            lane_policies,
             actor_tx,
             next_worker_id: Arc::new(AtomicUsize::new(0)),
             state: Arc::new(WorkerPoolState::default()),
@@ -189,7 +314,10 @@ impl WorkerPool {
             return Err(WorkerDispatchError {
                 failure: host_failure(
                     "host.worker.saturated",
-                    format!("pool {} has no dispatch capacity", self.pool_id),
+                    format!(
+                        "execution domain {} has no dispatch capacity",
+                        self.domain_id
+                    ),
                 ),
                 dispatch: Box::new(dispatch),
                 retryable: true,
@@ -230,6 +358,18 @@ impl WorkerPool {
                 retryable: true,
             });
         }
+        let lane_entries = dispatch_lane_entries(&dispatch);
+        let lane_bytes = distribute_lane_bytes(&lane_entries, payload_bytes, entry_count);
+        if let Err(failure) = self.reserve_lane_capacity(&lane_entries, &lane_bytes) {
+            self.state
+                .inflight_bytes
+                .fetch_sub(payload_bytes, Ordering::AcqRel);
+            return Err(WorkerDispatchError {
+                failure,
+                dispatch: Box::new(dispatch),
+                retryable: true,
+            });
+        }
         self.state.queued_batches.fetch_add(1, Ordering::AcqRel);
         self.state
             .queued_entries
@@ -238,6 +378,8 @@ impl WorkerPool {
             dispatch,
             entry_count,
             payload_bytes,
+            lane_entries,
+            lane_bytes,
         };
         match self.sender.try_send(queued) {
             Ok(()) => Ok(()),
@@ -255,6 +397,7 @@ impl WorkerPool {
                         ("worker queue is disconnected".to_string(), queued)
                     }
                 };
+                self.rollback_queued_lanes(&queued.lane_entries, &queued.lane_bytes);
                 Err(WorkerDispatchError {
                     failure: host_failure("host.worker.dispatch", detail),
                     dispatch: Box::new(queued.dispatch),
@@ -314,7 +457,8 @@ impl WorkerPool {
             .expect("isolated worker lock poisoned")
             .len();
         WorkerPoolSnapshot {
-            pool_id: self.pool_id.clone(),
+            domain_id: self.domain_id.clone(),
+            pool_id: self.domain_id.clone(),
             execution_classes: self.execution_classes.clone(),
             configured_threads: self.configured_threads,
             active_threads: self.state.active_threads.load(Ordering::Acquire),
@@ -328,12 +472,105 @@ impl WorkerPool {
             queue_capacity: self.queue_capacity,
             max_isolated_threads: self.max_isolated_threads,
             degraded: self.state.degraded.load(Ordering::Acquire),
+            lanes: self.lane_snapshots(),
         }
+    }
+
+    fn reserve_lane_capacity(
+        &self,
+        lane_entries: &BTreeMap<DispatchLane, usize>,
+        lane_bytes: &BTreeMap<DispatchLane, usize>,
+    ) -> RuntimeResult<()> {
+        let mut counters = self
+            .state
+            .lanes
+            .lock()
+            .expect("lane capacity lock poisoned");
+        for (lane, entries) in lane_entries {
+            let policy = self
+                .lane_policies
+                .get(lane)
+                .expect("validated execution domain has every lane policy");
+            let current = counters.get(lane).copied().unwrap_or_default();
+            if current.queued_entries.saturating_add(*entries) > policy.queue_entry_limit {
+                return Err(host_failure(
+                    "host.worker.lane_queue_capacity",
+                    format!("execution_domain.{}.lane.{lane:?}", self.domain_id),
+                ));
+            }
+            if current
+                .inflight_bytes
+                .saturating_add(lane_bytes.get(lane).copied().unwrap_or_default())
+                > policy.max_inflight_bytes
+            {
+                return Err(host_failure(
+                    "host.worker.lane_byte_capacity",
+                    format!("execution_domain.{}.lane.{lane:?}", self.domain_id),
+                ));
+            }
+        }
+        for (lane, entries) in lane_entries {
+            let current = counters.entry(lane.clone()).or_default();
+            current.queued_batches = current.queued_batches.saturating_add(1);
+            current.queued_entries = current.queued_entries.saturating_add(*entries);
+            current.inflight_bytes = current
+                .inflight_bytes
+                .saturating_add(lane_bytes.get(lane).copied().unwrap_or_default());
+        }
+        Ok(())
+    }
+
+    fn rollback_queued_lanes(
+        &self,
+        lane_entries: &BTreeMap<DispatchLane, usize>,
+        lane_bytes: &BTreeMap<DispatchLane, usize>,
+    ) {
+        let mut counters = self
+            .state
+            .lanes
+            .lock()
+            .expect("lane capacity lock poisoned");
+        for (lane, entries) in lane_entries {
+            let current = counters.entry(lane.clone()).or_default();
+            current.queued_batches = current.queued_batches.saturating_sub(1);
+            current.queued_entries = current.queued_entries.saturating_sub(*entries);
+            current.inflight_bytes = current
+                .inflight_bytes
+                .saturating_sub(lane_bytes.get(lane).copied().unwrap_or_default());
+        }
+    }
+
+    fn lane_snapshots(&self) -> Vec<LaneWorkerSnapshot> {
+        let counters = self
+            .state
+            .lanes
+            .lock()
+            .expect("lane capacity lock poisoned");
+        DispatchLane::ALL
+            .into_iter()
+            .map(|lane| {
+                let current = counters.get(&lane).copied().unwrap_or_default();
+                let policy = self
+                    .lane_policies
+                    .get(&lane)
+                    .expect("validated execution domain has every lane policy");
+                LaneWorkerSnapshot {
+                    lane,
+                    queued_batches: current.queued_batches,
+                    queued_entries: current.queued_entries,
+                    running_batches: current.running_batches,
+                    running_entries: current.running_entries,
+                    inflight_bytes: current.inflight_bytes,
+                    queue_entry_limit: policy.queue_entry_limit,
+                    max_inflight_bytes: policy.max_inflight_bytes,
+                }
+            })
+            .collect()
     }
 
     fn spawn_worker(&mut self) -> RuntimeResult<String> {
         let index = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
-        let worker_id = format!("{}-worker-{index}", self.pool_id);
+        let worker_id = format!("{}-worker-{index}", self.domain_id);
         let execution_class = self.execution_classes[0].clone();
         let receiver = self.receiver.clone();
         let actor_tx = self.actor_tx.clone();
@@ -361,64 +598,154 @@ impl WorkerPool {
 }
 
 pub(crate) struct WorkerPools {
-    compute: WorkerPool,
-    blocking: WorkerPool,
+    domains: BTreeMap<String, WorkerPool>,
+    class_to_domain: HashMap<ExecutionClass, String>,
 }
 
 impl WorkerPools {
     pub(crate) fn get(&self, execution_class: &ExecutionClass) -> Option<&WorkerPool> {
-        match execution_class {
-            ExecutionClass::Orchestration | ExecutionClass::Cpu => Some(&self.compute),
-            ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
-                Some(&self.blocking)
-            }
-            ExecutionClass::Control => None,
-        }
+        let domain_id = self.class_to_domain.get(execution_class)?;
+        self.domains.get(domain_id)
     }
 
     pub(crate) fn get_mut(&mut self, execution_class: &ExecutionClass) -> Option<&mut WorkerPool> {
-        match execution_class {
-            ExecutionClass::Orchestration | ExecutionClass::Cpu => Some(&mut self.compute),
-            ExecutionClass::Io | ExecutionClass::Blocking | ExecutionClass::Script => {
-                Some(&mut self.blocking)
-            }
-            ExecutionClass::Control => None,
-        }
+        let domain_id = self.class_to_domain.get(execution_class)?;
+        self.domains.get_mut(domain_id)
     }
 
     pub(crate) fn snapshots(&self) -> Vec<WorkerPoolSnapshot> {
-        vec![self.compute.snapshot(), self.blocking.snapshot()]
+        self.domains.values().map(WorkerPool::snapshot).collect()
+    }
+
+    pub(crate) fn domain_id(&self, execution_class: &ExecutionClass) -> Option<&str> {
+        self.class_to_domain
+            .get(execution_class)
+            .map(String::as_str)
+    }
+
+    pub(crate) fn lane_policies(
+        &self,
+        execution_class: &ExecutionClass,
+    ) -> Option<&BTreeMap<DispatchLane, LaneExecutionPolicy>> {
+        self.get(execution_class).map(|pool| &pool.lane_policies)
     }
 }
 
 pub(crate) fn worker_pools(
     config: &HostRuntimeConfig,
-    actor_tx: mpsc::Sender<CoreActorMsg>,
+    actor_tx: ActorSender,
 ) -> RuntimeResult<WorkerPools> {
-    Ok(WorkerPools {
-        compute: WorkerPool::new(
-            "compute",
-            vec![ExecutionClass::Orchestration, ExecutionClass::Cpu],
-            config.worker_threads,
-            config.pool_queue_limit,
-            config.pool_max_inflight_bytes,
-            config.max_isolated_workers,
+    let configured = if config.execution_domains.is_empty() {
+        vec![
+            ExecutionDomainConfig {
+                domain_id: "compute".into(),
+                execution_classes: vec![ExecutionClass::Orchestration, ExecutionClass::Cpu],
+                threads: config.worker_threads,
+                queue_capacity: config.pool_queue_limit,
+                max_inflight_bytes: config.pool_max_inflight_bytes,
+                max_isolated_threads: config.max_isolated_workers,
+                lane_policies: ExecutionDomainConfig::new("compute", Vec::new(), 1).lane_policies,
+            },
+            ExecutionDomainConfig {
+                domain_id: "blocking".into(),
+                execution_classes: vec![
+                    ExecutionClass::Io,
+                    ExecutionClass::Blocking,
+                    ExecutionClass::Script,
+                ],
+                threads: config.blocking_threads,
+                queue_capacity: config.pool_queue_limit,
+                max_inflight_bytes: config.pool_max_inflight_bytes,
+                max_isolated_threads: config.max_isolated_workers,
+                lane_policies: ExecutionDomainConfig::new("blocking", Vec::new(), 1).lane_policies,
+            },
+        ]
+    } else {
+        config.execution_domains.clone()
+    };
+    let mut domains = BTreeMap::new();
+    let mut class_to_domain = HashMap::new();
+    for domain in configured {
+        validate_execution_domain(&domain, &domains, &class_to_domain)?;
+        for execution_class in &domain.execution_classes {
+            class_to_domain.insert(execution_class.clone(), domain.domain_id.clone());
+        }
+        let pool = WorkerPool::new(
+            &domain.domain_id,
+            domain.execution_classes,
+            domain.threads,
+            domain.queue_capacity,
+            domain.max_inflight_bytes,
+            domain.max_isolated_threads,
+            domain.lane_policies,
             actor_tx.clone(),
-        )?,
-        blocking: WorkerPool::new(
-            "blocking",
-            vec![
-                ExecutionClass::Io,
-                ExecutionClass::Blocking,
-                ExecutionClass::Script,
-            ],
-            config.blocking_threads,
-            config.pool_queue_limit,
-            config.pool_max_inflight_bytes,
-            config.max_isolated_workers,
-            actor_tx,
-        )?,
+        )?;
+        domains.insert(domain.domain_id, pool);
+    }
+    for execution_class in [
+        ExecutionClass::Orchestration,
+        ExecutionClass::Io,
+        ExecutionClass::Cpu,
+        ExecutionClass::Blocking,
+        ExecutionClass::Script,
+    ] {
+        if !class_to_domain.contains_key(&execution_class) {
+            return Err(host_failure(
+                "host.execution_domain.class_missing",
+                format!("execution_class.{execution_class:?}"),
+            ));
+        }
+    }
+    Ok(WorkerPools {
+        domains,
+        class_to_domain,
     })
+}
+
+fn validate_execution_domain(
+    domain: &ExecutionDomainConfig,
+    domains: &BTreeMap<String, WorkerPool>,
+    class_to_domain: &HashMap<ExecutionClass, String>,
+) -> RuntimeResult<()> {
+    if domain.domain_id.trim().is_empty()
+        || domain.execution_classes.is_empty()
+        || domains.contains_key(&domain.domain_id)
+    {
+        return Err(host_failure(
+            "host.execution_domain.config",
+            format!("execution_domain.{}", domain.domain_id),
+        ));
+    }
+    for execution_class in &domain.execution_classes {
+        if *execution_class == ExecutionClass::Control
+            || class_to_domain.contains_key(execution_class)
+        {
+            return Err(host_failure(
+                "host.execution_domain.class_conflict",
+                format!("execution_class.{execution_class:?}"),
+            ));
+        }
+    }
+    for lane in DispatchLane::ALL {
+        let Some(policy) = domain.lane_policies.get(&lane) else {
+            return Err(host_failure(
+                "host.execution_domain.lane_missing",
+                format!("execution_domain.{}.lane.{lane:?}", domain.domain_id),
+            ));
+        };
+        if policy.weight == 0
+            || policy.max_share_percent == 0
+            || policy.max_share_percent > 100
+            || policy.queue_entry_limit == 0
+            || policy.max_inflight_bytes == 0
+        {
+            return Err(host_failure(
+                "host.execution_domain.lane_config",
+                format!("execution_domain.{}.lane.{lane:?}", domain.domain_id),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn reserve_bytes(counter: &AtomicUsize, amount: usize, limit: usize) -> RuntimeResult<()> {
@@ -447,7 +774,7 @@ fn worker_loop(
     worker_id: String,
     default_execution_class: ExecutionClass,
     receiver: Receiver<QueuedDispatch>,
-    actor_tx: mpsc::Sender<CoreActorMsg>,
+    actor_tx: ActorSender,
     state: Arc<WorkerPoolState>,
 ) {
     while let Ok(queued) = receiver.recv() {
@@ -459,15 +786,30 @@ fn worker_loop(
         state
             .running_entries
             .fetch_add(queued.entry_count, Ordering::AcqRel);
+        move_lanes_to_running(&state, &queued.lane_entries);
         let started = worker_started(&worker_id, &queued.dispatch);
         if actor_tx.send(CoreActorMsg::WorkerStarted(started)).is_err() {
-            finish_dispatch_counters(&state, queued.entry_count, queued.payload_bytes);
+            finish_dispatch_counters(
+                &state,
+                queued.entry_count,
+                queued.payload_bytes,
+                &queued.lane_entries,
+                &queued.lane_bytes,
+            );
             break;
         }
         let entry_count = queued.entry_count;
         let payload_bytes = queued.payload_bytes;
+        let lane_entries = queued.lane_entries;
+        let lane_bytes = queued.lane_bytes;
         let completion = execute_dispatch(queued.dispatch);
-        finish_dispatch_counters(&state, entry_count, payload_bytes);
+        finish_dispatch_counters(
+            &state,
+            entry_count,
+            payload_bytes,
+            &lane_entries,
+            &lane_bytes,
+        );
         if actor_tx
             .send(CoreActorMsg::WorkerCompleted(completion))
             .is_err()
@@ -492,7 +834,13 @@ fn worker_loop(
     state.active_threads.fetch_sub(1, Ordering::AcqRel);
 }
 
-fn finish_dispatch_counters(state: &WorkerPoolState, entry_count: usize, payload_bytes: usize) {
+fn finish_dispatch_counters(
+    state: &WorkerPoolState,
+    entry_count: usize,
+    payload_bytes: usize,
+    lane_entries: &BTreeMap<DispatchLane, usize>,
+    lane_bytes: &BTreeMap<DispatchLane, usize>,
+) {
     state.running_batches.fetch_sub(1, Ordering::AcqRel);
     state
         .running_entries
@@ -500,6 +848,56 @@ fn finish_dispatch_counters(state: &WorkerPoolState, entry_count: usize, payload
     state
         .inflight_bytes
         .fetch_sub(payload_bytes, Ordering::AcqRel);
+    let mut counters = state.lanes.lock().expect("lane capacity lock poisoned");
+    for (lane, entries) in lane_entries {
+        let current = counters.entry(lane.clone()).or_default();
+        current.running_batches = current.running_batches.saturating_sub(1);
+        current.running_entries = current.running_entries.saturating_sub(*entries);
+        current.inflight_bytes = current
+            .inflight_bytes
+            .saturating_sub(lane_bytes.get(lane).copied().unwrap_or_default());
+    }
+}
+
+fn move_lanes_to_running(state: &WorkerPoolState, lane_entries: &BTreeMap<DispatchLane, usize>) {
+    let mut counters = state.lanes.lock().expect("lane capacity lock poisoned");
+    for (lane, entries) in lane_entries {
+        let current = counters.entry(lane.clone()).or_default();
+        current.queued_batches = current.queued_batches.saturating_sub(1);
+        current.queued_entries = current.queued_entries.saturating_sub(*entries);
+        current.running_batches = current.running_batches.saturating_add(1);
+        current.running_entries = current.running_entries.saturating_add(*entries);
+    }
+}
+
+fn dispatch_lane_entries(dispatch: &RunnerDispatch) -> BTreeMap<DispatchLane, usize> {
+    let mut lanes = BTreeMap::new();
+    for entry in &dispatch.batch.entries {
+        *lanes.entry(entry.lane.clone()).or_default() += 1;
+    }
+    lanes
+}
+
+fn distribute_lane_bytes(
+    lane_entries: &BTreeMap<DispatchLane, usize>,
+    payload_bytes: usize,
+    entry_count: usize,
+) -> BTreeMap<DispatchLane, usize> {
+    if entry_count == 0 {
+        return BTreeMap::new();
+    }
+    let mut assigned = 0usize;
+    let mut distributed = BTreeMap::new();
+    for (index, (lane, entries)) in lane_entries.iter().enumerate() {
+        let bytes = if index + 1 == lane_entries.len() {
+            payload_bytes.saturating_sub(assigned)
+        } else {
+            payload_bytes.saturating_mul(*entries) / entry_count
+        };
+        assigned = assigned.saturating_add(bytes);
+        distributed.insert(lane.clone(), bytes);
+    }
+    distributed
 }
 
 fn execute_dispatch(dispatch: RunnerDispatch) -> RunnerCompletion {

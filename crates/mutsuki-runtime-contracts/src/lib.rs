@@ -1,6 +1,7 @@
 mod batch;
 mod capability_request;
 mod common;
+mod domain;
 mod error;
 mod event;
 mod execution_policy;
@@ -30,6 +31,7 @@ pub use common::{
     ResourceCellId, ResourceLeaseId, RunnerId, ScalarValue, SpanId, SurfaceId, TaskId, TaskLeaseId,
     TickId, TraceId,
 };
+pub use domain::{CrossDomainTaskRequest, DomainTaskHandle, RuntimeDomainId};
 pub use error::{
     ERR_CAPABILITY_EXHAUSTED, ERR_CHECKPOINT_INCOMPATIBLE, ERR_EXECUTION_NO_VARIANT,
     ERR_PLUGIN_DISABLED, ERR_PLUGIN_NOT_FOUND, ERR_PORTABLE_SCHEMA_UNSUPPORTED,
@@ -59,12 +61,12 @@ pub use observability::{
     ObservabilityOverflowPolicy, ObservabilityPage, ObservabilityProfile,
 };
 pub use plugin::{
-    ArtifactType, CapabilityProviderSelection, ContractSurface, ContractSurfaceKind,
-    HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant, PluginArtifact,
-    PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass,
-    ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock, RuntimeProfile,
-    RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy, SurfaceOccupancyHandle,
-    SurfaceOccupancyHandleKind,
+    ArtifactType, CapabilityProviderSelection, CompanionArtifact, ContractSurface,
+    ContractSurfaceKind, HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant,
+    PluginArtifact, PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides,
+    ProtocolClass, ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock,
+    RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy,
+    SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use portability::{
     ContentId, ExecutionMobility, PORTABLE_TASK_ENVELOPE_SCHEMA_ID,

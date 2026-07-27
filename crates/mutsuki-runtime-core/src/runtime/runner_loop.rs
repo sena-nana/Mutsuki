@@ -21,6 +21,23 @@ mod result_router;
 mod trace_metadata;
 
 impl CoreRuntime {
+    pub fn runner_load_snapshot(&self) -> Vec<(RunnerDescriptor, RunnerLoad)> {
+        self.registry
+            .descriptor_snapshot()
+            .iter()
+            .map(|descriptor| {
+                (
+                    descriptor.clone(),
+                    self.tasks.runner_load(
+                        descriptor,
+                        self.current_step,
+                        self.load_plan.registry_generation,
+                    ),
+                )
+            })
+            .collect()
+    }
+
     pub fn tick_once(&mut self) -> RuntimeResult<RunnerLoopReport> {
         let mut executor = InlineRunnerExecutor;
         self.tick_once_with_executor(&mut executor)

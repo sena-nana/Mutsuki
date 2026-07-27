@@ -222,6 +222,7 @@ fn plugin_builder_declares_the_typed_jsonl_compatibility_backend() {
             artifact_type: ArtifactType::Abi,
             path: "test_abi.dll".into(),
             sha256: "sha256:test".into(),
+            companion_artifacts: Vec::new(),
         })
         .build();
 

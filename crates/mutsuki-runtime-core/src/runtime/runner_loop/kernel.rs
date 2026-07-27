@@ -47,11 +47,20 @@ impl CoreRuntime {
                                 err.to_string(),
                             )
                         })?;
+                    let mut attributes = BTreeMap::new();
+                    attributes.insert(
+                        "domain_event_id".into(),
+                        mutsuki_runtime_contracts::ScalarValue::String(event.event_id.clone()),
+                    );
+                    attributes.insert(
+                        "payload".into(),
+                        mutsuki_runtime_contracts::ScalarValue::String(event.payload.to_string()),
+                    );
                     self.events.record(
                         RuntimeEventKind::Task,
                         event.kind,
-                        Some(event.event_id),
-                        BTreeMap::new(),
+                        task.correlation_id.clone().or(Some(event.event_id)),
+                        attributes,
                         None,
                     );
                 }

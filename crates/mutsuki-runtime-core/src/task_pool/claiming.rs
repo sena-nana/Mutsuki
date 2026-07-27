@@ -83,6 +83,16 @@ pub(super) fn queued_count(
     task_pool.ready_dispatch_count(runner, step, registry_generation)
 }
 
+pub(super) fn queued_count_for_lane(
+    task_pool: &TaskPool,
+    runner: &RunnerDescriptor,
+    step: u64,
+    registry_generation: u64,
+    lane: &mutsuki_runtime_contracts::DispatchLane,
+) -> usize {
+    task_pool.ready_dispatch_count_for_lane(runner, step, registry_generation, lane)
+}
+
 fn runner_accepts_indexed_task(
     _runner: &RunnerDescriptor,
     task: &Task,
@@ -113,6 +123,18 @@ fn select_candidate_ids(
         return Vec::new();
     }
     let max_entries = budget.map_or(limit, |budget| limit.min(budget.max_entries));
+    if let Some(budget) = budget
+        && !budget.lane_budget.is_empty()
+    {
+        return select_qos_candidate_ids(
+            task_pool,
+            runner,
+            step,
+            registry_generation,
+            max_entries,
+            budget,
+        );
+    }
     let mut lane_counts = HashMap::new();
     let mut selected_bytes = 0usize;
     let mut selected = Vec::with_capacity(max_entries);
@@ -147,6 +169,70 @@ fn select_candidate_ids(
     selected
 }
 
+fn select_qos_candidate_ids(
+    task_pool: &TaskPool,
+    runner: &RunnerDescriptor,
+    step: u64,
+    registry_generation: u64,
+    max_entries: usize,
+    budget: &DispatchBudget,
+) -> Vec<TaskId> {
+    let mut candidates = HashMap::new();
+    for lane in mutsuki_runtime_contracts::DispatchLane::ALL {
+        let lane_limit = budget
+            .lane_budget
+            .get(&lane)
+            .map_or(max_entries, |lane_budget| lane_budget.max_entries)
+            .min(max_entries);
+        if lane_limit == 0 {
+            continue;
+        }
+        let mut ids = Vec::with_capacity(lane_limit);
+        visit_candidate_records_for_lane(
+            task_pool,
+            runner,
+            step,
+            registry_generation,
+            &lane,
+            |record| {
+                ids.push(record.task.task_id.clone());
+                ids.len() < lane_limit
+            },
+        );
+        if !ids.is_empty() {
+            candidates.insert(lane, ids.into_iter());
+        }
+    }
+
+    let mut selected = Vec::with_capacity(max_entries);
+    let mut selected_bytes = 0usize;
+    while selected.len() < max_entries {
+        let mut progressed = false;
+        for lane in mutsuki_runtime_contracts::DispatchLane::ALL {
+            let Some(iter) = candidates.get_mut(&lane) else {
+                continue;
+            };
+            let Some(task_id) = iter.next() else {
+                continue;
+            };
+            let payload_bytes = task_pool.payload_wire_bytes(&task_id);
+            if selected_bytes.saturating_add(payload_bytes) > budget.max_bytes {
+                continue;
+            }
+            selected_bytes = selected_bytes.saturating_add(payload_bytes);
+            selected.push(task_id);
+            progressed = true;
+            if selected.len() >= max_entries {
+                break;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    selected
+}
+
 fn visit_candidate_records(
     task_pool: &TaskPool,
     runner: &RunnerDescriptor,
@@ -155,6 +241,43 @@ fn visit_candidate_records(
     mut visit: impl FnMut(&TaskRecord) -> bool,
 ) -> usize {
     let queues = task_pool.ready_dispatch_queues(runner);
+    visit_queues(
+        task_pool,
+        runner,
+        step,
+        registry_generation,
+        queues,
+        &mut visit,
+    )
+}
+
+fn visit_candidate_records_for_lane(
+    task_pool: &TaskPool,
+    runner: &RunnerDescriptor,
+    step: u64,
+    registry_generation: u64,
+    lane: &mutsuki_runtime_contracts::DispatchLane,
+    mut visit: impl FnMut(&TaskRecord) -> bool,
+) -> usize {
+    let queues = task_pool.ready_dispatch_queues_for_lane(runner, lane);
+    visit_queues(
+        task_pool,
+        runner,
+        step,
+        registry_generation,
+        queues,
+        &mut visit,
+    )
+}
+
+fn visit_queues(
+    task_pool: &TaskPool,
+    runner: &RunnerDescriptor,
+    step: u64,
+    registry_generation: u64,
+    queues: Vec<&std::collections::BTreeSet<super::indexes::ReadyKey>>,
+    visit: &mut impl FnMut(&TaskRecord) -> bool,
+) -> usize {
     let mut iterators = queues.iter().map(|queue| queue.iter()).collect::<Vec<_>>();
     let mut heap = BinaryHeap::new();
     for (index, iterator) in iterators.iter_mut().enumerate() {

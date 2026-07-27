@@ -8,6 +8,7 @@ license.workspace = true
 crossbeam-channel.workspace = true
 futures-util.workspace = true
 futures-channel.workspace = true
+libloading.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }
@@ -18,6 +19,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 libc.workspace = true
+mutsuki-runtime-host-abi-v2-fixture = { path = "fixtures/abi-v2-plugin" }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = [

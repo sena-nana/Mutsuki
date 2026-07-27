@@ -179,6 +179,9 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
 - Rust host 覆盖：
   - native plugin host 可解析 `RuntimeProfile + PluginManifest` 为 load plan 并启动
     `CoreRuntime`。
+  - `PluginArtifact` 可用 serde 向后兼容的 companion artifact 描述包内辅助文件；通用
+    ABI v2 loader 接收已验证动态库路径和 Host task/resource gateway，强制初始化及
+    manifest/provider surface 校验后返回 `LoadedPlugin`。包发现、staging 与缓存不进入 Core。
   - resolver 支持 `RuntimeProfile.mode`：`FullDev` / `ExtensibleRuntime` 保守保留
     manifest 声明的系统扩展，`BuiltinOnly` / `LockedBuiltin` 按 enabled plugins、
     deployment 与 manifest `requires` 生成 `RuntimeCapabilityGraph`，并在 Level 1
@@ -304,6 +307,19 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   `RuntimeCapabilityGraph.active_*` 裁剪 plugin backend、bridge、codec 与 scheduler
   policy。后续重点是 backend / bridge / codec 的长期连接监督、drain、replacement 与
   workflow 实例状态资源化。
+
+## Issue #43 多通路运行基线
+
+- `TaskPool` 已按 DispatchLane 建立 ready 索引与计数，QoS 预算使用跨 lane round-robin
+  候选选择。
+- `mutsuki-runtime-host` 已把固定 compute/blocking 池泛化为配置驱动 ExecutionDomain，
+  并暴露 domain/lane queue、running 与 inflight byte snapshot。
+- Core Actor 已拆分有界 control/data mailbox，并暴露 mailbox、submit-to-dispatch、
+  cancel、completion route、scheduler、starvation 与 reserved-capacity 指标。
+- `RuntimeGroupHost` 提供多 RuntimeDomain lifecycle、health snapshot、共享 Host services、
+  typed client、显式跨域 request/cancel/wait、幂等冲突与独立 reload/abort。
+- 固定机基准 `execution_domain_qos` 使用相同后台阻塞与交互请求，对比单共享通路和
+  interactive/background 双通路；验收门槛为多通路 p99 至少降低 50%。
 
 ## 红线
 
