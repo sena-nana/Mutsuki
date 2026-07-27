@@ -1,0 +1,7 @@
+plugin_id = "mutsuki.plugin.agent.loop"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent/run@1",
+]

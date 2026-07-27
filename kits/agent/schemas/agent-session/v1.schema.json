@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-session.v1",
+  "title": "Mutsuki Agent Session",
+  "type": "object",
+  "required": ["session_id", "profile_id", "messages", "turn_count", "resource", "cell"],
+  "properties": {
+    "session_id": { "type": "string", "minLength": 1 },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "title": { "type": ["string", "null"] },
+    "messages": { "type": "array" },
+    "turn_count": { "type": "integer", "minimum": 0 },
+    "resource": { "type": "object" },
+    "cell": { "type": "object" }
+  },
+  "additionalProperties": false
+}

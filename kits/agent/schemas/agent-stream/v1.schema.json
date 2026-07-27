@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-stream.v1",
+  "oneOf": [
+    { "type": "object", "required": ["type", "text"], "properties": { "type": { "const": "message_delta" }, "text": { "type": "string" } } },
+    { "type": "object", "required": ["type", "name", "input"], "properties": { "type": { "const": "tool_call" }, "name": { "type": "string" }, "input": true } },
+    { "type": "object", "required": ["type", "name", "output"], "properties": { "type": { "const": "tool_result" }, "name": { "type": "string" }, "output": true } },
+    { "type": "object", "required": ["type"], "properties": { "type": { "const": "done" } } },
+    { "type": "object", "required": ["stream"], "properties": { "stream": { "type": "object" } } }
+  ]
+}

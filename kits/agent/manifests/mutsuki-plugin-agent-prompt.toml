@@ -1,0 +1,8 @@
+plugin_id = "mutsuki.plugin.agent.prompt"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.prompt/render@1",
+  "mutsuki.agent.prompt/get@1",
+]

@@ -1,0 +1,10 @@
+plugin_id = "mutsuki.plugin.agent.session"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.session/create@1",
+  "mutsuki.agent.session/get@1",
+  "mutsuki.agent.session/append@1",
+  "mutsuki.agent.session/snapshot@1",
+]

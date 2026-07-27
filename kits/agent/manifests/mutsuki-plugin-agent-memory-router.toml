@@ -1,0 +1,9 @@
+plugin_id = "mutsuki.plugin.agent.memory_router"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.memory/query@1",
+  "mutsuki.agent.memory/write@1",
+  "mutsuki.agent.memory/activate@1",
+]
