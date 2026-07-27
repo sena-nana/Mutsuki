@@ -10,12 +10,21 @@
   },
   "noisy_cases": [
     {
+      "case_id": "agent.client-link-query-100",
+      "dimensions": {
+        "queries": 100,
+        "transport": "mutsuki-link-memory-control-stream",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.1309962466119718
+    },
+    {
       "case_id": "agent.context-large",
       "dimensions": {
         "token_like_bytes": 1048576,
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.3081180811808118
+      "mad_to_median": 0.416
     },
     {
       "case_id": "agent.context-medium",
@@ -23,7 +32,7 @@
         "token_like_bytes": 65536,
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.112
+      "mad_to_median": 0.24969987995198079
     },
     {
       "case_id": "agent.context-small",
@@ -31,7 +40,7 @@
         "token_like_bytes": 4096,
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.22133333333333333
+      "mad_to_median": 0.18434343434343434
     },
     {
       "case_id": "agent.failure-retry",
@@ -43,38 +52,34 @@
         "simulated_latency": "10ms",
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.15670384793457914
+      "mad_to_median": 0.17489031816105952
     },
     {
-      "case_id": "agent.failure-retry",
+      "case_id": "agent.lsp-query-100",
       "dimensions": {
-        "failures": [
-          "retryable",
-          "non-retryable"
-        ],
-        "simulated_latency": "1ms",
+        "queries": 100,
+        "transport": "in-memory-json-rpc",
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.11158611433103532
+      "mad_to_median": 0.1908150064683053
     },
     {
       "case_id": "agent.parallel-tools-8",
       "dimensions": {
         "execution": "real-tool-router-batch",
         "requested_parallelism": 8,
-        "simulated_latency": "1ms",
+        "simulated_latency": "10ms",
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.15466863474837358
+      "mad_to_median": 0.12342646227219811
     },
     {
-      "case_id": "agent.session-100-turns",
+      "case_id": "agent.single-turn",
       "dimensions": {
-        "simulated_latency": "1ms",
-        "turns": 100,
+        "simulated_latency": "10ms",
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.10540067995203385
+      "mad_to_median": 0.11006407362125033
     },
     {
       "case_id": "agent.tool-once",
@@ -82,16 +87,7 @@
         "simulated_latency": "10ms",
         "boundary": "agentkit-owner-runners-and-services"
       },
-      "mad_to_median": 0.15467178858729153
-    },
-    {
-      "case_id": "agent.wait-resume",
-      "dimensions": {
-        "extra_empty_poll": 1,
-        "simulated_latency": "1ms",
-        "boundary": "agentkit-owner-runners-and-services"
-      },
-      "mad_to_median": 0.13286982900333857
+      "mad_to_median": 0.11358619623528846
     }
   ],
   "limitations": [
