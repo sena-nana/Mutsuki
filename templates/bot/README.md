@@ -4,9 +4,13 @@
 注册 owner 提供的插件 factory catalog 并启动 Runtime；它不实现命令、回复、Agent 流程或
 任何具体业务 Bot。
 
-本目录是 Mutsuki monorepo 内的规范源，直接使用根 Workspace 的 package。发布给独立产品时，
-必须从仓库根执行导出脚本，使所有 Mutsuki package 固定到同一个 release tag 或 commit，并
-生成独立 `Cargo.lock`：
+唯一规范源位于
+[`Mutsuki/templates/bot`](https://github.com/sena-nana/Mutsuki/tree/main/templates/bot)，
+直接使用主仓根 Workspace 的 package。`sena-nana/MutsukiBotTemplate` 由 release 自动生成，
+供用户通过 GitHub “Use this template” 创建产品；禁止在生成仓手工维护实现或依赖版本。
+
+维护者从主仓根执行导出脚本，使所有 Mutsuki package 固定到同一个 release tag 或 commit，
+并生成独立 `Cargo.lock`：
 
 ```powershell
 python templates/bot/scripts/export_template.py `
@@ -107,7 +111,7 @@ BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"repl
 ```
 
 完整配置、scope 和错误模型见
-[BotPlugins 官方开放平台 backend](../../plugins/bot/docs/bilibili-open-platform.md)。
+[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/Mutsuki/blob/main/plugins/bot/docs/bilibili-open-platform.md)。
 
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
 Provider），并让 QQ 的 `media_provider_id` 与业务插件一致。米画师还需显式选择
@@ -163,4 +167,4 @@ python -m unittest discover -s templates/bot/scripts -p "test_*.py"
 ```
 
 package 职责见 [docs/repository-boundaries.md](docs/repository-boundaries.md)，统一发布与兼容性见
-[根发布规范](../../docs/release-train.md)。
+[根发布规范](https://github.com/sena-nana/Mutsuki/blob/main/docs/release-train.md)。

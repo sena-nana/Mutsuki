@@ -26,8 +26,11 @@ EXCLUDED_NAMES = {
     "target",
 }
 EXCLUDED_FILES = {
+    Path(".github/workflows/release-set.yml"),
     Path("docs/release-sets.md"),
+    Path("scripts/export_template.py"),
     Path("scripts/release_set.py"),
+    Path("scripts/test_export_template.py"),
     Path("scripts/test_release_set.py"),
 }
 

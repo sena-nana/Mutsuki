@@ -30,6 +30,8 @@ Keep one repository and one Rust compatibility baseline without collapsing packa
   comments, labels, milestones, and package ownership.
 - Add a migration notice to each source repository before archiving it.
 - Do not archive a repository while executable work exists only in that repository.
+- Keep a generated distribution repository such as `MutsukiBotTemplate` unarchived only when
+  publication is one-way from this monorepo and the generated tree is byte-identical.
 - Keep business products outside this repository and pin them to a released tag or commit.
 
 ## Validation

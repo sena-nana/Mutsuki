@@ -101,8 +101,10 @@ approval whose report hash, revision snapshot and environment fingerprint match.
 - [Monorepo decision](docs/decisions/0001-mutsuki-monorepo.md)
 
 Business products such as Lilia and Nana remain in their own repositories and pin this repository
-at a tag or commit. The independent Bot GitHub Template is generated from `templates/bot`; it is
-not a second source of framework behavior.
+at a tag or commit. The
+[independent Bot GitHub Template](https://github.com/sena-nana/MutsukiBotTemplate) is generated
+from `templates/bot`; it remains active for “Use this template” but is not a second source of
+framework behavior.
 
 ## Reading order
 

@@ -42,10 +42,28 @@ class TemplateExportTests(unittest.TestCase):
             shutil_ignore = export_template.ignored_paths(self.source)
             scripts = shutil_ignore(
                 str(self.source / "scripts"),
-                ["export_template.py", "release_set.py", "test_release_set.py"],
+                [
+                    "export_template.py",
+                    "release_set.py",
+                    "test_export_template.py",
+                    "test_release_set.py",
+                ],
             )
             root = shutil_ignore(str(self.source), ["artifacts", "releases", "crates"])
-            self.assertEqual(scripts, {"release_set.py", "test_release_set.py"})
+            workflows = shutil_ignore(
+                str(self.source / ".github" / "workflows"),
+                ["platform-compat.yml", "release-set.yml"],
+            )
+            self.assertEqual(
+                scripts,
+                {
+                    "export_template.py",
+                    "release_set.py",
+                    "test_export_template.py",
+                    "test_release_set.py",
+                },
+            )
+            self.assertEqual(workflows, {"release-set.yml"})
             self.assertEqual(root, {"artifacts", "releases"})
 
     def test_invalid_revision_is_rejected(self) -> None:

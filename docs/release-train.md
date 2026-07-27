@@ -15,9 +15,15 @@ minor baseline. Breaking cross-package changes are made in one repository change
 5. Update the compatibility matrix and migration notes.
 6. Tag the exact validated commit and publish release notes.
 7. Re-run clean-clone metadata, build, tests and smoke performance from the tag.
+8. Export the Bot template from that tag, validate its standalone Workspace, byte-compare it with
+   `sena-nana/MutsukiBotTemplate`, and publish the generated revision.
 
 Products must pin a tag or commit. Depending on `main`, mixing package revisions, or pinning former
 framework repositories is unsupported.
+
+The template publisher uses the write-scoped `MUTSUKI_BOT_TEMPLATE_DEPLOY_KEY` Actions Secret.
+The target repository stays unarchived and marked as a GitHub Template, but it is not edited
+manually and does not own framework Issues.
 
 ## Package selection
 

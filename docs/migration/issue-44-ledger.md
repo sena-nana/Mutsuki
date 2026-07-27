@@ -2,7 +2,7 @@
 
 ## Source history
 
-| Source repository | Imported source revision | Monorepo path | Issues total | Open | Closed | Issue transfer | Source archive |
+| Source repository | Imported source revision | Monorepo path | Issues total | Open | Closed | Issue transfer | Source disposition |
 | --- | --- | --- | ---: | ---: | ---: | --- | --- |
 | MutsukiLink | `75f5f3820d29b2c58bbba6408d68bc77c74a8ec0` | `crates/link` | 14 | 2 | 12 | Completed | Archived |
 | MutsukiCliHost | `681e4fd61172dcb0d7f33cf9f4e39d05f161085d` | `hosts/cli` | 0 | 0 | 0 | N/A | Archived |
@@ -14,7 +14,7 @@
 | MutsukiBotPlugins | `c9152c8e8e05f313343cc836985d118732785374` | `plugins/bot` | 20 | 10 | 10 | Completed | Archived |
 | MutsukiStdPlugins | `382b6984129fc09b10cc8e5f3af3649fd353f9ea` | `plugins/std` | 4 | 0 | 4 | Completed | Archived |
 | MutsukiPythonRunnerKit | `c48f4c4a55aacbf76066baf3a9dee945d959de9c` | `kits/python-runner` | 3 | 0 | 3 | Completed | Archived |
-| MutsukiBotTemplate | `50f40fd5c357e50263b3696f2971fb0721998aa8` | `templates/bot` | 5 | 0 | 5 | Completed | Archived |
+| MutsukiBotTemplate | `50f40fd5c357e50263b3696f2971fb0721998aa8` | `templates/bot` | 5 | 0 | 5 | Completed | Generated mirror |
 
 The target Core history was synchronized through
 `608e565f4af93e8226e01d5af3003071307a1654` before the unified Workspace gate. Imports use
@@ -39,13 +39,19 @@ A source repository is not archivable until all of the following are true:
 - the unified release and compatibility matrix are published;
 - a clean clone and generated template pass validation.
 
-All blockers above were cleared before the eleven source repositories were archived.
+All blockers above were cleared before ten retired source repositories were archived.
+`MutsukiBotTemplate` is the distribution exception: its former source history and Issues are
+retired, but the repository remains active as a GitHub Template generated from `templates/bot`.
+It accepts only release automation commits and is not a second implementation or Issue tracker.
 
 ## Completed remote migration
 
 - Target repository: [`sena-nana/Mutsuki`](https://github.com/sena-nana/Mutsuki).
 - Validated unified revision: `387a42735ce13f105292ddc91e5f209979c529d9`.
 - Release: [`v0.1.0`](https://github.com/sena-nana/Mutsuki/releases/tag/v0.1.0).
+- Generated Bot template:
+  [`sena-nana/MutsukiBotTemplate`](https://github.com/sena-nana/MutsukiBotTemplate), published
+  from the matching release by `.github/workflows/publish-bot-template.yml`.
 - Issue map: [`issue-44-issue-map.json`](issue-44-issue-map.json), containing 117 unique
   source-to-target mappings. Every source Issue list is empty after transfer.
 - The only open source PR, MutsukiLink Dependabot #20, was closed as superseded by the root
@@ -77,5 +83,7 @@ lockfiles and migration-facing documentation contain no former framework reposit
   59 passing smoke gates.
 - An isolated template export passed locked metadata, formatting, check, and 40 tests with 1
   ignored platform case.
+- The generated template repository is byte-for-byte synchronized from that validated export;
+  repository-local Git history is the only path excluded from comparison.
 - A fresh clone of remote tag `v0.1.0` resolved the exact unified revision, passed locked workspace
   check, 887 tests with 3 ignored cases, and all 59 Core smoke performance gates.
