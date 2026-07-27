@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-message.v1",
+  "type": "object",
+  "required": ["role", "content"],
+  "properties": {
+    "role": { "enum": ["system", "user", "assistant", "tool"] },
+    "content": { "type": "string" },
+    "name": { "type": ["string", "null"] },
+    "metadata": true
+  }
+}

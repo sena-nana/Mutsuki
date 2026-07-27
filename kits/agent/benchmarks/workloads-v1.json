@@ -1,0 +1,21 @@
+{
+  "schema_version": "mutsuki.performance.agent-workloads/v1",
+  "fixture_version": "mutsuki.agent.benchmark-fixtures/v1",
+  "seed": 1297435713,
+  "network_policy": "forbidden",
+  "simulated_latency_profiles": ["0us", "1ms", "10ms"],
+  "cases": [
+    {"case_id": "agent.single-turn"},
+    {"case_id": "agent.tool-once", "tool_routes": 1},
+    {"case_id": "agent.tool-chain-8", "tool_routes": 8},
+    {"case_id": "agent.parallel-tools-8", "parallelism": 8},
+    {"case_id": "agent.session-100-turns", "turns": 100},
+    {"case_id": "agent.context-small", "token_like_bytes": 4096},
+    {"case_id": "agent.context-medium", "token_like_bytes": 65536},
+    {"case_id": "agent.context-large", "token_like_bytes": 1048576},
+    {"case_id": "agent.memory-route", "candidates": 128, "selected": 8},
+    {"case_id": "agent.wait-resume", "extra_empty_poll": 1},
+    {"case_id": "agent.cancel", "phase": "waiting-model-result"},
+    {"case_id": "agent.failure-retry", "modes": ["retryable", "non-retryable"]}
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "schema_version": "mutsuki.performance.analysis/v1",
+  "classification": "environmental-noise",
+  "correctness_counters": {
+    "duplicate_tool_results": 0,
+    "hash_mismatches": 0,
+    "public_network_requests": 0,
+    "unexpected_errors": 0,
+    "wrong_routes": 0
+  },
+  "noisy_cases": [
+    {
+      "case_id": "agent.context-large",
+      "dimensions": {
+        "token_like_bytes": 1048576,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.15
+    },
+    {
+      "case_id": "agent.context-medium",
+      "dimensions": {
+        "token_like_bytes": 65536,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.25
+    },
+    {
+      "case_id": "agent.context-small",
+      "dimensions": {
+        "token_like_bytes": 4096,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.2
+    },
+    {
+      "case_id": "agent.failure-retry",
+      "dimensions": {
+        "failures": [
+          "retryable",
+          "non-retryable"
+        ],
+        "simulated_latency": "10ms",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.16347310190010422
+    },
+    {
+      "case_id": "agent.memory-route",
+      "dimensions": {
+        "candidates": 128,
+        "selected": 8,
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.18612521150592218
+    },
+    {
+      "case_id": "agent.parallel-tools-8",
+      "dimensions": {
+        "execution": "real-tool-router-batch",
+        "requested_parallelism": 8,
+        "simulated_latency": "10ms",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.11931665722548522
+    },
+    {
+      "case_id": "agent.single-turn",
+      "dimensions": {
+        "simulated_latency": "10ms",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.27901313002964845
+    },
+    {
+      "case_id": "agent.tool-once",
+      "dimensions": {
+        "simulated_latency": "10ms",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.17131266066838047
+    },
+    {
+      "case_id": "agent.wait-resume",
+      "dimensions": {
+        "extra_empty_poll": 1,
+        "simulated_latency": "10ms",
+        "boundary": "agentkit-owner-runners-and-services"
+      },
+      "mad_to_median": 0.230704255094499
+    }
+  ],
+  "limitations": [
+    "Agent workload is deterministic business-layer budget evidence, not a Core or ServiceHost baseline.",
+    "Core and Host overhead are explicitly zero because this owner suite excludes those boundaries.",
+    "Simulated sleep scheduling excess remains in Agent orchestration time."
+  ]
+}

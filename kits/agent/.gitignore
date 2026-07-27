@@ -1,0 +1,14 @@
+/target/
+/artifacts/performance/
+**/target/
+**/Cargo.lock
+!/Cargo.lock
+*.pdb
+*.dll
+*.so
+*.dylib
+*.rlib
+
+# Python cache
+__pycache__/
+*.pyc

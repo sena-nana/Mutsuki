@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-memory.v1",
+  "type": "object",
+  "required": ["memory_id", "text"],
+  "properties": {
+    "memory_id": { "type": "string" },
+    "text": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "score": { "type": "number" },
+    "metadata": true,
+    "resource": { "type": ["object", "null"] },
+    "cell": { "type": ["object", "null"] }
+  }
+}

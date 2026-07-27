@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-model-poll.v1",
+  "title": "Mutsuki Agent Model Poll",
+  "type": "object",
+  "required": ["parent_task_id"],
+  "properties": {
+    "parent_task_id": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mutsuki.agent-profile.v1",
+  "type": "object",
+  "required": ["profile_id"],
+  "properties": {
+    "profile_id": { "type": "string", "minLength": 1 },
+    "default_model": { "type": "string" },
+    "max_steps": { "type": "integer", "minimum": 0 },
+    "tools": { "type": "array", "items": { "type": "string" } }
+  }
+}

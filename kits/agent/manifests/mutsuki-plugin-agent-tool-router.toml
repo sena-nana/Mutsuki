@@ -1,0 +1,8 @@
+plugin_id = "mutsuki.plugin.agent.tool_router"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.tool/list@1",
+  "mutsuki.agent.tool/execute@1",
+]
