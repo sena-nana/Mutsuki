@@ -1,0 +1,26 @@
+[package]
+name = "mutsuki-plugin-bot-bilibili"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fastrand.workspace = true
+md5.workspace = true
+hmac.workspace = true
+image.workspace = true
+mutsuki-bot-link-parser.workspace = true
+mutsuki-bot-protocol.workspace = true
+mutsuki-protocol-browser.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+reqwest.workspace = true
+qrcode.workspace = true
+rusqlite.workspace = true
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+url.workspace = true

@@ -1,0 +1,4 @@
+[command]
+prefixes = ["/", "!"]
+mention_prefix = true
+case_sensitive = false
