@@ -1,0 +1,16 @@
+[package]
+name = "mutsuki-agent-adapter-anthropic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Anthropic Messages protocol Model Adapter for AgentKit"
+
+[dependencies]
+mutsuki-agent-adapter-api.workspace = true
+mutsuki-agent-contracts.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

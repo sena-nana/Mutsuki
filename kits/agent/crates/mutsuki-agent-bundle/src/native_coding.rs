@@ -199,13 +199,6 @@ impl NativeCodingAgentBundle {
                 )));
             }
         }
-        let git_ui = Arc::clone(&self.git);
-        let index_ui = Arc::clone(&self.code_index);
-        if !Arc::ptr_eq(&self.git, &git_ui) || !Arc::ptr_eq(&self.code_index, &index_ui) {
-            return Err(AgentError::invalid_input(
-                "shared coding services must be single-instance Arc handles",
-            ));
-        }
         Ok(())
     }
 
