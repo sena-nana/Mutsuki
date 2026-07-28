@@ -148,10 +148,21 @@ mutsuki-agent-distributed-integration = { path = "kits/agent/crates/mutsuki-agen
 mutsuki-agent-macros = { path = "kits/agent/crates/mutsuki-agent-macros" }
 mutsuki-agent-plugin-api = { path = "kits/agent/crates/mutsuki-agent-plugin-api" }
 mutsuki-agent-plugin-conformance = { path = "kits/agent/crates/mutsuki-agent-plugin-conformance" }
+mutsuki-agent-plugin-code-index = { path = "kits/agent/crates/mutsuki-agent-plugin-code-index" }
+mutsuki-agent-plugin-code-completion = { path = "kits/agent/crates/mutsuki-agent-plugin-code-completion" }
+mutsuki-agent-plugin-computer-use = { path = "kits/agent/crates/mutsuki-agent-plugin-computer-use" }
+mutsuki-agent-plugin-git = { path = "kits/agent/crates/mutsuki-agent-plugin-git" }
 mutsuki-agent-plugin-lsp = { path = "kits/agent/crates/mutsuki-agent-plugin-lsp" }
+mutsuki-agent-plugin-mcp = { path = "kits/agent/crates/mutsuki-agent-plugin-mcp" }
+mutsuki-agent-plugin-next-edit = { path = "kits/agent/crates/mutsuki-agent-plugin-next-edit" }
+mutsuki-agent-plugin-web-search = { path = "kits/agent/crates/mutsuki-agent-plugin-web-search" }
 mutsuki-agent-runtime = { path = "kits/agent/crates/mutsuki-agent-runtime" }
 mutsuki-agent-sdk = { path = "kits/agent/crates/mutsuki-agent-sdk" }
+mutsuki-plugin-agent-credential = { path = "kits/agent/crates/mutsuki-plugin-agent-credential" }
+mutsuki-plugin-agent-knowledge = { path = "kits/agent/crates/mutsuki-plugin-agent-knowledge" }
 mutsuki-plugin-agent-model-gateway = { path = "kits/agent/crates/mutsuki-plugin-agent-model-gateway" }
+mutsuki-plugin-agent-proactive = { path = "kits/agent/crates/mutsuki-plugin-agent-proactive" }
+mutsuki-plugin-agent-skills = { path = "kits/agent/crates/mutsuki-plugin-agent-skills" }
 
 mutsuki-bot-config = { path = "plugins/bot/crates/mutsuki-bot-config" }
 mutsuki-bot-config-derive = { path = "plugins/bot/crates/mutsuki-bot-config-derive" }

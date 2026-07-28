@@ -387,6 +387,8 @@ def main() -> None:
             "session",
             "context",
             "memory",
+            "skills",
+            "knowledge",
         ],
         "deployment": "deterministic AgentKit owner runners and services without network",
         "measurement_boundary": (

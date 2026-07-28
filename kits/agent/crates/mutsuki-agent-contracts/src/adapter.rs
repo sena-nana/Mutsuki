@@ -26,11 +26,20 @@ pub struct ModelCapability {
     #[serde(default)]
     pub images: bool,
     #[serde(default)]
+    pub audio_input: bool,
+    #[serde(default)]
+    pub transcription: bool,
+    #[serde(default)]
+    pub speech_synthesis: bool,
+    #[serde(default)]
     pub reasoning: bool,
     #[serde(default)]
     pub embedding: bool,
     #[serde(default)]
     pub rerank: bool,
+    /// Inline prefix/suffix code completion without Agent session/tool loops.
+    #[serde(default)]
+    pub code_completion: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

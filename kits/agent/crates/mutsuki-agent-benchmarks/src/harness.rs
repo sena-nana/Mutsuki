@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, VecDeque},
+    fs,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -8,7 +9,16 @@ use std::{
 use mutsuki_agent_client::{AgentClient, AgentLinkClient, AgentLinkServer, InProcessAgentService};
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_distributed_integration::{AgentCapabilityResolver, distributed_request};
+use mutsuki_agent_plugin_code_index::SharedCodeIndexService;
+use mutsuki_agent_plugin_computer_use::{
+    FakeBrowserBackend, FakeProcessBackend, InMemoryFilesystemBackend, SharedComputerUseService,
+};
 use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
+use mutsuki_agent_plugin_next_edit::{NextEditServiceConfig, SharedNextEditService};
+use mutsuki_agent_plugin_web_search::{
+    FakeHttpTransport, HttpJsonSearchService, HttpPageFetchService, SharedWebSearchService,
+};
+use mutsuki_agent_runtime::{CredentialBrokerService, KnowledgeService, SkillRegistry, SkillRoots};
 use mutsuki_agent_testkit::{
     BENCHMARK_FIXED_SEED, BENCHMARK_MODEL_ID, BENCHMARK_TOOL_NAME, BENCHMARK_TOOL_PROTOCOL,
     BenchmarkModelProvider, SimulatedLatency, benchmark_tool_descriptor, execute_benchmark_tool,
@@ -437,6 +447,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
             content: output.to_string(),
             name: Some(BENCHMARK_TOOL_NAME.into()),
             metadata: Some(json!({"call_id": format!("benchmark-call-{index:02}")})),
+            parts: Vec::new(),
         })
         .collect::<Vec<_>>();
     let final_result = harness
@@ -826,6 +837,449 @@ pub fn lsp_query_sample(query_count: usize) -> Sample {
     }
 }
 
+pub fn web_search_sample(query_count: usize) -> Sample {
+    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let hits = vec![SearchHit {
+        title: "Benchmark".into(),
+        url: "https://docs.example.com/bench".into(),
+        canonical_url: "https://docs.example.com/bench".into(),
+        snippet: Some("bench".into()),
+        published_at: None,
+        score: Some(1.0),
+        untrusted_content: true,
+    }];
+    let transport = Arc::new(
+        FakeHttpTransport::default()
+            .with_post("https://search.example/v1", 200, json!({"hits": hits}))
+            .with_get(
+                "https://docs.example.com/bench",
+                200,
+                "text/html",
+                b"<html><head><title>Benchmark</title></head><body>ok</body></html>".to_vec(),
+            ),
+    );
+    let search = HttpJsonSearchService::new(
+        SearchProviderConfig {
+            provider_id: "generic-json".into(),
+            endpoint: "https://search.example/v1".into(),
+            headers: Vec::new(),
+            credential_env: None,
+            timeout_ms: Some(1_000),
+            enable_http: true,
+            enable_browser_fallback: false,
+        },
+        transport.clone(),
+        resources.clone(),
+    )
+    .unwrap();
+    let pages = HttpPageFetchService::new(transport, resources.clone(), true, false, None);
+    let service =
+        SharedWebSearchService::new(Arc::new(search), Arc::new(pages), resources, true, false);
+    service
+        .search(SearchQuery {
+            query: "warmup".into(),
+            locale: None,
+            time_range: None,
+            allow_domains: Vec::new(),
+            deny_domains: Vec::new(),
+            limit: 3,
+        })
+        .unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = None;
+    for index in 0..query_count {
+        let result = service
+            .search(SearchQuery {
+                query: format!("benchmark-{index}"),
+                locale: None,
+                time_range: None,
+                allow_domains: Vec::new(),
+                deny_domains: Vec::new(),
+                limit: 3,
+            })
+            .unwrap();
+        last = Some(service.extract(PageFetchRequest {
+            url: result.hits[0].url.clone(),
+            follow_redirects: true,
+            max_redirects: 1,
+            max_bytes: 64 * 1024,
+            timeout_ms: 1_000,
+            allow_browser_fallback: false,
+        }));
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let last = last
+        .expect("web search benchmark executes at least one query")
+        .unwrap();
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: query_count as u64,
+        continuations: 0,
+        tool_routes: (query_count * 2) as u64,
+        max_tool_inflight: 1,
+        retained_bytes: serde_json::to_vec(&last).unwrap().len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "queries": query_count,
+            "title": last.title,
+            "canonical_url": last.canonical_url,
+            "untrusted": last.untrusted_content,
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn computer_use_sample(op_count: usize) -> Sample {
+    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let fs = Arc::new(
+        InMemoryFilesystemBackend::default()
+            .with_file("src/lib.rs", b"pub fn answer() -> u32 { 42 }")
+            .with_file("README.md", b"computer use benchmark"),
+    );
+    let service = SharedComputerUseService::new(
+        fs,
+        Some(Arc::new(FakeProcessBackend::default())),
+        Some(Arc::new(FakeBrowserBackend::default())),
+        resources,
+    );
+    let workspace = AgentWorkspaceRef {
+        workspace_id: "benchmark".into(),
+        root: "/virtual".into(),
+    };
+    service
+        .call_value(json!({
+            "op": "grep",
+            "workspace": workspace,
+            "pattern": "answer"
+        }))
+        .unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = Value::Null;
+    for index in 0..op_count {
+        last = service
+            .call_value(json!({
+                "op": "read",
+                "request": {"workspace": workspace, "path": "src/lib.rs"},
+                "max_bytes": 4096
+            }))
+            .unwrap();
+        if index % 4 == 0 {
+            last = service
+                .call_value(json!({
+                    "op": "patch",
+                    "request": {
+                        "workspace": workspace,
+                        "path": "src/lib.rs",
+                        "old_text": "42",
+                        "new_text": "42"
+                    },
+                    "session_id": "bench",
+                    "turn_id": format!("t{index}"),
+                    "approved": true
+                }))
+                .unwrap();
+        }
+        if index % 8 == 0 {
+            let _ = service
+                .call_value(json!({
+                    "op": "exec",
+                    "request": {
+                        "workspace": workspace,
+                        "command": "echo",
+                        "args": ["ok"],
+                        "limits": ExecutionLimits::default(),
+                        "allow_network": false
+                    },
+                    "session_id": "bench",
+                    "turn_id": format!("t{index}"),
+                    "approved": true
+                }))
+                .unwrap();
+            last = service
+                .call_value(json!({
+                    "op": "browser_snapshot",
+                    "request": {"url": "https://example.com", "limits": ExecutionLimits::default()},
+                    "session_id": "bench",
+                    "turn_id": format!("t{index}"),
+                    "approved": true
+                }))
+                .unwrap();
+        }
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: op_count as u64,
+        continuations: 0,
+        tool_routes: op_count as u64,
+        max_tool_inflight: 1,
+        retained_bytes: serde_json::to_vec(&last).unwrap().len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "ops": op_count,
+            "last": last,
+            "active_handles": service.active_handle_count(),
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn code_index_sample(query_count: usize) -> Sample {
+    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let service = SharedCodeIndexService::new(resources);
+    let workspace = CodeWorkspaceRef {
+        workspace_id: "benchmark".into(),
+        root: "/benchmark".into(),
+        tenant_id: "bench".into(),
+        git_revision: Some("deadbeef".into()),
+        worktree_id: None,
+    };
+    service
+        .open_workspace(workspace.clone(), None, None, false)
+        .unwrap();
+    let mut changes = Vec::new();
+    for index in 0..32 {
+        changes.push(CodeFileChange::Create {
+            path: format!("src/mod{index}.rs"),
+            content: format!("pub fn work_{index}() -> u32 {{ {index} }}\npub struct Item{index};"),
+        });
+        changes.push(CodeFileChange::Create {
+            path: format!("web/view{index}.ts"),
+            content: format!("export function render_{index}() {{ return {index}; }}\n"),
+        });
+    }
+    service
+        .apply_batch(CodeIndexBatch {
+            workspace: workspace.clone(),
+            rebuild: false,
+            changes,
+        })
+        .unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = None;
+    for index in 0..query_count {
+        last = Some(
+            service
+                .search(CodeSearchQuery {
+                    workspace: workspace.clone(),
+                    query: format!("work_{}", index % 16),
+                    mode: CodeSearchMode::Symbol,
+                    path_prefix: None,
+                    limit: 8,
+                    include_overlay: false,
+                })
+                .unwrap(),
+        );
+        if index % 4 == 0 {
+            last = Some(
+                service
+                    .search(CodeSearchQuery {
+                        workspace: workspace.clone(),
+                        query: "render_".into(),
+                        mode: CodeSearchMode::Text,
+                        path_prefix: Some("web/".into()),
+                        limit: 8,
+                        include_overlay: false,
+                    })
+                    .unwrap(),
+            );
+        }
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    let last = last.expect("code index benchmark executes at least one query");
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: query_count as u64,
+        continuations: 0,
+        tool_routes: query_count as u64,
+        max_tool_inflight: 1,
+        retained_bytes: serde_json::to_vec(&last).unwrap().len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "queries": query_count,
+            "hits": last.hits.len(),
+            "revision": last.index_revision,
+            "active_workspaces": service.active_workspace_count(),
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn next_edit_sample(plan_count: usize) -> Sample {
+    let resources = mutsuki_agent_runtime::AgentResourceStore::default();
+    let service = SharedNextEditService::with_config(
+        resources,
+        NextEditServiceConfig {
+            debounce_ms: 0,
+            ..NextEditServiceConfig::default()
+        },
+    );
+    let workspace = EditorWorkspaceRef {
+        workspace_id: "benchmark".into(),
+        folders: vec!["/workspace".into()],
+        metadata: json!({}),
+    };
+    let document = EditorDocumentRef {
+        workspace_id: "benchmark".into(),
+        uri: "file:///workspace/main.rs".into(),
+    };
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = Value::Null;
+    for index in 0..plan_count {
+        let request = NextEditRequest {
+            request_id: format!("bench-{index}"),
+            workspace: workspace.clone(),
+            generation: (index + 1) as u64,
+            editor_generation: (index + 1) as u64,
+            document_versions: vec![(document.clone(), DocumentVersion((index % 8) as u64 + 1))],
+            recent_edits: Vec::new(),
+            diagnostics: vec![NextEditDiagnosticHint {
+                document: document.clone(),
+                diagnostic: LspDiagnostic {
+                    range: LspRange {
+                        start: LspPosition {
+                            line: (index % 20) as u32,
+                            character: 0,
+                        },
+                        end: LspPosition {
+                            line: (index % 20) as u32,
+                            character: 4,
+                        },
+                    },
+                    severity: Some(1),
+                    code: None,
+                    message: format!("diag-{index}"),
+                },
+            }],
+            related_paths: Vec::new(),
+            git_diff: if index % 5 == 0 {
+                vec![NextEditDiffHint {
+                    path: "main.rs".into(),
+                    summary: format!("diff-{index}"),
+                    details: None,
+                }]
+            } else {
+                Vec::new()
+            },
+            expected_git_head: Some(GitHeadIdentity {
+                commit: "deadbeef".into(),
+                branch: Some("main".into()),
+                upstream: None,
+                generation: 1,
+            }),
+            intent: None,
+            path: NextEditPlanningPath::Lightweight,
+            min_confidence: 0.55,
+            allow_multi_file: false,
+            deadline_unix_ms: Some(u64::MAX),
+            now_unix_ms: 1_000 + index as u64,
+            metadata: json!({}),
+        };
+        last = serde_json::to_value(
+            service
+                .call_typed(NextEditServiceRequest::Plan { request })
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: plan_count as u64,
+        continuations: 0,
+        tool_routes: plan_count as u64,
+        max_tool_inflight: 1,
+        retained_bytes: serde_json::to_vec(&last).unwrap().len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "plans": plan_count,
+            "last": last,
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn native_coding_bundle_sample(iterations: usize) -> Sample {
+    use std::collections::BTreeMap;
+
+    use mutsuki_agent_bundle::{
+        NativeCodingAgentBundle, NativeCodingBackends, run_fix_golden_path, run_review_golden_path,
+    };
+    use mutsuki_agent_plugin_computer_use::InMemoryFilesystemBackend;
+    use mutsuki_agent_plugin_git::InMemoryGitBackend;
+
+    let mut files = BTreeMap::new();
+    files.insert(
+        "src/lib.rs".into(),
+        "pub fn answer() -> u32 { 41 }\n".into(),
+    );
+    let git = Arc::new(InMemoryGitBackend::default().seed_repo("/workspace", files));
+    let fs = Arc::new(
+        InMemoryFilesystemBackend::default()
+            .with_file("src/lib.rs", b"pub fn answer() -> u32 { 41 }\n"),
+    );
+    let bundle = NativeCodingAgentBundle::reference(NativeCodingBackends {
+        git,
+        filesystem: fs,
+        ..Default::default()
+    });
+    bundle.assert_shared_service_identity().unwrap();
+    bundle.assert_no_official_agent_server_dependency().unwrap();
+
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut last = Value::Null;
+    for _ in 0..iterations {
+        last = run_fix_golden_path(&bundle).unwrap();
+        let _ = run_review_golden_path(&bundle).unwrap();
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: (iterations * 2) as u64,
+        continuations: 0,
+        tool_routes: (iterations * 2) as u64,
+        max_tool_inflight: 1,
+        retained_bytes: serde_json::to_vec(&last).unwrap().len() as u64,
+        post_warmup_growth_bytes: 0,
+        output: json!({
+            "iterations": iterations,
+            "last": last,
+            "providers": bundle.profile.providers.len(),
+            "official_servers": 0,
+        }),
+        allocations,
+        allocated_bytes,
+    }
+}
+
 #[derive(Default)]
 struct BenchmarkAgentService;
 
@@ -1064,6 +1518,155 @@ fn benchmark_session_resource() -> ResourceRef {
     }
 }
 
+pub fn skill_discover_sample(skill_count: usize) -> Sample {
+    let workspace = tempfile::tempdir().expect("skill benchmark tempdir");
+    for index in 0..skill_count {
+        let dir = workspace.path().join(format!("skill-{index:03}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!(
+                "---\nid: skill-{index:03}\nversion: 1.0.0\ntitle: Skill {index:03}\nsummary: benchmark skill {index:03}\n---\n\nBenchmark skill body {index:03} seed={BENCHMARK_FIXED_SEED}.\n"
+            ),
+        )
+        .unwrap();
+    }
+    let registry = SkillRegistry::new(
+        AgentSkillPolicy::default(),
+        SkillRoots {
+            workspace: Some(workspace.path().to_path_buf()),
+            ..Default::default()
+        },
+    );
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let result = registry.discover(SkillDiscoverRequest::default()).unwrap();
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(result.catalog.len(), skill_count);
+    let retained_bytes = serde_json::to_vec(&result).unwrap().len() as u64;
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: 0,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 0,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: serde_json::to_value(result).unwrap(),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn knowledge_retrieve_sample(documents: usize, top_k: usize) -> Sample {
+    let service = KnowledgeService::default();
+    for index in 0..documents {
+        service
+            .ingest(IngestionPlan {
+                collection_id: "docs".into(),
+                tenant_id: "tenant-a".into(),
+                workspace_id: "ws-a".into(),
+                document_id: format!("doc-{index:03}"),
+                title: format!("Doc {index:03}"),
+                content_type: KnowledgeContentType::Text,
+                content: format!(
+                    "benchmark knowledge document {index:03} rust agent retrieval seed={BENCHMARK_FIXED_SEED}"
+                ),
+                rebuild: false,
+            })
+            .unwrap();
+    }
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let result = service
+        .retrieve(RetrievalQuery {
+            query: "rust agent retrieval".into(),
+            tenant_id: "tenant-a".into(),
+            workspace_id: "ws-a".into(),
+            collection_ids: vec!["docs".into()],
+            top_k,
+            hybrid: true,
+            rerank: false,
+            max_excerpt_chars: None,
+        })
+        .unwrap();
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(result.citations.len(), top_k);
+    let retained_bytes = serde_json::to_vec(&result).unwrap().len() as u64;
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: 0,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 0,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: serde_json::to_value(result).unwrap(),
+        allocations,
+        allocated_bytes,
+    }
+}
+
+pub fn credential_resolve_sample(credentials: usize) -> Sample {
+    let broker = CredentialBrokerService::default();
+    let mut refs = Vec::with_capacity(credentials);
+    for index in 0..credentials {
+        let login = broker
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: format!("sk-benchmark-credential-{index:03}-abcdef0123456789"),
+                account_label: None,
+                source: Some("benchmark".into()),
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: json!({}),
+            })
+            .unwrap();
+        refs.push(login.descriptor.credential);
+    }
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut resolved = 0usize;
+    for credential in &refs {
+        let secret = broker.resolve_secret(credential).unwrap();
+        assert!(secret.starts_with("sk-benchmark-credential-"));
+        resolved += 1;
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(resolved, credentials);
+    let status = broker
+        .status(CredentialStatusRequest {
+            credential: refs[0].clone(),
+        })
+        .unwrap();
+    let retained_bytes = serde_json::to_vec(&status.descriptor).unwrap().len() as u64;
+    let encoded = serde_json::to_string(&status.event).unwrap();
+    assert!(!encoded.contains("sk-benchmark-credential-"));
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    Sample {
+        elapsed_ns,
+        simulated_wall_ns: 0,
+        simulated_work_ns: 0,
+        tasks: 0,
+        continuations: 0,
+        tool_routes: 0,
+        max_tool_inflight: 0,
+        retained_bytes,
+        post_warmup_growth_bytes: 0,
+        output: json!({"resolved": resolved, "status": status.descriptor.status}),
+        allocations,
+        allocated_bytes,
+    }
+}
+
 pub fn memory_route_sample() -> Sample {
     let router = MemoryRouter::default();
     for index in 0..128 {
@@ -1072,6 +1675,12 @@ pub fn memory_route_sample() -> Sample {
                 text: format!("benchmark candidate {index:03} rust agent memory"),
                 tags: vec![if index % 2 == 0 { "even" } else { "odd" }.into()],
                 metadata: Some(json!({"seed": BENCHMARK_FIXED_SEED, "index": index})),
+                scope: None,
+                priority: None,
+                confidence: None,
+                expiry_unix_ms: None,
+                provenance: None,
+                details_ref: None,
             })
             .unwrap();
     }
@@ -1082,6 +1691,9 @@ pub fn memory_route_sample() -> Sample {
             query: "rust agent".into(),
             limit: 8,
             tags: vec!["even".into()],
+            scope: None,
+            include_disabled: false,
+            now_unix_ms: None,
         })
         .unwrap();
     let elapsed_ns = started.elapsed().as_nanos();

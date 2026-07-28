@@ -6,9 +6,9 @@ use mutsuki_agent_adapter_api::{
     CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter, ModelStreamFuture,
 };
 use mutsuki_agent_contracts::{
-    AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentToolCall,
-    AgentUsage, ModelGenerateRequest, ModelProtocolAdapterDescriptor, ModelStreamEvent,
-    ProtocolError, ProtocolErrorClass, ProviderInstanceDescriptor,
+    AgentContentPart, AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole,
+    AgentToolCall, AgentUsage, ModelGenerateRequest, ModelProtocolAdapterDescriptor,
+    ModelStreamEvent, ProtocolError, ProtocolErrorClass, ProviderInstanceDescriptor,
 };
 use mutsuki_agent_sdk::{AgentModelGenerateProtocol, orchestration_runner};
 use reqwest::{Client, StatusCode, Url};
@@ -19,6 +19,9 @@ use mutsuki_runtime_sdk::contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
     RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, WorkBatch,
 };
+
+mod media;
+pub use media::*;
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.adapter.openai-compatible";
 pub const RUNNER_ID: &str = "mutsuki.agent.adapter.openai-compatible.runner";
@@ -397,7 +400,70 @@ fn message_payload(message: &AgentMessage) -> Value {
         AgentRole::Assistant => "assistant",
         AgentRole::Tool => "tool",
     };
-    let mut value = json!({"role": role, "content": message.content});
+    let content = if message.parts.is_empty() {
+        Value::String(message.content.clone())
+    } else {
+        let mut parts = Vec::new();
+        if !message.content.is_empty() {
+            parts.push(json!({"type": "text", "text": message.content}));
+        }
+        for part in &message.parts {
+            match part {
+                AgentContentPart::Text { text } => {
+                    parts.push(json!({"type": "text", "text": text}));
+                }
+                AgentContentPart::Image {
+                    resource,
+                    mime_type,
+                    ..
+                } => {
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("resource://{}", resource.ref_id),
+                            "mime_type": mime_type,
+                        }
+                    }));
+                }
+                AgentContentPart::Audio {
+                    resource,
+                    mime_type,
+                    ..
+                } => {
+                    parts.push(json!({
+                        "type": "input_audio",
+                        "input_audio": {
+                            "resource_ref": resource.ref_id,
+                            "format": mime_type,
+                        }
+                    }));
+                }
+                AgentContentPart::Document {
+                    resource,
+                    mime_type,
+                    filename,
+                    ..
+                } => {
+                    parts.push(json!({
+                        "type": "file",
+                        "file": {
+                            "resource_ref": resource.ref_id,
+                            "mime_type": mime_type,
+                            "filename": filename,
+                        }
+                    }));
+                }
+                AgentContentPart::RemoteUrl { url, mime_type } => {
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": url, "mime_type": mime_type }
+                    }));
+                }
+            }
+        }
+        Value::Array(parts)
+    };
+    let mut value = json!({"role": role, "content": content});
     if let Some(name) = &message.name {
         value["name"] = Value::String(name.clone());
     }
@@ -608,8 +674,8 @@ mod tests {
 
     use mutsuki_agent_adapter_api::{CredentialFuture, CredentialValue};
     use mutsuki_agent_contracts::{
-        AGENT_MODEL_GENERATE_PROTOCOL, AgentToolDescriptor, CredentialRef, ModelCapability,
-        ToolSideEffect,
+        AGENT_MODEL_GENERATE_PROTOCOL, AgentContentPart, AgentToolDescriptor, CredentialRef,
+        ModelCapability, ToolSideEffect,
     };
     use mutsuki_runtime_sdk::contracts::{
         BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, Task, WorkResourcePlan,
@@ -701,6 +767,48 @@ mod tests {
             })),
             reasoning: None,
         }
+    }
+
+    #[tokio::test]
+    async fn image_resource_part_is_encoded_for_protocol_generate() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 16_384];
+            let read = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..read]);
+            assert!(request.contains("img-1"));
+            assert!(request.contains("image_url"));
+            assert!(request.contains("resource://"));
+            let payload = r#"{"choices":[{"message":{"role":"assistant","content":"saw image"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"#;
+            let body = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            stream.write_all(body.as_bytes()).unwrap();
+        });
+        let adapter =
+            OpenAiCompatibleAdapter::new(descriptor(), Arc::new(TestCredentials)).unwrap();
+        let image = AgentMessage::user("describe").with_parts(vec![AgentContentPart::Image {
+            resource: mutsuki_agent_sdk::stream_resource_ref("test", "img-1"),
+            mime_type: "image/png".into(),
+            width: Some(32),
+            height: Some(32),
+            size_bytes: Some(128),
+            provenance: None,
+        }]);
+        let mut generate = request();
+        generate.request.messages = vec![image];
+        let result = adapter
+            .generate(
+                provider(format!("http://{address}/v1/chat/completions")),
+                generate,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.message.content, "saw image");
+        server.join().unwrap();
     }
 
     #[tokio::test]

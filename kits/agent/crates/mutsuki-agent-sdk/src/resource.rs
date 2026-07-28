@@ -127,3 +127,44 @@ pub fn session_cell_ref(
         reload_policy: "compatible_without_leases".into(),
     }
 }
+
+pub fn skill_resource_ref(
+    provider_id: impl Into<String>,
+    skill_id: impl Into<String>,
+    resource_name: impl Into<String>,
+) -> ResourceRef {
+    let provider_id = provider_id.into();
+    let skill_id = skill_id.into();
+    let resource_name = resource_name.into();
+    resource_ref(
+        "mutsuki.agent.skill",
+        provider_id.clone(),
+        format!("{skill_id}/{resource_name}"),
+        ResourceSemantic::VersionedSnapshot,
+        ResourceLifetime::Persistent,
+        ResourceSealState::Sealed,
+        ResourceAccess::ProviderRpc {
+            provider_id,
+            method: "skill.read".into(),
+        },
+    )
+}
+
+pub fn knowledge_chunk_resource_ref(
+    provider_id: impl Into<String>,
+    chunk_id: impl Into<String>,
+) -> ResourceRef {
+    let provider_id = provider_id.into();
+    resource_ref(
+        "mutsuki.agent.knowledge.chunk",
+        provider_id.clone(),
+        chunk_id,
+        ResourceSemantic::VersionedSnapshot,
+        ResourceLifetime::Persistent,
+        ResourceSealState::Sealed,
+        ResourceAccess::ProviderRpc {
+            provider_id,
+            method: "knowledge.chunk.read".into(),
+        },
+    )
+}

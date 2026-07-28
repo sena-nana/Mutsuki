@@ -1,0 +1,15 @@
+plugin_id = "mutsuki.plugin.agent.proactive"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.schedule/create@1",
+  "mutsuki.agent.schedule/list@1",
+  "mutsuki.agent.schedule/get@1",
+  "mutsuki.agent.schedule/update@1",
+  "mutsuki.agent.schedule/pause@1",
+  "mutsuki.agent.schedule/resume@1",
+  "mutsuki.agent.schedule/cancel@1",
+  "mutsuki.agent.schedule/history@1",
+  "mutsuki.agent.schedule/due@1",
+]

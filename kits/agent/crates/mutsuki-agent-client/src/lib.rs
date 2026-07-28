@@ -1043,6 +1043,7 @@ mod tests {
                         events: vec![AgentEventEnvelope {
                             session_id,
                             sequence,
+                            meta: Default::default(),
                             event: AgentEvent::Cancelled {
                                 turn_id: "turn".into(),
                             },
@@ -1496,6 +1497,7 @@ mod tests {
         let event = |value| AgentEventEnvelope {
             session_id: "session".into(),
             sequence: value,
+            meta: Default::default(),
             event: AgentEvent::Cancelled {
                 turn_id: "turn".into(),
             },

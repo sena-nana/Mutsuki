@@ -67,6 +67,87 @@ pub trait ModelProtocolAdapter: Send + Sync {
     }
 }
 
+pub type TranscriptionFuture = Pin<
+    Box<
+        dyn Future<Output = Result<mutsuki_agent_contracts::TranscriptionResult, ProtocolError>>
+            + Send
+            + 'static,
+    >,
+>;
+pub type SpeechSynthesisFuture = Pin<
+    Box<
+        dyn Future<Output = Result<mutsuki_agent_contracts::SpeechSynthesisResult, ProtocolError>>
+            + Send
+            + 'static,
+    >,
+>;
+pub type TranscriptionStreamFuture = Pin<
+    Box<
+        dyn Future<Output = Result<Vec<mutsuki_agent_contracts::TranscriptionEvent>, ProtocolError>>
+            + Send
+            + 'static,
+    >,
+>;
+pub type SpeechStreamFuture = Pin<
+    Box<
+        dyn Future<
+                Output = Result<Vec<mutsuki_agent_contracts::SpeechSynthesisEvent>, ProtocolError>,
+            > + Send
+            + 'static,
+    >,
+>;
+
+/// Protocol-level STT/TTS surface. Brand-specific providers remain Host configuration.
+pub trait MediaProtocolAdapter: Send + Sync {
+    fn descriptor(&self) -> &ModelProtocolAdapterDescriptor;
+
+    fn transcribe(
+        &self,
+        provider: ProviderInstanceDescriptor,
+        request: mutsuki_agent_contracts::TranscriptionRequest,
+    ) -> TranscriptionFuture;
+
+    fn synthesize(
+        &self,
+        provider: ProviderInstanceDescriptor,
+        request: mutsuki_agent_contracts::SpeechSynthesisRequest,
+    ) -> SpeechSynthesisFuture;
+
+    fn transcribe_stream(
+        &self,
+        provider: ProviderInstanceDescriptor,
+        request: mutsuki_agent_contracts::TranscriptionRequest,
+    ) -> TranscriptionStreamFuture {
+        let future = self.transcribe(provider, request);
+        Box::pin(async move {
+            let result = future.await?;
+            Ok(vec![
+                mutsuki_agent_contracts::TranscriptionEvent::Completed {
+                    sequence: 1,
+                    result,
+                },
+            ])
+        })
+    }
+
+    fn synthesize_stream(
+        &self,
+        provider: ProviderInstanceDescriptor,
+        request: mutsuki_agent_contracts::SpeechSynthesisRequest,
+    ) -> SpeechStreamFuture {
+        let future = self.synthesize(provider, request);
+        Box::pin(async move {
+            let result = future.await?;
+            Ok(vec![
+                mutsuki_agent_contracts::SpeechSynthesisEvent::Completed {
+                    sequence: 1,
+                    result,
+                },
+            ])
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ModelAdapterCatalog {
     adapters: Arc<BTreeMap<String, Arc<dyn ModelProtocolAdapter>>>,

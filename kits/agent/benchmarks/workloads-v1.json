@@ -14,6 +14,10 @@
     {"case_id": "agent.context-medium", "token_like_bytes": 65536},
     {"case_id": "agent.context-large", "token_like_bytes": 1048576},
     {"case_id": "agent.memory-route", "candidates": 128, "selected": 8},
+    {"case_id": "agent.skill-discover", "skills": 32},
+    {"case_id": "agent.knowledge-retrieve", "documents": 64, "top_k": 8},
+    {"case_id": "agent.credential-resolve", "credentials": 64, "resolves": 64},
+    {"case_id": "agent.native-coding-bundle", "iterations": 8},
     {"case_id": "agent.wait-resume", "extra_empty_poll": 1},
     {"case_id": "agent.cancel", "phase": "waiting-model-result"},
     {"case_id": "agent.failure-retry", "modes": ["retryable", "non-retryable"]}

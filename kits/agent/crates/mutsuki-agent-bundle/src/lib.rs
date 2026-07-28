@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+mod native_coding;
+
+pub use mutsuki_agent_runtime::{KnowledgeService, SkillRegistry};
 pub use mutsuki_plugin_agent_context::ContextBuilder;
 pub use mutsuki_plugin_agent_loop::AgentLoop;
 pub use mutsuki_plugin_agent_memory_router::MemoryRouter;
@@ -12,6 +15,11 @@ pub use mutsuki_plugin_agent_tool_router::ToolRegistry;
 use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutcome};
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
+pub use native_coding::{
+    LSP_PLUGIN_ID, NATIVE_CODING_BUNDLE_ID, NativeCodingAgentBundle, NativeCodingBackends,
+    UnavailableLspFactory, UnavailableMcpFactory, run_fix_golden_path,
+    run_resume_without_duplicate_side_effects, run_review_golden_path, seed_fix_fixture,
+};
 
 /// Host-neutral collection of Agent services and plugin manifests.
 ///
@@ -22,30 +30,36 @@ use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
 pub struct AgentPluginBundle {
     pub context: ContextBuilder,
     pub agent_loop: AgentLoop,
+    pub knowledge: KnowledgeService,
     pub memory: MemoryRouter,
     pub model: ModelGateway,
     pub prompts: PromptRegistry,
     pub sessions: SessionStore,
+    pub skills: SkillRegistry,
     pub tools: ToolRegistry,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentRuntimeRunner {
     Context,
+    Knowledge,
     Loop,
     Memory,
     Prompt,
     Session,
+    Skill,
     Tool,
 }
 
 impl AgentRuntimeRunner {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Context,
+        Self::Knowledge,
         Self::Loop,
         Self::Memory,
         Self::Prompt,
         Self::Session,
+        Self::Skill,
         Self::Tool,
     ];
 }
@@ -55,6 +69,9 @@ impl AgentPluginBundle {
         let client = noop_client();
         vec![
             mutsuki_plugin_agent_context::plugin(client.clone(), self.context.clone())
+                .build()
+                .manifest,
+            mutsuki_plugin_agent_knowledge::plugin(client.clone(), self.knowledge.clone())
                 .build()
                 .manifest,
             mutsuki_plugin_agent_loop::plugin(client.clone(), self.agent_loop.clone())
@@ -70,6 +87,9 @@ impl AgentPluginBundle {
                 .build()
                 .manifest,
             mutsuki_plugin_agent_session::plugin(client.clone(), self.sessions.clone())
+                .build()
+                .manifest,
+            mutsuki_plugin_agent_skills::plugin(client.clone(), self.skills.clone())
                 .build()
                 .manifest,
             mutsuki_plugin_agent_tool_router::plugin(client, self.tools.clone())
@@ -88,6 +108,10 @@ impl AgentPluginBundle {
                 client,
                 self.context.clone(),
             )),
+            AgentRuntimeRunner::Knowledge => take_runner(mutsuki_plugin_agent_knowledge::plugin(
+                client,
+                self.knowledge.clone(),
+            )),
             AgentRuntimeRunner::Loop => take_runner(mutsuki_plugin_agent_loop::plugin(
                 client,
                 self.agent_loop.clone(),
@@ -104,6 +128,10 @@ impl AgentPluginBundle {
                 client,
                 self.sessions.clone(),
             )),
+            AgentRuntimeRunner::Skill => take_runner(mutsuki_plugin_agent_skills::plugin(
+                client,
+                self.skills.clone(),
+            )),
             AgentRuntimeRunner::Tool => take_runner(mutsuki_plugin_agent_tool_router::plugin(
                 client,
                 self.tools.clone(),
@@ -115,14 +143,16 @@ impl AgentPluginBundle {
         mutsuki_plugin_agent_model_gateway::async_handler(self.model.clone())
     }
 
-    pub fn runner_ids() -> [&'static str; 7] {
+    pub fn runner_ids() -> [&'static str; 9] {
         [
             mutsuki_plugin_agent_context::RUNNER_ID,
+            mutsuki_plugin_agent_knowledge::RUNNER_ID,
             mutsuki_plugin_agent_loop::RUNNER_ID,
             mutsuki_plugin_agent_memory_router::RUNNER_ID,
             mutsuki_plugin_agent_model_gateway::RUNNER_ID,
             mutsuki_plugin_agent_prompt::RUNNER_ID,
             mutsuki_plugin_agent_session::RUNNER_ID,
+            mutsuki_plugin_agent_skills::RUNNER_ID,
             mutsuki_plugin_agent_tool_router::RUNNER_ID,
         ]
     }
@@ -179,7 +209,7 @@ mod tests {
     #[test]
     fn standard_bundle_has_unique_batch_first_manifests() {
         let manifests = AgentPluginBundle::default().manifests();
-        assert_eq!(manifests.len(), 7);
+        assert_eq!(manifests.len(), 9);
         let ids = manifests
             .iter()
             .map(|manifest| manifest.plugin_id.as_str())

@@ -5,13 +5,18 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-agent-adapter-api.workspace = true
 mutsuki-agent-contracts.workspace = true
+mutsuki-agent-plugin-code-completion.workspace = true
+mutsuki-agent-runtime.workspace = true
+mutsuki-plugin-agent-credential.workspace = true
 mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
 mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
 mutsuki-plugin-agent-model-gateway = { path = "../mutsuki-plugin-agent-model-gateway" }
 mutsuki-plugin-agent-prompt = { path = "../mutsuki-plugin-agent-prompt" }
 mutsuki-plugin-agent-session = { path = "../mutsuki-plugin-agent-session" }
 mutsuki-plugin-agent-tool-router = { path = "../mutsuki-plugin-agent-tool-router" }
+mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true

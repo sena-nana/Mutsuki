@@ -4,8 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AgentMessage, AgentSession, AgentSessionCreateRequest, AgentSessionState, PermissionDecision,
-    ResourceRef, SessionSnapshotRef, SessionVersion,
+    AgentEventMeta, AgentMessage, AgentSession, AgentSessionCreateRequest, AgentSessionState,
+    ArtifactRef, CodingCommandRef, CodingDiagnostic, ContextUsageSnapshot, FileChangeDescriptor,
+    InteractionRequest, InteractionResolution, PermissionDecision, PlanState, ResourceRef,
+    SessionSnapshotRef, SessionVersion, SubAgentStatusUpdate, TestOrBuildResult, TodoState,
+    WorkspaceEditProposal,
 };
 
 pub const AGENT_WIRE_VERSION: u16 = 1;
@@ -139,6 +142,8 @@ pub struct AgentWireError {
 pub struct AgentEventEnvelope {
     pub session_id: String,
     pub sequence: u64,
+    #[serde(default)]
+    pub meta: AgentEventMeta,
     pub event: AgentEvent,
 }
 
@@ -186,6 +191,18 @@ pub enum AgentEvent {
         summary: String,
         details: Option<ResourceRef>,
     },
+    ToolCallStarted {
+        turn_id: String,
+        call_id: String,
+        name: String,
+        input: Value,
+    },
+    ToolCallCompleted {
+        turn_id: String,
+        call_id: String,
+        summary: String,
+        details: Option<ResourceRef>,
+    },
     ApprovalRequest {
         request: crate::PermissionRequest,
     },
@@ -193,12 +210,88 @@ pub enum AgentEvent {
         turn_id: String,
         status: String,
     },
+    ContextUsageUpdated {
+        turn_id: String,
+        usage: ContextUsageSnapshot,
+    },
     Usage {
         turn_id: String,
         usage: crate::AgentUsage,
     },
+    PlanUpdated {
+        turn_id: String,
+        plan: PlanState,
+    },
+    TodoUpdated {
+        turn_id: String,
+        todo: TodoState,
+    },
+    CommandStarted {
+        turn_id: String,
+        command: CodingCommandRef,
+    },
+    CommandOutput {
+        turn_id: String,
+        command_id: String,
+        stream: String,
+        chunk: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<ResourceRef>,
+    },
+    CommandExited {
+        turn_id: String,
+        command_id: String,
+        exit_code: i32,
+        summary: String,
+    },
+    FileChangeProposed {
+        turn_id: String,
+        change: FileChangeDescriptor,
+    },
+    FileChangeApplied {
+        turn_id: String,
+        change: FileChangeDescriptor,
+    },
+    FileChangeRejected {
+        turn_id: String,
+        change: FileChangeDescriptor,
+    },
+    WorkspaceEditProposed {
+        turn_id: String,
+        proposal: WorkspaceEditProposal,
+    },
+    DiagnosticUpdated {
+        turn_id: String,
+        diagnostics: Vec<CodingDiagnostic>,
+    },
+    TestOrBuildResult {
+        turn_id: String,
+        result: TestOrBuildResult,
+    },
+    ArtifactProduced {
+        turn_id: String,
+        artifact: ArtifactRef,
+    },
+    SubAgentStatus {
+        turn_id: String,
+        status: SubAgentStatusUpdate,
+    },
+    InteractionRequested {
+        turn_id: String,
+        interaction: InteractionRequest,
+    },
+    InteractionResolved {
+        turn_id: String,
+        resolution: InteractionResolution,
+    },
     Final {
         turn_id: String,
+        result: Option<ResourceRef>,
+    },
+    FinalResponse {
+        turn_id: String,
+        summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<ResourceRef>,
     },
     Failed {
