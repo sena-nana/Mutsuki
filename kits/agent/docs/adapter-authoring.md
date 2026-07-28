@@ -10,9 +10,14 @@ not a provider daemon and does not own scheduling.
 5. Return large or streaming bodies through `ResourceRef`; keep only summaries in messages.
 6. Let Host policy resolve endpoint, timeout, transport and `CredentialRef`.
 
-`mutsuki-agent-adapter-openai` is the reference implementation. It accepts an injected transport,
-maps tools and structured output, bounds retries/timeouts, and drops the in-flight transport future
-on cancellation. It does not read environment variables or ship a default credential.
+`mutsuki-agent-adapter-openai` is the reference Chat Completions implementation. It accepts an
+injected transport, maps tools and structured output, bounds retries/timeouts, and drops the
+in-flight transport future on cancellation. It does not read environment variables or ship a
+default credential.
+
+`mutsuki-agent-adapter-anthropic` is the Anthropic Messages counterpart (`x-api-key`,
+`anthropic-version`, `/v1/messages`). It is generate-first in the current slice; Hosts inject
+`CredentialRef` and provider endpoints the same way as the OpenAI-compatible Adapter.
 
 Breaking DTO/wire changes require a contract major-version change. Provider endpoint, brand or
 model-catalog changes belong to instance configuration and must not break the authoring API.

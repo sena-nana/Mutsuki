@@ -2833,6 +2833,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-agent-adapter-anthropic"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-agent-adapter-api",
+ "mutsuki-agent-contracts",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "mutsuki-agent-adapter-api"
 version = "0.1.0"
 dependencies = [

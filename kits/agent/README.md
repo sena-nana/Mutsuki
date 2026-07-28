@@ -37,7 +37,7 @@ MutsukiAgentKit   Runtime + Adapter + Plugin
 ## Workspace
 
 - `crates/mutsuki-agent-contracts` · `mutsuki-agent-runtime`
-- `crates/mutsuki-agent-adapter-api` · `mutsuki-agent-adapter-openai`
+- `crates/mutsuki-agent-adapter-api` · `mutsuki-agent-adapter-openai` · `mutsuki-agent-adapter-anthropic`
 - `crates/mutsuki-agent-plugin-api` · `mutsuki-agent-plugin-conformance`
 - `crates/mutsuki-agent-client` · `mutsuki-agent-distributed-integration`
 - `crates/mutsuki-agent-sdk` · `mutsuki-agent-macros`

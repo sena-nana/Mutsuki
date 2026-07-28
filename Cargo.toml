@@ -140,6 +140,7 @@ mutsuki-distributed-host-adapter = { path = "hosts/distributed/crates/mutsuki-di
 mutsuki-distributed-runtime = { path = "hosts/distributed/crates/mutsuki-distributed-runtime" }
 
 mutsuki-agent-adapter-api = { path = "kits/agent/crates/mutsuki-agent-adapter-api" }
+mutsuki-agent-adapter-anthropic = { path = "kits/agent/crates/mutsuki-agent-adapter-anthropic" }
 mutsuki-agent-adapter-openai = { path = "kits/agent/crates/mutsuki-agent-adapter-openai" }
 mutsuki-agent-bundle = { path = "kits/agent/crates/mutsuki-agent-bundle" }
 mutsuki-agent-client = { path = "kits/agent/crates/mutsuki-agent-client" }
