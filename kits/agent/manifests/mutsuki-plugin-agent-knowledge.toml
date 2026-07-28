@@ -1,0 +1,9 @@
+plugin_id = "mutsuki.plugin.agent.knowledge"
+version = "0.1.0"
+api_version = "mutsuki-plugin-v1"
+
+provides = [
+  "mutsuki.agent.knowledge/ingest@1",
+  "mutsuki.agent.knowledge/retrieve@1",
+  "mutsuki.agent.knowledge/delete@1",
+]

@@ -111,6 +111,12 @@ pub fn memory_round_trip() {
             text: "workspace uses Rust native plugins".into(),
             tags: vec!["architecture".into()],
             metadata: None,
+            scope: None,
+            priority: None,
+            confidence: None,
+            expiry_unix_ms: None,
+            provenance: None,
+            details_ref: None,
         })
         .expect("memory can be written");
     assert!(written.resource.is_some());
@@ -120,6 +126,9 @@ pub fn memory_round_trip() {
             query: "Rust plugins".into(),
             limit: 4,
             tags: Vec::new(),
+            scope: None,
+            include_disabled: false,
+            now_unix_ms: None,
         })
         .expect("memory can be queried");
     assert_eq!(result.records.len(), 1);

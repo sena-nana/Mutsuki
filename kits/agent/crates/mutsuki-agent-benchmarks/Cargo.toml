@@ -11,7 +11,14 @@ mutsuki-agent-client.workspace = true
 mutsuki-agent-distributed-integration.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-agent-testkit = { path = "../mutsuki-agent-testkit" }
+mutsuki-agent-bundle = { path = "../mutsuki-agent-bundle" }
+mutsuki-agent-plugin-code-index.workspace = true
+mutsuki-agent-plugin-computer-use.workspace = true
+mutsuki-agent-plugin-git.workspace = true
 mutsuki-agent-plugin-lsp.workspace = true
+mutsuki-agent-plugin-next-edit.workspace = true
+mutsuki-agent-plugin-web-search.workspace = true
+mutsuki-agent-runtime.workspace = true
 mutsuki-plugin-agent-context = { path = "../mutsuki-plugin-agent-context" }
 mutsuki-plugin-agent-loop = { path = "../mutsuki-plugin-agent-loop" }
 mutsuki-plugin-agent-memory-router = { path = "../mutsuki-plugin-agent-memory-router" }
@@ -25,4 +32,5 @@ mutsuki-link-core.workspace = true
 mutsuki-distributed-contracts.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 sha2.workspace = true

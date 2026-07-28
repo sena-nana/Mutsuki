@@ -193,6 +193,7 @@ mod tests {
             content: format!("tool-{index}"),
             name: Some(BENCHMARK_TOOL_NAME.into()),
             metadata: None,
+            parts: Vec::new(),
         }));
         AgentModelGenerateRequest {
             model: BENCHMARK_MODEL_ID.into(),

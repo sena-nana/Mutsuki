@@ -1,0 +1,1237 @@
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use mutsuki_agent_contracts::{
+    AgentError, AgentPluginStateKind, AgentServiceDescriptor, AgentToolDescriptor,
+    ContextProviderRequest, ContextProviderResult, DocumentVersion, EditorDocumentRef,
+    EditorWorkspaceRef, FileChangeDescriptor, FileChangeStatus, GitHeadIdentity, NextEditCandidate,
+    NextEditFeedback, NextEditFeedbackKind, NextEditFeedbackStats, NextEditPlanningPath,
+    NextEditRequest, NextEditServiceRequest, NextEditServiceResponse, NextEditStaleConflict,
+    NextEditTarget, RecentEditEvent, TextPosition, TextSelection, ToolSideEffect,
+    WorkspaceEditProposal,
+};
+use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider};
+use mutsuki_agent_runtime::AgentResourceStore;
+use serde_json::{Value, json};
+
+pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.next-edit";
+pub const SERVICE_ID: &str = "mutsuki.agent.service.next-edit";
+pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.next-edit";
+
+const INLINE_PREVIEW_LIMIT: usize = 2_048;
+const DEFAULT_DEBOUNCE_MS: u64 = 80;
+const DEFAULT_TTL_MS: u64 = 15_000;
+
+#[derive(Clone, Debug)]
+pub struct NextEditServiceConfig {
+    pub debounce_ms: u64,
+    pub candidate_ttl_ms: u64,
+    pub max_recent_edits: usize,
+}
+
+impl Default for NextEditServiceConfig {
+    fn default() -> Self {
+        Self {
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
+            candidate_ttl_ms: DEFAULT_TTL_MS,
+            max_recent_edits: 64,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ServiceState {
+    recent_edits: Vec<RecentEditEvent>,
+    last_edit_unix_ms: u64,
+    active_generation: u64,
+    cache: BTreeMap<String, NextEditCandidate>,
+    candidates: BTreeMap<String, NextEditCandidate>,
+    feedback: NextEditFeedbackStats,
+}
+
+/// Shared Next Edit planner. Produces versioned proposals only; never mutates the workspace.
+pub struct SharedNextEditService {
+    descriptor: AgentServiceDescriptor,
+    resources: AgentResourceStore,
+    config: NextEditServiceConfig,
+    next_candidate: AtomicU64,
+    state: Mutex<ServiceState>,
+}
+
+impl SharedNextEditService {
+    pub fn new(resources: AgentResourceStore) -> Self {
+        Self::with_config(resources, NextEditServiceConfig::default())
+    }
+
+    pub fn with_config(resources: AgentResourceStore, config: NextEditServiceConfig) -> Self {
+        Self {
+            descriptor: AgentServiceDescriptor {
+                service_id: SERVICE_ID.into(),
+                version: "1".into(),
+                request_schema: "mutsuki.agent.next_edit.request@1".into(),
+                response_schema: "mutsuki.agent.next_edit.response@1".into(),
+                state: AgentPluginStateKind::Stateful,
+                affinity: Some("workspace".into()),
+            },
+            resources,
+            config,
+            next_candidate: AtomicU64::new(1),
+            state: Mutex::new(ServiceState {
+                recent_edits: Vec::new(),
+                last_edit_unix_ms: 0,
+                active_generation: 1,
+                cache: BTreeMap::new(),
+                candidates: BTreeMap::new(),
+                feedback: NextEditFeedbackStats::default(),
+            }),
+        }
+    }
+
+    pub fn plugin_descriptor(
+        generation: u64,
+    ) -> Result<mutsuki_agent_contracts::AgentKitPluginDescriptor, AgentError> {
+        let mut tool = AgentToolDescriptor::new(
+            "next_edit.plan",
+            "mutsuki.agent.tool.next_edit.plan@1",
+            "Plan the next edit proposal from recent edits, diagnostics and git diff",
+        );
+        tool.side_effect = ToolSideEffect::WorkspaceRead;
+        AgentPluginRegistrar::new(PLUGIN_ID, generation)
+            .service(AgentServiceDescriptor {
+                service_id: SERVICE_ID.into(),
+                version: "1".into(),
+                request_schema: "mutsuki.agent.next_edit.request@1".into(),
+                response_schema: "mutsuki.agent.next_edit.response@1".into(),
+                state: AgentPluginStateKind::Stateful,
+                affinity: Some("workspace".into()),
+            })
+            .context_provider(CONTEXT_PROVIDER_ID)
+            .tool(tool)
+            .require_service(SERVICE_ID)
+            .build()
+    }
+
+    pub fn call_typed(
+        &self,
+        request: NextEditServiceRequest,
+    ) -> Result<NextEditServiceResponse, AgentError> {
+        match request {
+            NextEditServiceRequest::IngestRecentEdit { event } => {
+                self.ingest(event)?;
+                Ok(NextEditServiceResponse::Ack)
+            }
+            NextEditServiceRequest::Plan { request } => self.plan(request),
+            NextEditServiceRequest::Validate {
+                candidate_id,
+                document_versions,
+                git_head,
+                now_unix_ms,
+            } => self.validate(
+                &candidate_id,
+                &document_versions,
+                git_head.as_ref(),
+                now_unix_ms,
+            ),
+            NextEditServiceRequest::Feedback { feedback } => self.record_feedback(feedback),
+            NextEditServiceRequest::Cancel { generation } => self.cancel(generation),
+            NextEditServiceRequest::Stats => {
+                let state = self.state.lock().expect("next-edit state");
+                Ok(NextEditServiceResponse::Stats {
+                    stats: state.feedback.clone(),
+                    active_generation: state.active_generation,
+                    cached_candidates: state.cache.len() as u64,
+                })
+            }
+        }
+    }
+
+    fn ingest(&self, event: RecentEditEvent) -> Result<(), AgentError> {
+        if event.event_id.trim().is_empty() || event.document.uri.trim().is_empty() {
+            return Err(AgentError::invalid_input(
+                "recent edit event_id and document uri are required",
+            ));
+        }
+        let mut state = self.state.lock().expect("next-edit state");
+        state.last_edit_unix_ms = event.timestamp_unix_ms.max(state.last_edit_unix_ms);
+        state.active_generation = state
+            .active_generation
+            .saturating_add(1)
+            .max(event.editor_generation);
+        // New edits invalidate prior candidates so late results cannot cover newer work.
+        state.cache.clear();
+        state.candidates.clear();
+        state.recent_edits.push(event);
+        if state.recent_edits.len() > self.config.max_recent_edits {
+            let drop = state.recent_edits.len() - self.config.max_recent_edits;
+            state.recent_edits.drain(0..drop);
+        }
+        Ok(())
+    }
+
+    fn cancel(&self, generation: u64) -> Result<NextEditServiceResponse, AgentError> {
+        let mut state = self.state.lock().expect("next-edit state");
+        state.active_generation = state.active_generation.max(generation).saturating_add(1);
+        state.cache.clear();
+        state.candidates.clear();
+        Ok(NextEditServiceResponse::Cancelled {
+            generation: state.active_generation,
+        })
+    }
+
+    fn plan(&self, request: NextEditRequest) -> Result<NextEditServiceResponse, AgentError> {
+        if request.request_id.trim().is_empty() {
+            return Err(AgentError::invalid_input(
+                "next edit request_id is required",
+            ));
+        }
+        if request.workspace.workspace_id.trim().is_empty() {
+            return Err(AgentError::invalid_input("workspace_id is required"));
+        }
+
+        let mut state = self.state.lock().expect("next-edit state");
+        if request.generation < state.active_generation {
+            return Ok(NextEditServiceResponse::Superseded {
+                generation: request.generation,
+                active_generation: state.active_generation,
+            });
+        }
+        state.active_generation = request.generation;
+
+        if let Some(deadline) = request.deadline_unix_ms {
+            if request.now_unix_ms > deadline {
+                return Ok(NextEditServiceResponse::TimedOut {
+                    request_id: request.request_id,
+                });
+            }
+        }
+
+        if self.config.debounce_ms > 0
+            && state.last_edit_unix_ms > 0
+            && request.now_unix_ms.saturating_sub(state.last_edit_unix_ms) < self.config.debounce_ms
+        {
+            // Still inside debounce window: do not interrupt editing.
+            return Ok(NextEditServiceResponse::Candidate { candidate: None });
+        }
+
+        let cache_key = context_cache_key(&request);
+        if let Some(cached) = state.cache.get(&cache_key).cloned() {
+            if cached.expires_at_unix_ms >= request.now_unix_ms
+                && cached.generation == request.generation
+            {
+                return Ok(NextEditServiceResponse::Candidate {
+                    candidate: Some(cached),
+                });
+            }
+        }
+
+        let planned = plan_candidate(
+            &self.resources,
+            &request,
+            &state.recent_edits,
+            self.next_candidate.fetch_add(1, Ordering::Relaxed),
+            self.config.candidate_ttl_ms,
+        )?;
+
+        let Some(candidate) = planned else {
+            return Ok(NextEditServiceResponse::Candidate { candidate: None });
+        };
+
+        if candidate.confidence < request.min_confidence {
+            return Ok(NextEditServiceResponse::Candidate { candidate: None });
+        }
+
+        state.cache.insert(cache_key, candidate.clone());
+        state
+            .candidates
+            .insert(candidate.candidate_id.clone(), candidate.clone());
+        Ok(NextEditServiceResponse::Candidate {
+            candidate: Some(candidate),
+        })
+    }
+
+    fn validate(
+        &self,
+        candidate_id: &str,
+        document_versions: &[(EditorDocumentRef, DocumentVersion)],
+        git_head: Option<&GitHeadIdentity>,
+        now_unix_ms: u64,
+    ) -> Result<NextEditServiceResponse, AgentError> {
+        let state = self.state.lock().expect("next-edit state");
+        let candidate = state.candidates.get(candidate_id).cloned().ok_or_else(|| {
+            AgentError::not_found(format!("candidate `{candidate_id}` not found"))
+        })?;
+
+        if candidate.expires_at_unix_ms < now_unix_ms {
+            return Ok(NextEditServiceResponse::Stale {
+                conflict: NextEditStaleConflict {
+                    document: None,
+                    expected_version: None,
+                    actual_version: None,
+                    expected_git_head: candidate.expected_git_head.clone(),
+                    actual_git_head: git_head.cloned(),
+                    message: format!("candidate `{candidate_id}` expired"),
+                },
+            });
+        }
+
+        if candidate.generation < state.active_generation {
+            return Ok(NextEditServiceResponse::Superseded {
+                generation: candidate.generation,
+                active_generation: state.active_generation,
+            });
+        }
+
+        for (expected_doc, expected_version) in &candidate.expected_document_versions {
+            let actual = document_versions
+                .iter()
+                .find(|(doc, _)| doc == expected_doc)
+                .map(|(_, version)| *version);
+            match actual {
+                Some(actual) if actual == *expected_version => {}
+                Some(actual) => {
+                    return Ok(NextEditServiceResponse::Stale {
+                        conflict: NextEditStaleConflict {
+                            document: Some(expected_doc.clone()),
+                            expected_version: Some(*expected_version),
+                            actual_version: Some(actual),
+                            expected_git_head: candidate.expected_git_head.clone(),
+                            actual_git_head: git_head.cloned(),
+                            message: format!(
+                                "document `{}` expected version {}, observed {}",
+                                expected_doc.uri, expected_version.0, actual.0
+                            ),
+                        },
+                    });
+                }
+                None => {
+                    return Ok(NextEditServiceResponse::Stale {
+                        conflict: NextEditStaleConflict {
+                            document: Some(expected_doc.clone()),
+                            expected_version: Some(*expected_version),
+                            actual_version: None,
+                            expected_git_head: candidate.expected_git_head.clone(),
+                            actual_git_head: git_head.cloned(),
+                            message: format!(
+                                "document `{}` version missing during validation",
+                                expected_doc.uri
+                            ),
+                        },
+                    });
+                }
+            }
+        }
+
+        if let Some(expected) = &candidate.expected_git_head {
+            match git_head {
+                Some(actual)
+                    if actual.commit == expected.commit
+                        && actual.generation == expected.generation => {}
+                Some(actual) => {
+                    return Ok(NextEditServiceResponse::Stale {
+                        conflict: NextEditStaleConflict {
+                            document: None,
+                            expected_version: None,
+                            actual_version: None,
+                            expected_git_head: Some(expected.clone()),
+                            actual_git_head: Some(actual.clone()),
+                            message: format!(
+                                "git head expected {} (gen {}), observed {} (gen {})",
+                                expected.commit,
+                                expected.generation,
+                                actual.commit,
+                                actual.generation
+                            ),
+                        },
+                    });
+                }
+                None => {
+                    return Ok(NextEditServiceResponse::Stale {
+                        conflict: NextEditStaleConflict {
+                            document: None,
+                            expected_version: None,
+                            actual_version: None,
+                            expected_git_head: Some(expected.clone()),
+                            actual_git_head: None,
+                            message: "git head missing during validation".into(),
+                        },
+                    });
+                }
+            }
+        }
+
+        Ok(NextEditServiceResponse::Valid {
+            candidate_id: candidate.candidate_id,
+        })
+    }
+
+    fn record_feedback(
+        &self,
+        feedback: NextEditFeedback,
+    ) -> Result<NextEditServiceResponse, AgentError> {
+        if feedback.candidate_id.trim().is_empty() {
+            return Err(AgentError::invalid_input("candidate_id is required"));
+        }
+        let mut state = self.state.lock().expect("next-edit state");
+        match feedback.kind {
+            NextEditFeedbackKind::Accepted => state.feedback.accepted += 1,
+            NextEditFeedbackKind::Rejected => state.feedback.rejected += 1,
+            NextEditFeedbackKind::Skipped => state.feedback.skipped += 1,
+        }
+        Ok(NextEditServiceResponse::FeedbackRecorded {
+            stats: state.feedback.clone(),
+        })
+    }
+}
+
+fn context_cache_key(request: &NextEditRequest) -> String {
+    let mut versions = request
+        .document_versions
+        .iter()
+        .map(|(doc, version)| format!("{}@{}", doc.uri, version.0))
+        .collect::<Vec<_>>();
+    versions.sort();
+    let diagnostics = request
+        .diagnostics
+        .iter()
+        .map(|hint| {
+            format!(
+                "{}:{}:{}",
+                hint.document.uri, hint.diagnostic.range.start.line, hint.diagnostic.message
+            )
+        })
+        .collect::<Vec<_>>();
+    let diffs = request
+        .git_diff
+        .iter()
+        .map(|hint| format!("{}:{}", hint.path, hint.summary))
+        .collect::<Vec<_>>();
+    format!(
+        "{}|{}|{}|{}|{}|{:?}",
+        request.workspace.workspace_id,
+        request.editor_generation,
+        versions.join(","),
+        diagnostics.join(","),
+        diffs.join(","),
+        request.path
+    )
+}
+
+fn plan_candidate(
+    resources: &AgentResourceStore,
+    request: &NextEditRequest,
+    recent_edits: &[RecentEditEvent],
+    candidate_seq: u64,
+    ttl_ms: u64,
+) -> Result<Option<NextEditCandidate>, AgentError> {
+    let mut signals = Vec::new();
+
+    for hint in &request.diagnostics {
+        signals.push(PlanSignal {
+            document: hint.document.clone(),
+            range: Some(TextSelection {
+                start: TextPosition {
+                    line: hint.diagnostic.range.start.line,
+                    character: hint.diagnostic.range.start.character,
+                },
+                end: TextPosition {
+                    line: hint.diagnostic.range.end.line,
+                    character: hint.diagnostic.range.end.character,
+                },
+            }),
+            reason: format!("diagnostic: {}", truncate(&hint.diagnostic.message, 96)),
+            confidence: 0.82,
+            from_diff: false,
+        });
+    }
+
+    for edit in recent_edits
+        .iter()
+        .chain(request.recent_edits.iter())
+        .rev()
+        .take(8)
+    {
+        if edit.document.workspace_id != request.workspace.workspace_id {
+            continue;
+        }
+        signals.push(PlanSignal {
+            document: edit.document.clone(),
+            range: edit.range,
+            reason: format!("recent_edit: {}", truncate(&edit.summary, 96)),
+            confidence: 0.7,
+            from_diff: false,
+        });
+    }
+
+    for hint in &request.git_diff {
+        let related = request
+            .related_paths
+            .iter()
+            .any(|path| path.as_str() == hint.path.as_str() || hint.path.ends_with(path.as_str()));
+        signals.push(PlanSignal {
+            document: EditorDocumentRef {
+                workspace_id: request.workspace.workspace_id.clone(),
+                uri: path_to_uri(&hint.path),
+            },
+            range: None,
+            reason: format!("git_diff: {}", truncate(&hint.summary, 96)),
+            confidence: if related { 0.74 } else { 0.68 },
+            from_diff: true,
+        });
+    }
+
+    if signals.is_empty() {
+        return Ok(None);
+    }
+
+    signals.sort_by(|left, right| {
+        right
+            .confidence
+            .partial_cmp(&left.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let primary = &signals[0];
+    let mut targets = vec![NextEditTarget {
+        document: primary.document.clone(),
+        range: primary.range,
+        reason: primary.reason.clone(),
+        confidence: primary.confidence,
+    }];
+
+    let mut changes = vec![file_change(
+        format!("chg-{candidate_seq}-0"),
+        request.workspace.clone(),
+        &primary.document,
+        expected_version_for(request, &primary.document),
+        &primary.reason,
+    )];
+
+    let multi_file = request.allow_multi_file
+        && signals.iter().any(|signal| {
+            signal.from_diff
+                && signal.document.uri != primary.document.uri
+                && signal.confidence >= request.min_confidence
+        });
+
+    if multi_file {
+        for (index, signal) in signals
+            .iter()
+            .filter(|signal| signal.document.uri != primary.document.uri && signal.from_diff)
+            .take(2)
+            .enumerate()
+        {
+            targets.push(NextEditTarget {
+                document: signal.document.clone(),
+                range: signal.range,
+                reason: signal.reason.clone(),
+                confidence: signal.confidence,
+            });
+            changes.push(file_change(
+                format!("chg-{candidate_seq}-{}", index + 1),
+                request.workspace.clone(),
+                &signal.document,
+                expected_version_for(request, &signal.document),
+                &signal.reason,
+            ));
+        }
+    }
+
+    let path = if multi_file && matches!(request.path, NextEditPlanningPath::ShortAgent) {
+        NextEditPlanningPath::ShortAgent
+    } else if multi_file {
+        // Multi-file stays on lightweight planning unless the caller opted into short agent.
+        NextEditPlanningPath::Lightweight
+    } else {
+        request.path
+    };
+
+    let confidence = targets
+        .iter()
+        .map(|target| target.confidence)
+        .fold(0.0_f64, f64::max);
+    let reason = if multi_file {
+        format!(
+            "next edit across {} files ({})",
+            targets.len(),
+            truncate(&primary.reason, 64)
+        )
+    } else {
+        primary.reason.clone()
+    };
+
+    let preview_payload = json!({
+        "targets": targets.len(),
+        "changes": changes.len(),
+        "path": path,
+        "reason": reason,
+        // Intentionally omit source code bodies from retained preview metadata.
+        "uris": targets.iter().map(|target| target.document.uri.clone()).collect::<Vec<_>>(),
+    });
+    let preview_text = serde_json::to_string_pretty(&preview_payload)
+        .map_err(|error| AgentError::invalid_input(error.to_string()))?;
+    let preview_ref = if preview_text.len() > INLINE_PREVIEW_LIMIT {
+        Some(resources.put_json(
+            SERVICE_ID,
+            "mutsuki.agent.next_edit.preview",
+            "mutsuki.agent.next_edit.preview@1",
+            1,
+            &preview_payload,
+        )?)
+    } else {
+        None
+    };
+
+    let proposal = WorkspaceEditProposal {
+        proposal_id: format!("next-edit-proposal-{candidate_seq}"),
+        workspace: request.workspace.clone(),
+        changes,
+        summary: reason.clone(),
+        details: preview_ref.clone(),
+    };
+
+    Ok(Some(NextEditCandidate {
+        candidate_id: format!("next-edit-{candidate_seq}"),
+        request_id: request.request_id.clone(),
+        generation: request.generation,
+        created_at_unix_ms: request.now_unix_ms,
+        expires_at_unix_ms: request.now_unix_ms.saturating_add(ttl_ms),
+        confidence,
+        reason,
+        path,
+        targets,
+        proposal,
+        expected_document_versions: request.document_versions.clone(),
+        expected_git_head: request.expected_git_head.clone(),
+        requires_preview: multi_file,
+        preview_ref,
+    }))
+}
+
+struct PlanSignal {
+    document: EditorDocumentRef,
+    range: Option<TextSelection>,
+    reason: String,
+    confidence: f64,
+    from_diff: bool,
+}
+
+fn file_change(
+    change_id: String,
+    workspace: EditorWorkspaceRef,
+    document: &EditorDocumentRef,
+    base_version: DocumentVersion,
+    summary: &str,
+) -> FileChangeDescriptor {
+    FileChangeDescriptor {
+        change_id,
+        workspace,
+        document: document.clone(),
+        base_version,
+        status: FileChangeStatus::Proposed,
+        summary: truncate(summary, 160),
+        details: None,
+        rejection_reason: None,
+    }
+}
+
+fn expected_version_for(
+    request: &NextEditRequest,
+    document: &EditorDocumentRef,
+) -> DocumentVersion {
+    request
+        .document_versions
+        .iter()
+        .find(|(doc, _)| doc == document)
+        .map(|(_, version)| *version)
+        .unwrap_or(DocumentVersion(1))
+}
+
+fn path_to_uri(path: &str) -> String {
+    if path.starts_with("file://") {
+        path.into()
+    } else {
+        format!("file:///workspace/{path}")
+    }
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    text.chars().take(max).collect::<String>() + "…"
+}
+
+impl AgentService for SharedNextEditService {
+    fn descriptor(&self) -> &AgentServiceDescriptor {
+        &self.descriptor
+    }
+
+    fn call(&self, request: Value) -> Result<Value, AgentError> {
+        let request: NextEditServiceRequest = serde_json::from_value(request)
+            .map_err(|error| AgentError::invalid_input(error.to_string()))?;
+        let response = self.call_typed(request)?;
+        serde_json::to_value(response).map_err(|error| AgentError::invalid_input(error.to_string()))
+    }
+
+    fn drain(&self) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    fn dispose(&self) -> Result<(), AgentError> {
+        let mut state = self.state.lock().expect("next-edit state");
+        state.cache.clear();
+        state.candidates.clear();
+        state.recent_edits.clear();
+        Ok(())
+    }
+}
+
+impl ToolProvider for SharedNextEditService {
+    fn tools(&self) -> Vec<AgentToolDescriptor> {
+        let mut tool = AgentToolDescriptor::new(
+            "next_edit.plan",
+            "mutsuki.agent.tool.next_edit.plan@1",
+            "Plan the next edit proposal",
+        );
+        tool.side_effect = ToolSideEffect::WorkspaceRead;
+        vec![tool]
+    }
+}
+
+impl ContextProvider for SharedNextEditService {
+    fn provider_id(&self) -> &str {
+        CONTEXT_PROVIDER_ID
+    }
+
+    fn collect(
+        &self,
+        request: ContextProviderRequest,
+    ) -> Result<ContextProviderResult, AgentError> {
+        let state = self.state.lock().expect("next-edit state");
+        let summary = format!(
+            "next-edit gen={} recent={} accepted={} rejected={} skipped={}",
+            state.active_generation,
+            state.recent_edits.len(),
+            state.feedback.accepted,
+            state.feedback.rejected,
+            state.feedback.skipped
+        );
+        let details = self.resources.put_json(
+            SERVICE_ID,
+            "mutsuki.agent.next_edit.context",
+            "mutsuki.agent.next_edit.context@1",
+            1,
+            &json!({
+                "active_generation": state.active_generation,
+                "recent_edits": state.recent_edits.len(),
+                "feedback": state.feedback,
+            }),
+        )?;
+        Ok(ContextProviderResult {
+            provider_id: request.provider_id,
+            summary,
+            details: Some(details),
+            estimated_tokens: 24,
+            estimated_bytes: 96,
+            priority: 0,
+            required: false,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mutsuki_agent_contracts::{
+        LspDiagnostic, LspPosition, LspRange, NextEditDiagnosticHint, NextEditDiffHint,
+        TextPosition, TextSelection,
+    };
+    use mutsuki_agent_testkit::FakeEditorContextService;
+
+    fn workspace() -> EditorWorkspaceRef {
+        EditorWorkspaceRef {
+            workspace_id: "ws".into(),
+            folders: vec!["/workspace".into()],
+            metadata: json!({}),
+        }
+    }
+
+    fn doc(uri: &str) -> EditorDocumentRef {
+        EditorDocumentRef {
+            workspace_id: "ws".into(),
+            uri: uri.into(),
+        }
+    }
+
+    fn head(commit: &str, generation: u64) -> GitHeadIdentity {
+        GitHeadIdentity {
+            commit: commit.into(),
+            branch: Some("main".into()),
+            upstream: None,
+            generation,
+        }
+    }
+
+    fn base_request() -> NextEditRequest {
+        NextEditRequest {
+            request_id: "req-1".into(),
+            workspace: workspace(),
+            generation: 2,
+            editor_generation: 2,
+            document_versions: vec![(doc("file:///workspace/main.rs"), DocumentVersion(3))],
+            recent_edits: Vec::new(),
+            diagnostics: Vec::new(),
+            related_paths: Vec::new(),
+            git_diff: Vec::new(),
+            expected_git_head: Some(head("abc", 1)),
+            intent: None,
+            path: NextEditPlanningPath::Lightweight,
+            min_confidence: 0.55,
+            allow_multi_file: false,
+            deadline_unix_ms: Some(10_000),
+            now_unix_ms: 1_000,
+            metadata: json!({}),
+        }
+    }
+
+    #[test]
+    fn single_file_next_edit_e2e_with_fake_editor() {
+        let editor = FakeEditorContextService::default();
+        editor
+            .open_document("file:///workspace/main.rs", "rust", "fn main() {}", true)
+            .unwrap();
+        editor
+            .edit_unsaved("file:///workspace/main.rs", "fn main() {\n")
+            .unwrap();
+        let snapshot = editor.freeze_snapshot(Some("turn-1".into())).unwrap();
+        let resources = AgentResourceStore::default();
+        let service = SharedNextEditService::with_config(
+            resources,
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        service
+            .call_typed(NextEditServiceRequest::IngestRecentEdit {
+                event: RecentEditEvent {
+                    event_id: "e1".into(),
+                    document: doc("file:///workspace/main.rs"),
+                    version: DocumentVersion(2),
+                    editor_generation: snapshot.generation,
+                    timestamp_unix_ms: 900,
+                    kind: mutsuki_agent_contracts::RecentEditKind::Replaced,
+                    range: Some(TextSelection {
+                        start: TextPosition {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: TextPosition {
+                            line: 1,
+                            character: 0,
+                        },
+                    }),
+                    summary: "opened function body".into(),
+                    byte_delta: 4,
+                },
+            })
+            .unwrap();
+
+        let mut request = base_request();
+        request.generation = snapshot.generation;
+        request.editor_generation = snapshot.generation;
+        request.document_versions = vec![(
+            doc("file:///workspace/main.rs"),
+            snapshot.documents[0].version,
+        )];
+        request.recent_edits = vec![RecentEditEvent {
+            event_id: "e1".into(),
+            document: doc("file:///workspace/main.rs"),
+            version: snapshot.documents[0].version,
+            editor_generation: snapshot.generation,
+            timestamp_unix_ms: 900,
+            kind: mutsuki_agent_contracts::RecentEditKind::Replaced,
+            range: None,
+            summary: "opened function body".into(),
+            byte_delta: 4,
+        }];
+
+        let response = service
+            .call_typed(NextEditServiceRequest::Plan { request })
+            .unwrap();
+        let NextEditServiceResponse::Candidate {
+            candidate: Some(candidate),
+        } = response
+        else {
+            panic!("expected single-file candidate, got {response:?}");
+        };
+        assert_eq!(candidate.proposal.changes.len(), 1);
+        assert!(!candidate.requires_preview);
+        assert_eq!(candidate.path, NextEditPlanningPath::Lightweight);
+        assert!(candidate.confidence >= 0.55);
+        editor
+            .assert_edit_base(
+                &candidate.proposal.changes[0].document,
+                candidate.proposal.changes[0].base_version,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn multi_file_proposal_requires_preview_and_version_safe_validate() {
+        let service = SharedNextEditService::with_config(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        let mut request = base_request();
+        request.allow_multi_file = true;
+        request.document_versions = vec![
+            (doc("file:///workspace/main.rs"), DocumentVersion(3)),
+            (doc("file:///workspace/lib.rs"), DocumentVersion(5)),
+        ];
+        request.git_diff = vec![
+            NextEditDiffHint {
+                path: "main.rs".into(),
+                summary: "export new helper".into(),
+                details: None,
+            },
+            NextEditDiffHint {
+                path: "lib.rs".into(),
+                summary: "wire helper import".into(),
+                details: None,
+            },
+        ];
+        request.related_paths = vec!["lib.rs".into()];
+        let response = service
+            .call_typed(NextEditServiceRequest::Plan { request })
+            .unwrap();
+        let NextEditServiceResponse::Candidate {
+            candidate: Some(candidate),
+        } = response
+        else {
+            panic!("expected multi-file candidate");
+        };
+        assert!(candidate.requires_preview);
+        assert!(candidate.proposal.changes.len() >= 2);
+
+        let valid = service
+            .call_typed(NextEditServiceRequest::Validate {
+                candidate_id: candidate.candidate_id.clone(),
+                document_versions: candidate.expected_document_versions.clone(),
+                git_head: candidate.expected_git_head.clone(),
+                now_unix_ms: 1_100,
+            })
+            .unwrap();
+        assert!(matches!(valid, NextEditServiceResponse::Valid { .. }));
+    }
+
+    #[test]
+    fn stale_document_or_git_head_rejects_candidate() {
+        let service = SharedNextEditService::with_config(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        let mut request = base_request();
+        request.diagnostics = vec![NextEditDiagnosticHint {
+            document: doc("file:///workspace/main.rs"),
+            diagnostic: LspDiagnostic {
+                range: LspRange {
+                    start: LspPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: 0,
+                        character: 8,
+                    },
+                },
+                severity: Some(1),
+                code: None,
+                message: "missing semicolon".into(),
+            },
+        }];
+        let response = service
+            .call_typed(NextEditServiceRequest::Plan { request })
+            .unwrap();
+        let NextEditServiceResponse::Candidate {
+            candidate: Some(candidate),
+        } = response
+        else {
+            panic!("expected diagnostic-driven candidate");
+        };
+
+        let stale_doc = service
+            .call_typed(NextEditServiceRequest::Validate {
+                candidate_id: candidate.candidate_id.clone(),
+                document_versions: vec![(doc("file:///workspace/main.rs"), DocumentVersion(99))],
+                git_head: Some(head("abc", 1)),
+                now_unix_ms: 1_100,
+            })
+            .unwrap();
+        assert!(matches!(stale_doc, NextEditServiceResponse::Stale { .. }));
+
+        let stale_git = service
+            .call_typed(NextEditServiceRequest::Validate {
+                candidate_id: candidate.candidate_id.clone(),
+                document_versions: candidate.expected_document_versions.clone(),
+                git_head: Some(head("def", 2)),
+                now_unix_ms: 1_100,
+            })
+            .unwrap();
+        assert!(matches!(stale_git, NextEditServiceResponse::Stale { .. }));
+    }
+
+    #[test]
+    fn diagnostics_and_recent_diff_both_influence_candidates() {
+        let service = SharedNextEditService::with_config(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        let mut diagnostic_request = base_request();
+        diagnostic_request.diagnostics = vec![NextEditDiagnosticHint {
+            document: doc("file:///workspace/main.rs"),
+            diagnostic: LspDiagnostic {
+                range: LspRange {
+                    start: LspPosition {
+                        line: 2,
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: 2,
+                        character: 4,
+                    },
+                },
+                severity: Some(1),
+                code: None,
+                message: "unused import".into(),
+            },
+        }];
+        let diagnostic = match service
+            .call_typed(NextEditServiceRequest::Plan {
+                request: diagnostic_request,
+            })
+            .unwrap()
+        {
+            NextEditServiceResponse::Candidate {
+                candidate: Some(candidate),
+            } => candidate,
+            other => panic!("diagnostic candidate missing: {other:?}"),
+        };
+        assert!(diagnostic.reason.contains("diagnostic"));
+
+        let mut diff_request = base_request();
+        diff_request.request_id = "req-diff".into();
+        diff_request.generation = 3;
+        diff_request.git_diff = vec![NextEditDiffHint {
+            path: "main.rs".into(),
+            summary: "rename helper".into(),
+            details: None,
+        }];
+        let diff = match service
+            .call_typed(NextEditServiceRequest::Plan {
+                request: diff_request,
+            })
+            .unwrap()
+        {
+            NextEditServiceResponse::Candidate {
+                candidate: Some(candidate),
+            } => candidate,
+            other => panic!("diff candidate missing: {other:?}"),
+        };
+        assert!(diff.reason.contains("git_diff") || diff.reason.contains("rename"));
+    }
+
+    #[test]
+    fn feedback_accept_reject_skip_are_counted() {
+        let service = SharedNextEditService::new(AgentResourceStore::default());
+        for (kind, id) in [
+            (NextEditFeedbackKind::Accepted, "a"),
+            (NextEditFeedbackKind::Rejected, "b"),
+            (NextEditFeedbackKind::Skipped, "c"),
+            (NextEditFeedbackKind::Accepted, "d"),
+        ] {
+            service
+                .call_typed(NextEditServiceRequest::Feedback {
+                    feedback: NextEditFeedback {
+                        candidate_id: id.into(),
+                        kind,
+                        timestamp_unix_ms: 1,
+                        reason_code: None,
+                    },
+                })
+                .unwrap();
+        }
+        let stats = match service.call_typed(NextEditServiceRequest::Stats).unwrap() {
+            NextEditServiceResponse::Stats { stats, .. } => stats,
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(stats.accepted, 2);
+        assert_eq!(stats.rejected, 1);
+        assert_eq!(stats.skipped, 1);
+    }
+
+    #[test]
+    fn low_confidence_timeout_and_cancel_do_not_interrupt() {
+        let service = SharedNextEditService::with_config(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        let mut low = base_request();
+        low.min_confidence = 0.99;
+        low.recent_edits = vec![RecentEditEvent {
+            event_id: "e-low".into(),
+            document: doc("file:///workspace/main.rs"),
+            version: DocumentVersion(3),
+            editor_generation: 2,
+            timestamp_unix_ms: 900,
+            kind: mutsuki_agent_contracts::RecentEditKind::Inserted,
+            range: None,
+            summary: "weak signal".into(),
+            byte_delta: 1,
+        }];
+        let low_response = service
+            .call_typed(NextEditServiceRequest::Plan { request: low })
+            .unwrap();
+        assert!(matches!(
+            low_response,
+            NextEditServiceResponse::Candidate { candidate: None }
+        ));
+
+        let mut timed = base_request();
+        timed.request_id = "req-timeout".into();
+        timed.now_unix_ms = 20_000;
+        timed.deadline_unix_ms = Some(10_000);
+        timed.diagnostics = vec![NextEditDiagnosticHint {
+            document: doc("file:///workspace/main.rs"),
+            diagnostic: LspDiagnostic {
+                range: LspRange {
+                    start: LspPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: 0,
+                        character: 1,
+                    },
+                },
+                severity: Some(1),
+                code: None,
+                message: "error".into(),
+            },
+        }];
+        assert!(matches!(
+            service
+                .call_typed(NextEditServiceRequest::Plan { request: timed })
+                .unwrap(),
+            NextEditServiceResponse::TimedOut { .. }
+        ));
+
+        let cancelled = service
+            .call_typed(NextEditServiceRequest::Cancel { generation: 9 })
+            .unwrap();
+        assert!(matches!(
+            cancelled,
+            NextEditServiceResponse::Cancelled { .. }
+        ));
+
+        let mut late = base_request();
+        late.generation = 2;
+        late.diagnostics = vec![NextEditDiagnosticHint {
+            document: doc("file:///workspace/main.rs"),
+            diagnostic: LspDiagnostic {
+                range: LspRange {
+                    start: LspPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: 0,
+                        character: 1,
+                    },
+                },
+                severity: Some(1),
+                code: None,
+                message: "late".into(),
+            },
+        }];
+        assert!(matches!(
+            service
+                .call_typed(NextEditServiceRequest::Plan { request: late })
+                .unwrap(),
+            NextEditServiceResponse::Superseded { .. }
+        ));
+    }
+
+    #[test]
+    fn plugin_descriptor_exposes_service_without_ui_or_agent_server() {
+        let descriptor = SharedNextEditService::plugin_descriptor(1).unwrap();
+        assert_eq!(descriptor.plugin_id, PLUGIN_ID);
+        assert_eq!(descriptor.services[0].service_id, SERVICE_ID);
+        assert!(
+            descriptor
+                .context_providers
+                .contains(&CONTEXT_PROVIDER_ID.into())
+        );
+        assert!(
+            !descriptor
+                .required_capabilities
+                .iter()
+                .any(|cap| cap.contains("official") || cap.contains("agent-server"))
+        );
+    }
+
+    #[test]
+    fn performance_smoke_plan_loop() {
+        let service = SharedNextEditService::with_config(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+        );
+        let started = std::time::Instant::now();
+        for index in 0..200 {
+            let mut request = base_request();
+            request.request_id = format!("perf-{index}");
+            request.generation = (index + 2) as u64;
+            request.diagnostics = vec![NextEditDiagnosticHint {
+                document: doc("file:///workspace/main.rs"),
+                diagnostic: LspDiagnostic {
+                    range: LspRange {
+                        start: LspPosition {
+                            line: (index % 10) as u32,
+                            character: 0,
+                        },
+                        end: LspPosition {
+                            line: (index % 10) as u32,
+                            character: 2,
+                        },
+                    },
+                    severity: Some(1),
+                    code: None,
+                    message: format!("diag-{index}"),
+                },
+            }];
+            let _ = service
+                .call_typed(NextEditServiceRequest::Plan { request })
+                .unwrap();
+        }
+        assert!(
+            started.elapsed().as_millis() < 750,
+            "next-edit plan smoke exceeded budget"
+        );
+    }
+}

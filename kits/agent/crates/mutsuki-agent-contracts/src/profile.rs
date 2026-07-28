@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AgentBudget, ToolSideEffect};
+use crate::{AgentBudget, AgentKnowledgePolicy, AgentSkillPolicy, CredentialRef, ToolSideEffect};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +37,9 @@ impl Default for AgentRuntimePolicy {
 pub struct AgentProviderInstance {
     pub instance_id: String,
     pub adapter_id: String,
+    /// Opaque credential reference only. Secret material stays in Host secret boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<CredentialRef>,
     #[serde(default)]
     pub capability_tags: Vec<String>,
     #[serde(default)]
@@ -135,4 +138,8 @@ pub struct AgentRuntimeProfile {
     pub budget: AgentBudget,
     #[serde(default)]
     pub persistence_distribution: AgentPersistenceDistributionPolicy,
+    #[serde(default)]
+    pub skill: AgentSkillPolicy,
+    #[serde(default)]
+    pub knowledge: AgentKnowledgePolicy,
 }

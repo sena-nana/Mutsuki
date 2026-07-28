@@ -4,9 +4,12 @@ mod measurement;
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use harness::{
-    agent_case_sample, cancel_sample, checkpoint_codec_sample, client_link_sample, context_sample,
-    distributed_placement_sample, failure_retry_sample, lsp_query_sample, memory_route_sample,
-    parallel_tools_sample, session_100_sample, wait_resume_sample,
+    agent_case_sample, cancel_sample, checkpoint_codec_sample, client_link_sample,
+    code_index_sample, computer_use_sample, context_sample, credential_resolve_sample,
+    distributed_placement_sample, failure_retry_sample, knowledge_retrieve_sample,
+    lsp_query_sample, memory_route_sample, native_coding_bundle_sample, next_edit_sample,
+    parallel_tools_sample, session_100_sample, skill_discover_sample, wait_resume_sample,
+    web_search_sample,
 };
 use measurement::{CountingAllocator, RawCase, raw_case};
 use mutsuki_agent_testkit::{BENCHMARK_FIXED_SEED, BENCHMARK_FIXTURE_VERSION, SimulatedLatency};
@@ -110,6 +113,32 @@ fn main() {
             .collect(),
     ));
     cases.push(raw_case(
+        "agent.web-search-50",
+        json!({"queries": 50, "transport": "injected-http-json"}),
+        (0..regular_samples)
+            .map(|_| web_search_sample(50))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.computer-use-50",
+        json!({"ops": 50, "backends": ["in-memory-fs", "fake-process", "fake-browser"]}),
+        (0..regular_samples)
+            .map(|_| computer_use_sample(50))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.code-index-50",
+        json!({"queries": 50, "files": 64, "modes": ["symbol", "text"]}),
+        (0..regular_samples)
+            .map(|_| code_index_sample(50))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.next-edit-50",
+        json!({"plans": 50, "signals": ["diagnostic", "git_diff"]}),
+        (0..regular_samples).map(|_| next_edit_sample(50)).collect(),
+    ));
+    cases.push(raw_case(
         "agent.client-link-query-100",
         json!({"queries": 100, "transport": "mutsuki-link-memory-control-stream"}),
         (0..regular_samples)
@@ -135,6 +164,39 @@ fn main() {
         json!({"candidates": 128, "selected": 8}),
         (0..regular_samples)
             .map(|_| memory_route_sample())
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.skill-discover",
+        json!({"skills": 32}),
+        (0..regular_samples)
+            .map(|_| skill_discover_sample(32))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.knowledge-retrieve",
+        json!({"documents": 64, "top_k": 8}),
+        (0..regular_samples)
+            .map(|_| knowledge_retrieve_sample(64, 8))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.credential-resolve",
+        json!({"credentials": 64, "resolves": 64}),
+        (0..regular_samples)
+            .map(|_| credential_resolve_sample(64))
+            .collect(),
+    ));
+    cases.push(raw_case(
+        "agent.native-coding-bundle",
+        json!({
+            "iterations": 8,
+            "paths": ["fix", "review"],
+            "providers": 2,
+            "official_servers": 0
+        }),
+        (0..regular_samples)
+            .map(|_| native_coding_bundle_sample(8))
             .collect(),
     ));
     cases.push(raw_case(

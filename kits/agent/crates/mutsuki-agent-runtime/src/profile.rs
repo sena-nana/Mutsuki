@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
 use mutsuki_agent_contracts::{
-    AgentBudget, AgentContextPolicy, AgentError, AgentPermissionPolicy,
+    AgentBudget, AgentContextPolicy, AgentError, AgentKnowledgePolicy, AgentPermissionPolicy,
     AgentPersistenceDistributionPolicy, AgentProfilePlugin, AgentPromptFragment,
     AgentProtocolAdapterSelection, AgentProviderInstance, AgentRuntimeMode, AgentRuntimePolicy,
-    AgentRuntimeProfile,
+    AgentRuntimeProfile, AgentSkillPolicy,
 };
 
 pub struct AgentRuntimeProfileBuilder {
@@ -27,6 +27,8 @@ impl AgentRuntimeProfileBuilder {
                 permissions: AgentPermissionPolicy::default(),
                 budget: AgentBudget::default(),
                 persistence_distribution: AgentPersistenceDistributionPolicy::default(),
+                skill: Default::default(),
+                knowledge: Default::default(),
             },
         }
     }
@@ -83,6 +85,16 @@ impl AgentRuntimeProfileBuilder {
 
     pub fn persistence_distribution(mut self, policy: AgentPersistenceDistributionPolicy) -> Self {
         self.profile.persistence_distribution = policy;
+        self
+    }
+
+    pub fn skill_policy(mut self, policy: AgentSkillPolicy) -> Self {
+        self.profile.skill = policy;
+        self
+    }
+
+    pub fn knowledge_policy(mut self, policy: AgentKnowledgePolicy) -> Self {
+        self.profile.knowledge = policy;
         self
     }
 
@@ -233,28 +245,47 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
     AgentRuntimeProfileBuilder::new("mutsuki.reference.coding-agent")
         .mode(AgentRuntimeMode::Test)
         .provider(AgentProviderInstance {
-            instance_id: "reference-scripted-provider".into(),
+            instance_id: "reference-provider-primary".into(),
             adapter_id: "openai-compatible".into(),
+            credential_ref: None,
             capability_tags: vec![
                 "streaming".into(),
                 "tools".into(),
                 "structured-output".into(),
             ],
-            endpoint_profile: None,
+            endpoint_profile: Some("provider-a".into()),
+            test_only: true,
+        })
+        .provider(AgentProviderInstance {
+            instance_id: "reference-provider-secondary".into(),
+            adapter_id: "openai-compatible".into(),
+            credential_ref: None,
+            capability_tags: vec![
+                "streaming".into(),
+                "tools".into(),
+                "structured-output".into(),
+            ],
+            endpoint_profile: Some("provider-b".into()),
             test_only: true,
         })
         .adapter(AgentProtocolAdapterSelection {
             protocol_family: "openai-compatible".into(),
             adapter_id: "openai-compatible".into(),
-            provider_instance_id: "reference-scripted-provider".into(),
+            provider_instance_id: "reference-provider-primary".into(),
             model: "reference-coding-model".into(),
-            fallback_provider_instance_ids: Vec::new(),
+            fallback_provider_instance_ids: vec!["reference-provider-secondary".into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.context".into(),
             generation: 1,
             tools: Vec::new(),
             services: vec!["mutsuki.agent.context@1".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.loop".into(),
+            generation: 1,
+            tools: Vec::new(),
+            services: Vec::new(),
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.model-gateway".into(),
@@ -266,18 +297,81 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
             plugin_id: "mutsuki.plugin.agent.tool-router".into(),
             generation: 1,
             tools: vec![
-                "filesystem.read".into(),
-                "filesystem.write".into(),
+                "computer.fs.read".into(),
+                "computer.fs.write".into(),
+                "computer.fs.patch".into(),
+                "computer.shell.exec".into(),
                 "git.status".into(),
                 "lsp.hover".into(),
+                "code.search".into(),
+                "code.symbol_query".into(),
+                "mcp.call".into(),
             ],
             services: Vec::new(),
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.code-index".into(),
+            generation: 1,
+            tools: Vec::new(),
+            services: vec!["mutsuki.agent.service.code-index".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.next-edit".into(),
+            generation: 1,
+            tools: Vec::new(),
+            services: vec!["mutsuki.agent.service.next-edit".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.git".into(),
+            generation: 1,
+            tools: vec![
+                "git.status".into(),
+                "git.diff".into(),
+                "git.stage".into(),
+                "git.commit".into(),
+                "git.push".into(),
+            ],
+            services: vec!["mutsuki.agent.service.git".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.lsp".into(),
+            generation: 1,
+            tools: vec!["lsp.hover".into(), "lsp.diagnostics".into()],
+            services: vec!["mutsuki.agent.service.lsp".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.computer-use".into(),
+            generation: 1,
+            tools: vec![
+                "computer.fs.read".into(),
+                "computer.fs.patch".into(),
+                "computer.shell.exec".into(),
+            ],
+            services: vec!["mutsuki.agent.service.computer-use".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.mcp".into(),
+            generation: 1,
+            tools: vec!["mcp.call".into()],
+            services: vec!["mutsuki.agent.service.mcp".into()],
         })
         .plugin(AgentProfilePlugin {
             plugin_id: "mutsuki.plugin.agent.session".into(),
             generation: 1,
             tools: Vec::new(),
             services: vec!["mutsuki.agent.session-store@1".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.skills".into(),
+            generation: 1,
+            tools: Vec::new(),
+            services: vec!["mutsuki.agent.skills@1".into()],
+        })
+        .plugin(AgentProfilePlugin {
+            plugin_id: "mutsuki.plugin.agent.knowledge".into(),
+            generation: 1,
+            tools: Vec::new(),
+            services: vec!["mutsuki.agent.knowledge@1".into()],
         })
         .system_instruction(
             "Act on the product-provided workspace and return verifiable coding results.",
@@ -289,7 +383,16 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
             priority: 0,
         })
         .context_policy(AgentContextPolicy {
-            provider_ids: vec!["workspace".into(), "git".into(), "lsp".into()],
+            provider_ids: vec![
+                "workspace".into(),
+                "git".into(),
+                "lsp".into(),
+                "mutsuki.agent.context.code-index".into(),
+                "mutsuki.agent.context.next-edit".into(),
+                "mutsuki.agent.context.computer-use".into(),
+                "mutsuki.agent.context.mcp".into(),
+                "editor".into(),
+            ],
             budget: mutsuki_agent_contracts::ContextBudget {
                 max_tokens: Some(32_000),
                 max_bytes: Some(2 * 1024 * 1024),
@@ -311,7 +414,13 @@ pub fn reference_coding_agent_test_profile() -> AgentRuntimeProfile {
                 "workspace.read".into(),
                 "workspace.write".into(),
                 "git.read".into(),
+                "git.write".into(),
+                "git.high_risk".into(),
                 "lsp.read".into(),
+                "code.index.read".into(),
+                "next.edit.read".into(),
+                "mcp.call".into(),
+                "subagent.delegate".into(),
             ],
         })
         .budget_policy(AgentBudget {
@@ -370,6 +479,7 @@ mod tests {
         AgentProviderInstance {
             instance_id: "primary".into(),
             adapter_id: "openai-compatible".into(),
+            credential_ref: None,
             capability_tags: vec!["tools".into(), "structured-output".into()],
             endpoint_profile: Some("product-owned-endpoint".into()),
             test_only,
@@ -457,13 +567,31 @@ mod tests {
         let profile = reference_coding_agent_test_profile();
         assert_eq!(profile.mode, AgentRuntimeMode::Test);
         assert!(profile.providers.iter().all(|provider| provider.test_only));
+        assert_eq!(profile.providers.len(), 2);
+        assert_eq!(profile.adapters.len(), 1);
+        assert_eq!(
+            profile.adapters[0].fallback_provider_instance_ids,
+            vec!["reference-provider-secondary".to_string()]
+        );
         assert!(profile.persistence_distribution.durable_sessions);
         assert!(profile.persistence_distribution.remote_subagents);
+        assert!(profile.plugins.iter().any(|plugin| {
+            plugin
+                .tools
+                .iter()
+                .any(|tool| tool == "computer.fs.patch" || tool == "computer.fs.write")
+        }));
         assert!(
             profile
                 .plugins
                 .iter()
-                .any(|plugin| { plugin.tools.iter().any(|tool| tool == "filesystem.write") })
+                .any(|plugin| plugin.plugin_id == "mutsuki.plugin.agent.git")
+        );
+        assert!(
+            profile
+                .plugins
+                .iter()
+                .any(|plugin| plugin.plugin_id == "mutsuki.plugin.agent.computer-use")
         );
     }
 }

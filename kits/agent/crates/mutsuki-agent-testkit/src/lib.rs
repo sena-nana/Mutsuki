@@ -1,12 +1,20 @@
+pub mod auth_conformance;
 pub mod benchmark;
+pub mod code_completion;
+pub mod coding_events;
 pub mod conformance;
+pub mod fake_editor;
 pub mod fake_memory;
 pub mod fake_model;
 pub mod fake_session;
 pub mod fake_tool;
 
+pub use auth_conformance::*;
 pub use benchmark::*;
+pub use code_completion::*;
+pub use coding_events::*;
 pub use conformance::*;
+pub use fake_editor::*;
 pub use fake_memory::*;
 pub use fake_model::*;
 pub use fake_session::*;

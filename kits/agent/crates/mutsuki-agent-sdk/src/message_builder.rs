@@ -15,6 +15,7 @@ impl MessageBuilder {
                 content: content.into(),
                 name: None,
                 metadata: None,
+                parts: Vec::new(),
             },
         }
     }

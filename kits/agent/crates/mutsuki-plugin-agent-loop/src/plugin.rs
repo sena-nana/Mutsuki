@@ -547,6 +547,7 @@ async fn execute_tool_batch(
                 "call_id": tool_result.call_id,
                 "output_ref": tool_result.output_ref,
             })),
+            parts: Vec::new(),
         });
         steps.push(AgentStepRecord {
             step_index,
