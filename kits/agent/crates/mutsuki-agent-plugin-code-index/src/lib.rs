@@ -65,10 +65,15 @@ impl CodeIndexLspSignals for UnavailableLspSignals {
 }
 
 /// Injected LSP-backed symbol source for tests and product adapters.
+type SymbolKey = (String, String);
+type RelationKey = (String, String, String);
+type SymbolMap = BTreeMap<SymbolKey, Vec<CodeSymbol>>;
+type RelationMap = BTreeMap<RelationKey, Vec<SymbolRelation>>;
+
 #[derive(Clone, Default)]
 pub struct FakeLspSignals {
-    symbols: Arc<Mutex<BTreeMap<(String, String), Vec<CodeSymbol>>>>,
-    relations: Arc<Mutex<BTreeMap<(String, String, String), Vec<SymbolRelation>>>>,
+    symbols: Arc<Mutex<SymbolMap>>,
+    relations: Arc<Mutex<RelationMap>>,
 }
 
 impl FakeLspSignals {
@@ -1495,10 +1500,10 @@ fn change_impact_graph(
     for _ in 0..query.depth.max(1) {
         let current = impacted.clone();
         for dependency in &index.dependencies {
-            if current.contains(&dependency.from_path) {
-                if let Some(to_path) = &dependency.to_path {
-                    impacted.insert(to_path.clone());
-                }
+            if current.contains(&dependency.from_path)
+                && let Some(to_path) = &dependency.to_path
+            {
+                impacted.insert(to_path.clone());
             }
             if dependency
                 .to_path

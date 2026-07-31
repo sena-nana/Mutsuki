@@ -104,7 +104,7 @@ pub enum TranscriptionEvent {
     },
     Completed {
         sequence: u64,
-        result: TranscriptionResult,
+        result: Box<TranscriptionResult>,
     },
     Failed {
         sequence: u64,

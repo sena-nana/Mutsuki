@@ -320,15 +320,13 @@ impl ProactiveScheduleService {
             .lock()
             .expect("schedule mutex")
             .get_mut(&result.schedule_id)
-        {
-            if let Some(entry) = entries
+            && let Some(entry) = entries
                 .iter_mut()
                 .rev()
                 .find(|entry| entry.execution_id == result.execution_id)
-            {
-                entry.status = result.status.clone();
-                entry.finished_at_unix_ms = Some(now_unix_ms);
-            }
+        {
+            entry.status = result.status.clone();
+            entry.finished_at_unix_ms = Some(now_unix_ms);
         }
         schedule.occurrence_count = schedule.occurrence_count.saturating_add(1);
         schedule.updated_at_unix_ms = now_unix_ms;

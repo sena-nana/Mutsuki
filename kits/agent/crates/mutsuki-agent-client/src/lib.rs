@@ -244,7 +244,7 @@ impl<B: AgentClientBackend> AgentClient<B> {
             self.dispatch(AgentWireRequest::ForkSession {
                 source_session_id: source_session_id.into(),
                 target_session_id: target_session_id.into(),
-                snapshot,
+                snapshot: Box::new(snapshot),
             })?,
             target_session_id,
             "ForkSession",
@@ -293,7 +293,7 @@ impl<B: AgentClientBackend> AgentClient<B> {
         self.ensure_negotiated()?;
         let expected_ref = resource.ref_id.clone();
         match self.dispatch(AgentWireRequest::ReadResource {
-            resource,
+            resource: Box::new(resource),
             offset,
             length,
         })? {
@@ -1072,7 +1072,7 @@ mod tests {
                 AgentWireRequest::ReadResource {
                     resource, offset, ..
                 } => AgentWireResponse::ResourceChunk {
-                    resource,
+                    resource: *resource,
                     offset,
                     bytes: b"value".to_vec(),
                     eof: true,

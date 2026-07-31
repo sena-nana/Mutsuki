@@ -31,18 +31,18 @@ pub enum AgentSessionEvent {
         turn_id: String,
     },
     SnapshotAdvanced {
-        snapshot: SessionSnapshotRef,
+        snapshot: Box<SessionSnapshotRef>,
     },
     ApprovalPending {
         request: PermissionRequest,
     },
     AttemptCompleted {
         attempt_id: String,
-        result: Option<ResourceRef>,
+        result: Option<Box<ResourceRef>>,
     },
     TurnCompleted {
         turn_id: String,
-        result: Option<ResourceRef>,
+        result: Option<Box<ResourceRef>>,
     },
     TurnCancelled {
         turn_id: String,

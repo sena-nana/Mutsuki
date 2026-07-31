@@ -220,13 +220,10 @@ impl Runner for ConformanceRunner {
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
             let mut result = mutsuki_runtime_contracts::RunnerResult::completed(&task.task_id);
-            result.output = Some(
-                json!({
-                    "generation": self.generation,
-                    "echo": Value::from(task.payload.clone()),
-                })
-                .into(),
-            );
+            result.output = Some(json!({
+                "generation": self.generation,
+                "echo": task.payload.clone(),
+            }));
             Ok(result)
         })
     }

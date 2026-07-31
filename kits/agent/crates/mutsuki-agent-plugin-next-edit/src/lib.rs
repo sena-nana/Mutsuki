@@ -121,7 +121,7 @@ impl SharedNextEditService {
                 self.ingest(event)?;
                 Ok(NextEditServiceResponse::Ack)
             }
-            NextEditServiceRequest::Plan { request } => self.plan(request),
+            NextEditServiceRequest::Plan { request } => self.plan(*request),
             NextEditServiceRequest::Validate {
                 candidate_id,
                 document_versions,
@@ -198,12 +198,12 @@ impl SharedNextEditService {
         }
         state.active_generation = request.generation;
 
-        if let Some(deadline) = request.deadline_unix_ms {
-            if request.now_unix_ms > deadline {
-                return Ok(NextEditServiceResponse::TimedOut {
-                    request_id: request.request_id,
-                });
-            }
+        if let Some(deadline) = request.deadline_unix_ms
+            && request.now_unix_ms > deadline
+        {
+            return Ok(NextEditServiceResponse::TimedOut {
+                request_id: request.request_id,
+            });
         }
 
         if self.config.debounce_ms > 0
@@ -215,14 +215,13 @@ impl SharedNextEditService {
         }
 
         let cache_key = context_cache_key(&request);
-        if let Some(cached) = state.cache.get(&cache_key).cloned() {
-            if cached.expires_at_unix_ms >= request.now_unix_ms
-                && cached.generation == request.generation
-            {
-                return Ok(NextEditServiceResponse::Candidate {
-                    candidate: Some(cached),
-                });
-            }
+        if let Some(cached) = state.cache.get(&cache_key).cloned()
+            && cached.expires_at_unix_ms >= request.now_unix_ms
+            && cached.generation == request.generation
+        {
+            return Ok(NextEditServiceResponse::Candidate {
+                candidate: Some(Box::new(cached)),
+            });
         }
 
         let planned = plan_candidate(
@@ -246,7 +245,7 @@ impl SharedNextEditService {
             .candidates
             .insert(candidate.candidate_id.clone(), candidate.clone());
         Ok(NextEditServiceResponse::Candidate {
-            candidate: Some(candidate),
+            candidate: Some(Box::new(candidate)),
         })
     }
 
@@ -264,14 +263,14 @@ impl SharedNextEditService {
 
         if candidate.expires_at_unix_ms < now_unix_ms {
             return Ok(NextEditServiceResponse::Stale {
-                conflict: NextEditStaleConflict {
+                conflict: Box::new(NextEditStaleConflict {
                     document: None,
                     expected_version: None,
                     actual_version: None,
                     expected_git_head: candidate.expected_git_head.clone(),
                     actual_git_head: git_head.cloned(),
                     message: format!("candidate `{candidate_id}` expired"),
-                },
+                }),
             });
         }
 
@@ -291,7 +290,7 @@ impl SharedNextEditService {
                 Some(actual) if actual == *expected_version => {}
                 Some(actual) => {
                     return Ok(NextEditServiceResponse::Stale {
-                        conflict: NextEditStaleConflict {
+                        conflict: Box::new(NextEditStaleConflict {
                             document: Some(expected_doc.clone()),
                             expected_version: Some(*expected_version),
                             actual_version: Some(actual),
@@ -301,12 +300,12 @@ impl SharedNextEditService {
                                 "document `{}` expected version {}, observed {}",
                                 expected_doc.uri, expected_version.0, actual.0
                             ),
-                        },
+                        }),
                     });
                 }
                 None => {
                     return Ok(NextEditServiceResponse::Stale {
-                        conflict: NextEditStaleConflict {
+                        conflict: Box::new(NextEditStaleConflict {
                             document: Some(expected_doc.clone()),
                             expected_version: Some(*expected_version),
                             actual_version: None,
@@ -316,7 +315,7 @@ impl SharedNextEditService {
                                 "document `{}` version missing during validation",
                                 expected_doc.uri
                             ),
-                        },
+                        }),
                     });
                 }
             }
@@ -329,7 +328,7 @@ impl SharedNextEditService {
                         && actual.generation == expected.generation => {}
                 Some(actual) => {
                     return Ok(NextEditServiceResponse::Stale {
-                        conflict: NextEditStaleConflict {
+                        conflict: Box::new(NextEditStaleConflict {
                             document: None,
                             expected_version: None,
                             actual_version: None,
@@ -342,19 +341,19 @@ impl SharedNextEditService {
                                 actual.commit,
                                 actual.generation
                             ),
-                        },
+                        }),
                     });
                 }
                 None => {
                     return Ok(NextEditServiceResponse::Stale {
-                        conflict: NextEditStaleConflict {
+                        conflict: Box::new(NextEditStaleConflict {
                             document: None,
                             expected_version: None,
                             actual_version: None,
                             expected_git_head: Some(expected.clone()),
                             actual_git_head: None,
                             message: "git head missing during validation".into(),
-                        },
+                        }),
                     });
                 }
             }
@@ -858,7 +857,9 @@ mod tests {
         }];
 
         let response = service
-            .call_typed(NextEditServiceRequest::Plan { request })
+            .call_typed(NextEditServiceRequest::Plan {
+                request: Box::new(request),
+            })
             .unwrap();
         let NextEditServiceResponse::Candidate {
             candidate: Some(candidate),
@@ -907,7 +908,9 @@ mod tests {
         ];
         request.related_paths = vec!["lib.rs".into()];
         let response = service
-            .call_typed(NextEditServiceRequest::Plan { request })
+            .call_typed(NextEditServiceRequest::Plan {
+                request: Box::new(request),
+            })
             .unwrap();
         let NextEditServiceResponse::Candidate {
             candidate: Some(candidate),
@@ -958,7 +961,9 @@ mod tests {
             },
         }];
         let response = service
-            .call_typed(NextEditServiceRequest::Plan { request })
+            .call_typed(NextEditServiceRequest::Plan {
+                request: Box::new(request),
+            })
             .unwrap();
         let NextEditServiceResponse::Candidate {
             candidate: Some(candidate),
@@ -1018,7 +1023,7 @@ mod tests {
         }];
         let diagnostic = match service
             .call_typed(NextEditServiceRequest::Plan {
-                request: diagnostic_request,
+                request: Box::new(diagnostic_request),
             })
             .unwrap()
         {
@@ -1039,7 +1044,7 @@ mod tests {
         }];
         let diff = match service
             .call_typed(NextEditServiceRequest::Plan {
-                request: diff_request,
+                request: Box::new(diff_request),
             })
             .unwrap()
         {
@@ -1103,7 +1108,9 @@ mod tests {
             byte_delta: 1,
         }];
         let low_response = service
-            .call_typed(NextEditServiceRequest::Plan { request: low })
+            .call_typed(NextEditServiceRequest::Plan {
+                request: Box::new(low),
+            })
             .unwrap();
         assert!(matches!(
             low_response,
@@ -1134,7 +1141,9 @@ mod tests {
         }];
         assert!(matches!(
             service
-                .call_typed(NextEditServiceRequest::Plan { request: timed })
+                .call_typed(NextEditServiceRequest::Plan {
+                    request: Box::new(timed),
+                })
                 .unwrap(),
             NextEditServiceResponse::TimedOut { .. }
         ));
@@ -1169,7 +1178,9 @@ mod tests {
         }];
         assert!(matches!(
             service
-                .call_typed(NextEditServiceRequest::Plan { request: late })
+                .call_typed(NextEditServiceRequest::Plan {
+                    request: Box::new(late),
+                })
                 .unwrap(),
             NextEditServiceResponse::Superseded { .. }
         ));
@@ -1226,7 +1237,9 @@ mod tests {
                 },
             }];
             let _ = service
-                .call_typed(NextEditServiceRequest::Plan { request })
+                .call_typed(NextEditServiceRequest::Plan {
+                    request: Box::new(request),
+                })
                 .unwrap();
         }
         assert!(

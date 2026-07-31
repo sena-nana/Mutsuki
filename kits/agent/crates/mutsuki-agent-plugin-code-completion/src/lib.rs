@@ -884,9 +884,9 @@ pub fn request_from_snapshot(
     language_id: Option<String>,
     document_version: DocumentVersion,
     cursor: TextPosition,
-    prefix: impl Into<String>,
-    suffix: impl Into<String>,
+    surrounding_text: (impl Into<String>, impl Into<String>),
 ) -> CodeCompletionRequest {
+    let (prefix, suffix) = surrounding_text;
     CodeCompletionRequest {
         request_id: request_id.into(),
         generation,
@@ -956,8 +956,7 @@ mod tests {
                 line: 0,
                 character: prefix.len() as u32,
             },
-            prefix,
-            "\n",
+            (prefix, "\n"),
         )
     }
 

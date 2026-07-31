@@ -172,7 +172,7 @@ pub enum NextEditServiceRequest {
         event: RecentEditEvent,
     },
     Plan {
-        request: NextEditRequest,
+        request: Box<NextEditRequest>,
     },
     Validate {
         candidate_id: String,
@@ -198,13 +198,13 @@ pub enum NextEditServiceResponse {
     /// Empty candidate means low confidence / no interruption.
     Candidate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        candidate: Option<NextEditCandidate>,
+        candidate: Option<Box<NextEditCandidate>>,
     },
     Valid {
         candidate_id: String,
     },
     Stale {
-        conflict: NextEditStaleConflict,
+        conflict: Box<NextEditStaleConflict>,
     },
     Superseded {
         generation: u64,

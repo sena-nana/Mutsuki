@@ -1197,7 +1197,9 @@ pub fn next_edit_sample(plan_count: usize) -> Sample {
         };
         last = serde_json::to_value(
             service
-                .call_typed(NextEditServiceRequest::Plan { request })
+                .call_typed(NextEditServiceRequest::Plan {
+                    request: Box::new(request),
+                })
                 .unwrap(),
         )
         .unwrap();

@@ -159,7 +159,7 @@ impl FilesystemBackend for InMemoryFilesystemBackend {
             let entry_path = if prefix.is_empty() {
                 name.to_string()
             } else {
-                format!("{}{name}", &prefix)
+                format!("{}{name}", prefix)
             };
             let kind = if rest.contains('/') { "dir" } else { "file" };
             entries.insert(
@@ -847,7 +847,7 @@ impl AgentService for SharedComputerUseService {
                 }
             }
             ComputerUseServiceRequest::Read { request, max_bytes } => {
-                ComputerUseServiceResponse::Read(self.read(&request, max_bytes)?)
+                ComputerUseServiceResponse::Read(Box::new(self.read(&request, max_bytes)?))
             }
             ComputerUseServiceRequest::Stat { request } => {
                 let root = workspace_root(&request.workspace)?;
@@ -879,7 +879,7 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"path": path, "bytes": content.len()})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
                     let root = workspace_root(&workspace)?;
                     let relative = resolve_workspace_path(&workspace, &path)?;
@@ -904,7 +904,7 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"path": request.path})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
                     let root = workspace_root(&request.workspace)?;
                     let relative = resolve_workspace_path(&request.workspace, &request.path)?;
@@ -930,7 +930,7 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"from": from, "to": to})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
                     let root = workspace_root(&workspace)?;
                     let from_path = resolve_workspace_path(&workspace, &from)?;
@@ -955,7 +955,7 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"path": request.path})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
                     let path = request.path.clone();
                     self.patch(&request)?;
@@ -998,9 +998,9 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"command": request.command, "args": request.args})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
-                    ComputerUseServiceResponse::Exec(self.exec(request)?)
+                    ComputerUseServiceResponse::Exec(Box::new(self.exec(request)?))
                 }
             }
             ComputerUseServiceRequest::BrowserSnapshot {
@@ -1019,9 +1019,9 @@ impl AgentService for SharedComputerUseService {
                     approval_version.unwrap_or(1),
                     Some(json!({"url": request.url})),
                 )? {
-                    ComputerUseServiceResponse::Plan(plan)
+                    ComputerUseServiceResponse::Plan(Box::new(plan))
                 } else {
-                    ComputerUseServiceResponse::Browser(self.browser_snapshot(request)?)
+                    ComputerUseServiceResponse::Browser(Box::new(self.browser_snapshot(request)?))
                 }
             }
             ComputerUseServiceRequest::Plan {
@@ -1032,7 +1032,7 @@ impl AgentService for SharedComputerUseService {
                 turn_id,
                 version,
                 preview,
-            } => ComputerUseServiceResponse::Plan(self.plan(
+            } => ComputerUseServiceResponse::Plan(Box::new(self.plan(
                 &operation,
                 risk,
                 summary,
@@ -1040,7 +1040,7 @@ impl AgentService for SharedComputerUseService {
                 &turn_id,
                 version,
                 preview,
-            )),
+            ))),
             ComputerUseServiceRequest::Cancel { handle_id } => {
                 self.cancel(&handle_id)?;
                 ComputerUseServiceResponse::Ack

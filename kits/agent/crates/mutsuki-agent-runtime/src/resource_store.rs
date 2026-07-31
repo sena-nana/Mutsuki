@@ -172,12 +172,12 @@ impl AgentResourceStore {
         let expired = state
             .leases
             .iter()
-            .filter_map(|(token, lease)| {
+            .filter(|(_, lease)| {
                 lease
                     .expires_at_step
                     .is_some_and(|step| current_step >= step)
-                    .then(|| token.clone())
             })
+            .map(|(token, _)| token.clone())
             .collect::<Vec<_>>();
         for token in &expired {
             state.leases.remove(token);

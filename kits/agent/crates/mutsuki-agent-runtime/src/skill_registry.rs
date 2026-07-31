@@ -537,19 +537,19 @@ fn parse_frontmatter(frontmatter: &str) -> BTreeMap<String, String> {
 
     for line in frontmatter.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- ") {
+        if let Some(list_value) = trimmed.strip_prefix("- ") {
             if let Some(key) = &current_key {
-                list_values.push(trimmed[2..].trim().to_string());
+                list_values.push(list_value.trim().to_string());
                 fields.insert(key.clone(), list_values.join("\n"));
             }
             continue;
         }
         if let Some((key, value)) = trimmed.split_once(':') {
-            if let Some(prev) = current_key.take() {
-                if !list_values.is_empty() {
-                    fields.insert(prev, list_values.join("\n"));
-                    list_values.clear();
-                }
+            if let Some(prev) = current_key.take()
+                && !list_values.is_empty()
+            {
+                fields.insert(prev, list_values.join("\n"));
+                list_values.clear();
             }
             let key = key.trim().to_string();
             let value = value
@@ -662,10 +662,10 @@ mod tests {
         let mut file = fs::File::create(dir.join("SKILL.md")).unwrap();
         write!(file, "---\n{frontmatter}\n---\n\n{body}\n").unwrap();
         for (name, contents) in extra_files {
-            if name.contains('/') {
-                if let Some(parent) = dir.join(name).parent() {
-                    fs::create_dir_all(parent).unwrap();
-                }
+            if name.contains('/')
+                && let Some(parent) = dir.join(name).parent()
+            {
+                fs::create_dir_all(parent).unwrap();
             }
             fs::write(dir.join(name), contents).unwrap();
         }

@@ -39,21 +39,12 @@ pub struct SkillProvenance {
     pub generation: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillCompatibility {
     #[serde(default)]
     pub agentkit_api: Option<String>,
     #[serde(default)]
     pub min_runtime: Option<String>,
-}
-
-impl Default for SkillCompatibility {
-    fn default() -> Self {
-        Self {
-            agentkit_api: None,
-            min_runtime: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
