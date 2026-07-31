@@ -1,0 +1,22 @@
+[package]
+name = "mutsuki-plugin-image-render-skia"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-protocol-image.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-runtime-sdk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+skia-safe = { version = "=0.99.0", default-features = false, features = ["binary-cache", "embed-icudtl", "textlayout", "jpeg", "webp-decode"] }
+
+[dev-dependencies]
+image.workspace = true
+mutsuki-plugin-resource-memory = { path = "../mutsuki-plugin-resource-memory" }
+tempfile.workspace = true
+
+[lints]
+workspace = true

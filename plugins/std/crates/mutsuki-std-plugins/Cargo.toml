@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-plugin-io-browser-chromium = { path = "../../plugins/mutsuki-plugin-io-browser-chromium" }
+mutsuki-plugin-image-render-skia.workspace = true
 mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true

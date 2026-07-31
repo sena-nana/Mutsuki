@@ -1,3 +1,4 @@
+use mutsuki_plugin_image_render_skia::{SkiaRenderConfig, SkiaRenderRunner};
 use mutsuki_plugin_io_browser_chromium::{BrowserSnapshotRunner, ChromiumConfig};
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
@@ -53,10 +54,39 @@ impl ConfiguredPluginFactory for ChromiumPluginFactory {
     }
 }
 
+pub struct SkiaRenderPluginFactory;
+
+impl ConfiguredPluginFactory for SkiaRenderPluginFactory {
+    fn plugin_id(&self) -> &str {
+        mutsuki_plugin_image_render_skia::PLUGIN_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config: SkiaRenderConfig = serde_json::from_value(config.clone())
+            .map_err(|error| format!("invalid Skia renderer config: {error}"))?;
+        config.validate()?;
+        let mut manifest = mutsuki_plugin_image_render_skia::manifest();
+        manifest
+            .requires
+            .push(format!("resource_strategy:{}", config.output_provider_id));
+        Ok(builder
+            .register_builtin_plugin(manifest)
+            .register_fallible_runtime_services_runner(move |_client, resources| {
+                SkiaRenderRunner::launch(config.clone(), resources)
+                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_core::Runner>)
+            }))
+    }
+}
+
 pub fn configured_std_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
     catalog.register(MemoryResourcePluginFactory)?;
     catalog.register(ChromiumPluginFactory)?;
+    catalog.register(SkiaRenderPluginFactory)?;
     Ok(catalog)
 }
 
@@ -65,7 +95,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configured_catalog_contains_memory_and_chromium_factories() {
+    fn configured_catalog_contains_memory_chromium_and_skia_factories() {
         configured_std_plugin_catalog().unwrap();
     }
 }

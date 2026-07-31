@@ -1,8 +1,19 @@
 use std::path::Path;
 
 use mutsuki_bot::{apply_product_runtime_profile, assemble_service};
-use mutsuki_bot_service_host_integration::BilibiliConsoleBridge;
+use mutsuki_bot_service_host_integration::{BilibiliConsoleBridge, configured_bot_plugin_catalog};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, ExecutionClass, PluginManifest, ProtocolClass, RunnerContext,
+    RunnerDescriptor, RunnerPurity, RuntimeError, WorkBatch,
+};
+use mutsuki_runtime_core::{Runner, RuntimeResult};
+use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
+use mutsuki_service_runtime::{
+    ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
+};
+use mutsuki_std_plugins::configured_std_plugin_catalog;
+use serde_json::Value;
 use tempfile::tempdir;
 
 const SIMPLE_TEMPLATE: &str = include_str!("../../../config/template.toml");
@@ -188,7 +199,7 @@ media_provider_id = "missing.media.provider"
 }
 
 #[tokio::test]
-async fn mihuashi_fails_startup_without_browser_protocol() {
+async fn mihuashi_fails_startup_without_image_renderer_protocol() {
     let root = tempdir().unwrap();
     let config_path = root.path().join("product.toml");
     std::fs::write(
@@ -200,11 +211,57 @@ async fn mihuashi_fails_startup_without_browser_protocol() {
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
+id = "template.test.browser"
+
+[[plugins.configured]]
 id = "mutsuki.bot.mihuashi"
 
 [plugins.configured.config]
 media_provider_id = "mutsuki.std.resource.memory"
 "#,
+        ),
+    )
+    .unwrap();
+    let error = assemble_with_browser_stub(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing image renderer protocol must fail startup");
+    assert!(
+        error.to_string().contains("mutsuki.image.render"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn mihuashi_with_renderer_fails_startup_without_browser_protocol() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let font = test_font_path();
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &format!(
+                r#"
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["{font}"]
+
+[[plugins.configured]]
+id = "mutsuki.bot.mihuashi"
+
+[plugins.configured.config]
+media_provider_id = "mutsuki.std.resource.memory"
+"#,
+            ),
         ),
     )
     .unwrap();
@@ -214,7 +271,118 @@ media_provider_id = "mutsuki.std.resource.memory"
         .await
         .err()
         .expect("missing browser protocol must fail startup");
-    assert!(error.to_string().contains("mutsuki.browser.snapshot"));
+    assert!(
+        error.to_string().contains("mutsuki.browser.snapshot"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn mihuashi_browser_renderer_and_provider_form_valid_load_plan() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let font = test_font_path();
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &format!(
+                r#"
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "template.test.browser"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["{font}"]
+
+[[plugins.configured]]
+id = "mutsuki.bot.mihuashi"
+
+[plugins.configured.config]
+media_provider_id = "mutsuki.std.resource.memory"
+"#,
+            ),
+        ),
+    )
+    .unwrap();
+
+    let runtime = assemble_with_browser_stub(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn skia_renderer_rejects_missing_font_before_startup() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            r#"
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["/definitely/missing/NotoSansSC.ttf"]
+"#,
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing font must fail startup");
+    assert!(error.to_string().contains("font file"));
+}
+
+#[tokio::test]
+async fn skia_renderer_fails_startup_without_output_provider() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let font = test_font_path();
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &format!(
+                r#"
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "missing.output.provider"
+font_files = ["{font}"]
+"#,
+            ),
+        ),
+    )
+    .unwrap();
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing output provider must fail startup");
+    assert!(
+        error.to_string().contains("missing.output.provider"),
+        "{error}"
+    );
 }
 
 #[tokio::test]
@@ -424,6 +592,114 @@ fn load(path: &Path) -> ServiceConfig {
         ..Default::default()
     })
     .unwrap()
+}
+
+fn test_font_path() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../../plugins/std/plugins/mutsuki-plugin-image-render-skia/tests/fonts/NotoSansSC-Test.ttf")
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+struct BrowserStubRunner {
+    descriptor: RunnerDescriptor,
+}
+
+impl Runner for BrowserStubRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        Ok(CompletionBatch::from_error(
+            &batch,
+            RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
+                "template.test.browser",
+                "browser.stub.must_not_run",
+            ),
+        ))
+    }
+}
+
+fn browser_stub_descriptor() -> RunnerDescriptor {
+    RunnerDescriptorBuilder::new("template.test.browser.runner", "template.test.browser")
+        .accepted_protocol(mutsuki_protocol_browser::SNAPSHOT)
+        .purity(RunnerPurity::Effectful)
+        .execution_class(ExecutionClass::Blocking)
+        .build()
+}
+
+fn browser_stub_manifest() -> PluginManifest {
+    let mut manifest = PluginBuilder::new("template.test.browser")
+        .runner(Box::new(BrowserStubRunner {
+            descriptor: browser_stub_descriptor(),
+        }))
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(mutsuki_protocol_browser::SNAPSHOT)
+                .input_schema(
+                    mutsuki_protocol_browser::input_schema(mutsuki_protocol_browser::SNAPSHOT)
+                        .unwrap(),
+                )
+                .output_schema(
+                    mutsuki_protocol_browser::output_schema(mutsuki_protocol_browser::SNAPSHOT)
+                        .unwrap(),
+                )
+                .error_schema(
+                    mutsuki_protocol_browser::error_schema(mutsuki_protocol_browser::SNAPSHOT)
+                        .unwrap(),
+                )
+                .build(),
+            "template.test.browser.runner",
+            "blocking",
+        )
+        .build()
+        .manifest;
+    manifest.provides.protocol_classes.insert(
+        mutsuki_protocol_browser::SNAPSHOT.into(),
+        ProtocolClass::Effect,
+    );
+    manifest
+}
+
+struct BrowserStubConfiguredPlugin;
+
+impl ConfiguredPluginFactory for BrowserStubConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        "template.test.browser"
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        if !config.is_null() && config.as_object().is_none_or(|object| !object.is_empty()) {
+            return Err("browser stub does not accept configuration".into());
+        }
+        Ok(builder
+            .register_builtin_plugin(browser_stub_manifest())
+            .register_builtin_runner(|| {
+                Box::new(BrowserStubRunner {
+                    descriptor: browser_stub_descriptor(),
+                })
+            }))
+    }
+}
+
+fn assemble_with_browser_stub(
+    service: ServiceConfig,
+) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
+    let mut catalog = configured_std_plugin_catalog()?;
+    catalog.merge(configured_bot_plugin_catalog()?)?;
+    catalog.register(BrowserStubConfiguredPlugin)?;
+    Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
 }
 
 fn service_toml(root: &Path, configured: &str) -> String {

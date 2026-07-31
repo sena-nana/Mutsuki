@@ -187,6 +187,8 @@ mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot
 mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
 
 mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
+mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
+mutsuki-plugin-image-render-skia = { path = "plugins/std/plugins/mutsuki-plugin-image-render-skia" }
 mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }
 mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
 
