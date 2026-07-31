@@ -7,9 +7,9 @@ use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, PatchDescriptor, RunnerBatchCapability, RunnerContext,
-    RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RuntimeError,
-    ScalarValue, Task, WorkBatch, WritePlan,
+    CompletionBatch, ExecutionClass, PatchDescriptor, ProtocolClass, RunnerBatchCapability,
+    RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
+    RuntimeError, ScalarValue, Task, WorkBatch, WritePlan,
 };
 use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -246,13 +246,18 @@ impl Runner for BrowserSnapshotRunner {
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
-    PluginBuilder::new(PLUGIN_ID)
+    let mut manifest = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestOnlyRunner {
             descriptor: runner_descriptor(),
         }))
         .protocol_handler(protocol_descriptor(), RUNNER_ID, "blocking")
         .build()
-        .manifest
+        .manifest;
+    manifest
+        .provides
+        .protocol_classes
+        .insert(SNAPSHOT.into(), ProtocolClass::Effect);
+    manifest
 }
 
 fn runner_descriptor() -> RunnerDescriptor {
@@ -449,6 +454,14 @@ mod tests {
             self.disposed = true;
             Ok(())
         }
+    }
+
+    #[test]
+    fn manifest_classifies_snapshot_as_effect() {
+        assert_eq!(
+            manifest().provides.protocol_classes.get(SNAPSHOT),
+            Some(&ProtocolClass::Effect)
+        );
     }
 
     #[test]

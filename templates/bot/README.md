@@ -114,11 +114,46 @@ BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"repl
 [BotPlugins 官方开放平台 backend](https://github.com/sena-nana/Mutsuki/blob/main/plugins/bot/docs/bilibili-open-platform.md)。
 
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
-Provider），并让 QQ 的 `media_provider_id` 与业务插件一致。米画师还需显式选择
-`mutsuki.std.io.browser.chromium`；其 `executable` 必须在本地配置中填写，仓库不提交任何
-机器路径。浏览器 allowlist 应仅包含实际产品需要的米画师域名。
+Provider），并让 QQ、业务插件与图片 renderer 的 Provider 选择一致。米画师保留 Chromium
+执行页面 JavaScript 和提取 DOM，再把结构化数据交给 Skia CPU Raster renderer 生成固定
+1200×630 PNG；Skia 不拥有网络或浏览器能力。一个本地装配示例如下（路径必须替换为本机
+绝对路径，默认模板仍保持零插件）：
 
-迁移版只使用原始封面/头像资源，不生成 HTML 卡片截图。Cookie 扫码登录、聊天管理/自助
+```toml
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.io.browser.chromium"
+
+[plugins.configured.config]
+executable = "/absolute/path/to/chromium"
+domain_allowlist = ["mihuashi.com"]
+timeout_ms = 10000
+max_dom_bytes = 2097152
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["/absolute/path/to/NotoSansSC-Regular.ttf"]
+
+[[plugins.configured]]
+id = "mutsuki.bot.mihuashi"
+
+[plugins.configured.config]
+media_provider_id = "mutsuki.std.resource.memory"
+```
+
+renderer 只读取配置列出的字体文件，不使用系统字体 fallback。米画师 Scene 请求
+`Noto Sans SC` 或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及页面文本所需字形。
+缺少 renderer、字体、输出 Provider 或 Browser Snapshot 协议都会在启动或任务边界结构化失败，
+不会退回旧截图或原图。`skia-safe 0.99.0` 关闭默认 PDF/GPU，只启用 CPU Raster、textlayout、
+JPEG/WebP 解码与 binary cache；官方 binary cache 没有覆盖所有无 PDF 特性组合，缓存未命中时
+构建机必须提供 C++ toolchain 与 `ninja`。
+
+Cookie 扫码登录、聊天管理/自助
 绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend
 拒绝这些 Web-only 配置。
 
