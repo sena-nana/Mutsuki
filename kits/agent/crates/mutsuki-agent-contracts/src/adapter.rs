@@ -130,7 +130,7 @@ pub enum ModelStreamEvent {
     },
     Completed {
         sequence: u64,
-        result: AgentModelStreamResult,
+        result: Box<AgentModelStreamResult>,
     },
     Failed {
         sequence: u64,

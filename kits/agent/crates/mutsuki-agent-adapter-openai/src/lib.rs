@@ -250,8 +250,7 @@ impl AsyncBatchHandler for OpenAiAdapterAsyncHandler {
                                     .map(|output| {
                                         let mut result =
                                             RunnerResult::completed(task.task_id.clone());
-                                        result.output =
-                                            serde_json::to_value(output).ok().map(Into::into);
+                                        result.output = serde_json::to_value(output).ok();
                                         result
                                     })
                                     .map_err(|err| runtime_error(&task.task_id, err)),
@@ -577,11 +576,11 @@ fn parse_tool_calls(value: Option<&Value>) -> Result<Vec<AgentToolCall>, Protoco
 }
 
 fn parse_sse(body: &str) -> Result<Vec<ModelStreamEvent>, ProtocolError> {
-    let mut sequence = 0;
     let mut events = Vec::new();
-    for data in body
+    for (data, sequence) in body
         .lines()
         .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+        .zip(1_u64..)
     {
         if data == "[DONE]" {
             break;
@@ -593,7 +592,6 @@ fn parse_sse(body: &str) -> Result<Vec<ModelStreamEvent>, ProtocolError> {
                 "stream event is not valid JSON",
             )
         })?;
-        sequence += 1;
         if let Some(text) = value
             .pointer("/choices/0/delta/content")
             .and_then(Value::as_str)
@@ -865,7 +863,7 @@ mod tests {
             for attempt in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut bytes = [0_u8; 16_384];
-                stream.read(&mut bytes).unwrap();
+                let _bytes_read = stream.read(&mut bytes).unwrap();
                 if attempt == 0 {
                     write!(
                         stream,
@@ -908,7 +906,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut bytes = [0_u8; 16_384];
-            stream.read(&mut bytes).unwrap();
+            let _bytes_read = stream.read(&mut bytes).unwrap();
             write!(
                 stream,
                 "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
@@ -930,7 +928,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut bytes = [0_u8; 16_384];
-            stream.read(&mut bytes).unwrap();
+            let _bytes_read = stream.read(&mut bytes).unwrap();
             std::thread::sleep(Duration::from_millis(100));
         });
         let adapter =
@@ -956,7 +954,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut bytes = [0_u8; 16_384];
-            stream.read(&mut bytes).unwrap();
+            let _bytes_read = stream.read(&mut bytes).unwrap();
             let body = json!({
                 "choices": [{
                     "finish_reason": "stop",
@@ -1063,7 +1061,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut bytes = [0_u8; 16_384];
-            stream.read(&mut bytes).unwrap();
+            let _bytes_read = stream.read(&mut bytes).unwrap();
             accepted_tx.send(()).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(2)))

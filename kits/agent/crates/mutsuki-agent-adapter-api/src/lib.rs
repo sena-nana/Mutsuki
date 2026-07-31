@@ -124,7 +124,7 @@ pub trait MediaProtocolAdapter: Send + Sync {
             Ok(vec![
                 mutsuki_agent_contracts::TranscriptionEvent::Completed {
                     sequence: 1,
-                    result,
+                    result: Box::new(result),
                 },
             ])
         })
@@ -196,23 +196,18 @@ impl ModelAdapterCatalog {
         let provider = self
             .providers
             .values()
-            .filter(|provider| {
-                selector.allowed_provider_ids.is_empty()
+            .find(|provider| {
+                (selector.allowed_provider_ids.is_empty()
                     || selector
                         .allowed_provider_ids
-                        .contains(&provider.provider_id)
+                        .contains(&provider.provider_id))
+                    && (selector.allowed_adapter_ids.is_empty()
+                        || selector.allowed_adapter_ids.contains(&provider.adapter_id))
+                    && selector
+                        .preferred_model
+                        .as_ref()
+                        .is_none_or(|model| provider.models.contains_key(model))
             })
-            .filter(|provider| {
-                selector.allowed_adapter_ids.is_empty()
-                    || selector.allowed_adapter_ids.contains(&provider.adapter_id)
-            })
-            .filter(|provider| {
-                selector
-                    .preferred_model
-                    .as_ref()
-                    .is_none_or(|model| provider.models.contains_key(model))
-            })
-            .next()
             .cloned()
             .ok_or_else(|| config_error("no provider matches the model selector"))?;
         let adapter = self

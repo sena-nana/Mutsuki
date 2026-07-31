@@ -355,7 +355,6 @@ fn parse_messages_response(body: Value) -> Result<AgentModelGenerateResult, Prot
             input_tokens,
             output_tokens,
             total_tokens: input_tokens.saturating_add(output_tokens),
-            ..AgentUsage::default()
         },
         cost_microunits: 0,
         raw: Some(body),
@@ -516,7 +515,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut bytes = [0_u8; 16_384];
-            stream.read(&mut bytes).unwrap();
+            let _bytes_read = stream.read(&mut bytes).unwrap();
             write!(
                 stream,
                 "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

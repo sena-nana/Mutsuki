@@ -308,7 +308,7 @@ pub enum ComputerUseServiceRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputerUseServiceResponse {
     Entries { entries: Vec<FsEntry> },
-    Read(FsReadResult),
+    Read(Box<FsReadResult>),
     Stat(FsEntry),
     Written { path: String },
     Deleted { path: String },
@@ -316,8 +316,8 @@ pub enum ComputerUseServiceResponse {
     Patched { path: String },
     Paths { paths: Vec<String> },
     Grep { matches: Vec<GrepMatch> },
-    Exec(ProcessExecResult),
-    Browser(BrowserSnapshotResult),
-    Plan(ComputerUseActionPlan),
+    Exec(Box<ProcessExecResult>),
+    Browser(Box<BrowserSnapshotResult>),
+    Plan(Box<ComputerUseActionPlan>),
     Ack,
 }

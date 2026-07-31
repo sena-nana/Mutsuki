@@ -1565,11 +1565,10 @@ fn cancel_async_invocation(
     let Some(handle) = handle else {
         return false;
     };
-    let cancelled = config
+    config
         .async_executor
         .as_ref()
-        .is_some_and(|executor| executor.cancel(&handle).unwrap_or(false));
-    cancelled
+        .is_some_and(|executor| executor.cancel(&handle).unwrap_or(false))
 }
 
 fn schedule_ready(

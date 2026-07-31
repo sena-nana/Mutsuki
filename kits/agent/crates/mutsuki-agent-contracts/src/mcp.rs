@@ -224,9 +224,9 @@ pub enum McpServiceResponse {
     Status(McpServerStatus),
     Servers(Vec<McpServerStatus>),
     Catalog(McpCatalog),
-    Call(McpCallResult),
-    Resource(McpResourceReadResult),
-    Prompt(McpPromptGetResult),
+    Call(Box<McpCallResult>),
+    Resource(Box<McpResourceReadResult>),
+    Prompt(Box<McpPromptGetResult>),
 }
 
 pub fn mcp_namespaced_name(server_id: &str, name: &str) -> String {

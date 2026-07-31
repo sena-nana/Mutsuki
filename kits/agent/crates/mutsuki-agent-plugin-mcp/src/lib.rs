@@ -1312,15 +1312,21 @@ impl AgentService for SharedMcpService {
                     timeout: Duration::from_millis(timeout_ms.unwrap_or(10_000).max(1)),
                     cancellation: McpCancellation::default(),
                 };
-                McpServiceResponse::Call(self.call_tool(&namespaced_name, arguments, &control)?)
+                McpServiceResponse::Call(Box::new(self.call_tool(
+                    &namespaced_name,
+                    arguments,
+                    &control,
+                )?))
             }
             McpServiceRequest::ReadResource { server_id, uri } => {
-                McpServiceResponse::Resource(self.read_resource(&server_id, &uri)?)
+                McpServiceResponse::Resource(Box::new(self.read_resource(&server_id, &uri)?))
             }
             McpServiceRequest::GetPrompt {
                 namespaced_name,
                 arguments,
-            } => McpServiceResponse::Prompt(self.get_prompt(&namespaced_name, arguments)?),
+            } => {
+                McpServiceResponse::Prompt(Box::new(self.get_prompt(&namespaced_name, arguments)?))
+            }
             McpServiceRequest::Cancel {
                 server_id,
                 request_id,

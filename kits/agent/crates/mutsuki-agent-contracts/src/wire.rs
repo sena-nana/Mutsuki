@@ -79,7 +79,7 @@ pub enum AgentWireRequest {
     ForkSession {
         source_session_id: String,
         target_session_id: String,
-        snapshot: SessionSnapshotRef,
+        snapshot: Box<SessionSnapshotRef>,
     },
     CloseSession {
         session_id: String,
@@ -91,7 +91,7 @@ pub enum AgentWireRequest {
         limit: u32,
     },
     ReadResource {
-        resource: ResourceRef,
+        resource: Box<ResourceRef>,
         offset: u64,
         length: u32,
     },

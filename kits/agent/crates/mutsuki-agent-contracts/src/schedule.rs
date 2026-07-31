@@ -30,19 +30,26 @@ pub enum ScheduleTrigger {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MisfirePolicy {
+    #[default]
     FireOnce,
     Skip,
-    CatchUpBounded { max_catch_up: u32 },
+    CatchUpBounded {
+        max_catch_up: u32,
+    },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleRetryPolicy {
+    #[default]
     None,
-    Fixed { max_attempts: u32, delay_ms: u64 },
+    Fixed {
+        max_attempts: u32,
+        delay_ms: u64,
+    },
 }
 
 /// Neutral delivery handle. Products map this to QQ/webhook/etc. outside AgentKit.
@@ -83,18 +90,6 @@ pub struct AgentSchedule {
     pub next_run_at_unix_ms: Option<u64>,
     #[serde(default)]
     pub occurrence_count: u32,
-}
-
-impl Default for MisfirePolicy {
-    fn default() -> Self {
-        Self::FireOnce
-    }
-}
-
-impl Default for ScheduleRetryPolicy {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

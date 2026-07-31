@@ -54,8 +54,7 @@ pub fn complete_from_fake_editor(
                 line: 0,
                 character: prefix.len() as u32,
             },
-            prefix,
-            suffix,
+            (prefix, suffix),
         ))
         .expect("completion")
 }

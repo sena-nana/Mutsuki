@@ -335,18 +335,16 @@ impl InMemoryGitBackend {
                         });
                     }
                 }
-                (Some(_), None) => {
-                    if staged_entry.is_none() {
-                        changes.push(GitFileChange {
-                            path,
-                            old_path: None,
-                            status: GitFileStatus::Deleted,
-                            staged: false,
-                            hunks_summary: Some("deleted".into()),
-                            additions: 0,
-                            deletions: 1,
-                        });
-                    }
+                (Some(_), None) if staged_entry.is_none() => {
+                    changes.push(GitFileChange {
+                        path,
+                        old_path: None,
+                        status: GitFileStatus::Deleted,
+                        staged: false,
+                        hunks_summary: Some("deleted".into()),
+                        additions: 0,
+                        deletions: 1,
+                    });
                 }
                 _ => {}
             }
@@ -879,13 +877,14 @@ impl GitBackend for InMemoryGitBackend {
         Self::check_cancel(cancel)?;
         self.with_repo_mut(worktree, |state| {
             let key = format!("{remote}/{}", state.branch);
-            if let Some(remote_tip) = state.remote_heads.get(&key) {
-                if remote_tip != &state.head && !force {
-                    return Err(AgentError::new(
-                        "agent.git.non_fast_forward",
-                        "remote rejected non-fast-forward push",
-                    ));
-                }
+            if let Some(remote_tip) = state.remote_heads.get(&key)
+                && remote_tip != &state.head
+                && !force
+            {
+                return Err(AgentError::new(
+                    "agent.git.non_fast_forward",
+                    "remote rejected non-fast-forward push",
+                ));
             }
             state.remote_heads.insert(key, state.head.clone());
             Self::bump(state);
@@ -1506,24 +1505,24 @@ impl GitBackend for CliGitBackend {
                 path = Some(value.to_string());
             } else if let Some(value) = line.strip_prefix("HEAD ") {
                 head = Some(value.to_string());
-            } else if line.is_empty() {
-                if let (Some(path), Some(commit)) = (path.take(), head.take()) {
-                    worktrees.push(GitWorktreeInfo {
-                        worktree: GitWorktreeRef {
-                            worktree_id: format!("wt:{path}"),
-                            path: path.clone(),
-                            repository: repository.clone(),
-                        },
-                        head: GitHeadIdentity {
-                            commit,
-                            branch: None,
-                            upstream: None,
-                            generation: 1,
-                        },
-                        locked: false,
-                        prunable: false,
-                    });
-                }
+            } else if line.is_empty()
+                && let (Some(path), Some(commit)) = (path.take(), head.take())
+            {
+                worktrees.push(GitWorktreeInfo {
+                    worktree: GitWorktreeRef {
+                        worktree_id: format!("wt:{path}"),
+                        path: path.clone(),
+                        repository: repository.clone(),
+                    },
+                    head: GitHeadIdentity {
+                        commit,
+                        branch: None,
+                        upstream: None,
+                        generation: 1,
+                    },
+                    locked: false,
+                    prunable: false,
+                });
             }
         }
         Ok(worktrees)
@@ -1944,12 +1943,12 @@ impl SharedGitService {
         preview: Option<Value>,
     ) -> Result<Option<GitServiceResponse>, AgentError> {
         let head = self.backend.head(worktree)?;
-        if let Some(expected) = &write.expected_head {
-            if expected.commit != head.commit || expected.generation != head.generation {
-                return Ok(Some(GitServiceResponse::Conflict(
-                    GitRevisionConflict::stale(worktree.clone(), expected.clone(), head),
-                )));
-            }
+        if let Some(expected) = &write.expected_head
+            && (expected.commit != head.commit || expected.generation != head.generation)
+        {
+            return Ok(Some(GitServiceResponse::Conflict(
+                GitRevisionConflict::stale(worktree.clone(), expected.clone(), head),
+            )));
         }
         if risk.requires_approval() && !write.approved {
             return Ok(Some(GitServiceResponse::Plan(self.plan(
@@ -2916,7 +2915,7 @@ mod tests {
 
         let (handle_id, cancel) =
             service.begin_op(GitOperationKind::Fetch, GitRisk::HighRisk, None, "fetch");
-        assert_eq!(handle_id.is_empty(), false);
+        assert!(!handle_id.is_empty());
         assert_eq!(service.active_handle_count(), 1);
         AgentService::dispose(&service).unwrap();
         assert!(cancel.load(Ordering::Relaxed));

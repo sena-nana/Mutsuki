@@ -150,7 +150,6 @@ fn invoke(runner: &mut dyn Runner) -> Value {
         .unwrap()
         .output
         .unwrap()
-        .into()
 }
 
 #[test]

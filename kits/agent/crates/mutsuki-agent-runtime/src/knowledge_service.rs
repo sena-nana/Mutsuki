@@ -151,24 +151,24 @@ impl KnowledgeService {
             .lock()
             .expect("knowledge service mutex poisoned")
             .get(&plan.document_id)
+            && existing.content_hash == content_hash
+            && !plan.rebuild
         {
-            if existing.content_hash == content_hash && !plan.rebuild {
-                let revision = self
-                    .inner
-                    .revisions
-                    .lock()
-                    .expect("knowledge service mutex poisoned")
-                    .get(&plan.document_id)
-                    .cloned()
-                    .ok_or_else(|| AgentError::not_found("document revision missing"))?;
-                return Ok(IngestionResult {
-                    document: existing.clone(),
-                    chunks_written: 0,
-                    chunks_skipped: revision.chunk_ids.len(),
-                    revision: revision.revision,
-                    deduplicated: true,
-                });
-            }
+            let revision = self
+                .inner
+                .revisions
+                .lock()
+                .expect("knowledge service mutex poisoned")
+                .get(&plan.document_id)
+                .cloned()
+                .ok_or_else(|| AgentError::not_found("document revision missing"))?;
+            return Ok(IngestionResult {
+                document: existing.clone(),
+                chunks_written: 0,
+                chunks_skipped: revision.chunk_ids.len(),
+                revision: revision.revision,
+                deduplicated: true,
+            });
         }
 
         let staged = self.stage_ingestion(plan, normalized, content_hash)?;
@@ -519,14 +519,13 @@ impl KnowledgeService {
             .expect("knowledge service mutex poisoned")
             .get(&request.collection_id)
             .cloned();
-        if let Some(collection) = collection {
-            if collection.tenant_id != request.tenant_id
-                || collection.workspace_id != request.workspace_id
-            {
-                return Err(AgentError::invalid_input(
-                    "document delete crosses tenant/workspace boundary",
-                ));
-            }
+        if let Some(collection) = collection
+            && (collection.tenant_id != request.tenant_id
+                || collection.workspace_id != request.workspace_id)
+        {
+            return Err(AgentError::invalid_input(
+                "document delete crosses tenant/workspace boundary",
+            ));
         }
         documents.remove(document_id);
         self.inner
@@ -605,15 +604,15 @@ impl KnowledgeService {
             .lock()
             .expect("knowledge service mutex poisoned")
             .clone();
-        if let Some(expected) = &policy.tenant_id {
-            if expected != tenant_id {
-                return Err(AgentError::invalid_input("tenant mismatch"));
-            }
+        if let Some(expected) = &policy.tenant_id
+            && expected != tenant_id
+        {
+            return Err(AgentError::invalid_input("tenant mismatch"));
         }
-        if let Some(expected) = &policy.workspace_id {
-            if expected != workspace_id {
-                return Err(AgentError::invalid_input("workspace mismatch"));
-            }
+        if let Some(expected) = &policy.workspace_id
+            && expected != workspace_id
+        {
+            return Err(AgentError::invalid_input("workspace mismatch"));
         }
         Ok(())
     }

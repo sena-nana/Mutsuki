@@ -349,12 +349,15 @@ fn truncate(input: &str, limit: usize) -> String {
     input.chars().take(limit).collect::<String>() + "…"
 }
 
+type FakeGetResponse = (u16, String, Vec<u8>);
+type HttpFetchResult = (String, u16, Option<String>, Vec<u8>, bool);
+
 #[derive(Default)]
 pub struct FakeHttpTransport {
     pub posts: Mutex<Vec<(String, Value)>>,
     pub gets: Mutex<Vec<String>>,
     post_responses: Mutex<BTreeMap<String, (u16, Value)>>,
-    get_responses: Mutex<BTreeMap<String, (u16, String, Vec<u8>)>>,
+    get_responses: Mutex<BTreeMap<String, FakeGetResponse>>,
 }
 
 impl FakeHttpTransport {
@@ -665,10 +668,7 @@ impl HttpPageFetchService {
         }
     }
 
-    fn fetch_http(
-        &self,
-        request: &PageFetchRequest,
-    ) -> Result<(String, u16, Option<String>, Vec<u8>, bool), AgentError> {
+    fn fetch_http(&self, request: &PageFetchRequest) -> Result<HttpFetchResult, AgentError> {
         if !self.enable_http {
             return Err(AgentError::provider_unavailable(
                 "HTTP page fetch is disabled",
