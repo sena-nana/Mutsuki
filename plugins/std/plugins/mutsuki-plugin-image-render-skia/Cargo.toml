@@ -11,7 +11,7 @@ mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-skia-safe = { version = "=0.99.0", default-features = false, features = ["binary-cache", "embed-icudtl", "textlayout", "jpeg", "webp-decode"] }
+skia-safe = { version = "=0.99.0", features = ["svg", "textlayout", "webp"] }
 
 [dev-dependencies]
 image.workspace = true
