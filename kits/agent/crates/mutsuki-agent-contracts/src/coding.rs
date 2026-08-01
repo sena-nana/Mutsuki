@@ -70,6 +70,17 @@ pub enum FileChangeStatus {
     Conflict,
 }
 
+/// One concrete, editor-applicable text replacement.
+///
+/// Positions use the editor contract's zero-based line/character coordinates.
+/// Products must still validate `FileChangeDescriptor::base_version` before
+/// constructing their native WorkspaceEdit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceTextEdit {
+    pub range: TextSelection,
+    pub new_text: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FileChangeDescriptor {
     pub change_id: String,
@@ -78,6 +89,11 @@ pub struct FileChangeDescriptor {
     pub base_version: DocumentVersion,
     pub status: FileChangeStatus,
     pub summary: String,
+    /// Concrete edits for this document. An empty list is allowed for
+    /// non-applicable lifecycle events, but a Next Edit candidate must contain
+    /// at least one edit across its proposed changes.
+    #[serde(default)]
+    pub edits: Vec<WorkspaceTextEdit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<ResourceRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

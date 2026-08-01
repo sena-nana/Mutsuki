@@ -1,7 +1,8 @@
 use mutsuki_agent_contracts::*;
 use mutsuki_agent_sdk::{
-    AgentSessionAppendProtocol, AgentSessionCreateProtocol, AgentSessionGetProtocol,
-    AgentSessionSnapshotProtocol, orchestration_runner, service_result_event, unsupported_protocol,
+    AgentSessionAppendProtocol, AgentSessionCreateProtocol, AgentSessionForkProtocol,
+    AgentSessionGetProtocol, AgentSessionSnapshotProtocol, orchestration_runner,
+    service_result_event, unsupported_protocol,
 };
 use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
 use mutsuki_runtime_sdk::{PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter};
@@ -17,6 +18,7 @@ pub fn plugin(client: RuntimeClientRef, store: SessionStore) -> PluginBuilder {
         .protocol::<AgentSessionGetProtocol>()
         .protocol::<AgentSessionAppendProtocol>()
         .protocol::<AgentSessionSnapshotProtocol>()
+        .protocol::<AgentSessionForkProtocol>()
         .runner(Box::new(runner(client, store)))
 }
 
@@ -26,6 +28,7 @@ pub fn runner(client: RuntimeClientRef, store: SessionStore) -> TaskAwaitRunnerA
         .accepts::<AgentSessionGetProtocol>()
         .accepts::<AgentSessionAppendProtocol>()
         .accepts::<AgentSessionSnapshotProtocol>()
+        .accepts::<AgentSessionForkProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
@@ -62,6 +65,12 @@ async fn run_task(store: SessionStore, task: Task) -> RuntimeResult<RunnerResult
             &task,
             "mutsuki.agent.session.snapshot",
             |request: AgentSessionSnapshotRequest| store.snapshot(request),
+        ),
+        AGENT_SESSION_FORK_PROTOCOL => service_result_event(
+            PLUGIN_ID,
+            &task,
+            "mutsuki.agent.session.forked",
+            |request: AgentSessionForkRequest| store.fork(request),
         ),
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
     }

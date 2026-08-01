@@ -43,6 +43,7 @@ pub fn session_round_trip() {
     let store = SessionStore::default();
     let session = store
         .create(AgentSessionCreateRequest {
+            session_id: None,
             profile_id: "test.profile".into(),
             title: Some("Conformance".into()),
         })
@@ -51,6 +52,8 @@ pub fn session_round_trip() {
         .append(AgentSessionAppendRequest {
             session_id: session.session_id,
             messages: vec![AgentMessage::user("hello")],
+            events: Vec::new(),
+            advance_turn: true,
         })
         .expect("session can append messages");
     assert_eq!(session.messages.len(), 1);
@@ -60,6 +63,7 @@ pub fn session_round_trip() {
 
     let other = store
         .create(AgentSessionCreateRequest {
+            session_id: None,
             profile_id: "test.profile".into(),
             title: Some("Other".into()),
         })
@@ -73,6 +77,8 @@ pub fn session_round_trip() {
         .append(AgentSessionAppendRequest {
             session_id: other.session_id,
             messages: vec![AgentMessage::user("other")],
+            events: Vec::new(),
+            advance_turn: true,
         })
         .expect("second session can append independently");
     let first = store
@@ -99,6 +105,7 @@ pub fn tool_round_trip() {
         input: serde_json::json!({"value": "hello"}),
         session_id: Some("session-a".into()),
         approval: None,
+        context: None,
     });
     assert_eq!(result.output, Some(serde_json::json!({"value": "hello"})));
     assert!(result.approved);

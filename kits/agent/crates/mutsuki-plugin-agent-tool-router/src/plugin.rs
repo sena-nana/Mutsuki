@@ -4,7 +4,7 @@ use mutsuki_agent_sdk::{
     AgentToolExecuteProtocol, AgentToolListProtocol, orchestration_runner, result_event,
     runtime_failure, service_result_event, task_payload, unsupported_protocol,
 };
-use mutsuki_runtime_sdk::contracts::{RunnerResult, Task, TaskOutcome};
+use mutsuki_runtime_sdk::contracts::{RunnerResult, ScalarValue, Task, TaskOutcome};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, PluginBuilder, RuntimeClientRef, RuntimeResult, TaskAwaitRunnerAdapter,
 };
@@ -55,13 +55,26 @@ async fn run_task(
                 validate_approval(&request, &descriptor)
                     .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             }
+            let payload = target_payload(&descriptor, &request)
+                .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
             let outcome = ctx
-                .call_raw(descriptor.target_protocol_id.clone(), request.input.clone())
+                .call_raw(descriptor.target_protocol_id.clone(), payload)
                 .await?;
             let result = tool_result(&task, request.call_id, request.name, outcome)?;
             result_event(task.task_id, "mutsuki.agent.tool.executed", result)
         }
         _ => Err(unsupported_protocol(PLUGIN_ID, &task)),
+    }
+}
+
+fn target_payload(
+    descriptor: &AgentToolDescriptor,
+    request: &AgentToolExecuteRequest,
+) -> AgentResult<serde_json::Value> {
+    match descriptor.target_payload_mode {
+        ToolTargetPayloadMode::RawInput => Ok(request.input.clone()),
+        ToolTargetPayloadMode::ExecutionRequest => serde_json::to_value(request)
+            .map_err(|error| AgentError::invalid_input(error.to_string())),
     }
 }
 
@@ -112,6 +125,7 @@ fn tool_result(
             name,
             output,
             output_ref,
+            error: None,
             approved: true,
         }),
         TaskOutcome::Completed { .. } => Err(runtime_failure(
@@ -122,7 +136,20 @@ fn tool_result(
                 "tool target completed without a business result",
             ),
         )),
-        TaskOutcome::Failed { error, .. } => Err(mutsuki_runtime_sdk::RuntimeFailure::new(error)),
+        TaskOutcome::Failed { error, .. } => Ok(AgentToolExecuteResult {
+            call_id,
+            name,
+            output: None,
+            output_ref: None,
+            error: Some(AgentError::new(
+                error.code.clone(),
+                match error.evidence.get("message") {
+                    Some(ScalarValue::String(message)) => message.clone(),
+                    _ => error.route.clone(),
+                },
+            )),
+            approved: true,
+        }),
         outcome => Err(runtime_failure(
             PLUGIN_ID,
             &task.task_id,
@@ -156,6 +183,7 @@ mod tests {
         assert_eq!(result.call_id.as_deref(), Some("call-1"));
         assert_eq!(result.output, Some(serde_json::json!({"value": "ping"})));
         assert!(result.output_ref.is_none());
+        assert!(result.error.is_none());
     }
 
     #[test]
@@ -175,6 +203,34 @@ mod tests {
 
         assert!(result.output.is_none());
         assert_eq!(result.output_ref.as_deref(), Some("resource:tool-output"));
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn tool_business_failure_is_returned_as_structured_result() {
+        let task = Task::new("tool-1", AGENT_TOOL_EXECUTE_PROTOCOL, serde_json::json!({}));
+        let mut error = mutsuki_runtime_sdk::contracts::RuntimeError::new(
+            "tool.rejected",
+            "test-tool",
+            "workspace.write",
+        );
+        error.evidence.insert(
+            "message".into(),
+            ScalarValue::String("write was rejected".into()),
+        );
+        let result = tool_result(
+            &task,
+            Some("call-1".into()),
+            "workspace.write".into(),
+            TaskOutcome::Failed {
+                task_id: "target-1".into(),
+                error,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.call_id.as_deref(), Some("call-1"));
+        assert_eq!(result.error.unwrap().code, "tool.rejected");
     }
 
     #[test]
@@ -207,6 +263,7 @@ mod tests {
                     decision: PermissionDecisionKind::Approved,
                 },
             }),
+            context: Some(serde_json::json!({"workspace": "/repo"})),
         };
         validate_approval(&execution, &descriptor).unwrap();
         let mut stale = execution;
@@ -215,5 +272,27 @@ mod tests {
             validate_approval(&stale, &descriptor).unwrap_err().code,
             "agent.approval.invalid_binding"
         );
+    }
+
+    #[test]
+    fn target_payload_mode_preserves_raw_input_and_opt_in_execution_context() {
+        let request = AgentToolExecuteRequest {
+            call_id: Some("call".into()),
+            name: "echo".into(),
+            input: serde_json::json!({"value": "ping"}),
+            session_id: Some("session".into()),
+            approval: None,
+            context: Some(serde_json::json!({"workspace": "/repo"})),
+        };
+        let raw = AgentToolDescriptor::new("echo", "test.echo@1", "echo");
+        assert_eq!(target_payload(&raw, &request).unwrap(), request.input);
+
+        let contextual = AgentToolDescriptor {
+            target_payload_mode: ToolTargetPayloadMode::ExecutionRequest,
+            ..raw
+        };
+        let payload = target_payload(&contextual, &request).unwrap();
+        assert_eq!(payload["call_id"], "call");
+        assert_eq!(payload["context"]["workspace"], "/repo");
     }
 }

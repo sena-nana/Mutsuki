@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AgentBudget, AgentMessage, CoordinatorLease, PermissionRequest, ResourceCellRef, ResourceRef,
-    SessionVersion,
+    AgentBudget, AgentEventEnvelope, AgentMessage, CoordinatorLease, PermissionRequest,
+    ResourceCellRef, ResourceRef, SessionVersion,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,6 +83,10 @@ pub struct AgentSessionCheckpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionCreateRequest {
+    /// Optional externally stable id used when attaching a migrated product
+    /// binding. Omitted requests retain AgentKit-assigned ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub profile_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -97,11 +101,28 @@ pub struct AgentSessionGetRequest {
 pub struct AgentSessionAppendRequest {
     pub session_id: String,
     pub messages: Vec<AgentMessage>,
+    #[serde(default)]
+    pub events: Vec<AgentEventEnvelope>,
+    /// False for approval-only continuation of the current logical turn.
+    #[serde(default = "default_true")]
+    pub advance_turn: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSessionSnapshotRequest {
     pub session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSessionForkRequest {
+    pub source_session_id: String,
+    pub target_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -112,6 +133,10 @@ pub struct AgentSession {
     pub title: Option<String>,
     pub messages: Vec<AgentMessage>,
     pub turn_count: u64,
+    #[serde(default)]
+    pub events: Vec<AgentEventEnvelope>,
+    #[serde(default)]
+    pub next_event_sequence: u64,
     pub resource: ResourceRef,
     pub cell: ResourceCellRef,
 }
@@ -129,6 +154,8 @@ impl AgentSession {
             title: None,
             messages: Vec::new(),
             turn_count: 0,
+            events: Vec::new(),
+            next_event_sequence: 0,
             resource,
             cell,
         }

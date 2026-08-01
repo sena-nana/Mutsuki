@@ -42,6 +42,7 @@ impl ChildAgentExecutor for EchoChildExecutor {
             cost_microunits: 0,
             output_resource: None,
             pending_approvals: Vec::new(),
+            events: Vec::new(),
         })
     }
 }

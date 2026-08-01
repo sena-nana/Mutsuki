@@ -50,7 +50,11 @@ pub trait FilesystemBackend: Send + Sync {
 }
 
 pub trait ProcessBackend: Send + Sync {
-    fn exec(&self, request: &ProcessExecRequest) -> Result<ProcessExecResult, AgentError>;
+    fn exec(
+        &self,
+        handle_id: &str,
+        request: &ProcessExecRequest,
+    ) -> Result<ProcessExecResult, AgentError>;
     fn cancel(&self, handle_id: &str) -> Result<(), AgentError>;
 }
 
@@ -465,7 +469,11 @@ pub struct FakeProcessBackend {
 }
 
 impl ProcessBackend for FakeProcessBackend {
-    fn exec(&self, request: &ProcessExecRequest) -> Result<ProcessExecResult, AgentError> {
+    fn exec(
+        &self,
+        _handle_id: &str,
+        request: &ProcessExecRequest,
+    ) -> Result<ProcessExecResult, AgentError> {
         self.calls
             .lock()
             .expect("process mutex")
@@ -730,7 +738,7 @@ impl SharedComputerUseService {
             .lock()
             .expect("handles mutex")
             .insert(handle.clone(), ComputerUseRisk::ProcessExec);
-        let mut result = process.exec(&request)?;
+        let mut result = process.exec(&handle, &request)?;
         if result.summary.len() > INLINE_LIMIT {
             result.stdout_ref = self.store_text(
                 "mutsuki.agent.computer_use.stdout",

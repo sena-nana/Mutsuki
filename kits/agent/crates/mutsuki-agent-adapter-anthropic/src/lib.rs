@@ -4,7 +4,7 @@
 //! Hosts inject credentials and provider endpoints; this crate does not read env
 //! vars or ship default secrets.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,8 +13,8 @@ use mutsuki_agent_adapter_api::{
 };
 use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentToolCall,
-    AgentUsage, ModelCapability, ModelGenerateRequest, ModelProtocolAdapterDescriptor,
-    ProtocolError, ProtocolErrorClass, ProviderInstanceDescriptor,
+    AgentToolResultMetadata, AgentUsage, ModelCapability, ModelGenerateRequest,
+    ModelProtocolAdapterDescriptor, ProtocolError, ProtocolErrorClass, ProviderInstanceDescriptor,
 };
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -92,7 +92,7 @@ impl AnthropicMessagesAdapter {
             .and_then(Value::as_u64)
             .unwrap_or(1)
             .min(3);
-        let payload = messages_payload(request);
+        let payload = messages_payload(request)?;
         for attempt in 0..=retries {
             let mut builder = self
                 .client
@@ -235,18 +235,92 @@ fn messages_endpoint(provider: &ProviderInstanceDescriptor) -> Result<String, Pr
     }
 }
 
-fn messages_payload(value: ModelGenerateRequest) -> Value {
+fn messages_payload(value: ModelGenerateRequest) -> Result<Value, ProtocolError> {
     let mut messages = Vec::new();
-    for message in &value.request.messages {
-        let role = match message.role {
-            AgentRole::User => "user",
-            AgentRole::Assistant => "assistant",
-            AgentRole::System | AgentRole::Tool => continue,
-        };
-        messages.push(json!({
-            "role": role,
-            "content": message.content,
-        }));
+    let mut tool_uses = BTreeSet::new();
+    let mut tool_results = BTreeSet::new();
+    let mut index = 0;
+    while index < value.request.messages.len() {
+        let message = &value.request.messages[index];
+        match message.role {
+            AgentRole::System => {}
+            AgentRole::User => messages.push(json!({
+                "role": "user",
+                "content": message.content,
+            })),
+            AgentRole::Assistant => {
+                let tool_calls = assistant_tool_calls(message)?;
+                if tool_calls.is_empty() {
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": message.content,
+                    }));
+                } else {
+                    let mut content = Vec::new();
+                    if !message.content.is_empty() {
+                        content.push(json!({"type": "text", "text": &message.content}));
+                    }
+                    for call in tool_calls {
+                        validate_tool_call(&call, &mut tool_uses)?;
+                        content.push(json!({
+                            "type": "tool_use",
+                            "id": call.call_id,
+                            "name": call.name,
+                            "input": call.input,
+                        }));
+                    }
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": content,
+                    }));
+                }
+            }
+            AgentRole::Tool => {
+                let mut content = Vec::new();
+                while index < value.request.messages.len()
+                    && value.request.messages[index].role == AgentRole::Tool
+                {
+                    let tool_message = &value.request.messages[index];
+                    let metadata = tool_result_metadata(tool_message)?;
+                    if !tool_uses.contains(&metadata.call_id) {
+                        return Err(invalid_request(format!(
+                            "tool_result `{}` does not reference an earlier tool_use",
+                            metadata.call_id
+                        )));
+                    }
+                    if !tool_results.insert(metadata.call_id.clone()) {
+                        return Err(invalid_request(format!(
+                            "duplicate tool_result id `{}`",
+                            metadata.call_id
+                        )));
+                    }
+                    if metadata.is_error != metadata.error.is_some() {
+                        return Err(invalid_request(format!(
+                            "tool_result `{}` has inconsistent error metadata",
+                            metadata.call_id
+                        )));
+                    }
+                    let mut block = json!({
+                        "type": "tool_result",
+                        "tool_use_id": metadata.call_id,
+                        "content": tool_message.content,
+                    });
+                    if metadata.is_error {
+                        block["is_error"] = Value::Bool(true);
+                    }
+                    content.push(block);
+                    index += 1;
+                }
+                messages.push(json!({"role": "user", "content": content}));
+                continue;
+            }
+        }
+        index += 1;
+    }
+    if let Some(unresolved) = tool_uses.difference(&tool_results).next() {
+        return Err(invalid_request(format!(
+            "tool_use `{unresolved}` is missing its tool_result"
+        )));
     }
     let mut payload = json!({
         "model": value.request.model,
@@ -276,7 +350,55 @@ fn messages_payload(value: ModelGenerateRequest) -> Value {
                 .collect(),
         );
     }
-    payload
+    Ok(payload)
+}
+
+fn assistant_tool_calls(message: &AgentMessage) -> Result<Vec<AgentToolCall>, ProtocolError> {
+    let Some(metadata) = message.metadata.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let Some(calls) = metadata.get("tool_calls") else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_value(calls.clone())
+        .map_err(|error| invalid_request(format!("assistant tool_calls are malformed: {error}")))
+}
+
+fn validate_tool_call(
+    call: &AgentToolCall,
+    tool_uses: &mut BTreeSet<String>,
+) -> Result<(), ProtocolError> {
+    if call.call_id.trim().is_empty() || call.name.trim().is_empty() {
+        return Err(invalid_request(
+            "tool_use call_id and name must both be non-empty",
+        ));
+    }
+    if !call.input.is_object() {
+        return Err(invalid_request(format!(
+            "tool_use `{}` input must be an object",
+            call.call_id
+        )));
+    }
+    if !tool_uses.insert(call.call_id.clone()) {
+        return Err(invalid_request(format!(
+            "duplicate tool_use id `{}`",
+            call.call_id
+        )));
+    }
+    Ok(())
+}
+
+fn tool_result_metadata(message: &AgentMessage) -> Result<AgentToolResultMetadata, ProtocolError> {
+    let metadata = message
+        .metadata
+        .as_ref()
+        .ok_or_else(|| invalid_request("tool_result is missing metadata"))?;
+    let metadata: AgentToolResultMetadata = serde_json::from_value(metadata.clone())
+        .map_err(|error| invalid_request(format!("tool_result metadata is malformed: {error}")))?;
+    if metadata.call_id.trim().is_empty() {
+        return Err(invalid_request("tool_result call_id must be non-empty"));
+    }
+    Ok(metadata)
 }
 
 fn parse_messages_response(body: Value) -> Result<AgentModelGenerateResult, ProtocolError> {
@@ -292,6 +414,7 @@ fn parse_messages_response(body: Value) -> Result<AgentModelGenerateResult, Prot
         })?;
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut tool_call_ids = BTreeSet::new();
     for block in content {
         match block.get("type").and_then(Value::as_str) {
             Some("text") => {
@@ -303,14 +426,45 @@ fn parse_messages_response(body: Value) -> Result<AgentModelGenerateResult, Prot
                 let call_id = block
                     .get("id")
                     .and_then(Value::as_str)
-                    .unwrap_or("tool_use")
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        error(
+                            "agent.adapter.invalid_response",
+                            ProtocolErrorClass::Protocol,
+                            "tool_use block is missing a non-empty id",
+                        )
+                    })?
                     .to_string();
                 let name = block
                     .get("name")
                     .and_then(Value::as_str)
-                    .unwrap_or("unknown")
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        error(
+                            "agent.adapter.invalid_response",
+                            ProtocolErrorClass::Protocol,
+                            "tool_use block is missing a non-empty name",
+                        )
+                    })?
                     .to_string();
-                let input = block.get("input").cloned().unwrap_or_else(|| json!({}));
+                if !tool_call_ids.insert(call_id.clone()) {
+                    return Err(error(
+                        "agent.adapter.invalid_response",
+                        ProtocolErrorClass::Protocol,
+                        "tool_use response ids must be unique",
+                    ));
+                }
+                let input = block
+                    .get("input")
+                    .filter(|value| value.is_object())
+                    .cloned()
+                    .ok_or_else(|| {
+                        error(
+                            "agent.adapter.invalid_response",
+                            ProtocolErrorClass::Protocol,
+                            "tool_use block input must be an object",
+                        )
+                    })?;
                 tool_calls.push(AgentToolCall {
                     call_id,
                     name,
@@ -375,6 +529,15 @@ fn error(code: &str, class: ProtocolErrorClass, message: &str) -> ProtocolError 
     }
 }
 
+fn invalid_request(message: impl Into<String>) -> ProtocolError {
+    let message = message.into();
+    error(
+        "agent.adapter.invalid_request",
+        ProtocolErrorClass::Protocol,
+        &message,
+    )
+}
+
 fn transport_error(err: &reqwest::Error) -> ProtocolError {
     let class = if err.is_timeout() {
         ProtocolErrorClass::Timeout
@@ -415,7 +578,7 @@ mod tests {
     use mutsuki_agent_adapter_api::{CredentialFuture, CredentialValue};
     use mutsuki_agent_contracts::{AgentToolDescriptor, CredentialRef, ToolSideEffect};
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
 
     struct StaticCredentials;
 
@@ -423,6 +586,70 @@ mod tests {
         fn resolve(&self, _credential: CredentialRef) -> CredentialFuture {
             Box::pin(async { CredentialValue::new("sk-ant-test-key") })
         }
+    }
+
+    fn model_request(messages: Vec<AgentMessage>) -> ModelGenerateRequest {
+        ModelGenerateRequest {
+            request: mutsuki_agent_contracts::AgentModelGenerateRequest {
+                model: DEFAULT_MODEL.into(),
+                messages,
+                temperature: None,
+                max_output_tokens: Some(256),
+                provider_hint: None,
+                metadata: None,
+                result_protocol_id: None,
+                result_context: None,
+                session_id: None,
+            },
+            tools: Vec::new(),
+            structured_output: None,
+            reasoning: None,
+        }
+    }
+
+    fn write_tool_descriptor() -> AgentToolDescriptor {
+        let mut tool = AgentToolDescriptor::new(
+            "computer.fs.write",
+            "mutsuki.agent.computer.fs.write@1",
+            "write a workspace file",
+        );
+        tool.side_effect = ToolSideEffect::WorkspaceWrite;
+        tool.input_schema = json!({"type": "object"});
+        tool
+    }
+
+    fn read_json_request(stream: &mut TcpStream) -> Value {
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "client closed before completing request body");
+            bytes.extend_from_slice(&chunk[..count]);
+            let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&bytes[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map(str::trim)
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("request declares content-length");
+            let body_start = header_end + 4;
+            if bytes.len() >= body_start + content_length {
+                return serde_json::from_slice(&bytes[body_start..body_start + content_length])
+                    .unwrap();
+            }
+        }
+    }
+
+    fn write_json_response(stream: &mut TcpStream, payload: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+            payload.len()
+        )
+        .unwrap();
     }
 
     #[test]
@@ -433,6 +660,144 @@ mod tests {
         );
         assert_eq!(resolve_endpoint(Some("  ")), DEFAULT_ENDPOINT);
         assert_eq!(resolve_endpoint(None), DEFAULT_ENDPOINT);
+    }
+
+    #[test]
+    fn tool_loop_messages_preserve_parallel_results_and_errors() {
+        let calls = vec![
+            AgentToolCall {
+                call_id: "toolu_1".into(),
+                name: "computer.fs.read".into(),
+                input: json!({"path": "README.md"}),
+            },
+            AgentToolCall {
+                call_id: "toolu_2".into(),
+                name: "computer.fs.write".into(),
+                input: json!({"path": "README.md", "content": "hello"}),
+            },
+        ];
+        let mut assistant = AgentMessage::assistant("checking workspace");
+        assistant.metadata = Some(json!({"tool_calls": calls}));
+        let read_result = AgentMessage {
+            role: AgentRole::Tool,
+            content: json!({"kind": "read", "content": "hello"}).to_string(),
+            name: Some("computer.fs.read".into()),
+            metadata: Some(
+                serde_json::to_value(AgentToolResultMetadata {
+                    call_id: "toolu_1".into(),
+                    output_ref: None,
+                    is_error: false,
+                    error: None,
+                })
+                .unwrap(),
+            ),
+            parts: Vec::new(),
+        };
+        let write_error = mutsuki_agent_contracts::AgentError::new(
+            "computer.fs.denied",
+            "workspace write was denied",
+        );
+        let write_result = AgentMessage {
+            role: AgentRole::Tool,
+            content: serde_json::to_string(&write_error).unwrap(),
+            name: Some("computer.fs.write".into()),
+            metadata: Some(
+                serde_json::to_value(AgentToolResultMetadata {
+                    call_id: "toolu_2".into(),
+                    output_ref: None,
+                    is_error: true,
+                    error: Some(write_error),
+                })
+                .unwrap(),
+            ),
+            parts: Vec::new(),
+        };
+        let payload = messages_payload(ModelGenerateRequest {
+            request: mutsuki_agent_contracts::AgentModelGenerateRequest {
+                model: DEFAULT_MODEL.into(),
+                messages: vec![
+                    AgentMessage::user("read and write it"),
+                    assistant,
+                    read_result,
+                    write_result,
+                ],
+                temperature: None,
+                max_output_tokens: Some(256),
+                provider_hint: None,
+                metadata: None,
+                result_protocol_id: None,
+                result_context: None,
+                session_id: None,
+            },
+            tools: Vec::new(),
+            structured_output: None,
+            reasoning: None,
+        })
+        .unwrap();
+        assert_eq!(payload["messages"][1]["content"][0]["type"], "text");
+        assert_eq!(payload["messages"][1]["content"][1]["type"], "tool_use");
+        assert_eq!(payload["messages"][1]["content"][1]["id"], "toolu_1");
+        assert_eq!(payload["messages"][1]["content"][2]["id"], "toolu_2");
+        assert_eq!(payload["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(payload["messages"][2]["content"][0]["type"], "tool_result");
+        assert_eq!(
+            payload["messages"][2]["content"][0]["tool_use_id"],
+            "toolu_1"
+        );
+        assert_eq!(
+            payload["messages"][2]["content"][1]["tool_use_id"],
+            "toolu_2"
+        );
+        assert_eq!(payload["messages"][2]["content"][1]["is_error"], true);
+    }
+
+    #[test]
+    fn malformed_tool_causality_is_rejected_deterministically() {
+        let mut malformed_calls = AgentMessage::assistant("");
+        malformed_calls.metadata = Some(json!({"tool_calls": "not-an-array"}));
+        let err = messages_payload(model_request(vec![malformed_calls])).unwrap_err();
+        assert_eq!(err.code, "agent.adapter.invalid_request");
+
+        let mut duplicate_calls = AgentMessage::assistant("");
+        duplicate_calls.metadata = Some(json!({"tool_calls": [
+            {"call_id": "same", "name": "one", "input": {}},
+            {"call_id": "same", "name": "two", "input": {}}
+        ]}));
+        let err = messages_payload(model_request(vec![duplicate_calls])).unwrap_err();
+        assert_eq!(err.code, "agent.adapter.invalid_request");
+
+        let orphan = AgentMessage {
+            role: AgentRole::Tool,
+            content: "orphan".into(),
+            name: Some("tool".into()),
+            metadata: Some(json!({"call_id": "missing"})),
+            parts: Vec::new(),
+        };
+        let err = messages_payload(model_request(vec![orphan])).unwrap_err();
+        assert_eq!(err.code, "agent.adapter.invalid_request");
+
+        let mut missing_result = AgentMessage::assistant("");
+        missing_result.metadata = Some(json!({"tool_calls": [
+            {"call_id": "toolu_1", "name": "read", "input": {}}
+        ]}));
+        let err = messages_payload(model_request(vec![missing_result])).unwrap_err();
+        assert_eq!(err.code, "agent.adapter.invalid_request");
+    }
+
+    #[test]
+    fn malformed_tool_use_response_is_rejected() {
+        for body in [
+            json!({"content": [{"type": "tool_use", "id": "", "name": "read", "input": {}}]}),
+            json!({"content": [{"type": "tool_use", "id": "call", "name": "", "input": {}}]}),
+            json!({"content": [{"type": "tool_use", "id": "call", "name": "read", "input": []}]}),
+            json!({"content": [
+                {"type": "tool_use", "id": "call", "name": "read", "input": {}},
+                {"type": "tool_use", "id": "call", "name": "write", "input": {}}
+            ]}),
+        ] {
+            let err = parse_messages_response(body).unwrap_err();
+            assert_eq!(err.code, "agent.adapter.invalid_response");
+        }
     }
 
     #[test]
@@ -505,6 +870,101 @@ mod tests {
         assert_eq!(result.tool_calls[0].name, "native.coding.fix");
         assert_eq!(result.stop_reason, AgentModelStopReason::ToolCalls);
         assert_eq!(result.usage.total_tokens, 10);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn loopback_tool_round_trip_sends_causal_error_result_then_final_text() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().unwrap();
+            let first_payload = read_json_request(&mut first);
+            assert_eq!(first_payload["messages"][0]["role"], "user");
+            write_json_response(
+                &mut first,
+                r#"{"content":[{"type":"tool_use","id":"toolu_write","name":"computer.fs.write","input":{"path":"README.md","content":"hello"}}],"stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":6}}"#,
+            );
+
+            let (mut second, _) = listener.accept().unwrap();
+            let second_payload = read_json_request(&mut second);
+            assert_eq!(
+                second_payload["messages"][1]["content"][0]["id"],
+                "toolu_write"
+            );
+            assert_eq!(
+                second_payload["messages"][2]["content"][0]["tool_use_id"],
+                "toolu_write"
+            );
+            assert_eq!(
+                second_payload["messages"][2]["content"][0]["is_error"],
+                true
+            );
+            write_json_response(
+                &mut second,
+                r#"{"content":[{"type":"text","text":"write was denied; no file changed"}],"stop_reason":"end_turn","usage":{"input_tokens":8,"output_tokens":5}}"#,
+            );
+        });
+
+        let adapter = AnthropicMessagesAdapter::new(
+            AnthropicMessagesAdapter::default_descriptor(),
+            Arc::new(StaticCredentials),
+        )
+        .unwrap();
+        let provider = provider_descriptor(
+            "anthropic-console",
+            &format!("http://{address}"),
+            CredentialRef {
+                credential_id: "cred".into(),
+                revision: 1,
+            },
+            DEFAULT_MODEL,
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut first_request = model_request(vec![AgentMessage::user("write README")]);
+        first_request.tools.push(write_tool_descriptor());
+        let first = runtime
+            .block_on(adapter.generate(provider.clone(), first_request))
+            .unwrap();
+        assert_eq!(first.tool_calls.len(), 1);
+        let mut assistant = first.message;
+        assistant.metadata = Some(json!({"tool_calls": first.tool_calls}));
+        let error = mutsuki_agent_contracts::AgentError::new(
+            "computer.fs.denied",
+            "workspace write was denied",
+        );
+        let tool_result = AgentMessage {
+            role: AgentRole::Tool,
+            content: serde_json::to_string(&error).unwrap(),
+            name: Some("computer.fs.write".into()),
+            metadata: Some(
+                serde_json::to_value(AgentToolResultMetadata {
+                    call_id: "toolu_write".into(),
+                    output_ref: None,
+                    is_error: true,
+                    error: Some(error),
+                })
+                .unwrap(),
+            ),
+            parts: Vec::new(),
+        };
+        let mut second_request = model_request(vec![
+            AgentMessage::user("write README"),
+            assistant,
+            tool_result,
+        ]);
+        second_request.tools.push(write_tool_descriptor());
+        let final_result = runtime
+            .block_on(adapter.generate(provider, second_request))
+            .unwrap();
+        assert_eq!(final_result.stop_reason, AgentModelStopReason::Stop);
+        assert_eq!(
+            final_result.message.content,
+            "write was denied; no file changed"
+        );
         server.join().unwrap();
     }
 

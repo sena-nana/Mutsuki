@@ -22,6 +22,7 @@ pub fn execute_echo_tool(request: AgentToolExecuteRequest) -> AgentToolExecuteRe
         name: request.name,
         output: Some(request.input),
         output_ref: None,
+        error: None,
         approved: true,
     }
 }

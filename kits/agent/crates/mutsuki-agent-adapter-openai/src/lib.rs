@@ -466,6 +466,29 @@ fn message_payload(message: &AgentMessage) -> Value {
     if let Some(name) = &message.name {
         value["name"] = Value::String(name.clone());
     }
+    if message.role == AgentRole::Assistant
+        && let Some(tool_calls) = message
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("tool_calls"))
+            .and_then(|calls| serde_json::from_value::<Vec<AgentToolCall>>(calls.clone()).ok())
+    {
+        value["tool_calls"] = Value::Array(
+            tool_calls
+                .into_iter()
+                .map(|call| {
+                    json!({
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.input.to_string(),
+                        }
+                    })
+                })
+                .collect(),
+        );
+    }
     if message.role == AgentRole::Tool
         && let Some(call_id) = message
             .metadata
@@ -740,6 +763,34 @@ mod tests {
             ]),
             remote_execution_allowed: true,
         }
+    }
+
+    #[test]
+    fn tool_loop_messages_preserve_assistant_calls_and_tool_results() {
+        let call = AgentToolCall {
+            call_id: "call-1".into(),
+            name: "computer.fs.read".into(),
+            input: json!({"path": "README.md"}),
+        };
+        let mut assistant = AgentMessage::assistant("");
+        assistant.metadata = Some(json!({"tool_calls": [call]}));
+        let assistant_payload = message_payload(&assistant);
+        assert_eq!(assistant_payload["tool_calls"][0]["id"], "call-1");
+        assert_eq!(
+            assistant_payload["tool_calls"][0]["function"]["name"],
+            "computer.fs.read"
+        );
+
+        let tool = AgentMessage {
+            role: AgentRole::Tool,
+            content: json!({"kind": "read", "content": "hello"}).to_string(),
+            name: Some("computer.fs.read".into()),
+            metadata: Some(json!({"call_id": "call-1"})),
+            parts: Vec::new(),
+        };
+        let tool_payload = message_payload(&tool);
+        assert_eq!(tool_payload["role"], "tool");
+        assert_eq!(tool_payload["tool_call_id"], "call-1");
     }
 
     fn request() -> ModelGenerateRequest {

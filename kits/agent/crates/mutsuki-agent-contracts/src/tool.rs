@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{PermissionDecision, PermissionRequest};
+use crate::{AgentError, PermissionDecision, PermissionRequest};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +12,17 @@ pub enum ToolSideEffect {
     WorkspaceWrite,
     ExternalRead,
     ExternalWrite,
+}
+
+/// Payload shape delivered to the tool's target protocol.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolTargetPayloadMode {
+    /// Backward-compatible target input: only the model-produced JSON value.
+    #[default]
+    RawInput,
+    /// Full neutral execution envelope including session, approval and Host context.
+    ExecutionRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -27,6 +38,8 @@ pub struct AgentToolDescriptor {
     pub side_effect: ToolSideEffect,
     #[serde(default)]
     pub requires_approval: bool,
+    #[serde(default)]
+    pub target_payload_mode: ToolTargetPayloadMode,
     #[serde(default)]
     pub permissions: Vec<String>,
 }
@@ -45,6 +58,7 @@ impl AgentToolDescriptor {
             output_schema: json!({}),
             side_effect: ToolSideEffect::None,
             requires_approval: false,
+            target_payload_mode: ToolTargetPayloadMode::RawInput,
             permissions: Vec::new(),
         }
     }
@@ -72,6 +86,10 @@ pub struct AgentToolExecuteRequest {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<AgentToolApproval>,
+    /// Host/product facts forwarded without granting authority. Context-aware
+    /// targets must still validate workspace and approval capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -89,8 +107,25 @@ pub struct AgentToolExecuteResult {
     pub output: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_ref: Option<String>,
+    /// Structured business failure returned by the target tool. Infrastructure
+    /// failures remain Runtime failures and do not masquerade as model-visible output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<AgentError>,
     #[serde(default)]
     pub approved: bool,
+}
+
+/// Provider-neutral metadata attached to an `AgentRole::Tool` transcript message.
+/// Model adapters use this contract to preserve tool-call causality and error state.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AgentToolResultMetadata {
+    pub call_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_ref: Option<String>,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<AgentError>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -99,4 +134,53 @@ pub struct AgentToolCall {
     pub name: String,
     #[serde(default)]
     pub input: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_result_metadata_round_trips_structured_failure() {
+        let metadata = AgentToolResultMetadata {
+            call_id: "call-1".into(),
+            output_ref: None,
+            is_error: true,
+            error: Some(AgentError::new("tool.failed", "target rejected input")),
+        };
+        let encoded = serde_json::to_value(&metadata).unwrap();
+        assert_eq!(
+            serde_json::from_value::<AgentToolResultMetadata>(encoded).unwrap(),
+            metadata
+        );
+    }
+
+    #[test]
+    fn legacy_tool_result_metadata_defaults_to_success() {
+        let metadata: AgentToolResultMetadata =
+            serde_json::from_value(serde_json::json!({"call_id": "call-1"})).unwrap();
+        assert!(!metadata.is_error);
+        assert!(metadata.error.is_none());
+    }
+
+    #[test]
+    fn legacy_tool_descriptor_and_execution_default_to_raw_payload_without_context() {
+        let descriptor: AgentToolDescriptor = serde_json::from_value(serde_json::json!({
+            "name": "echo",
+            "target_protocol_id": "test.echo@1",
+            "description": "echo"
+        }))
+        .unwrap();
+        assert_eq!(
+            descriptor.target_payload_mode,
+            ToolTargetPayloadMode::RawInput
+        );
+
+        let execution: AgentToolExecuteRequest = serde_json::from_value(serde_json::json!({
+            "name": "echo",
+            "input": {"value": "ping"}
+        }))
+        .unwrap();
+        assert!(execution.context.is_none());
+    }
 }

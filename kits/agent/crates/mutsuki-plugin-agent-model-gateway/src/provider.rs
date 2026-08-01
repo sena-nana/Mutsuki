@@ -4,10 +4,12 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use mutsuki_agent_adapter_api::ModelProtocolAdapter;
 use mutsuki_agent_contracts::{
     AgentError, AgentMessage, AgentModelGenerateRequest, AgentModelGenerateResult,
     AgentModelStopReason, AgentModelStreamRequest, AgentModelStreamResult, AgentResult, AgentRole,
-    AgentToolCall, AgentUsage,
+    AgentToolCall, AgentToolDescriptor, AgentUsage, ModelGenerateRequest, ProtocolError,
+    ProviderInstanceDescriptor,
 };
 use mutsuki_agent_sdk::stream_resource_ref;
 
@@ -26,6 +28,83 @@ pub trait ModelProvider: Send + Sync {
 
 pub type ModelProviderFuture =
     Pin<Box<dyn Future<Output = AgentResult<AgentModelGenerateResult>> + Send + 'static>>;
+
+/// Bridges a protocol-level Model Adapter into the ModelGateway effect Runner.
+///
+/// Products inject the concrete Provider instance and credential-backed Adapter;
+/// AgentLoop still reaches it only through the declared model Runner/TaskPool.
+#[derive(Clone)]
+pub struct AdapterBackedModelProvider {
+    provider: ProviderInstanceDescriptor,
+    adapter: Arc<dyn ModelProtocolAdapter>,
+    tools: Arc<Vec<AgentToolDescriptor>>,
+}
+
+impl AdapterBackedModelProvider {
+    pub fn new(
+        provider: ProviderInstanceDescriptor,
+        adapter: Arc<dyn ModelProtocolAdapter>,
+        tools: Vec<AgentToolDescriptor>,
+    ) -> AgentResult<Self> {
+        if provider.provider_id.trim().is_empty() {
+            return Err(AgentError::invalid_input("provider_id is required"));
+        }
+        if provider.adapter_id != adapter.descriptor().adapter_id {
+            return Err(AgentError::invalid_input(format!(
+                "provider `{}` selects adapter `{}` but received `{}`",
+                provider.provider_id,
+                provider.adapter_id,
+                adapter.descriptor().adapter_id
+            )));
+        }
+        Ok(Self {
+            provider,
+            adapter,
+            tools: Arc::new(tools),
+        })
+    }
+
+    fn adapter_request(&self, request: AgentModelGenerateRequest) -> ModelGenerateRequest {
+        ModelGenerateRequest {
+            request,
+            tools: self.tools.as_ref().clone(),
+            structured_output: None,
+            reasoning: None,
+        }
+    }
+}
+
+impl ModelProvider for AdapterBackedModelProvider {
+    fn provider_id(&self) -> &str {
+        &self.provider.provider_id
+    }
+
+    fn generate(
+        &self,
+        _request: AgentModelGenerateRequest,
+    ) -> AgentResult<AgentModelGenerateResult> {
+        Err(AgentError::new(
+            "agent.model.effect_runner_required",
+            "protocol Model Adapters may only execute in the ModelGateway effect Runner",
+        ))
+    }
+
+    fn generate_async(&self, request: AgentModelGenerateRequest) -> ModelProviderFuture {
+        let provider = self.provider.clone();
+        let adapter = self.adapter.clone();
+        let request = self.adapter_request(request);
+        Box::pin(async move {
+            adapter
+                .generate(provider, request)
+                .await
+                .map_err(protocol_agent_error)
+        })
+    }
+}
+
+fn protocol_agent_error(error: ProtocolError) -> AgentError {
+    AgentError::new(error.code, error.message)
+}
 
 #[derive(Clone)]
 pub struct ModelGateway {
@@ -552,6 +631,10 @@ fn parse_http_result(body: serde_json::Value) -> AgentResult<AgentModelGenerateR
 #[cfg(test)]
 mod http_tests {
     use super::*;
+    use mutsuki_agent_adapter_api::{ModelAdapterFuture, ModelStreamFuture};
+    use mutsuki_agent_contracts::{
+        CredentialRef, ModelCapability, ModelProtocolAdapterDescriptor, ModelStreamEvent,
+    };
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -563,6 +646,137 @@ mod http_tests {
         let health = gateway.health_snapshot();
         assert!(!health.ready);
         assert!(health.providers.is_empty());
+    }
+
+    #[derive(Clone)]
+    struct RecordingAdapter {
+        descriptor: ModelProtocolAdapterDescriptor,
+        request: Arc<Mutex<Option<ModelGenerateRequest>>>,
+    }
+
+    impl ModelProtocolAdapter for RecordingAdapter {
+        fn descriptor(&self) -> &ModelProtocolAdapterDescriptor {
+            &self.descriptor
+        }
+
+        fn generate(
+            &self,
+            _provider: ProviderInstanceDescriptor,
+            request: ModelGenerateRequest,
+        ) -> ModelAdapterFuture {
+            *self.request.lock().unwrap() = Some(request);
+            Box::pin(async {
+                Ok(AgentModelGenerateResult {
+                    message: AgentMessage::assistant("adapter response"),
+                    stop_reason: AgentModelStopReason::Stop,
+                    tool_calls: Vec::new(),
+                    usage: AgentUsage::default(),
+                    cost_microunits: 0,
+                    raw: None,
+                    output_resource: None,
+                })
+            })
+        }
+
+        fn stream(
+            &self,
+            _provider: ProviderInstanceDescriptor,
+            _request: ModelGenerateRequest,
+        ) -> ModelStreamFuture {
+            Box::pin(async { Ok(Vec::<ModelStreamEvent>::new()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn adapter_backed_provider_runs_only_in_effect_path_and_forwards_tools() {
+        let recorded = Arc::new(Mutex::new(None));
+        let adapter: Arc<dyn ModelProtocolAdapter> = Arc::new(RecordingAdapter {
+            descriptor: ModelProtocolAdapterDescriptor {
+                adapter_id: "recording".into(),
+                protocol: "test.recording".into(),
+                version: "1".into(),
+                runner_id: "test.recording.runner".into(),
+                capability: ModelCapability {
+                    tools: true,
+                    ..ModelCapability::default()
+                },
+            },
+            request: recorded.clone(),
+        });
+        let provider = AdapterBackedModelProvider::new(
+            ProviderInstanceDescriptor {
+                provider_id: "recording-provider".into(),
+                adapter_id: "recording".into(),
+                endpoint: "https://example.invalid".into(),
+                credential: CredentialRef {
+                    credential_id: "credential".into(),
+                    revision: 1,
+                },
+                models: BTreeMap::from([("model".into(), ModelCapability::default())]),
+                headers: BTreeMap::new(),
+                compatibility: BTreeMap::new(),
+                remote_execution_allowed: true,
+            },
+            adapter,
+            vec![AgentToolDescriptor::new("echo", "test.echo@1", "echo")],
+        )
+        .unwrap();
+        let request = AgentModelGenerateRequest {
+            model: "model".into(),
+            messages: vec![AgentMessage::user("hello")],
+            temperature: None,
+            max_output_tokens: None,
+            provider_hint: None,
+            metadata: None,
+            result_protocol_id: None,
+            result_context: None,
+            session_id: None,
+        };
+
+        assert_eq!(
+            provider.generate(request.clone()).unwrap_err().code,
+            "agent.model.effect_runner_required"
+        );
+        let generated = provider.generate_async(request).await.unwrap();
+        assert_eq!(generated.message.content, "adapter response");
+        let forwarded = recorded.lock().unwrap().clone().unwrap();
+        assert_eq!(forwarded.tools.len(), 1);
+        assert_eq!(forwarded.tools[0].name, "echo");
+    }
+
+    #[test]
+    fn adapter_backed_provider_rejects_mismatched_adapter_identity() {
+        let adapter: Arc<dyn ModelProtocolAdapter> = Arc::new(RecordingAdapter {
+            descriptor: ModelProtocolAdapterDescriptor {
+                adapter_id: "recording".into(),
+                protocol: "test.recording".into(),
+                version: "1".into(),
+                runner_id: "test.recording.runner".into(),
+                capability: ModelCapability::default(),
+            },
+            request: Arc::new(Mutex::new(None)),
+        });
+        let error = match AdapterBackedModelProvider::new(
+            ProviderInstanceDescriptor {
+                provider_id: "provider".into(),
+                adapter_id: "different".into(),
+                endpoint: "https://example.invalid".into(),
+                credential: CredentialRef {
+                    credential_id: "credential".into(),
+                    revision: 1,
+                },
+                models: BTreeMap::new(),
+                headers: BTreeMap::new(),
+                compatibility: BTreeMap::new(),
+                remote_execution_allowed: true,
+            },
+            adapter,
+            Vec::new(),
+        ) {
+            Ok(_) => panic!("mismatched adapter identity was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "agent.invalid_input");
     }
 
     #[test]

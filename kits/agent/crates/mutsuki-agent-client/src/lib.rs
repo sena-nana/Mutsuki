@@ -12,6 +12,9 @@ use mutsuki_link_core::{
     Connection, ProtocolId, RequestReplay, TransportError, TransportErrorKind,
 };
 
+mod wire_authority;
+pub use wire_authority::*;
+
 pub const AGENT_LINK_PROTOCOL_ID: &str = "mutsuki.agent.wire";
 pub const DEFAULT_LINK_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_EVENT_PAGE_SIZE: u32 = 1_000;
@@ -1206,6 +1209,7 @@ mod tests {
         assert_eq!(
             client
                 .start_session(AgentSessionCreateRequest {
+                    session_id: None,
                     profile_id: "profile".into(),
                     title: None,
                 })
@@ -1385,6 +1389,7 @@ mod tests {
         let mut client = AgentClient::new(backend);
         let session = client
             .start_session(AgentSessionCreateRequest {
+                session_id: None,
                 profile_id: "cross-process".into(),
                 title: None,
             })

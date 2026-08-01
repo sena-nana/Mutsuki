@@ -170,6 +170,7 @@ pub fn emit_deterministic_coding_run(log: &CodingEventLog, turn_id: &str) {
         base_version: DocumentVersion(3),
         status: FileChangeStatus::Proposed,
         summary: "update main".into(),
+        edits: Vec::new(),
         details: Some(details_ref("diff-1")),
         rejection_reason: None,
     };
