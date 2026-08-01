@@ -2955,6 +2955,8 @@ dependencies = [
 name = "mutsuki-agent-bundle"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-agent-adapter-anthropic",
+ "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-plugin-code-index",
@@ -2978,6 +2980,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
+ "serde",
  "serde_json",
 ]
 
@@ -2989,6 +2992,7 @@ dependencies = [
  "mutsuki-link-core",
  "mutsuki-link-local",
  "mutsuki-runtime-contracts",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -3134,12 +3138,14 @@ dependencies = [
 name = "mutsuki-agent-plugin-next-edit"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
  "mutsuki-agent-testkit",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3670,6 +3676,7 @@ dependencies = [
 name = "mutsuki-plugin-agent-model-gateway"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
  "mutsuki-runtime-core",

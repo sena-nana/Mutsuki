@@ -301,6 +301,7 @@ impl Harness {
                 input: target.payload.into(),
                 session_id: None,
                 approval: None,
+                context: None,
             },
             self.latency,
         );
@@ -369,6 +370,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                     input: call.input.clone(),
                     session_id: None,
                     approval: None,
+                    context: None,
                 })
                 .unwrap(),
             )
@@ -409,6 +411,7 @@ pub fn parallel_tools_sample(latency: SimulatedLatency) -> Sample {
                             input: target.payload.into(),
                             session_id: None,
                             approval: None,
+                            context: None,
                         },
                         latency,
                     );
@@ -607,6 +610,7 @@ pub fn session_100_sample(latency: SimulatedLatency) -> Sample {
     let session = harness
         .sessions
         .create(AgentSessionCreateRequest {
+            session_id: None,
             profile_id: "benchmark.profile".into(),
             title: Some("benchmark-v1".into()),
         })
@@ -1152,6 +1156,7 @@ pub fn next_edit_sample(plan_count: usize) -> Sample {
             generation: (index + 1) as u64,
             editor_generation: (index + 1) as u64,
             document_versions: vec![(document.clone(), DocumentVersion((index % 8) as u64 + 1))],
+            document_contexts: Vec::new(),
             recent_edits: Vec::new(),
             diagnostics: vec![NextEditDiagnosticHint {
                 document: document.clone(),

@@ -1,4 +1,4 @@
-use mutsuki_agent_contracts::{AgentMessage, AgentRunRequest};
+use mutsuki_agent_contracts::{AgentMessage, AgentPermissionMode, AgentRunRequest};
 use mutsuki_runtime_sdk::{AsyncRunnerContext, CallFuture};
 
 use crate::AgentRunProtocol;
@@ -38,6 +38,16 @@ impl AgentRunCall {
 
     pub fn session(mut self, session_id: impl Into<String>) -> Self {
         self.request.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn turn(mut self, turn_id: impl Into<String>) -> Self {
+        self.request.turn_id = Some(turn_id.into());
+        self
+    }
+
+    pub fn permission_mode(mut self, permission_mode: AgentPermissionMode) -> Self {
+        self.request.permission_mode = permission_mode;
         self
     }
 

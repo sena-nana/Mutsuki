@@ -31,6 +31,14 @@ struct MemoryRouterInner {
 }
 
 impl MemoryRouter {
+    /// Returns whether two handles address the same runtime-owned memory state.
+    ///
+    /// Hosts use this to prove that product surfaces and Agent tools share one
+    /// router without mutating memory with diagnostic probe records.
+    pub fn shares_state_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub fn set_baseline_policy(&self, policy: MemoryBaselinePolicy) {
         *self
             .inner
@@ -486,6 +494,16 @@ mod tests {
             namespace: ns.into(),
             scope_id: id.into(),
         }
+    }
+
+    #[test]
+    fn cloned_handles_report_shared_runtime_state_without_probe_writes() {
+        let router = MemoryRouter::default();
+        let shared = router.clone();
+        let independent = MemoryRouter::default();
+
+        assert!(router.shares_state_with(&shared));
+        assert!(!router.shares_state_with(&independent));
     }
 
     #[test]

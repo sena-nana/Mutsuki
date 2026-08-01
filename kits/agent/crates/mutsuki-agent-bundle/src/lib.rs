@@ -7,7 +7,7 @@ pub use mutsuki_plugin_agent_context::ContextBuilder;
 pub use mutsuki_plugin_agent_loop::AgentLoop;
 pub use mutsuki_plugin_agent_memory_router::MemoryRouter;
 pub use mutsuki_plugin_agent_model_gateway::{
-    HttpModelProvider, HttpModelProviderOptions, ModelGateway,
+    AdapterBackedModelProvider, HttpModelProvider, HttpModelProviderOptions, ModelGateway,
 };
 pub use mutsuki_plugin_agent_prompt::PromptRegistry;
 pub use mutsuki_plugin_agent_session::SessionStore;
@@ -16,9 +16,12 @@ use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, TaskHandle, TaskOutco
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner};
 use mutsuki_runtime_sdk::{RuntimeClient, RuntimeClientRef, RuntimeResult};
 pub use native_coding::{
-    LSP_PLUGIN_ID, NATIVE_CODING_BUNDLE_ID, NativeCodingAgentBundle, NativeCodingBackends,
-    UnavailableLspFactory, UnavailableMcpFactory, run_fix_golden_path,
-    run_resume_without_duplicate_side_effects, run_review_golden_path, seed_fix_fixture,
+    LSP_PLUGIN_ID, NATIVE_CODING_BUNDLE_ID, NATIVE_CODING_TOOL_PLUGIN_ID,
+    NATIVE_CODING_TOOL_PROTOCOL, NATIVE_CODING_TOOL_RUNNER_ID, NativeCodingAgentBundle,
+    NativeCodingBackends, NativeCodingRunContext, NativeCodingToolContext,
+    NativeCodingToolProtocol, UnavailableLspFactory, UnavailableMcpFactory,
+    native_coding_tool_plugin, run_fix_golden_path, run_resume_without_duplicate_side_effects,
+    run_review_golden_path, seed_fix_fixture,
 };
 
 /// Host-neutral collection of Agent services and plugin manifests.
@@ -185,23 +188,30 @@ impl RuntimeClient for NoopClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_agent_adapter_anthropic::{
+        AnthropicMessagesAdapter, provider_descriptor as anthropic_provider_descriptor,
+    };
+    use mutsuki_agent_adapter_api::{
+        CredentialBroker, CredentialFuture, CredentialValue, ModelProtocolAdapter,
+    };
     use mutsuki_agent_contracts::{
-        AGENT_RUN_PROTOCOL, AgentError, AgentMessage, AgentModelGenerateRequest,
-        AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentRunRequest, AgentRunResult,
-        AgentRunStatus, AgentToolCall, AgentToolDescriptor, AgentUsage,
+        AGENT_RUN_PROTOCOL, AgentMessage, AgentRunRequest, AgentRunResult, AgentRunStatus,
+        AgentSessionCreateRequest, AgentToolDescriptor, CredentialRef, PermissionDecision,
+        PermissionDecisionKind,
     };
     use mutsuki_agent_sdk::orchestration_runner;
-    use mutsuki_plugin_agent_model_gateway::{ModelProvider, ModelProviderFuture};
     use mutsuki_runtime_contracts::{
-        PluginDeploymentKind, RunnerResult, RuntimeProfile, RuntimeProfileMode, Task, TaskOutcome,
+        PluginDeploymentKind, RuntimeError, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
+        TaskOutcome,
     };
     use mutsuki_runtime_host::{HostRuntimeConfig, RuntimeBootstrapper, TokioAsyncExecutor};
     use mutsuki_runtime_sdk::{
         HostRuntime as _, PluginBuilder, ProtocolSpec, RuntimeClientRef, RuntimeFailure,
         SdkProtocol, TaskAwaitRunnerAdapter, TaskSubmitterRuntimeClient,
     };
-    use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
@@ -272,86 +282,143 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct ReferenceProvider {
-        calls: Arc<AtomicUsize>,
+    struct StaticCredential;
+
+    impl CredentialBroker for StaticCredential {
+        fn resolve(&self, _credential: CredentialRef) -> CredentialFuture {
+            Box::pin(async { CredentialValue::new("loopback-secret") })
+        }
     }
 
-    impl ModelProvider for ReferenceProvider {
-        fn provider_id(&self) -> &str {
-            "reference"
+    fn read_json_request(stream: &mut TcpStream) -> serde_json::Value {
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            let count = stream.read(&mut chunk).expect("request read succeeds");
+            assert!(count > 0, "client closed before request body completed");
+            bytes.extend_from_slice(&chunk[..count]);
+            let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&bytes[..header_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map(str::trim)
+                .and_then(|value| value.parse::<usize>().ok())
+                .expect("request declares content-length");
+            let body_start = header_end + 4;
+            if bytes.len() >= body_start + content_length {
+                return serde_json::from_slice(&bytes[body_start..body_start + content_length])
+                    .expect("request body is JSON");
+            }
         }
+    }
 
-        fn generate(
-            &self,
-            request: AgentModelGenerateRequest,
-        ) -> Result<AgentModelGenerateResult, AgentError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let completed_tool = request
-                .messages
-                .iter()
-                .any(|message| message.role == AgentRole::Tool);
-            Ok(AgentModelGenerateResult {
-                message: AgentMessage::assistant(if completed_tool {
-                    "reference-final"
-                } else {
-                    ""
-                }),
-                stop_reason: if completed_tool {
-                    AgentModelStopReason::Stop
-                } else {
-                    AgentModelStopReason::ToolCalls
-                },
-                tool_calls: if completed_tool {
-                    Vec::new()
-                } else {
-                    vec![AgentToolCall {
-                        call_id: "reference-tool".into(),
-                        name: "workspace.inspect".into(),
-                        input: json!({"path": "."}),
-                    }]
-                },
-                usage: AgentUsage {
-                    input_tokens: 2,
-                    output_tokens: 1,
-                    total_tokens: 3,
-                },
-                cost_microunits: 1,
-                raw: None,
-                output_resource: None,
-            })
-        }
-
-        fn generate_async(&self, request: AgentModelGenerateRequest) -> ModelProviderFuture {
-            let result = self.generate(request);
-            Box::pin(async move { result })
-        }
+    fn write_json_response(stream: &mut TcpStream, payload: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+            payload.len()
+        )
+        .expect("response writes");
     }
 
     #[test]
     fn in_process_core_runs_agent_runtime_through_public_bootstrapper() {
         let model_calls = Arc::new(AtomicUsize::new(0));
         let tool_calls = Arc::new(AtomicUsize::new(0));
-        let model = ModelGateway::with_default_provider("reference");
-        model.register(Arc::new(ReferenceProvider {
-            calls: model_calls.clone(),
-        }));
+        let mut reference_tool = AgentToolDescriptor::new(
+            "workspace.inspect",
+            TOOL_PROTOCOL,
+            "Reads the public workspace view",
+        );
+        reference_tool.requires_approval = true;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback model server binds");
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server_model_calls = model_calls.clone();
+        let model_server = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().expect("first model request arrives");
+            server_model_calls.fetch_add(1, Ordering::SeqCst);
+            let first_payload = read_json_request(&mut first);
+            assert_eq!(first_payload["messages"][0]["role"], "user");
+            assert_eq!(first_payload["tools"][0]["name"], "workspace.inspect");
+            write_json_response(
+                &mut first,
+                r#"{"content":[{"type":"tool_use","id":"reference-tool","name":"workspace.inspect","input":{"path":"."}}],"stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":1}}"#,
+            );
+
+            let (mut second, _) = listener.accept().expect("second model request arrives");
+            server_model_calls.fetch_add(1, Ordering::SeqCst);
+            let second_payload = read_json_request(&mut second);
+            assert_eq!(
+                second_payload["messages"][1]["content"][0]["id"],
+                "reference-tool"
+            );
+            assert_eq!(
+                second_payload["messages"][2]["content"][0]["tool_use_id"],
+                "reference-tool"
+            );
+            assert_eq!(
+                second_payload["messages"][2]["content"][0]["is_error"],
+                true
+            );
+            assert!(
+                second_payload["messages"][2]["content"][0]["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains("reference.tool_failed"))
+            );
+            write_json_response(
+                &mut second,
+                r#"{"content":[{"type":"text","text":"reference-final"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":1}}"#,
+            );
+        });
+        let adapter: Arc<dyn ModelProtocolAdapter> = Arc::new(
+            AnthropicMessagesAdapter::new(
+                AnthropicMessagesAdapter::default_descriptor(),
+                Arc::new(StaticCredential),
+            )
+            .expect("Anthropic adapter constructs"),
+        );
+        let provider_id = "anthropic-loopback";
+        let model = ModelGateway::with_default_provider(provider_id);
+        model.register(Arc::new(
+            AdapterBackedModelProvider::new(
+                anthropic_provider_descriptor(
+                    provider_id,
+                    &endpoint,
+                    CredentialRef {
+                        credential_id: "loopback".into(),
+                        revision: 1,
+                    },
+                    "claude-loopback",
+                ),
+                adapter,
+                vec![reference_tool.clone()],
+            )
+            .expect("adapter-backed provider constructs"),
+        ));
         let bundle = AgentPluginBundle {
-            agent_loop: AgentLoop::default().with_default_model("reference-model"),
+            agent_loop: AgentLoop::default().with_default_model("claude-loopback"),
             model,
             ..Default::default()
         };
         bundle
             .tools
-            .register(AgentToolDescriptor::new(
-                "workspace.inspect",
-                TOOL_PROTOCOL,
-                "Reads the public workspace view",
-            ))
+            .register(reference_tool)
             .expect("reference tool registers");
         bundle
             .context
             .set_tools(bundle.tools.list(Default::default()).tools);
+        let session_id = bundle
+            .sessions
+            .create(AgentSessionCreateRequest {
+                session_id: None,
+                profile_id: "reference.profile".into(),
+                title: Some("approval resume".into()),
+            })
+            .expect("reference session creates")
+            .session_id;
 
         let deferred = Arc::new(DeferredClient::default());
         let client: RuntimeClientRef = deferred.clone();
@@ -383,9 +450,16 @@ mod tests {
                     let tool_calls = tool_calls.clone();
                     Box::pin(async move {
                         tool_calls.fetch_add(1, Ordering::SeqCst);
-                        let mut result = RunnerResult::completed(task.task_id);
-                        result.output = Some(json!({"path": task.payload["path"]}));
-                        Ok(result)
+                        let mut error = RuntimeError::new(
+                            "reference.tool_failed",
+                            TOOL_PLUGIN_ID,
+                            task.task_id,
+                        );
+                        error.evidence.insert(
+                            "message".into(),
+                            ScalarValue::String("reference tool failed".into()),
+                        );
+                        Err(RuntimeFailure::new(error))
                     })
                 }
             }),
@@ -421,15 +495,14 @@ mod tests {
             .expect("in-process Agent runtime boots");
         deferred.bind(&runtime);
 
+        let mut initial_request =
+            AgentRunRequest::new("reference.profile", vec![AgentMessage::user("inspect")]);
+        initial_request.session_id = Some(session_id.clone());
         let handle = runtime
             .submit_task(Task::new(
                 "agent-reference-in-process",
                 AGENT_RUN_PROTOCOL,
-                serde_json::to_value(AgentRunRequest::new(
-                    "reference.profile",
-                    vec![AgentMessage::user("inspect")],
-                ))
-                .expect("run request serializes"),
+                serde_json::to_value(initial_request).expect("run request serializes"),
             ))
             .expect("Agent run submits");
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -450,10 +523,57 @@ mod tests {
         else {
             panic!("in-process Agent run did not complete: {outcome:?}");
         };
+        let waiting: AgentRunResult = serde_json::from_value(output).expect("typed Agent result");
+        assert_eq!(waiting.status, AgentRunStatus::WaitingApproval);
+        assert_eq!(waiting.pending_approvals.len(), 1);
+        assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
+
+        let pending = waiting.pending_approvals[0].clone();
+        // Session-backed resume loads the persisted waiting history. Only the
+        // approval decision is new input; replaying `waiting.messages` would
+        // duplicate the assistant tool_use and violate provider causality.
+        let mut resume_request = AgentRunRequest::new("reference.profile", Vec::new());
+        resume_request.session_id = Some(session_id);
+        resume_request.permission_decisions = vec![PermissionDecision {
+            session_id: pending.session_id,
+            turn_id: pending.turn_id,
+            action_id: pending.action_id,
+            version: pending.version,
+            decision: PermissionDecisionKind::Approved,
+        }];
+        let handle = runtime
+            .submit_task(Task::new(
+                "agent-reference-resume",
+                AGENT_RUN_PROTOCOL,
+                serde_json::to_value(resume_request).expect("resume request serializes"),
+            ))
+            .expect("Agent resume submits");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let outcome = loop {
+            if let Some(outcome) = runtime
+                .task_outcome(&handle)
+                .expect("Agent resume outcome query succeeds")
+            {
+                break outcome;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "in-process Agent resume timed out"
+            );
+            std::thread::yield_now();
+        };
+        let TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } = outcome
+        else {
+            panic!("in-process Agent resume did not complete: {outcome:?}");
+        };
         let result: AgentRunResult = serde_json::from_value(output).expect("typed Agent result");
         assert_eq!(result.status, AgentRunStatus::Completed);
         assert_eq!(result.messages.last().unwrap().content, "reference-final");
         assert_eq!(model_calls.load(Ordering::SeqCst), 2);
         assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+        model_server.join().expect("model server assertions pass");
     }
 }

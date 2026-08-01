@@ -785,6 +785,19 @@ impl SharedLspService {
             .ok_or_else(|| AgentError::not_found("LSP workspace is not open"))
     }
 
+    /// Snapshot every workspace owned by this shared service instance.
+    ///
+    /// Product diagnostics and Agent tools must observe the same sessions; this
+    /// method exposes their public status without creating a second LSP client.
+    pub fn list_workspaces(&self) -> Vec<LspWorkspaceStatus> {
+        self.sessions
+            .lock()
+            .expect("lsp sessions mutex")
+            .values_mut()
+            .map(LspSession::status)
+            .collect()
+    }
+
     pub fn active_workspace_count(&self) -> usize {
         self.sessions.lock().expect("lsp sessions mutex").len()
     }
@@ -1329,6 +1342,8 @@ mod tests {
         let status = service.workspace_status(&workspace).unwrap();
         assert_eq!(status.restart_count, 1);
         assert_eq!(status.open_documents, 1);
+        let workspaces = service.list_workspaces();
+        assert_eq!(workspaces, vec![status]);
         let did_open_texts = sent
             .lock()
             .unwrap()

@@ -166,6 +166,7 @@ pub fn execute_benchmark_tool(
             "input": request.input
         })),
         output_ref: None,
+        error: None,
         approved: true,
     }
 }

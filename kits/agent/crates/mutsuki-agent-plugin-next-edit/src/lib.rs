@@ -1,18 +1,23 @@
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use mutsuki_agent_adapter_api::ModelProtocolAdapter;
 use mutsuki_agent_contracts::{
-    AgentError, AgentPluginStateKind, AgentServiceDescriptor, AgentToolDescriptor,
-    ContextProviderRequest, ContextProviderResult, DocumentVersion, EditorDocumentRef,
-    EditorWorkspaceRef, FileChangeDescriptor, FileChangeStatus, GitHeadIdentity, NextEditCandidate,
-    NextEditFeedback, NextEditFeedbackKind, NextEditFeedbackStats, NextEditPlanningPath,
-    NextEditRequest, NextEditServiceRequest, NextEditServiceResponse, NextEditStaleConflict,
-    NextEditTarget, RecentEditEvent, TextPosition, TextSelection, ToolSideEffect,
-    WorkspaceEditProposal,
+    AgentError, AgentMessage, AgentModelGenerateRequest, AgentPluginStateKind,
+    AgentServiceDescriptor, AgentToolDescriptor, ContextProviderRequest, ContextProviderResult,
+    DocumentVersion, EditorDocumentRef, EditorWorkspaceRef, FileChangeDescriptor, FileChangeStatus,
+    GitHeadIdentity, ModelGenerateRequest, NextEditCandidate, NextEditFeedback,
+    NextEditFeedbackKind, NextEditFeedbackStats, NextEditPlanningPath, NextEditRequest,
+    NextEditServiceRequest, NextEditServiceResponse, NextEditStaleConflict, NextEditTarget,
+    ProviderInstanceDescriptor, RecentEditEvent, TextPosition, TextSelection, ToolSideEffect,
+    WorkspaceEditProposal, WorkspaceTextEdit,
 };
 use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider};
 use mutsuki_agent_runtime::AgentResourceStore;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.next-edit";
@@ -55,8 +60,64 @@ pub struct SharedNextEditService {
     descriptor: AgentServiceDescriptor,
     resources: AgentResourceStore,
     config: NextEditServiceConfig,
+    planner: Option<Arc<dyn NextEditPlanner>>,
     next_candidate: AtomicU64,
     state: Mutex<ServiceState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlannedNextEdit {
+    pub document: EditorDocumentRef,
+    pub edit: WorkspaceTextEdit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NextEditPlan {
+    pub reason: String,
+    pub confidence: f64,
+    pub edits: Vec<PlannedNextEdit>,
+}
+
+/// Replaceable inference boundary for Next Edit. Implementations may call a
+/// lightweight protocol model adapter, but must not mutate the workspace.
+pub trait NextEditPlanner: Send + Sync {
+    fn plan(
+        &self,
+        request: &NextEditRequest,
+        targets: &[NextEditTarget],
+    ) -> Result<Option<NextEditPlan>, AgentError>;
+}
+
+#[derive(Clone)]
+pub struct ProtocolNextEditPlanner {
+    adapter: Arc<dyn ModelProtocolAdapter>,
+    provider: ProviderInstanceDescriptor,
+    model: String,
+}
+
+impl ProtocolNextEditPlanner {
+    pub fn new(
+        adapter: Arc<dyn ModelProtocolAdapter>,
+        provider: ProviderInstanceDescriptor,
+        model: impl Into<String>,
+    ) -> Result<Self, AgentError> {
+        let model = model.into();
+        if model.trim().is_empty() {
+            return Err(AgentError::invalid_input(
+                "next edit planner model is required",
+            ));
+        }
+        if provider.adapter_id != adapter.descriptor().adapter_id {
+            return Err(AgentError::invalid_input(
+                "next edit provider does not belong to the selected adapter",
+            ));
+        }
+        Ok(Self {
+            adapter,
+            provider,
+            model,
+        })
+    }
 }
 
 impl SharedNextEditService {
@@ -65,6 +126,33 @@ impl SharedNextEditService {
     }
 
     pub fn with_config(resources: AgentResourceStore, config: NextEditServiceConfig) -> Self {
+        Self::with_optional_planner(resources, config, None)
+    }
+
+    pub fn with_planner(
+        resources: AgentResourceStore,
+        config: NextEditServiceConfig,
+        planner: Arc<dyn NextEditPlanner>,
+    ) -> Self {
+        Self::with_optional_planner(resources, config, Some(planner))
+    }
+
+    pub fn with_protocol_model(
+        resources: AgentResourceStore,
+        config: NextEditServiceConfig,
+        adapter: Arc<dyn ModelProtocolAdapter>,
+        provider: ProviderInstanceDescriptor,
+        model: impl Into<String>,
+    ) -> Result<Self, AgentError> {
+        let planner = ProtocolNextEditPlanner::new(adapter, provider, model)?;
+        Ok(Self::with_planner(resources, config, Arc::new(planner)))
+    }
+
+    fn with_optional_planner(
+        resources: AgentResourceStore,
+        config: NextEditServiceConfig,
+        planner: Option<Arc<dyn NextEditPlanner>>,
+    ) -> Self {
         Self {
             descriptor: AgentServiceDescriptor {
                 service_id: SERVICE_ID.into(),
@@ -76,6 +164,7 @@ impl SharedNextEditService {
             },
             resources,
             config,
+            planner,
             next_candidate: AtomicU64::new(1),
             state: Mutex::new(ServiceState {
                 recent_edits: Vec::new(),
@@ -226,6 +315,7 @@ impl SharedNextEditService {
 
         let planned = plan_candidate(
             &self.resources,
+            self.planner.as_deref(),
             &request,
             &state.recent_edits,
             self.next_candidate.fetch_add(1, Ordering::Relaxed),
@@ -418,6 +508,7 @@ fn context_cache_key(request: &NextEditRequest) -> String {
 
 fn plan_candidate(
     resources: &AgentResourceStore,
+    planner: Option<&dyn NextEditPlanner>,
     request: &NextEditRequest,
     recent_edits: &[RecentEditEvent],
     candidate_seq: u64,
@@ -498,14 +589,6 @@ fn plan_candidate(
         confidence: primary.confidence,
     }];
 
-    let mut changes = vec![file_change(
-        format!("chg-{candidate_seq}-0"),
-        request.workspace.clone(),
-        &primary.document,
-        expected_version_for(request, &primary.document),
-        &primary.reason,
-    )];
-
     let multi_file = request.allow_multi_file
         && signals.iter().any(|signal| {
             signal.from_diff
@@ -514,11 +597,10 @@ fn plan_candidate(
         });
 
     if multi_file {
-        for (index, signal) in signals
+        for signal in signals
             .iter()
             .filter(|signal| signal.document.uri != primary.document.uri && signal.from_diff)
             .take(2)
-            .enumerate()
         {
             targets.push(NextEditTarget {
                 document: signal.document.clone(),
@@ -526,13 +608,6 @@ fn plan_candidate(
                 reason: signal.reason.clone(),
                 confidence: signal.confidence,
             });
-            changes.push(file_change(
-                format!("chg-{candidate_seq}-{}", index + 1),
-                request.workspace.clone(),
-                &signal.document,
-                expected_version_for(request, &signal.document),
-                &signal.reason,
-            ));
         }
     }
 
@@ -545,11 +620,11 @@ fn plan_candidate(
         request.path
     };
 
-    let confidence = targets
+    let mut confidence = targets
         .iter()
         .map(|target| target.confidence)
         .fold(0.0_f64, f64::max);
-    let reason = if multi_file {
+    let mut reason = if multi_file {
         format!(
             "next edit across {} files ({})",
             targets.len(),
@@ -558,6 +633,50 @@ fn plan_candidate(
     } else {
         primary.reason.clone()
     };
+
+    let planned = planner
+        .map(|planner| planner.plan(request, &targets))
+        .transpose()?
+        .flatten();
+    if planner.is_some() && planned.is_none() {
+        return Ok(None);
+    }
+    let mut edits_by_document = BTreeMap::<EditorDocumentRef, Vec<WorkspaceTextEdit>>::new();
+    if let Some(planned) = planned {
+        if planned.edits.is_empty() {
+            return Ok(None);
+        }
+        confidence = confidence.min(planned.confidence.clamp(0.0, 1.0));
+        if !planned.reason.trim().is_empty() {
+            reason = planned.reason;
+        }
+        for planned_edit in planned.edits {
+            edits_by_document
+                .entry(planned_edit.document)
+                .or_default()
+                .push(planned_edit.edit);
+        }
+    }
+
+    let changes = targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            file_change(
+                format!("chg-{candidate_seq}-{index}"),
+                request.workspace.clone(),
+                &target.document,
+                expected_version_for(request, &target.document),
+                &target.reason,
+                edits_by_document
+                    .remove(&target.document)
+                    .unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if planner.is_some() && changes.iter().all(|change| change.edits.is_empty()) {
+        return Ok(None);
+    }
 
     let preview_payload = json!({
         "targets": targets.len(),
@@ -621,6 +740,7 @@ fn file_change(
     document: &EditorDocumentRef,
     base_version: DocumentVersion,
     summary: &str,
+    edits: Vec<WorkspaceTextEdit>,
 ) -> FileChangeDescriptor {
     FileChangeDescriptor {
         change_id,
@@ -629,9 +749,204 @@ fn file_change(
         base_version,
         status: FileChangeStatus::Proposed,
         summary: truncate(summary, 160),
+        edits,
         details: None,
         rejection_reason: None,
     }
+}
+
+#[derive(Deserialize)]
+struct ModelPlan {
+    #[serde(default)]
+    reason: String,
+    confidence: f64,
+    edits: Vec<ModelTextEdit>,
+}
+
+#[derive(Deserialize)]
+struct ModelTextEdit {
+    uri: String,
+    start: TextPosition,
+    end: TextPosition,
+    new_text: String,
+}
+
+impl NextEditPlanner for ProtocolNextEditPlanner {
+    fn plan(
+        &self,
+        request: &NextEditRequest,
+        targets: &[NextEditTarget],
+    ) -> Result<Option<NextEditPlan>, AgentError> {
+        let allowed = targets
+            .iter()
+            .map(|target| target.document.uri.as_str())
+            .collect::<Vec<_>>();
+        let contexts = request
+            .document_contexts
+            .iter()
+            .filter_map(|context| {
+                let text = context.inline_text.as_deref()?;
+                if !allowed.contains(&context.document.uri.as_str()) {
+                    return None;
+                }
+                Some(json!({
+                    "uri": context.document.uri,
+                    "version": context.version.0,
+                    "language": context.language_id,
+                    "selection": context.selection,
+                    "text": truncate_bytes(text, 32 * 1024),
+                }))
+            })
+            .collect::<Vec<_>>();
+        if contexts.is_empty() {
+            return Ok(None);
+        }
+
+        let prompt = serde_json::to_string(&json!({
+            "intent": request.intent,
+            "targets": targets,
+            "documents": contexts,
+            "constraints": {
+                "allow_multi_file": request.allow_multi_file,
+                "maximum_edits": 16,
+                "maximum_total_new_text_bytes": 64 * 1024,
+            }
+        }))
+        .map_err(|error| AgentError::invalid_input(error.to_string()))?;
+        let generate = ModelGenerateRequest {
+            request: AgentModelGenerateRequest {
+                model: self.model.clone(),
+                messages: vec![
+                    AgentMessage::system(
+                        "Return only strict JSON for the next concrete editor edit. Shape: {\"reason\":string,\"confidence\":number,\"edits\":[{\"uri\":string,\"start\":{\"line\":number,\"character\":number},\"end\":{\"line\":number,\"character\":number},\"new_text\":string}]}. Use only supplied target URIs. Do not call tools.",
+                    ),
+                    AgentMessage::user(prompt),
+                ],
+                temperature: Some(0.0),
+                max_output_tokens: Some(1_024),
+                provider_hint: Some(self.provider.provider_id.clone()),
+                metadata: Some(json!({
+                    "mode": "next_edit",
+                    "request_id": request.request_id,
+                    "generation": request.generation,
+                })),
+                result_protocol_id: None,
+                result_context: None,
+                session_id: None,
+            },
+            tools: Vec::new(),
+            structured_output: None,
+            reasoning: None,
+        };
+
+        let started = Instant::now();
+        let result = block_on_adapter(self.adapter.generate(self.provider.clone(), generate))
+            .map_err(|error| {
+                AgentError::new(
+                    error.code,
+                    format!("next edit protocol adapter failed: {}", error.message),
+                )
+            })?;
+        if let Some(deadline) = request.deadline_unix_ms {
+            let remaining = deadline.saturating_sub(request.now_unix_ms);
+            if started.elapsed() > Duration::from_millis(remaining) {
+                return Ok(None);
+            }
+        }
+        if !result.tool_calls.is_empty() {
+            return Err(AgentError::new(
+                "agent.next_edit.tool_forbidden",
+                "next edit planner must not emit tool calls",
+            ));
+        }
+
+        let raw = extract_json_object(&result.message.content).ok_or_else(|| {
+            AgentError::new(
+                "agent.next_edit.invalid_model_output",
+                "next edit model did not return a JSON object",
+            )
+        })?;
+        let model_plan: ModelPlan = serde_json::from_str(raw).map_err(|_| {
+            AgentError::new(
+                "agent.next_edit.invalid_model_output",
+                "next edit model returned an invalid edit payload",
+            )
+        })?;
+        if !model_plan.confidence.is_finite()
+            || !(0.0..=1.0).contains(&model_plan.confidence)
+            || model_plan.edits.is_empty()
+            || model_plan.edits.len() > 16
+        {
+            return Ok(None);
+        }
+
+        let mut total_bytes = 0usize;
+        let mut edits = Vec::with_capacity(model_plan.edits.len());
+        for edit in model_plan.edits {
+            let Some(document) = targets
+                .iter()
+                .find(|target| target.document.uri == edit.uri)
+                .map(|target| target.document.clone())
+            else {
+                return Ok(None);
+            };
+            if position_after(edit.start, edit.end) {
+                return Ok(None);
+            }
+            total_bytes = total_bytes.saturating_add(edit.new_text.len());
+            if total_bytes > 64 * 1024 {
+                return Ok(None);
+            }
+            edits.push(PlannedNextEdit {
+                document,
+                edit: WorkspaceTextEdit {
+                    range: TextSelection {
+                        start: edit.start,
+                        end: edit.end,
+                    },
+                    new_text: edit.new_text,
+                },
+            });
+        }
+        Ok(Some(NextEditPlan {
+            reason: truncate(&model_plan.reason, 160),
+            confidence: model_plan.confidence,
+            edits,
+        }))
+    }
+}
+
+fn block_on_adapter<T>(future: impl Future<Output = T>) -> T {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return tokio::task::block_in_place(|| handle.block_on(future));
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("next edit runtime")
+        .block_on(future)
+}
+
+fn extract_json_object(value: &str) -> Option<&str> {
+    let start = value.find('{')?;
+    let end = value.rfind('}')?;
+    (end >= start).then_some(&value[start..=end])
+}
+
+fn position_after(start: TextPosition, end: TextPosition) -> bool {
+    (start.line, start.character) > (end.line, end.character)
+}
+
+fn truncate_bytes(value: &str, maximum: usize) -> &str {
+    if value.len() <= maximum {
+        return value;
+    }
+    let mut end = maximum;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 fn expected_version_for(
@@ -743,10 +1058,74 @@ impl ContextProvider for SharedNextEditService {
 mod tests {
     use super::*;
     use mutsuki_agent_contracts::{
-        LspDiagnostic, LspPosition, LspRange, NextEditDiagnosticHint, NextEditDiffHint,
-        TextPosition, TextSelection,
+        AgentModelGenerateResult, AgentModelStopReason, AgentUsage, CredentialRef, LspDiagnostic,
+        LspPosition, LspRange, ModelCapability, ModelProtocolAdapterDescriptor,
+        NextEditDiagnosticHint, NextEditDiffHint, NextEditDocumentContext, TextPosition,
+        TextSelection,
     };
     use mutsuki_agent_testkit::FakeEditorContextService;
+
+    struct ConcreteEditAdapter {
+        descriptor: ModelProtocolAdapterDescriptor,
+    }
+
+    impl ConcreteEditAdapter {
+        fn new() -> Self {
+            Self {
+                descriptor: ModelProtocolAdapterDescriptor {
+                    adapter_id: "next-edit-test".into(),
+                    protocol: "test.next-edit".into(),
+                    version: "1".into(),
+                    runner_id: "next-edit-test-runner".into(),
+                    capability: ModelCapability::default(),
+                },
+            }
+        }
+    }
+
+    impl ModelProtocolAdapter for ConcreteEditAdapter {
+        fn descriptor(&self) -> &ModelProtocolAdapterDescriptor {
+            &self.descriptor
+        }
+
+        fn generate(
+            &self,
+            _provider: ProviderInstanceDescriptor,
+            request: ModelGenerateRequest,
+        ) -> mutsuki_agent_adapter_api::ModelAdapterFuture {
+            Box::pin(async move {
+                assert!(request.tools.is_empty());
+                assert!(request.request.session_id.is_none());
+                Ok(AgentModelGenerateResult {
+                    message: AgentMessage::assistant(
+                        r#"{"reason":"complete the function","confidence":0.91,"edits":[{"uri":"file:///workspace/main.rs","start":{"line":0,"character":11},"end":{"line":0,"character":11},"new_text":" println!(\"hi\");"}]}"#,
+                    ),
+                    stop_reason: AgentModelStopReason::Stop,
+                    tool_calls: Vec::new(),
+                    usage: AgentUsage::default(),
+                    cost_microunits: 0,
+                    raw: None,
+                    output_resource: None,
+                })
+            })
+        }
+    }
+
+    fn model_provider() -> ProviderInstanceDescriptor {
+        ProviderInstanceDescriptor {
+            provider_id: "next-edit-provider".into(),
+            adapter_id: "next-edit-test".into(),
+            endpoint: "memory://next-edit".into(),
+            credential: CredentialRef {
+                credential_id: "next-edit-credential".into(),
+                revision: 1,
+            },
+            models: BTreeMap::from([("next-edit-model".into(), ModelCapability::default())]),
+            headers: BTreeMap::new(),
+            compatibility: BTreeMap::new(),
+            remote_execution_allowed: true,
+        }
+    }
 
     fn workspace() -> EditorWorkspaceRef {
         EditorWorkspaceRef {
@@ -779,6 +1158,7 @@ mod tests {
             generation: 2,
             editor_generation: 2,
             document_versions: vec![(doc("file:///workspace/main.rs"), DocumentVersion(3))],
+            document_contexts: Vec::new(),
             recent_edits: Vec::new(),
             diagnostics: Vec::new(),
             related_paths: Vec::new(),
@@ -861,6 +1241,9 @@ mod tests {
                 request: Box::new(request),
             })
             .unwrap();
+        let roundtrip: NextEditServiceResponse =
+            serde_json::from_value(serde_json::to_value(&response).unwrap()).unwrap();
+        assert_eq!(roundtrip, response);
         let NextEditServiceResponse::Candidate {
             candidate: Some(candidate),
         } = response
@@ -877,6 +1260,72 @@ mod tests {
                 candidate.proposal.changes[0].base_version,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn protocol_model_returns_concrete_versioned_workspace_edit() {
+        let service = SharedNextEditService::with_protocol_model(
+            AgentResourceStore::default(),
+            NextEditServiceConfig {
+                debounce_ms: 0,
+                ..NextEditServiceConfig::default()
+            },
+            Arc::new(ConcreteEditAdapter::new()),
+            model_provider(),
+            "next-edit-model",
+        )
+        .unwrap();
+        let mut request = base_request();
+        request.recent_edits = vec![RecentEditEvent {
+            event_id: "edit-model".into(),
+            document: doc("file:///workspace/main.rs"),
+            version: DocumentVersion(3),
+            editor_generation: 2,
+            timestamp_unix_ms: 900,
+            kind: mutsuki_agent_contracts::RecentEditKind::Inserted,
+            range: Some(TextSelection {
+                start: TextPosition {
+                    line: 0,
+                    character: 11,
+                },
+                end: TextPosition {
+                    line: 0,
+                    character: 11,
+                },
+            }),
+            summary: "opened function body".into(),
+            byte_delta: 1,
+        }];
+        request.document_contexts = vec![NextEditDocumentContext {
+            document: doc("file:///workspace/main.rs"),
+            version: DocumentVersion(3),
+            language_id: Some("rust".into()),
+            selection: None,
+            inline_text: Some("fn main() {}".into()),
+            content_ref: None,
+        }];
+
+        let response = service
+            .call_typed(NextEditServiceRequest::Plan {
+                request: Box::new(request),
+            })
+            .unwrap();
+        let NextEditServiceResponse::Candidate {
+            candidate: Some(candidate),
+        } = response
+        else {
+            panic!("expected concrete model candidate");
+        };
+        assert_eq!(candidate.proposal.changes.len(), 1);
+        assert_eq!(
+            candidate.proposal.changes[0].base_version,
+            DocumentVersion(3)
+        );
+        assert_eq!(candidate.proposal.changes[0].edits.len(), 1);
+        assert_eq!(
+            candidate.proposal.changes[0].edits[0].new_text,
+            " println!(\"hi\");"
+        );
     }
 
     #[test]

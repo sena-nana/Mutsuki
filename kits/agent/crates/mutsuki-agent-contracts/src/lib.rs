@@ -78,6 +78,7 @@ pub const AGENT_SESSION_CREATE_PROTOCOL: &str = "mutsuki.agent.session/create@1"
 pub const AGENT_SESSION_GET_PROTOCOL: &str = "mutsuki.agent.session/get@1";
 pub const AGENT_SESSION_APPEND_PROTOCOL: &str = "mutsuki.agent.session/append@1";
 pub const AGENT_SESSION_SNAPSHOT_PROTOCOL: &str = "mutsuki.agent.session/snapshot@1";
+pub const AGENT_SESSION_FORK_PROTOCOL: &str = "mutsuki.agent.session/fork@1";
 pub const AGENT_MEMORY_QUERY_PROTOCOL: &str = "mutsuki.agent.memory/query@1";
 pub const AGENT_MEMORY_WRITE_PROTOCOL: &str = "mutsuki.agent.memory/write@1";
 pub const AGENT_MEMORY_ACTIVATE_PROTOCOL: &str = "mutsuki.agent.memory/activate@1";

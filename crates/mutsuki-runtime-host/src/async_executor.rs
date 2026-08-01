@@ -198,7 +198,9 @@ impl TokioAsyncExecutor {
         let runtime = Builder::new_multi_thread()
             .worker_threads(configured_threads)
             .thread_name("mutsuki-async-io")
-            .enable_time()
+            // Effect runners own network/process/file futures as well as timers.
+            // A time-only runtime panics when a real Model Adapter opens TCP.
+            .enable_all()
             .build()
             .map_err(|error| host_failure("host.async_executor.start", error.to_string()))?;
         Ok(Self {
@@ -498,6 +500,9 @@ fn capacity_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    use std::net::TcpListener;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn executor_can_drop_inside_an_async_context() {
@@ -505,5 +510,23 @@ mod tests {
         outer.block_on(async {
             drop(TokioAsyncExecutor::new(1, 1, 1, 1024).unwrap());
         });
+    }
+
+    #[test]
+    fn executor_runtime_supports_real_async_io_for_effect_runners() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut byte = [0_u8; 1];
+            stream.read_exact(&mut byte).unwrap();
+            byte[0]
+        });
+        let executor = TokioAsyncExecutor::new(1, 1, 1, 1024).unwrap();
+        executor.runtime().block_on(async {
+            let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            stream.write_all(&[7]).await.unwrap();
+        });
+        assert_eq!(server.join().unwrap(), 7);
     }
 }

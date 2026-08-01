@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 mutsuki-agent-contracts.workspace = true
 mutsuki-link-core.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

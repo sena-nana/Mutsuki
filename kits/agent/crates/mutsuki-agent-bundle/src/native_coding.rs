@@ -10,11 +10,15 @@ use std::sync::Arc;
 use mutsuki_agent_contracts::{
     AgentDelegationRequest, AgentError, AgentKitPluginDescriptor, AgentPluginStateKind,
     AgentResult, AgentRuntimeProfile, AgentServiceDescriptor, AgentToolDescriptor,
-    AgentWorkspaceRef, CodeFileChange, CodeIndexBatch, CodeSearchMode, CodeSearchQuery,
-    CodeWorkspaceRef, DelegationBudget, DelegationMode, DelegationScope, GitRepositoryRef,
-    GitWorktreeRef, SubAgentDescriptor, SubAgentOutcomeKind, ToolSideEffect,
+    AgentToolExecuteRequest, AgentWorkspaceRef, BrowserNavigateRequest, CodeFileChange,
+    CodeIndexBatch, CodeIndexServiceRequest, CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef,
+    ComputerUseServiceRequest, DelegationBudget, DelegationMode, DelegationScope, ExecutionLimits,
+    FsPatchRequest, GitDiffRequest, GitDiffScope, GitRepositoryRef, GitServiceRequest,
+    GitServiceResponse, GitWorktreeRef, LspServiceRequest, LspWorkspaceId, ProcessExecRequest,
+    SubAgentDescriptor, SubAgentOutcomeKind, ToolSideEffect, ToolTargetPayloadMode,
+    WorkspacePathRequest,
 };
-use mutsuki_agent_plugin_api::AgentPluginRegistrar;
+use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ToolProvider};
 use mutsuki_agent_plugin_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
 use mutsuki_agent_plugin_computer_use::{
     BrowserBackend, FakeBrowserBackend, FakeProcessBackend, FilesystemBackend,
@@ -22,17 +26,54 @@ use mutsuki_agent_plugin_computer_use::{
 };
 use mutsuki_agent_plugin_git::{GitBackend, InMemoryGitBackend, SharedGitService};
 use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
-use mutsuki_agent_plugin_mcp::{McpTransport, McpTransportFactory, SharedMcpService};
+use mutsuki_agent_plugin_mcp::{
+    McpRequestControl, McpTransport, McpTransportFactory, SharedMcpService,
+};
 use mutsuki_agent_runtime::{
     AgentResourceStore, EchoChildExecutor, SubAgentOrchestrator,
     reference_coding_agent_test_profile,
 };
+use mutsuki_agent_sdk::{orchestration_runner, runtime_failure};
+use mutsuki_runtime_sdk::contracts::{RunnerResult, Task};
+use mutsuki_runtime_sdk::{
+    PluginBuilder, ProtocolSpec, RuntimeClientRef, SdkProtocol, TaskAwaitRunnerAdapter,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::AgentPluginBundle;
 
 pub const NATIVE_CODING_BUNDLE_ID: &str = "mutsuki.agent.bundle.native-coding";
 pub const LSP_PLUGIN_ID: &str = "mutsuki.plugin.agent.lsp";
+pub const NATIVE_CODING_TOOL_PLUGIN_ID: &str = "mutsuki.plugin.agent.native-coding-tools";
+pub const NATIVE_CODING_TOOL_RUNNER_ID: &str = "mutsuki.agent.native-coding-tools.runner";
+pub const NATIVE_CODING_TOOL_PROTOCOL: &str = "mutsuki.agent.native-coding.tool@1";
+
+#[derive(Clone, Debug)]
+pub struct NativeCodingToolProtocol;
+
+impl SdkProtocol for NativeCodingToolProtocol {
+    const PROTOCOL_ID: &'static str = NATIVE_CODING_TOOL_PROTOCOL;
+}
+
+impl ProtocolSpec for NativeCodingToolProtocol {}
+
+/// Provider-neutral Host facts forwarded to a Native Coding tool target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeCodingRunContext {
+    pub workspace: AgentWorkspaceRef,
+    pub turn_id: String,
+}
+
+/// Product-provided facts and approval state for one Native Coding tool call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeCodingToolContext {
+    pub session_id: String,
+    pub turn_id: String,
+    pub workspace: AgentWorkspaceRef,
+    pub approval_version: u64,
+    pub approved: bool,
+}
 
 /// Host-neutral Native Coding Agent assembly used by conformance, LiliaCode
 /// migration, and CLI smoke. Not a product Persona.
@@ -171,6 +212,416 @@ impl NativeCodingAgentBundle {
         ])
     }
 
+    /// Tools that the Native Coding model may call directly.
+    ///
+    /// These descriptors deliberately expose only operations with a complete
+    /// model-input → public Service request mapping. Dynamic MCP tools retain
+    /// the schema advertised by their server catalog.
+    pub fn model_tools(&self) -> Vec<AgentToolDescriptor> {
+        let mut tools = vec![
+            model_tool(
+                "git.status",
+                "Read the current Git branch and working tree status",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ),
+            model_tool(
+                "git.diff",
+                "Read a working tree or staged Git diff",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "staged": {"type": "boolean"},
+                        "paths": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "git.log",
+                "Read recent Git commits",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                        "path": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "code.search",
+                "Search the shared workspace code index",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {"type": "string"},
+                        "mode": {"type": "string", "enum": ["text", "regex", "symbol", "semantic"]},
+                        "path_prefix": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 64}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "code.project_summary",
+                "Summarize the shared workspace code index",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ),
+            model_tool(
+                "computer.fs.list",
+                "List files in the workspace",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                path_schema(false),
+            ),
+            model_tool(
+                "computer.fs.read",
+                "Read a workspace file",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                path_schema(true),
+            ),
+            model_tool(
+                "computer.fs.write",
+                "Create or replace a workspace file",
+                ToolSideEffect::WorkspaceWrite,
+                true,
+                json!({
+                    "type": "object",
+                    "required": ["path", "content"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                        "create": {"type": "boolean"},
+                        "overwrite": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "computer.fs.patch",
+                "Replace one exact text segment in a workspace file",
+                ToolSideEffect::WorkspaceWrite,
+                true,
+                json!({
+                    "type": "object",
+                    "required": ["path", "old_text", "new_text"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old_text": {"type": "string"},
+                        "new_text": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "computer.fs.glob",
+                "Find workspace files by glob",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "required": ["pattern"],
+                    "properties": {"pattern": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "computer.fs.grep",
+                "Find text in workspace files",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "required": ["pattern"],
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "computer.shell.exec",
+                "Run an approved process in the workspace",
+                ToolSideEffect::ExternalWrite,
+                true,
+                json!({
+                    "type": "object",
+                    "required": ["command"],
+                    "properties": {
+                        "command": {"type": "string"},
+                        "args": {"type": "array", "items": {"type": "string"}},
+                        "stdin": {"type": "string"},
+                        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 300000},
+                        "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+                        "allow_network": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            model_tool(
+                "computer.browser.snapshot",
+                "Fetch an approved web page snapshot",
+                ToolSideEffect::ExternalRead,
+                true,
+                json!({
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {"url": {"type": "string", "format": "uri"}},
+                    "additionalProperties": false
+                }),
+            ),
+        ];
+        if self.lsp.active_workspace_count() > 0 {
+            tools.push(model_tool(
+                "lsp.workspace_symbols",
+                "Search symbols in the active language server workspace",
+                ToolSideEffect::WorkspaceRead,
+                false,
+                json!({
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {"query": {"type": "string"}},
+                    "additionalProperties": false
+                }),
+            ));
+        }
+        tools.extend(self.mcp.tools());
+        tools
+    }
+
+    /// Tool descriptors routed through the declared Native Coding effect Runner.
+    pub fn routed_model_tools(&self) -> Vec<AgentToolDescriptor> {
+        self.model_tools()
+            .into_iter()
+            .map(|mut descriptor| {
+                descriptor.target_protocol_id = NATIVE_CODING_TOOL_PROTOCOL.into();
+                descriptor.target_payload_mode = ToolTargetPayloadMode::ExecutionRequest;
+                descriptor
+            })
+            .collect()
+    }
+
+    /// Execute a model-selected tool through the public shared Service surface.
+    pub fn invoke_model_tool(
+        &self,
+        name: &str,
+        input: Value,
+        context: &NativeCodingToolContext,
+    ) -> AgentResult<Value> {
+        let descriptor = self
+            .model_tools()
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .ok_or_else(|| {
+                AgentError::not_found(format!("Native Coding tool `{name}` is not registered"))
+            })?;
+        if descriptor.requires_approval && !context.approved {
+            return Err(AgentError::new(
+                "agent.permission.denied",
+                format!("Native Coding tool `{name}` requires approval"),
+            ));
+        }
+        match name {
+            "git.status" => {
+                let worktree = self.discover_worktree(&context.workspace.root)?;
+                self.git
+                    .call_value(agent_value(GitServiceRequest::Status { worktree })?)
+            }
+            "git.diff" => {
+                let worktree = self.discover_worktree(&context.workspace.root)?;
+                let scope = if bool_field(&input, "staged", false)? {
+                    GitDiffScope::Staged
+                } else {
+                    GitDiffScope::WorkingTree
+                };
+                self.git.call_value(agent_value(GitServiceRequest::Diff {
+                    request: GitDiffRequest {
+                        worktree,
+                        scope,
+                        base: None,
+                        head: None,
+                        paths: string_array_field(&input, "paths")?,
+                    },
+                })?)
+            }
+            "git.log" => {
+                let worktree = self.discover_worktree(&context.workspace.root)?;
+                self.git.call_value(agent_value(GitServiceRequest::Log {
+                    worktree,
+                    limit: u64_field(&input, "limit", 20)?.clamp(1, 100) as u32,
+                    path: optional_string_field(&input, "path")?,
+                })?)
+            }
+            "code.search" => AgentService::call(
+                self.code_index.as_ref(),
+                agent_value(CodeIndexServiceRequest::Search {
+                    query: CodeSearchQuery {
+                        workspace: code_workspace(&context.workspace),
+                        query: required_string_field(&input, "query")?,
+                        mode: match optional_string_field(&input, "mode")?.as_deref() {
+                            Some("regex") => CodeSearchMode::Regex,
+                            Some("symbol") => CodeSearchMode::Symbol,
+                            Some("semantic") => CodeSearchMode::Semantic,
+                            Some("text") | None => CodeSearchMode::Text,
+                            Some(other) => {
+                                return Err(AgentError::invalid_input(format!(
+                                    "unsupported code search mode `{other}`"
+                                )));
+                            }
+                        },
+                        path_prefix: optional_string_field(&input, "path_prefix")?,
+                        limit: u64_field(&input, "limit", 32)?.clamp(1, 64) as u32,
+                        include_overlay: true,
+                    },
+                })?,
+            ),
+            "code.project_summary" => AgentService::call(
+                self.code_index.as_ref(),
+                agent_value(CodeIndexServiceRequest::ProjectSummary {
+                    workspace: code_workspace(&context.workspace),
+                })?,
+            ),
+            "computer.fs.list" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::List {
+                        request: workspace_path(&input, context, false)?,
+                    })?)
+            }
+            "computer.fs.read" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Read {
+                        request: workspace_path(&input, context, true)?,
+                        max_bytes: u64_field(&input, "max_bytes", 256 * 1024)?,
+                    })?)
+            }
+            "computer.fs.write" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Write {
+                        workspace: context.workspace.clone(),
+                        path: required_string_field(&input, "path")?,
+                        content: required_string_field(&input, "content")?,
+                        create: bool_field(&input, "create", true)?,
+                        overwrite: bool_field(&input, "overwrite", false)?,
+                        session_id: context.session_id.clone(),
+                        turn_id: context.turn_id.clone(),
+                        approval_version: Some(context.approval_version),
+                        approved: true,
+                    })?)
+            }
+            "computer.fs.patch" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Patch {
+                        request: FsPatchRequest {
+                            workspace: context.workspace.clone(),
+                            path: required_string_field(&input, "path")?,
+                            old_text: required_string_field(&input, "old_text")?,
+                            new_text: required_string_field(&input, "new_text")?,
+                        },
+                        session_id: context.session_id.clone(),
+                        turn_id: context.turn_id.clone(),
+                        approval_version: Some(context.approval_version),
+                        approved: true,
+                    })?)
+            }
+            "computer.fs.glob" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Glob {
+                        workspace: context.workspace.clone(),
+                        pattern: required_string_field(&input, "pattern")?,
+                    })?)
+            }
+            "computer.fs.grep" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Grep {
+                        workspace: context.workspace.clone(),
+                        pattern: required_string_field(&input, "pattern")?,
+                        path: optional_string_field(&input, "path")?,
+                    })?)
+            }
+            "computer.shell.exec" => {
+                self.computer_use
+                    .call_value(agent_value(ComputerUseServiceRequest::Exec {
+                        request: ProcessExecRequest {
+                            workspace: context.workspace.clone(),
+                            command: required_string_field(&input, "command")?,
+                            args: string_array_field(&input, "args")?,
+                            stdin: optional_string_field(&input, "stdin")?,
+                            limits: ExecutionLimits {
+                                timeout_ms: u64_field(&input, "timeout_ms", 30_000)?,
+                                max_output_bytes: u64_field(
+                                    &input,
+                                    "max_output_bytes",
+                                    256 * 1024,
+                                )?,
+                                max_concurrency: 1,
+                            },
+                            allow_network: bool_field(&input, "allow_network", false)?,
+                        },
+                        session_id: context.session_id.clone(),
+                        turn_id: context.turn_id.clone(),
+                        approval_version: Some(context.approval_version),
+                        approved: true,
+                    })?)
+            }
+            "computer.browser.snapshot" => self.computer_use.call_value(agent_value(
+                ComputerUseServiceRequest::BrowserSnapshot {
+                    request: BrowserNavigateRequest {
+                        url: required_string_field(&input, "url")?,
+                        limits: ExecutionLimits::default(),
+                    },
+                    session_id: context.session_id.clone(),
+                    turn_id: context.turn_id.clone(),
+                    approval_version: Some(context.approval_version),
+                    approved: true,
+                },
+            )?),
+            "lsp.workspace_symbols" => AgentService::call(
+                self.lsp.as_ref(),
+                agent_value(LspServiceRequest::WorkspaceSymbols {
+                    workspace: LspWorkspaceId(context.workspace.workspace_id.clone()),
+                    query: required_string_field(&input, "query")?,
+                })?,
+            ),
+            dynamic if self.mcp.tools().iter().any(|tool| tool.name == dynamic) => agent_value(
+                self.mcp
+                    .call_tool(dynamic, input, &McpRequestControl::default())?,
+            ),
+            other => Err(AgentError::not_found(format!(
+                "Native Coding tool `{other}` is not registered"
+            ))),
+        }
+    }
+
+    fn discover_worktree(&self, root: &str) -> AgentResult<GitWorktreeRef> {
+        let value = self
+            .git
+            .call_value(agent_value(GitServiceRequest::Discover {
+                path: root.to_string(),
+            })?)?;
+        match serde_json::from_value::<GitServiceResponse>(value)
+            .map_err(|error| AgentError::invalid_input(error.to_string()))?
+        {
+            GitServiceResponse::Discovered { worktree, .. } => Ok(worktree),
+            _ => Err(AgentError::new(
+                "agent.git.unexpected_response",
+                "Git discovery returned an unexpected response",
+            )),
+        }
+    }
+
     /// Asserts Git / Code Index / LSP / Computer Use / MCP share one resource store
     /// and that UI / Agent callers hold the same service instances.
     pub fn assert_shared_service_identity(&self) -> AgentResult<()> {
@@ -246,13 +697,209 @@ impl NativeCodingAgentBundle {
     }
 
     pub fn code_workspace(&self) -> CodeWorkspaceRef {
-        CodeWorkspaceRef {
-            workspace_id: "native-workspace".into(),
-            root: "/workspace".into(),
-            tenant_id: "native".into(),
-            git_revision: Some("HEAD".into()),
-            worktree_id: None,
-        }
+        code_workspace(&self.workspace_ref())
+    }
+}
+
+/// Build the effect Runner that turns AgentLoop tool requests into calls on the
+/// bundle's shared Git/LSP/Index/ComputerUse/MCP Services.
+pub fn native_coding_tool_plugin(
+    client: RuntimeClientRef,
+    bundle: NativeCodingAgentBundle,
+) -> PluginBuilder {
+    let descriptor =
+        orchestration_runner(NATIVE_CODING_TOOL_RUNNER_ID, NATIVE_CODING_TOOL_PLUGIN_ID)
+            .accepts::<NativeCodingToolProtocol>()
+            .build();
+    PluginBuilder::new(NATIVE_CODING_TOOL_PLUGIN_ID)
+        .protocol::<NativeCodingToolProtocol>()
+        .runner(Box::new(TaskAwaitRunnerAdapter::new(
+            descriptor,
+            client,
+            Box::new(move |_ctx, task| {
+                let bundle = bundle.clone();
+                Box::pin(async move { run_native_coding_tool(bundle, task) })
+            }),
+        )))
+}
+
+fn run_native_coding_tool(
+    bundle: NativeCodingAgentBundle,
+    task: Task,
+) -> mutsuki_runtime_sdk::RuntimeResult<RunnerResult> {
+    let request: AgentToolExecuteRequest = serde_json::from_value(task.payload.clone().into())
+        .map_err(|error| {
+            runtime_failure(
+                NATIVE_CODING_TOOL_PLUGIN_ID,
+                &task.task_id,
+                AgentError::invalid_input(error.to_string()),
+            )
+        })?;
+    let context: NativeCodingRunContext = request
+        .context
+        .clone()
+        .ok_or_else(|| {
+            runtime_failure(
+                NATIVE_CODING_TOOL_PLUGIN_ID,
+                &task.task_id,
+                AgentError::invalid_input("Native Coding tool context is required"),
+            )
+        })
+        .and_then(|context| {
+            serde_json::from_value(context).map_err(|error| {
+                runtime_failure(
+                    NATIVE_CODING_TOOL_PLUGIN_ID,
+                    &task.task_id,
+                    AgentError::invalid_input(error.to_string()),
+                )
+            })
+        })?;
+    let approval_version = request
+        .approval
+        .as_ref()
+        .map(|approval| approval.request.version)
+        .unwrap_or_default();
+    let approved = request.approval.as_ref().is_none_or(|approval| {
+        approval.decision.decision == mutsuki_agent_contracts::PermissionDecisionKind::Approved
+    });
+    let tool_context = NativeCodingToolContext {
+        session_id: request.session_id.clone().ok_or_else(|| {
+            runtime_failure(
+                NATIVE_CODING_TOOL_PLUGIN_ID,
+                &task.task_id,
+                AgentError::invalid_input("Native Coding tool session_id is required"),
+            )
+        })?,
+        turn_id: context.turn_id,
+        workspace: context.workspace,
+        approval_version,
+        approved,
+    };
+    let output = bundle
+        .invoke_model_tool(&request.name, request.input, &tool_context)
+        .map_err(|error| runtime_failure(NATIVE_CODING_TOOL_PLUGIN_ID, &task.task_id, error))?;
+    let mut result = RunnerResult::completed(task.task_id);
+    result.output = Some(output);
+    Ok(result)
+}
+
+fn model_tool(
+    name: &str,
+    description: &str,
+    side_effect: ToolSideEffect,
+    requires_approval: bool,
+    input_schema: Value,
+) -> AgentToolDescriptor {
+    let mut descriptor =
+        AgentToolDescriptor::new(name, format!("mutsuki.agent.tool.{name}@1"), description);
+    descriptor.side_effect = side_effect;
+    descriptor.requires_approval = requires_approval;
+    descriptor.input_schema = input_schema;
+    descriptor
+}
+
+fn agent_value(value: impl serde::Serialize) -> AgentResult<Value> {
+    serde_json::to_value(value).map_err(|error| AgentError::invalid_input(error.to_string()))
+}
+
+fn path_schema(required: bool) -> Value {
+    json!({
+        "type": "object",
+        "required": if required { vec!["path"] } else { Vec::<&str>::new() },
+        "properties": {
+            "path": {"type": "string"},
+            "max_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}
+        },
+        "additionalProperties": false
+    })
+}
+
+fn input_object(input: &Value) -> AgentResult<&serde_json::Map<String, Value>> {
+    input
+        .as_object()
+        .ok_or_else(|| AgentError::invalid_input("tool input must be a JSON object"))
+}
+
+fn required_string_field(input: &Value, name: &str) -> AgentResult<String> {
+    optional_string_field(input, name)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AgentError::invalid_input(format!("tool input requires `{name}`")))
+}
+
+fn optional_string_field(input: &Value, name: &str) -> AgentResult<Option<String>> {
+    match input_object(input)?.get(name) {
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(Value::Null) | None => Ok(None),
+        Some(_) => Err(AgentError::invalid_input(format!(
+            "tool input `{name}` must be a string"
+        ))),
+    }
+}
+
+fn string_array_field(input: &Value, name: &str) -> AgentResult<Vec<String>> {
+    match input_object(input)?.get(name) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value.as_str().map(str::to_string).ok_or_else(|| {
+                    AgentError::invalid_input(format!(
+                        "tool input `{name}` must contain only strings"
+                    ))
+                })
+            })
+            .collect(),
+        Some(Value::Null) | None => Ok(Vec::new()),
+        Some(_) => Err(AgentError::invalid_input(format!(
+            "tool input `{name}` must be an array"
+        ))),
+    }
+}
+
+fn bool_field(input: &Value, name: &str, default: bool) -> AgentResult<bool> {
+    match input_object(input)?.get(name) {
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(Value::Null) | None => Ok(default),
+        Some(_) => Err(AgentError::invalid_input(format!(
+            "tool input `{name}` must be a boolean"
+        ))),
+    }
+}
+
+fn u64_field(input: &Value, name: &str, default: u64) -> AgentResult<u64> {
+    match input_object(input)?.get(name) {
+        Some(Value::Number(value)) => value.as_u64().ok_or_else(|| {
+            AgentError::invalid_input(format!("tool input `{name}` must be a positive integer"))
+        }),
+        Some(Value::Null) | None => Ok(default),
+        Some(_) => Err(AgentError::invalid_input(format!(
+            "tool input `{name}` must be an integer"
+        ))),
+    }
+}
+
+fn workspace_path(
+    input: &Value,
+    context: &NativeCodingToolContext,
+    required: bool,
+) -> AgentResult<WorkspacePathRequest> {
+    let path = if required {
+        required_string_field(input, "path")?
+    } else {
+        optional_string_field(input, "path")?.unwrap_or_default()
+    };
+    Ok(WorkspacePathRequest {
+        workspace: context.workspace.clone(),
+        path,
+    })
+}
+
+fn code_workspace(workspace: &AgentWorkspaceRef) -> CodeWorkspaceRef {
+    CodeWorkspaceRef {
+        workspace_id: workspace.workspace_id.clone(),
+        root: workspace.root.clone(),
+        tenant_id: String::new(),
+        git_revision: None,
+        worktree_id: None,
     }
 }
 
@@ -715,6 +1362,79 @@ mod tests {
         assert_eq!(
             bundle.core.manifests().len(),
             AgentPluginBundle::default().manifests().len()
+        );
+    }
+
+    #[test]
+    fn native_model_tools_route_through_shared_services() {
+        let bundle = seeded_bundle();
+        seed_fix_fixture(&bundle).unwrap();
+        let tools = bundle.model_tools();
+        for name in [
+            "git.status",
+            "code.search",
+            "computer.fs.read",
+            "computer.fs.write",
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("missing model tool {name}"));
+            assert_eq!(tool.input_schema["type"], "object");
+        }
+        assert!(
+            tools
+                .iter()
+                .find(|tool| tool.name == "computer.fs.write")
+                .unwrap()
+                .requires_approval
+        );
+
+        let context = NativeCodingToolContext {
+            session_id: "native-model".into(),
+            turn_id: "turn-1".into(),
+            workspace: bundle.workspace_ref(),
+            approval_version: 1,
+            approved: true,
+        };
+        let status = bundle
+            .invoke_model_tool("git.status", json!({}), &context)
+            .unwrap();
+        assert_eq!(status["kind"], "status");
+
+        let search = bundle
+            .invoke_model_tool(
+                "code.search",
+                json!({"query": "answer", "mode": "symbol"}),
+                &context,
+            )
+            .unwrap();
+        assert_eq!(search["kind"], "search");
+        assert!(!search["hits"].as_array().unwrap().is_empty());
+
+        let read = bundle
+            .invoke_model_tool("computer.fs.read", json!({"path": "src/lib.rs"}), &context)
+            .unwrap();
+        assert!(read.to_string().contains("41"));
+        let mut unapproved = context.clone();
+        unapproved.approved = false;
+        assert_eq!(
+            bundle
+                .invoke_model_tool(
+                    "computer.fs.write",
+                    json!({"path": "blocked.txt", "content": "no"}),
+                    &unapproved,
+                )
+                .unwrap_err()
+                .code,
+            "agent.permission.denied"
+        );
+        assert_eq!(
+            bundle
+                .invoke_model_tool("missing.tool", json!({}), &context)
+                .unwrap_err()
+                .code,
+            "agent.not_found"
         );
     }
 

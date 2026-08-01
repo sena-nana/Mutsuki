@@ -57,6 +57,25 @@ pub struct NextEditDiffHint {
     pub details: Option<ResourceRef>,
 }
 
+/// Bounded editor text supplied to the planner for one document.
+///
+/// Products may omit inline text for oversized or policy-restricted buffers;
+/// the planner then ignores that document instead of reading the filesystem
+/// behind the product's editor context boundary.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NextEditDocumentContext {
+    pub document: EditorDocumentRef,
+    pub version: DocumentVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<TextSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_ref: Option<ResourceRef>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NextEditRequest {
     pub request_id: String,
@@ -66,6 +85,8 @@ pub struct NextEditRequest {
     pub editor_generation: u64,
     #[serde(default)]
     pub document_versions: Vec<(EditorDocumentRef, DocumentVersion)>,
+    #[serde(default)]
+    pub document_contexts: Vec<NextEditDocumentContext>,
     #[serde(default)]
     pub recent_edits: Vec<RecentEditEvent>,
     #[serde(default)]
