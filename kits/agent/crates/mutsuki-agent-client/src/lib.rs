@@ -691,10 +691,10 @@ fn validate_envelope(request: &AgentWireRequestEnvelope) -> Result<(), AgentWire
         } => {
             non_empty(source_session_id, "source_session_id")?;
             non_empty(target_session_id, "target_session_id")?;
-            if snapshot.session_id != *target_session_id {
+            if snapshot.session_id != *source_session_id {
                 Err(protocol_error(
                     "agent.wire.snapshot_session_mismatch",
-                    "fork snapshot must be bound to the target session",
+                    "fork snapshot must be bound to the source session",
                     false,
                 ))
             } else {
@@ -1250,7 +1250,7 @@ mod tests {
         );
         assert_eq!(
             client
-                .fork_session("session", "fork", snapshot("fork"))
+                .fork_session("session", "fork", snapshot("session"))
                 .unwrap(),
             SessionVersion(1)
         );

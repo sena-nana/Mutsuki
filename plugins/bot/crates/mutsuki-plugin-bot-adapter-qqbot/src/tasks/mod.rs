@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
-    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
-    QqBotAccountGetRequest, QqBotGatewayStatusRequest,
+    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_CAPABILITY_GET_PROTOCOL_ID,
+    QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID, QqBotAccountGetRequest,
+    QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
 };
 use mutsuki_runtime_contracts::{
     CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode, OrderingRequirement,
@@ -28,6 +29,7 @@ use crate::api::{
 use crate::config::QqBotConfig;
 use crate::gateway::GatewayFrame;
 pub use crate::gateway::QQBOT_GATEWAY_FRAME_PROTOCOL_ID;
+use crate::inbound_media::gateway_media_descriptor;
 
 pub const QQBOT_ADAPTER_PLUGIN_ID: &str = "mutsuki.bot.adapter.qqbot";
 pub const QQBOT_GATEWAY_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.gateway";
@@ -35,10 +37,15 @@ pub const QQBOT_OPENAPI_RUNNER_ID: &str = "mutsuki.bot.adapter.qqbot.openapi";
 pub const QQBOT_OPENAPI_RESULT_EVENT: &str = "mutsuki.bot.qqbot.openapi.result";
 
 pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> PluginManifest {
+    let gateway = if media_enabled {
+        gateway_media_descriptor(plugin_generation)
+    } else {
+        gateway_descriptor(plugin_generation)
+    };
     PluginBuilder::new(QQBOT_ADAPTER_PLUGIN_ID)
         .metadata("platform", ScalarValue::String("qqbot".into()))
         .metadata("adapter", ScalarValue::Bool(true))
-        .runner_descriptor(gateway_descriptor(plugin_generation))
+        .runner_descriptor(gateway)
         .runner_descriptor(openapi_descriptor(plugin_generation, media_enabled))
         .build()
         .manifest
@@ -192,6 +199,14 @@ impl Runner for QqOpenApiRunner {
                     })?;
                     self.service.gateway_status()
                 }
+                QQBOT_CAPABILITY_GET_PROTOCOL_ID => {
+                    let _: QqBotCapabilityGetRequest = parse_payload(task.payload.clone().into())
+                        .map_err(|error| {
+                        failure("mutsuki.bot.qqbot.capability.get.payload", error)
+                    })?;
+                    serde_json::to_value(self.service.config().capability_matrix())
+                        .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))
+                }
                 QQBOT_RAW_CALL_PROTOCOL_ID => self.service.raw_call(
                     parse_payload::<RawCallPayload>(task.payload.clone().into())
                         .map_err(|error| failure("mutsuki.bot.qqbot.raw.call.payload", error))?,
@@ -256,6 +271,7 @@ pub fn openapi_descriptor(plugin_generation: u64, media_enabled: bool) -> Runner
         BOT_MESSAGE_RECALL_PROTOCOL_ID.into(),
         QQBOT_ACCOUNT_GET_PROTOCOL_ID.into(),
         QQBOT_GATEWAY_STATUS_PROTOCOL_ID.into(),
+        QQBOT_CAPABILITY_GET_PROTOCOL_ID.into(),
         QQBOT_RAW_CALL_PROTOCOL_ID.into(),
     ];
     if media_enabled {

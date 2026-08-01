@@ -3253,6 +3253,9 @@ version = "0.1.0"
 dependencies = [
  "bot-echo",
  "libc",
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-delivery",
+ "mutsuki-bot-interaction",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-bot-service-host-integration",
@@ -3295,6 +3298,44 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "mutsuki-bot-conversation"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mutsuki-bot-protocol",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mutsuki-bot-delivery"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-agent-contracts",
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mutsuki-bot-interaction"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -3349,12 +3390,18 @@ version = "0.1.0"
 dependencies = [
  "fastrand",
  "futures-util",
+ "mutsuki-agent-contracts",
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-delivery",
+ "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
  "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-workshop",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-event-router",
+ "mutsuki-plugin-bot-media",
  "mutsuki-plugin-bot-mihuashi",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -3364,9 +3411,25 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tracing",
+]
+
+[[package]]
+name = "mutsuki-bot-state-db"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-delivery",
+ "mutsuki-bot-interaction",
+ "mutsuki-bot-protocol",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -3769,6 +3832,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-agent"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-agent-client",
+ "mutsuki-agent-contracts",
+ "mutsuki-bot-conversation",
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-bilibili"
 version = "0.1.0"
 dependencies = [
@@ -3895,6 +3974,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-media"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-agent-contracts",
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-mihuashi"
 version = "0.1.0"
 dependencies = [
@@ -3937,6 +4029,23 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-qq-web"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "mutsuki-bot-protocol",
+ "mutsuki-web-extension",
+ "mutsuki-web-host",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "uuid",

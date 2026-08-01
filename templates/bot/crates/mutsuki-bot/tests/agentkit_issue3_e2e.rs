@@ -297,6 +297,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
         "session-create",
         AGENT_SESSION_CREATE_PROTOCOL,
         &AgentSessionCreateRequest {
+            session_id: None,
             profile_id: "test.profile".into(),
             title: Some("Issue 3".into()),
         },
@@ -413,18 +414,24 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
         Some("agent.test.model_failed")
     );
 
-    let tool_failure = submit_outcome(
+    let tool_failure = submit_and_wait::<AgentRunResult>(
         &client,
         "agent-tool-fail",
         AGENT_RUN_PROTOCOL,
         &AgentRunRequest::new("test.profile", vec![AgentMessage::user("tool-fail")]),
     )
     .await;
-    assert_eq!(tool_failure.status, "failed");
-    assert_eq!(
-        tool_failure.error_code.as_deref(),
-        Some("agent.test.tool_failed")
-    );
+    assert_eq!(tool_failure.status, AgentRunStatus::Completed);
+    assert!(tool_failure.messages.iter().any(|message| {
+        message.role == AgentRole::Tool
+            && message
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("is_error"))
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            && message.content.contains("agent.test.tool_failed")
+    }));
 
     let executions_before_budget = tool_executions.load(Ordering::SeqCst);
     let mut budget = AgentRunRequest::new("test.profile", vec![AgentMessage::user("budget")]);

@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
     BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BotEventKind, BotMessage, BotMessageRecallRequest, BotTarget, MessageSegment,
-    QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID,
+    BotConversationKind, BotEventKind, BotMediaKind, BotMessage, BotMessageRecallRequest,
+    BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
+    QQBOT_RAW_CALL_PROTOCOL_ID,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerResult,
@@ -78,6 +79,89 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
     let message = event.message.unwrap();
     assert_eq!(message.plain_text(), "ping");
     assert_eq!(message.time_ms, None);
+}
+
+#[test]
+fn gateway_runner_maps_channel_mentions_and_quote_context() {
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    let task = Task::new(
+        "channel",
+        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+        json!({
+            "op": 0,
+            "s": 25,
+            "t": "AT_MESSAGE_CREATE",
+            "id": "channel-event",
+            "d": {
+                "id": "channel-message",
+                "guild_id": "guild",
+                "channel_id": "channel",
+                "content": "hello",
+                "mentions": [{"id": "bot", "is_you": true}],
+                "message_reference": {"message_id": "quoted"},
+                "author": {"id": "actor"}
+            }
+        }),
+    );
+
+    let result = run_one(&mut runner, task).unwrap();
+    let event: mutsuki_bot_protocol::BotEvent =
+        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
+    assert_eq!(
+        event.target,
+        BotTarget::GuildChannel {
+            guild_id: "guild".into(),
+            channel_id: "channel".into()
+        }
+    );
+    assert_eq!(
+        event.message.as_ref().unwrap().reply_to.as_deref(),
+        Some("quoted")
+    );
+    assert_eq!(event.ext["qqbot.mentioned_bot"], Value::Bool(true));
+    assert!(
+        event
+            .message
+            .unwrap()
+            .segments
+            .iter()
+            .any(|segment| matches!(
+                segment,
+                MessageSegment::MentionUser { user_id } if user_id == "bot"
+            ))
+    );
+}
+
+#[test]
+fn capability_matrix_follows_intents_and_resource_provider_configuration() {
+    let mut config = QqBotConfig::new("main", "app");
+    config.gateway_intents = 1 << 25;
+    let text_only = config.capability_matrix();
+    assert_eq!(
+        text_only.conversation_kinds,
+        vec![BotConversationKind::Private, BotConversationKind::Group]
+    );
+    assert!(text_only.inbound_media.is_empty());
+    assert!(text_only.outbound_media.is_empty());
+
+    config.gateway_intents |= 1 << 30;
+    config.media_provider_id = Some("memory".into());
+    let media = config.capability_matrix();
+    assert!(
+        media
+            .conversation_kinds
+            .contains(&BotConversationKind::Channel)
+    );
+    assert!(
+        !media
+            .outbound_conversation_kinds
+            .contains(&BotConversationKind::Channel)
+    );
+    assert!(media.inbound_media.contains(&BotMediaKind::Image));
+    assert_eq!(
+        media.upload.max_bytes_by_kind[&BotMediaKind::File],
+        100 * 1024 * 1024
+    );
 }
 
 #[test]
@@ -380,6 +464,71 @@ fn openapi_runner_preserves_image_then_text_send_order() {
     assert_eq!(requests[4].body.as_ref().unwrap()["content"], "caption");
 }
 
+#[test]
+fn openapi_runner_sends_audio_video_and_file_through_qq_media_messages() {
+    for (segment, file_type) in [
+        (
+            MessageSegment::Audio {
+                resource: test_media_resource("audio", "audio/silk"),
+            },
+            3,
+        ),
+        (
+            MessageSegment::Video {
+                resource: test_media_resource("video", "video/mp4"),
+            },
+            2,
+        ),
+        (
+            MessageSegment::File {
+                resource: test_media_resource("file", "application/octet-stream"),
+                name: Some("report.bin".into()),
+            },
+            4,
+        ),
+    ] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let mut runner = openapi_runner_with_shared(
+            requests.clone(),
+            vec![
+                token_response("TOKEN_A"),
+                ok_response(json!({"upload_id": "UPLOAD", "block_size": 1024})),
+                ok_response(json!({"file_info": "FILE_INFO"})),
+                ok_response(json!({"id": "MEDIA_MESSAGE"})),
+            ],
+            Box::new(NoopIdSource::new(900)),
+        );
+        let message = BotMessage {
+            message_id: None,
+            target: BotTarget::Group {
+                group_id: "GROUP_OPENID".into(),
+            },
+            sender: None,
+            segments: vec![segment],
+            reply_to: Some("SOURCE_MESSAGE_ID".into()),
+            time_ms: None,
+            ext: Default::default(),
+        };
+        run_one(
+            &mut runner,
+            Task::new(
+                format!("media-{file_type}"),
+                BOT_MESSAGE_SEND_PROTOCOL_ID,
+                serde_json::to_value(message).unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests[1].body.as_ref().unwrap()["file_type"], file_type);
+        assert_eq!(requests[3].body.as_ref().unwrap()["msg_type"], 7);
+        assert_eq!(
+            requests[3].body.as_ref().unwrap()["msg_id"],
+            "SOURCE_MESSAGE_ID"
+        );
+    }
+}
+
 fn test_image_resource() -> mutsuki_runtime_contracts::ResourceRef {
     use mutsuki_runtime_contracts::{
         ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
@@ -403,11 +552,22 @@ fn test_image_resource() -> mutsuki_runtime_contracts::ResourceRef {
             method: "memory".into(),
         },
         size_hint: Some(3),
-        content_hash: None,
+        content_hash: Some("sha256:image".into()),
         lifetime: ResourceLifetime::Persistent,
         lease: None,
         seal_state: ResourceSealState::Sealed,
     }
+}
+
+fn test_media_resource(id: &str, schema: &str) -> mutsuki_runtime_contracts::ResourceRef {
+    let mut resource = test_image_resource();
+    resource.ref_id = format!("{id}-1");
+    resource.resource_id.kind_id = id.into();
+    resource.resource_id.slot_id = resource.ref_id.clone();
+    resource.resource_kind = id.into();
+    resource.schema = schema.into();
+    resource.content_hash = Some(format!("sha256:{id}"));
+    resource
 }
 
 #[test]

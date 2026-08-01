@@ -246,6 +246,50 @@ def analyze(cases: list[dict[str, Any]], counters: dict[str, int]) -> dict[str, 
     }
 
 
+def metric_value(case: dict[str, Any], path: str) -> float:
+    value: Any = case["metrics"]
+    for part in path.split("."):
+        value = value[part]
+    return float(value)
+
+
+def evaluate_budgets(cases: list[dict[str, Any]], filtered: bool) -> dict[str, Any]:
+    manifest = json.loads((ROOT / "benchmarks/workloads-v2.json").read_text())
+    results = []
+    evaluated = set()
+    budgets = manifest.get("acceptance_budgets", [])
+    for budget_index, budget in enumerate(budgets):
+        matches = [case for case in cases if case["case_id"] == budget["case_id"]]
+        if not matches:
+            continue
+        evaluated.add(budget_index)
+        for case in matches:
+            actual = metric_value(case, budget["metric"])
+            passed = True
+            if "max" in budget:
+                passed = passed and actual <= float(budget["max"])
+            if "min" in budget:
+                passed = passed and actual >= float(budget["min"])
+            results.append(
+                {
+                    "case_id": budget["case_id"],
+                    "dimensions": case["dimensions"],
+                    "metric": budget["metric"],
+                    "actual": actual,
+                    "min": budget.get("min"),
+                    "max": budget.get("max"),
+                    "passed": passed,
+                }
+            )
+    return {
+        "passed": bool(results) and all(result["passed"] for result in results),
+        "complete": not filtered and len(evaluated) == len(budgets),
+        "evaluated_budget_count": len(results),
+        "declared_budget_count": len(budgets),
+        "results": results,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("smoke", "reference"), default="smoke")
@@ -385,12 +429,13 @@ def main() -> None:
     )
 
     repository_revisions = revisions(args.repository)
+    budget_acceptance = evaluate_budgets(cases, bool(os.environ.get("MUTSUKI_BENCH_CASE")))
     environment_value = environment(args.mode, process_runs)
     generated_at = dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
     report = {
         "schema_version": "mutsuki.performance.report/v1",
-        "suite_version": "mutsuki-bot-plugins-issue10-v1",
-        "workload_version": "mutsuki.performance.bot-workloads/v1",
+        "suite_version": "mutsuki-bot-qq-ai-issue140-v2",
+        "workload_version": "mutsuki.performance.bot-workloads/v2",
         "report_id": f"bot-plugins-{args.mode}-{generated_at}",
         "generated_at": generated_at,
         "revision_lock_hash": digest(repository_revisions),
@@ -401,6 +446,13 @@ def main() -> None:
             "qq-adapter-map",
             "event-router",
             "command",
+            "handler-pipeline",
+            "conversation-session",
+            "agent-bridge",
+            "media-bridge",
+            "active-delivery-idempotency",
+            "interaction-state-machine",
+            "qq-management-web",
             "link-parser",
             "gateway-dedup",
             "rate-limit",
@@ -424,8 +476,9 @@ def main() -> None:
             "passed": not any(counters.values()),
             "counters": dict(sorted(counters.items())),
         },
+        "performance_acceptance": budget_acceptance,
         "metadata": {
-            "fixture_manifest": "benchmarks/workloads-v1.json",
+            "fixture_manifest": "benchmarks/workloads-v2.json",
             "fixture_version": "mutsuki.bot.benchmark-fixtures/v1",
             "contract_validation": "MutsukiCore performance model v1",
         },
@@ -436,6 +489,12 @@ def main() -> None:
     analysis_path.write_text(json.dumps(analyze(cases, dict(counters)), indent=2) + "\n")
     print(output)
     print(analysis_path)
+    if (
+        not report["correctness"]["passed"]
+        or not budget_acceptance["passed"]
+        or (args.mode == "reference" and not budget_acceptance["complete"])
+    ):
+        raise SystemExit("Bot performance acceptance failed")
 
 
 if __name__ == "__main__":

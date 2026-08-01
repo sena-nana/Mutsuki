@@ -224,6 +224,8 @@ mod tests {
             },
             name: name.into(),
             args,
+            command_path: vec![name.into()],
+            typed_args: Default::default(),
             raw_text: format!("/{name}"),
         }
     }

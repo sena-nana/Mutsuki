@@ -18,6 +18,10 @@ pub struct QqOpenApiService {
 }
 
 impl QqOpenApiService {
+    pub fn config(&self) -> &QqBotConfig {
+        self.transport.config()
+    }
+
     pub fn account_id(&self) -> &str {
         &self.transport.config().account_id
     }
@@ -63,7 +67,9 @@ impl QqOpenApiService {
         let mut pending = Vec::new();
         for segment in message.segments {
             match segment {
-                MessageSegment::Image { resource } => {
+                segment @ (MessageSegment::Image { .. }
+                | MessageSegment::Audio { .. }
+                | MessageSegment::Video { .. }) => {
                     if !pending.is_empty() {
                         responses.push(self.send_segment_group(
                             scene.clone(),
@@ -72,17 +78,24 @@ impl QqOpenApiService {
                             message.reply_to.clone(),
                         )?);
                     }
+                    let (file_type, resource) = match segment {
+                        MessageSegment::Image { resource } => (1, resource),
+                        MessageSegment::Video { resource } => (2, resource),
+                        MessageSegment::Audio { resource } => (3, resource),
+                        _ => unreachable!(),
+                    };
+                    validate_outbound_resource(&resource, file_type)?;
                     let file_size = resource.size_hint;
                     let upload = self.upload_media(MediaUploadPayload {
                         scene: scene.clone(),
                         target_openid: target_openid.clone(),
-                        file_type: 1,
+                        file_type,
                         url: None,
                         file_data: None,
                         resource_ref: Some(resource),
                         upload_id: None,
                         srv_send_msg: Some(false),
-                        file_name: Some("image".into()),
+                        file_name: Some(default_media_name(file_type).into()),
                         file_size,
                         md5: None,
                         sha1: None,
@@ -92,11 +105,39 @@ impl QqOpenApiService {
                     responses.push(self.send_message(SendMessagePayload {
                         scene: scene.clone(),
                         target_openid: target_openid.clone(),
-                        body: json!({
-                            "msg_type": 7,
-                            "media": {"file_info": file_info},
-                            "content": "",
-                        }),
+                        body: media_message_body(file_info, message.reply_to.clone()),
+                    })?);
+                }
+                MessageSegment::File { resource, name } => {
+                    if !pending.is_empty() {
+                        responses.push(self.send_segment_group(
+                            scene.clone(),
+                            target_openid.clone(),
+                            std::mem::take(&mut pending),
+                            message.reply_to.clone(),
+                        )?);
+                    }
+                    validate_outbound_resource(&resource, 4)?;
+                    let upload = self.upload_media(MediaUploadPayload {
+                        scene: scene.clone(),
+                        target_openid: target_openid.clone(),
+                        file_type: 4,
+                        url: None,
+                        file_data: None,
+                        file_size: resource.size_hint,
+                        resource_ref: Some(resource),
+                        upload_id: None,
+                        srv_send_msg: Some(false),
+                        file_name: name.or_else(|| Some(default_media_name(4).into())),
+                        md5: None,
+                        sha1: None,
+                        md5_10m: None,
+                    })?;
+                    let file_info = json_field(&upload, "file_info")?.to_owned();
+                    responses.push(self.send_message(SendMessagePayload {
+                        scene: scene.clone(),
+                        target_openid: target_openid.clone(),
+                        body: media_message_body(file_info, message.reply_to.clone()),
                     })?);
                 }
                 MessageSegment::Text { .. }
@@ -303,6 +344,55 @@ impl QqOpenApiService {
         }
         self.exchange_upload_id(&payload, &upload_id)
     }
+}
+
+fn validate_outbound_resource(
+    resource: &mutsuki_runtime_contracts::ResourceRef,
+    file_type: u8,
+) -> Result<(), QqOpenApiError> {
+    let size = resource.size_hint.ok_or_else(|| {
+        QqOpenApiError::InvalidPayload("outbound media ResourceRef is missing size".into())
+    })?;
+    if resource
+        .content_hash
+        .as_deref()
+        .is_none_or(|hash| hash.trim().is_empty())
+    {
+        return Err(QqOpenApiError::InvalidPayload(
+            "outbound media ResourceRef is missing content hash".into(),
+        ));
+    }
+    let max_bytes = match file_type {
+        1 | 3 => 20 * 1024 * 1024,
+        2 => 30 * 1024 * 1024,
+        4 => 100 * 1024 * 1024,
+        _ => return Err(QqOpenApiError::InvalidPayload("invalid media kind".into())),
+    };
+    if size > max_bytes {
+        return Err(QqOpenApiError::InvalidPayload(format!(
+            "outbound media exceeds QQ limit of {max_bytes} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn default_media_name(file_type: u8) -> &'static str {
+    match file_type {
+        1 => "image",
+        2 => "video",
+        3 => "audio",
+        _ => "file",
+    }
+}
+
+fn media_message_body(file_info: String, reply_to: Option<String>) -> Value {
+    let mut body = json!({
+        "msg_type": 7,
+        "media": {"file_info": file_info},
+        "content": "",
+    });
+    insert_optional(&mut body, "msg_id", reply_to);
+    body
 }
 
 fn ensure_file_info(body: &Value) -> Result<(), QqOpenApiError> {
