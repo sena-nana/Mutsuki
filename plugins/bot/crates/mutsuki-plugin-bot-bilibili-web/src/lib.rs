@@ -79,13 +79,17 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("login.start", {
+        ctx.register_async("login.start", {
             let service = service.clone();
             move |params| {
-                require_runtime_write(&params)?;
-                let actor = optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
-                let result = service.login_start(&actor).map_err(map_bili_error)?;
-                Ok(serde_json::to_value(result).unwrap_or_default())
+                let service = service.clone();
+                async move {
+                    require_runtime_write(&params)?;
+                    let actor =
+                        optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
+                    let result = service.login_start(&actor).await.map_err(map_bili_error)?;
+                    Ok(serde_json::to_value(result).unwrap_or_default())
+                }
             }
         });
 

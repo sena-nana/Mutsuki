@@ -1,8 +1,11 @@
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 
+use image::ImageFormat;
 use mutsuki_protocol_image::{
-    Fill, ImageFit, ImageRenderRequest, ImageRenderResponse, PNG_SCHEMA, Point, RENDER, Rgba,
+    CARD_RENDER, CardRenderRequest, Fill, GradientStop, ImageFit, ImageRenderRequest,
+    ImageRenderResponse, ImageScene, PNG_SCHEMA, Point, QR_RENDER, QrRenderRequest, RENDER, Rgba,
     SceneEffect, SceneNode, SceneRect, TextAlign, validate_scene,
 };
 use mutsuki_runtime_contracts::{
@@ -15,6 +18,7 @@ use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
     map_work_batch_entries,
 };
+use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use skia_safe::canvas::{SaveLayerRec, SrcRectConstraint};
@@ -118,11 +122,41 @@ impl SkiaRenderRunner {
     }
 
     fn run_task(&self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        let request: ImageRenderRequest = serde_json::from_value(task.payload.to_value())
-            .map_err(|error| render_error(task, "request.invalid", error.to_string()))?;
-        validate_scene(&request.scene)
-            .map_err(|error| render_error(task, error.code, error.detail))?;
-        let bytes = self.render(task, &request)?;
+        let (bytes, width, height) = match task.protocol_id.as_str() {
+            RENDER => {
+                let request: ImageRenderRequest = serde_json::from_value(task.payload.to_value())
+                    .map_err(|error| {
+                    render_error(task, "request.invalid", error.to_string())
+                })?;
+                validate_scene(&request.scene)
+                    .map_err(|error| render_error(task, error.code, error.detail))?;
+                let width = request.scene.width;
+                let height = request.scene.height;
+                (self.render_scene(task, &request.scene)?, width, height)
+            }
+            CARD_RENDER => {
+                let request: CardRenderRequest = serde_json::from_value(task.payload.to_value())
+                    .map_err(|error| render_error(task, "request.invalid", error.to_string()))?;
+                let scene = card_scene(request);
+                validate_scene(&scene)
+                    .map_err(|error| render_error(task, error.code, error.detail))?;
+                let width = scene.width;
+                let height = scene.height;
+                (self.render_scene(task, &scene)?, width, height)
+            }
+            QR_RENDER => {
+                let request: QrRenderRequest = serde_json::from_value(task.payload.to_value())
+                    .map_err(|error| render_error(task, "request.invalid", error.to_string()))?;
+                render_qr(task, &request)?
+            }
+            protocol_id => {
+                return Err(render_error(
+                    task,
+                    "request.protocol",
+                    format!("unsupported image protocol: {protocol_id}"),
+                ));
+            }
+        };
         if bytes.len() > MAX_OUTPUT_BYTES {
             return Err(render_error(
                 task,
@@ -140,8 +174,8 @@ impl SkiaRenderRunner {
             .map_err(|error| render_error(task, "output.provider", error.to_string()))?;
         let response = ImageRenderResponse {
             resource: resource.clone(),
-            width: request.scene.width,
-            height: request.scene.height,
+            width,
+            height,
             byte_len,
         };
         let mut result = RunnerResult::completed(task.task_id.clone());
@@ -153,10 +187,10 @@ impl SkiaRenderRunner {
         Ok(result)
     }
 
-    fn render(&self, task: &Task, request: &ImageRenderRequest) -> Result<Vec<u8>, RuntimeError> {
-        let width = i32::try_from(request.scene.width)
+    fn render_scene(&self, task: &Task, scene: &ImageScene) -> Result<Vec<u8>, RuntimeError> {
+        let width = i32::try_from(scene.width)
             .map_err(|error| render_error(task, "surface.invalid", error.to_string()))?;
-        let height = i32::try_from(request.scene.height)
+        let height = i32::try_from(scene.height)
             .map_err(|error| render_error(task, "surface.invalid", error.to_string()))?;
         let mut surface = surfaces::raster_n32_premul((width, height)).ok_or_else(|| {
             render_error(
@@ -165,15 +199,177 @@ impl SkiaRenderRunner {
                 "failed to create CPU raster surface",
             )
         })?;
-        surface.canvas().clear(color4f(request.scene.background));
+        surface.canvas().clear(color4f(scene.background));
         let mut state = RenderState {
             task,
             resources: self.resources.as_ref(),
             fonts: &self.fonts,
             total_input_bytes: 0,
         };
-        draw_nodes(surface.canvas(), &request.scene.nodes, &mut state)?;
+        draw_nodes(surface.canvas(), &scene.nodes, &mut state)?;
         encode_png(task, &mut surface)
+    }
+}
+
+const CARD_WIDTH: u32 = 1200;
+const CARD_HEIGHT: u32 = 630;
+const CARD_FONT_FAMILIES: &[&str] = &["Noto Sans SC", "Noto Sans CJK SC"];
+
+fn card_scene(request: CardRenderRequest) -> ImageScene {
+    let full = SceneRect {
+        x: 0.0,
+        y: 0.0,
+        width: CARD_WIDTH as f32,
+        height: CARD_HEIGHT as f32,
+    };
+    let mut nodes = Vec::new();
+    if let Some(source) = request.cover {
+        nodes.push(SceneNode::Image {
+            bounds: full,
+            source: Box::new(source),
+            fit: ImageFit::Cover,
+            corner_radius: 0.0,
+            opacity: 1.0,
+            effects: Vec::new(),
+        });
+    } else {
+        nodes.push(SceneNode::Rect {
+            bounds: full,
+            corner_radius: 0.0,
+            fill: Fill::LinearGradient {
+                start: Point { x: 0.0, y: 0.0 },
+                end: Point {
+                    x: CARD_WIDTH as f32,
+                    y: CARD_HEIGHT as f32,
+                },
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: request.fallback_gradient.start,
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: request.fallback_gradient.end,
+                    },
+                ],
+            },
+            opacity: 1.0,
+            effects: Vec::new(),
+        });
+    }
+    nodes.push(SceneNode::Rect {
+        bounds: SceneRect {
+            x: 0.0,
+            y: 346.5,
+            width: CARD_WIDTH as f32,
+            height: 283.5,
+        },
+        corner_radius: 0.0,
+        fill: Fill::LinearGradient {
+            start: Point { x: 0.0, y: 346.5 },
+            end: Point { x: 0.0, y: 630.0 },
+            stops: vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: rgba(12, 10, 18, 0),
+                },
+                GradientStop {
+                    offset: 0.35,
+                    color: rgba(12, 10, 18, 190),
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: rgba(12, 10, 18, 244),
+                },
+            ],
+        },
+        opacity: 1.0,
+        effects: Vec::new(),
+    });
+    nodes.extend([
+        card_text(&request.brand, 355.0, 28.0, 22.0, 700, 1.0, 1, false),
+        card_text(&request.title, 394.0, 80.0, 38.0, 700, 1.08, 2, true),
+        card_text(&request.description, 480.0, 66.0, 20.0, 400, 1.1, 3, true),
+        card_text(&request.url, 556.0, 26.0, 18.0, 400, 1.0, 1, true),
+    ]);
+    ImageScene {
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        background: Rgba::TRANSPARENT,
+        nodes,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn card_text(
+    text: &str,
+    y: f32,
+    height: f32,
+    font_size: f32,
+    font_weight: u16,
+    line_height: f32,
+    max_lines: u32,
+    ellipsis: bool,
+) -> SceneNode {
+    SceneNode::Text {
+        bounds: SceneRect {
+            x: 48.0,
+            y,
+            width: 1104.0,
+            height,
+        },
+        text: text.into(),
+        font_families: CARD_FONT_FAMILIES
+            .iter()
+            .map(|family| (*family).into())
+            .collect(),
+        font_size,
+        font_weight,
+        line_height,
+        align: TextAlign::Start,
+        max_lines,
+        ellipsis,
+        color: rgba(255, 255, 255, 255),
+        opacity: 1.0,
+        effects: Vec::new(),
+    }
+}
+
+fn render_qr(task: &Task, request: &QrRenderRequest) -> Result<(Vec<u8>, u32, u32), RuntimeError> {
+    if request.content.is_empty() {
+        return Err(render_error(task, "qr.content", "QR content is empty"));
+    }
+    if request.min_dimensions == 0
+        || request.min_dimensions > mutsuki_protocol_image::MAX_CANVAS_EDGE
+    {
+        return Err(render_error(
+            task,
+            "qr.dimensions",
+            format!(
+                "QR minimum dimensions must be between 1 and {}",
+                mutsuki_protocol_image::MAX_CANVAS_EDGE
+            ),
+        ));
+    }
+    let image = QrCode::new(request.content.as_bytes())
+        .map_err(|error| render_error(task, "qr.encode", error.to_string()))?
+        .render::<image::Luma<u8>>()
+        .min_dimensions(request.min_dimensions, request.min_dimensions)
+        .build();
+    let (width, height) = image.dimensions();
+    let mut bytes = Cursor::new(Vec::new());
+    image::DynamicImage::ImageLuma8(image)
+        .write_to(&mut bytes, ImageFormat::Png)
+        .map_err(|error| render_error(task, "qr.png", error.to_string()))?;
+    Ok((bytes.into_inner(), width, height))
+}
+
+const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Rgba {
+    Rgba {
+        red,
+        green,
+        blue,
+        alpha,
     }
 }
 
@@ -619,23 +815,28 @@ fn color8(color: Rgba) -> Color {
 
 #[must_use]
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
-    let mut manifest = PluginBuilder::new(PLUGIN_ID)
-        .runner(Box::new(ManifestOnlyRunner {
-            descriptor: runner_descriptor(),
-        }))
-        .protocol_handler(protocol_descriptor(), RUNNER_ID, "cpu")
-        .build()
-        .manifest;
-    manifest
-        .provides
-        .protocol_classes
-        .insert(RENDER.into(), ProtocolClass::Effect);
+    let mut builder = PluginBuilder::new(PLUGIN_ID).runner(Box::new(ManifestOnlyRunner {
+        descriptor: runner_descriptor(),
+    }));
+    for protocol_id in mutsuki_protocol_image::PROTOCOL_IDS {
+        builder = builder.protocol_handler(protocol_descriptor(protocol_id), RUNNER_ID, "cpu");
+    }
+    let mut manifest = builder.build().manifest;
+    for protocol_id in mutsuki_protocol_image::PROTOCOL_IDS {
+        manifest
+            .provides
+            .protocol_classes
+            .insert((*protocol_id).into(), ProtocolClass::Effect);
+    }
     manifest
 }
 
 fn runner_descriptor() -> RunnerDescriptor {
-    RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
-        .accepted_protocol(RENDER)
+    let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
+    for protocol_id in mutsuki_protocol_image::PROTOCOL_IDS {
+        builder = builder.accepted_protocol(*protocol_id);
+    }
+    builder
         .purity(RunnerPurity::Effectful)
         .execution_class(ExecutionClass::Cpu)
         .batch_capability(RunnerBatchCapability {
@@ -647,11 +848,11 @@ fn runner_descriptor() -> RunnerDescriptor {
         .build()
 }
 
-fn protocol_descriptor() -> mutsuki_runtime_contracts::ProtocolDescriptor {
-    ProtocolDescriptorBuilder::new(RENDER)
-        .input_schema(mutsuki_protocol_image::input_schema(RENDER).unwrap())
-        .output_schema(mutsuki_protocol_image::output_schema(RENDER).unwrap())
-        .error_schema(mutsuki_protocol_image::error_schema(RENDER).unwrap())
+fn protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(mutsuki_protocol_image::input_schema(protocol_id).unwrap())
+        .output_schema(mutsuki_protocol_image::output_schema(protocol_id).unwrap())
+        .error_schema(mutsuki_protocol_image::error_schema(protocol_id).unwrap())
         .build()
 }
 
@@ -863,6 +1064,14 @@ mod tests {
             manifest().provides.protocol_classes.get(RENDER),
             Some(&ProtocolClass::Effect)
         );
+        assert_eq!(
+            manifest().provides.protocol_classes.get(CARD_RENDER),
+            Some(&ProtocolClass::Effect)
+        );
+        assert_eq!(
+            manifest().provides.protocol_classes.get(QR_RENDER),
+            Some(&ProtocolClass::Effect)
+        );
     }
 
     #[test]
@@ -932,6 +1141,193 @@ mod tests {
             ))
             .unwrap_err();
         assert!(missing.route.contains("text.glyph_missing"));
+    }
+
+    #[test]
+    fn card_protocol_preserves_previous_mihuashi_pixels() {
+        let resources = Arc::new(TestGateway::new());
+        let font =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fonts/NotoSansSC-Test.ttf");
+        let runner = SkiaRenderRunner::launch(
+            SkiaRenderConfig {
+                output_provider_id: "memory".into(),
+                font_files: vec![font],
+            },
+            resources.clone(),
+        )
+        .unwrap();
+        let cover = resources
+            .create_blob_resource("memory", "image/png", fixture_png())
+            .unwrap();
+        let legacy = runner
+            .run_task(&Task::new(
+                "legacy-mihuashi-card",
+                RENDER,
+                serde_json::to_value(ImageRenderRequest {
+                    scene: legacy_mihuashi_scene(Some(cover.clone())),
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let migrated = runner
+            .run_task(&Task::new(
+                "migrated-mihuashi-card",
+                CARD_RENDER,
+                serde_json::to_value(CardRenderRequest {
+                    brand: "米画师".into(),
+                    title: "Painter".into(),
+                    description: "Window".into(),
+                    url: "https://www.mihuashi.com/profiles/1".into(),
+                    cover: Some(cover),
+                    fallback_gradient: mutsuki_protocol_image::CardGradient {
+                        start: rgba(240, 91, 122, 255),
+                        end: rgba(91, 72, 176, 255),
+                    },
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let legacy = output_png(&resources, legacy, "read-legacy-card");
+        let migrated = output_png(&resources, migrated, "read-migrated-card");
+        assert_eq!(
+            image::load_from_memory(&legacy).unwrap().to_rgba8(),
+            image::load_from_memory(&migrated).unwrap().to_rgba8()
+        );
+        let legacy_fallback = runner
+            .run_task(&Task::new(
+                "legacy-mihuashi-fallback",
+                RENDER,
+                serde_json::to_value(ImageRenderRequest {
+                    scene: legacy_mihuashi_scene(None),
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let migrated_fallback = runner
+            .run_task(&Task::new(
+                "migrated-mihuashi-fallback",
+                CARD_RENDER,
+                serde_json::to_value(CardRenderRequest {
+                    brand: "米画师".into(),
+                    title: "Painter".into(),
+                    description: "Window".into(),
+                    url: "https://www.mihuashi.com/profiles/1".into(),
+                    cover: None,
+                    fallback_gradient: mutsuki_protocol_image::CardGradient {
+                        start: rgba(240, 91, 122, 255),
+                        end: rgba(91, 72, 176, 255),
+                    },
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(
+            image::load_from_memory(&output_png(
+                &resources,
+                legacy_fallback,
+                "read-legacy-fallback"
+            ))
+            .unwrap()
+            .to_rgba8(),
+            image::load_from_memory(&output_png(
+                &resources,
+                migrated_fallback,
+                "read-migrated-fallback"
+            ))
+            .unwrap()
+            .to_rgba8()
+        );
+        write_visual_artifact("mihuashi-before.png", &legacy);
+        write_visual_artifact("mihuashi-after.png", &migrated);
+    }
+
+    #[test]
+    fn qr_protocol_preserves_previous_bilibili_pixels() {
+        let resources = Arc::new(TestGateway::new());
+        let font =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fonts/NotoSansSC-Test.ttf");
+        let runner = SkiaRenderRunner::launch(
+            SkiaRenderConfig {
+                output_provider_id: "memory".into(),
+                font_files: vec![font],
+            },
+            resources.clone(),
+        )
+        .unwrap();
+        let content = "https://passport.bilibili.com/h5-app/passport/login/scan-web?key=test";
+        let rendered = runner
+            .run_task(&Task::new(
+                "migrated-bilibili-qr",
+                QR_RENDER,
+                serde_json::to_value(QrRenderRequest {
+                    content: content.into(),
+                    min_dimensions: 256,
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let actual = output_png(&resources, rendered, "read-migrated-qr");
+        let expected_image = QrCode::new(content.as_bytes())
+            .unwrap()
+            .render::<image::Luma<u8>>()
+            .min_dimensions(256, 256)
+            .build();
+        let mut expected = Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(expected_image)
+            .write_to(&mut expected, ImageFormat::Png)
+            .unwrap();
+        let expected = expected.into_inner();
+        assert_eq!(
+            image::load_from_memory(&expected).unwrap().to_rgba8(),
+            image::load_from_memory(&actual).unwrap().to_rgba8()
+        );
+        write_visual_artifact("bilibili-qr-before.png", &expected);
+        write_visual_artifact("bilibili-qr-after.png", &actual);
+    }
+
+    #[test]
+    fn bilibili_card_visual_fixture_uses_standard_layout_and_brand_palette() {
+        let resources = Arc::new(TestGateway::new());
+        let font = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fonts/NotoSansSC-Bilibili-Test.ttf");
+        let runner = SkiaRenderRunner::launch(
+            SkiaRenderConfig {
+                output_provider_id: "memory".into(),
+                font_files: vec![font],
+            },
+            resources.clone(),
+        )
+        .unwrap();
+        let result = runner
+            .run_task(&Task::new(
+                "bilibili-card-visual",
+                CARD_RENDER,
+                serde_json::to_value(CardRenderRequest {
+                    brand: "哔哩哔哩".into(),
+                    title: "新的动态与视频通知".into(),
+                    description: "发布了新投稿".into(),
+                    url: "https://www.bilibili.com/video/BV1Visual".into(),
+                    cover: None,
+                    fallback_gradient: mutsuki_protocol_image::CardGradient {
+                        start: rgba(251, 114, 153, 255),
+                        end: rgba(0, 174, 236, 255),
+                    },
+                })
+                .unwrap(),
+            ))
+            .unwrap();
+        let png = output_png(&resources, result, "read-bilibili-card");
+        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(decoded.dimensions(), (1200, 630));
+        assert_eq!(decoded.get_pixel(0, 0).0, [251, 114, 153, 255]);
+        assert!(decoded.get_pixel(1199, 0).0[2] > decoded.get_pixel(0, 0).0[2]);
+        assert!(decoded.get_pixel(48, 600).0[0] < 80);
+        let approved =
+            image::load_from_memory(include_bytes!("../tests/goldens/bilibili-card.png"))
+                .unwrap()
+                .to_rgba8();
+        assert_eq!(decoded, approved);
+        write_visual_artifact("bilibili-card.png", &png);
     }
 
     #[test]
@@ -1092,6 +1488,151 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn legacy_mihuashi_scene(source: Option<ResourceRef>) -> ImageScene {
+        let full = SceneRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1200.0,
+            height: 630.0,
+        };
+        let mut nodes = if let Some(source) = source {
+            vec![SceneNode::Image {
+                bounds: full,
+                source: Box::new(source),
+                fit: ImageFit::Cover,
+                corner_radius: 0.0,
+                opacity: 1.0,
+                effects: Vec::new(),
+            }]
+        } else {
+            vec![SceneNode::Rect {
+                bounds: full,
+                corner_radius: 0.0,
+                fill: Fill::LinearGradient {
+                    start: Point { x: 0.0, y: 0.0 },
+                    end: Point {
+                        x: 1200.0,
+                        y: 630.0,
+                    },
+                    stops: vec![
+                        GradientStop {
+                            offset: 0.0,
+                            color: rgba(240, 91, 122, 255),
+                        },
+                        GradientStop {
+                            offset: 1.0,
+                            color: rgba(91, 72, 176, 255),
+                        },
+                    ],
+                },
+                opacity: 1.0,
+                effects: Vec::new(),
+            }]
+        };
+        nodes.push(SceneNode::Rect {
+            bounds: SceneRect {
+                x: 0.0,
+                y: 346.5,
+                width: 1200.0,
+                height: 283.5,
+            },
+            corner_radius: 0.0,
+            fill: Fill::LinearGradient {
+                start: Point { x: 0.0, y: 346.5 },
+                end: Point { x: 0.0, y: 630.0 },
+                stops: vec![
+                    GradientStop {
+                        offset: 0.0,
+                        color: rgba(12, 10, 18, 0),
+                    },
+                    GradientStop {
+                        offset: 0.35,
+                        color: rgba(12, 10, 18, 190),
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: rgba(12, 10, 18, 244),
+                    },
+                ],
+            },
+            opacity: 1.0,
+            effects: Vec::new(),
+        });
+        nodes.extend([
+            legacy_card_text("米画师", 355.0, 28.0, 22.0, 700, 1.0, 1, false),
+            legacy_card_text("Painter", 394.0, 80.0, 38.0, 700, 1.08, 2, true),
+            legacy_card_text("Window", 480.0, 66.0, 20.0, 400, 1.1, 3, true),
+            legacy_card_text(
+                "https://www.mihuashi.com/profiles/1",
+                556.0,
+                26.0,
+                18.0,
+                400,
+                1.0,
+                1,
+                true,
+            ),
+        ]);
+        ImageScene {
+            width: 1200,
+            height: 630,
+            background: Rgba::TRANSPARENT,
+            nodes,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn legacy_card_text(
+        text: &str,
+        y: f32,
+        height: f32,
+        font_size: f32,
+        font_weight: u16,
+        line_height: f32,
+        max_lines: u32,
+        ellipsis: bool,
+    ) -> SceneNode {
+        SceneNode::Text {
+            bounds: SceneRect {
+                x: 48.0,
+                y,
+                width: 1104.0,
+                height,
+            },
+            text: text.into(),
+            font_families: vec!["Noto Sans SC".into(), "Noto Sans CJK SC".into()],
+            font_size,
+            font_weight,
+            line_height,
+            align: TextAlign::Start,
+            max_lines,
+            ellipsis,
+            color: rgba(255, 255, 255, 255),
+            opacity: 1.0,
+            effects: Vec::new(),
+        }
+    }
+
+    fn output_png(resources: &Arc<TestGateway>, result: RunnerResult, plan_id: &str) -> Vec<u8> {
+        let response: ImageRenderResponse = serde_json::from_value(result.output.unwrap()).unwrap();
+        resources
+            .collect_read_plan(&ReadPlan {
+                plan_id: plan_id.into(),
+                resource: response.resource,
+                operation: "collect".into(),
+                args: Value::Null,
+            })
+            .unwrap()
+    }
+
+    fn write_visual_artifact(name: &str, bytes: &[u8]) {
+        let Ok(root) = std::env::var("MUTSUKI_VISUAL_ARTIFACT_DIR") else {
+            return;
+        };
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(PathBuf::from(root).join(name), bytes).unwrap();
     }
 
     fn fixture_png() -> Vec<u8> {

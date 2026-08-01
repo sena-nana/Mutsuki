@@ -9,8 +9,7 @@ use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
 use mutsuki_protocol_image::{
-    Fill, GradientStop, ImageFit, ImageRenderRequest, ImageRenderResponse, ImageScene, Point,
-    RENDER, Rgba, SceneNode, SceneRect, TextAlign,
+    CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, Rgba,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, ProtocolClass, ReadPlan, RunnerDescriptor, RunnerPurity, RunnerResult,
@@ -29,11 +28,6 @@ use url::Url;
 pub const PLUGIN_ID: &str = "mutsuki.bot.mihuashi";
 pub const RUNNER_ID: &str = "mutsuki.bot.mihuashi.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.mihuashi.link/resolve@1";
-const CARD_WIDTH: u32 = 1200;
-const CARD_HEIGHT: u32 = 630;
-const CARD_WIDTH_PX: f32 = 1200.0;
-const CARD_HEIGHT_PX: f32 = 630.0;
-const CARD_FONT_FAMILIES: &[&str] = &["Noto Sans SC", "Noto Sans CJK SC"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MihuashiResolveRequest {
@@ -188,9 +182,27 @@ async fn run_task(
     };
     let render_outcome = ctx
         .call_raw(
-            RENDER,
-            serde_json::to_value(ImageRenderRequest {
-                scene: profile_scene(&card.0, &card.1, &snapshot.final_url, image),
+            CARD_RENDER,
+            serde_json::to_value(CardRenderRequest {
+                brand: "米画师".into(),
+                title: card.0,
+                description: card.1,
+                url: snapshot.final_url.clone(),
+                cover: image,
+                fallback_gradient: CardGradient {
+                    start: Rgba {
+                        red: 240,
+                        green: 91,
+                        blue: 122,
+                        alpha: 255,
+                    },
+                    end: Rgba {
+                        red: 91,
+                        green: 72,
+                        blue: 176,
+                        alpha: 255,
+                    },
+                },
             })
             .map_err(|error| fail(&task, error))?,
         )
@@ -231,140 +243,6 @@ async fn run_task(
     let mut result = RunnerResult::completed(task.task_id);
     result.tasks.push(outbound);
     Ok(result)
-}
-
-fn profile_scene(
-    title: &str,
-    description: &str,
-    url: &str,
-    image: Option<mutsuki_runtime_contracts::ResourceRef>,
-) -> ImageScene {
-    let full = SceneRect {
-        x: 0.0,
-        y: 0.0,
-        width: CARD_WIDTH_PX,
-        height: CARD_HEIGHT_PX,
-    };
-    let mut nodes = Vec::new();
-    if let Some(source) = image {
-        nodes.push(SceneNode::Image {
-            bounds: full,
-            source: Box::new(source),
-            fit: ImageFit::Cover,
-            corner_radius: 0.0,
-            opacity: 1.0,
-            effects: Vec::new(),
-        });
-    } else {
-        nodes.push(SceneNode::Rect {
-            bounds: full,
-            corner_radius: 0.0,
-            fill: Fill::LinearGradient {
-                start: Point { x: 0.0, y: 0.0 },
-                end: Point {
-                    x: CARD_WIDTH_PX,
-                    y: CARD_HEIGHT_PX,
-                },
-                stops: vec![
-                    GradientStop {
-                        offset: 0.0,
-                        color: rgba(240, 91, 122, 255),
-                    },
-                    GradientStop {
-                        offset: 1.0,
-                        color: rgba(91, 72, 176, 255),
-                    },
-                ],
-            },
-            opacity: 1.0,
-            effects: Vec::new(),
-        });
-    }
-    nodes.push(SceneNode::Rect {
-        bounds: SceneRect {
-            x: 0.0,
-            y: 346.5,
-            width: CARD_WIDTH_PX,
-            height: 283.5,
-        },
-        corner_radius: 0.0,
-        fill: Fill::LinearGradient {
-            start: Point { x: 0.0, y: 346.5 },
-            end: Point { x: 0.0, y: 630.0 },
-            stops: vec![
-                GradientStop {
-                    offset: 0.0,
-                    color: rgba(12, 10, 18, 0),
-                },
-                GradientStop {
-                    offset: 0.35,
-                    color: rgba(12, 10, 18, 190),
-                },
-                GradientStop {
-                    offset: 1.0,
-                    color: rgba(12, 10, 18, 244),
-                },
-            ],
-        },
-        opacity: 1.0,
-        effects: Vec::new(),
-    });
-    nodes.extend([
-        text_node("米画师", 355.0, 28.0, 22.0, 700, 1.0, 1, false),
-        text_node(title, 394.0, 80.0, 38.0, 700, 1.08, 2, true),
-        text_node(description, 480.0, 66.0, 20.0, 400, 1.1, 3, true),
-        text_node(url, 556.0, 26.0, 18.0, 400, 1.0, 1, true),
-    ]);
-    ImageScene {
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        background: Rgba::TRANSPARENT,
-        nodes,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn text_node(
-    text: &str,
-    y: f32,
-    height: f32,
-    font_size: f32,
-    font_weight: u16,
-    line_height: f32,
-    max_lines: u32,
-    ellipsis: bool,
-) -> SceneNode {
-    SceneNode::Text {
-        bounds: SceneRect {
-            x: 48.0,
-            y,
-            width: 1104.0,
-            height,
-        },
-        text: text.into(),
-        font_families: CARD_FONT_FAMILIES
-            .iter()
-            .map(|family| (*family).into())
-            .collect(),
-        font_size,
-        font_weight,
-        line_height,
-        align: TextAlign::Start,
-        max_lines,
-        ellipsis,
-        color: rgba(255, 255, 255, 255),
-        opacity: 1.0,
-        effects: Vec::new(),
-    }
-}
-
-const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Rgba {
-    Rgba {
-        red,
-        green,
-        blue,
-        alpha,
-    }
 }
 
 fn parse_profile(html: &str, final_url: &str) -> Result<(String, String, Option<String>), String> {
@@ -417,7 +295,9 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
         .provides
         .protocol_classes
         .insert(LINK_RESOLVE.into(), ProtocolClass::Effect);
-    manifest.requires.push(format!("task_protocol:{RENDER}"));
+    manifest
+        .requires
+        .push(format!("task_protocol:{CARD_RENDER}"));
     manifest
 }
 fn descriptor() -> RunnerDescriptor {
@@ -591,7 +471,7 @@ mod tests {
         assert!(
             manifest()
                 .requires
-                .contains(&format!("task_protocol:{RENDER}"))
+                .contains(&format!("task_protocol:{CARD_RENDER}"))
         );
     }
 
@@ -601,25 +481,6 @@ mod tests {
         let parsed = parse_profile(html, "https://www.mihuashi.com/profiles/1").unwrap();
         assert_eq!(parsed.0, "Painter");
         assert_eq!(parsed.1, "Window");
-    }
-
-    #[test]
-    fn profile_scene_uses_fixed_card_layout_and_brand_fallback() {
-        let scene = profile_scene(
-            "Painter",
-            "Window",
-            "https://www.mihuashi.com/profiles/1",
-            None,
-        );
-        assert_eq!((scene.width, scene.height), (1200, 630));
-        assert!(matches!(
-            scene.nodes.first(),
-            Some(SceneNode::Rect {
-                fill: Fill::LinearGradient { .. },
-                ..
-            })
-        ));
-        assert!(mutsuki_protocol_image::validate_scene(&scene).is_ok());
     }
 
     #[tokio::test]

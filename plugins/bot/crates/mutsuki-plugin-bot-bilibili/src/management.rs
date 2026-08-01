@@ -1,7 +1,8 @@
 //! Structured Bilibili account/subscription management shared by chat commands and Web Console.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
+use async_trait::async_trait;
 use mutsuki_bot_protocol::BotTarget;
 use serde::{Deserialize, Serialize};
 
@@ -9,9 +10,13 @@ use crate::{
     BilibiliBackendConfig, BilibiliBackendKind, BilibiliConfig, BilibiliConfigStore,
     BilibiliCredentialStore, BilibiliError, BilibiliPollKind, BilibiliQrStatus,
     BilibiliSubscription, BilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository, binding_code, render_qr_png, select_subscription,
-    self_subscription_id_for,
+    SqliteBilibiliRepository, binding_code, select_subscription, self_subscription_id_for,
 };
+
+#[async_trait]
+pub trait BilibiliQrRenderer: Send + Sync {
+    async fn render_qr(&self, content: &str) -> Result<Vec<u8>, BilibiliError>;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +52,12 @@ pub struct LoginStartResult {
     #[serde(skip)]
     pub qr_png: Vec<u8>,
     pub qr_png_base64: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LoginSession {
+    pub url: String,
+    pub key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +111,7 @@ pub struct BilibiliManagementService {
     credential_store: Arc<dyn BilibiliCredentialStore>,
     config_store: Arc<dyn BilibiliConfigStore>,
     secret_presence: Arc<dyn BilibiliSecretPresence>,
+    qr_renderer: RwLock<Option<Arc<dyn BilibiliQrRenderer>>>,
 }
 
 impl BilibiliManagementService {
@@ -120,7 +132,12 @@ impl BilibiliManagementService {
             credential_store,
             config_store,
             secret_presence,
+            qr_renderer: RwLock::new(None),
         }
+    }
+
+    pub fn bind_qr_renderer(&self, renderer: Arc<dyn BilibiliQrRenderer>) {
+        *self.qr_renderer.write().expect("QR renderer lock") = Some(renderer);
     }
 
     pub fn config(&self) -> &SharedBilibiliConfig {
@@ -164,7 +181,29 @@ impl BilibiliManagementService {
         }
     }
 
-    pub fn login_start(&self, actor_id: &str) -> Result<LoginStartResult, BilibiliError> {
+    pub async fn login_start(&self, actor_id: &str) -> Result<LoginStartResult, BilibiliError> {
+        let renderer = self
+            .qr_renderer
+            .read()
+            .expect("QR renderer lock")
+            .clone()
+            .ok_or_else(|| {
+                BilibiliError::ManagementUnavailable("image QR renderer is unavailable".into())
+            })?;
+        let session = self.login_start_session(actor_id)?;
+        let png = renderer.render_qr(&session.url).await?;
+        Ok(LoginStartResult {
+            url: session.url,
+            key: session.key,
+            qr_png_base64: base64_encode(&png),
+            qr_png: png,
+        })
+    }
+
+    pub(crate) fn login_start_session(
+        &self,
+        actor_id: &str,
+    ) -> Result<LoginSession, BilibiliError> {
         self.require_web_management()?;
         let qr = self
             .transport
@@ -174,12 +213,9 @@ impl BilibiliManagementService {
         self.repository
             .set_qr_session(actor_id, &qr.key)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        let png = render_qr_png(&qr.url)?;
-        Ok(LoginStartResult {
+        Ok(LoginSession {
             url: qr.url,
             key: qr.key,
-            qr_png_base64: base64_encode(&png),
-            qr_png: png,
         })
     }
 

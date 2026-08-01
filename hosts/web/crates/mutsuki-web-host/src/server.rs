@@ -231,7 +231,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             continue;
         };
 
-        match state.bridge.handle_message(session_id, wire) {
+        match state.bridge.handle_message_async(session_id, wire).await {
             Ok(HandleOutcome::Reply(reply)) => {
                 if let WireMessage::HelloAck { session, .. } = &reply {
                     session_id = Some(session.session_id);

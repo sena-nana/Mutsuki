@@ -5,7 +5,9 @@ use serde_json::{Value, json};
 pub const VERSION: &str = "0.1.0";
 pub const ABI_CODEC: &str = "serde-json";
 pub const RENDER: &str = "mutsuki.image.render";
-pub const PROTOCOL_IDS: &[&str] = &[RENDER];
+pub const CARD_RENDER: &str = "mutsuki.image.card.render";
+pub const QR_RENDER: &str = "mutsuki.image.qr.render";
+pub const PROTOCOL_IDS: &[&str] = &[RENDER, CARD_RENDER, QR_RENDER];
 pub const PNG_SCHEMA: &str = "mutsuki.image.raster.png.v1";
 
 pub const MAX_CANVAS_EDGE: u32 = 4096;
@@ -159,6 +161,34 @@ pub struct ImageScene {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ImageRenderRequest {
     pub scene: ImageScene,
+}
+
+/// Content and brand styling for the standard 1200x630 social link card.
+///
+/// Card geometry, typography, cover fitting, and contrast treatment are owned
+/// by the renderer so callers only describe the content they want to present.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CardRenderRequest {
+    pub brand: String,
+    pub title: String,
+    pub description: String,
+    pub url: String,
+    #[serde(default)]
+    pub cover: Option<ResourceRef>,
+    pub fallback_gradient: CardGradient,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardGradient {
+    pub start: Rgba,
+    pub end: Rgba,
+}
+
+/// Text content for a square QR raster.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QrRenderRequest {
+    pub content: String,
+    pub min_dimensions: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -445,18 +475,39 @@ const fn full_opacity() -> f32 {
 
 #[must_use]
 pub fn input_schema(protocol_id: &str) -> Option<Value> {
-    (protocol_id == RENDER).then(|| {
-        json!({
+    match protocol_id {
+        RENDER => Some(json!({
             "type": "object",
             "required": ["scene"],
             "properties": {"scene": {"type": "object"}}
-        })
-    })
+        })),
+        CARD_RENDER => Some(json!({
+            "type": "object",
+            "required": ["brand", "title", "description", "url", "fallback_gradient"],
+            "properties": {
+                "brand": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "url": {"type": "string"},
+                "cover": {"type": ["object", "null"]},
+                "fallback_gradient": {"type": "object"}
+            }
+        })),
+        QR_RENDER => Some(json!({
+            "type": "object",
+            "required": ["content", "min_dimensions"],
+            "properties": {
+                "content": {"type": "string"},
+                "min_dimensions": {"type": "integer", "minimum": 1, "maximum": 4096}
+            }
+        })),
+        _ => None,
+    }
 }
 
 #[must_use]
 pub fn output_schema(protocol_id: &str) -> Option<Value> {
-    (protocol_id == RENDER).then(|| {
+    PROTOCOL_IDS.contains(&protocol_id).then(|| {
         json!({
             "type": "object",
             "required": ["resource", "width", "height", "byte_len"]
@@ -466,7 +517,7 @@ pub fn output_schema(protocol_id: &str) -> Option<Value> {
 
 #[must_use]
 pub fn error_schema(protocol_id: &str) -> Option<Value> {
-    (protocol_id == RENDER).then(|| {
+    PROTOCOL_IDS.contains(&protocol_id).then(|| {
         json!({
             "type": "object",
             "required": ["code", "detail"]
@@ -625,6 +676,50 @@ mod tests {
         let value = serde_json::to_value(&scene).unwrap();
         assert_eq!(serde_json::from_value::<ImageScene>(value).unwrap(), scene);
         assert!(validate_scene(&scene).is_ok());
+    }
+
+    #[test]
+    fn standard_card_and_qr_contracts_round_trip_and_publish_schemas() {
+        let card = CardRenderRequest {
+            brand: "米画师".into(),
+            title: "Painter".into(),
+            description: "Window".into(),
+            url: "https://www.mihuashi.com/profiles/1".into(),
+            cover: Some(resource()),
+            fallback_gradient: CardGradient {
+                start: Rgba {
+                    red: 240,
+                    green: 91,
+                    blue: 122,
+                    alpha: 255,
+                },
+                end: Rgba {
+                    red: 91,
+                    green: 72,
+                    blue: 176,
+                    alpha: 255,
+                },
+            },
+        };
+        let card_value = serde_json::to_value(&card).unwrap();
+        assert_eq!(
+            serde_json::from_value::<CardRenderRequest>(card_value).unwrap(),
+            card
+        );
+        let qr = QrRenderRequest {
+            content: "https://www.bilibili.com".into(),
+            min_dimensions: 256,
+        };
+        let qr_value = serde_json::to_value(&qr).unwrap();
+        assert_eq!(
+            serde_json::from_value::<QrRenderRequest>(qr_value).unwrap(),
+            qr
+        );
+        for protocol_id in PROTOCOL_IDS {
+            assert!(input_schema(protocol_id).is_some());
+            assert!(output_schema(protocol_id).is_some());
+            assert!(error_schema(protocol_id).is_some());
+        }
     }
 
     #[test]

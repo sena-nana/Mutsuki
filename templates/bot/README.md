@@ -114,10 +114,11 @@ BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"repl
 [BotPlugins 官方开放平台 backend](https://github.com/sena-nana/Mutsuki/blob/main/plugins/bot/docs/bilibili-open-platform.md)。
 
 要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
-Provider），并让 QQ、业务插件与图片 renderer 的 Provider 选择一致。米画师保留 Chromium
-执行页面 JavaScript 和提取 DOM，再把结构化数据交给 Skia CPU Raster renderer 生成固定
-1200×630 PNG；Skia 不拥有网络或浏览器能力。一个本地装配示例如下（路径必须替换为本机
-绝对路径，默认模板仍保持零插件）：
+Provider），并让 QQ、业务插件与图片 renderer 的 Provider 选择一致。Bilibili 的链接、动态、
+投稿和预览只向 renderer 提交内容与品牌色，由 renderer 生成固定 1200×630 PNG；扫码登录也
+通过统一 QR 协议生成 PNG。米画师保留 Chromium 执行页面 JavaScript 和提取 DOM，再把
+结构化内容交给同一套卡片协议；Skia 不拥有网络或浏览器能力。一个本地装配示例如下（路径
+必须替换为本机绝对路径，默认模板仍保持零插件）：
 
 ```toml
 [[plugins.configured]]
@@ -146,12 +147,13 @@ id = "mutsuki.bot.mihuashi"
 media_provider_id = "mutsuki.std.resource.memory"
 ```
 
-renderer 只读取配置列出的字体文件，不使用系统字体 fallback。米画师 Scene 请求
-`Noto Sans SC` 或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及页面文本所需字形。
-缺少 renderer、字体、输出 Provider 或 Browser Snapshot 协议都会在启动或任务边界结构化失败，
-不会退回旧截图或原图。renderer 使用 `skia-safe 0.99.0` 官方 CPU 预编译组合；依赖层启用
-PDF、SVG、textlayout 与完整 WebP 以命中 binary cache，但插件协议仍只公开 CPU Raster 和 PNG，
-不接受 PDF/SVG 输入，也不输出 WebP。没有对应官方资产的平台仍会回退源码构建。
+renderer 只读取配置列出的字体文件，不使用系统字体 fallback。标准卡片请求 `Noto Sans SC`
+或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及业务文本所需字形。Bilibili 或米画师
+缺少卡片 renderer、Bilibili 管理模式缺少 QR renderer、或缺少字体/输出 Provider/Browser
+Snapshot 协议时，启动或任务边界会结构化失败，不会退回业务插件本地绘制、旧截图或原图。
+renderer 使用 `skia-safe 0.99.0` 官方 CPU 预编译组合；依赖层启用 PDF、SVG、textlayout 与
+完整 WebP 以命中 binary cache，但插件协议仍只公开 CPU Raster 和 PNG，不接受 PDF/SVG 输入，
+也不输出 WebP。没有对应官方资产的平台仍会回退源码构建。
 
 Cookie 扫码登录、聊天管理/自助
 绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend

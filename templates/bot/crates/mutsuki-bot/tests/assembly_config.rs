@@ -119,6 +119,7 @@ async fn bilibili_management_starts_with_host_owned_persistence_boundaries() {
     let secret_path = root.path().join("product.secret.toml");
     std::fs::write(&secret_path, "[secrets]\n").unwrap();
     let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    let font = test_font_path();
     std::fs::write(
         &config_path,
         service_toml(
@@ -130,6 +131,13 @@ secret_file = "{secret_path}"
 
 [[plugins.configured]]
 id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["{font}"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.command"
@@ -169,6 +177,59 @@ management = {{ enabled = true, allow_self_binding = true, command = "bili", adm
     let product = std::fs::read_to_string(&config_path).unwrap();
     assert!(product.contains("cookie_secret_key = \"BILIBILI_COOKIE\""));
     assert!(!product.contains("SESSDATA"));
+}
+
+#[tokio::test]
+async fn bilibili_fails_startup_without_image_renderer_protocol() {
+    let root = tempdir().unwrap();
+    let config_path = root.path().join("product.toml");
+    let secret_path = root.path().join("product.secret.toml");
+    std::fs::write(&secret_path, "[secrets]\n").unwrap();
+    let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        &config_path,
+        service_toml(
+            root.path(),
+            &format!(
+                r#"
+[security]
+secret_file = "{secret_path}"
+
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.bot.command"
+
+[plugins.configured.config]
+prefixes = ["/"]
+
+[[plugins.configured]]
+id = "mutsuki.bot.bilibili"
+
+[plugins.configured.config]
+backend = {{ type = "web_cookie", cookie_secret_key = "BILIBILI_COOKIE" }}
+live_interval_ms = 60000
+dynamic_interval_ms = 60000
+video_interval_ms = 60000
+retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
+subscriptions = []
+link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
+media_provider_id = "mutsuki.std.resource.memory"
+management = {{ enabled = true, allow_self_binding = true, command = "bili", admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
+"#,
+            ),
+        ),
+    )
+    .unwrap();
+
+    let error = assemble_service(load(&config_path))
+        .unwrap()
+        .start()
+        .await
+        .err()
+        .expect("missing image renderer protocol must fail startup");
+    assert!(error.to_string().contains("mutsuki.image.card.render"));
 }
 
 #[tokio::test]
@@ -229,7 +290,7 @@ media_provider_id = "mutsuki.std.resource.memory"
         .err()
         .expect("missing image renderer protocol must fail startup");
     assert!(
-        error.to_string().contains("mutsuki.image.render"),
+        error.to_string().contains("mutsuki.image.card.render"),
         "{error}"
     );
 }
@@ -392,6 +453,7 @@ async fn bilibili_chromium_backend_fails_startup_without_browser_protocol() {
     let secret_path = root.path().join("product.secret.toml");
     std::fs::write(&secret_path, "[secrets]\n").unwrap();
     let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    let font = test_font_path();
     std::fs::write(
         &config_path,
         service_toml(
@@ -403,6 +465,13 @@ secret_file = "{secret_path}"
 
 [[plugins.configured]]
 id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["{font}"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.bilibili"
@@ -737,6 +806,7 @@ panic_file = "panic.log"
 
 fn bilibili_open_platform_config(secret_path: &Path, dynamic: bool) -> String {
     let secret_path = secret_path.to_string_lossy().replace('\\', "/");
+    let font = test_font_path();
     let subscriptions = if dynamic {
         r#"[[plugins.configured.config.subscriptions]]
 subscription_id = "invalid-dynamic"
@@ -755,6 +825,13 @@ secret_file = "{secret_path}"
 
 [[plugins.configured]]
 id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render.skia"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["{font}"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.bilibili"
