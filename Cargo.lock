@@ -3772,17 +3772,17 @@ dependencies = [
 name = "mutsuki-plugin-bot-bilibili"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "fastrand",
  "hmac",
- "image",
  "md5",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-protocol-browser",
+ "mutsuki-protocol-image",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
- "qrcode",
  "reqwest",
  "rusqlite",
  "scraper",
@@ -3790,6 +3790,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.19",
+ "tokio",
  "url",
 ]
 
@@ -4017,6 +4018,7 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
+ "qrcode",
  "serde",
  "serde_json",
  "skia-safe",
@@ -4631,6 +4633,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

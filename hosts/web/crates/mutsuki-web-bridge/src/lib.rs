@@ -170,6 +170,26 @@ impl WebBridge {
         }
     }
 
+    pub async fn handle_message_async(
+        &self,
+        session_id: Option<Uuid>,
+        message: WireMessage,
+    ) -> ProtocolResult<HandleOutcome> {
+        let size = message.payload_size();
+        if size > self.inner.budgets.max_payload_bytes {
+            return Err(ProtocolError::PayloadTooLarge {
+                limit: self.inner.budgets.max_payload_bytes,
+                actual: size,
+            });
+        }
+        if let WireMessage::Rpc(request) = message {
+            let session = self.require_session(session_id)?;
+            let response = self.dispatch_rpc_async(&session, request).await;
+            return Ok(HandleOutcome::Reply(WireMessage::RpcResult(response)));
+        }
+        self.handle_message(session_id, message)
+    }
+
     pub fn publish_event(
         &self,
         topic: &str,
@@ -226,6 +246,57 @@ impl WebBridge {
                     };
                     rpc_error(request.id, code, err.to_string())
                 }
+            }
+        };
+        self.inner.metrics.dec_rpc_inflight();
+        self.inner
+            .metrics
+            .observe_rpc_latency(started.elapsed().as_millis() as u64);
+        response
+    }
+
+    async fn dispatch_rpc_async(
+        &self,
+        session: &BridgeSession,
+        request: RpcRequest,
+    ) -> RpcResponse {
+        if request.namespace == "host" || request.namespace == "recovery" {
+            return self.dispatch_rpc(session, request);
+        }
+        self.inner.metrics.inc_rpc_inflight();
+        let started = std::time::Instant::now();
+        let rpc = self.inner.extensions.read().resolve_rpc(
+            &request.namespace,
+            &request.method,
+            &session.capabilities,
+        );
+        let response = match rpc {
+            Ok(rpc) => rpc
+                .call_async(
+                    &request.method,
+                    inject_session_capabilities(request.params.clone(), &session.capabilities),
+                )
+                .await
+                .map(|result| RpcResponse {
+                    id: request.id,
+                    result: Some(result),
+                    error: None,
+                })
+                .unwrap_or_else(|err| {
+                    let code = if err.to_string().contains("capability denied") {
+                        "capability_denied"
+                    } else {
+                        "rpc_failed"
+                    };
+                    rpc_error(request.id, code, err.to_string())
+                }),
+            Err(err) => {
+                let code = if err.to_string().contains("capability denied") {
+                    "capability_denied"
+                } else {
+                    "rpc_failed"
+                };
+                rpc_error(request.id, code, err.to_string())
             }
         };
         self.inner.metrics.dec_rpc_inflight();

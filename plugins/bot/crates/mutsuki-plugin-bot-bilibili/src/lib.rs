@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::Cursor;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use image::ImageFormat;
+use async_trait::async_trait;
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
 use mutsuki_bot_protocol::{
     BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap,
@@ -14,18 +14,21 @@ use mutsuki_bot_protocol::{
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
+use mutsuki_protocol_image::{
+    CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, QR_RENDER, QrRenderRequest,
+    Rgba,
+};
 use mutsuki_runtime_contracts::{
     CompletionBatch, DomainEvent, ExecutionClass, ProtocolClass, ReadPlan, RunnerBatchCapability,
     RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
-    RuntimeError, ScalarValue, Task, TaskOutcome, WorkBatch,
+    RuntimeError, ScalarValue, Task, TaskBatch, TaskOutcome, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, HandlerBindingBuilder, PluginBuilder, ProtocolDescriptorBuilder,
     ResourceRegistryGateway, RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter,
-    map_work_batch_entries,
+    TaskHandleFuture,
 };
-use qrcode::QrCode;
 use reqwest::blocking::Client;
 use rusqlite::{Connection, OptionalExtension, params};
 use scraper::{ElementRef, Html, Selector};
@@ -37,9 +40,9 @@ mod management;
 mod open_platform;
 
 pub use management::{
-    BilibiliManagementService, BilibiliSecretPresence, BindChallengeResult, BindVerifyResult,
-    CredentialSecretState, LoginPollResult, LoginStartResult, ManagementStatus, PreviewCardView,
-    SubscriptionView,
+    BilibiliManagementService, BilibiliQrRenderer, BilibiliSecretPresence, BindChallengeResult,
+    BindVerifyResult, CredentialSecretState, LoginPollResult, LoginStartResult, ManagementStatus,
+    PreviewCardView, SubscriptionView,
 };
 pub use open_platform::{
     BilibiliOpenPlatformCredential, BilibiliOpenPlatformHttpClient,
@@ -57,6 +60,79 @@ pub const LINK_RESOLVE: &str = "mutsuki.bot.bilibili.link/resolve@1";
 pub const MANAGEMENT_COMMAND: &str = "mutsuki.bot.bilibili.management/command@1";
 pub const RISK_CONTROL_STATUS_EVENT: &str = "mutsuki.bot.bilibili.risk_control/status@1";
 pub const MAX_MEDIA_BYTES: usize = MAX_LINK_CARD_MEDIA_BYTES;
+
+pub struct RuntimeBilibiliQrRenderer {
+    client: RuntimeClientRef,
+    resources: Arc<dyn ResourceRegistryGateway>,
+    next_task: AtomicU64,
+}
+
+impl RuntimeBilibiliQrRenderer {
+    #[must_use]
+    pub fn new(client: RuntimeClientRef, resources: Arc<dyn ResourceRegistryGateway>) -> Self {
+        Self {
+            client,
+            resources,
+            next_task: AtomicU64::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl BilibiliQrRenderer for RuntimeBilibiliQrRenderer {
+    async fn render_qr(&self, content: &str) -> Result<Vec<u8>, BilibiliError> {
+        let sequence = self.next_task.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let task_id = format!("bilibili.web.qr.{epoch_nanos}.{sequence}");
+        let task = Task::new(
+            task_id.clone(),
+            QR_RENDER,
+            serde_json::to_value(QrRenderRequest {
+                content: content.into(),
+                min_dimensions: 256,
+            })
+            .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?,
+        );
+        let handle = self
+            .client
+            .submit_batch(TaskBatch::one(format!("{task_id}.batch"), task))
+            .map_err(|error| BilibiliError::Transport(error.to_string()))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| BilibiliError::Transport("QR render returned no task handle".into()))?;
+        let outcome = TaskHandleFuture::new(self.client.clone(), handle)
+            .await
+            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
+        let response: ImageRenderResponse = match outcome {
+            TaskOutcome::Completed {
+                output: Some(output),
+                ..
+            } => serde_json::from_value(output)
+                .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?,
+            TaskOutcome::Completed { output: None, .. } => {
+                return Err(BilibiliError::InvalidResponse(
+                    "QR renderer completed without output".into(),
+                ));
+            }
+            outcome => {
+                return Err(BilibiliError::Transport(format!(
+                    "QR renderer did not complete: {outcome:?}"
+                )));
+            }
+        };
+        self.resources
+            .collect_read_plan(&ReadPlan {
+                plan_id: format!("{task_id}.read"),
+                resource: response.resource,
+                operation: "collect".into(),
+                args: Value::Null,
+            })
+            .map_err(|error| BilibiliError::Transport(error.to_string()))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -765,7 +841,7 @@ impl SqliteBilibiliRepository {
         Ok(())
     }
 
-    fn admit_cooldown(
+    fn cooldown_ready(
         &self,
         key: &str,
         now_ms: u64,
@@ -782,11 +858,15 @@ impl SqliteBilibiliRepository {
         if previous.is_some_and(|previous| now_ms.saturating_sub(previous) < cooldown_ms) {
             return Ok(false);
         }
-        connection.execute(
+        Ok(true)
+    }
+
+    fn record_cooldown(&self, key: &str, now_ms: u64) -> Result<(), rusqlite::Error> {
+        self.connection.lock().expect("sqlite mutex").execute(
             "INSERT INTO cooldown(key,seen_ms) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET seen_ms=excluded.seen_ms",
             params![key, now_ms],
         )?;
-        Ok(true)
+        Ok(())
     }
 
     pub fn set_qr_session(&self, actor_id: &str, key: &str) -> Result<(), rusqlite::Error> {
@@ -855,7 +935,6 @@ impl SqliteBilibiliRepository {
 }
 
 pub struct BilibiliRunner {
-    descriptor: RunnerDescriptor,
     backend_kind: BilibiliBackendKind,
     transport: Box<dyn BilibiliTransport>,
     repository: Arc<SqliteBilibiliRepository>,
@@ -863,6 +942,24 @@ pub struct BilibiliRunner {
     media_provider_id: String,
     managed_config: Option<SharedBilibiliConfig>,
     management: Option<Arc<BilibiliManagementService>>,
+}
+
+struct PreparedCards {
+    result: RunnerResult,
+    cards: Vec<PreparedCard>,
+    cursor_update: Option<(Arc<SqliteBilibiliRepository>, String, String)>,
+    cooldown_update: Option<(Arc<SqliteBilibiliRepository>, String, u64)>,
+}
+
+struct PreparedCard {
+    target: BotTarget,
+    request: CardRenderRequest,
+    route: CardRoute,
+}
+
+enum CardRoute {
+    Notify(String),
+    Command(Option<String>),
 }
 
 impl BilibiliRunner {
@@ -889,7 +986,6 @@ impl BilibiliRunner {
         backend_kind: BilibiliBackendKind,
     ) -> Self {
         Self {
-            descriptor: runner_descriptor(false, false, backend_kind),
             backend_kind,
             transport,
             repository,
@@ -901,29 +997,22 @@ impl BilibiliRunner {
     }
 
     pub fn with_management(mut self, management: Arc<BilibiliManagementService>) -> Self {
-        self.descriptor = runner_descriptor(true, false, self.backend_kind);
         self.managed_config = Some(management.config().clone());
         self.management = Some(management);
         self
     }
 
     pub fn into_runtime_runner(
-        mut self,
+        self,
         client: RuntimeClientRef,
         risk_control: Option<BilibiliRiskControlConfig>,
     ) -> Box<dyn Runner> {
-        let Some(risk_control) = risk_control else {
-            return Box::new(self);
-        };
-        let descriptor = runner_descriptor(self.managed_config.is_some(), true, self.backend_kind);
-        self.descriptor = descriptor.clone();
+        let descriptor = runner_descriptor(self.managed_config.is_some(), self.backend_kind);
         let state = Arc::new(Mutex::new(self));
         let factory = Box::new(move |ctx: AsyncRunnerContext, task: Task| {
             let state = state.clone();
             let risk_control = risk_control.clone();
-            Box::pin(
-                async move { run_task_with_risk_control(ctx, task, state, risk_control).await },
-            )
+            Box::pin(async move { run_task_async(ctx, task, state, risk_control).await })
                 as std::pin::Pin<
                     Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
                 >
@@ -933,41 +1022,6 @@ impl BilibiliRunner {
         )
     }
 
-    fn run_task(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
-        if task.protocol_id == MANAGEMENT_COMMAND {
-            return self.run_command(task);
-        }
-        if task.protocol_id == LINK_RESOLVE {
-            let request: LinkResolveRequest = decode(task)?;
-            let cooldown_key = format!("{}:{}", request.account_id, request.url);
-            if !self
-                .repository
-                .admit_cooldown(&cooldown_key, request.now_ms, request.cooldown_ms)
-                .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?
-            {
-                return Ok(RunnerResult::completed(task.task_id.clone()));
-            }
-            let card = self
-                .transport
-                .resolve(&request.url)
-                .map_err(|error| bili_error(task, error))?;
-            let message = self.card_message(request.target, card, task)?;
-            return Ok(outbound_result(task, message, request.outbound_binding));
-        }
-        let request: PollRequest = decode(task)?;
-        let kind = BilibiliPollKind::from_protocol_id(&task.protocol_id).ok_or_else(|| {
-            bili_error(
-                task,
-                BilibiliError::InvalidResponse("unsupported poll protocol".into()),
-            )
-        })?;
-        let items = self
-            .transport
-            .poll(&kind, request.uid)
-            .map_err(|error| bili_error(task, error))?;
-        self.finish_poll(task, request, kind, items, None)
-    }
-
     fn finish_poll(
         &mut self,
         task: &Task,
@@ -975,7 +1029,7 @@ impl BilibiliRunner {
         kind: BilibiliPollKind,
         items: Vec<BilibiliItem>,
         status: Option<DomainEvent>,
-    ) -> Result<RunnerResult, RuntimeError> {
+    ) -> Result<PreparedCards, RuntimeError> {
         let key = format!("{kind:?}:{}:{}", request.uid, request.subscription_id);
         let previous = self
             .repository
@@ -984,19 +1038,30 @@ impl BilibiliRunner {
         let Some(head) = items.first().map(|item| item.id.clone()) else {
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.events.extend(status);
-            return Ok(result);
+            return Ok(PreparedCards {
+                result,
+                cards: Vec::new(),
+                cursor_update: None,
+                cooldown_update: None,
+            });
         };
-        self.repository
-            .set_cursor(&key, &head)
-            .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
         let Some(previous) = previous else {
+            self.repository
+                .set_cursor(&key, &head)
+                .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.events.extend(status);
-            return Ok(result);
+            return Ok(PreparedCards {
+                result,
+                cards: Vec::new(),
+                cursor_update: None,
+                cooldown_update: None,
+            });
         };
         let fresh = fresh_since(items, &previous);
         let mut result = RunnerResult::completed(task.task_id.clone());
         result.events.extend(status);
+        let mut cards = Vec::with_capacity(fresh.len());
         for item in fresh {
             let card = ResolvedLinkCard {
                 url: item.url,
@@ -1009,15 +1074,18 @@ impl BilibiliRunner {
                 .into(),
                 image_url: item.image_url,
             };
-            let message = self.card_message(request.target.clone(), card, task)?;
-            result.tasks.push(outbound_task(
-                task,
-                message,
-                &request.outbound_binding,
-                result.tasks.len(),
-            ));
+            cards.push(PreparedCard {
+                target: request.target.clone(),
+                request: self.prepare_card_request(card, task)?,
+                route: CardRoute::Notify(request.outbound_binding.clone()),
+            });
         }
-        Ok(result)
+        Ok(PreparedCards {
+            result,
+            cards,
+            cursor_update: Some((self.repository.clone(), key, head)),
+            cooldown_update: None,
+        })
     }
 
     fn run_command(&mut self, task: &Task) -> Result<RunnerResult, RuntimeError> {
@@ -1053,16 +1121,11 @@ impl BilibiliRunner {
                 None,
             )),
             "login" => {
-                require_admin(is_admin).map_err(|error| bili_error(task, error))?;
-                let started = management
-                    .login_start(actor_id)
-                    .map_err(|error| bili_error(task, error))?;
-                let image = self.qr_resource_from_png(started.qr_png, task)?;
-                Ok(self.command_reply(
+                Err(bili_error(
                     task,
-                    &command,
-                    "请使用 Bilibili App 扫码确认，然后发送 /bili login-status；二维码不会把 Cookie 写入聊天或 Task payload。",
-                    Some(image),
+                    BilibiliError::ManagementUnavailable(
+                        "login requires the asynchronous image renderer".into(),
+                    ),
                 ))
             }
             "login-status" => {
@@ -1150,35 +1213,12 @@ impl BilibiliRunner {
                 ))
             }
             "preview" => {
-                match management.preview(
-                    actor_id,
-                    is_admin,
-                    command.args.get(1).map(String::as_str),
-                ) {
-                    Ok(card) => {
-                        let message = self.card_message(
-                            command.source.target.clone(),
-                            ResolvedLinkCard {
-                                url: card.url,
-                                title: card.title,
-                                description: card.description,
-                                image_url: card.image_url,
-                            },
-                            task,
-                        )?;
-                        Ok(command_outbound_result(
-                            task,
-                            message,
-                            Some(&config.management.self_binding_outbound_binding),
-                        ))
-                    }
-                    Err(BilibiliError::ManagementUnavailable(message))
-                        if message.contains("暂无可预览") =>
-                    {
-                        Ok(self.command_reply(task, &command, message, None))
-                    }
-                    Err(error) => Err(bili_error(task, error)),
-                }
+                Err(bili_error(
+                    task,
+                    BilibiliError::ManagementUnavailable(
+                        "preview requires the asynchronous image renderer".into(),
+                    ),
+                ))
             }
             "list" => {
                 let lines = management
@@ -1252,20 +1292,6 @@ impl BilibiliRunner {
         }
     }
 
-    fn qr_resource_from_png(
-        &self,
-        bytes: Vec<u8>,
-        task: &Task,
-    ) -> Result<mutsuki_runtime_contracts::ResourceRef, RuntimeError> {
-        self.resources
-            .create_blob_resource(
-                &self.media_provider_id,
-                "mutsuki.bot.image.qrcode.png.v1",
-                bytes,
-            )
-            .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))
-    }
-
     fn command_reply(
         &self,
         task: &Task,
@@ -1302,14 +1328,12 @@ impl BilibiliRunner {
         )
     }
 
-    fn card_message(
+    fn prepare_card_request(
         &mut self,
-        target: BotTarget,
         card: ResolvedLinkCard,
         task: &Task,
-    ) -> Result<BotMessage, RuntimeError> {
-        let mut segments = Vec::new();
-        if let Some(image_url) = card.image_url {
+    ) -> Result<CardRenderRequest, RuntimeError> {
+        let cover = if let Some(image_url) = card.image_url {
             let bytes = self
                 .transport
                 .download(&image_url, MAX_MEDIA_BYTES)
@@ -1322,53 +1346,338 @@ impl BilibiliRunner {
                     bytes,
                 )
                 .map_err(|error| bili_error(task, BilibiliError::Transport(error.to_string())))?;
-            segments.push(MessageSegment::Image { resource });
-        }
-        segments.push(MessageSegment::Text {
-            text: format!("{}\n{}\n{}", card.title, card.description, card.url),
-        });
-        Ok(BotMessage {
-            message_id: None,
-            target,
-            sender: None,
-            segments,
-            reply_to: None,
-            time_ms: None,
-            ext: BotExtMap::new(),
+            Some(resource)
+        } else {
+            None
+        };
+        Ok(CardRenderRequest {
+            brand: "哔哩哔哩".into(),
+            title: card.title,
+            description: card.description,
+            url: card.url,
+            cover,
+            fallback_gradient: CardGradient {
+                start: Rgba {
+                    red: 251,
+                    green: 114,
+                    blue: 153,
+                    alpha: 255,
+                },
+                end: Rgba {
+                    red: 0,
+                    green: 174,
+                    blue: 236,
+                    alpha: 255,
+                },
+            },
         })
     }
 }
 
-async fn run_task_with_risk_control(
+async fn run_task_async(
     ctx: AsyncRunnerContext,
     task: Task,
     state: Arc<Mutex<BilibiliRunner>>,
-    risk_control: BilibiliRiskControlConfig,
+    risk_control: Option<BilibiliRiskControlConfig>,
 ) -> RuntimeResult<RunnerResult> {
-    if task.protocol_id != POLL_DYNAMIC {
-        return state
-            .lock()
-            .expect("Bilibili runner mutex")
-            .run_task(&task)
-            .map_err(RuntimeFailure::new);
+    if task.protocol_id == MANAGEMENT_COMMAND {
+        return run_management_task(ctx, task, state).await;
     }
-
+    if task.protocol_id == LINK_RESOLVE {
+        let prepared = {
+            let mut runner = state.lock().expect("Bilibili runner mutex");
+            let request: LinkResolveRequest = decode(&task).map_err(RuntimeFailure::new)?;
+            let cooldown_key = format!("{}:{}", request.account_id, request.url);
+            if !runner
+                .repository
+                .cooldown_ready(&cooldown_key, request.now_ms, request.cooldown_ms)
+                .map_err(|error| {
+                    RuntimeFailure::new(bili_error(
+                        &task,
+                        BilibiliError::Transport(error.to_string()),
+                    ))
+                })?
+            {
+                None
+            } else {
+                let card = runner
+                    .transport
+                    .resolve(&request.url)
+                    .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
+                let card = runner
+                    .prepare_card_request(card, &task)
+                    .map_err(RuntimeFailure::new)?;
+                Some(PreparedCards {
+                    result: RunnerResult::completed(task.task_id.clone()),
+                    cards: vec![PreparedCard {
+                        target: request.target,
+                        request: card,
+                        route: CardRoute::Notify(request.outbound_binding),
+                    }],
+                    cursor_update: None,
+                    cooldown_update: Some((
+                        runner.repository.clone(),
+                        cooldown_key,
+                        request.now_ms,
+                    )),
+                })
+            }
+        };
+        return match prepared {
+            Some(prepared) => render_cards(&ctx, &task, prepared).await,
+            None => Ok(RunnerResult::completed(task.task_id)),
+        };
+    }
     let request: PollRequest = decode(&task).map_err(RuntimeFailure::new)?;
+    let kind = BilibiliPollKind::from_protocol_id(&task.protocol_id).ok_or_else(|| {
+        RuntimeFailure::new(bili_error(
+            &task,
+            BilibiliError::InvalidResponse("unsupported poll protocol".into()),
+        ))
+    })?;
     let attempt = state
         .lock()
         .expect("Bilibili runner mutex")
         .transport
-        .poll(&BilibiliPollKind::Dynamic, request.uid);
+        .poll(&kind, request.uid);
     match attempt {
-        Ok(items) => state
-            .lock()
-            .expect("Bilibili runner mutex")
-            .finish_poll(&task, request, BilibiliPollKind::Dynamic, items, None)
-            .map_err(RuntimeFailure::new),
-        Err(BilibiliError::RiskControl352) => {
-            run_chromium_risk_control_fallback(ctx, task, request, state, risk_control).await
+        Ok(items) => {
+            let prepared = state
+                .lock()
+                .expect("Bilibili runner mutex")
+                .finish_poll(&task, request, kind, items, None)
+                .map_err(RuntimeFailure::new)?;
+            render_cards(&ctx, &task, prepared).await
+        }
+        Err(BilibiliError::RiskControl352)
+            if kind == BilibiliPollKind::Dynamic && risk_control.is_some() =>
+        {
+            run_chromium_risk_control_fallback(
+                ctx,
+                task,
+                request,
+                state,
+                risk_control.expect("checked"),
+            )
+            .await
         }
         Err(error) => Err(RuntimeFailure::new(bili_error(&task, error))),
+    }
+}
+
+async fn run_management_task(
+    ctx: AsyncRunnerContext,
+    task: Task,
+    state: Arc<Mutex<BilibiliRunner>>,
+) -> RuntimeResult<RunnerResult> {
+    let command: BotCommandEvent = decode(&task).map_err(RuntimeFailure::new)?;
+    let action = command.args.first().map(String::as_str).unwrap_or("help");
+    if action != "login" && action != "preview" {
+        return state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .run_command(&task)
+            .map_err(RuntimeFailure::new);
+    }
+    let (management, config, actor_id, is_admin) = {
+        let runner = state.lock().expect("Bilibili runner mutex");
+        let Some(management) = runner.management.clone() else {
+            return Ok(RunnerResult::completed(task.task_id));
+        };
+        let config = management.config().snapshot();
+        if !config.management.enabled
+            || !command
+                .name
+                .eq_ignore_ascii_case(&config.management.command)
+        {
+            return Ok(RunnerResult::completed(task.task_id));
+        }
+        let actor_id = command
+            .source
+            .actor
+            .as_ref()
+            .map(|actor| actor.user_id.clone())
+            .ok_or_else(|| RuntimeFailure::new(bili_error(&task, BilibiliError::Forbidden)))?;
+        let is_admin = config
+            .management
+            .admin_user_ids
+            .iter()
+            .any(|candidate| candidate == &actor_id);
+        (management, config, actor_id, is_admin)
+    };
+    if action == "login" {
+        require_admin(is_admin).map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
+        let session = management
+            .login_start_session(&actor_id)
+            .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
+        let rendered = render_qr_child(&ctx, &task, session.url).await?;
+        return Ok(state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .command_reply(
+                &task,
+                &command,
+                "请使用 Bilibili App 扫码确认，然后发送 /bili login-status；二维码不会把 Cookie 写入聊天或 Task payload。",
+                Some(rendered.resource),
+            ));
+    }
+    match management.preview(&actor_id, is_admin, command.args.get(1).map(String::as_str)) {
+        Ok(card) => {
+            let request = state
+                .lock()
+                .expect("Bilibili runner mutex")
+                .prepare_card_request(
+                    ResolvedLinkCard {
+                        url: card.url,
+                        title: card.title,
+                        description: card.description,
+                        image_url: card.image_url,
+                    },
+                    &task,
+                )
+                .map_err(RuntimeFailure::new)?;
+            render_cards(
+                &ctx,
+                &task,
+                PreparedCards {
+                    result: RunnerResult::completed(task.task_id.clone()),
+                    cards: vec![PreparedCard {
+                        target: command.source.target,
+                        request,
+                        route: CardRoute::Command(Some(
+                            config.management.self_binding_outbound_binding,
+                        )),
+                    }],
+                    cursor_update: None,
+                    cooldown_update: None,
+                },
+            )
+            .await
+        }
+        Err(BilibiliError::ManagementUnavailable(message)) if message.contains("暂无可预览") => {
+            Ok(state
+                .lock()
+                .expect("Bilibili runner mutex")
+                .command_reply(&task, &command, message, None))
+        }
+        Err(error) => Err(RuntimeFailure::new(bili_error(&task, error))),
+    }
+}
+
+async fn render_qr_child(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    content: String,
+) -> RuntimeResult<ImageRenderResponse> {
+    let outcome = ctx
+        .call_raw(
+            QR_RENDER,
+            serde_json::to_value(QrRenderRequest {
+                content,
+                min_dimensions: 256,
+            })
+            .map_err(|error| {
+                RuntimeFailure::new(bili_error(
+                    task,
+                    BilibiliError::InvalidResponse(error.to_string()),
+                ))
+            })?,
+        )
+        .await?;
+    decode_render_outcome(task, outcome, "QR")
+}
+
+async fn render_cards(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    mut prepared: PreparedCards,
+) -> RuntimeResult<RunnerResult> {
+    for (index, card) in prepared.cards.into_iter().enumerate() {
+        let url = card.request.url.clone();
+        let outcome = ctx
+            .call_raw(
+                CARD_RENDER,
+                serde_json::to_value(card.request).map_err(|error| {
+                    RuntimeFailure::new(bili_error(
+                        task,
+                        BilibiliError::InvalidResponse(error.to_string()),
+                    ))
+                })?,
+            )
+            .await?;
+        let rendered = decode_render_outcome(task, outcome, "card")?;
+        let message = BotMessage {
+            message_id: None,
+            target: card.target,
+            sender: None,
+            segments: vec![
+                MessageSegment::Image {
+                    resource: rendered.resource,
+                },
+                MessageSegment::Text { text: url },
+            ],
+            reply_to: None,
+            time_ms: None,
+            ext: BotExtMap::new(),
+        };
+        match card.route {
+            CardRoute::Notify(binding) => {
+                prepared
+                    .result
+                    .tasks
+                    .push(outbound_task(task, message, &binding, index));
+            }
+            CardRoute::Command(binding) => {
+                let binding = binding.as_deref().filter(|value| !value.is_empty());
+                prepared
+                    .result
+                    .tasks
+                    .extend(command_outbound_result(task, message, binding).tasks);
+            }
+        }
+    }
+    if let Some((repository, key, head)) = prepared.cursor_update {
+        repository.set_cursor(&key, &head).map_err(|error| {
+            RuntimeFailure::new(bili_error(
+                task,
+                BilibiliError::Transport(error.to_string()),
+            ))
+        })?;
+    }
+    if let Some((repository, key, now_ms)) = prepared.cooldown_update {
+        repository.record_cooldown(&key, now_ms).map_err(|error| {
+            RuntimeFailure::new(bili_error(
+                task,
+                BilibiliError::Transport(error.to_string()),
+            ))
+        })?;
+    }
+    Ok(prepared.result)
+}
+
+fn decode_render_outcome(
+    task: &Task,
+    outcome: TaskOutcome,
+    kind: &str,
+) -> RuntimeResult<ImageRenderResponse> {
+    match outcome {
+        TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output).map_err(|error| {
+            RuntimeFailure::new(bili_error(
+                task,
+                BilibiliError::InvalidResponse(error.to_string()),
+            ))
+        }),
+        TaskOutcome::Completed { output: None, .. } => Err(RuntimeFailure::new(bili_error(
+            task,
+            BilibiliError::InvalidResponse(format!("{kind} renderer completed without output")),
+        ))),
+        _ => Err(RuntimeFailure::new(bili_error(
+            task,
+            BilibiliError::Transport(format!("{kind} renderer child task failed")),
+        ))),
     }
 }
 
@@ -1453,7 +1762,7 @@ async fn run_chromium_risk_control_fallback(
             "fallback": "succeeded"
         }),
     };
-    state
+    let prepared = state
         .lock()
         .expect("Bilibili runner mutex")
         .finish_poll(
@@ -1463,20 +1772,8 @@ async fn run_chromium_risk_control_fallback(
             items,
             Some(status),
         )
-        .map_err(RuntimeFailure::new)
-}
-
-impl Runner for BilibiliRunner {
-    fn descriptor(&self) -> &RunnerDescriptor {
-        &self.descriptor
-    }
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| self.run_task(task))
-    }
+        .map_err(RuntimeFailure::new)?;
+    render_cards(&ctx, &task, prepared).await
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
@@ -1518,18 +1815,18 @@ fn manifest_for_backend(
 ) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestRunner {
-            descriptor: runner_descriptor(command.is_some(), risk_control_enabled, backend_kind),
+            descriptor: runner_descriptor(command.is_some(), backend_kind),
         }))
-        .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "io")
-        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "io");
+        .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "orchestration")
+        .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "orchestration");
     if backend_kind == BilibiliBackendKind::WebCookie {
         builder = builder
-            .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "io")
-            .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "io");
+            .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "orchestration")
+            .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "orchestration");
     }
     if let Some(command) = command {
         builder = builder
-            .protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "io")
+            .protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "orchestration")
             .handler_binding(
                 HandlerBindingBuilder::new(
                     bot_command_binding_id(command),
@@ -1538,7 +1835,7 @@ fn manifest_for_backend(
                     MANAGEMENT_COMMAND,
                 )
                 .target_runner_hint(RUNNER_ID)
-                .pool_id("io")
+                .pool_id("orchestration")
                 .build(),
             );
     }
@@ -1557,13 +1854,15 @@ fn manifest_for_backend(
         manifest.requires.push(format!("task_protocol:{SNAPSHOT}"));
     }
     manifest
+        .requires
+        .push(format!("task_protocol:{CARD_RENDER}"));
+    if command.is_some() {
+        manifest.requires.push(format!("task_protocol:{QR_RENDER}"));
+    }
+    manifest
 }
 
-fn runner_descriptor(
-    management: bool,
-    risk_control_enabled: bool,
-    backend_kind: BilibiliBackendKind,
-) -> RunnerDescriptor {
+fn runner_descriptor(management: bool, backend_kind: BilibiliBackendKind) -> RunnerDescriptor {
     let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
     let protocols: &[&str] = match backend_kind {
         BilibiliBackendKind::WebCookie => &[POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE],
@@ -1577,11 +1876,7 @@ fn runner_descriptor(
     }
     builder
         .purity(RunnerPurity::Effectful)
-        .execution_class(if risk_control_enabled {
-            ExecutionClass::Orchestration
-        } else {
-            ExecutionClass::Io
-        })
+        .execution_class(ExecutionClass::Orchestration)
         .batch_capability(RunnerBatchCapability {
             mode: RunnerMode::ScalarAdapter,
             side_effect: RunnerSideEffect::External,
@@ -1632,12 +1927,6 @@ impl Runner for ManifestRunner {
 fn decode<T: for<'de> Deserialize<'de>>(task: &Task) -> Result<T, RuntimeError> {
     serde_json::from_value(task.payload.clone().into())
         .map_err(|error| bili_error(task, BilibiliError::InvalidResponse(error.to_string())))
-}
-
-fn outbound_result(task: &Task, message: BotMessage, binding: String) -> RunnerResult {
-    let mut result = RunnerResult::completed(task.task_id.clone());
-    result.tasks.push(outbound_task(task, message, &binding, 0));
-    result
 }
 
 fn command_outbound_result(
@@ -1756,19 +2045,6 @@ pub(crate) fn select_subscription(
             "subscription selector is ambiguous".into(),
         )),
     }
-}
-
-pub(crate) fn render_qr_png(value: &str) -> Result<Vec<u8>, BilibiliError> {
-    let image = QrCode::new(value.as_bytes())
-        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?
-        .render::<image::Luma<u8>>()
-        .min_dimensions(256, 256)
-        .build();
-    let mut bytes = Cursor::new(Vec::new());
-    image::DynamicImage::ImageLuma8(image)
-        .write_to(&mut bytes, ImageFormat::Png)
-        .map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
-    Ok(bytes.into_inner())
 }
 
 fn outbound_task(parent: &Task, message: BotMessage, binding: &str, index: usize) -> Task {
@@ -2404,6 +2680,108 @@ mod tests {
         }
     }
 
+    struct RenderedChildClient;
+
+    impl RuntimeClient for RenderedChildClient {
+        fn submit_batch(&self, _: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
+            unreachable!()
+        }
+
+        fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+            Ok(Some(TaskOutcome::Completed {
+                task_id: handle.task_id.clone(),
+                output: Some(
+                    serde_json::to_value(ImageRenderResponse {
+                        resource: rendered_image_resource(),
+                        width: 1200,
+                        height: 630,
+                        byte_len: 128,
+                    })
+                    .unwrap(),
+                ),
+                output_ref: None,
+            }))
+        }
+    }
+
+    fn rendered_image_resource() -> ResourceRef {
+        let mut resource = snapshot_resource();
+        resource.ref_id = "bilibili-rendered-card".into();
+        resource.resource_id.kind_id = "blob".into();
+        resource.resource_id.slot_id = "bilibili-rendered-card".into();
+        resource.resource_kind = "blob".into();
+        resource.schema = mutsuki_protocol_image::PNG_SCHEMA.into();
+        resource.semantic = ResourceSemantic::FrozenValue;
+        resource
+    }
+
+    struct LinkTransport;
+
+    impl BilibiliTransport for LinkTransport {
+        fn poll(
+            &mut self,
+            _: &BilibiliPollKind,
+            _: u64,
+        ) -> Result<Vec<BilibiliItem>, BilibiliError> {
+            unreachable!()
+        }
+        fn resolve(&mut self, url: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+            Ok(ResolvedLinkCard {
+                url: url.into(),
+                title: "视频标题".into(),
+                description: "视频简介".into(),
+                image_url: None,
+            })
+        }
+        fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+            unreachable!()
+        }
+        fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+            unreachable!()
+        }
+    }
+
+    struct MultiPollTransport;
+
+    impl BilibiliTransport for MultiPollTransport {
+        fn poll(
+            &mut self,
+            _: &BilibiliPollKind,
+            _: u64,
+        ) -> Result<Vec<BilibiliItem>, BilibiliError> {
+            Ok(["3", "2", "1"]
+                .into_iter()
+                .map(|id| BilibiliItem {
+                    id: id.into(),
+                    title: format!("动态 {id}"),
+                    url: format!("https://t.bilibili.com/{id}"),
+                    image_url: None,
+                })
+                .collect())
+        }
+        fn resolve(&mut self, _: &str) -> Result<ResolvedLinkCard, BilibiliError> {
+            unreachable!()
+        }
+        fn download(&mut self, _: &str, _: usize) -> Result<Vec<u8>, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
+            unreachable!()
+        }
+        fn qr_poll(&mut self, _: &str) -> Result<BilibiliQrPoll, BilibiliError> {
+            unreachable!()
+        }
+        fn profile(&mut self, _: u64) -> Result<BilibiliProfile, BilibiliError> {
+            unreachable!()
+        }
+    }
+
     struct RiskControlledTransport;
 
     impl BilibiliTransport for RiskControlledTransport {
@@ -2467,6 +2845,15 @@ mod tests {
     fn management_manifest_exposes_only_the_configured_command_binding() {
         let base = manifest();
         assert!(
+            base.requires
+                .contains(&format!("task_protocol:{CARD_RENDER}"))
+        );
+        assert!(
+            !base
+                .requires
+                .contains(&format!("task_protocol:{QR_RENDER}"))
+        );
+        assert!(
             !base.provides.runners[0]
                 .accepted_protocol_ids
                 .contains(&BOT_COMMAND_HANDLE_PROTOCOL_ID.to_string())
@@ -2479,6 +2866,11 @@ mod tests {
         );
 
         let managed = manifest_with_management(Some("bili"));
+        assert!(
+            managed
+                .requires
+                .contains(&format!("task_protocol:{QR_RENDER}"))
+        );
         assert!(
             managed.provides.runners[0]
                 .accepted_protocol_ids
@@ -2599,6 +2991,190 @@ mod tests {
     }
 
     #[test]
+    fn link_resolution_awaits_card_renderer_then_sends_image_and_url() {
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let mut runner = BilibiliRunner::new(
+            Box::new(LinkTransport),
+            repository.clone(),
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        let task = Task::new(
+            "link-card",
+            LINK_RESOLVE,
+            serde_json::to_value(LinkResolveRequest {
+                url: "https://www.bilibili.com/video/BV1Visual".into(),
+                target: BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                outbound_binding: "qq-main".into(),
+                account_id: "account".into(),
+                now_ms: 1_000,
+                cooldown_ms: 60_000,
+            })
+            .unwrap(),
+        );
+        let batch = command_batch(vec![task]);
+        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
+            .with_batch("batch", 1);
+        let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        let waiting = waiting.results[0].result.as_ref().unwrap();
+        assert_eq!(waiting.tasks[0].protocol_id, CARD_RENDER);
+        let request: CardRenderRequest =
+            serde_json::from_value(waiting.tasks[0].payload.to_value()).unwrap();
+        assert_eq!(request.brand, "哔哩哔哩");
+        assert_eq!(
+            request.fallback_gradient.start,
+            Rgba {
+                red: 251,
+                green: 114,
+                blue: 153,
+                alpha: 255,
+            }
+        );
+        assert!(waiting.task_await.is_some());
+        assert!(
+            repository
+                .cooldown_ready(
+                    "account:https://www.bilibili.com/video/BV1Visual",
+                    1_000,
+                    60_000,
+                )
+                .unwrap()
+        );
+
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        assert_eq!(completed.tasks.len(), 1);
+        let message: BotMessage =
+            serde_json::from_value(completed.tasks[0].payload.to_value()).unwrap();
+        assert!(matches!(message.segments[0], MessageSegment::Image { .. }));
+        assert_eq!(
+            message.segments[1],
+            MessageSegment::Text {
+                text: "https://www.bilibili.com/video/BV1Visual".into(),
+            }
+        );
+        assert!(
+            !repository
+                .cooldown_ready(
+                    "account:https://www.bilibili.com/video/BV1Visual",
+                    1_000,
+                    60_000,
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn login_command_awaits_qr_renderer_then_sends_rendered_resource() {
+        let state = Arc::new(Mutex::new(FakeTransportState::default()));
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let management = Arc::new(BilibiliManagementService::new(
+            SharedBilibiliConfig::new(managed_config()),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(state.clone())),
+            repository.clone(),
+            Arc::new(RecordingCredentialStore::default()),
+            Arc::new(RecordingConfigStore::default()),
+            Arc::new(AlwaysPresentSecrets),
+        ));
+        let mut runner = BilibiliRunner::new(
+            Box::new(FakeTransport(state)),
+            repository,
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .with_management(management)
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        let task = command_task("login-render", "admin", &["login"]);
+        let batch = command_batch(vec![task]);
+        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
+            .with_batch("batch", 1);
+        let waiting = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        let waiting = waiting.results[0].result.as_ref().unwrap();
+        assert_eq!(waiting.tasks[0].protocol_id, QR_RENDER);
+        let request: QrRenderRequest =
+            serde_json::from_value(waiting.tasks[0].payload.to_value()).unwrap();
+        assert_eq!(request.content, "https://passport.bilibili.com/qr");
+        assert_eq!(request.min_dimensions, 256);
+
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        let message: BotMessage =
+            serde_json::from_value(completed.tasks[0].payload.to_value()).unwrap();
+        assert!(matches!(message.segments[0], MessageSegment::Image { .. }));
+        assert!(matches!(message.segments[1], MessageSegment::Text { .. }));
+    }
+
+    #[test]
+    fn multiple_fresh_items_render_in_order_before_cursor_commit() {
+        let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        repository.set_cursor("Dynamic:7:sub", "1").unwrap();
+        let mut runner = BilibiliRunner::new(
+            Box::new(MultiPollTransport),
+            repository.clone(),
+            Arc::new(UnusedResources),
+            "memory",
+        )
+        .into_runtime_runner(Arc::new(RenderedChildClient), None);
+        let task = Task::new(
+            "multi-card",
+            POLL_DYNAMIC,
+            serde_json::to_value(PollRequest {
+                subscription_id: "sub".into(),
+                uid: 7,
+                target: BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                outbound_binding: "qq-main".into(),
+            })
+            .unwrap(),
+        );
+        let batch = command_batch(vec![task]);
+        let context = RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "invocation")
+            .with_batch("batch", 1);
+
+        let first = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        assert_eq!(
+            first.results[0].result.as_ref().unwrap().tasks[0].protocol_id,
+            CARD_RENDER
+        );
+        assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "1");
+
+        let second = runner.run_batch(context.clone(), batch.clone()).unwrap();
+        assert_eq!(
+            second.results[0].result.as_ref().unwrap().tasks[0].protocol_id,
+            CARD_RENDER
+        );
+        assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "1");
+
+        let completed = runner.run_batch(context, batch).unwrap();
+        let completed = completed.results[0].result.as_ref().unwrap();
+        assert_eq!(completed.tasks.len(), 2);
+        let urls = completed
+            .tasks
+            .iter()
+            .map(|task| {
+                let message: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
+                let MessageSegment::Text { text } = &message.segments[1] else {
+                    panic!("second segment must be URL text")
+                };
+                text.clone()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "https://t.bilibili.com/2".to_string(),
+                "https://t.bilibili.com/3".to_string(),
+            ]
+        );
+        assert_eq!(repository.cursor("Dynamic:7:sub").unwrap().unwrap(), "3");
+    }
+
+    #[test]
     fn management_flow_rotates_secret_persists_verified_binding_and_previews_without_cursor() {
         let state = Arc::new(Mutex::new(FakeTransportState::default()));
         let config = SharedBilibiliConfig::new(managed_config());
@@ -2621,22 +3197,17 @@ mod tests {
             Arc::new(UnusedResources),
             "memory",
         )
-        .with_management(management);
+        .with_management(management.clone());
 
         repository.set_qr_session("admin", "qr-key").unwrap();
         let login = runner
-            .run_batch(
-                RunnerContext::new(1, 1, "executor", Vec::<String>::new(), "batch")
-                    .with_batch("batch", 2),
-                command_batch(vec![
-                    command_task("login", "admin", &["login-status"]),
-                    command_task("forbidden-login", "alice", &["login-status"]),
-                ]),
-            )
+            .run_command(&command_task("login", "admin", &["login-status"]))
             .unwrap();
-        assert_eq!(login.results.len(), 2);
-        assert!(login.results[1].error.is_some());
-        let login = login.results[0].result.as_ref().unwrap();
+        assert!(
+            runner
+                .run_command(&command_task("forbidden-login", "alice", &["login-status"]))
+                .is_err()
+        );
         assert_eq!(credential_store.0.lock().unwrap().len(), 1);
         assert!(
             !serde_json::to_string(&login.tasks)
@@ -2667,10 +3238,8 @@ mod tests {
         assert!(config_store.0.lock().unwrap().len() >= 2);
 
         assert!(repository.cursor("Dynamic:42").unwrap().is_none());
-        let preview = runner
-            .run_command(&command_task("preview", "alice", &["preview"]))
-            .unwrap();
-        assert_eq!(preview.tasks.len(), 1);
+        let preview = management.preview("alice", false, None).unwrap();
+        assert_eq!(preview.title, "latest");
         assert!(repository.cursor("Dynamic:42").unwrap().is_none());
     }
 
@@ -2728,6 +3297,36 @@ mod tests {
         fn inspect(&self, _key: &str) -> CredentialSecretState {
             CredentialSecretState::Present
         }
+    }
+
+    struct FakeQrRenderer;
+
+    #[async_trait]
+    impl BilibiliQrRenderer for FakeQrRenderer {
+        async fn render_qr(&self, content: &str) -> Result<Vec<u8>, BilibiliError> {
+            assert_eq!(content, "https://passport.bilibili.com/qr");
+            Ok(vec![1, 2, 3, 4])
+        }
+    }
+
+    #[tokio::test]
+    async fn management_login_uses_bound_renderer_for_web_console_payload() {
+        let management = BilibiliManagementService::new(
+            SharedBilibiliConfig::new(managed_config()),
+            SharedBilibiliCredential::default(),
+            Box::new(FakeTransport(Arc::new(Mutex::new(
+                FakeTransportState::default(),
+            )))),
+            Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap()),
+            Arc::new(RecordingCredentialStore::default()),
+            Arc::new(RecordingConfigStore::default()),
+            Arc::new(AlwaysPresentSecrets),
+        );
+        management.bind_qr_renderer(Arc::new(FakeQrRenderer));
+        let result = management.login_start("web-console").await.unwrap();
+        assert_eq!(result.url, "https://passport.bilibili.com/qr");
+        assert_eq!(result.qr_png, vec![1, 2, 3, 4]);
+        assert_eq!(result.qr_png_base64, "AQIDBA==");
     }
 
     fn managed_config() -> BilibiliConfig {
@@ -2791,6 +3390,8 @@ mod tests {
                 },
                 name: "bili".into(),
                 args: args.iter().map(|value| (*value).into()).collect(),
+                command_path: vec!["bili".into()],
+                typed_args: Default::default(),
                 raw_text: format!("/bili {}", args.join(" ")),
             })
             .unwrap(),
@@ -2854,9 +3455,10 @@ mod tests {
     #[test]
     fn cooldown_is_persisted_in_sqlite() {
         let repo = SqliteBilibiliRepository::open(":memory:").unwrap();
-        assert!(repo.admit_cooldown("account:url", 100, 50).unwrap());
-        assert!(!repo.admit_cooldown("account:url", 120, 50).unwrap());
-        assert!(repo.admit_cooldown("account:url", 151, 50).unwrap());
+        assert!(repo.cooldown_ready("account:url", 100, 50).unwrap());
+        repo.record_cooldown("account:url", 100).unwrap();
+        assert!(!repo.cooldown_ready("account:url", 120, 50).unwrap());
+        assert!(repo.cooldown_ready("account:url", 151, 50).unwrap());
     }
 
     #[test]

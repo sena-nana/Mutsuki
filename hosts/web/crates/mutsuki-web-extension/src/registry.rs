@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use mutsuki_web_protocol::{
@@ -42,10 +44,19 @@ impl Drop for Disposable {
 }
 
 pub type RpcHandler = Arc<dyn Fn(JsonValue) -> Result<JsonValue, ExtensionError> + Send + Sync>;
+pub type RpcFuture =
+    Pin<Box<dyn Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static>>;
+pub type AsyncRpcHandler = Arc<dyn Fn(JsonValue) -> RpcFuture + Send + Sync>;
+
+#[derive(Clone)]
+enum RegisteredRpcHandler {
+    Sync(RpcHandler),
+    Async(AsyncRpcHandler),
+}
 
 #[derive(Default)]
 pub struct RpcRegistry {
-    handlers: HashMap<String, RpcHandler>,
+    handlers: HashMap<String, RegisteredRpcHandler>,
     namespace: String,
 }
 
@@ -67,12 +78,27 @@ impl RpcRegistry {
     {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers
-            .insert(key.clone(), Arc::new(handler) as RpcHandler);
-        let handlers = &self.handlers as *const HashMap<String, RpcHandler>;
+            .insert(key.clone(), RegisteredRpcHandler::Sync(Arc::new(handler)));
+        let handlers = &self.handlers as *const HashMap<String, RegisteredRpcHandler>;
         Disposable::new(move || {
             // Safety: Disposable is only used while registry lives and methods remove by key.
             // We store owned key and remove via a side table in ExtensionRecord instead.
             let _ = handlers;
+            let _ = key;
+        })
+    }
+
+    pub fn register_async<F, Fut>(&mut self, method: &str, handler: F) -> Disposable
+    where
+        F: Fn(JsonValue) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static,
+    {
+        let key = format!("{}.{}", self.namespace, method);
+        self.handlers.insert(
+            key.clone(),
+            RegisteredRpcHandler::Async(Arc::new(move |params| Box::pin(handler(params)))),
+        );
+        Disposable::new(move || {
             let _ = key;
         })
     }
@@ -87,7 +113,32 @@ impl RpcRegistry {
             .handlers
             .get(&key)
             .ok_or_else(|| ExtensionError::Registration(format!("rpc method not found: {key}")))?;
-        handler(params)
+        match handler {
+            RegisteredRpcHandler::Sync(handler) => handler(params),
+            RegisteredRpcHandler::Async(_) => Err(ExtensionError::Registration(format!(
+                "rpc method requires asynchronous dispatch: {key}"
+            ))),
+        }
+    }
+
+    pub async fn call_async(
+        &self,
+        method: &str,
+        params: JsonValue,
+    ) -> Result<JsonValue, ExtensionError> {
+        let key = if method.starts_with(&format!("{}.", self.namespace)) {
+            method.to_string()
+        } else {
+            format!("{}.{}", self.namespace, method)
+        };
+        let handler =
+            self.handlers.get(&key).cloned().ok_or_else(|| {
+                ExtensionError::Registration(format!("rpc method not found: {key}"))
+            })?;
+        match handler {
+            RegisteredRpcHandler::Sync(handler) => handler(params),
+            RegisteredRpcHandler::Async(handler) => handler(params).await,
+        }
     }
 
     pub fn methods(&self) -> Vec<String> {
@@ -286,6 +337,16 @@ impl ExtensionRegistry {
         params: JsonValue,
         session_capabilities: &[String],
     ) -> Result<JsonValue, ExtensionError> {
+        self.resolve_rpc(namespace, method, session_capabilities)?
+            .call(method, params)
+    }
+
+    pub fn resolve_rpc(
+        &self,
+        namespace: &str,
+        method: &str,
+        session_capabilities: &[String],
+    ) -> Result<Arc<RpcRegistry>, ExtensionError> {
         let record = self.records.get(namespace).ok_or_else(|| {
             ExtensionError::Registration(format!("unknown namespace: {namespace}"))
         })?;
@@ -312,7 +373,19 @@ impl ExtensionRegistry {
                 "capability denied: {capability}"
             )));
         }
-        record.rpc.call(method, params)
+        Ok(record.rpc.clone())
+    }
+
+    pub async fn call_rpc_async(
+        &self,
+        namespace: &str,
+        method: &str,
+        params: JsonValue,
+        session_capabilities: &[String],
+    ) -> Result<JsonValue, ExtensionError> {
+        self.resolve_rpc(namespace, method, session_capabilities)?
+            .call_async(method, params)
+            .await
     }
 }
 
@@ -332,5 +405,19 @@ mod tests {
             .unwrap();
         assert_eq!(value, serde_json::json!(["demo"]));
         let _ = DEFAULT_BUDGETS;
+    }
+
+    #[tokio::test]
+    async fn asynchronous_methods_share_namespace_resolution() {
+        let mut rpc = RpcRegistry::new("image");
+        rpc.register_async("qr.render", |params| async move {
+            Ok(serde_json::json!({"content": params["content"]}))
+        });
+        let value = rpc
+            .call_async("image.qr.render", serde_json::json!({"content": "login"}))
+            .await
+            .unwrap();
+        assert_eq!(value, serde_json::json!({"content": "login"}));
+        assert!(rpc.call("qr.render", serde_json::json!({})).is_err());
     }
 }

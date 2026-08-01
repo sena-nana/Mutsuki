@@ -87,6 +87,10 @@ impl WebExtension for ExampleExtension {
             return Err(ExtensionError::Setup("boom".into()));
         }
         ctx.register("ping", |_params| Ok(JsonValue::String("pong".into())));
+        ctx.register_async("ping_async", |_params| async move {
+            tokio::task::yield_now().await;
+            Ok(JsonValue::String("pong-async".into()))
+        });
         Ok(())
     }
 
@@ -198,6 +202,31 @@ async fn loads_extension_and_answers_rpc_over_bridge() {
             assert_eq!(result.result.unwrap(), JsonValue::String("pong".into()));
         }
         _ => panic!("rpc result"),
+    }
+
+    let response = bridge
+        .handle_message_async(
+            Some(session_id),
+            mutsuki_web_protocol::WireMessage::Rpc(mutsuki_web_protocol::RpcRequest {
+                id: Uuid::new_v4(),
+                namespace: "mutsuki.example.web".into(),
+                method: "ping_async".into(),
+                params: JsonValue::Null,
+            }),
+        )
+        .await
+        .unwrap();
+    match response {
+        mutsuki_web_bridge::HandleOutcome::Reply(mutsuki_web_protocol::WireMessage::RpcResult(
+            result,
+        )) => {
+            assert!(result.error.is_none());
+            assert_eq!(
+                result.result.unwrap(),
+                JsonValue::String("pong-async".into())
+            );
+        }
+        _ => panic!("async rpc result"),
     }
 
     host.stop().await.unwrap();

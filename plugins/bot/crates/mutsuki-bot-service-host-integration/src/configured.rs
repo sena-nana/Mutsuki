@@ -22,8 +22,8 @@ use mutsuki_plugin_bot_bilibili::{
     BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
     BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence, CredentialSecretState,
     PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliOpenPlatformTransport,
-    ReqwestBilibiliTransport, SharedBilibiliConfig, SharedBilibiliCredential,
-    SqliteBilibiliRepository,
+    ReqwestBilibiliTransport, RuntimeBilibiliQrRenderer, SharedBilibiliConfig,
+    SharedBilibiliCredential, SqliteBilibiliRepository,
 };
 use mutsuki_plugin_bot_bilibili_workshop::{
     PLUGIN_ID as WORKSHOP_PLUGIN_ID, ReqwestWorkshopTransport, WorkshopRunner,
@@ -303,7 +303,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 let mut runner = BilibiliRunner::new_for_backend(
                     transport,
                     runner_repository.clone(),
-                    resources,
+                    resources.clone(),
                     snapshot.media_provider_id.clone(),
                     snapshot.backend.kind(),
                 );
@@ -313,6 +313,10 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                             "Bilibili management service is unavailable".into(),
                         )
                     })?;
+                    management.bind_qr_renderer(Arc::new(RuntimeBilibiliQrRenderer::new(
+                        client.clone(),
+                        resources,
+                    )));
                     runner = runner.with_management(management);
                 }
                 Ok::<
