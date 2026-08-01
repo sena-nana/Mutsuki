@@ -5,8 +5,9 @@ mod reconnect;
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use cases::{
-    command_sample, duplicate_sample, link_parse_sample, long_run_sample, pipeline_sample,
-    rate_limit_sample, wait_resume_sample,
+    command_sample, conversation_sample, delivery_idempotency_sample, duplicate_sample,
+    handler_filter_sample, interaction_transition_sample, link_parse_sample, long_run_sample,
+    pipeline_sample, rate_limit_sample, wait_resume_sample,
 };
 use measurement::{CountingAllocator, RawCase, process_cpu_time_ns, raw_case};
 use mutsuki_bot_testkit::{BENCHMARK_FIXED_SEED, BENCHMARK_FIXTURE_VERSION};
@@ -83,6 +84,30 @@ fn main() {
             || command_sample(false),
         ),
         repeated_case(
+            "bot.handler-filter-10k",
+            json!({"events": 10_000, "handlers": 64}),
+            regular_samples,
+            || handler_filter_sample(10_000, 64),
+        ),
+        repeated_case(
+            "bot.conversation-session-1k",
+            json!({"events": 1_000, "policy_rules": 4}),
+            regular_samples,
+            || conversation_sample(1_000),
+        ),
+        repeated_case(
+            "bot.delivery-idempotency-1k",
+            json!({"deliveries": 1_000, "duplicate_submissions": 1_000}),
+            regular_samples,
+            || delivery_idempotency_sample(1_000),
+        ),
+        repeated_case(
+            "bot.interaction-transition-1k",
+            json!({"sessions": 1_000, "steps": 1}),
+            regular_samples,
+            || interaction_transition_sample(1_000),
+        ),
+        repeated_case(
             "bot.link-parse",
             json!({"fixture": "nested-card-and-text"}),
             regular_samples,
@@ -150,7 +175,7 @@ fn main() {
     ]);
     let report = RawReport {
         schema_version: "mutsuki.bot.performance.raw/v1",
-        workload_version: "mutsuki.performance.bot-workloads/v1",
+        workload_version: "mutsuki.performance.bot-workloads/v2",
         fixture_version: BENCHMARK_FIXTURE_VERSION,
         mode,
         fixed_seed: BENCHMARK_FIXED_SEED,

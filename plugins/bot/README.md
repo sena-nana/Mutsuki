@@ -135,10 +135,9 @@ Business bot plugins should depend on `mutsuki.bot.*` protocols. They should not
 ## Performance model
 
 `mutsuki-bot-benchmarks` and `scripts/run-performance-model.py` implement the versioned Bot owner
-workload for MutsukiBotPlugins #10 and MutsukiCore #35. The suite uses only deterministic fixtures
-and loopback HTTP/WebSocket servers. It covers event bursts, 4/16-adapter fairness, command
-hit/miss, link parsing, handler wait/resume, rate limiting, reconnect/resume, duplicate suppression,
-an established idle WebSocket window, and bounded long-run retention.
+workload. The current v2 suite adds Issue #140 handler filtering, conversation/session binding,
+active-delivery idempotency, and interaction state transitions to the existing deterministic
+fixtures and loopback HTTP/WebSocket cases.
 
 Run a local reference report with:
 
@@ -146,8 +145,9 @@ Run a local reference report with:
 python scripts/run-performance-model.py \
   --mode reference \
   --process-runs 3 \
-  --output artifacts/performance/issue10-reference.json
+  --output artifacts/performance/issue140-reference.json
 ```
 
 The raw samples, unified report, anomaly analysis, workload boundary, and revision-lock procedure
-are documented in `docs/performance-model-issue10.md`.
+are documented in `docs/performance-model-issue140.md`. The end-to-end functional boundary and
+truthful QQ capability matrix are documented in `docs/qq-ai-pipeline-issue140.md`.

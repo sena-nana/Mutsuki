@@ -12,7 +12,7 @@ use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CancelPolicy, CommandPlan, DispatchLane, ExecutionClass, ExportPlan, PlanReceipt,
     PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeProfile, RuntimeProfileMode,
-    SnapshotDescriptor, StreamPlan, SurfaceCompatibility, TaskBatch, TaskHandle, TaskOutcome,
+    SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task, TaskBatch, TaskHandle, TaskOutcome,
     TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{
@@ -296,6 +296,8 @@ pub enum ServiceRuntimeError {
     ExternalRunnerSpawn { runner_id: String, detail: String },
     #[error("service runtime already started")]
     AlreadyStarted,
+    #[error("service runtime is not available")]
+    RuntimeUnavailable,
     #[error("event source registration failed: {0}")]
     EventSource(String),
     #[error("native runner factory failed: {0}")]
@@ -351,6 +353,7 @@ pub struct ServiceRuntimeBuilder {
     runtime_client: Arc<DeferredRuntimeClient>,
     health_probes: BTreeMap<String, HealthProbe>,
     event_sources: Vec<Box<dyn HostEventSource>>,
+    runner_limits: BTreeMap<String, RunnerLimits>,
 }
 
 /// Domain-neutral factory for a native product plugin selected by Host configuration.
@@ -458,6 +461,7 @@ impl ServiceRuntimeBuilder {
             runtime_client: Arc::new(DeferredRuntimeClient::default()),
             health_probes: BTreeMap::new(),
             event_sources: Vec::new(),
+            runner_limits: BTreeMap::new(),
         }
     }
 
@@ -531,6 +535,25 @@ impl ServiceRuntimeBuilder {
     {
         self.async_handler_factories.push(Arc::new(move || {
             factory().map_err(|error| error.to_string())
+        }));
+        self
+    }
+
+    /// Registers a Host-driven async handler that uses the booted runtime resource services.
+    pub fn register_fallible_runtime_services_async_handler<F, E>(mut self, factory: F) -> Self
+    where
+        F: Fn(
+                RuntimeClientRef,
+                Arc<dyn ResourceRegistryGateway>,
+            ) -> Result<Arc<dyn AsyncBatchHandler>, E>
+            + Send
+            + Sync
+            + 'static,
+        E: std::fmt::Display,
+    {
+        let services = self.runtime_client.clone();
+        self.async_handler_factories.push(Arc::new(move || {
+            factory(services.clone(), services.clone()).map_err(|error| error.to_string())
         }));
         self
     }
@@ -611,6 +634,30 @@ impl ServiceRuntimeBuilder {
         self
     }
 
+    /// Narrows Host-owned execution limits for a logical runner.
+    ///
+    /// Repeated registrations keep the strictest non-empty value, which lets multiple public
+    /// handlers share a runner without weakening one another's safety boundary.
+    pub fn configure_runner_limits(
+        mut self,
+        runner_id: impl Into<String>,
+        max_running: Option<usize>,
+        wall_clock_timeout_ms: Option<u64>,
+    ) -> Self {
+        let limits = self.runner_limits.entry(runner_id.into()).or_default();
+        if let Some(max_running) = max_running {
+            limits.max_running = limits.max_running.min(max_running.max(1));
+        }
+        if let Some(timeout) = wall_clock_timeout_ms.map(Duration::from_millis) {
+            limits.wall_clock_deadline = Some(
+                limits
+                    .wall_clock_deadline
+                    .map_or(timeout, |current| current.min(timeout)),
+            );
+        }
+        self
+    }
+
     pub async fn start(self) -> ServiceRuntimeResult<ServiceRuntime> {
         let self_ = self.install_configured_plugins()?;
         let ServiceRuntimeBuilder {
@@ -623,6 +670,7 @@ impl ServiceRuntimeBuilder {
             runtime_client,
             health_probes,
             event_sources,
+            runner_limits,
         } = self_;
         validate_event_sources(&event_sources, &config)?;
         let observe = mutsuki_service_observe::init_observe(&config);
@@ -638,6 +686,7 @@ impl ServiceRuntimeBuilder {
             &async_handler_factories,
             &loaded_plugin_factories,
             runtime_client.clone(),
+            &runner_limits,
         )
         .await?;
         let task_submitter = host_runtime.host_context().task_submitter_ref();
@@ -805,6 +854,57 @@ fn validate_event_sources(
 }
 
 impl ServiceRuntime {
+    /// Submits work through the same Host-owned TaskPool used by control-plane clients.
+    pub fn submit_task(&self, task: Task) -> ServiceRuntimeResult<TaskHandle> {
+        let submitter = self
+            .inner
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .task_submitter_ref();
+        Ok(submitter.submit_task(task)?)
+    }
+
+    /// Reads the authoritative TaskPool outcome without exposing runtime internals.
+    pub fn task_outcome(&self, handle: &TaskHandle) -> ServiceRuntimeResult<Option<TaskOutcome>> {
+        let submitter = self
+            .inner
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .task_submitter_ref();
+        Ok(submitter.task_outcome(handle)?)
+    }
+
+    /// Requests cancellation through the Host so cascade and runner cancellation stay intact.
+    pub fn cancel_task(&self, handle: &TaskHandle) -> ServiceRuntimeResult<()> {
+        let submitter = self
+            .inner
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .task_submitter_ref();
+        Ok(submitter.cancel_task(handle)?)
+    }
+
+    /// Returns immutable task snapshots for embedded diagnostics and acceptance harnesses.
+    pub fn task_snapshots(&self) -> ServiceRuntimeResult<Vec<HostTaskSnapshot>> {
+        let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+        let runtime = runtime
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?;
+        Ok(runtime.task_snapshots()?)
+    }
+
     pub async fn run_foreground(self) -> ServiceRuntimeResult<()> {
         self.run_until_shutdown_signal(platform_shutdown_signal())
             .await
@@ -1939,6 +2039,7 @@ async fn boot_core(
     async_handler_factories: &[AsyncHandlerFactory],
     loaded_plugin_factories: &BTreeMap<String, LoadedPluginFactory>,
     runtime_client: Arc<DeferredRuntimeClient>,
+    runner_limits: &BTreeMap<String, RunnerLimits>,
 ) -> ServiceRuntimeResult<HostRuntime> {
     let (bootstrapper, profile) = runtime_bootstrapper(
         config,
@@ -2005,6 +2106,7 @@ async fn boot_core(
             .core
             .actor_control_quota
             .unwrap_or_else(|| HostRuntimeConfig::default().actor_control_quota),
+        runner_limits: runner_limits.clone(),
         async_executor: Some(Arc::new(TokioAsyncExecutor::new(
             worker_settings.compute_threads.clamp(1, 4),
             worker_settings.queue_capacity,
@@ -4274,6 +4376,7 @@ mod tests {
             &[],
             &BTreeMap::new(),
             runtime_client.clone(),
+            &BTreeMap::new(),
         )
         .await
         .expect("core");

@@ -6,9 +6,9 @@ use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
 use mutsuki_plugin_bot_adapter_qqbot::{
-    QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqIdSource, QqMediaProvider,
-    QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient, ResourceGatewayQqMediaProvider,
-    SharedQqCredentials, qqbot_adapter_manifest,
+    QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqGatewayMediaHandler,
+    QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient,
+    ResourceGatewayQqMediaProvider, SharedQqCredentials, qqbot_adapter_manifest,
 };
 
 use crate::event_source::{QqGatewayEventSource, QqGatewayHealthHandle};
@@ -115,14 +115,22 @@ impl QqBotPluginBundle {
                 .requires
                 .push(format!("resource_strategy:{provider_id}"));
         }
-        Ok(builder
-            .register_builtin_plugin(manifest)
-            .register_builtin_runner(move || {
+        let builder = builder.register_builtin_plugin(manifest);
+        let builder = if media_enabled {
+            builder.register_fallible_runtime_services_async_handler(move |_runtime, resources| {
+                QqGatewayMediaHandler::new(gateway_config.clone(), resources).map(|handler| {
+                    Arc::new(handler) as Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>
+                })
+            })
+        } else {
+            builder.register_builtin_runner(move || {
                 Box::new(QqGatewayMapRunner::new(
                     1,
                     gateway_config.account_id.clone(),
                 ))
             })
+        };
+        Ok(builder
             .register_fallible_runtime_services_runner(move |_runtime, resources| {
                 let http = ReqwestQqHttpClient::new(&openapi_config)
                     .map_err(|error| error.redacted_message())?;

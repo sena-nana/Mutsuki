@@ -1,9 +1,11 @@
+mod ai_bundle;
 mod bilibili;
 mod bundle;
 mod configured;
 mod console_bridge;
 mod event_source;
 
+pub use ai_bundle::QqAiBotPluginBundle;
 pub use bilibili::{BilibiliPollingCredentials, BilibiliPollingEventSource};
 pub use bundle::QqBotPluginBundle;
 pub use configured::*;

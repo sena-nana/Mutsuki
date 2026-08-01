@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
+use mutsuki_bot_protocol::{
+    BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqStreamingStrategy,
+    QqUploadConstraints,
+};
+
 pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,6 +18,8 @@ pub struct QqBotConfig {
     pub client_secret_key: String,
     /// Host resource provider used for platform media upload. `None` keeps a text-only adapter.
     pub media_provider_id: Option<String>,
+    /// DNS suffixes accepted for QQ-signed inbound attachment downloads.
+    pub media_download_allowed_hosts: Vec<String>,
     pub token_url: String,
     pub openapi_base_url: String,
     pub gateway_intents: u64,
@@ -49,6 +56,11 @@ impl QqBotConfig {
             app_id: app_id.into(),
             client_secret_key: "QQBOT_CLIENT_SECRET".into(),
             media_provider_id: None,
+            media_download_allowed_hosts: vec![
+                "qq.com".into(),
+                "qpic.cn".into(),
+                "gtimg.cn".into(),
+            ],
             token_url: "https://bots.qq.com/app/getAppAccessToken".into(),
             openapi_base_url: "https://api.sgroup.qq.com".into(),
             gateway_intents: DEFAULT_QQBOT_INTENTS,
@@ -83,6 +95,17 @@ impl QqBotConfig {
         {
             return Err(QqConfigError::Invalid(
                 "media_provider_id must be non-empty when configured".into(),
+            ));
+        }
+        if self.media_download_allowed_hosts.iter().any(|host| {
+            host.trim().is_empty()
+                || host.contains('/')
+                || host.contains(':')
+                || host.starts_with('.')
+        }) {
+            return Err(QqConfigError::Invalid(
+                "media_download_allowed_hosts must contain DNS suffixes without schemes or ports"
+                    .into(),
             ));
         }
         validate_http_url("token_url", &self.token_url, self.allow_insecure_transport)?;
@@ -132,6 +155,79 @@ impl QqBotConfig {
             ));
         }
         Ok(())
+    }
+
+    /// Returns only capabilities that are enabled by this account's intents and Host resources.
+    pub fn capability_matrix(&self) -> QqBotCapabilityMatrix {
+        const PUBLIC_GUILD_MESSAGES: u64 = 1 << 30;
+        const GROUP_AND_C2C_EVENT: u64 = 1 << 25;
+        let mut conversation_kinds = Vec::new();
+        let mut required_intents = Vec::new();
+        if self.gateway_intents & GROUP_AND_C2C_EVENT != 0 {
+            conversation_kinds.extend([BotConversationKind::Private, BotConversationKind::Group]);
+            required_intents.push("group_and_c2c_event".into());
+        }
+        if self.gateway_intents & PUBLIC_GUILD_MESSAGES != 0 {
+            conversation_kinds.push(BotConversationKind::Channel);
+            required_intents.push("public_guild_messages".into());
+        }
+        let media_enabled = self.media_provider_id.is_some();
+        let media = if media_enabled {
+            vec![
+                BotMediaKind::Image,
+                BotMediaKind::Audio,
+                BotMediaKind::Video,
+                BotMediaKind::File,
+            ]
+        } else {
+            Vec::new()
+        };
+        let active_message_kinds = [BotConversationKind::Private, BotConversationKind::Group]
+            .into_iter()
+            .filter(|_| self.gateway_intents & GROUP_AND_C2C_EVENT != 0)
+            .collect::<Vec<_>>();
+        QqBotCapabilityMatrix {
+            account_id: self.account_id.clone(),
+            conversation_kinds,
+            outbound_conversation_kinds: [BotConversationKind::Private, BotConversationKind::Group]
+                .into_iter()
+                .filter(|_| self.gateway_intents & GROUP_AND_C2C_EVENT != 0)
+                .collect(),
+            active_message: !active_message_kinds.is_empty(),
+            active_message_kinds,
+            inbound_media: media.clone(),
+            outbound_media: media,
+            message_edit: false,
+            message_recall: true,
+            reply: true,
+            mention: true,
+            upload: QqUploadConstraints {
+                max_bytes: Some(100 * 1024 * 1024),
+                max_bytes_by_kind: [
+                    (BotMediaKind::Image, 20 * 1024 * 1024),
+                    (BotMediaKind::Video, 30 * 1024 * 1024),
+                    (BotMediaKind::Audio, 20 * 1024 * 1024),
+                    (BotMediaKind::File, 100 * 1024 * 1024),
+                ]
+                .into(),
+                allowed_mime_types: vec![
+                    "image/jpeg".into(),
+                    "image/png".into(),
+                    "image/gif".into(),
+                    "image/webp".into(),
+                    "audio/mpeg".into(),
+                    "audio/wav".into(),
+                    "audio/ogg".into(),
+                    "video/mp4".into(),
+                    "application/octet-stream".into(),
+                ],
+            },
+            streaming: vec![
+                QqStreamingStrategy::FinalOnly,
+                QqStreamingStrategy::SegmentMessages,
+            ],
+            required_intents,
+        }
     }
 }
 

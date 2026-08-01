@@ -23,6 +23,26 @@ pub fn qq_gateway_frame_to_bot_event(
     let mut ext = BotExtMap::new();
     ext.insert("qqbot.event_type".into(), Value::String(event_type.into()));
     ext.insert("qqbot.dedup_key".into(), Value::String(dedup_key(&frame)));
+    ext.insert(
+        "qqbot.mentioned_bot".into(),
+        Value::Bool(
+            event_type == "GROUP_AT_MESSAGE_CREATE"
+                || data
+                    .get("mentions")
+                    .and_then(Value::as_array)
+                    .is_some_and(|mentions| {
+                        mentions.iter().any(|mention| {
+                            mention
+                                .get("is_you")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        })
+                    }),
+        ),
+    );
+    if let Some(role) = qq_actor_role(data) {
+        ext.insert("qqbot.actor_role".into(), Value::String(role.into()));
+    }
     Ok(BotEvent {
         event_id: frame
             .id
@@ -47,8 +67,15 @@ pub fn qq_gateway_frame_to_bot_event(
 
 fn qq_event_kind(event_type: &str) -> BotEventKind {
     match event_type {
-        "GROUP_MESSAGE_CREATE" | "GROUP_AT_MESSAGE_CREATE" | "C2C_MESSAGE_CREATE" => {
-            BotEventKind::MessageCreated
+        "GROUP_MESSAGE_CREATE"
+        | "GROUP_AT_MESSAGE_CREATE"
+        | "C2C_MESSAGE_CREATE"
+        | "AT_MESSAGE_CREATE"
+        | "MESSAGE_CREATE"
+        | "DIRECT_MESSAGE_CREATE" => BotEventKind::MessageCreated,
+        "MESSAGE_UPDATE" => BotEventKind::MessageUpdated,
+        "MESSAGE_DELETE" | "PUBLIC_MESSAGE_DELETE" | "DIRECT_MESSAGE_DELETE" => {
+            BotEventKind::MessageDeleted
         }
         "MESSAGE_REACTION_ADD" => BotEventKind::ReactionAdded,
         "MESSAGE_REACTION_REMOVE" => BotEventKind::ReactionRemoved,
@@ -83,6 +110,36 @@ fn qq_actor(data: &Value) -> Option<BotUser> {
     })
 }
 
+fn qq_actor_role(data: &Value) -> Option<&'static str> {
+    let roles = data
+        .get("member")
+        .and_then(|member| member.get("roles"))
+        .or_else(|| data.get("roles"))
+        .and_then(Value::as_array)?;
+    let mut rank = 0_u8;
+    for role in roles {
+        let Some(role) = role
+            .as_str()
+            .map(str::to_ascii_lowercase)
+            .or_else(|| role.as_u64().map(|value| value.to_string()))
+        else {
+            continue;
+        };
+        rank = rank.max(match role.as_str() {
+            "4" | "owner" => 3,
+            "2" | "5" | "admin" | "administrator" => 2,
+            "1" | "member" => 1,
+            _ => 0,
+        });
+    }
+    match rank {
+        3 => Some("owner"),
+        2 => Some("administrator"),
+        1 => Some("member"),
+        _ => None,
+    }
+}
+
 fn qq_message(
     event_type: &str,
     data: &Value,
@@ -91,21 +148,54 @@ fn qq_message(
 ) -> Option<BotMessage> {
     if !matches!(
         event_type,
-        "GROUP_MESSAGE_CREATE" | "GROUP_AT_MESSAGE_CREATE" | "C2C_MESSAGE_CREATE"
+        "GROUP_MESSAGE_CREATE"
+            | "GROUP_AT_MESSAGE_CREATE"
+            | "C2C_MESSAGE_CREATE"
+            | "AT_MESSAGE_CREATE"
+            | "MESSAGE_CREATE"
+            | "DIRECT_MESSAGE_CREATE"
+            | "MESSAGE_UPDATE"
+            | "MESSAGE_DELETE"
+            | "PUBLIC_MESSAGE_DELETE"
+            | "DIRECT_MESSAGE_DELETE"
     ) {
         return None;
     }
     let content = message_content(event_type, data);
+    let mut segments = vec![MessageSegment::Text { text: content }];
+    if let Some(mentions) = data.get("mentions").and_then(Value::as_array) {
+        segments.extend(mentions.iter().filter_map(|mention| {
+            mention
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|user_id| MessageSegment::MentionUser {
+                    user_id: user_id.into(),
+                })
+        }));
+    }
+    let reply_to = data
+        .get("message_reference")
+        .and_then(|reference| reference.get("message_id"))
+        .or_else(|| {
+            data.get("referenced_message")
+                .and_then(|message| message.get("id"))
+        })
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let Some(message_id) = reply_to.as_ref() {
+        segments.push(MessageSegment::Reply {
+            message_id: message_id.clone(),
+        });
+        segments.push(MessageSegment::Quote {
+            message_id: message_id.clone(),
+        });
+    }
     Some(BotMessage {
         message_id: data.get("id").and_then(Value::as_str).map(str::to_owned),
         target,
         sender: actor,
-        segments: vec![MessageSegment::Text { text: content }],
-        reply_to: data
-            .get("message_reference")
-            .and_then(|reference| reference.get("message_id"))
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        segments,
+        reply_to,
         time_ms: event_time_ms(data),
         ext: BotExtMap::new(),
     })

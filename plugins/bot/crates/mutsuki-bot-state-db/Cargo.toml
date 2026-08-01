@@ -1,0 +1,21 @@
+[package]
+name = "mutsuki-bot-state-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-bot-conversation.workspace = true
+mutsuki-bot-delivery.workspace = true
+mutsuki-bot-interaction.workspace = true
+mutsuki-bot-protocol.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

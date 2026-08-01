@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 bot-echo.workspace = true
+mutsuki-bot-conversation.workspace = true
+mutsuki-bot-delivery.workspace = true
+mutsuki-bot-interaction.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-bot-service-host-integration.workspace = true

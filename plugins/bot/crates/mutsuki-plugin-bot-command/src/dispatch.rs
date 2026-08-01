@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandEvent, BotEvent,
-    bot_command_binding_id,
+    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_HELP_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID,
+    BotCommandDescriptor, BotCommandEvent, BotCommandHelpRequest, BotEvent,
+    BotHandlerExecutionResult, BotHandlerOutcome, bot_command_binding_id,
 };
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode,
@@ -13,12 +14,13 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AbiHostClient, AbiHostClientV2, LoadedPlugin, PluginBuilder, map_work_batch_entries,
+    AbiHostClient, AbiHostClientV2, LoadedPlugin, PluginBuilder, ProtocolDescriptorBuilder,
+    map_work_batch_entries,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{CommandParseError, CommandParser, message_text};
+use crate::{CommandParseError, CommandParser, message_text, validate_command_descriptors};
 
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
@@ -38,6 +40,13 @@ pub struct BotCommandConfig {
         restart = "plugin_reload"
     )]
     pub prefixes: Vec<String>,
+    #[config(
+        title = "指令定义",
+        description = "命令组、别名与类型参数描述",
+        restart = "plugin_reload"
+    )]
+    #[serde(default)]
+    pub commands: Vec<BotCommandDescriptor>,
 }
 
 impl BotCommandConfig {
@@ -45,13 +54,23 @@ impl BotCommandConfig {
         if self.prefixes.is_empty() || self.prefixes.iter().any(|prefix| prefix.is_empty()) {
             return Err("prefixes must contain non-empty values".into());
         }
-        Ok(())
+        validate_command_descriptors(&self.commands)
     }
 }
 
 pub fn bot_command_manifest(plugin_generation: u64) -> PluginManifest {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
         .runner_descriptor(command_descriptor(plugin_generation))
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
+            BOT_COMMAND_RUNNER_ID,
+            "bot-command-parse",
+        )
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_COMMAND_HELP_PROTOCOL_ID).build(),
+            BOT_COMMAND_RUNNER_ID,
+            "bot-command-help",
+        )
         .build()
         .manifest
 }
@@ -60,6 +79,7 @@ pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
     command_plugin(
         1,
         vec!["/".into()],
+        Vec::new(),
         PluginArtifact {
             artifact_type: ArtifactType::Abi,
             path: path.into(),
@@ -73,10 +93,25 @@ pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
 fn command_plugin(
     plugin_generation: u64,
     prefixes: Vec<String>,
+    commands: Vec<BotCommandDescriptor>,
     artifact: PluginArtifact,
 ) -> LoadedPlugin {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
-        .runner(Box::new(BotCommandRunner::new(plugin_generation, prefixes)))
+        .runner(Box::new(BotCommandRunner::with_commands(
+            plugin_generation,
+            prefixes,
+            commands,
+        )))
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
+            BOT_COMMAND_RUNNER_ID,
+            "bot-command-parse",
+        )
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_COMMAND_HELP_PROTOCOL_ID).build(),
+            BOT_COMMAND_RUNNER_ID,
+            "bot-command-help",
+        )
         .artifact(artifact)
         .build()
 }
@@ -98,6 +133,7 @@ fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
     Ok(command_plugin(
         1,
         config.prefixes,
+        config.commands,
         PluginArtifact {
             artifact_type: ArtifactType::Abi,
             path: "plugin".into(),
@@ -114,9 +150,17 @@ pub struct BotCommandRunner {
 
 impl BotCommandRunner {
     pub fn new(plugin_generation: u64, prefixes: Vec<String>) -> Self {
+        Self::with_commands(plugin_generation, prefixes, Vec::new())
+    }
+
+    pub fn with_commands(
+        plugin_generation: u64,
+        prefixes: Vec<String>,
+        commands: Vec<BotCommandDescriptor>,
+    ) -> Self {
         Self {
             descriptor: command_descriptor(plugin_generation),
-            parser: CommandParser::new(prefixes),
+            parser: CommandParser::new(prefixes).commands(commands),
         }
     }
 }
@@ -132,24 +176,48 @@ impl Runner for BotCommandRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
+            if task.protocol_id == BOT_COMMAND_HELP_PROTOCOL_ID {
+                let request: BotCommandHelpRequest =
+                    serde_json::from_value(task.payload.to_value())
+                        .map_err(|error| failure("mutsuki.bot.command.help.decode", error))?;
+                let mut result = RunnerResult::completed(task.task_id.clone());
+                result.output = Some(
+                    serde_json::to_value(self.parser.help(&request.path))
+                        .map_err(|error| failure("mutsuki.bot.command.help.encode", error))?,
+                );
+                return Ok(result);
+            }
             let event = task
                 .payload
                 .decode_shared::<BotEvent>()
                 .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
             let Some(text) = message_text(event.as_ref()) else {
-                return Ok(RunnerResult::completed(task.task_id.clone()));
+                return Ok(handler_result(&task.task_id, BotHandlerOutcome::Continue));
             };
             let command = match self.parser.parse(&text) {
                 Ok(command) => command,
                 Err(CommandParseError::MissingPrefix) => {
-                    return Ok(RunnerResult::completed(task.task_id.clone()));
+                    return Ok(handler_result(&task.task_id, BotHandlerOutcome::Continue));
                 }
-                Err(error) => return Err(failure("mutsuki.bot.command.parse", error)),
+                Err(error) => {
+                    let attempted_path = text
+                        .trim_start_matches(|ch: char| !ch.is_alphanumeric())
+                        .split_whitespace()
+                        .take(2)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    return Err(parse_failure(
+                        "mutsuki.bot.command.parse",
+                        self.parser.parse_failure(&error, &attempted_path),
+                    ));
+                }
             };
             let command_event = BotCommandEvent {
                 source: (*event).clone(),
                 name: command.name,
                 args: command.args,
+                command_path: command.command_path,
+                typed_args: command.typed_args,
                 raw_text: command.raw_text,
             };
             tracing::info!(
@@ -172,10 +240,25 @@ impl Runner for BotCommandRunner {
             child.correlation_id = task.correlation_id.clone();
             child.target_binding_id = Some(binding_id);
             let mut result = RunnerResult::completed(task.task_id.clone());
+            result.output = Some(
+                serde_json::to_value(BotHandlerExecutionResult {
+                    outcome: BotHandlerOutcome::Stop,
+                })
+                .map_err(|error| failure("mutsuki.bot.command.outcome", error))?,
+            );
             result.tasks.push(child);
             Ok(result)
         })
     }
+}
+
+fn handler_result(task_id: &str, outcome: BotHandlerOutcome) -> RunnerResult {
+    let mut result = RunnerResult::completed(task_id);
+    result.output = Some(
+        serde_json::to_value(BotHandlerExecutionResult { outcome })
+            .expect("handler outcome serializes"),
+    );
+    result
 }
 
 pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
@@ -183,7 +266,10 @@ pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         runner_id: BOT_COMMAND_RUNNER_ID.into(),
         plugin_id: BOT_COMMAND_PLUGIN_ID.into(),
         plugin_generation,
-        accepted_protocol_ids: vec![BOT_COMMAND_PARSE_PROTOCOL_ID.into()],
+        accepted_protocol_ids: vec![
+            BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
+            BOT_COMMAND_HELP_PROTOCOL_ID.into(),
+        ],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Orchestration,
         invocation_mode: InvocationMode::SyncExclusive,
@@ -232,6 +318,33 @@ fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeEr
         .evidence
         .insert("message".into(), ScalarValue::String(error.to_string()));
     runtime_error
+}
+
+fn parse_failure(
+    route: impl Into<String>,
+    failure: mutsuki_bot_protocol::BotCommandParseFailure,
+) -> RuntimeError {
+    let code = match failure.code {
+        mutsuki_bot_protocol::BotCommandParseErrorCode::MissingPrefix => "missing_prefix",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::EmptyName => "empty_name",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::UnterminatedQuote => "unterminated_quote",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::UnknownCommand => "unknown_command",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::MissingArgument => "missing_argument",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::InvalidArgument => "invalid_argument",
+        mutsuki_bot_protocol::BotCommandParseErrorCode::UnexpectedArgument => "unexpected_argument",
+    };
+    let mut error = RuntimeError::new(
+        format!("bot.command.parse.{code}"),
+        BOT_COMMAND_PLUGIN_ID,
+        route.into(),
+    );
+    error.evidence.insert(
+        "failure".into(),
+        ScalarValue::String(
+            serde_json::to_string(&failure).unwrap_or_else(|_| failure.message.clone()),
+        ),
+    );
+    error
 }
 
 mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v1!(create_abi_plugin_v1);

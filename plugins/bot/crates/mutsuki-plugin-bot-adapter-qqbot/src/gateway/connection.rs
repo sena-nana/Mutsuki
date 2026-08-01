@@ -1,5 +1,6 @@
-use std::collections::{BTreeSet, VecDeque, hash_map::DefaultHasher};
+use std::collections::{HashSet, VecDeque, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use mutsuki_runtime_contracts::Task;
 use serde::{Deserialize, Serialize};
@@ -36,12 +37,13 @@ pub enum GatewayAction {
 
 #[derive(Clone, Debug)]
 pub struct QqGatewayPump {
-    account_id: String,
+    task_account_id: String,
+    task_session_digest: u64,
     last_sequence: Option<u64>,
     session_id: Option<String>,
     resume_url: Option<String>,
-    seen_dedup_keys: BTreeSet<String>,
-    dedup_order: VecDeque<String>,
+    seen_dedup_keys: HashSet<Arc<str>>,
+    dedup_order: VecDeque<Arc<str>>,
     dedup_window: usize,
     actions: VecDeque<GatewayAction>,
 }
@@ -58,12 +60,14 @@ impl QqGatewayPump {
     }
 
     pub fn with_account(account_id: impl Into<String>, dedup_window: usize) -> Self {
+        let account_id = account_id.into();
         Self {
-            account_id: account_id.into(),
+            task_account_id: safe_id(&account_id),
+            task_session_digest: digest("unidentified"),
             last_sequence: None,
             session_id: None,
             resume_url: None,
-            seen_dedup_keys: BTreeSet::new(),
+            seen_dedup_keys: HashSet::new(),
             dedup_order: VecDeque::new(),
             dedup_window: dedup_window.max(1),
             actions: VecDeque::new(),
@@ -86,6 +90,7 @@ impl QqGatewayPump {
         self.session_id = None;
         self.resume_url = None;
         self.last_sequence = None;
+        self.task_session_digest = digest("unidentified");
     }
 
     pub fn identify_frame(config: &QqBotConfig, access_token: &str) -> Value {
@@ -141,8 +146,11 @@ impl QqGatewayPump {
     /// the reservation here would turn temporary Core backpressure into loss.
     pub fn forget_dispatch(&mut self, frame: &GatewayFrame) {
         let key = dedup_key(frame);
-        if self.seen_dedup_keys.remove(&key)
-            && let Some(index) = self.dedup_order.iter().position(|item| item == &key)
+        if self.seen_dedup_keys.remove(key.as_str())
+            && let Some(index) = self
+                .dedup_order
+                .iter()
+                .position(|item| item.as_ref() == key)
         {
             self.dedup_order.remove(index);
         }
@@ -153,9 +161,90 @@ impl QqGatewayPump {
         raw: Value,
         registry_generation: u64,
     ) -> Result<Option<Task>, String> {
-        let frame: GatewayFrame = serde_json::from_value(raw.clone())
-            .map_err(|error| format!("invalid_gateway_frame:{error}"))?;
-        self.handle_frame(frame, raw, registry_generation)
+        let object = raw
+            .as_object()
+            .ok_or_else(|| "invalid_gateway_frame:expected object".to_string())?;
+        let op = object
+            .get("op")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "invalid_gateway_frame:op must be an unsigned integer".to_string())?;
+        let sequence = optional_u64(object.get("s"), "s")?;
+        if let Some(sequence) = sequence {
+            self.last_sequence = Some(sequence);
+        }
+        match op {
+            0 => {
+                let event_type = optional_str(object.get("t"), "t")?.unwrap_or("UNKNOWN");
+                let event_id = optional_str(object.get("id"), "id")?;
+                let data = object.get("d").unwrap_or(&Value::Null);
+                if event_type == "READY" {
+                    self.session_id = data
+                        .get("session_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    self.resume_url = data
+                        .get("resume_gateway_url")
+                        .or_else(|| data.get("resume_url"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    self.task_session_digest =
+                        digest(self.session_id.as_deref().unwrap_or("unidentified"));
+                }
+                if !known_event_type(event_type) {
+                    self.actions
+                        .push_back(GatewayAction::UnknownEvent(event_type.to_owned()));
+                    return Ok(None);
+                }
+                let key = dedup_key_parts(op, sequence, event_id, data);
+                if self.seen_dedup_keys.contains(key.as_str()) {
+                    return Ok(None);
+                }
+                let task_id = self.task_id(&key);
+                let correlation_id = event_id.map(str::to_owned).or_else(|| Some(key.clone()));
+                self.remember_dedup_key(key);
+                self.actions
+                    .push_back(GatewayAction::DispatchTask(task_id.clone()));
+                let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
+                task.registry_generation = registry_generation;
+                task.correlation_id = correlation_id;
+                Ok(Some(task))
+            }
+            7 => {
+                self.actions.push_back(GatewayAction::Reconnect);
+                Ok(None)
+            }
+            9 => {
+                let resumable = object.get("d").and_then(Value::as_bool).unwrap_or(false);
+                if resumable && self.session_id.is_some() {
+                    self.actions.push_back(GatewayAction::Resume);
+                } else {
+                    self.clear_session();
+                    self.actions.push_back(GatewayAction::Identify);
+                }
+                Ok(None)
+            }
+            10 => {
+                self.actions.push_back(if self.session_id.is_some() {
+                    GatewayAction::Resume
+                } else {
+                    GatewayAction::Identify
+                });
+                Ok(None)
+            }
+            11 => {
+                self.actions.push_back(GatewayAction::AckHeartbeat);
+                Ok(None)
+            }
+            1 => {
+                self.actions
+                    .push_back(GatewayAction::Heartbeat(self.last_sequence));
+                Ok(None)
+            }
+            opcode => {
+                self.actions.push_back(GatewayAction::UnknownOpcode(opcode));
+                Ok(None)
+            }
+        }
     }
 
     pub fn handle_frame(
@@ -219,6 +308,7 @@ impl QqGatewayPump {
                 .get("session_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            self.task_session_digest = digest(self.session_id.as_deref().unwrap_or("unidentified"));
             self.resume_url = frame
                 .d
                 .get("resume_gateway_url")
@@ -232,20 +322,22 @@ impl QqGatewayPump {
             return Ok(None);
         }
         let key = dedup_key(&frame);
-        if self.seen_dedup_keys.contains(&key) {
+        if self.seen_dedup_keys.contains(key.as_str()) {
             return Ok(None);
         }
-        self.remember_dedup_key(key.clone());
         let task_id = self.task_id(&key);
+        let correlation_id = frame.id.clone().or_else(|| Some(key.clone()));
+        self.remember_dedup_key(key);
         self.actions
             .push_back(GatewayAction::DispatchTask(task_id.clone()));
         let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
         task.registry_generation = registry_generation;
-        task.correlation_id = frame.id.clone().or(Some(key));
+        task.correlation_id = correlation_id;
         Ok(Some(task))
     }
 
     fn remember_dedup_key(&mut self, key: String) {
+        let key: Arc<str> = key.into();
         self.seen_dedup_keys.insert(key.clone());
         self.dedup_order.push_back(key);
         while self.dedup_order.len() > self.dedup_window {
@@ -256,25 +348,46 @@ impl QqGatewayPump {
     }
 
     fn task_id(&self, event_fact: &str) -> String {
-        let session = self.session_id.as_deref().unwrap_or("unidentified");
         format!(
             "mutsuki.bot.qqbot.gateway.frame:{}:{:016x}:{:016x}",
-            safe_id(&self.account_id),
-            digest(session),
+            self.task_account_id,
+            self.task_session_digest,
             digest(event_fact)
         )
     }
 }
 
-pub fn dedup_key(frame: &GatewayFrame) -> String {
-    frame
-        .d
-        .get("id")
+fn optional_u64(value: Option<&Value>, field: &str) -> Result<Option<u64>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| format!("invalid_gateway_frame:{field} must be an unsigned integer")),
+    }
+}
+
+fn optional_str<'a>(value: Option<&'a Value>, field: &str) -> Result<Option<&'a str>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| format!("invalid_gateway_frame:{field} must be a string")),
+    }
+}
+
+fn dedup_key_parts(op: u64, sequence: Option<u64>, id: Option<&str>, data: &Value) -> String {
+    data.get("id")
         .and_then(Value::as_str)
         .map(|id| format!("message:{id}"))
-        .or_else(|| frame.id.as_ref().map(|id| format!("event:{id}")))
-        .or_else(|| frame.s.map(|sequence| format!("seq:{sequence}")))
-        .unwrap_or_else(|| format!("op:{}:unknown", frame.op))
+        .or_else(|| id.map(|id| format!("event:{id}")))
+        .or_else(|| sequence.map(|sequence| format!("seq:{sequence}")))
+        .unwrap_or_else(|| format!("op:{op}:unknown"))
+}
+
+pub fn dedup_key(frame: &GatewayFrame) -> String {
+    dedup_key_parts(frame.op, frame.s, frame.id.as_deref(), &frame.d)
 }
 
 pub fn session_summary(session_id: Option<&str>) -> String {

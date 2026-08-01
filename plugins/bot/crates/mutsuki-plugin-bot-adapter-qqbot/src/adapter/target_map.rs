@@ -4,7 +4,15 @@ use serde_json::Value;
 use crate::api::QqScene;
 
 pub fn qq_target_from_payload(event_type: &str, data: &Value) -> BotTarget {
-    if let Some(group_id) = data
+    if let (Some(guild_id), Some(channel_id)) = (
+        data.get("guild_id").and_then(Value::as_str),
+        data.get("channel_id").and_then(Value::as_str),
+    ) {
+        BotTarget::GuildChannel {
+            guild_id: guild_id.into(),
+            channel_id: channel_id.into(),
+        }
+    } else if let Some(group_id) = data
         .get("group_openid")
         .or_else(|| data.get("group_id"))
         .and_then(Value::as_str)

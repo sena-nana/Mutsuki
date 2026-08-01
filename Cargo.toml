@@ -167,13 +167,18 @@ mutsuki-plugin-agent-skills = { path = "kits/agent/crates/mutsuki-plugin-agent-s
 
 mutsuki-bot-config = { path = "plugins/bot/crates/mutsuki-bot-config" }
 mutsuki-bot-config-derive = { path = "plugins/bot/crates/mutsuki-bot-config-derive" }
+mutsuki-bot-conversation = { path = "plugins/bot/crates/mutsuki-bot-conversation" }
+mutsuki-bot-delivery = { path = "plugins/bot/crates/mutsuki-bot-delivery" }
 mutsuki-bot-link-parser = { path = "plugins/bot/crates/mutsuki-bot-link-parser" }
+mutsuki-bot-interaction = { path = "plugins/bot/crates/mutsuki-bot-interaction" }
+mutsuki-bot-state-db = { path = "plugins/bot/crates/mutsuki-bot-state-db" }
 mutsuki-bot-protocol = { path = "plugins/bot/crates/mutsuki-bot-protocol" }
 mutsuki-bot-sdk = { path = "plugins/bot/crates/mutsuki-bot-sdk" }
 mutsuki-bot-service-host-integration = { path = "plugins/bot/crates/mutsuki-bot-service-host-integration" }
 mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
 mutsuki-bot-web-console = { path = "plugins/bot/crates/mutsuki-bot-web-console" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-qqbot" }
+mutsuki-plugin-bot-agent = { path = "plugins/bot/crates/mutsuki-plugin-bot-agent" }
 mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili" }
 mutsuki-plugin-bot-bilibili-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-web" }
 mutsuki-plugin-bot-bilibili-workshop = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-workshop" }
@@ -181,8 +186,10 @@ mutsuki-plugin-bot-command = { path = "plugins/bot/crates/mutsuki-plugin-bot-com
 mutsuki-plugin-bot-config-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-config-web" }
 mutsuki-plugin-bot-control-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-control-web" }
 mutsuki-plugin-bot-event-router = { path = "plugins/bot/crates/mutsuki-plugin-bot-event-router" }
+mutsuki-plugin-bot-media = { path = "plugins/bot/crates/mutsuki-plugin-bot-media" }
 mutsuki-plugin-bot-mihuashi = { path = "plugins/bot/crates/mutsuki-plugin-bot-mihuashi" }
 mutsuki-plugin-bot-overview-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-overview-web" }
+mutsuki-plugin-bot-qq-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-qq-web" }
 mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-upgrade-web" }
 mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
 

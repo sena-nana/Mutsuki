@@ -1,0 +1,23 @@
+[package]
+name = "mutsuki-plugin-bot-qq-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mutsuki-bot-protocol.workspace = true
+mutsuki-web-extension.workspace = true
+mutsuki-web-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
+mutsuki-web-host.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

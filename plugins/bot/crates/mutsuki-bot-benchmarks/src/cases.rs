@@ -4,6 +4,14 @@ use std::{
     time::Instant,
 };
 
+use mutsuki_bot_conversation::{ConversationError, ConversationRepository, ConversationService};
+use mutsuki_bot_delivery::{
+    ActiveDeliveryService, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
+    QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
+};
+use mutsuki_bot_interaction::{
+    InteractionConditionMatcher, InteractionError, InteractionRepository, InteractionService,
+};
 use mutsuki_bot_link_parser::{expand_card_payload, extract_urls};
 use mutsuki_bot_protocol::*;
 use mutsuki_bot_testkit::{
@@ -14,7 +22,9 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     QqHttpResponse, QqOpenApiError, QqOpenApiTransport, StaticQqCredentials,
 };
 use mutsuki_plugin_bot_command::BotCommandRunner;
-use mutsuki_plugin_bot_event_router::{BOT_EVENT_ROUTER_RUNNER_ID, BotEventRouterRunner};
+use mutsuki_plugin_bot_event_router::{
+    BOT_EVENT_ROUTER_RUNNER_ID, BotEventRouterRunner, handler_matches,
+};
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerContext,
     RunnerResult, RunnerStatus, RuntimeError, Task, TaskBatch, TaskHandle, TaskOutcome,
@@ -155,6 +165,462 @@ pub fn command_sample(hit: bool) -> Sample {
     }
 }
 
+pub fn handler_filter_sample(event_count: usize, handler_count: usize) -> Sample {
+    let event = benchmark_event(7, 1, true);
+    let handlers = (0..handler_count)
+        .map(|index| BotHandlerDescriptor {
+            handler_id: format!("handler-{index}"),
+            binding_id: format!("binding-{index}"),
+            generation: 1,
+            handler_protocol_id: "mutsuki.bot.benchmark/handle@1".into(),
+            runner_hint: None,
+            event_kinds: vec![BotEventKind::MessageCreated],
+            conversation_kinds: vec![BotConversationKind::Group],
+            filter: Some(BotFilterExpr::All {
+                filters: vec![BotFilterExpr::MustMentionBot],
+            }),
+            permissions: Vec::new(),
+            priority: index as i32,
+            propagation: BotPropagationPolicy::Continue,
+            rate_limit: None,
+            timeout_ms: None,
+            side_effects: Vec::new(),
+            max_concurrency: None,
+            before_hook_protocol_ids: Vec::new(),
+            after_hook_protocol_ids: Vec::new(),
+            error_hook_protocol_ids: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut matches = 0_u64;
+    for _ in 0..event_count {
+        matches += handlers
+            .iter()
+            .filter(|handler| handler_matches(handler, &event))
+            .count() as u64;
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(matches, (event_count * handler_count) as u64);
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        event_count as u64,
+        json!({"matches": matches}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+pub fn conversation_sample(event_count: usize) -> Sample {
+    let repository = Arc::new(BenchmarkConversationRepository::default());
+    let service = ConversationService::new(repository, benchmark_policy());
+    let event = benchmark_event(7, 1, true);
+    let conversation = mutsuki_bot_conversation::qq_conversation_from_event(&event).unwrap();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    let mut session_id = String::new();
+    for _ in 0..event_count {
+        let resolved = service
+            .resolve_policy(conversation.clone(), Some("user-7"))
+            .unwrap();
+        session_id = service
+            .get_or_create_session_binding(&resolved, Some("user-7"))
+            .unwrap()
+            .session_id;
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert!(!session_id.is_empty());
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        event_count as u64,
+        json!({"session_id": session_id, "stable": true}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+pub fn delivery_idempotency_sample(delivery_count: usize) -> Sample {
+    let repository = Arc::new(BenchmarkDeliveryRepository::default());
+    let gateway = Arc::new(BenchmarkDeliveryGateway::default());
+    let service = ActiveDeliveryService::new(
+        repository,
+        gateway.clone(),
+        Arc::new(BenchmarkDeliveryPolicy),
+    );
+    let conversation =
+        mutsuki_bot_conversation::qq_conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    for index in 0..delivery_count {
+        let request = BotActiveDeliveryRequest {
+            delivery_id: format!("delivery-{index}"),
+            idempotency_key: format!("delivery-key-{index}"),
+            conversation: conversation.clone(),
+            content: BotDeliveryContent {
+                segments: vec![MessageSegment::text("benchmark")],
+                summary: None,
+            },
+            policy: DeliveryPolicy {
+                max_attempts: 3,
+                initial_backoff_ms: 10,
+                max_backoff_ms: 1_000,
+                not_before_unix_ms: None,
+                expires_at_unix_ms: None,
+            },
+            dry_run: false,
+            source_execution_id: None,
+        };
+        service.submit(&request, index as u64).unwrap();
+        service.submit(&request, index as u64).unwrap();
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    assert_eq!(*gateway.calls.lock().unwrap(), delivery_count as u64);
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        delivery_count as u64,
+        json!({"deliveries": delivery_count, "duplicate_sends": 0}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+pub fn interaction_transition_sample(session_count: usize) -> Sample {
+    let repository = Arc::new(BenchmarkInteractionRepository::default());
+    let service = InteractionService::new(repository, Arc::new(BenchmarkInteractionMatcher));
+    let event = benchmark_event(7, 1, true);
+    let conversation = mutsuki_bot_conversation::qq_conversation_from_event(&event).unwrap();
+    let actor_id = event.actor.as_ref().unwrap().user_id.clone();
+    let allocation_start = allocation_snapshot();
+    let started = Instant::now();
+    for index in 0..session_count {
+        service
+            .create(BotInteractionSession {
+                session_id: format!("interaction-{index}"),
+                conversation: conversation.clone(),
+                scope: InteractionScope::ActorInConversation,
+                actor_id: Some(actor_id.clone()),
+                state_ref_id: format!("state-{index}"),
+                wait: InteractionWaitSpec {
+                    event_kinds: vec![BotEventKind::MessageCreated],
+                    command: None,
+                    predicate_service_id: None,
+                    timeout_at_unix_ms: u64::MAX,
+                    propagation: BotPropagationPolicy::ConsumeOnSuccess,
+                    retry_prompt: None,
+                },
+                status: InteractionStatus::Waiting,
+                generation: 1,
+                version: 1,
+                exclusive: false,
+                retries_remaining: 1,
+            })
+            .unwrap();
+        let mut next = event.clone();
+        next.event_id = format!("interaction-event-{index}");
+        assert!(
+            service
+                .match_event(&next, index as u64)
+                .unwrap()
+                .unwrap()
+                .accepted
+        );
+    }
+    let elapsed_ns = started.elapsed().as_nanos();
+    let (allocations, allocated_bytes) = allocation_delta(allocation_start);
+    compact_sample(
+        elapsed_ns,
+        session_count as u64,
+        json!({"sessions": session_count, "matched": session_count}),
+        allocations,
+        allocated_bytes,
+    )
+}
+
+fn compact_sample(
+    elapsed_ns: u128,
+    events: u64,
+    output: serde_json::Value,
+    allocations: u64,
+    allocated_bytes: u64,
+) -> Sample {
+    Sample {
+        elapsed_ns,
+        cpu_time_ns: 0,
+        idle_cpu_time_ns: 0,
+        simulated_platform_ns: 0,
+        events,
+        queue_depth: 1,
+        dropped: 0,
+        deferred: 0,
+        retried: 0,
+        fairness: 1.0,
+        duplicate_executions: 0,
+        retained_units: 1,
+        output,
+        allocations,
+        allocated_bytes,
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkConversationRepository {
+    binding: Mutex<Option<AgentSessionBinding>>,
+    events: Mutex<BTreeMap<(String, String), bool>>,
+}
+
+impl ConversationRepository for BenchmarkConversationRepository {
+    fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
+        Ok(Vec::new())
+    }
+
+    fn session_binding(&self, _: &str) -> Result<Option<AgentSessionBinding>, ConversationError> {
+        Ok(self.binding.lock().unwrap().clone())
+    }
+
+    fn compare_and_set_session_binding(
+        &self,
+        _: &str,
+        expected: Option<u64>,
+        binding: AgentSessionBinding,
+    ) -> Result<(), ConversationError> {
+        let mut current = self.binding.lock().unwrap();
+        if current.as_ref().map(|value| value.generation) != expected {
+            return Err(ConversationError::GenerationConflict);
+        }
+        *current = Some(binding);
+        Ok(())
+    }
+
+    fn begin_agent_event(
+        &self,
+        binding_key: &str,
+        event_id: &str,
+        _: &str,
+    ) -> Result<mutsuki_bot_conversation::AgentEventClaim, ConversationError> {
+        use mutsuki_bot_conversation::AgentEventClaim;
+        let mut events = self.events.lock().unwrap();
+        let key = (binding_key.into(), event_id.into());
+        Ok(match events.get(&key) {
+            Some(true) => AgentEventClaim::Completed,
+            Some(false) => AgentEventClaim::ResumePending,
+            None => {
+                events.insert(key, false);
+                AgentEventClaim::New
+            }
+        })
+    }
+
+    fn complete_agent_event(
+        &self,
+        binding_key: &str,
+        event_id: &str,
+    ) -> Result<(), ConversationError> {
+        self.events
+            .lock()
+            .unwrap()
+            .insert((binding_key.into(), event_id.into()), true);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkDeliveryRepository {
+    requests: Mutex<BTreeMap<String, BotActiveDeliveryRequest>>,
+    keys: Mutex<BTreeMap<String, String>>,
+    receipts: Mutex<BTreeMap<String, BotDeliveryReceipt>>,
+}
+
+impl DeliveryRepository for BenchmarkDeliveryRepository {
+    fn reserve(
+        &self,
+        request: &BotActiveDeliveryRequest,
+    ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
+        if let Some(delivery_id) = self.keys.lock().unwrap().get(&request.idempotency_key) {
+            return Ok(self.receipts.lock().unwrap().get(delivery_id).cloned());
+        }
+        self.keys
+            .lock()
+            .unwrap()
+            .insert(request.idempotency_key.clone(), request.delivery_id.clone());
+        self.requests
+            .lock()
+            .unwrap()
+            .insert(request.delivery_id.clone(), request.clone());
+        Ok(None)
+    }
+
+    fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .get(delivery_id)
+            .cloned()
+            .ok_or(DeliveryError::NotFound)
+    }
+
+    fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+        self.receipts
+            .lock()
+            .unwrap()
+            .get(delivery_id)
+            .cloned()
+            .ok_or(DeliveryError::NotFound)
+    }
+
+    fn attempts(&self, _delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
+        Ok(Vec::new())
+    }
+
+    fn save_attempt(&self, _attempt: BotDeliveryAttempt) -> Result<(), DeliveryError> {
+        Ok(())
+    }
+
+    fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
+        self.receipts
+            .lock()
+            .unwrap()
+            .insert(receipt.delivery_id.clone(), receipt);
+        Ok(())
+    }
+
+    fn due_delivery_ids(&self, _now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
+        Ok(Vec::new())
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkDeliveryGateway {
+    calls: Mutex<u64>,
+}
+
+impl QqDeliveryGateway for BenchmarkDeliveryGateway {
+    fn send(
+        &self,
+        _conversation: &QqConversationRef,
+        _content: &BotDeliveryContent,
+    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        Ok(QqDeliverySuccess {
+            platform_message_ids: vec![format!("message-{calls}")],
+            part_receipts: Vec::new(),
+        })
+    }
+}
+
+struct BenchmarkDeliveryPolicy;
+
+impl DeliveryPolicyResolver for BenchmarkDeliveryPolicy {
+    fn active_delivery_allowed(
+        &self,
+        _conversation: &QqConversationRef,
+    ) -> Result<bool, DeliveryError> {
+        Ok(true)
+    }
+}
+
+#[derive(Default)]
+struct BenchmarkInteractionRepository {
+    sessions: Mutex<BTreeMap<String, BotInteractionSession>>,
+}
+
+impl InteractionRepository for BenchmarkInteractionRepository {
+    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session.session_id.clone(), session);
+        Ok(())
+    }
+
+    fn active_for_origin(
+        &self,
+        origin_key: &str,
+    ) -> Result<Vec<BotInteractionSession>, InteractionError> {
+        Ok(self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|session| {
+                session.status == InteractionStatus::Waiting
+                    && session.conversation.origin_key() == origin_key
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn compare_and_set(
+        &self,
+        expected_version: u64,
+        session: BotInteractionSession,
+    ) -> Result<(), InteractionError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if sessions
+            .get(&session.session_id)
+            .map(|current| current.version)
+            != Some(expected_version)
+        {
+            return Err(InteractionError::GenerationConflict);
+        }
+        sessions.insert(session.session_id.clone(), session);
+        Ok(())
+    }
+
+    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+        Ok(self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|session| session.status == InteractionStatus::Waiting)
+            .cloned()
+            .collect())
+    }
+}
+
+struct BenchmarkInteractionMatcher;
+
+impl InteractionConditionMatcher for BenchmarkInteractionMatcher {
+    fn command_matches(&self, _command: &str, _event: &BotEvent) -> Result<bool, InteractionError> {
+        Ok(true)
+    }
+
+    fn predicate_matches(
+        &self,
+        _service_id: &str,
+        _event: &BotEvent,
+    ) -> Result<bool, InteractionError> {
+        Ok(true)
+    }
+}
+
+fn benchmark_policy() -> ConversationPolicy {
+    ConversationPolicy {
+        revision: 1,
+        enabled: true,
+        agent_enabled: true,
+        direct_message_policy: Default::default(),
+        must_mention: false,
+        wake_words: Vec::new(),
+        allowlist: Vec::new(),
+        denylist: Vec::new(),
+        rate_limit_profile_id: None,
+        session_scope: AgentSessionScope::SharedConversation,
+        business_profile_binding_id: None,
+        agent_runtime_profile_id: Some("benchmark".into()),
+        stt_enabled: false,
+        tts_enabled: false,
+        speech_reply_policy: Default::default(),
+        stt_selector_id: None,
+        tts_selector_id: None,
+        active_delivery_enabled: true,
+    }
+}
+
 pub fn link_parse_sample() -> Sample {
     let payload = benchmark_card_payload();
     let allocation_start = allocation_snapshot();
@@ -230,20 +696,21 @@ pub fn duplicate_sample() -> Sample {
 pub fn long_run_sample(event_count: usize) -> Sample {
     const WINDOW: usize = 2_048;
     let mut pump = QqGatewayPump::with_account("long-run", WINDOW);
+    // Fixture construction is not Bot orchestration. Keep it outside the measured region, as the
+    // event-burst cases do, so the budget measures the Gateway pump rather than serde_json::json!.
+    let frames = (0..event_count)
+        .map(|index| benchmark_gateway_frame(index, 4, false))
+        .collect::<Vec<_>>();
+    let old = benchmark_gateway_frame(0, 4, false);
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
     let mut accepted = 0_u64;
-    for index in 0..event_count {
-        if pump
-            .handle_raw_frame(benchmark_gateway_frame(index, 4, false), 1)
-            .unwrap()
-            .is_some()
-        {
+    for raw in frames {
+        if pump.handle_raw_frame(raw, 1).unwrap().is_some() {
             accepted += 1;
         }
         let _ = pump.pop_action();
     }
-    let old = benchmark_gateway_frame(0, 4, false);
     assert!(pump.handle_raw_frame(old.clone(), 1).unwrap().is_some());
     let _ = pump.pop_action();
     assert!(pump.handle_raw_frame(old, 1).unwrap().is_none());
