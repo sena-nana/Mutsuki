@@ -149,9 +149,9 @@ media_provider_id = "mutsuki.std.resource.memory"
 renderer 只读取配置列出的字体文件，不使用系统字体 fallback。米画师 Scene 请求
 `Noto Sans SC` 或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及页面文本所需字形。
 缺少 renderer、字体、输出 Provider 或 Browser Snapshot 协议都会在启动或任务边界结构化失败，
-不会退回旧截图或原图。`skia-safe 0.99.0` 关闭默认 PDF/GPU，只启用 CPU Raster、textlayout、
-JPEG/WebP 解码与 binary cache；官方 binary cache 没有覆盖所有无 PDF 特性组合，缓存未命中时
-构建机必须提供 C++ toolchain 与 `ninja`。
+不会退回旧截图或原图。renderer 使用 `skia-safe 0.99.0` 官方 CPU 预编译组合；依赖层启用
+PDF、SVG、textlayout 与完整 WebP 以命中 binary cache，但插件协议仍只公开 CPU Raster 和 PNG，
+不接受 PDF/SVG 输入，也不输出 WebP。没有对应官方资产的平台仍会回退源码构建。
 
 Cookie 扫码登录、聊天管理/自助
 绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend
