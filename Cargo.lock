@@ -3395,6 +3395,7 @@ dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-testkit",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",

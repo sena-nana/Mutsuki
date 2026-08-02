@@ -32,6 +32,21 @@ pub struct FakeQqSnapshot {
     pub clean_closes: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct FakeQqGatewayScript {
+    pub initial_events: Vec<Value>,
+    pub resumed_events: Vec<Value>,
+}
+
+impl Default for FakeQqGatewayScript {
+    fn default() -> Self {
+        Self {
+            initial_events: vec![command_event(2, "echo-1", "/echo hello")],
+            resumed_events: vec![command_event(4, "ping-1", "/ping")],
+        }
+    }
+}
+
 /// External-boundary fake for product E2E tests. It runs real HTTP and WebSocket servers while
 /// leaving ServiceRuntime, EventSource, Runner routing and task completion untouched.
 pub struct FakeQqServer {
@@ -49,6 +64,10 @@ pub struct FakeQqServer {
 
 impl FakeQqServer {
     pub async fn start() -> Self {
+        Self::start_with_gateway_script(FakeQqGatewayScript::default()).await
+    }
+
+    pub async fn start_with_gateway_script(script: FakeQqGatewayScript) -> Self {
         let sends = Arc::new(Mutex::new(Vec::new()));
         let gateway_auth_frames = Arc::new(Mutex::new(Vec::new()));
         let websocket_connections = Arc::new(AtomicUsize::new(0));
@@ -63,6 +82,7 @@ impl FakeQqServer {
             gateway_auth_frames.clone(),
             websocket_connections.clone(),
             clean_closes.clone(),
+            script,
         ));
 
         let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -253,6 +273,7 @@ async fn run_gateway_server(
     auth_frames: Arc<Mutex<Vec<Value>>>,
     connections: Arc<AtomicUsize>,
     clean_closes: Arc<AtomicUsize>,
+    script: FakeQqGatewayScript,
 ) {
     let resume_url = format!("ws://{}", listener.local_addr().unwrap());
     for connection in 0..2 {
@@ -282,7 +303,9 @@ async fn run_gateway_server(
                 ))
                 .await
                 .unwrap();
-            send_command(&mut socket, 2, "echo-1", "/echo hello").await;
+            for event in &script.initial_events {
+                send_gateway_event(&mut socket, event).await;
+            }
             socket.send(Message::Close(None)).await.unwrap();
             continue;
         }
@@ -295,7 +318,9 @@ async fn run_gateway_server(
             ))
             .await
             .unwrap();
-        send_command(&mut socket, 4, "ping-1", "/ping").await;
+        for event in &script.resumed_events {
+            send_gateway_event(&mut socket, event).await;
+        }
         while let Some(message) = socket.next().await {
             match message {
                 Ok(Message::Text(text)) => {
@@ -317,35 +342,31 @@ async fn run_gateway_server(
     }
 }
 
-async fn send_command<S>(
-    socket: &mut tokio_tungstenite::WebSocketStream<S>,
-    sequence: u64,
-    id: &str,
-    content: &str,
-) where
+async fn send_gateway_event<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>, event: &Value)
+where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     socket
-        .send(Message::Text(
-            json!({
-                "op": 0,
-                "s": sequence,
-                "t": "GROUP_AT_MESSAGE_CREATE",
-                "id": id,
-                "d": {
-                    "id": format!("MESSAGE_{sequence}"),
-                    "group_openid": "GROUP_1",
-                    "content": format!("<@BOT_OPENID> {content}"),
-                    "mentions": [{"id": "BOT_OPENID", "is_you": true, "bot": true}],
-                    "timestamp": "2026-07-12T10:00:00+08:00",
-                    "author": {"member_openid": "USER_1", "username": "tester"}
-                }
-            })
-            .to_string()
-            .into(),
-        ))
+        .send(Message::Text(event.to_string().into()))
         .await
         .unwrap();
+}
+
+fn command_event(sequence: u64, id: &str, content: &str) -> Value {
+    json!({
+        "op": 0,
+        "s": sequence,
+        "t": "GROUP_AT_MESSAGE_CREATE",
+        "id": id,
+        "d": {
+            "id": format!("MESSAGE_{sequence}"),
+            "group_openid": "GROUP_1",
+            "content": format!("<@BOT_OPENID> {content}"),
+            "mentions": [{"id": "BOT_OPENID", "is_you": true, "bot": true}],
+            "timestamp": "2026-07-12T10:00:00+08:00",
+            "author": {"member_openid": "USER_1", "username": "tester"}
+        }
+    })
 }
 
 async fn next_json<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value

@@ -3,8 +3,8 @@ use thiserror::Error;
 use url::Url;
 
 use mutsuki_bot_protocol::{
-    BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqStreamingStrategy,
-    QqUploadConstraints,
+    BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqMessageSegmentKind,
+    QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
 };
 
 pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
@@ -161,18 +161,30 @@ impl QqBotConfig {
     pub fn capability_matrix(&self) -> QqBotCapabilityMatrix {
         const PUBLIC_GUILD_MESSAGES: u64 = 1 << 30;
         const GROUP_AND_C2C_EVENT: u64 = 1 << 25;
+        let group_c2c_enabled = self.gateway_intents & GROUP_AND_C2C_EVENT != 0;
+        let guild_enabled = self.gateway_intents & PUBLIC_GUILD_MESSAGES != 0;
         let mut conversation_kinds = Vec::new();
         let mut required_intents = Vec::new();
-        if self.gateway_intents & GROUP_AND_C2C_EVENT != 0 {
+        let mut required_permissions = Vec::new();
+        if group_c2c_enabled {
             conversation_kinds.extend([BotConversationKind::Private, BotConversationKind::Group]);
             required_intents.push("group_and_c2c_event".into());
+            required_permissions.extend([
+                QqPermissionRequirement::ReadGroupMessages,
+                QqPermissionRequirement::ReadC2cMessages,
+                QqPermissionRequirement::SendGroupMessages,
+                QqPermissionRequirement::SendC2cMessages,
+                QqPermissionRequirement::RecallGroupMessages,
+                QqPermissionRequirement::RecallC2cMessages,
+            ]);
         }
-        if self.gateway_intents & PUBLIC_GUILD_MESSAGES != 0 {
+        if guild_enabled {
             conversation_kinds.push(BotConversationKind::Channel);
             required_intents.push("public_guild_messages".into());
+            required_permissions.push(QqPermissionRequirement::ReadGuildAtMessages);
         }
         let media_enabled = self.media_provider_id.is_some();
-        let media = if media_enabled {
+        let inbound_media = if media_enabled && !conversation_kinds.is_empty() {
             vec![
                 BotMediaKind::Image,
                 BotMediaKind::Audio,
@@ -182,25 +194,59 @@ impl QqBotConfig {
         } else {
             Vec::new()
         };
-        let active_message_kinds = [BotConversationKind::Private, BotConversationKind::Group]
-            .into_iter()
-            .filter(|_| self.gateway_intents & GROUP_AND_C2C_EVENT != 0)
-            .collect::<Vec<_>>();
+        let outbound_conversation_kinds =
+            [BotConversationKind::Private, BotConversationKind::Group]
+                .into_iter()
+                .filter(|_| group_c2c_enabled)
+                .collect::<Vec<_>>();
+        let active_message_kinds = outbound_conversation_kinds.clone();
+        let outbound_media = if media_enabled && !outbound_conversation_kinds.is_empty() {
+            required_permissions.extend([
+                QqPermissionRequirement::UploadGroupMedia,
+                QqPermissionRequirement::UploadC2cMedia,
+            ]);
+            inbound_media.clone()
+        } else {
+            Vec::new()
+        };
+        let mut inbound_segments = if conversation_kinds.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                QqMessageSegmentKind::Text,
+                QqMessageSegmentKind::MentionUser,
+                QqMessageSegmentKind::Reply,
+                QqMessageSegmentKind::Quote,
+            ]
+        };
+        inbound_segments.extend(inbound_media.iter().map(media_segment_kind));
+        let mut outbound_segments = if outbound_conversation_kinds.is_empty() {
+            Vec::new()
+        } else {
+            vec![
+                QqMessageSegmentKind::Text,
+                QqMessageSegmentKind::MentionUser,
+                QqMessageSegmentKind::MentionAll,
+                QqMessageSegmentKind::Reply,
+                QqMessageSegmentKind::Quote,
+            ]
+        };
+        outbound_segments.extend(outbound_media.iter().map(media_segment_kind));
         QqBotCapabilityMatrix {
             account_id: self.account_id.clone(),
             conversation_kinds,
-            outbound_conversation_kinds: [BotConversationKind::Private, BotConversationKind::Group]
-                .into_iter()
-                .filter(|_| self.gateway_intents & GROUP_AND_C2C_EVENT != 0)
-                .collect(),
+            outbound_conversation_kinds,
             active_message: !active_message_kinds.is_empty(),
             active_message_kinds,
-            inbound_media: media.clone(),
-            outbound_media: media,
+            inbound_segments,
+            outbound_segments,
+            inbound_media,
+            outbound_media,
             message_edit: false,
-            message_recall: true,
-            reply: true,
-            mention: true,
+            message_recall: group_c2c_enabled,
+            reply: !required_intents.is_empty(),
+            quote: !required_intents.is_empty(),
+            mention: !required_intents.is_empty(),
             upload: QqUploadConstraints {
                 max_bytes: Some(100 * 1024 * 1024),
                 max_bytes_by_kind: [
@@ -222,12 +268,32 @@ impl QqBotConfig {
                     "application/octet-stream".into(),
                 ],
             },
+            rate_limit: QqRateLimitPolicy {
+                server_driven: true,
+                honors_retry_after: true,
+                max_retry_attempts: self.max_retry_attempts,
+                retry_base_delay_ms: self.retry_base_delay_ms,
+                retry_max_delay_ms: self.retry_max_delay_ms,
+                gateway_rate_limit_delay_ms: self.gateway_rate_limit_delay_ms,
+            },
             streaming: vec![
                 QqStreamingStrategy::FinalOnly,
                 QqStreamingStrategy::SegmentMessages,
             ],
+            configured_intents: self.gateway_intents,
+            shard: self.shard,
             required_intents,
+            required_permissions,
         }
+    }
+}
+
+fn media_segment_kind(kind: &BotMediaKind) -> QqMessageSegmentKind {
+    match kind {
+        BotMediaKind::Image => QqMessageSegmentKind::Image,
+        BotMediaKind::Audio => QqMessageSegmentKind::Audio,
+        BotMediaKind::Video => QqMessageSegmentKind::Video,
+        BotMediaKind::File => QqMessageSegmentKind::File,
     }
 }
 

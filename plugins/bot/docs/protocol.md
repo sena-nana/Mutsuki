@@ -20,6 +20,14 @@ QQBot-specific protocols:
 - `mutsuki.bot.qqbot.raw/call@1`
 - `mutsuki.bot.qqbot.account/get@1`
 - `mutsuki.bot.qqbot.gateway/status@1`
+- `mutsuki.bot.qqbot.capability/get@1`
+
+The QQ capability response is account-scoped and additive. It reports the configured intent mask
+and shard, required QQ permission categories, truthful inbound/outbound conversation and segment
+surfaces, optional media constraints, reply/quote/mention, active delivery, edit/recall and
+streaming strategy. The QQ-specific rate-limit policy declares server-governed quotas,
+`Retry-After` handling, bounded retry attempts/backoff and the Gateway rate-limit delay. New fields
+are serde-defaulted so older recorded responses remain readable.
 
 Business plugins should prefer the standard protocols. Adapter-specific protocols are escape hatches.
 

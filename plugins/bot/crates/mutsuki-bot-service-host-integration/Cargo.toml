@@ -33,4 +33,5 @@ tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mutsuki-bot-testkit.workspace = true
 tempfile.workspace = true

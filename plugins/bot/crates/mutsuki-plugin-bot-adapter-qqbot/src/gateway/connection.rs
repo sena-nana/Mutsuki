@@ -195,7 +195,7 @@ impl QqGatewayPump {
                         .push_back(GatewayAction::UnknownEvent(event_type.to_owned()));
                     return Ok(None);
                 }
-                let key = dedup_key_parts(op, sequence, event_id, data);
+                let key = dedup_key_parts(op, event_type, sequence, event_id, data);
                 if self.seen_dedup_keys.contains(key.as_str()) {
                     return Ok(None);
                 }
@@ -377,17 +377,29 @@ fn optional_str<'a>(value: Option<&'a Value>, field: &str) -> Result<Option<&'a 
     }
 }
 
-fn dedup_key_parts(op: u64, sequence: Option<u64>, id: Option<&str>, data: &Value) -> String {
+fn dedup_key_parts(
+    op: u64,
+    event_type: &str,
+    sequence: Option<u64>,
+    id: Option<&str>,
+    data: &Value,
+) -> String {
     data.get("id")
         .and_then(Value::as_str)
-        .map(|id| format!("message:{id}"))
+        .map(|id| format!("{event_type}:message:{id}"))
         .or_else(|| id.map(|id| format!("event:{id}")))
         .or_else(|| sequence.map(|sequence| format!("seq:{sequence}")))
         .unwrap_or_else(|| format!("op:{op}:unknown"))
 }
 
 pub fn dedup_key(frame: &GatewayFrame) -> String {
-    dedup_key_parts(frame.op, frame.s, frame.id.as_deref(), &frame.d)
+    dedup_key_parts(
+        frame.op,
+        frame.t.as_deref().unwrap_or("UNKNOWN"),
+        frame.s,
+        frame.id.as_deref(),
+        &frame.d,
+    )
 }
 
 pub fn session_summary(session_id: Option<&str>) -> String {
@@ -404,6 +416,13 @@ fn known_event_type(event_type: &str) -> bool {
             | "GROUP_MESSAGE_CREATE"
             | "GROUP_AT_MESSAGE_CREATE"
             | "C2C_MESSAGE_CREATE"
+            | "MESSAGE_CREATE"
+            | "AT_MESSAGE_CREATE"
+            | "DIRECT_MESSAGE_CREATE"
+            | "MESSAGE_UPDATE"
+            | "MESSAGE_DELETE"
+            | "PUBLIC_MESSAGE_DELETE"
+            | "DIRECT_MESSAGE_DELETE"
             | "INTERACTION_CREATE"
             | "FRIEND_ADD"
             | "FRIEND_DEL"
@@ -415,6 +434,9 @@ fn known_event_type(event_type: &str) -> bool {
             | "GROUP_MSG_RECEIVE"
             | "GROUP_MEMBER_ADD"
             | "GROUP_MEMBER_REMOVE"
+            | "GUILD_MEMBER_ADD"
+            | "GUILD_MEMBER_UPDATE"
+            | "GUILD_MEMBER_REMOVE"
             | "MESSAGE_REACTION_ADD"
             | "MESSAGE_REACTION_REMOVE"
     )

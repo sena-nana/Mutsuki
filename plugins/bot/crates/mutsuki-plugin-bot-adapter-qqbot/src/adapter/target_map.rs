@@ -12,6 +12,8 @@ pub fn qq_target_from_payload(event_type: &str, data: &Value) -> BotTarget {
             guild_id: guild_id.into(),
             channel_id: channel_id.into(),
         }
+    } else if let Some(guild_id) = data.get("guild_id").and_then(Value::as_str) {
+        BotTarget::platform_specific("qqbot", "guild", guild_id)
     } else if let Some(group_id) = data
         .get("group_openid")
         .or_else(|| data.get("group_id"))
