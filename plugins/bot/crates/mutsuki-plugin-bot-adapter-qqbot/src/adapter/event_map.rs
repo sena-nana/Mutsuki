@@ -23,6 +23,9 @@ pub fn qq_gateway_frame_to_bot_event(
     let mut ext = BotExtMap::new();
     ext.insert("qqbot.event_type".into(), Value::String(event_type.into()));
     ext.insert("qqbot.dedup_key".into(), Value::String(dedup_key(&frame)));
+    if let Some(sequence) = frame.s {
+        ext.insert("qqbot.sequence".into(), Value::from(sequence));
+    }
     ext.insert(
         "qqbot.mentioned_bot".into(),
         Value::Bool(
@@ -79,8 +82,8 @@ fn qq_event_kind(event_type: &str) -> BotEventKind {
         }
         "MESSAGE_REACTION_ADD" => BotEventKind::ReactionAdded,
         "MESSAGE_REACTION_REMOVE" => BotEventKind::ReactionRemoved,
-        "GROUP_MEMBER_ADD" | "FRIEND_ADD" => BotEventKind::MemberJoined,
-        "GROUP_MEMBER_REMOVE" | "FRIEND_DEL" => BotEventKind::MemberLeft,
+        "GROUP_MEMBER_ADD" | "GUILD_MEMBER_ADD" | "FRIEND_ADD" => BotEventKind::MemberJoined,
+        "GROUP_MEMBER_REMOVE" | "GUILD_MEMBER_REMOVE" | "FRIEND_DEL" => BotEventKind::MemberLeft,
         "READY" | "RESUMED" => BotEventKind::BotConnected,
         _ => BotEventKind::PlatformSpecific(event_type.into()),
     }

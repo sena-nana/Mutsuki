@@ -5,7 +5,8 @@ use mutsuki_bot_protocol::{
     BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
     BotConversationKind, BotEventKind, BotMediaKind, BotMessage, BotMessageRecallRequest,
     BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
-    QQBOT_RAW_CALL_PROTOCOL_ID,
+    QQBOT_OPENAPI_PERMANENT_ERROR, QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID,
+    QqMessageSegmentKind, QqPermissionRequirement,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerResult,
@@ -84,25 +85,23 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
 #[test]
 fn gateway_runner_maps_channel_mentions_and_quote_context() {
     let mut runner = QqGatewayMapRunner::new(1, "main");
-    let task = Task::new(
-        "channel",
-        QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
-        json!({
-            "op": 0,
-            "s": 25,
-            "t": "AT_MESSAGE_CREATE",
-            "id": "channel-event",
-            "d": {
-                "id": "channel-message",
-                "guild_id": "guild",
-                "channel_id": "channel",
-                "content": "hello",
-                "mentions": [{"id": "bot", "is_you": true}],
-                "message_reference": {"message_id": "quoted"},
-                "author": {"id": "actor"}
-            }
-        }),
-    );
+    let raw = json!({
+        "op": 0,
+        "s": 25,
+        "t": "AT_MESSAGE_CREATE",
+        "id": "channel-event",
+        "d": {
+            "id": "channel-message",
+            "guild_id": "guild",
+            "channel_id": "channel",
+            "content": "hello",
+            "mentions": [{"id": "bot", "is_you": true}],
+            "message_reference": {"message_id": "quoted"},
+            "author": {"id": "actor"}
+        }
+    });
+    let mut pump = QqGatewayPump::with_account("main", 8);
+    let task = pump.handle_raw_frame(raw, 1).unwrap().unwrap();
 
     let result = run_one(&mut runner, task).unwrap();
     let event: mutsuki_bot_protocol::BotEvent =
@@ -119,6 +118,7 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
         Some("quoted")
     );
     assert_eq!(event.ext["qqbot.mentioned_bot"], Value::Bool(true));
+    assert_eq!(event.ext["qqbot.sequence"], Value::from(25));
     assert!(
         event
             .message
@@ -133,9 +133,51 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
 }
 
 #[test]
+fn gateway_pump_and_runner_map_available_message_update_and_delete_events() {
+    let mut pump = QqGatewayPump::with_account("main", 16);
+    let mut runner = QqGatewayMapRunner::new(1, "main");
+    for (sequence, event_type, expected_kind) in [
+        (30, "MESSAGE_UPDATE", BotEventKind::MessageUpdated),
+        (31, "MESSAGE_DELETE", BotEventKind::MessageDeleted),
+        (32, "PUBLIC_MESSAGE_DELETE", BotEventKind::MessageDeleted),
+        (33, "DIRECT_MESSAGE_DELETE", BotEventKind::MessageDeleted),
+    ] {
+        let task = pump
+            .handle_raw_frame(
+                json!({
+                    "op": 0,
+                    "s": sequence,
+                    "t": event_type,
+                    "id": format!("event-{sequence}"),
+                    "d": {
+                        "id": format!("message-{sequence}"),
+                        "guild_id": "guild",
+                        "channel_id": "channel",
+                        "author": {"id": "actor"}
+                    }
+                }),
+                1,
+            )
+            .unwrap()
+            .unwrap();
+        let result = run_one(&mut runner, task).unwrap();
+        let event = result.tasks[0]
+            .payload
+            .decode_shared::<mutsuki_bot_protocol::BotEvent>()
+            .unwrap();
+        assert_eq!(event.kind, expected_kind);
+        assert_eq!(event.ext["qqbot.sequence"], Value::from(sequence));
+    }
+}
+
+#[test]
 fn capability_matrix_follows_intents_and_resource_provider_configuration() {
     let mut config = QqBotConfig::new("main", "app");
     config.gateway_intents = 1 << 25;
+    config.max_retry_attempts = 4;
+    config.retry_base_delay_ms = 125;
+    config.retry_max_delay_ms = 2_000;
+    config.gateway_rate_limit_delay_ms = 30_000;
     let text_only = config.capability_matrix();
     assert_eq!(
         text_only.conversation_kinds,
@@ -143,6 +185,40 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
     );
     assert!(text_only.inbound_media.is_empty());
     assert!(text_only.outbound_media.is_empty());
+    assert_eq!(text_only.configured_intents, 1 << 25);
+    assert_eq!(text_only.shard, [0, 1]);
+    assert!(
+        text_only
+            .inbound_segments
+            .contains(&QqMessageSegmentKind::Reply)
+    );
+    assert!(
+        text_only
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::MentionUser)
+    );
+    assert!(
+        text_only
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::Reply)
+    );
+    assert!(
+        text_only
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::Quote)
+    );
+    assert!(text_only.quote);
+    assert!(text_only.rate_limit.server_driven);
+    assert!(text_only.rate_limit.honors_retry_after);
+    assert_eq!(text_only.rate_limit.max_retry_attempts, 4);
+    assert_eq!(text_only.rate_limit.retry_base_delay_ms, 125);
+    assert_eq!(text_only.rate_limit.retry_max_delay_ms, 2_000);
+    assert_eq!(text_only.rate_limit.gateway_rate_limit_delay_ms, 30_000);
+    assert!(
+        text_only
+            .required_permissions
+            .contains(&QqPermissionRequirement::ReadC2cMessages)
+    );
 
     config.gateway_intents |= 1 << 30;
     config.media_provider_id = Some("memory".into());
@@ -158,6 +234,21 @@ fn capability_matrix_follows_intents_and_resource_provider_configuration() {
             .contains(&BotConversationKind::Channel)
     );
     assert!(media.inbound_media.contains(&BotMediaKind::Image));
+    assert!(
+        media
+            .inbound_segments
+            .contains(&QqMessageSegmentKind::Audio)
+    );
+    assert!(
+        media
+            .outbound_segments
+            .contains(&QqMessageSegmentKind::File)
+    );
+    assert!(
+        media
+            .required_permissions
+            .contains(&QqPermissionRequirement::ReadGuildAtMessages)
+    );
     assert_eq!(
         media.upload.max_bytes_by_kind[&BotMediaKind::File],
         100 * 1024 * 1024
@@ -411,6 +502,94 @@ fn openapi_runner_maps_standard_text_message_to_qqbot_send() {
         requests[1].body.as_ref().unwrap()["msg_id"],
         "SOURCE_MESSAGE_ID"
     );
+}
+
+#[test]
+fn openapi_runner_accepts_standard_reply_and_quote_segments() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner = openapi_runner_with_shared(
+        requests.clone(),
+        vec![
+            token_response("TOKEN_A"),
+            ok_response(json!({"id": "MESSAGE_ID"})),
+        ],
+        Box::new(NoopIdSource::new(701)),
+    );
+    let task = Task::new(
+        "send",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage {
+            message_id: None,
+            target: BotTarget::User {
+                user_id: "USER_OPENID".into(),
+            },
+            sender: None,
+            segments: vec![
+                MessageSegment::Reply {
+                    message_id: "SOURCE_MESSAGE_ID".into(),
+                },
+                MessageSegment::Quote {
+                    message_id: "SOURCE_MESSAGE_ID".into(),
+                },
+                MessageSegment::Text {
+                    text: "quoted reply".into(),
+                },
+            ],
+            reply_to: None,
+            time_ms: None,
+            ext: Default::default(),
+        })
+        .unwrap(),
+    );
+
+    run_one(&mut runner, task).unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests[1].body.as_ref().unwrap()["msg_seq"], 701);
+    assert_eq!(
+        requests[1].body.as_ref().unwrap()["msg_id"],
+        "SOURCE_MESSAGE_ID"
+    );
+    assert_eq!(
+        requests[1].body.as_ref().unwrap()["content"],
+        "quoted reply"
+    );
+}
+
+#[test]
+fn openapi_runner_rejects_conflicting_reply_and_quote_ids_before_network() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut runner =
+        openapi_runner_with_shared(requests.clone(), Vec::new(), Box::new(NoopIdSource::new(1)));
+    let task = Task::new(
+        "send",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(BotMessage {
+            message_id: None,
+            target: BotTarget::User {
+                user_id: "USER_OPENID".into(),
+            },
+            sender: None,
+            segments: vec![
+                MessageSegment::Quote {
+                    message_id: "OTHER_MESSAGE_ID".into(),
+                },
+                MessageSegment::Text { text: "no".into() },
+            ],
+            reply_to: Some("SOURCE_MESSAGE_ID".into()),
+            time_ms: None,
+            ext: Default::default(),
+        })
+        .unwrap(),
+    );
+
+    let error = run_one(&mut runner, task).unwrap_err();
+
+    assert_eq!(
+        error.code,
+        mutsuki_bot_protocol::QQBOT_OPENAPI_INVALID_REQUEST_ERROR
+    );
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -779,11 +958,67 @@ fn openapi_batch_isolates_api_failure_and_continues_in_order() {
     let completion = run_tasks(&mut runner, vec![send, account]);
 
     assert!(completion.results[0].result.is_none());
-    assert!(completion.results[0].error.is_some());
+    let error = completion.results[0].error.as_ref().unwrap();
+    assert_eq!(error.code, QQBOT_OPENAPI_PERMANENT_ERROR);
+    assert_eq!(
+        error.evidence.get("classification"),
+        Some(&mutsuki_runtime_contracts::ScalarValue::String(
+            "permanent".into()
+        ))
+    );
+    assert_eq!(
+        error.evidence.get("retryable"),
+        Some(&mutsuki_runtime_contracts::ScalarValue::Bool(false))
+    );
     assert!(completion.results[1].error.is_none());
     assert_eq!(
         completion.results[1].result.as_ref().unwrap().events[0].payload["task_id"],
         "account"
+    );
+}
+
+#[test]
+fn openapi_task_exposes_rate_limit_and_retry_after() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut config = QqBotConfig::new("main", "APP_ID");
+    config.max_retry_attempts = 1;
+    config.retry_base_delay_ms = 0;
+    config.retry_max_delay_ms = 0;
+    let mut runner = openapi_runner_with_config(
+        config,
+        requests,
+        vec![
+            token_response("TOKEN_A"),
+            Ok(QqHttpResponse {
+                status: 429,
+                headers: BTreeMap::from([("Retry-After".into(), "0.25".into())]),
+                body: json!({"message": "slow down"}),
+            }),
+        ],
+        Box::new(NoopIdSource::new(1)),
+    );
+
+    let completion = run_tasks(
+        &mut runner,
+        vec![Task::new(
+            "account",
+            QQBOT_ACCOUNT_GET_PROTOCOL_ID,
+            json!({}),
+        )],
+    );
+
+    let error = completion.results[0].error.as_ref().unwrap();
+    assert_eq!(error.code, QQBOT_OPENAPI_RATE_LIMITED_ERROR);
+    assert_eq!(error.recovery.as_deref(), Some("retry"));
+    assert_eq!(
+        error.evidence.get("classification"),
+        Some(&mutsuki_runtime_contracts::ScalarValue::String(
+            "rate_limited".into()
+        ))
+    );
+    assert_eq!(
+        error.evidence.get("retry_after_ms"),
+        Some(&mutsuki_runtime_contracts::ScalarValue::Int(250))
     );
 }
 
@@ -1014,6 +1249,14 @@ fn config_rejects_insecure_or_credential_bearing_urls() {
     assert!(
         crate::config::validate_gateway_url("wss://user:password@gateway.example", false).is_err()
     );
+
+    let mut invalid_intents = QqBotConfig::new("main", "APP_ID");
+    invalid_intents.gateway_intents = 0;
+    assert!(invalid_intents.validate().is_err());
+
+    let mut invalid_shard = QqBotConfig::new("main", "APP_ID");
+    invalid_shard.shard = [1, 1];
+    assert!(invalid_shard.validate().is_err());
 }
 
 #[test]
@@ -1160,12 +1403,51 @@ fn gateway_pump_releases_dedup_reservation_after_submit_rejection() {
     assert!(pump.handle_raw_frame(raw, 0).unwrap().is_some());
 }
 
+#[test]
+fn gateway_dedup_keeps_distinct_lifecycle_events_for_the_same_message() {
+    let mut pump = QqGatewayPump::with_account("main", 8);
+    let frame = |event_type: &str, event_id: &str, sequence: u64| {
+        json!({
+            "op": 0,
+            "s": sequence,
+            "t": event_type,
+            "id": event_id,
+            "d": {
+                "id": "message-one",
+                "guild_id": "guild",
+                "channel_id": "channel"
+            }
+        })
+    };
+
+    assert!(
+        pump.handle_raw_frame(frame("AT_MESSAGE_CREATE", "create", 1), 0)
+            .unwrap()
+            .is_some()
+    );
+    let _ = pump.pop_action();
+    assert!(
+        pump.handle_raw_frame(frame("PUBLIC_MESSAGE_DELETE", "delete", 2), 0)
+            .unwrap()
+            .is_some()
+    );
+}
+
 fn openapi_runner_with_shared(
     requests: Arc<Mutex<Vec<QqHttpRequest>>>,
     responses: Vec<Result<QqHttpResponse, QqOpenApiError>>,
     id_source: Box<dyn QqIdSource>,
 ) -> QqOpenApiRunner {
     let config = QqBotConfig::new("main", "APP_ID");
+    openapi_runner_with_config(config, requests, responses, id_source)
+}
+
+fn openapi_runner_with_config(
+    config: QqBotConfig,
+    requests: Arc<Mutex<Vec<QqHttpRequest>>>,
+    responses: Vec<Result<QqHttpResponse, QqOpenApiError>>,
+    id_source: Box<dyn QqIdSource>,
+) -> QqOpenApiRunner {
     let clients = QqBotClients::new(
         Box::new(FakeHttpClient {
             requests,

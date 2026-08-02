@@ -814,6 +814,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn gateway_health_reports_disconnected_degraded_connected_and_reconnect_state() {
+        let source = QqGatewayEventSource::new(
+            QqBotConfig::new("main", "APP_ID"),
+            SharedQqCredentials::default(),
+            QqAuthManager::new(),
+        );
+        assert!(matches!(
+            source.health(),
+            HostEventSourceHealth::Unhealthy(_)
+        ));
+
+        mark_connected(&source.health);
+        assert!(matches!(
+            source.health(),
+            HostEventSourceHealth::Degraded(_)
+        ));
+
+        source
+            .health
+            .inner
+            .lock()
+            .expect("QQBot health mutex")
+            .identified = true;
+        assert_eq!(source.health(), HostEventSourceHealth::Healthy);
+
+        mark_reconnect(&source.health, "heartbeat ACK timed out");
+        assert!(matches!(
+            source.health(),
+            HostEventSourceHealth::Unhealthy(ref reason)
+                if reason == "heartbeat ACK timed out"
+        ));
+        assert_eq!(source.health.snapshot().reconnect_count, 1);
+    }
+
     #[tokio::test]
     async fn shutdown_abort_guard_cancels_the_owned_gateway_task() {
         let task = tokio::spawn(std::future::pending::<()>());

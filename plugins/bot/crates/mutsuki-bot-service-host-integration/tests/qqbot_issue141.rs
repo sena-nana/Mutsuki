@@ -1,0 +1,322 @@
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotTarget, MessageSegment};
+use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
+use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, WorkBatch,
+};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_sdk::{
+    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
+};
+use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
+use mutsuki_service_runtime::ServiceRuntimeBuilder;
+use serde_json::{Value, json};
+use tokio::sync::Notify;
+
+const CAPTURE_PLUGIN_ID: &str = "test.qqbot.issue141.capture";
+const CAPTURE_RUNNER_ID: &str = "test.qqbot.issue141.capture.runner";
+const CAPTURE_PROTOCOL_ID: &str = "test.qqbot.issue141/capture@1";
+
+struct CaptureRunner {
+    descriptor: RunnerDescriptor,
+    events: Arc<Mutex<Vec<BotEvent>>>,
+    notify: Arc<Notify>,
+}
+
+impl Runner for CaptureRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let event = task
+                .payload
+                .decode_shared::<BotEvent>()
+                .expect("capture task carries a BotEvent")
+                .as_ref()
+                .clone();
+            self.events.lock().unwrap().push(event);
+            self.notify.notify_waiters();
+            Ok(RunnerResult::completed(task.task_id.clone()))
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() {
+    let group = gateway_event(
+        3,
+        "event-group",
+        "GROUP_AT_MESSAGE_CREATE",
+        json!({
+            "id": "message-group",
+            "group_openid": "group",
+            "content": "<@bot> group",
+            "mentions": [{"id": "bot", "is_you": true}],
+            "author": {"member_openid": "group-user"}
+        }),
+    );
+    let fake = FakeQqServer::start_with_gateway_script(FakeQqGatewayScript {
+        initial_events: vec![
+            gateway_event(
+                2,
+                "event-private",
+                "C2C_MESSAGE_CREATE",
+                json!({
+                    "id": "message-private",
+                    "content": "private",
+                    "author": {"user_openid": "private-user"}
+                }),
+            ),
+            group.clone(),
+            gateway_event(
+                4,
+                "event-channel",
+                "AT_MESSAGE_CREATE",
+                json!({
+                    "id": "message-channel",
+                    "guild_id": "guild",
+                    "channel_id": "channel",
+                    "content": "channel",
+                    "mentions": [{"id": "bot", "is_you": true}],
+                    "message_reference": {"message_id": "quoted-message"},
+                    "author": {"id": "channel-user"}
+                }),
+            ),
+        ],
+        resumed_events: vec![
+            gateway_event(
+                5,
+                "event-group-replayed",
+                "GROUP_AT_MESSAGE_CREATE",
+                group["d"].clone(),
+            ),
+            gateway_event(
+                6,
+                "event-channel-delete",
+                "PUBLIC_MESSAGE_DELETE",
+                json!({
+                    "id": "message-channel",
+                    "guild_id": "guild",
+                    "channel_id": "channel",
+                    "author": {"id": "channel-user"}
+                }),
+            ),
+        ],
+    })
+    .await;
+    let secret_key = format!("QQBOT_ISSUE141_SECRET_{}", fake.websocket_addr().port());
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("local.secret.toml"),
+        format!("[secrets]\n{secret_key} = \"TEST_CLIENT_SECRET\"\n"),
+    )
+    .unwrap();
+    let qq = fake.config("issue141", "TEST_APP_ID", &secret_key);
+    let config_path = root.path().join("local.toml");
+    std::fs::write(&config_path, product_toml(root.path(), &qq)).unwrap();
+    let config = ServiceConfig::load(ConfigOverrides {
+        config_file: Some(config_path),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let notify = Arc::new(Notify::new());
+    let descriptor = RunnerDescriptorBuilder::new(CAPTURE_RUNNER_ID, CAPTURE_PLUGIN_ID)
+        .accepted_protocol(CAPTURE_PROTOCOL_ID)
+        .execution_class(ExecutionClass::Io)
+        .build();
+    let manifest = PluginBuilder::new(CAPTURE_PLUGIN_ID)
+        .runner_descriptor(descriptor.clone())
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(CAPTURE_PROTOCOL_ID).build(),
+            CAPTURE_RUNNER_ID,
+            "capture",
+        )
+        .build()
+        .manifest;
+    let runner_descriptor = descriptor.clone();
+    let runner_events = events.clone();
+    let runner_notify = notify.clone();
+    let runtime = ServiceRuntimeBuilder::new(config)
+        .with_configured_plugin_catalog(configured_bot_plugin_catalog().unwrap())
+        .register_builtin_plugin(manifest)
+        .register_builtin_runner(move || {
+            Box::new(CaptureRunner {
+                descriptor: runner_descriptor.clone(),
+                events: runner_events.clone(),
+                notify: runner_notify.clone(),
+            })
+        })
+        .start()
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let ready = {
+                let captured = events.lock().unwrap();
+                [
+                    "event-private",
+                    "event-group",
+                    "event-channel",
+                    "event-channel-delete",
+                ]
+                .into_iter()
+                .all(|event_id| captured.iter().any(|event| event.event_id == event_id))
+            };
+            if ready {
+                break;
+            }
+            notify.notified().await;
+        }
+    })
+    .await
+    .expect("private, group, channel and delete events should reach the business runner");
+
+    let captured = events.lock().unwrap().clone();
+    assert!(
+        captured
+            .iter()
+            .all(|event| event.event_id != "event-group-replayed"),
+        "the replayed group message must be suppressed"
+    );
+    let private = event_by_id(&captured, "event-private");
+    assert_eq!(
+        private.target,
+        BotTarget::User {
+            user_id: "private-user".into()
+        }
+    );
+    assert_eq!(private.actor.as_ref().unwrap().user_id, "private-user");
+    let group = event_by_id(&captured, "event-group");
+    assert_eq!(
+        group.target,
+        BotTarget::Group {
+            group_id: "group".into()
+        }
+    );
+    assert_eq!(group.actor.as_ref().unwrap().user_id, "group-user");
+    assert_eq!(group.ext["qqbot.mentioned_bot"], Value::Bool(true));
+    let channel = event_by_id(&captured, "event-channel");
+    assert_eq!(
+        channel.target,
+        BotTarget::GuildChannel {
+            guild_id: "guild".into(),
+            channel_id: "channel".into()
+        }
+    );
+    assert_eq!(channel.actor.as_ref().unwrap().user_id, "channel-user");
+    assert_eq!(channel.ext["qqbot.sequence"], Value::from(4));
+    assert_eq!(
+        channel.message.as_ref().unwrap().reply_to.as_deref(),
+        Some("quoted-message")
+    );
+    assert!(channel.message.as_ref().unwrap().segments.iter().any(
+        |segment| matches!(segment, MessageSegment::Quote { message_id } if message_id == "quoted-message")
+    ));
+    assert_eq!(
+        event_by_id(&captured, "event-channel-delete").kind,
+        BotEventKind::MessageDeleted
+    );
+
+    runtime.shutdown().await;
+    let snapshot = fake.shutdown().await;
+    assert_eq!(snapshot.websocket_connections, 2);
+    assert_eq!(snapshot.gateway_auth_frames[0]["op"], 2);
+    assert_eq!(snapshot.gateway_auth_frames[1]["op"], 6);
+    assert_eq!(snapshot.clean_closes, 1);
+}
+
+fn event_by_id<'a>(events: &'a [BotEvent], event_id: &str) -> &'a BotEvent {
+    events
+        .iter()
+        .find(|event| event.event_id == event_id)
+        .unwrap_or_else(|| panic!("missing event {event_id}"))
+}
+
+fn gateway_event(sequence: u64, event_id: &str, event_type: &str, data: Value) -> Value {
+    json!({
+        "op": 0,
+        "s": sequence,
+        "t": event_type,
+        "id": event_id,
+        "d": data
+    })
+}
+
+fn product_toml(
+    root: &std::path::Path,
+    qq: &mutsuki_plugin_bot_adapter_qqbot::QqBotConfig,
+) -> String {
+    format!(
+        r#"[service]
+profile = "issue141"
+instance_id = "issue141"
+home_dir = "{}"
+data_dir = "data"
+log_dir = "logs"
+plugin_dir = "plugins"
+run_dir = "run"
+
+[ipc]
+enabled = false
+transport = "tcp-debug"
+name = "issue141"
+token = "test-token"
+
+[plugins]
+dynamic_dirs = []
+disabled_dir = "disabled"
+
+[[plugins.configured]]
+id = "mutsuki.bot.router.event"
+[plugins.configured.config]
+subscriptions = [{{ subscription_id = "issue141-capture", handler_protocol_id = "{CAPTURE_PROTOCOL_ID}", platform = "qqbot" }}]
+
+[[plugins.configured]]
+id = "mutsuki.bot.adapter.qqbot"
+[plugins.configured.config]
+account_id = "{}"
+app_id = "{}"
+client_secret_key = "{}"
+token_url = "{}"
+openapi_base_url = "{}"
+allow_insecure_transport = true
+gateway_hello_timeout_ms = 1000
+gateway_ack_timeout_ms = 500
+retry_base_delay_ms = 0
+retry_max_delay_ms = 0
+reconnect_initial_delay_ms = 10
+reconnect_max_delay_ms = 20
+reconnect_jitter_ms = 0
+
+[[plugins.configured]]
+id = "{CAPTURE_PLUGIN_ID}"
+
+[security]
+secret_file = "local.secret.toml"
+
+[observe]
+console = false
+json = false
+log_file = "service.log"
+panic_file = "panic.log"
+"#,
+        root.to_string_lossy().replace('\\', "/"),
+        qq.account_id,
+        qq.app_id,
+        qq.client_secret_key,
+        qq.token_url,
+        qq.openapi_base_url,
+    )
+}

@@ -123,6 +123,8 @@ disallowed intent/shard configurations as permanent structured failures.
 See `docs/qqbot-adapter.md` and `examples/service-host-example` for configured ServiceHost
 assembly, fake-server E2E and real-account smoke boundaries. `configured_bot_plugin_catalog()`
 exports owner-defined config factories without moving QQ fields into ServiceHost.
+Issue #141's criterion-by-criterion functional and performance evidence is recorded in
+`docs/issue141-acceptance.md`.
 
 `examples/qqbot-echo` is only the deterministic product assembly. Its Echo
 business runner lives in the separate `examples/bot-echo` crate and has no

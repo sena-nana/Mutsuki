@@ -368,12 +368,43 @@ fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeEr
 }
 
 fn openapi_failure(route: &str, error: QqOpenApiError) -> RuntimeError {
-    let mut runtime_error =
-        RuntimeError::new(ERR_RUNTIME_HOST_FAILED, QQBOT_ADAPTER_PLUGIN_ID, route);
-    runtime_error.evidence = BTreeMap::from([(
-        "message".into(),
-        ScalarValue::String(error.redacted_message()),
-    )]);
+    let classification = error.classification();
+    let retryable = error.retryable();
+    let retry_after_ms = error.retry_after_ms();
+    let http_status = error.http_status();
+    let mut runtime_error = RuntimeError::new(error.stable_code(), QQBOT_ADAPTER_PLUGIN_ID, route);
+    runtime_error.recovery = Some(
+        match classification {
+            crate::api::QqOpenApiErrorClass::RateLimited
+            | crate::api::QqOpenApiErrorClass::Transient => "retry",
+            crate::api::QqOpenApiErrorClass::Authentication => "refresh_credentials",
+            _ => "fix_request",
+        }
+        .into(),
+    );
+    runtime_error.evidence = BTreeMap::from([
+        (
+            "message".into(),
+            ScalarValue::String(error.redacted_message()),
+        ),
+        (
+            "classification".into(),
+            ScalarValue::String(classification.as_str().into()),
+        ),
+        ("retryable".into(), ScalarValue::Bool(retryable)),
+    ]);
+    if let Some(retry_after_ms) = retry_after_ms {
+        runtime_error.evidence.insert(
+            "retry_after_ms".into(),
+            ScalarValue::Int(i64::try_from(retry_after_ms).unwrap_or(i64::MAX)),
+        );
+    }
+    if let Some(http_status) = http_status {
+        runtime_error.evidence.insert(
+            "http_status".into(),
+            ScalarValue::Int(i64::from(http_status)),
+        );
+    }
     if let QqOpenApiError::HttpStatus { body, .. } = error {
         runtime_error.evidence.insert(
             "body".into(),

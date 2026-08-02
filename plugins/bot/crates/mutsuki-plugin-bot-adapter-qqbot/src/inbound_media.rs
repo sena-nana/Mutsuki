@@ -495,59 +495,72 @@ mod tests {
                 },
             ),
         ] {
-            let (url, server) = png_server().await;
-            let resources = Arc::new(TestResources::default());
-            let mut config = QqBotConfig::new("main", "app");
-            config.allow_insecure_transport = true;
-            config.media_provider_id = Some("memory".into());
-            let handler = QqGatewayMediaHandler::new(config, resources.clone()).unwrap();
-            let mut data = target_fields.as_object().unwrap().clone();
-            data.insert("id".into(), Value::String(format!("{event_type}-message")));
-            data.insert("content".into(), Value::String("look".into()));
-            data.insert(
-                "attachments".into(),
-                serde_json::json!([{
-                    "url": url,
-                    "content_type": "image/png",
-                    "filename": "picture.png",
-                    "size": PNG.len()
-                }]),
-            );
-            let task = Task::new(
-                format!("task-{event_type}"),
-                QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
-                serde_json::json!({"op": 0, "s": 1, "t": event_type, "d": data}),
-            );
-            let batch = batch(&task);
-            let result = handler
-                .run_batch(context(), batch)
-                .await
-                .unwrap()
-                .results
-                .into_iter()
-                .next()
-                .unwrap()
-                .result
-                .unwrap();
-            let event: BotEvent = result.tasks[0]
-                .payload
-                .decode_shared::<BotEvent>()
-                .unwrap()
-                .as_ref()
-                .clone();
-            assert_eq!(event.target, expected_target);
-            let segment = event.message.unwrap().segments.pop().unwrap();
-            let MessageSegment::Image { resource } = segment else {
-                panic!("expected image segment");
-            };
-            assert_eq!(resource.size_hint, Some(PNG.len() as u64));
-            assert!(resource.content_hash.unwrap().starts_with("sha256:"));
-            assert_eq!(resources.created.lock().unwrap().len(), 1);
-            server.await.unwrap();
+            for (kind, mime_type, file_name, bytes) in [
+                (BotMediaKind::Image, "image/png", "picture.png", PNG),
+                (BotMediaKind::Audio, "audio/mpeg", "voice.mp3", MP3),
+                (BotMediaKind::Video, "video/mp4", "clip.mp4", MP4),
+                (BotMediaKind::File, "application/pdf", "document.pdf", PDF),
+            ] {
+                let (url, server) = media_server(bytes, mime_type).await;
+                let resources = Arc::new(TestResources::default());
+                let mut config = QqBotConfig::new("main", "app");
+                config.allow_insecure_transport = true;
+                config.media_provider_id = Some("memory".into());
+                let handler = QqGatewayMediaHandler::new(config, resources.clone()).unwrap();
+                let mut data = target_fields.as_object().unwrap().clone();
+                data.insert("id".into(), Value::String(format!("{event_type}-message")));
+                data.insert("content".into(), Value::String("look".into()));
+                data.insert(
+                    "attachments".into(),
+                    serde_json::json!([{
+                        "url": url,
+                        "content_type": mime_type,
+                        "filename": file_name,
+                        "size": bytes.len()
+                    }]),
+                );
+                let task = Task::new(
+                    format!("task-{event_type}-{kind:?}"),
+                    QQBOT_GATEWAY_FRAME_PROTOCOL_ID,
+                    serde_json::json!({"op": 0, "s": 1, "t": event_type, "d": data}),
+                );
+                let result = handler
+                    .run_batch(context(), batch(&task))
+                    .await
+                    .unwrap()
+                    .results
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .result
+                    .unwrap();
+                let event: BotEvent = result.tasks[0]
+                    .payload
+                    .decode_shared::<BotEvent>()
+                    .unwrap()
+                    .as_ref()
+                    .clone();
+                assert_eq!(event.target, expected_target.clone());
+                let segment = event.message.unwrap().segments.pop().unwrap();
+                let resource = match (kind, segment) {
+                    (BotMediaKind::Image, MessageSegment::Image { resource })
+                    | (BotMediaKind::Audio, MessageSegment::Audio { resource })
+                    | (BotMediaKind::Video, MessageSegment::Video { resource })
+                    | (BotMediaKind::File, MessageSegment::File { resource, .. }) => resource,
+                    (_, segment) => panic!("unexpected media segment: {segment:?}"),
+                };
+                assert_eq!(resource.size_hint, Some(bytes.len() as u64));
+                assert!(resource.content_hash.unwrap().starts_with("sha256:"));
+                assert_eq!(resources.created.lock().unwrap().len(), 1);
+                server.await.unwrap();
+            }
         }
     }
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nfixture";
+    const MP3: &[u8] = b"ID3fixture";
+    const MP4: &[u8] = b"\0\0\0\x18ftypfixture";
+    const PDF: &[u8] = b"%PDF-1.7 fixture";
 
     #[test]
     fn mp3_id3_and_frame_sync_are_accepted_but_spoofed_audio_is_rejected() {
@@ -556,7 +569,10 @@ mod tests {
         assert!(validate_mime("audio/mpeg", b"not-an-mp3").is_err());
     }
 
-    async fn png_server() -> (String, tokio::task::JoinHandle<()>) {
+    async fn media_server(
+        bytes: &'static [u8],
+        mime_type: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -566,14 +582,14 @@ mod tests {
             socket
                 .write_all(
                     format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        PNG.len()
+                        "HTTP/1.1 200 OK\r\nContent-Type: {mime_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
                     )
                     .as_bytes(),
                 )
                 .await
                 .unwrap();
-            socket.write_all(PNG).await.unwrap();
+            socket.write_all(bytes).await.unwrap();
         });
         (format!("http://{address}/image"), server)
     }

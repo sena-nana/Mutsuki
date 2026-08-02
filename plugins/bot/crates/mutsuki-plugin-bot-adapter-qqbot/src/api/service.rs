@@ -63,9 +63,19 @@ impl QqOpenApiService {
     pub fn send_bot_message(&mut self, message: BotMessage) -> Result<Value, QqOpenApiError> {
         let (scene, target_openid) = qq_scene_and_openid(&message.target)
             .ok_or_else(|| QqOpenApiError::InvalidPayload("unsupported QQ target".into()))?;
+        let mut reply_to = message.reply_to;
+        let mut send_segments = Vec::with_capacity(message.segments.len());
+        for segment in message.segments {
+            match segment {
+                MessageSegment::Reply { message_id } | MessageSegment::Quote { message_id } => {
+                    merge_reply_reference(&mut reply_to, message_id)?;
+                }
+                segment => send_segments.push(segment),
+            }
+        }
         let mut responses = Vec::new();
         let mut pending = Vec::new();
-        for segment in message.segments {
+        for segment in send_segments {
             match segment {
                 segment @ (MessageSegment::Image { .. }
                 | MessageSegment::Audio { .. }
@@ -75,7 +85,7 @@ impl QqOpenApiService {
                             scene.clone(),
                             target_openid.clone(),
                             std::mem::take(&mut pending),
-                            message.reply_to.clone(),
+                            reply_to.clone(),
                         )?);
                     }
                     let (file_type, resource) = match segment {
@@ -105,7 +115,7 @@ impl QqOpenApiService {
                     responses.push(self.send_message(SendMessagePayload {
                         scene: scene.clone(),
                         target_openid: target_openid.clone(),
-                        body: media_message_body(file_info, message.reply_to.clone()),
+                        body: media_message_body(file_info, reply_to.clone()),
                     })?);
                 }
                 MessageSegment::File { resource, name } => {
@@ -114,7 +124,7 @@ impl QqOpenApiService {
                             scene.clone(),
                             target_openid.clone(),
                             std::mem::take(&mut pending),
-                            message.reply_to.clone(),
+                            reply_to.clone(),
                         )?);
                     }
                     validate_outbound_resource(&resource, 4)?;
@@ -137,7 +147,7 @@ impl QqOpenApiService {
                     responses.push(self.send_message(SendMessagePayload {
                         scene: scene.clone(),
                         target_openid: target_openid.clone(),
-                        body: media_message_body(file_info, message.reply_to.clone()),
+                        body: media_message_body(file_info, reply_to.clone()),
                     })?);
                 }
                 MessageSegment::Text { .. }
@@ -145,18 +155,19 @@ impl QqOpenApiService {
                 | MessageSegment::MentionAll => pending.push(segment),
                 _ => {
                     return Err(QqOpenApiError::InvalidPayload(
-                        "QQ message/send supports text, mention and image segments".into(),
+                        "QQ message/send supports text, mention, reply, quote and media segments"
+                            .into(),
                     ));
                 }
             }
         }
         if !pending.is_empty() {
-            responses.push(self.send_segment_group(
-                scene,
-                target_openid,
-                pending,
-                message.reply_to,
-            )?);
+            responses.push(self.send_segment_group(scene, target_openid, pending, reply_to)?);
+        }
+        if responses.is_empty() {
+            return Err(QqOpenApiError::InvalidPayload(
+                "QQ message/send requires text, mention or media content".into(),
+            ));
         }
         if responses.len() == 1 {
             Ok(responses.remove(0))
@@ -343,6 +354,27 @@ impl QqOpenApiService {
             )?;
         }
         self.exchange_upload_id(&payload, &upload_id)
+    }
+}
+
+fn merge_reply_reference(
+    reply_to: &mut Option<String>,
+    message_id: String,
+) -> Result<(), QqOpenApiError> {
+    if message_id.trim().is_empty() {
+        return Err(QqOpenApiError::InvalidPayload(
+            "QQ reply/quote message_id must not be empty".into(),
+        ));
+    }
+    match reply_to {
+        Some(existing) if existing != &message_id => Err(QqOpenApiError::InvalidPayload(
+            "QQ message contains conflicting reply/quote message IDs".into(),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            *reply_to = Some(message_id);
+            Ok(())
+        }
     }
 }
 

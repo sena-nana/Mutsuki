@@ -9,15 +9,26 @@ the adapter through the configured plugin catalog.
 | Area | Support |
 | --- | --- |
 | Gateway | HTTPS discovery, WSS, Hello, Identify, Ready, heartbeat/ACK, Resume and reconnect |
-| Inbound | Group @ messages, C2C messages, robot/friend/member lifecycle and reactions |
-| Standard effects | Text send and message recall |
+| Inbound | Group @, C2C, guild/channel @ and direct messages; available delete, member and reaction events |
+| Standard effects | Group/C2C text, mention, reply and message recall |
 | QQ-specific effects | Account query, Gateway query and relative-path raw call |
-| Media upload | Only when the product injects a real `QqMediaProvider` |
+| Media | Validated image/audio/video/file `ResourceRef` input and Group/C2C upload/send, only when the product injects a real provider |
 | Message edit / media download | Not provided |
 
 The default configured factory is text-only. Its manifest does not claim
 `mutsuki.bot.media/upload@1`. Products that own a resource provider may build
 `QqBotPluginBundle::new(config)?.with_media_provider(factory)` and then install it explicitly.
+Guild/channel messages are inbound-only in the standard adapter: the capability matrix does not
+claim channel send, upload or recall endpoints.
+
+`mutsuki.bot.qqbot.capability/get@1` returns the account-scoped source of truth. It includes inbound
+and outbound conversation kinds and segment kinds, active-message kinds, edit/recall/reply/quote/
+mention flags, media limits and MIME types, streaming strategy, the configured numeric intents and
+shard, recognized intent names, required QQ permission categories, and the effective bounded retry/
+rate-limit policy. QQ remains the quota authority; the adapter declares that it honors
+`Retry-After` rather than publishing a guessed fixed request quota. Media segment and upload
+permissions appear only when a real resource provider is configured. The matrix describes QQ only;
+it is not a cross-platform compatibility promise.
 
 ## Configuration
 
@@ -52,15 +63,26 @@ explicit supervised restart. Logs use account ID, a session digest, event type, 
 correlation ID, never credentials or authorization headers.
 
 Failures are classified as recoverable disconnect, Gateway rate limit, auth/config rejection or
-permanent account rejection. HTTP 401 refreshes once; 429/5xx retries are bounded by config and
-server headers. Gateway queues and event deduplication windows are bounded.
+permanent account rejection. OpenAPI task failures expose stable `qqbot.openapi.*` codes plus
+`classification`, `retryable`, optional `retry_after_ms` and HTTP status evidence. HTTP 401 refreshes
+once; 429/5xx retries are bounded by config and server headers. Gateway queues and event
+deduplication windows are bounded. Dedup keys include event kind plus message ID, so a reconnect
+replay is suppressed without hiding a later delete event for the same message. Normalized events
+carry `qqbot.sequence` as ordering information.
+
+Standard outbound `Reply` and `Quote` segments lower to QQ's `msg_id`, the same as
+`BotMessage.reply_to`. Empty or conflicting message IDs return `qqbot.openapi.invalid_request`
+before any network request; they never fall back to a new active message.
 
 ## Verification
 
 - Unit tests cover config validation, token expiry/refresh, 401/429/5xx, response limits, redaction,
   batch isolation, event mapping and capability surfaces.
 - `mutsuki-bot-testkit::FakeQqServer` provides real local HTTP/WebSocket boundaries for product E2E,
-  including Identify, heartbeat, reconnect and Resume.
+  including Identify, heartbeat, reconnect and Resume. Its scripted mode drives private, group,
+  channel, replay and deletion events through a real `ServiceRuntime`.
+- The inbound media loopback test downloads and validates image/audio/video/file bytes for private,
+  group and channel messages before publishing sealed, hashed `ResourceRef` values.
 - `examples/service-host-example` starts the real `ServiceRuntime` through configured factories and
   verifies `/echo`, `/ping`, health, task correlation, secret isolation and graceful shutdown.
 - A real-account smoke uses an ignored local config and Host environment secret. It is successful
@@ -70,3 +92,8 @@ server headers. Gateway queues and event deduplication windows are bounded.
 Protocol behavior should be checked against the current QQ Open Platform documentation and
 Tencent's official reference implementations before changing opcodes, close-code handling, event
 names or message payloads.
+
+The Issue #141 audit checked Tencent `tencent-connect/openclaw-qqbot` revision
+`47142c997bdbc9e72d92b817ff378941b3be7d4c` for current Group/C2C rich-media behavior and
+`tencent-connect/botgo` revision `fe31c0dfe469001e0f783d2f07e7de7bd08b403f` for the official
+Gateway event/intent/opcode tables, including guild/channel events.

@@ -1,5 +1,10 @@
 use std::collections::BTreeMap;
 
+use mutsuki_bot_protocol::{
+    QQBOT_OPENAPI_AUTHENTICATION_ERROR, QQBOT_OPENAPI_INVALID_REQUEST_ERROR,
+    QQBOT_OPENAPI_MEDIA_PROVIDER_ERROR, QQBOT_OPENAPI_PERMANENT_ERROR,
+    QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_OPENAPI_TRANSIENT_ERROR,
+};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -29,7 +34,65 @@ pub enum QqOpenApiError {
     Clock(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QqOpenApiErrorClass {
+    RateLimited,
+    Authentication,
+    Transient,
+    InvalidRequest,
+    Permanent,
+    MediaProvider,
+}
+
+impl QqOpenApiErrorClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RateLimited => "rate_limited",
+            Self::Authentication => "authentication",
+            Self::Transient => "transient",
+            Self::InvalidRequest => "invalid_request",
+            Self::Permanent => "permanent",
+            Self::MediaProvider => "media_provider",
+        }
+    }
+}
+
 impl QqOpenApiError {
+    pub fn classification(&self) -> QqOpenApiErrorClass {
+        match self {
+            Self::Network(_) | Self::Clock(_) => QqOpenApiErrorClass::Transient,
+            Self::HttpStatus { status: 429, .. } => QqOpenApiErrorClass::RateLimited,
+            Self::HttpStatus {
+                status: 401 | 403, ..
+            }
+            | Self::CredentialsUnavailable => QqOpenApiErrorClass::Authentication,
+            Self::HttpStatus { status, .. } if *status >= 500 => QqOpenApiErrorClass::Transient,
+            Self::InvalidPayload(_) => QqOpenApiErrorClass::InvalidRequest,
+            Self::Media(_) => QqOpenApiErrorClass::MediaProvider,
+            Self::HttpStatus { .. } | Self::InvalidResponse(_) | Self::ResponseTooLarge { .. } => {
+                QqOpenApiErrorClass::Permanent
+            }
+        }
+    }
+
+    pub fn stable_code(&self) -> &'static str {
+        match self.classification() {
+            QqOpenApiErrorClass::RateLimited => QQBOT_OPENAPI_RATE_LIMITED_ERROR,
+            QqOpenApiErrorClass::Authentication => QQBOT_OPENAPI_AUTHENTICATION_ERROR,
+            QqOpenApiErrorClass::Transient => QQBOT_OPENAPI_TRANSIENT_ERROR,
+            QqOpenApiErrorClass::InvalidRequest => QQBOT_OPENAPI_INVALID_REQUEST_ERROR,
+            QqOpenApiErrorClass::Permanent => QQBOT_OPENAPI_PERMANENT_ERROR,
+            QqOpenApiErrorClass::MediaProvider => QQBOT_OPENAPI_MEDIA_PROVIDER_ERROR,
+        }
+    }
+
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::HttpStatus { status, .. } => Some(*status),
+            _ => None,
+        }
+    }
+
     pub fn redacted_message(&self) -> String {
         match self {
             Self::HttpStatus { status, body, .. } => {
