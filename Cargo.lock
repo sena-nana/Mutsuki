@@ -3809,6 +3809,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-wire",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-adapter-qqbot"
 version = "0.1.0"
 dependencies = [
@@ -4119,6 +4129,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-host"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "mutsuki-plugin-api",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-wire",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-plugin-image-render-skia"
 version = "0.1.0"
 dependencies = [
@@ -4340,6 +4361,8 @@ dependencies = [
  "futures-util",
  "libc",
  "libloading",
+ "mutsuki-plugin-api",
+ "mutsuki-plugin-host",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-host-abi-v2-fixture",
@@ -4365,6 +4388,7 @@ dependencies = [
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-plugin-api",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk-macros",

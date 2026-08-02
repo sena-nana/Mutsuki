@@ -9,6 +9,8 @@ crossbeam-channel.workspace = true
 futures-util.workspace = true
 futures-channel.workspace = true
 libloading.workspace = true
+mutsuki-plugin-api.workspace = true
+mutsuki-plugin-host.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core = { path = "../mutsuki-runtime-core" }
 mutsuki-runtime-sdk = { path = "../mutsuki-runtime-sdk" }

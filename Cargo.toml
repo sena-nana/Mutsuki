@@ -6,6 +6,8 @@ members = [
     "crates/mutsuki-runtime-sdk",
     "crates/mutsuki-runtime-sdk-macros",
     "crates/mutsuki-runtime-wire",
+    "crates/mutsuki-plugin-api",
+    "crates/mutsuki-plugin-host",
     "crates/mutsuki-runtime-benchmarks",
     "crates/mutsuki-runtime-host/fixtures/abi-v2-plugin",
     "crates/link/crates/*",
@@ -107,6 +109,8 @@ mutsuki-runtime-core = { path = "crates/mutsuki-runtime-core" }
 mutsuki-runtime-host = { path = "crates/mutsuki-runtime-host" }
 mutsuki-runtime-sdk = { path = "crates/mutsuki-runtime-sdk" }
 mutsuki-runtime-wire = { path = "crates/mutsuki-runtime-wire" }
+mutsuki-plugin-api = { path = "crates/mutsuki-plugin-api" }
+mutsuki-plugin-host = { path = "crates/mutsuki-plugin-host" }
 
 mutsuki-link = { path = "crates/link/crates/mutsuki-link", features = ["local"] }
 mutsuki-link-core = { path = "crates/link/crates/mutsuki-link-core" }
