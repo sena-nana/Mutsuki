@@ -10,4 +10,3 @@ mutsuki-plugin-api.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-wire.workspace = true
 serde_json.workspace = true
-
