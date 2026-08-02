@@ -9,8 +9,9 @@ use mutsuki_runtime_contracts::{
     RunnerResult, RuntimeProfile, RuntimeProfileMode, Task, TaskStatus,
 };
 use mutsuki_runtime_host::{
-    ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply,
-    NativeRunner, RuntimeBootstrapper, runner_manifest,
+    ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig,
+    HostRuntimeMetricsSnapshot, HostRuntimeReply, NativeRunner, RuntimeBootstrapper,
+    runner_manifest,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -22,6 +23,7 @@ const INTERACTIVE_PROTOCOL: &str = "bench.interactive";
 #[derive(Clone, Debug)]
 struct Options {
     samples: usize,
+    warmup_samples: usize,
     background_ms: u64,
     output: Option<PathBuf>,
 }
@@ -35,13 +37,30 @@ struct Distribution {
     max_ms: f64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct RuntimeMetrics {
+    actor_commands: u64,
+    task_state_batch_queries: u64,
+    completion_notifications: u64,
+    submit_to_dispatch_mean_ns: u64,
+    submit_to_dispatch_max_ns: u64,
+    completion_route_mean_ns: u64,
+    completion_route_max_ns: u64,
+    scheduler_mean_ns: u64,
+    scheduler_max_ns: u64,
+}
+
 #[derive(Debug, Serialize)]
 struct Report {
     schema: &'static str,
     business_purpose: &'static str,
     workload: serde_json::Value,
+    dedicated_tokio: Distribution,
     single_path: Distribution,
+    single_path_metrics: RuntimeMetrics,
     multi_path: Distribution,
+    multi_path_metrics: RuntimeMetrics,
+    cold_start_multi_path: Distribution,
     p99_improvement_percent: f64,
     expected_minimum_improvement_percent: f64,
     passed: bool,
@@ -49,26 +68,38 @@ struct Report {
 
 fn main() -> Result<(), String> {
     let options = parse_options()?;
-    if options.samples < 5 || options.background_ms == 0 {
-        return Err("samples must be at least 5 and background-ms must be positive".into());
+    if options.samples < 5 || options.warmup_samples == 0 || options.background_ms == 0 {
+        return Err(
+            "samples must be at least 5; warmup-samples and background-ms must be positive".into(),
+        );
     }
-    let single_path = run_case(&options, false)?;
-    let multi_path = run_case(&options, true)?;
+    let dedicated_tokio = run_dedicated_tokio(&options)?;
+    let (single_path, single_path_metrics) = run_case(&options, false)?;
+    let (multi_path, multi_path_metrics) = run_case(&options, true)?;
+    let cold_start_multi_path = run_cold_start_case(&options)?;
     let improvement =
         (single_path.p99_ms - multi_path.p99_ms) / single_path.p99_ms.max(f64::EPSILON) * 100.0;
     let report = Report {
-        schema: "mutsuki.execution-domain-qos.v1",
+        schema: "mutsuki.execution-domain-qos.v2",
         business_purpose: "complete one interactive request while the same background operation is running",
         workload: json!({
             "samples": options.samples,
+            "warmup_samples": options.warmup_samples,
             "background_block_ms": options.background_ms,
             "interactive_work": "deterministic no-op completion",
+            "runtime_lifecycle": "one resident runtime per steady-state case",
             "single_path_threads": 1,
             "multi_path_threads": {"interactive": 1, "background": 1},
-            "measurement": "interactive submit to terminal outcome"
+            "measurement": "interactive submit to terminal outcome",
+            "dedicated_tokio_semantics": "raw executor lower bound",
+            "mutsuki_semantics": "full task submission and authoritative terminal outcome"
         }),
+        dedicated_tokio,
         single_path,
+        single_path_metrics,
         multi_path,
+        multi_path_metrics,
+        cold_start_multi_path,
         p99_improvement_percent: improvement,
         expected_minimum_improvement_percent: 50.0,
         passed: improvement >= 50.0,
@@ -90,10 +121,10 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn run_case(options: &Options, multi_path: bool) -> Result<Distribution, String> {
+fn run_case(options: &Options, multi_path: bool) -> Result<(Distribution, RuntimeMetrics), String> {
+    let runtime = runtime(multi_path, options.background_ms)?;
     let mut samples = Vec::with_capacity(options.samples);
-    for index in 0..options.samples {
-        let runtime = runtime(multi_path, options.background_ms)?;
+    for index in 0..options.samples + options.warmup_samples {
         let background_id = format!("background-{multi_path}-{index}");
         let mut background = Task::new(&background_id, BACKGROUND_PROTOCOL, json!({}));
         background.dispatch_lane = DispatchLane::Bulk;
@@ -113,11 +144,93 @@ fn run_case(options: &Options, multi_path: bool) -> Result<Distribution, String>
                 "interactive task {interactive_id} did not complete"
             ));
         }
-        samples.push(started.elapsed().as_secs_f64() * 1_000.0);
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        if index >= options.warmup_samples {
+            samples.push(elapsed_ms);
+        }
         let _ = runtime.wait_task_states(
             vec![task_handle(&background_id, BACKGROUND_PROTOCOL)],
             Duration::from_secs(2),
         );
+    }
+    Ok((distribution(samples), runtime_metrics(runtime.metrics())))
+}
+
+fn runtime_metrics(metrics: HostRuntimeMetricsSnapshot) -> RuntimeMetrics {
+    RuntimeMetrics {
+        actor_commands: metrics.actor_commands,
+        task_state_batch_queries: metrics.task_state_batch_queries,
+        completion_notifications: metrics.completion_notifications,
+        submit_to_dispatch_mean_ns: mean(
+            metrics.submit_to_dispatch_total_ns,
+            metrics.submit_to_dispatch_samples,
+        ),
+        submit_to_dispatch_max_ns: metrics.submit_to_dispatch_max_ns,
+        completion_route_mean_ns: mean(
+            metrics.completion_route_total_ns,
+            metrics.completion_route_samples,
+        ),
+        completion_route_max_ns: metrics.completion_route_max_ns,
+        scheduler_mean_ns: mean(metrics.scheduler_total_ns, metrics.scheduler_passes),
+        scheduler_max_ns: metrics.scheduler_max_ns,
+    }
+}
+
+fn mean(total: u64, samples: u64) -> u64 {
+    if samples == 0 { 0 } else { total / samples }
+}
+
+fn run_dedicated_tokio(options: &Options) -> Result<Distribution, String> {
+    let background_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .max_blocking_threads(1)
+        .enable_all()
+        .thread_name("qos-tokio-background")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let interactive_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .max_blocking_threads(1)
+        .enable_all()
+        .thread_name("qos-tokio-interactive")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut samples = Vec::with_capacity(options.samples);
+    for index in 0..options.samples + options.warmup_samples {
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+        let background_ms = options.background_ms;
+        background_runtime.spawn_blocking(move || {
+            let _ = started_tx.send(());
+            thread::sleep(Duration::from_millis(background_ms));
+        });
+        started_rx.recv().map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        interactive_runtime
+            .block_on(async { tokio::task::spawn_blocking(|| {}).await })
+            .map_err(|error| error.to_string())?;
+        if index >= options.warmup_samples {
+            samples.push(started.elapsed().as_secs_f64() * 1_000.0);
+        }
+    }
+    Ok(distribution(samples))
+}
+
+fn run_cold_start_case(options: &Options) -> Result<Distribution, String> {
+    let mut samples = Vec::with_capacity(options.samples);
+    for index in 0..options.samples {
+        let started = Instant::now();
+        let runtime = runtime(true, options.background_ms)?;
+        let interactive_id = format!("cold-interactive-{index}");
+        let mut interactive = Task::new(&interactive_id, INTERACTIVE_PROTOCOL, json!({}));
+        interactive.dispatch_lane = DispatchLane::Interactive;
+        let handle = submit(&runtime, interactive)?;
+        let states = runtime
+            .wait_task_states(vec![handle], Duration::from_secs(2))
+            .map_err(|error| error.to_string())?;
+        if states.first().and_then(|state| state.status.clone()) != Some(TaskStatus::Completed) {
+            return Err(format!("cold-start task {interactive_id} did not complete"));
+        }
+        samples.push(started.elapsed().as_secs_f64() * 1_000.0);
     }
     Ok(distribution(samples))
 }
@@ -287,6 +400,7 @@ fn percentile(values: &[f64], percentile: f64) -> f64 {
 fn parse_options() -> Result<Options, String> {
     let mut options = Options {
         samples: 30,
+        warmup_samples: 20,
         background_ms: 20,
         output: None,
     };
@@ -306,6 +420,13 @@ fn parse_options() -> Result<Options, String> {
                     .ok_or("--background-ms requires a value")?
                     .parse()
                     .map_err(|_| "invalid --background-ms")?;
+            }
+            "--warmup-samples" => {
+                options.warmup_samples = args
+                    .next()
+                    .ok_or("--warmup-samples requires a value")?
+                    .parse()
+                    .map_err(|_| "invalid --warmup-samples")?;
             }
             "--output" => {
                 options.output = Some(PathBuf::from(

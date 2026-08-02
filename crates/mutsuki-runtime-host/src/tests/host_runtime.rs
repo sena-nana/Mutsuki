@@ -446,6 +446,89 @@ fn wait_task_states_blocks_until_terminal_without_status_polling() {
 }
 
 #[test]
+fn wait_task_states_times_out_with_current_state_and_wakes_all_waiters_on_completion() {
+    let runner_descriptor = descriptor_with_class(
+        "wait.blocking.runner",
+        "wait.blocking",
+        ExecutionClass::Blocking,
+    );
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(NativeRunner::new(
+        runner_descriptor,
+        move |_ctx, task| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(RunnerResult::completed(task.task_id))
+        },
+    )));
+    let runtime = Arc::new(
+        host.into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                blocking_threads: 1,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap(),
+    );
+    let handle = match runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "wait-blocking",
+            "wait.blocking",
+            json!({}),
+        ))))
+        .unwrap()
+    {
+        HostRuntimeReply::TaskSubmitted(handle) => handle,
+        reply => panic!("unexpected submit reply: {reply:?}"),
+    };
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let timeout_runtime = runtime.clone();
+    let timeout_handle = handle.clone();
+    let timeout_waiter = std::thread::spawn(move || {
+        timeout_runtime
+            .wait_task_states(vec![timeout_handle], Duration::from_millis(20))
+            .unwrap()
+    });
+    let traffic_deadline = Instant::now() + Duration::from_secs(1);
+    while !timeout_waiter.is_finished() && Instant::now() < traffic_deadline {
+        assert_eq!(
+            runtime.task_status("wait-blocking"),
+            Some(TaskStatus::Running)
+        );
+    }
+    let timed_out = timeout_waiter.join().unwrap();
+    assert_eq!(timed_out[0].status, Some(TaskStatus::Running));
+    assert!(timed_out[0].outcome.is_none());
+
+    let waiters = (0..2)
+        .map(|_| {
+            let runtime = runtime.clone();
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                runtime
+                    .wait_task_states(vec![handle], Duration::from_secs(1))
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    release_tx.send(()).unwrap();
+    for waiter in waiters {
+        let states = waiter.join().unwrap();
+        assert_eq!(states[0].status, Some(TaskStatus::Completed));
+        assert!(matches!(
+            states[0].outcome,
+            Some(TaskOutcome::Completed { .. })
+        ));
+    }
+}
+
+#[test]
 fn dropping_runtime_closes_completion_waiters() {
     let runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime(runtime_profile())

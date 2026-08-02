@@ -37,6 +37,11 @@ pub(crate) enum CoreActorMsg {
         mpsc::Sender<RuntimeResult<HostRuntimeReply>>,
     ),
     TaskStatus(String, mpsc::Sender<Option<TaskStatus>>),
+    WaitTaskStates {
+        handles: Vec<TaskHandle>,
+        deadline: Instant,
+        reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+    },
     WorkerStarted(WorkerStarted),
     WorkerCompleted(RunnerCompletion),
     AsyncEvent(AsyncExecutorEvent),
@@ -228,6 +233,12 @@ struct DrainingInvocation {
     recover_after_termination: bool,
 }
 
+struct PendingTaskWait {
+    handles: Vec<TaskHandle>,
+    deadline: Instant,
+    reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+}
+
 #[derive(Default)]
 struct DriverState {
     scheduled_tick: Option<(u64, Instant)>,
@@ -336,6 +347,7 @@ pub(crate) fn core_actor_loop(
     let mut terminal_revision = terminal_revision(&core);
     let mut control_burst = 0usize;
     let mut submitted_at: BTreeMap<String, Instant> = BTreeMap::new();
+    let mut pending_task_waits: Vec<PendingTaskWait> = Vec::new();
     loop {
         driver.refresh_scheduled_tick(
             next_required_tick(&core, &running_batches_by_task),
@@ -344,6 +356,9 @@ pub(crate) fn core_actor_loop(
         );
         let wait = driver
             .next_wake_deadline(&config, &running_batches_by_task)
+            .into_iter()
+            .chain(pending_task_waits.iter().map(|pending| pending.deadline))
+            .min()
             .map(|deadline| deadline.saturating_duration_since(Instant::now()));
         let received = receive_actor_message(
             &control_rx,
@@ -379,7 +394,13 @@ pub(crate) fn core_actor_loop(
                     &mut running_batches_by_task,
                     &mut draining_invocations,
                 );
-                publish_terminal_changes(&core, &mut terminal_revision, &completion_hub);
+                publish_terminal_changes(
+                    &core,
+                    &mut terminal_revision,
+                    &completion_hub,
+                    &mut pending_task_waits,
+                );
+                resolve_pending_task_waits(&core, &mut pending_task_waits, false);
                 continue;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -436,6 +457,14 @@ pub(crate) fn core_actor_loop(
                 let _ = reply_tx.send(task_status(&core, &task_id));
                 false
             }
+            CoreActorMsg::WaitTaskStates {
+                handles,
+                deadline,
+                reply,
+            } => {
+                register_task_wait(&core, &mut pending_task_waits, handles, deadline, reply);
+                false
+            }
             CoreActorMsg::WorkerStarted(started) => {
                 for task_id in &started.task_ids {
                     if let Some(submitted) = submitted_at.remove(task_id) {
@@ -456,6 +485,12 @@ pub(crate) fn core_actor_loop(
                     &mut running_batches_by_task,
                     &mut draining_invocations,
                 );
+                publish_terminal_changes(
+                    &core,
+                    &mut terminal_revision,
+                    &completion_hub,
+                    &mut pending_task_waits,
+                );
                 let _ =
                     schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
                 config
@@ -470,6 +505,12 @@ pub(crate) fn core_actor_loop(
                     &mut pending_cancels,
                     &mut running_batches_by_task,
                     &mut draining_invocations,
+                );
+                publish_terminal_changes(
+                    &core,
+                    &mut terminal_revision,
+                    &completion_hub,
+                    &mut pending_task_waits,
                 );
                 let _ =
                     schedule_ready(&mut core, &config, &mut pools, &mut running_batches_by_task);
@@ -503,11 +544,23 @@ pub(crate) fn core_actor_loop(
                 true
             }
         };
-        publish_terminal_changes(&core, &mut terminal_revision, &completion_hub);
+        publish_terminal_changes(
+            &core,
+            &mut terminal_revision,
+            &completion_hub,
+            &mut pending_task_waits,
+        );
+        let waiter_deadline_reached = pending_task_waits
+            .iter()
+            .any(|pending| pending.deadline <= Instant::now());
+        if waiter_deadline_reached || shutdown {
+            resolve_pending_task_waits(&core, &mut pending_task_waits, shutdown);
+        }
         if shutdown {
             break;
         }
     }
+    resolve_pending_task_waits(&core, &mut pending_task_waits, true);
     completion_hub.close();
 }
 
@@ -525,12 +578,90 @@ fn publish_terminal_changes(
     core: &CoreRuntime,
     previous_revision: &mut u64,
     completion_hub: &TaskCompletionHub,
+    pending_task_waits: &mut Vec<PendingTaskWait>,
 ) {
     let revision = terminal_revision(core);
     if revision > *previous_revision {
         *previous_revision = revision;
         completion_hub.publish(revision);
+        resolve_pending_task_waits(core, pending_task_waits, false);
     }
+}
+
+fn register_task_wait(
+    core: &CoreRuntime,
+    pending_task_waits: &mut Vec<PendingTaskWait>,
+    handles: Vec<TaskHandle>,
+    deadline: Instant,
+    reply: mpsc::Sender<RuntimeResult<Vec<HostTaskState>>>,
+) {
+    let states = task_states(core, &handles);
+    let ready = match states.as_ref() {
+        Ok(states) => all_task_states_terminal(states) || Instant::now() >= deadline,
+        Err(_) => true,
+    };
+    if ready {
+        let _ = reply.send(states);
+    } else {
+        pending_task_waits.push(PendingTaskWait {
+            handles,
+            deadline,
+            reply,
+        });
+    }
+}
+
+fn resolve_pending_task_waits(
+    core: &CoreRuntime,
+    pending_task_waits: &mut Vec<PendingTaskWait>,
+    force: bool,
+) {
+    let now = Instant::now();
+    let mut index = 0;
+    while index < pending_task_waits.len() {
+        let states = task_states(core, &pending_task_waits[index].handles);
+        let ready = force
+            || now >= pending_task_waits[index].deadline
+            || match states.as_ref() {
+                Ok(states) => all_task_states_terminal(states),
+                Err(_) => true,
+            };
+        if ready {
+            let pending = pending_task_waits.swap_remove(index);
+            let _ = pending.reply.send(states);
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn task_states(core: &CoreRuntime, handles: &[TaskHandle]) -> RuntimeResult<Vec<HostTaskState>> {
+    handles
+        .iter()
+        .cloned()
+        .map(|handle| {
+            Ok(HostTaskState {
+                status: core.task_handle_status(&handle),
+                outcome: core.task_handle_outcome(&handle)?,
+                handle,
+            })
+        })
+        .collect()
+}
+
+fn all_task_states_terminal(states: &[HostTaskState]) -> bool {
+    states.iter().all(|state| {
+        matches!(
+            state.status,
+            Some(
+                TaskStatus::Completed
+                    | TaskStatus::Failed
+                    | TaskStatus::Cancelled
+                    | TaskStatus::Expired
+                    | TaskStatus::DeadLetter
+            )
+        )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -701,17 +832,10 @@ fn handle_command(
         HostRuntimeCommand::TaskSnapshots => {
             Ok((HostRuntimeReply::TaskSnapshots(task_snapshots(core)), false))
         }
-        HostRuntimeCommand::TaskStatesBatch(handles) => {
-            let mut states = Vec::with_capacity(handles.len());
-            for handle in handles {
-                states.push(HostTaskState {
-                    status: core.task_handle_status(&handle),
-                    outcome: core.task_handle_outcome(&handle)?,
-                    handle,
-                });
-            }
-            Ok((HostRuntimeReply::TaskStatesBatch(states), false))
-        }
+        HostRuntimeCommand::TaskStatesBatch(handles) => Ok((
+            HostRuntimeReply::TaskStatesBatch(task_states(core, &handles)?),
+            false,
+        )),
         HostRuntimeCommand::TaskOutcome(handle) => Ok((
             HostRuntimeReply::TaskOutcome(core.task_handle_outcome(&handle)?),
             false,
@@ -918,6 +1042,12 @@ fn drain_for_reload(
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
                 let _ = reply_tx.send(task_status(core, &task_id));
             }
+            Ok(CoreActorMsg::WaitTaskStates { reply, .. }) => {
+                let _ = reply.send(Err(host_failure(
+                    "host.actor.mailbox",
+                    "task waits must use the control mailbox",
+                )));
+            }
             Ok(CoreActorMsg::Command(_, reply_tx)) => {
                 let _ = reply_tx.send(Err(host_failure(
                     "host.reload.busy",
@@ -1087,6 +1217,12 @@ fn drain_worker_completions(
             ),
             Ok(CoreActorMsg::TaskStatus(task_id, reply_tx)) => {
                 let _ = reply_tx.send(task_status(core, &task_id));
+            }
+            Ok(CoreActorMsg::WaitTaskStates { reply, .. }) => {
+                let _ = reply.send(Err(host_failure(
+                    "host.actor.mailbox",
+                    "task waits must use the control mailbox",
+                )));
             }
             Ok(CoreActorMsg::Command(command, reply_tx)) => {
                 if send_command_reply(

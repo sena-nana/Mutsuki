@@ -647,8 +647,9 @@ impl HostRuntime {
         self.completion_hub.subscribe()
     }
 
-    /// Blocks until every handle reaches a terminal outcome, the subscription closes, or `timeout`
-    /// elapses. Uses completion notifications instead of busy-polling the actor mailbox.
+    /// Blocks until every handle reaches a terminal outcome, the runtime stops, or `timeout`
+    /// elapses. The actor owns the wait so completion returns the committed terminal states without
+    /// a follow-up status query.
     pub fn wait_task_states(
         &self,
         handles: Vec<mutsuki_runtime_contracts::TaskHandle>,
@@ -657,35 +658,22 @@ impl HostRuntime {
         if handles.is_empty() {
             return Ok(Vec::new());
         }
-        let subscription = self.subscribe_task_completions();
-        let mut revision = subscription.revision();
         let deadline = Instant::now() + timeout;
-        loop {
-            let states = self.task_states(handles.clone())?;
-            if states.iter().all(|state| {
-                matches!(
-                    state.status,
-                    Some(
-                        TaskStatus::Completed
-                            | TaskStatus::Failed
-                            | TaskStatus::Cancelled
-                            | TaskStatus::Expired
-                            | TaskStatus::DeadLetter
-                    )
-                )
-            }) {
-                return Ok(states);
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return Ok(states);
-            }
-            match subscription.wait_after_timeout(revision, deadline.saturating_duration_since(now))
-            {
-                Some(next_revision) => revision = next_revision,
-                None => return self.task_states(handles),
-            }
-        }
+        self.metrics.actor_commands.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .task_state_batch_queries
+            .fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(CoreActorMsg::WaitTaskStates {
+                handles,
+                deadline,
+                reply: reply_tx,
+            })
+            .map_err(|_| host_failure("host.actor.command", "actor mailbox closed"))?;
+        reply_rx
+            .recv()
+            .map_err(|error| host_failure("host.actor.reply", error.to_string()))?
     }
 
     pub fn metrics(&self) -> HostRuntimeMetricsSnapshot {
