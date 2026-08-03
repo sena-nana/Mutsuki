@@ -6,8 +6,8 @@ use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_wire::{
     CancelTaskRequest, CollectReadPlanRequest, CommandBatchRequest, CommandPlanRequest,
     CommitWritePlanRequest, ExportPlanRequest, OpenStreamPlanRequest, SnapshotReadPlanRequest,
-    SubmitTaskBatchRequest, TaskOutcomeRequest, WireRequest, decode_jsonl_response,
-    encode_jsonl_request,
+    SubmitTaskBatchRequest, TaskOutcomeRequest, WireRequest, decode_binary_response,
+    encode_binary_request,
 };
 
 use crate::{ResourcePlanGateway, TaskSubmitter};
@@ -34,7 +34,7 @@ impl AbiHostClient {
         })?;
         let request_id = 1;
         let bytes =
-            encode_jsonl_request(request_id, value, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
+            encode_binary_request(request_id, value, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
                 .map_err(wire_failure)?;
         let response = unsafe { callback(self.host.context, bytes.as_ptr(), bytes.len()) };
         let (ok, response_bytes) =
@@ -45,7 +45,7 @@ impl AbiHostClient {
                 String::from_utf8_lossy(&response_bytes),
             ));
         }
-        decode_jsonl_response::<R>(
+        decode_binary_response::<R>(
             &response_bytes,
             request_id,
             mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,

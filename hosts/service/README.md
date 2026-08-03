@@ -104,14 +104,14 @@ runtime contracts `PluginManifest`. External process plugins add a `[runtime]` s
 command = "example-runner"
 args = []
 env = {}
-runner_link = "jsonl-stdio"
+runner_link = "binary-stdio"
 ```
 
-`jsonl-stdio` runners are launched by ServiceHost, wrapped with `mutsuki-runtime-host::JsonlRunner`,
+`binary-stdio` runners are launched by ServiceHost, wrapped with `mutsuki-runtime-host::BinaryRunner`,
 and registered with Core as external runners (`runner.run_batch`). Sidecar processes without Core
 runner descriptors are supervised by the runner supervisor and exposed through the control API.
 
-ABI plugins use the same Core JSONL runner/task/resource methods through the versioned byte
+ABI plugins use the same Core binary runner/task/resource methods through the versioned byte
 transport exported by `mutsuki-runtime-sdk`. An installed package contains `plugin.toml` and one
 platform library (`.dll`, `.so`, or `.dylib`) referenced by `manifest.artifact.path`. The path must
 remain inside the package directory and `manifest.artifact.sha256` must contain the exact lowercase
@@ -135,7 +135,7 @@ real builtin crates through `ServiceRuntimeBuilder`; missing upstream capabiliti
 
 ## Performance
 
-The versioned ServiceHost benchmark matrix exercises real builtin, ABI, and independent Rust JSONL
+The versioned ServiceHost benchmark matrix exercises real builtin, ABI, and independent Rust binary
 Runner deployments through authenticated IPC, reload, and graceful shutdown. See
 [`docs/performance-model-v1.md`](docs/performance-model-v1.md) for smoke and local reference commands.
 

@@ -9,7 +9,7 @@ commit `f56489ba9fa41bee9742fcb8474a46fcb41f19b8` on macOS/aarch64 with
 
 | Phase | Scope | Gates |
 | --- | --- | ---: |
-| P0 | typed JSONL contract and allocation reduction | 16 / 16 passed |
+| P0 | typed contract and allocation reduction | 16 / 16 passed |
 | P1 | multiplexing, cancellation, and concurrency | 5 / 5 passed |
 | P2 | MessagePack framing, stdio, and native ABI | 11 / 11 passed |
 | P3 | bounded rejection of hostile input | 3 / 3 passed |
@@ -26,21 +26,20 @@ The reports are the authoritative machine-readable evidence:
 All codec values below are nanoseconds per entry. Frame sizes include the
 complete request frame.
 
-| Workload | Legacy JSON RPC | Typed JSONL | Binary MessagePack |
-| --- | ---: | ---: | ---: |
-| encode, 1 entry | 10,313.92 | 3,484.75 | 2,355.08 |
-| decode, 1 entry | 14,314.21 | 5,696.08 | 6,449.17 |
-| encode, 16 entries | 6,005.18 | 1,735.20 | 681.61 |
-| decode, 16 entries | 5,384.44 | 3,533.93 | 2,798.18 |
-| encode, 256 entries | 4,555.38 | 1,149.86 | 544.53 |
-| decode, 256 entries | 4,850.90 | 2,704.26 | 2,255.11 |
-| encode, 4,096 entries | 4,598.37 | 1,296.86 | 549.89 |
-| decode, 4,096 entries | 4,837.58 | 2,409.52 | 2,340.60 |
+| Workload | Binary MessagePack |
+| --- | ---: |
+| encode, 1 entry | 2,355.08 |
+| decode, 1 entry | 6,449.17 |
+| encode, 16 entries | 681.61 |
+| decode, 16 entries | 2,798.18 |
+| encode, 256 entries | 544.53 |
+| decode, 256 entries | 2,255.11 |
+| encode, 4,096 entries | 549.89 |
+| decode, 4,096 entries | 2,340.60 |
 
-At 4,096 entries, the typed JSONL frame was 3,968,000 bytes and the binary
-frame was 3,223,770 bytes. The measured stdio round trip fell from 31,249.13 ns
-for typed JSONL to 19,825.09 ns for binary. The native ABI encode path fell
-from 24.13 ns and 150 bytes for JSONL to 21.81 ns and 56 bytes for binary.
+At 4,096 entries, the binary frame was 3,223,770 bytes. The measured stdio
+round trip was 19,825.09 ns for binary. The native ABI encode path measured
+21.81 ns and 56 bytes for binary.
 
 P1 sustained 23,156 requests/s with one request in flight, 33,202 requests/s
 with 16 in flight, and 32,160 requests/s with 56 in flight. Cancellation had a
@@ -54,9 +53,7 @@ ns/frame bound. The length and truncation paths allocate no heap memory.
 
 ## Release decision
 
-- Binary MessagePack is the production default for stdio and native ABI v2.
-- Typed JSONL remains the diagnostics and compatibility format during the
-  documented migration window. New callers must not select legacy JSON RPC.
+- Binary MessagePack is the only internal runtime wire codec for stdio and native ABI.
 - Latency-sensitive batching should normally stay at or below 256 entries.
   Larger throughput batches are supported when they remain inside the checked
   frame and payload limits.
@@ -66,8 +63,8 @@ ns/frame bound. The length and truncation paths allocate no heap memory.
   mandatory before allocation. Unknown flags, opcodes, message types, duplicate
   responses, and late responses fail the connection structurally.
 - Native libraries are loaded off the async executor and selected by the exact
-  manifest ABI. ABI v1 remains an explicit compatibility path, not a fallback
-  from an invalid ABI v2 declaration.
+  manifest ABI. ABI v1/v2 share the same binary wire codec and invalid ABI
+  declarations do not fall back.
 
 The Rust golden-vector suite covers all 18 opcodes in both directions. The
 companion Python kit consumes the same checked-in vectors and must reproduce

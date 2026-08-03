@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_wire::{
-    DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck, encode_jsonl_response,
+    BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck,
+    SubmitTaskBatchRequest, decode_binary_frame, decode_binary_request, encode_binary_response,
 };
 use serde_json::json;
 
@@ -69,7 +70,10 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
     abi.cancel_task(&submitted).unwrap();
     let outcome = abi.task_outcome(&submitted).unwrap();
     let (_reader, writer) = abi.into_inner();
-    let request = String::from_utf8(writer.into_inner()).unwrap();
+    let bytes = writer.into_inner();
+    let frames = split_frames(&bytes);
+    let (_, submit_request) =
+        decode_binary_request::<SubmitTaskBatchRequest>(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
 
     assert_eq!(submitted.task_id, "abi-client-task");
     assert_eq!(submitted.trace_id.as_deref(), Some("trace-abi"));
@@ -77,10 +81,31 @@ fn host_task_clients_share_task_contract_across_local_and_abi_backends() {
         outcome,
         Some(TaskOutcome::Cancelled { task_id, .. }) if task_id == "abi-client-task"
     ));
-    assert!(request.contains("\"method\":\"task.submit_batch\""));
-    assert!(request.contains("\"method\":\"task.cancel\""));
-    assert!(request.contains("\"method\":\"task.outcome\""));
-    assert!(request.contains("\"trace_id\":\"trace-abi\""));
+    assert_eq!(
+        decode_binary_frame(frames[1], DEFAULT_WIRE_LIMITS)
+            .unwrap()
+            .header
+            .opcode,
+        Opcode::TaskSubmitBatch
+    );
+    assert_eq!(
+        decode_binary_frame(frames[2], DEFAULT_WIRE_LIMITS)
+            .unwrap()
+            .header
+            .opcode,
+        Opcode::TaskCancel
+    );
+    assert_eq!(
+        decode_binary_frame(frames[3], DEFAULT_WIRE_LIMITS)
+            .unwrap()
+            .header
+            .opcode,
+        Opcode::TaskOutcome
+    );
+    assert_eq!(
+        submit_request.batch.tasks[0].trace_id.as_deref(),
+        Some("trace-abi")
+    );
 }
 
 #[test]
@@ -179,24 +204,37 @@ fn task_clients_submit_batch_across_local_and_abi_backends() {
         .build();
     let submitted = abi.submit_batch(abi_batch).unwrap();
     let (_reader, writer) = abi.into_inner();
-    let request = String::from_utf8(writer.into_inner()).unwrap();
+    let bytes = writer.into_inner();
+    let frames = split_frames(&bytes);
+    let (_, request) =
+        decode_binary_request::<SubmitTaskBatchRequest>(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
 
     assert_eq!(submitted.len(), 2);
-    assert!(request.contains("\"method\":\"task.submit_batch\""));
-    assert!(request.contains("\"batch_id\":\"abi-batch\""));
+    assert_eq!(request.batch.batch_id, "abi-batch");
 }
 
 fn typed_response_bytes(responses: &[(Opcode, serde_json::Value)]) -> Vec<u8> {
-    let hello = ProtocolHello::debug_jsonl();
-    let ack: ProtocolHelloAck =
-        serde_json::from_value(serde_json::to_value(hello).unwrap()).unwrap();
+    let hello = ProtocolHello::binary();
+    let ack: ProtocolHelloAck = hello.accept(BINARY_CODEC_ID, None).unwrap();
     let mut encoded =
-        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
     for (index, (opcode, value)) in responses.iter().enumerate() {
         encoded.extend(
-            encode_jsonl_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
+            encode_binary_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
                 .unwrap(),
         );
     }
     encoded
+}
+
+fn split_frames(bytes: &[u8]) -> Vec<&[u8]> {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let len = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let end = offset + 4 + len;
+        frames.push(&bytes[offset..end]);
+        offset = end;
+    }
+    frames
 }

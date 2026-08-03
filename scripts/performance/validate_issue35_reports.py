@@ -14,8 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_DEPLOYMENTS = {
     "builtin",
     "abi",
-    "rust-process-jsonl",
-    "python-jsonl",
+    "rust-process-binary",
     "python-binary",
 }
 RETIRED_IN_TREE_REPOSITORIES = {

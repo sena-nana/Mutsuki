@@ -10,7 +10,7 @@ runners. This repository implements the Python side of that protocol.
 
 ```text
 transport: concurrent stdio now, named pipe / unix socket later
-frame: typed JSONL debug + length-prefixed MessagePack v1
+frame: length-prefixed MessagePack v1
 codec: schema-validated typed contract objects
 envelope/task: runner.run_batch, runner.cancel, runner.dispose
 sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
@@ -23,7 +23,7 @@ sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
   `BatchPayload`, `WorkResourcePlan`, and `TaskBatch`.
 - JSON roundtrip helpers.
 - `PythonRunnerBackend` runner registry and invocation.
-- `StdioJsonlBridge` typed Opcode methods:
+- `StdioBinaryBridge` typed Opcode methods:
   - `runner.run_batch`
   - `runner.cancel`
   - `runner.dispose`
@@ -31,7 +31,7 @@ sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
 - Explicit resource request handler injection; the bundled provider implementation is testing-only.
 - Runner-side async adapter and scalar `run_one` adapter sugar that lower to
   `run_batch`.
-- `StdioBinaryBridge` uses the same dispatcher and semantic fixtures with a fixed
+- The binary bridge uses the same dispatcher and semantic fixtures with a fixed
   24-byte header and typed MessagePack payload.
 - Initialization negotiates protocol major, codec, schema revision, features and
   limits before business dispatch.
@@ -49,8 +49,6 @@ sdk: ctx.call, ctx.resources, ctx.log, side-effect scope
 - Resource access must use `ResourceRef`, `ValueRef`, plans, leases, and
   structured generation checks.
 - Unsupported Python awaitables must fail as `runner.awaitable_unsupported`.
-- JSONL and MessagePack preserve the same contract objects and Rust-generated
-  active release conformance cases.
-- JSONL is compatibility/debug only. Recommended operational limits are 64 KiB
-  payload and 32 entries; hard limits remain schema-defined.
+- MessagePack preserves the contract objects and Rust-generated active release
+  conformance cases.
 - Resource bytes over 64 KiB must use `ResourceRef`, stream, or shared descriptor.

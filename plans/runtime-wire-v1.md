@@ -5,7 +5,7 @@ Runtime Wire v1 把封闭 Core 操作与 transport 分层：
 ```text
 mutsuki-runtime-contracts DTO
         -> mutsuki-runtime-wire typed request / Opcode
-        -> typed JSONL debug codec | length-prefixed MessagePack codec
+        -> length-prefixed MessagePack codec
         -> stdio | local IPC | native ABI | MutsukiLink opaque bytes
 ```
 
@@ -45,15 +45,13 @@ revision、feature flags、frame/payload/in-flight 上限和 management 能力�
 runner 不返回该 surface。不兼容 major、codec、schema、必需 feature、management 能力或
 扩大的限制立即结构化失败。
 
-默认上限：8 MiB frame/JSONL line、4 MiB payload、64 in-flight，其中 8 个槽只供
+默认上限：8 MiB frame、4 MiB payload、64 in-flight，其中 8 个槽只供
 management。资源 bytes 的 inline 上限为 64 KiB；更大内容必须通过 `ResourceRef`、stream
 或 shared descriptor。
 
-## JSONL 兼容边界
+## Binary 边界
 
-Typed JSONL 保留为 debug、conformance 和迁移 codec，不再向调用层公开
-`method: &str + Value`。Host reader 与 writer 分离，pending table 按 `u64 request_id`
+Runtime Wire 不向调用层公开 `method: &str + Value`。Host reader 与 writer 分离，pending table 按 `u64 request_id`
 关联乱序响应；EOF、malformed、oversized、duplicate/late response 会收敛所有 waiter。
 
-JSONL 的淘汰条件是 active release set 全部支持 binary codec 且诊断工具可解析 binary
-frame；在此之前它不作为大 batch、大 payload 或高频生产热路径的推荐 codec。
+旧 text/line-oriented frame 输入必须在业务分发前结构化失败，不能回退到兼容 codec。

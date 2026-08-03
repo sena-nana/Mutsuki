@@ -15,7 +15,7 @@ subsequently migrated those owners into one repository without changing their ow
   validator;
 - ServiceHost owns builtin, ABI and Rust-process deployment fixtures and the canonical executable
   six-fixture manifest;
-- PythonRunnerKit mirrors the manifest and owns Python JSONL/binary measurements;
+- PythonRunnerKit mirrors the manifest and owns Python binary measurements;
 - TauriHost, Link, DistributedHost, StdPlugins, AgentKit and BotPlugins own their own workloads;
 - every owner retains reports, anomaly analysis, approvals and reference history in its own
   `artifacts/performance/` directory (`artifacts/perf/` in Core);
@@ -35,7 +35,7 @@ report's `repository_revisions` map.
 | MutsukiTauriHost#4 | task pump, executable bridge, 1 MiB/64 MiB ResourceRef streaming and release cases | 36 reference cases; 31 tests passed | Pass; Windows approved |
 | MutsukiLink#21 | aligned local/TCP/QUIC dimensions, control/backpressure/mux/latest-only/reconnect cases | 53 reference cases; 100 tests passed | Pass; Windows approved |
 | MutsukiDistributedHost#22 | real Controller/Worker/ServiceHost processes, placement, registry, content localization and fault stages | 242 reference cases; 68 tests passed | Pass; Windows approved |
-| MutsukiPythonRunnerKit#4 | six fixtures across JSONL/binary, codec/pipe/process layers, 1/16/56 inflight and 1/32/256 batches | 92 reference cases; 81 tests passed; Pyright 0 errors | Pass; Windows approved |
+| MutsukiPythonRunnerKit#4 | six fixtures across binary codec/pipe/process layers, 1/16/56 inflight and 1/32/256 batches | 92 reference cases; 81 tests passed; Pyright 0 errors | Pass; Windows approved |
 | MutsukiStdPlugins#5 | deterministic workflow/resource/fs/http/sqlite workloads with no public network | 18 reference cases; 35 tests passed, 1 ignored | Pass; Windows approved |
 | MutsukiAgentKit#4 | deterministic fake model/tool for single/tool/parallel/session/wait/cancel/failure paths | 27 reference cases; 16 tests passed | Pass; Windows approved |
 | MutsukiBotPlugins#10 | fake platform burst/multi-adapter/wait/rate-limit/reconnect/dedup/idle paths | 15 reference cases; 75 tests passed | Pass; Windows approved |
@@ -50,7 +50,7 @@ dependencies, environment fingerprint and measurement boundary, and passes corre
 | Performance tests have an authoritative home | Nine owner areas contain their own benchmark code and artifacts; the root workflow aggregates them without changing ownership | Pass locally |
 | Version report/workload/repository-snapshot/approval contracts | Four schemas and seven Core contract tests under `performance/` | Pass locally |
 | Parse every owner report | `scripts/performance/validate_issue35_reports.py` validates 9 reports and 628 cases | Pass locally |
-| Same Runner fixture across five deployments | ServiceHost manifest plus builtin, ABI, Rust process, Python JSONL and Python binary hashes are exact | Pass locally |
+| Same Runner fixture across four deployments | ServiceHost manifest plus builtin, ABI, Rust process binary and Python binary hashes are exact | Pass locally |
 | Independent owner benchmarks | Core/Host/Tauri/Link/Distributed/Python and three domain workloads run independently from their owner areas | Pass locally |
 | Optional macOS ARM64 reference history | Every owner workflow can target `[self-hosted,mutsuki-reference,macOS,ARM64]`; physical Apple M4 provisional reports are retained locally | Not required for closure; waived by owner |
 | Fixed Windows x64 reference history | Physical Ryzen 7 5800X Windows x64 run retained in all nine owners; 628 clean cases and nine exact-byte approvals pass aggregate validation | Pass |

@@ -855,12 +855,18 @@ fn static_capability_broker_serves_only_active_load_plan_surfaces() {
         "plugin.backend.builtin"
     );
     assert_eq!(
-        broker.require_codec("codec.json").unwrap().codec_id,
-        "codec.json"
+        broker
+            .require_codec("mutsuki.codec.typed-msgpack.v1")
+            .unwrap()
+            .codec_id,
+        "mutsuki.codec.typed-msgpack.v1"
     );
     assert_eq!(
-        broker.require_bridge("bridge.abi.jsonl").unwrap().bridge_id,
-        "bridge.abi.jsonl"
+        broker
+            .require_bridge("bridge.abi.binary")
+            .unwrap()
+            .bridge_id,
+        "bridge.abi.binary"
     );
     assert_eq!(
         broker
@@ -1030,19 +1036,19 @@ fn capability_plan() -> RuntimeLoadPlan {
         deployment_kind: PluginDeploymentKind::Builtin,
         task_client_protocol: "mutsuki.task.v1".into(),
         resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-        codec_id: Some("codec.json".into()),
-        bridge_id: Some("bridge.abi.jsonl".into()),
+        codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+        bridge_id: Some("bridge.abi.binary".into()),
     };
     let codec = CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     };
     let bridge = BridgeDescriptor {
-        bridge_id: "bridge.abi.jsonl".into(),
+        bridge_id: "bridge.abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     };
     let scheduler = SchedulerPolicyDescriptor {
@@ -1105,8 +1111,8 @@ fn capability_plan() -> RuntimeLoadPlan {
                 "host_extension:host.extension.builtin".into(),
                 "plugin_backend:plugin.backend.builtin".into(),
                 "plugin_backend:plugin.backend.pruned".into(),
-                "codec:codec.json".into(),
-                "bridge:bridge.abi.jsonl".into(),
+                "codec:mutsuki.codec.typed-msgpack.v1".into(),
+                "bridge:bridge.abi.binary".into(),
                 "scheduler_policy:scheduler.fair".into(),
                 "workflow:workflow.linear".into(),
             ],
@@ -1114,8 +1120,8 @@ fn capability_plan() -> RuntimeLoadPlan {
             active_capabilities: vec![
                 "host_extension:host.extension.builtin".into(),
                 "plugin_backend:plugin.backend.builtin".into(),
-                "codec:codec.json".into(),
-                "bridge:bridge.abi.jsonl".into(),
+                "codec:mutsuki.codec.typed-msgpack.v1".into(),
+                "bridge:bridge.abi.binary".into(),
                 "scheduler_policy:scheduler.fair".into(),
                 "workflow:workflow.linear".into(),
             ],
@@ -1123,8 +1129,8 @@ fn capability_plan() -> RuntimeLoadPlan {
             active_resource_providers: Vec::new(),
             active_host_extensions: vec!["host.extension.builtin".into()],
             active_plugin_backends: vec!["plugin.backend.builtin".into()],
-            active_codecs: vec!["codec.json".into()],
-            active_bridges: vec!["bridge.abi.jsonl".into()],
+            active_codecs: vec!["mutsuki.codec.typed-msgpack.v1".into()],
+            active_bridges: vec!["bridge.abi.binary".into()],
             active_scheduler_policies: vec!["scheduler.fair".into()],
             active_workflows: vec!["workflow.linear".into()],
             permission_audit: Vec::new(),

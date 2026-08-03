@@ -12,7 +12,7 @@ use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RunnerContext, RuntimeFailure, RuntimeResult,
 };
 use mutsuki_runtime_host::{
-    ProcessRunnerSpec, RuntimeBootstrapper, SpawnedJsonlRunner, runner_manifest,
+    ProcessRunnerSpec, RuntimeBootstrapper, SpawnedBinaryRunner, runner_manifest,
 };
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeClientRef};
 use mutsuki_tauri_bridge::{
@@ -648,7 +648,7 @@ fn deployment_label(deployment: &PluginDeploymentKind) -> &'static str {
 
 pub(crate) struct ExternalProcessRunner {
     descriptor: RunnerDescriptor,
-    inner: SpawnedJsonlRunner,
+    inner: SpawnedBinaryRunner,
     stderr_thread: Option<thread::JoinHandle<()>>,
     events: Arc<EventHub>,
     health: Arc<HostHealthState>,
@@ -692,7 +692,7 @@ impl ExternalProcessRunner {
             cwd: Some(cwd),
             env,
         };
-        let mut inner = SpawnedJsonlRunner::spawn(descriptor.clone(), &spec).map_err(|error| {
+        let mut inner = SpawnedBinaryRunner::spawn(descriptor.clone(), &spec).map_err(|error| {
             HostError::Config(format!(
                 "failed to spawn runner {} from {}: {error}",
                 descriptor.runner_id,

@@ -3,16 +3,16 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, CompletionBatch, EntryCompletion, OrderingRequirement, RunnerContext,
-    RunnerResult, Task, TaskLease, WorkBatch, WorkResourcePlan,
+    BatchEntry, BatchPayload, CompletionBatch, ERR_RUNTIME_HOST_FAILED, EntryCompletion,
+    OrderingRequirement, RunnerContext, RunnerResult, Task, TaskLease, WorkBatch, WorkResourcePlan,
 };
 use mutsuki_runtime_wire::{
-    CancelRunnerRequest, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, Opcode, ProtocolHello,
-    RunBatchRequest, WireLimits, encode_jsonl_response,
+    BINARY_CODEC_ID, CancelRunnerRequest, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, Opcode,
+    ProtocolHello, RunBatchRequest, WireLimits, encode_binary_response,
 };
 use serde_json::json;
 
-use crate::JsonlTransport;
+use crate::BinaryTransport;
 
 #[test]
 fn cancel_and_dispose_survive_work_saturation_and_out_of_order_response() {
@@ -22,22 +22,20 @@ fn cancel_and_dispose_survive_work_saturation_and_out_of_order_response() {
         management_reserved_requests: 2,
         ..DEFAULT_WIRE_LIMITS
     };
-    let hello = ProtocolHello::debug_jsonl_with_limits(limits).unwrap();
-    let ack = hello
-        .accept(mutsuki_runtime_wire::DEBUG_JSONL_CODEC_ID, None)
-        .unwrap();
+    let hello = ProtocolHello::binary_with_limits(limits).unwrap();
+    let ack = hello.accept(BINARY_CODEC_ID, None).unwrap();
     let completion = completion();
     let mut responses =
-        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
     let gate_after = responses.len();
     responses.extend(
-        encode_jsonl_response(5, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
+        encode_binary_response(5, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
     );
     responses.extend(
-        encode_jsonl_response(4, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
+        encode_binary_response(4, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
     );
     responses.extend(
-        encode_jsonl_response(
+        encode_binary_response(
             2,
             Opcode::RunnerRunBatch,
             Ok(&completion),
@@ -55,43 +53,39 @@ fn cancel_and_dispose_survive_work_saturation_and_out_of_order_response() {
     };
     let writer = SharedWriter(writer_state.clone());
     let bridge =
-        JsonlTransport::with_limits(reader, writer, limits, Duration::from_secs(2)).unwrap();
+        BinaryTransport::with_limits(reader, writer, limits, Duration::from_secs(2)).unwrap();
 
     let run_thread = {
         let bridge = bridge.clone();
         let run = run.clone();
         std::thread::spawn(move || bridge.request(&run))
     };
-    wait_for_lines(&writer_state, 2);
+    wait_for_frames(&writer_state, 2);
 
     let saturated = bridge.request(&run).unwrap_err();
-    assert!(
-        saturated
-            .error()
-            .evidence
-            .values()
-            .any(|value| matches!(value, mutsuki_runtime_contracts::ScalarValue::String(reason) if reason.contains("capacity")))
-    );
+    assert_eq!(saturated.error().code, ERR_RUNTIME_HOST_FAILED);
+    assert_eq!(saturated.error().source, "wire_multiplexer");
+    assert_eq!(saturated.error().route, "wire.transport");
 
     let cancel_thread = {
         let bridge = bridge.clone();
         std::thread::spawn(move || {
             bridge.request(&CancelRunnerRequest {
-                runner_id: "jsonl.runner".into(),
+                runner_id: "binary.runner".into(),
                 invocation_id: "invocation:test".into(),
             })
         })
     };
-    wait_for_lines(&writer_state, 3);
+    wait_for_frames(&writer_state, 3);
     let dispose_thread = {
         let bridge = bridge.clone();
         std::thread::spawn(move || {
             bridge.request(&DisposeRunnerRequest {
-                runner_id: "jsonl.runner".into(),
+                runner_id: "binary.runner".into(),
             })
         })
     };
-    wait_for_lines(&writer_state, 4);
+    wait_for_frames(&writer_state, 4);
     let (open, wake) = &*gate;
     *open.lock().unwrap() = true;
     wake.notify_all();
@@ -103,17 +97,15 @@ fn cancel_and_dispose_survive_work_saturation_and_out_of_order_response() {
 
 #[test]
 fn duplicate_or_late_response_fails_the_connection_and_pending_request() {
-    let hello = ProtocolHello::debug_jsonl();
-    let ack = hello
-        .accept(mutsuki_runtime_wire::DEBUG_JSONL_CODEC_ID, None)
-        .unwrap();
+    let hello = ProtocolHello::binary();
+    let ack = hello.accept(BINARY_CODEC_ID, None).unwrap();
     let mut responses =
-        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
     let dispose =
-        encode_jsonl_response(2, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(2, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
     responses.extend_from_slice(&dispose);
     responses.extend_from_slice(&dispose);
-    let bridge = JsonlTransport::with_limits(
+    let bridge = BinaryTransport::with_limits(
         Cursor::new(responses),
         Vec::new(),
         DEFAULT_WIRE_LIMITS,
@@ -121,7 +113,7 @@ fn duplicate_or_late_response_fails_the_connection_and_pending_request() {
     )
     .unwrap();
     let request = DisposeRunnerRequest {
-        runner_id: "jsonl.runner".into(),
+        runner_id: "binary.runner".into(),
     };
 
     bridge.request(&request).unwrap();
@@ -139,7 +131,7 @@ fn run_request() -> RunBatchRequest {
     let batch = WorkBatch {
         batch_id: "batch-1".into(),
         tick_id: "tick-1".into(),
-        batch_key: "jsonl.runner".into(),
+        batch_key: "binary.runner".into(),
         entries: vec![BatchEntry {
             entry_id: "task-1".into(),
             task_id: "task-1".into(),
@@ -158,7 +150,7 @@ fn run_request() -> RunBatchRequest {
         task_leases: vec![TaskLease {
             lease_id: "lease-1".into(),
             task_id: "task-1".into(),
-            runner_id: "jsonl.runner".into(),
+            runner_id: "binary.runner".into(),
             attempt_generation: 1,
             executor_id: "executor:test".into(),
             registry_generation: 1,
@@ -167,7 +159,7 @@ fn run_request() -> RunBatchRequest {
         }],
     };
     RunBatchRequest {
-        runner_id: "jsonl.runner".into(),
+        runner_id: "binary.runner".into(),
         ctx: RunnerContext::new(
             1,
             1,
@@ -201,24 +193,43 @@ struct GatedReader {
 
 impl Read for GatedReader {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.cursor.read(buffer)
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let position = self.cursor.position() as usize;
+        if position >= self.gate_after {
+            self.wait_for_gate();
+            return self.cursor.read(buffer);
+        }
+        let readable = (self.gate_after - position).min(buffer.len());
+        self.cursor.read(&mut buffer[..readable])
     }
 }
 
 impl BufRead for GatedReader {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
         if self.cursor.position() as usize >= self.gate_after {
-            let (open, wake) = &*self.gate;
-            drop(
-                wake.wait_while(open.lock().unwrap(), |open| !*open)
-                    .unwrap(),
-            );
+            self.wait_for_gate();
+            return self.cursor.fill_buf();
         }
-        self.cursor.fill_buf()
+        let position = self.cursor.position() as usize;
+        let readable = self.gate_after - position;
+        let bytes = self.cursor.fill_buf()?;
+        Ok(&bytes[..bytes.len().min(readable)])
     }
 
     fn consume(&mut self, amount: usize) {
         self.cursor.consume(amount);
+    }
+}
+
+impl GatedReader {
+    fn wait_for_gate(&self) {
+        let (open, wake) = &*self.gate;
+        drop(
+            wake.wait_while(open.lock().unwrap(), |open| !*open)
+                .unwrap(),
+        );
     }
 }
 
@@ -238,19 +249,30 @@ impl Write for SharedWriter {
     }
 }
 
-fn wait_for_lines(state: &Arc<(Mutex<Vec<u8>>, Condvar)>, expected: usize) {
+fn wait_for_frames(state: &Arc<(Mutex<Vec<u8>>, Condvar)>, expected: usize) {
     let (bytes, wake) = &**state;
     let (bytes, timeout) = wake
         .wait_timeout_while(bytes.lock().unwrap(), Duration::from_secs(2), |bytes| {
-            bytes.iter().filter(|byte| **byte == b'\n').count() < expected
+            count_binary_frames(bytes) < expected
         })
         .unwrap();
     assert!(
         !timeout.timed_out(),
         "writer did not emit {expected} frames"
     );
-    assert_eq!(
-        bytes.iter().filter(|byte| **byte == b'\n').count(),
-        expected
-    );
+    assert_eq!(count_binary_frames(&bytes), expected);
+}
+
+fn count_binary_frames(bytes: &[u8]) -> usize {
+    let mut offset = 0;
+    let mut frames = 0;
+    while offset + 4 <= bytes.len() {
+        let len = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        if offset + 4 + len > bytes.len() {
+            break;
+        }
+        frames += 1;
+        offset += 4 + len;
+    }
+    frames
 }

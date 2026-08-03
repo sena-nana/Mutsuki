@@ -178,26 +178,39 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .await
         .map_err(|error| error.to_string())?;
     socket
-        .send(Message::Text(
-            serde_json::to_string(&WireMessage::Hello {
+        .send(Message::Binary(
+            WireMessage::Hello {
                 protocol_version: WEB_PROTOCOL_VERSION.into(),
                 capabilities: Vec::new(),
                 auth_token: Some("local-dev".into()),
-            })
+            }
+            .encode()
             .unwrap()
             .into(),
         ))
         .await
         .map_err(|error| error.to_string())?;
-    let _ = socket.next().await;
+    let ack = socket
+        .next()
+        .await
+        .ok_or_else(|| "missing hello ack".to_string())?
+        .map_err(|error| error.to_string())?;
+    let Message::Binary(bytes) = ack else {
+        return Err("unexpected hello ack".into());
+    };
+    match WireMessage::decode(bytes.as_ref()).map_err(|error| error.to_string())? {
+        WireMessage::HelloAck { .. } => {}
+        _ => return Err("unexpected hello ack".into()),
+    }
     socket
-        .send(Message::Text(
-            serde_json::to_string(&WireMessage::Rpc(RpcRequest {
+        .send(Message::Binary(
+            WireMessage::Rpc(RpcRequest {
                 id: Uuid::new_v4(),
                 namespace: PLUGIN_ID.into(),
                 method: method.into(),
                 params,
-            }))
+            })
+            .encode()
             .unwrap()
             .into(),
         ))
@@ -208,10 +221,10 @@ async fn rpc(address: &str, method: &str, params: Value) -> Result<Value, String
         .await
         .ok_or_else(|| "missing response".to_string())?
         .map_err(|error| error.to_string())?;
-    let Message::Text(text) = message else {
+    let Message::Binary(bytes) = message else {
         return Err("unexpected response".into());
     };
-    match serde_json::from_str::<WireMessage>(&text).map_err(|error| error.to_string())? {
+    match WireMessage::decode(bytes.as_ref()).map_err(|error| error.to_string())? {
         WireMessage::RpcResult(result) => match result.error {
             Some(error) => Err(error.message),
             None => Ok(result.result.unwrap_or(Value::Null)),

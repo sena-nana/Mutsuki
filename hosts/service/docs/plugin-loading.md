@@ -17,11 +17,11 @@ command = "runner-binary"
 args = []
 env = {}
 cwd = "optional-working-directory"
-runner_link = "jsonl-stdio"
+runner_link = "binary-stdio"
 ```
 
-`jsonl-stdio` is the first Core-connected runner link. ServiceHost resolves the exact environment
-and launches the child through `mutsuki-runtime-host::SpawnedJsonlRunner` (`runner.run_batch`). Other external processes can still be
+`binary-stdio` is the first Core-connected runner link. ServiceHost resolves the exact environment
+and launches the child through `mutsuki-runtime-host::SpawnedBinaryRunner` (`runner.run_batch`). Other external processes can still be
 supervised as sidecars, but they are not advertised to Core as executable runners.
 
 The default ServiceHost build links no builtin plugins. Product binaries may link real plugin crates

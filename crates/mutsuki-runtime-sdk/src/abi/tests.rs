@@ -5,8 +5,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_wire::{
-    BINARY_CODEC_ID, DEBUG_JSONL_CODEC_ID, DisposeRunnerRequest, InitializeRequest, ProtocolHello,
-    decode_binary_response, decode_jsonl_response, encode_binary_request, encode_jsonl_request,
+    BINARY_CODEC_ID, DisposeRunnerRequest, InitializeRequest, ProtocolHello,
+    decode_binary_response, encode_binary_request,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -134,26 +134,27 @@ fn abi_result_contract_rejects_bad_status_and_pointer_pairs() {
 #[test]
 fn configured_guest_initializes_from_typed_request_and_returns_surface() {
     let plugin = PluginBuilder::new("test.abi").build();
-    let mut guest = ConfiguredJsonlPluginGuest::new(Box::new(move |config| {
+    let mut guest = ConfiguredBinaryPluginGuest::new(Box::new(move |config| {
         assert_eq!(config, json!({"mode": "test"}));
         Ok(plugin)
     }));
     let request = InitializeRequest {
-        hello: ProtocolHello::debug_jsonl(),
+        hello: ProtocolHello::binary(),
         config: Some(json!({"mode": "test"})),
     };
     let encoded =
-        encode_jsonl_request(1, &request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_request(1, &request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
 
     let response = guest.request(&encoded);
-    let ack = decode_jsonl_response::<InitializeRequest>(
+    let ack = decode_binary_response::<InitializeRequest>(
         &response,
         1,
         mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
     )
     .unwrap();
 
-    assert_eq!(ack.codec_id, DEBUG_JSONL_CODEC_ID);
+    assert_eq!(ack.codec_id, BINARY_CODEC_ID);
+    assert_eq!(ABI_CODEC_ID, BINARY_CODEC_ID);
     assert_eq!(
         ack.plugin
             .as_ref()
@@ -165,14 +166,14 @@ fn configured_guest_initializes_from_typed_request_and_returns_surface() {
 #[test]
 fn configured_guest_rejects_business_request_before_init_and_duplicate_init() {
     let mut guest =
-        ConfiguredJsonlPluginGuest::new(Box::new(|_| Ok(PluginBuilder::new("test.abi").build())));
+        ConfiguredBinaryPluginGuest::new(Box::new(|_| Ok(PluginBuilder::new("test.abi").build())));
     let dispose = DisposeRunnerRequest {
         runner_id: "missing".into(),
     };
     let encoded =
-        encode_jsonl_request(1, &dispose, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_request(1, &dispose, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
     let before = guest.request(&encoded);
-    let error = decode_jsonl_response::<DisposeRunnerRequest>(
+    let error = decode_binary_response::<DisposeRunnerRequest>(
         &before,
         1,
         mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
@@ -181,12 +182,12 @@ fn configured_guest_rejects_business_request_before_init_and_duplicate_init() {
     assert_eq!(error.route, "abi.not_initialized");
 
     let initialize = InitializeRequest {
-        hello: ProtocolHello::debug_jsonl(),
+        hello: ProtocolHello::binary(),
         config: None,
     };
     let encoded =
-        encode_jsonl_request(2, &initialize, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
-    decode_jsonl_response::<InitializeRequest>(
+        encode_binary_request(2, &initialize, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
+    decode_binary_response::<InitializeRequest>(
         &guest.request(&encoded),
         2,
         mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
@@ -194,8 +195,8 @@ fn configured_guest_rejects_business_request_before_init_and_duplicate_init() {
     .unwrap();
 
     let duplicate =
-        encode_jsonl_request(3, &initialize, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
-    let error = decode_jsonl_response::<InitializeRequest>(
+        encode_binary_request(3, &initialize, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS).unwrap();
+    let error = decode_binary_response::<InitializeRequest>(
         &guest.request(&duplicate),
         3,
         mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
@@ -212,7 +213,7 @@ fn owned_buffer_round_trip_uses_paired_release() {
 }
 
 #[test]
-fn plugin_builder_declares_the_typed_jsonl_compatibility_backend() {
+fn plugin_builder_declares_the_binary_abi_backend() {
     let descriptor = RunnerDescriptorBuilder::new("test.abi.runner", "test.abi")
         .accepted_protocol("test.abi.run")
         .build();

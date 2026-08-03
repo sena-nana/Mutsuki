@@ -7,8 +7,8 @@ ServiceHost deployment matrix.
 
 The versioned fixture manifest is `benchmarks/runner-fixtures-v1.json`. Its noop, echo, calibrated
 CPU, wait, resource and fault outputs match the Rust builtin/ABI/process fixtures byte-for-byte after
-canonical JSON encoding. `benchmarks/fixture_process.py` exposes stable `python-jsonl` and
-`python-binary` process entries for external orchestration.
+canonical JSON encoding. `benchmarks/fixture_process.py` exposes the stable
+`python-binary` process entry for external orchestration.
 
 Reference mode covers batch 1/32/256, payload 256 B/4 KiB/64 KiB, the 1 MiB codec stress case,
 inflight 1/16/56, calibrated 50 us/1 ms/10 ms execution, cold start, Hello/Ack, warm reuse, cancel,
@@ -32,7 +32,7 @@ uv run python benchmarks/performance_model.py \
 ```
 
 Historical same-machine controls under `run_p0.py` and `run_p1.py` remain available. This repository
-owns Python JSONL/binary reports and retains them under `artifacts/performance/`; ServiceHost owns the
+owns Python binary reports and retains them under `artifacts/performance/`; ServiceHost owns the
 Rust builtin/ABI/process half of the five-deployment matrix. MutsukiCore's acceptance validator
 compares the two owner reports' fixture hashes. This runner never treats a new CI artifact as an
 approved baseline.

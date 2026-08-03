@@ -63,8 +63,8 @@ fn plugin_business_surface_ignores_deployment_transport() {
     abi.provides.plugin_backends[0].backend_id = "plugin.backend.plugin-a.abi".into();
     abi.provides.plugin_backends[0].deployment_kind = PluginDeploymentKind::Abi;
     abi.provides.codecs.push(CodecDescriptor {
-        codec_id: "mutsuki.codec.jsonl.v1".into(),
-        media_type: "application/x-ndjson".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1".into(),
         connection_scoped: true,
     });
@@ -492,19 +492,19 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
             deployment_kind: PluginDeploymentKind::Builtin,
             task_client_protocol: "mutsuki.task.v1".into(),
             resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-            codec_id: Some("codec.json".into()),
+            codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
             bridge_id: None,
         }],
         codecs: vec![CodecDescriptor {
-            codec_id: "codec.json".into(),
-            media_type: "application/json".into(),
+            codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+            media_type: "application/vnd.mutsuki.msgpack".into(),
             version: "1.0.0".into(),
             connection_scoped: true,
         }],
         bridges: vec![BridgeDescriptor {
-            bridge_id: "bridge.abi.jsonl".into(),
+            bridge_id: "bridge.abi.binary".into(),
             deployment_kind: PluginDeploymentKind::Abi,
-            codec_ids: vec!["codec.json".into()],
+            codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
             drain_policy: "connection_drain".into(),
         }],
         scheduler_policies: vec![SchedulerPolicyDescriptor {
@@ -617,19 +617,19 @@ fn system_extension_descriptors_roundtrip_json() {
         deployment_kind: PluginDeploymentKind::Process,
         task_client_protocol: "mutsuki.task.v1".into(),
         resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-        codec_id: Some("codec.json".into()),
-        bridge_id: Some("bridge.process.jsonl".into()),
+        codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+        bridge_id: Some("bridge.process.binary".into()),
     };
     let codec = CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     };
     let bridge = BridgeDescriptor {
-        bridge_id: "bridge.process.jsonl".into(),
+        bridge_id: "bridge.process.binary".into(),
         deployment_kind: PluginDeploymentKind::Process,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     };
     let policy = SchedulerPolicyDescriptor {

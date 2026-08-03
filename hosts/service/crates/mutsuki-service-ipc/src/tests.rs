@@ -5,13 +5,10 @@ use std::time::Duration;
 use mutsuki_service_config::{IpcCodec, IpcTransport, ServiceConfig};
 use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 use super::*;
-use crate::codec::encode_jsonl_request;
 use crate::frame::{BINARY_LENGTH_PREFIX_LEN, FrameFlags, encode_frame};
-use crate::io::read_jsonl_line;
 
 struct OkHandler;
 
@@ -81,28 +78,6 @@ fn control_method_opcodes_are_stable() {
     assert!(ControlMethod::PluginReload.is_mutating());
     assert!(!ControlMethod::HealthCheck.is_mutating());
     assert!(!ControlMethod::RuntimeStatistics.is_mutating());
-}
-
-#[tokio::test]
-async fn jsonl_rejects_oversized_line_without_unbounded_allocation() {
-    let limits = ControlIpcLimits {
-        max_jsonl_line_bytes: 64,
-        ..ControlIpcLimits::default()
-    };
-    let (client, server) = tokio::io::duplex(1024);
-    let (mut reader, _writer) = tokio::io::split(server);
-    tokio::spawn(async move {
-        let (_r, mut w) = tokio::io::split(client);
-        let huge = vec![b'a'; 128];
-        w.write_all(&huge).await.unwrap();
-        w.write_all(b"\n").await.unwrap();
-    });
-    let mut line_buf = Vec::new();
-    let err = read_jsonl_line(&mut reader, limits, &mut line_buf)
-        .await
-        .expect_err("oversized");
-    assert!(matches!(err, IpcError::JsonlLineOversized { .. }));
-    assert!(line_buf.len() <= limits.max_jsonl_line_bytes);
 }
 
 #[tokio::test]
@@ -184,31 +159,6 @@ async fn persistent_binary_handles_multiple_requests_on_one_connection() {
     }
     assert_eq!(session.connection_count(), 1);
     session.close().await.unwrap();
-    server.shutdown().await;
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn jsonl_compat_oneshot_still_works() {
-    let root = tempfile::tempdir().unwrap();
-    let mut config = ServiceConfig::default();
-    config.service.run_dir = root.path().to_path_buf();
-    config.ipc.enabled = true;
-    config.ipc.transport = IpcTransport::UnixSocket;
-    config.ipc.codec = IpcCodec::Jsonl;
-    config.ipc.name = "ipc-jsonl".into();
-    config.ipc.token = Some("tok".into());
-
-    let server = start_server(&config, Arc::new(OkHandler))
-        .await
-        .unwrap()
-        .unwrap();
-    let client = ControlClient::new((&config).into());
-    let response = client
-        .request_oneshot(ControlMethod::HealthCheck, Value::Null)
-        .await
-        .unwrap();
-    assert!(response.ok);
     server.shutdown().await;
 }
 
@@ -308,6 +258,6 @@ fn encode_helpers_reuse_caller_buffers() {
     let mut payload = Vec::with_capacity(64);
     crate::codec::encode_binary_request_with_scratch(1, &request, limits, &mut frame, &mut payload)
         .unwrap();
-    encode_jsonl_request(&request, limits, &mut frame).unwrap();
-    assert!(frame.ends_with(b"\n"));
+    assert!(frame.len() > BINARY_LENGTH_PREFIX_LEN);
+    assert!(!frame.ends_with(b"\n"));
 }

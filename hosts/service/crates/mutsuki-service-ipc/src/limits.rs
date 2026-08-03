@@ -4,7 +4,6 @@ use mutsuki_service_config::{IpcCodec, IpcSection, ServiceConfig};
 pub struct ControlIpcLimits {
     pub max_frame_bytes: usize,
     pub max_payload_bytes: usize,
-    pub max_jsonl_line_bytes: usize,
     pub max_in_flight: usize,
     pub idle_timeout_ms: u64,
     pub request_timeout_ms: u64,
@@ -18,7 +17,6 @@ impl ControlIpcLimits {
         Self {
             max_frame_bytes: section.max_frame_bytes,
             max_payload_bytes: section.max_payload_bytes.min(section.max_frame_bytes),
-            max_jsonl_line_bytes: section.max_jsonl_line_bytes,
             max_in_flight: section.max_in_flight.max(1),
             idle_timeout_ms: section.idle_timeout_ms,
             request_timeout_ms: section.request_timeout_ms,

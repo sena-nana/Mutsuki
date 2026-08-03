@@ -1,8 +1,7 @@
 //! Native plugin ABI surfaces.
 //!
-//! ABI v1 remains the typed JSONL compatibility bridge. Dispatch and clients
-//! consume `mutsuki-runtime-wire` request types; readable method names never
-//! escape the debug codec.
+//! ABI v1/v2 share the length-prefixed typed MessagePack Runtime Wire codec.
+//! Dispatch and clients consume `mutsuki-runtime-wire` request types directly.
 
 mod binary_guest;
 mod binary_host_client;
@@ -15,7 +14,6 @@ mod types;
 pub use binary_guest::{BinaryPluginGuest, ConfiguredBinaryPluginGuest, FailedBinaryAbiGuest};
 pub use binary_host_client::AbiHostClientV2;
 pub use dispatch::{dispatch_binary_host_request, dispatch_host_request};
-pub use guest::{ConfiguredJsonlPluginGuest, FailedAbiGuest, JsonlPluginGuest};
 pub use host_client::AbiHostClient;
 pub use types::{
     ABI_BRIDGE_ID, ABI_CODEC_ID, ABI_ENTRY_SYMBOL, ABI_TRANSPORT_VERSION, ABI_V2_BRIDGE_ID,
@@ -33,7 +31,7 @@ macro_rules! export_mutsuki_plugin_abi_v1 {
         ) -> $crate::abi::AbiPluginV1 {
             let host_client = $crate::abi::AbiHostClient::new(host);
             let guest: Box<dyn $crate::abi::AbiGuest> =
-                Box::new($crate::abi::ConfiguredJsonlPluginGuest::new(Box::new(
+                Box::new($crate::abi::ConfiguredBinaryPluginGuest::new(Box::new(
                     move |config| $factory(host_client, config),
                 )));
             $crate::abi::plugin_api_from_guest(guest)

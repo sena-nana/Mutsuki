@@ -77,60 +77,6 @@ pub fn encode_binary_cancel(request_id: u64, limits: ControlIpcLimits) -> IpcRes
     )
 }
 
-pub fn encode_jsonl_request(
-    request: &ControlRequest,
-    limits: ControlIpcLimits,
-    encode_buf: &mut Vec<u8>,
-) -> IpcResult<()> {
-    encode_jsonl(request, limits, encode_buf)
-}
-
-pub fn encode_jsonl_response(
-    response: &ControlResponse,
-    limits: ControlIpcLimits,
-    encode_buf: &mut Vec<u8>,
-) -> IpcResult<()> {
-    encode_jsonl(response, limits, encode_buf)
-}
-
-pub fn decode_jsonl_request(line: &str, limits: ControlIpcLimits) -> IpcResult<ControlRequest> {
-    decode_jsonl(line, limits)
-}
-
-pub fn decode_jsonl_response(line: &str, limits: ControlIpcLimits) -> IpcResult<ControlResponse> {
-    decode_jsonl(line, limits)
-}
-
-fn encode_jsonl<T: Serialize>(
-    value: &T,
-    limits: ControlIpcLimits,
-    encode_buf: &mut Vec<u8>,
-) -> IpcResult<()> {
-    encode_buf.clear();
-    serde_json::to_writer(&mut *encode_buf, value)?;
-    encode_buf.push(b'\n');
-    if encode_buf.len() > limits.max_jsonl_line_bytes {
-        return Err(IpcError::JsonlLineOversized {
-            actual: encode_buf.len(),
-            limit: limits.max_jsonl_line_bytes,
-        });
-    }
-    Ok(())
-}
-
-fn decode_jsonl<T: for<'de> Deserialize<'de>>(
-    line: &str,
-    limits: ControlIpcLimits,
-) -> IpcResult<T> {
-    if line.len() > limits.max_jsonl_line_bytes {
-        return Err(IpcError::JsonlLineOversized {
-            actual: line.len(),
-            limit: limits.max_jsonl_line_bytes,
-        });
-    }
-    Ok(serde_json::from_str(line)?)
-}
-
 fn encode_messagepack_into<T: Serialize>(
     value: &T,
     buf: &mut Vec<u8>,

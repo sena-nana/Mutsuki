@@ -19,8 +19,8 @@ use mutsuki_runtime_wire::{
 
 pub const ABI_V1_TRANSPORT_VERSION: u32 = 1;
 pub const ABI_V1_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
-pub const ABI_V1_CODEC_ID: &str = "mutsuki.codec.typed-jsonl.v1";
-pub const ABI_V1_BRIDGE_ID: &str = "mutsuki.bridge.abi.jsonl.v1";
+pub const ABI_V1_CODEC_ID: &str = mutsuki_runtime_wire::BINARY_CODEC_ID;
+pub const ABI_V1_BRIDGE_ID: &str = "mutsuki.bridge.abi.binary.v1";
 pub const ABI_V2_TRANSPORT_VERSION: u32 = 2;
 pub const ABI_V2_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v2\0";
 pub const ABI_V2_CODEC_ID: &str = mutsuki_runtime_wire::BINARY_CODEC_ID;

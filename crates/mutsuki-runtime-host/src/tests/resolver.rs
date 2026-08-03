@@ -190,19 +190,19 @@ fn resolver_emits_declared_runtime_surfaces() {
         deployment_kind: PluginDeploymentKind::Builtin,
         task_client_protocol: "mutsuki.task.v1".into(),
         resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-        codec_id: Some("codec.json".into()),
+        codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
         bridge_id: None,
     }];
     manifest.provides.codecs = vec![CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     }];
     manifest.provides.bridges = vec![BridgeDescriptor {
-        bridge_id: "bridge.abi.jsonl".into(),
+        bridge_id: "bridge.abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     }];
     manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
@@ -276,10 +276,14 @@ fn resolver_emits_declared_runtime_surfaces() {
         "plugin_backend:plugin.backend.builtin",
         ContractSurfaceKind::PluginBackend,
     );
-    assert_surface(&plan, "codec:codec.json", ContractSurfaceKind::Codec);
     assert_surface(
         &plan,
-        "bridge:bridge.abi.jsonl",
+        "codec:mutsuki.codec.typed-msgpack.v1",
+        ContractSurfaceKind::Codec,
+    );
+    assert_surface(
+        &plan,
+        "bridge:bridge.abi.binary",
         ContractSurfaceKind::Bridge,
     );
     assert_surface(
@@ -337,20 +341,20 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
             deployment_kind: PluginDeploymentKind::Abi,
             task_client_protocol: "mutsuki.task.v1".into(),
             resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-            codec_id: Some("codec.json".into()),
-            bridge_id: Some("bridge.abi.jsonl".into()),
+            codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+            bridge_id: Some("bridge.abi.binary".into()),
         },
     ];
     manifest.provides.codecs = vec![CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     }];
     manifest.provides.bridges = vec![BridgeDescriptor {
-        bridge_id: "bridge.abi.jsonl".into(),
+        bridge_id: "bridge.abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     }];
     manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
@@ -415,8 +419,8 @@ fn locked_builtin_profile_prunes_unused_external_extensions() {
         ContractSurfaceKind::ResourceProvider,
     );
     assert_no_surface(&plan, "resource_provider:resource.shared-memory");
-    assert_no_surface(&plan, "bridge:bridge.abi.jsonl");
-    assert_no_surface(&plan, "codec:codec.json");
+    assert_no_surface(&plan, "bridge:bridge.abi.binary");
+    assert_no_surface(&plan, "codec:mutsuki.codec.typed-msgpack.v1");
     assert_no_surface(&plan, "scheduler_policy:scheduler.fair");
 }
 
@@ -429,19 +433,19 @@ fn extensible_runtime_profile_keeps_external_extensions_available() {
         deployment_kind: PluginDeploymentKind::Abi,
         task_client_protocol: "mutsuki.task.v1".into(),
         resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-        codec_id: Some("codec.json".into()),
-        bridge_id: Some("bridge.abi.jsonl".into()),
+        codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+        bridge_id: Some("bridge.abi.binary".into()),
     }];
     manifest.provides.codecs = vec![CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     }];
     manifest.provides.bridges = vec![BridgeDescriptor {
-        bridge_id: "bridge.abi.jsonl".into(),
+        bridge_id: "bridge.abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     }];
     let mut profile = runtime_profile();
@@ -459,11 +463,11 @@ fn extensible_runtime_profile_keeps_external_extensions_available() {
     );
     assert_eq!(
         plan.capability_graph.active_bridges,
-        vec!["bridge.abi.jsonl".to_string()]
+        vec!["bridge.abi.binary".to_string()]
     );
     assert_eq!(
         plan.capability_graph.active_codecs,
-        vec!["codec.json".to_string()]
+        vec!["mutsuki.codec.typed-msgpack.v1".to_string()]
     );
     assert_surface(
         &plan,
@@ -472,10 +476,14 @@ fn extensible_runtime_profile_keeps_external_extensions_available() {
     );
     assert_surface(
         &plan,
-        "bridge:bridge.abi.jsonl",
+        "bridge:bridge.abi.binary",
         ContractSurfaceKind::Bridge,
     );
-    assert_surface(&plan, "codec:codec.json", ContractSurfaceKind::Codec);
+    assert_surface(
+        &plan,
+        "codec:mutsuki.codec.typed-msgpack.v1",
+        ContractSurfaceKind::Codec,
+    );
 }
 
 #[test]

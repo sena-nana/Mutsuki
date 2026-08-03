@@ -3,9 +3,11 @@ use mutsuki_tauri_bridge::{
     ApprovalResponse, FrontendError, FrontendEventEnvelope, FrontendTaskRequest,
     FrontendTaskResult, FrontendTaskRun, HostStatus, PluginReloadRequest, PluginReloadResult,
     PluginSummary, PreviewHandle, ResourceBytes, ResourceChunk, ResourceText, RunnerSummary,
-    TaskCancelRequest, TaskResultRequest,
+    TaskCancelRequest, TaskResultRequest, decode_bridge_payload, encode_bridge_payload,
 };
-use mutsuki_tauri_host::{MutsukiTauriHost, MutsukiTauriHostBuilder, PluginSelection};
+use mutsuki_tauri_host::{HostResult, MutsukiTauriHost, MutsukiTauriHostBuilder, PluginSelection};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,10 +31,15 @@ where
     tauri::plugin::Builder::new("mutsuki")
         .invoke_handler(tauri::generate_handler![
             mutsuki_call,
+            mutsuki_call_binary,
             mutsuki_start_task,
+            mutsuki_start_task_binary,
             mutsuki_task_result,
+            mutsuki_task_result_binary,
             mutsuki_peek_task_result,
+            mutsuki_peek_task_result_binary,
             mutsuki_cancel_task,
+            mutsuki_cancel_task_binary,
             mutsuki_status,
             mutsuki_plugins_list,
             mutsuki_plugins_reload,
@@ -88,11 +95,27 @@ fn mutsuki_call(
 }
 
 #[tauri::command]
+fn mutsuki_call_binary(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, FrontendError> {
+    invoke_binary(host.inner(), request, MutsukiTauriHost::call)
+}
+
+#[tauri::command]
 fn mutsuki_start_task(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: FrontendTaskRequest,
 ) -> Result<FrontendTaskRun, FrontendError> {
     host.start_task(request).map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_start_task_binary(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, FrontendError> {
+    invoke_binary(host.inner(), request, MutsukiTauriHost::start_task)
 }
 
 #[tauri::command]
@@ -104,6 +127,14 @@ fn mutsuki_task_result(
 }
 
 #[tauri::command]
+fn mutsuki_task_result_binary(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, FrontendError> {
+    invoke_binary(host.inner(), request, MutsukiTauriHost::task_result)
+}
+
+#[tauri::command]
 fn mutsuki_peek_task_result(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: TaskResultRequest,
@@ -112,11 +143,41 @@ fn mutsuki_peek_task_result(
 }
 
 #[tauri::command]
+fn mutsuki_peek_task_result_binary(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, FrontendError> {
+    invoke_binary(host.inner(), request, MutsukiTauriHost::peek_task_result)
+}
+
+#[tauri::command]
 fn mutsuki_cancel_task(
     host: State<'_, Arc<MutsukiTauriHost>>,
     request: TaskCancelRequest,
 ) -> Result<String, FrontendError> {
     host.cancel_task(request).map_err(FrontendError::from)
+}
+
+#[tauri::command]
+fn mutsuki_cancel_task_binary(
+    host: State<'_, Arc<MutsukiTauriHost>>,
+    request: Vec<u8>,
+) -> Result<Vec<u8>, FrontendError> {
+    invoke_binary(host.inner(), request, MutsukiTauriHost::cancel_task)
+}
+
+fn invoke_binary<T, U>(
+    host: &MutsukiTauriHost,
+    request: Vec<u8>,
+    call: impl FnOnce(&MutsukiTauriHost, T) -> HostResult<U>,
+) -> Result<Vec<u8>, FrontendError>
+where
+    T: DeserializeOwned,
+    U: Serialize,
+{
+    let request = decode_bridge_payload::<T>(&request)?;
+    let result = call(host, request).map_err(FrontendError::from)?;
+    encode_bridge_payload(&result)
 }
 
 #[tauri::command]

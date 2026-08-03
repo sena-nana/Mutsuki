@@ -23,71 +23,71 @@ fn published_opcodes_are_unique_and_schema_is_generated_from_registry() {
 }
 
 #[test]
-fn typed_jsonl_accepts_additive_fields_and_rejects_breaking_major_at_decode() {
+fn binary_accepts_additive_fields_and_rejects_breaking_major_at_decode() {
     let request = CancelRunnerRequest {
         runner_id: "runner-a".into(),
         invocation_id: "inv-1".into(),
     };
-    let encoded = encode_jsonl_request(7, &request, DEFAULT_WIRE_LIMITS).unwrap();
-    let mut envelope: Value = serde_json::from_slice(&encoded).unwrap();
-    envelope["payload"]["future_additive"] = Value::Bool(true);
-    envelope["payload_len"] =
-        Value::from(serde_json::to_vec(&envelope["payload"]).unwrap().len() as u64);
-    let encoded = serde_json::to_vec(&envelope).unwrap();
-    let (_, decoded) =
-        decode_jsonl_request::<CancelRunnerRequest>(&encoded, DEFAULT_WIRE_LIMITS).unwrap();
-    assert_eq!(decoded, request);
-
-    envelope["protocol"]["major"] = Value::from(2);
-    let error = decode_jsonl_request::<CancelRunnerRequest>(
-        &serde_json::to_vec(&envelope).unwrap(),
+    let encoded = crate::binary::encode_binary_request_value(
+        7,
+        Opcode::RunnerCancel,
+        &json!({
+            "runner_id": "runner-a",
+            "invocation_id": "inv-1",
+            "future_additive": true
+        }),
         DEFAULT_WIRE_LIMITS,
     )
-    .unwrap_err();
+    .unwrap();
+    let (_, decoded) =
+        decode_binary_request::<CancelRunnerRequest>(&encoded, DEFAULT_WIRE_LIMITS).unwrap();
+    assert_eq!(decoded, request);
+
+    let mut incompatible = encoded;
+    incompatible[8..10].copy_from_slice(&2_u16.to_be_bytes());
+    let error = decode_binary_request::<CancelRunnerRequest>(&incompatible, DEFAULT_WIRE_LIMITS)
+        .unwrap_err();
     assert!(matches!(error, WireCodecError::VersionMismatch { .. }));
 }
 
 #[test]
-fn typed_jsonl_response_preserves_request_and_response_type_pairing() {
+fn binary_response_preserves_request_and_response_type_pairing() {
     let encoded =
-        encode_jsonl_response(9, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
-    decode_jsonl_response::<CancelRunnerRequest>(&encoded, 9, DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(9, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap();
+    decode_binary_response::<CancelRunnerRequest>(&encoded, 9, DEFAULT_WIRE_LIMITS).unwrap();
 }
 
 #[test]
-fn dynamic_typed_jsonl_rejects_unknown_opcode_and_payload_shape() {
+fn dynamic_binary_rejects_unknown_opcode_and_payload_shape() {
     let request = CancelRunnerRequest {
         runner_id: "runner-a".into(),
         invocation_id: "inv-1".into(),
     };
-    let encoded = encode_jsonl_request(5, &request, DEFAULT_WIRE_LIMITS).unwrap();
-    let mut envelope: Value = serde_json::from_slice(&encoded).unwrap();
-    envelope["opcode"] = Value::from(0x7fff_u64);
-    let error =
-        decode_jsonl_any_request(&serde_json::to_vec(&envelope).unwrap(), DEFAULT_WIRE_LIMITS)
-            .unwrap_err();
+    let mut encoded = encode_binary_request(5, &request, DEFAULT_WIRE_LIMITS).unwrap();
+    encoded[12..14].copy_from_slice(&0x7fff_u16.to_be_bytes());
+    let error = decode_binary_any_request(&encoded, DEFAULT_WIRE_LIMITS).unwrap_err();
     assert!(matches!(error, WireCodecError::UnknownOpcode(0x7fff)));
 
-    envelope["opcode"] = Value::from(Opcode::RunnerCancel as u16);
-    envelope["method"] = Value::from(Opcode::RunnerCancel.method());
-    envelope["payload"] = json!({"runner_id": "runner-a"});
-    envelope["payload_len"] =
-        Value::from(serde_json::to_vec(&envelope["payload"]).unwrap().len() as u64);
-    let error =
-        decode_jsonl_any_request(&serde_json::to_vec(&envelope).unwrap(), DEFAULT_WIRE_LIMITS)
-            .unwrap_err();
+    let encoded = crate::binary::encode_binary_request_value(
+        5,
+        Opcode::RunnerCancel,
+        &json!({"runner_id": "runner-a"}),
+        DEFAULT_WIRE_LIMITS,
+    )
+    .unwrap();
+    let error = decode_binary_any_request(&encoded, DEFAULT_WIRE_LIMITS).unwrap_err();
     assert!(matches!(error, WireCodecError::Decode(_)));
 }
 
 #[test]
 fn initialization_negotiates_limits_and_rejects_missing_management_support() {
-    let hello = ProtocolHello::debug_jsonl();
-    let ack = hello.accept(DEBUG_JSONL_CODEC_ID, None).unwrap();
+    let hello = ProtocolHello::binary();
+    let ack = hello.accept(BINARY_CODEC_ID, None).unwrap();
     ack.validate_for(&hello).unwrap();
 
     let mut incompatible = hello.clone();
     incompatible.management_channel = false;
-    let error = incompatible.accept(DEBUG_JSONL_CODEC_ID, None).unwrap_err();
+    let error = incompatible.accept(BINARY_CODEC_ID, None).unwrap_err();
     assert_eq!(error, WireCodecError::ManagementChannelRequired);
 }
 
@@ -98,10 +98,10 @@ fn custom_limits_are_advertised_and_invalid_reservations_are_rejected() {
         management_reserved_requests: 2,
         ..DEFAULT_WIRE_LIMITS
     };
-    let hello = ProtocolHello::debug_jsonl_with_limits(limits).unwrap();
+    let hello = ProtocolHello::binary_with_limits(limits).unwrap();
     assert_eq!(hello.max_in_flight_requests, 12);
     assert_eq!(hello.management_reserved_requests, 2);
-    let ack = hello.accept(DEBUG_JSONL_CODEC_ID, None).unwrap();
+    let ack = hello.accept(BINARY_CODEC_ID, None).unwrap();
     ack.validate_for(&hello).unwrap();
 
     let invalid = WireLimits {
@@ -153,7 +153,7 @@ fn large_resource_bytes_must_use_resource_ref_or_stream() {
 }
 
 #[test]
-fn jsonl_and_binary_share_the_run_batch_golden_fixture() {
+fn binary_decodes_the_run_batch_golden_fixture() {
     let fixtures = generated_fixtures_value();
     let value = fixtures["fixtures"]
         .as_array()
@@ -164,15 +164,8 @@ fn jsonl_and_binary_share_the_run_batch_golden_fixture() {
         .clone();
     let request: RunBatchRequest = serde_json::from_value(value).unwrap();
 
-    let jsonl = encode_jsonl_request(41, &request, DEFAULT_WIRE_LIMITS).unwrap();
     let binary = encode_binary_request(41, &request, DEFAULT_WIRE_LIMITS).unwrap();
 
-    assert_eq!(
-        decode_jsonl_request::<RunBatchRequest>(&jsonl, DEFAULT_WIRE_LIMITS)
-            .unwrap()
-            .1,
-        request
-    );
     assert_eq!(
         decode_binary_request::<RunBatchRequest>(&binary, DEFAULT_WIRE_LIMITS)
             .unwrap()

@@ -5,7 +5,7 @@ deployments owned by this repository:
 
 - linked builtin Rust Runner;
 - verified ABI dynamic library, including staging, `dlopen` and Runtime Wire initialization;
-- independently executable Rust process over the JSONL Runner Link.
+- independently executable Rust process over the Binary Runner Link.
 
 Every deployment runs the same six `runner-fixtures/v1` behaviors. The timed cases cover startup,
 authenticated health IPC, echo submission through terminal outcome, registry reload and graceful
@@ -46,5 +46,5 @@ cargo run -p mutsuki-service-benchmarks --release --bin mutsuki-control-ipc-benc
   --output artifacts/performance/issue16-macos-arm64/report.json
 ```
 
-It compares one-shot JSONL, persistent JSONL, and persistent binary across in-flight and payload
-sizes, and enforces p95, connections/request, and allocation-overhead gates.
+It measures persistent binary control IPC across in-flight and payload sizes, and enforces
+connections/request gates.

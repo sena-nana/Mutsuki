@@ -4675,10 +4675,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-tauri-binary-fixture"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-wire",
+ "serde_json",
+]
+
+[[package]]
 name = "mutsuki-tauri-bridge"
 version = "0.1.0"
 dependencies = [
  "mutsuki-runtime-contracts",
+ "rmp-serde",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -4715,15 +4725,6 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "uuid",
  "zip",
-]
-
-[[package]]
-name = "mutsuki-tauri-jsonl-fixture"
-version = "0.1.0"
-dependencies = [
- "mutsuki-runtime-contracts",
- "mutsuki-runtime-wire",
- "serde_json",
 ]
 
 [[package]]
@@ -4798,6 +4799,7 @@ dependencies = [
 name = "mutsuki-web-protocol"
 version = "0.1.0"
 dependencies = [
+ "rmp-serde",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

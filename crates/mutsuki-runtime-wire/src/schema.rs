@@ -11,9 +11,9 @@ use mutsuki_runtime_contracts::{
 };
 
 use crate::{
-    BINARY_CODEC_ID, CancelRunnerRequest, DEBUG_JSONL_CODEC_ID, DisposeRunnerRequest,
-    InitializeRequest, Opcode, ProtocolHello, ProtocolHelloAck, RunBatchRequest, SCHEMA_REVISION,
-    SubmitTaskBatchRequest, WireProtocolVersion,
+    BINARY_CODEC_ID, CancelRunnerRequest, DisposeRunnerRequest, InitializeRequest, Opcode,
+    ProtocolHello, ProtocolHelloAck, RunBatchRequest, SCHEMA_REVISION, SubmitTaskBatchRequest,
+    WireProtocolVersion,
 };
 
 pub fn generated_schema_value() -> Value {
@@ -41,7 +41,7 @@ pub fn generated_schema_value() -> Value {
                 "opcode_policy": "append_only_never_reuse"
             }
         },
-        "codecs": [DEBUG_JSONL_CODEC_ID, BINARY_CODEC_ID],
+        "codecs": [BINARY_CODEC_ID],
         "operations": operations,
         "resource_policy": {
             "large_bytes": "ResourceRef_or_stream_descriptor",
@@ -50,7 +50,6 @@ pub fn generated_schema_value() -> Value {
         "limits": {
             "max_frame_bytes": crate::MAX_FRAME_BYTES,
             "max_payload_bytes": crate::MAX_PAYLOAD_BYTES,
-            "max_jsonl_line_bytes": crate::MAX_JSONL_LINE_BYTES,
             "max_in_flight_requests": crate::MAX_IN_FLIGHT_REQUESTS,
             "management_reserved_requests": crate::MANAGEMENT_RESERVED_REQUESTS
         }
@@ -162,7 +161,7 @@ pub fn generated_fixtures_value() -> Value {
         "fixture",
         "fixture.route",
     );
-    let hello = ProtocolHello::debug_jsonl();
+    let hello = ProtocolHello::binary();
     let fixtures = vec![
         fixture("ProtocolHello", &hello),
         fixture(

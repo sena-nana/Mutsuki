@@ -83,49 +83,50 @@ async fn ws_rpc(
     method: &str,
     params: serde_json::Value,
 ) -> serde_json::Value {
-    // Minimal HTTP upgrade + JSON frames is heavy; use bridge through host HTTP health first,
-    // then speak WebSocket using tungstenite via tokio — prefer raw TCP HTTP upgrade for MVP.
+    // Use the same binary MessagePack WebSocket frames as the browser SDK.
     use tokio_tungstenite::{connect_async, tungstenite::Message};
     let url = format!("ws://{addr}/ws");
     let (mut ws, _) = connect_async(url).await.expect("ws connect");
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Hello {
+    ws.send(Message::Binary(
+        WireMessage::Hello {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
             capabilities: vec![],
             auth_token: Some("local-dev".into()),
-        })
+        }
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .unwrap();
     let ack = ws.next().await.unwrap().unwrap();
-    let Message::Text(text) = ack else {
-        panic!("expected text")
+    let Message::Binary(bytes) = ack else {
+        panic!("expected binary")
     };
-    let hello: WireMessage = serde_json::from_str(&text).unwrap();
+    let hello = WireMessage::decode(bytes.as_ref()).unwrap();
     let WireMessage::HelloAck { .. } = hello else {
         panic!("expected hello ack")
     };
 
     let id = Uuid::new_v4();
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Rpc(RpcRequest {
+    ws.send(Message::Binary(
+        WireMessage::Rpc(RpcRequest {
             id,
             namespace: namespace.into(),
             method: method.into(),
             params,
-        }))
+        })
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .unwrap();
     let resp = ws.next().await.unwrap().unwrap();
-    let Message::Text(text) = resp else {
-        panic!("expected rpc text")
+    let Message::Binary(bytes) = resp else {
+        panic!("expected rpc binary")
     };
-    let msg: WireMessage = serde_json::from_str(&text).unwrap();
+    let msg = WireMessage::decode(bytes.as_ref()).unwrap();
     match msg {
         WireMessage::RpcResult(result) => {
             assert!(result.error.is_none(), "{:?}", result.error);

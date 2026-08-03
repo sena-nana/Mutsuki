@@ -15,13 +15,13 @@ ResourceManager、EventLog 和 TraceLog 等领域中立运行事实。
   `RunnerRegistry`、Executor dispatch、`ResultRouter`、`StateStore`、
   `ResourceManager`、EventLog/TraceLog。
 - `crates/mutsuki-runtime-host`：runtime bootstrapper、deterministic load-plan resolver、
-  bounded worker pools、可注入 async executor 和 JSONL runner client。
+  bounded worker pools、可注入 async executor 和 binary runner client。
 - `crates/mutsuki-runtime-sdk`：Rust 插件作者侧 SDK，把 `TaskHandle` 包装为
   `Future`，提供 `ctx.call(...).await` 语法糖；单 task submit 由 SDK/Host 包装成
   one-entry batch。
 
 Python Runner Kit 位于 `kits/python-runner`，镜像同一 revision 的协议并提供 Python
-runner backend、stdio JSONL runner bridge 和测试替身；它不是 Rust Workspace member。
+runner backend、stdio binary runner bridge 和测试替身；它不是 Rust Workspace member。
 
 Link、Host、AgentKit、Bot、StdPlugins 和 BotTemplate 的 package 组、依赖方向与发布门禁见
 `docs/architecture/monorepo.md` 和 `docs/release-train.md`。
@@ -197,7 +197,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     `CommandPlan` 等协议对象。builtin 资源路径现在通过可注入的
     `ResourceProviderGateway` 执行资源创建和 plan 数据面；HostRuntimeCommand
     没有 provider 时会结构化失败，不能回退到 core-managed store；ABI 路径通过
-    JSONL bridge 编码同一 wire shape。
+    binary bridge 编码同一 wire shape。
   - native plugin host 可启动 `HostRuntime` 控制面门面，并通过
     `HostRuntimeCommand` / `HostRuntimeReply` 预留 CoreActor 消息边界；
     `into_runtime` 保留裸 `CoreRuntime` 路径用于单线程测试、replay 和最小 host。
@@ -225,7 +225,7 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
   - Host scheduler 的 `HostCapacity` 暴露 running/queued batch 与 entry 数、saturation、
     preferred batch size、max entry concurrency 和 max inflight bytes；SchedulerPolicy
     只读这些事实并返回 dispatch budget。
-  - JSONL runner client 使用 `runner.run_batch`、`runner.cancel`、`runner.dispose` 方法面。
+  - Binary runner client 使用 `runner.run_batch`、`runner.cancel`、`runner.dispose` 方法面。
   - Host backend / plugin backend 裁剪已覆盖 Level 2 boot gate：resolver 生成 active
     capability graph 和 contract surface，RuntimeBootstrapper / host boot 按
     `RuntimeCapabilityGraph.active_*` 注册或拒绝 plugin backend、bridge、codec 与
@@ -239,13 +239,13 @@ SDK helper types 与更细粒度 compatibility rules 后续在协议 wire shape 
     不新增 Core 运行时事实。
 - `kits/python-runner` 覆盖：
   - 新协议 dataclass mirror 与 JSON roundtrip。
-  - `PythonRunnerBackend`、`StdioJsonlBridge`、`PythonResourceManager`。
+  - `PythonRunnerBackend`、`StdioBinaryBridge`、`PythonResourceManager`。
   - `RunnerContext` 镜像 invocation id、cancel token、deadline tick、deadline-after-ms 与
     `cancel_requested`；`PythonRunnerBackend.cancel_runner` 会记录 cancellation 并在后续
     step context 中传播，async runner context 暴露这些字段。
   - runner-side async adapter 将 `await ctx.call_raw(...)` 映射为 `RunnerStatus::Waiting`
     + child `Task` + `TaskAwait`，只驱动 Mutsuki task awaitable。
-  - public API 只面向 runner、resource descriptor 和 JSONL runner server。
+  - public API 只面向 runner、resource descriptor 和 binary runner server。
   - Python 端仅保留 runner kit，不进入本 Rust workspace。
 - Rust SDK 覆盖：
   - `RuntimeClient`、`TaskHandleFuture`、`SdkProtocol`、

@@ -1,7 +1,6 @@
 //! Control IPC performance harness for ServiceHost Issue #16.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,9 +8,7 @@ use std::time::Instant;
 
 use mutsuki_service_config::{IpcCodec, IpcTransport, ServiceConfig};
 use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
-use mutsuki_service_ipc::{
-    ControlClient, ControlClientConfig, ControlSession, IpcServer, start_server,
-};
+use mutsuki_service_ipc::{ControlClientConfig, ControlSession, IpcServer, start_server};
 use serde::Serialize;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -75,23 +72,18 @@ impl ControlHandler for EchoHandler {
 
 #[derive(Clone, Copy)]
 enum BenchMode {
-    OneShotJsonl,
-    PersistentJsonl,
     PersistentBinary,
 }
 
 impl BenchMode {
     fn as_str(self) -> &'static str {
         match self {
-            Self::OneShotJsonl => "one-shot-jsonl",
-            Self::PersistentJsonl => "persistent-jsonl",
             Self::PersistentBinary => "persistent-binary",
         }
     }
 
     fn codec(self) -> IpcCodec {
         match self {
-            Self::OneShotJsonl | Self::PersistentJsonl => IpcCodec::Jsonl,
             Self::PersistentBinary => IpcCodec::Binary,
         }
     }
@@ -156,31 +148,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let warmup = if smoke { 4 } else { 32 };
 
     let mut cases = Vec::new();
-    for mode in [
-        BenchMode::OneShotJsonl,
-        BenchMode::PersistentJsonl,
-        BenchMode::PersistentBinary,
-    ] {
+    for mode in [BenchMode::PersistentBinary] {
         for &in_flight in in_flights {
-            let effective_inflight = match mode {
-                BenchMode::PersistentBinary => in_flight,
-                _ => 1.min(in_flight),
-            };
-            if matches!(mode, BenchMode::OneShotJsonl | BenchMode::PersistentJsonl)
-                && in_flight > 1
-                && !smoke
-            {
-                continue;
-            }
             for &payload_bytes in payloads {
-                let case = run_case(
-                    mode,
-                    effective_inflight,
-                    payload_bytes,
-                    requests_per_case,
-                    warmup,
-                )
-                .await?;
+                let case =
+                    run_case(mode, in_flight, payload_bytes, requests_per_case, warmup).await?;
                 println!(
                     "{} inflight={} payload={} p95={}ns alloc/req={:.0} conn/req={:.4} rps={:.0}",
                     case.mode,
@@ -248,25 +220,14 @@ async fn run_case(
     let client_config = ControlClientConfig::from(&config);
     let payload = Value::String("x".repeat(payload_bytes));
 
-    // Warmup outside measurement.
-    match mode {
-        BenchMode::OneShotJsonl => {
-            let client = ControlClient::new(client_config.clone());
-            for _ in 0..warmup {
-                let _ = client
-                    .request_oneshot(ControlMethod::HealthCheck, payload.clone())
-                    .await?;
-            }
+    {
+        let session = ControlSession::connect(client_config.clone()).await?;
+        for _ in 0..warmup {
+            let _ = session
+                .request(ControlMethod::HealthCheck, payload.clone())
+                .await?;
         }
-        BenchMode::PersistentJsonl | BenchMode::PersistentBinary => {
-            let session = ControlSession::connect(client_config.clone()).await?;
-            for _ in 0..warmup {
-                let _ = session
-                    .request(ControlMethod::HealthCheck, payload.clone())
-                    .await?;
-            }
-            session.close().await?;
-        }
+        session.close().await?;
     }
 
     let alloc_before = ALLOCATOR.snapshot();
@@ -274,43 +235,30 @@ async fn run_case(
     let mut latencies = Vec::with_capacity(requests);
     let connections;
 
-    match mode {
-        BenchMode::OneShotJsonl => {
-            let client = ControlClient::new(client_config.clone());
-            for _ in 0..requests {
+    {
+        let session = ControlSession::connect(client_config.clone()).await?;
+        let session = Arc::new(session);
+        let sem = Arc::new(tokio::sync::Semaphore::new(in_flight));
+        let mut handles = Vec::with_capacity(requests);
+        for _ in 0..requests {
+            let permit = sem.clone().acquire_owned().await?;
+            let session = session.clone();
+            let payload = payload.clone();
+            handles.push(tokio::spawn(async move {
+                let _permit = permit;
                 let t0 = Instant::now();
-                let _ = client
-                    .request_oneshot(ControlMethod::HealthCheck, payload.clone())
-                    .await?;
-                latencies.push(t0.elapsed().as_nanos() as u64);
-            }
-            connections = requests as u64;
+                let result = session.request(ControlMethod::HealthCheck, payload).await;
+                (t0.elapsed().as_nanos() as u64, result)
+            }));
         }
-        BenchMode::PersistentJsonl | BenchMode::PersistentBinary => {
-            let session = ControlSession::connect(client_config.clone()).await?;
-            let session = Arc::new(session);
-            let sem = Arc::new(tokio::sync::Semaphore::new(in_flight));
-            let mut handles = Vec::with_capacity(requests);
-            for _ in 0..requests {
-                let permit = sem.clone().acquire_owned().await?;
-                let session = session.clone();
-                let payload = payload.clone();
-                handles.push(tokio::spawn(async move {
-                    let _permit = permit;
-                    let t0 = Instant::now();
-                    let result = session.request(ControlMethod::HealthCheck, payload).await;
-                    (t0.elapsed().as_nanos() as u64, result)
-                }));
-            }
-            for handle in handles {
-                let (ns, result) = handle.await?;
-                result?;
-                latencies.push(ns);
-            }
-            connections = session.connection_count();
-            if let Ok(session) = Arc::try_unwrap(session) {
-                session.close().await?;
-            }
+        for handle in handles {
+            let (ns, result) = handle.await?;
+            result?;
+            latencies.push(ns);
+        }
+        connections = session.connection_count();
+        if let Ok(session) = Arc::try_unwrap(session) {
+            session.close().await?;
         }
     }
 
@@ -365,7 +313,6 @@ async fn start_echo_server(
     }
     config.ipc.max_frame_bytes = 2 * 1024 * 1024;
     config.ipc.max_payload_bytes = 1024 * 1024;
-    config.ipc.max_jsonl_line_bytes = 1024 * 1024;
     config.ipc.max_in_flight = 128;
     config.ipc.request_timeout_ms = 30_000;
     config.ipc.idle_timeout_ms = 60_000;
@@ -385,56 +332,11 @@ fn percentile(sorted: &[u64], pct: u8) -> u64 {
 }
 
 fn evaluate_gates(cases: &[CaseResult]) -> Vec<GateResult> {
-    let by_id: BTreeMap<String, &CaseResult> =
-        cases.iter().map(|c| (c.case_id.clone(), c)).collect();
-
     let mut gates = Vec::new();
-
-    if let (Some(oneshot), Some(binary)) = (
-        by_id.get("control-ipc/one-shot-jsonl/inflight-1/payload-64"),
-        by_id.get("control-ipc/persistent-binary/inflight-1/payload-64"),
-    ) {
-        let reduction = 1.0 - (binary.p95_ns as f64 / oneshot.p95_ns.max(1) as f64);
-        gates.push(GateResult {
-            gate_id: "p95.persistent-binary.vs.oneshot-jsonl.short".into(),
-            passed: reduction >= 0.40,
-            actual: reduction,
-            limit: 0.40,
-            unit: "relative_reduction".into(),
-        });
-        gates.push(GateResult {
-            gate_id: "connections-per-request.persistent-binary.short".into(),
-            passed: binary.connections_per_request <= 0.05,
-            actual: binary.connections_per_request,
-            limit: 0.05,
-            unit: "connections/request".into(),
-        });
-    }
-
-    // Allocation overhead for payloads <= 64 KiB must drop >=30% vs one-shot JSONL.
-    for payload in [64_usize, 4096, 65536] {
-        let oneshot_key = format!("control-ipc/one-shot-jsonl/inflight-1/payload-{payload}");
-        let binary_key = format!("control-ipc/persistent-binary/inflight-1/payload-{payload}");
-        let (Some(oneshot), Some(binary)) = (by_id.get(&oneshot_key), by_id.get(&binary_key))
-        else {
-            continue;
-        };
-        let oneshot_overhead =
-            (oneshot.allocated_bytes_per_request - 2.0 * payload as f64).max(1.0);
-        let binary_overhead = (binary.allocated_bytes_per_request - 2.0 * payload as f64).max(0.0);
-        let reduction = 1.0 - (binary_overhead / oneshot_overhead);
-        gates.push(GateResult {
-            gate_id: format!(
-                "allocated-overhead.persistent-binary.vs.oneshot-jsonl.payload-{payload}"
-            ),
-            passed: reduction >= 0.30,
-            actual: reduction,
-            limit: 0.30,
-            unit: "relative_reduction".into(),
-        });
-    }
-
-    if let Some(binary) = by_id.get("control-ipc/persistent-binary/inflight-16/payload-64") {
+    if let Some(binary) = cases
+        .iter()
+        .find(|case| case.case_id == "control-ipc/persistent-binary/inflight-16/payload-64")
+    {
         gates.push(GateResult {
             gate_id: "connections-per-request.persistent-binary.inflight-16".into(),
             passed: binary.connections_per_request <= 0.05,

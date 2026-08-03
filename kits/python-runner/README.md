@@ -13,8 +13,7 @@ This repository owns:
 
 - Python mirrors of the Mutsuki runtime contracts.
 - `PythonRunnerBackend` for runner registration, invocation, cancel, and dispose.
-- Concurrent typed `StdioJsonlBridge` for compatibility/debugging and
-  `StdioBinaryBridge` for length-prefixed MessagePack Runtime Wire v1.
+- Concurrent typed `StdioBinaryBridge` for length-prefixed MessagePack Runtime Wire v1.
 - descriptor-based resource clients and an explicitly injected resource request handler.
 - `FakeResourceProvider` under `testing` for conformance tests only.
 - Testing helpers for Python-owned runners.
@@ -42,7 +41,7 @@ shape; do not add Python-only runtime semantics.
 The checked-in schema and semantic fixtures are pinned to MutsukiCore
 `1d42325107a82f98dda3912097c3c0aefd4907ba`. Startup rejects an incompatible
 protocol major, codec, or schema revision before runner work is dispatched.
-Performance measurements and JSONL operational limits are documented in
+Performance measurements and binary operational limits are documented in
 `docs/performance/runtime-wire-v1.md`.
 
 The unified Python Runner performance entrypoint is:
@@ -51,6 +50,6 @@ The unified Python Runner performance entrypoint is:
 uv run python benchmarks/performance_model.py --mode smoke --output artifacts/perf/python.json
 ```
 
-ServiceHost and external orchestrators start `benchmarks/fixture_process.py` with either
-`--codec python-jsonl` or `--codec python-binary`. These are real stdio processes; codec-only,
-in-memory, real-pipe and external ServiceHost results remain separate measurement boundaries.
+ServiceHost and external orchestrators start `benchmarks/fixture_process.py` with
+`--codec python-binary`. These are real stdio processes; codec-only, in-memory,
+real-pipe and external ServiceHost results remain separate measurement boundaries.

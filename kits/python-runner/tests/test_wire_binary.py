@@ -172,7 +172,7 @@ async def test_binary_bridge_negotiates_before_dispatch_and_reuses_semantics() -
 
 
 @pytest.mark.asyncio
-async def test_binary_and_jsonl_share_batch_contract_semantics() -> None:
+async def test_binary_bridge_preserves_batch_contract_semantics() -> None:
     backend = PythonRunnerBackend()
     backend.register_runner(EchoRunner(echo_descriptor()))
     bridge = StdioBinaryBridge(backend)

@@ -84,11 +84,11 @@ pub struct EventEnvelope {
 
 impl WireMessage {
     pub fn encode(&self) -> ProtocolResult<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|err| ProtocolError::InvalidMessage(err.to_string()))
+        rmp_serde::to_vec_named(self).map_err(|err| ProtocolError::InvalidMessage(err.to_string()))
     }
 
     pub fn decode(bytes: &[u8]) -> ProtocolResult<Self> {
-        serde_json::from_slice(bytes).map_err(|err| ProtocolError::InvalidMessage(err.to_string()))
+        rmp_serde::from_slice(bytes).map_err(|err| ProtocolError::InvalidMessage(err.to_string()))
     }
 
     pub fn payload_size(&self) -> usize {
@@ -107,9 +107,13 @@ mod tests {
             message: "missing extension.read".into(),
         };
         let encoded = message.encode().expect("encode");
-        let text = String::from_utf8(encoded.clone()).expect("utf8");
-        assert!(!text.contains("token="));
+        assert_ne!(encoded.first().copied(), Some(b'{'));
         let decoded = WireMessage::decode(&encoded).expect("decode");
         assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn wire_decode_rejects_text_json_frames() {
+        assert!(WireMessage::decode(br#"{"type":"ping"}"#).is_err());
     }
 }

@@ -2,11 +2,9 @@ use std::collections::BTreeMap;
 use std::hint::black_box;
 
 use mutsuki_runtime_wire::{
-    AnyWireRequest, RunBatchRequest, WireRequest, decode_jsonl_any_request, encode_jsonl_request,
+    AnyWireRequest, RunBatchRequest, WireRequest, decode_binary_any_request, encode_binary_request,
 };
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
 
 use crate::allocator::TrackingAllocator;
 use crate::report::{BenchmarkMode, CaseResult};
@@ -23,16 +21,7 @@ pub fn run(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<Vec<Cas
         0,
         empty_iterations,
         &dispose_request(),
-        Codec::Legacy,
-    )?);
-    cases.push(encode_case(
-        allocator,
-        "dispose",
-        1,
-        0,
-        empty_iterations,
-        &dispose_request(),
-        Codec::Typed,
+        Codec::Binary,
     )?);
 
     for entries in [1, 16, 256, 4_096] {
@@ -47,35 +36,36 @@ pub fn run(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<Vec<Cas
             (BenchmarkMode::Full, _) => 3,
         };
         let request = run_batch_request(entries, 32);
-        for codec in [Codec::Legacy, Codec::Typed] {
-            cases.push(encode_case(
-                allocator,
-                "run_batch",
-                entries,
-                32,
-                iterations,
-                &request,
-                codec,
-            )?);
-            cases.push(decode_case(
-                allocator, entries, 32, iterations, &request, codec,
-            )?);
-        }
+        cases.push(encode_case(
+            allocator,
+            "run_batch",
+            entries,
+            32,
+            iterations,
+            &request,
+            Codec::Binary,
+        )?);
+        cases.push(decode_case(
+            allocator,
+            entries,
+            32,
+            iterations,
+            &request,
+            Codec::Binary,
+        )?);
     }
     Ok(cases)
 }
 
 #[derive(Clone, Copy)]
 enum Codec {
-    Legacy,
-    Typed,
+    Binary,
 }
 
 impl Codec {
     fn label(self) -> &'static str {
         match self {
-            Self::Legacy => "legacy_json_rpc",
-            Self::Typed => "typed_jsonl",
+            Self::Binary => "binary",
         }
     }
 }
@@ -149,35 +139,18 @@ fn decode_case(
 
 fn encode<R: WireRequest + Serialize>(codec: Codec, request: &R) -> Result<Vec<u8>, String> {
     match codec {
-        Codec::Legacy => {
-            let params = serde_json::to_value(request).map_err(|error| error.to_string())?;
-            serde_json::to_vec(&json!({
-                "id": "req-1",
-                "method": R::OPCODE.method(),
-                "params": params,
-            }))
-            .map_err(|error| error.to_string())
+        Codec::Binary => {
+            encode_binary_request(1, request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
+                .map_err(|error| error.to_string())
         }
-        Codec::Typed => encode_jsonl_request(1, request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
-            .map_err(|error| error.to_string()),
     }
 }
 
 fn decode(codec: Codec, encoded: &[u8]) -> Result<RunBatchRequest, String> {
     match codec {
-        Codec::Legacy => {
-            let envelope: Value =
-                serde_json::from_slice(encoded).map_err(|error| error.to_string())?;
-            decode_value(
-                envelope
-                    .get("params")
-                    .cloned()
-                    .ok_or_else(|| "legacy params missing".to_string())?,
-            )
-        }
-        Codec::Typed => {
+        Codec::Binary => {
             let decoded =
-                decode_jsonl_any_request(encoded, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
+                decode_binary_any_request(encoded, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
                     .map_err(|error| error.to_string())?;
             match decoded.request {
                 AnyWireRequest::RunBatch(request) => Ok(*request),
@@ -185,10 +158,6 @@ fn decode(codec: Codec, encoded: &[u8]) -> Result<RunBatchRequest, String> {
             }
         }
     }
-}
-
-fn decode_value<T: DeserializeOwned>(value: Value) -> Result<T, String> {
-    serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
 fn dimensions(

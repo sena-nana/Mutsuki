@@ -35,6 +35,10 @@ importers:
         version: 5.9.3
 
   packages/web-sdk:
+    dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.1.3
+        version: 3.1.3
     devDependencies:
       pinia:
         specifier: ^2.2.0
@@ -254,6 +258,10 @@ packages:
     version: 0.1.0
     engines: {node: '>=26.0.0 <27'}
 
+  '@msgpack/msgpack@3.1.3':
+    resolution: {integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==}
+    engines: {node: '>= 18'}
+
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
@@ -458,6 +466,8 @@ snapshots:
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@lilia/theme@https://codeload.github.com/sena-nana/LiliaUI/tar.gz/4dab5476073468c4da24a39cf4b85cad6464e83a#path:/packages/theme': {}
+
+  '@msgpack/msgpack@3.1.3': {}
 
   '@types/node@22.20.1':
     dependencies:

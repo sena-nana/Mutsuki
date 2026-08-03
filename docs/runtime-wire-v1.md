@@ -1,8 +1,8 @@
 # Runtime Wire v1
 
-Runtime Wire 是 Core 唯一的跨语言请求/响应契约。生产热路径使用 typed MessagePack；typed
-JSONL 只用于调试、可读 conformance 输出和旧插件迁移。两种 codec 使用同一 Opcode、DTO、
-semantic fixtures、握手与 P1 request multiplexer。
+Runtime Wire 是 Core 唯一的跨语言请求/响应契约。内部传输统一使用 length-prefixed typed
+MessagePack frame；Opcode、DTO、semantic fixtures、握手与 P1 request multiplexer 只维护这一套
+wire codec。
 
 ## Binary frame
 
@@ -54,13 +54,9 @@ bounded writer queues、timeout 和 fail-all 语义，不得各自维护 pending
 | ABI | Entry | Bridge | Codec | Status |
 | --- | --- | --- | --- | --- |
 | v2 | `mutsuki_plugin_abi_v2` | `mutsuki.bridge.abi.binary.v2` | typed MessagePack | production default |
-| v1 | `mutsuki_plugin_abi_v1` | `mutsuki.bridge.abi.jsonl.v1` | typed JSONL | deprecated migration path |
+| v1 | `mutsuki_plugin_abi_v1` | `mutsuki.bridge.abi.binary.v1` | typed MessagePack | compatibility entry |
 
 Loader 按 manifest 声明选择 entry，绝不把 v1 symbol 当作 v2。两版 callback 都是
 `request(context, ptr, len) -> status + buffer`；返回 buffer 由生产方持有，消费方复制或解码后
 必须调用配对 release，context 只 close 一次。null pointer、缺失 callback、错误 transport
 version、panic 或非零 status 均跨边界转换为有界错误。
-
-JSONL v1 至少保留到 2027-01-01，且只有同时满足以下条件才可在后续 major 删除：所有第一方
-插件已发布 v2；连续两个 minor release 的兼容测试通过；官方清单中无 v1 pin；迁移诊断和性能
-报告已发布。生产与高频调用推荐 binary；JSONL 仅推荐调试、golden fixture 查看和迁移诊断。

@@ -11,7 +11,6 @@ mod commands;
 mod error;
 mod group;
 mod host;
-mod jsonl;
 mod management;
 mod manifest;
 mod multiplexer;
@@ -24,9 +23,7 @@ mod scheduler;
 mod worker;
 
 pub use abi_plugin::{AbiPluginLoadRequest, load_abi_plugin_v2};
-pub use abi_transport::{
-    TransportJsonlRunner, TransportResourceProvider, TransportRunner, TypedRequestTransport,
-};
+pub use abi_transport::{TransportResourceProvider, TransportRunner, TypedRequestTransport};
 pub use async_executor::{
     AsyncEventSink, AsyncExecutor, AsyncExecutorEvent, AsyncExecutorSnapshot, TokioAsyncExecutor,
 };
@@ -48,11 +45,10 @@ pub use host::{
     HostRuntimeDriveState, HostRuntimeMetrics, HostRuntimeMetricsSnapshot,
     TaskCompletionSubscription,
 };
-pub use jsonl::{JsonlRunner, JsonlTransport};
 pub use manifest::{runner_manifest, runner_manifest_with_artifact};
 pub use mutsuki_runtime_sdk::{HostTaskFailureSummary, HostTaskSnapshot};
 pub use native_runner::{CancellationProbe, NativeRunner};
-pub use process::{ProcessRunnerSpec, SpawnedJsonlRunner};
+pub use process::{ProcessRunnerSpec, SpawnedBinaryRunner};
 pub use resolver::resolve_load_plan;
 pub use scheduler::{DefaultScheduler, HostCapacity, RunnerLimits, ScheduleInput, SchedulerPolicy};
 pub use worker::{

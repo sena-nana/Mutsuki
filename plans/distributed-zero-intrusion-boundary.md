@@ -69,7 +69,7 @@ Distributed Host 连接某个本机 Runtime 时，只能使用普通 Host 已有
 - 节点 trust、attestation、执行收据或可信账本；
 - `cfg(feature = "distributed")` 或任何让插件维护两套执行实现的等价开关。
 
-本仓库允许 Host 内部已有的本地 ABI/JSONL bytes transport helper；它不是集群 transport，不能携带节点、租约、共识或调度语义。
+本仓库允许 Host 内部已有的本地 ABI/binary bytes transport helper；它不是集群 transport，不能携带节点、租约、共识或调度语义。
 
 ## 自动门禁
 

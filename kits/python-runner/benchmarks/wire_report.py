@@ -60,30 +60,21 @@ def add_baseline_gates(report: dict[str, Any], baseline: Mapping[str, Any]) -> d
 
 
 def add_binary_size_gates(report: dict[str, Any]) -> dict[str, Any]:
-    cases = {
-        (case["codec"], case["batch_size"], case["payload_bytes_per_entry"]): case
-        for case in _case_sequence(report.get("codec_results"))
-    }
     gates = list(_mapping_sequence(report.get("gates", []), "gates"))
-    scenarios = {
-        (batch_size, payload_bytes)
-        for _, batch_size, payload_bytes in cases
-    }
-    for batch_size, payload_bytes in sorted(scenarios):
-        jsonl = cases[("typed_jsonl", batch_size, payload_bytes)]
-        binary = cases[("typed_msgpack", batch_size, payload_bytes)]
-        actual = _number(binary["frame_bytes"], "binary frame_bytes")
-        baseline = _number(jsonl["frame_bytes"], "JSONL frame_bytes")
+    unexpected = [
+        str(case.get("codec"))
+        for case in _case_sequence(report.get("codec_results"))
+        if case.get("codec") != "typed_msgpack"
+    ]
+    if unexpected:
         gates.append(
             {
-                "name": (
-                    f"p2.python.binary.batch-{batch_size}.payload-{payload_bytes}.frame_bytes"
-                ),
-                "kind": "optimization",
-                "actual": actual,
-                "baseline": baseline,
-                "limit": baseline - 1,
-                "passed": actual < baseline,
+                "name": "p2.python.binary_only.unexpected_codec_cases",
+                "kind": "contract",
+                "actual": len(unexpected),
+                "baseline": 0,
+                "limit": 0,
+                "passed": False,
             }
         )
     report["gates"] = gates

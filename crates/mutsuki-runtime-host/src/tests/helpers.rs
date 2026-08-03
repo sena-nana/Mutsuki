@@ -86,19 +86,19 @@ pub(super) fn abi_plugin_fixture() -> (PluginManifest, RunnerDescriptor) {
         deployment_kind: PluginDeploymentKind::Abi,
         task_client_protocol: "mutsuki.task.v1".into(),
         resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-        codec_id: Some("codec.plugin-abi.json".into()),
-        bridge_id: Some("bridge.plugin-abi.jsonl".into()),
+        codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+        bridge_id: Some("bridge.plugin-abi.binary".into()),
     }];
     manifest.provides.codecs = vec![CodecDescriptor {
-        codec_id: "codec.plugin-abi.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     }];
     manifest.provides.bridges = vec![BridgeDescriptor {
-        bridge_id: "bridge.plugin-abi.jsonl".into(),
+        bridge_id: "bridge.plugin-abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.plugin-abi.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     }];
     (manifest, runner_descriptor)

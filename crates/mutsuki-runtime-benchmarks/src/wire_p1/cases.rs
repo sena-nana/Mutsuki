@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
-use mutsuki_runtime_host::JsonlTransport;
+use mutsuki_runtime_host::BinaryTransport;
 use mutsuki_runtime_wire::{
     CancelRunnerRequest, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, RunBatchRequest,
 };
@@ -27,7 +27,7 @@ pub(super) fn run(
 fn cancel_case(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<CaseResult, String> {
     let iterations = mode.select(10, 100);
     let (reader, writer, server) = spawn(ServerMode::Cancel);
-    let transport = JsonlTransport::new(reader, writer);
+    let transport = BinaryTransport::new(reader, writer);
     transport
         .request(&DisposeRunnerRequest {
             runner_id: "benchmark.runner".into(),
@@ -66,7 +66,7 @@ fn cancel_case(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<Cas
     let max = sorted.last().copied().unwrap_or_default();
     close_transport(transport, server)?;
     Ok(CaseResult::measured(
-        "wire/p1/jsonl/cancel-during-run_batch",
+        "wire/p1/binary/cancel-during-run_batch",
         "wire_p1",
         BTreeMap::from([
             ("phase".into(), "p1".into()),
@@ -102,7 +102,7 @@ fn concurrent_case(
         group_size: concurrency,
     });
     let limits = DEFAULT_WIRE_LIMITS;
-    let transport = JsonlTransport::with_limits(reader, writer, limits, Duration::from_secs(5))
+    let transport = BinaryTransport::with_limits(reader, writer, limits, Duration::from_secs(5))
         .map_err(|error| error.to_string())?;
     transport
         .request(&DisposeRunnerRequest {
@@ -141,7 +141,7 @@ fn concurrent_case(
     close_transport(transport, server)?;
     let units = iterations * concurrency as u64;
     Ok(CaseResult::measured(
-        format!("wire/p1/jsonl/concurrent/in-flight-{concurrency}"),
+        format!("wire/p1/binary/concurrent/in-flight-{concurrency}"),
         "wire_p1",
         BTreeMap::from([
             ("phase".into(), "p1".into()),
@@ -158,7 +158,7 @@ fn concurrent_case(
 }
 
 fn close_transport<R, W>(
-    transport: JsonlTransport<R, W>,
+    transport: BinaryTransport<R, W>,
     server: super::server::ServerHandle,
 ) -> Result<(), String>
 where

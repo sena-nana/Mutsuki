@@ -54,4 +54,4 @@ supports_snapshot = false
 command = "example-runner"
 args = []
 env = {}
-runner_link = "jsonl-stdio"
+runner_link = "binary-stdio"

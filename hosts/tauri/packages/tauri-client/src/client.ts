@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { decode as decodeMsgpack, encode as encodeMsgpack } from "@msgpack/msgpack";
 import type {
   ApprovalDecisionInput,
   ApprovalRequest,
@@ -103,7 +104,7 @@ export function createMutsukiClient(): MutsukiClient {
   };
 
   const cancel = (taskId: string, reason?: string) =>
-    invoke<string>("mutsuki_cancel_task", { request: { task_id: taskId, reason } });
+    invokeBinary<string>("mutsuki_cancel_task_binary", { task_id: taskId, reason });
 
   const call = async <TPayload = unknown>(
     protocolId: string,
@@ -117,7 +118,7 @@ export function createMutsukiClient(): MutsukiClient {
       priority: 0,
       ...options,
     };
-    return invoke<FrontendTaskResult>("mutsuki_call", { request });
+    return invokeBinary<FrontendTaskResult>("mutsuki_call_binary", request);
   };
 
   const callStream = async <TPayload = unknown>(
@@ -136,12 +137,12 @@ export function createMutsukiClient(): MutsukiClient {
     };
     const stream = await openTaskEvents(taskId);
     try {
-      await invoke<FrontendTaskRun>("mutsuki_start_task", { request });
+      await invokeBinary<FrontendTaskRun>("mutsuki_start_task_binary", request);
     } catch (error) {
       stream.close();
       throw error;
     }
-    const result = invoke<FrontendTaskResult>("mutsuki_task_result", { request: { task_id: taskId } });
+    const result = invokeBinary<FrontendTaskResult>("mutsuki_task_result_binary", { task_id: taskId });
     void result.then(
       () => stream.close(),
       () => stream.close(),
@@ -207,7 +208,7 @@ export function createMutsukiClient(): MutsukiClient {
       callStream,
       cancel,
       peekResult: (taskId) =>
-        invoke<FrontendTaskResult>("mutsuki_peek_task_result", { request: { task_id: taskId } }),
+        invokeBinary<FrontendTaskResult>("mutsuki_peek_task_result_binary", { task_id: taskId }),
     },
     resources,
     approvals,
@@ -282,6 +283,24 @@ function approvalResponseForRequest(
     correlation_id: request.correlation_id,
     context: request.context,
   };
+}
+
+async function invokeBinary<T>(command: string, request: unknown): Promise<T> {
+  const payload = encodeMsgpack(request);
+  const response = await invoke<unknown>(command, { request: payload });
+  return decodeMsgpack(invokeBytes(response)) as T;
+}
+
+function invokeBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  if (Array.isArray(value) && value.every((item) => Number.isInteger(item))) {
+    return new Uint8Array(value);
+  }
+  throw new Error("binary bridge command returned a non-binary payload");
 }
 
 function listenCategory<T extends MutsukiFrontendEvent>(
