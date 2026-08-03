@@ -21,7 +21,6 @@ from mutsuki_runner_kit.wire.generated import (
 from mutsuki_runner_kit.wire.handshake import ProtocolHelloAck
 from mutsuki_runner_kit.wire.protocol import (
     BINARY_CODEC_ID,
-    DEBUG_JSONL_CODEC_ID,
     SCHEMA_REVISION,
     ProtocolHello,
     WireProtocolFailure,
@@ -45,7 +44,7 @@ def test_generated_opcode_registry_matches_pinned_core_schema() -> None:
 
     assert len(CORE_WIRE_REVISION) == 40
     assert RUNTIME_WIRE_SCHEMA["schema_revision"] == SCHEMA_REVISION
-    assert RUNTIME_WIRE_SCHEMA["codecs"] == [DEBUG_JSONL_CODEC_ID, BINARY_CODEC_ID]
+    assert RUNTIME_WIRE_SCHEMA["codecs"] == [BINARY_CODEC_ID]
     assert schema_registry == {int(opcode): method for opcode, method in OPCODE_METHODS.items()}
     assert MANAGEMENT_OPCODES == frozenset(
         Opcode(_operation_opcode(operation))
@@ -124,14 +123,14 @@ def test_additive_payload_fields_do_not_break_typed_request_decode() -> None:
 
 
 def test_handshake_rejects_missing_management_support_and_expanded_limits() -> None:
-    hello = ProtocolHello.for_codec(DEBUG_JSONL_CODEC_ID)
+    hello = ProtocolHello.for_codec(BINARY_CODEC_ID)
     without_management = ProtocolHello(
         **{**hello.__dict__, "management_channel": False}
     )
     with pytest.raises(WireProtocolFailure, match="management channel"):
-        ProtocolHelloAck.negotiate(without_management, DEBUG_JSONL_CODEC_ID)
+        ProtocolHelloAck.negotiate(without_management, BINARY_CODEC_ID)
 
-    ack = ProtocolHelloAck.negotiate(hello, DEBUG_JSONL_CODEC_ID)
+    ack = ProtocolHelloAck.negotiate(hello, BINARY_CODEC_ID)
     expanded = ProtocolHelloAck(
         **{**ack.__dict__, "max_payload_bytes": hello.max_payload_bytes + 1}
     )

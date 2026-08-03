@@ -38,7 +38,7 @@ Mutsuki/
   Runner dispatch 可通过 `RunnerExecutor` 边界替换；core 默认只提供同步 inline
   执行器，不绑定线程模型。
 - `mutsuki-runtime-host`：实现 native RuntimeBootstrapper/resolver、native runner wrapper 和
-  stdio JSONL runner client，并提供默认 CoreActor / worker pool 隔离的
+  stdio binary runner client，并提供默认 CoreActor / worker pool 隔离的
   `HostRuntime` 控制面门面。`RuntimeBootstrapper::into_runtime` 仍返回裸 `CoreRuntime`
   用于单线程测试、replay 和最小 host。Host backend / plugin backend 只能聚合统一
   `TaskClient` / `ResourcePlanClient` 和 host-side bridge/codec/service descriptor；不得把

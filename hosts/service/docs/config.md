@@ -50,9 +50,8 @@ runners; native runners remain cooperative and may cause the pool to report degr
 `ipc.codec` selects the control transport profile:
 
 - `binary` (default): persistent length-prefixed MessagePack session with multiplexed `RequestId`s.
-- `jsonl`: diagnostics/migration newline-delimited JSON; sequential, with a hard max line length.
 
-Additional bounds (`max_frame_bytes`, `max_payload_bytes`, `max_jsonl_line_bytes`, `max_in_flight`,
+Additional bounds (`max_frame_bytes`, `max_payload_bytes`, `max_in_flight`,
 `idle_timeout_ms`, `request_timeout_ms`) reject oversized or runaway clients before unbounded
 allocation. High-frequency data streams stay on MutsukiLink; do not raise control frame limits to
 carry media or tracking payloads.

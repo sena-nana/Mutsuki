@@ -6,18 +6,18 @@ use mutsuki_runtime_wire::{
 use serde_json::Value;
 
 use super::error::{abi_failure, encode_binary_result};
-use super::guest::{BinaryGuestCodec, ConfiguredPluginFactory, JsonlPluginGuest};
+use super::guest::{BinaryGuestCodec, ConfiguredPluginFactory, PluginGuest};
 use super::types::AbiGuest;
 use crate::LoadedPlugin;
 
 pub struct BinaryPluginGuest {
-    plugin: JsonlPluginGuest,
+    plugin: PluginGuest,
 }
 
 impl BinaryPluginGuest {
     pub fn new(plugin: LoadedPlugin) -> RuntimeResult<Self> {
         Ok(Self {
-            plugin: JsonlPluginGuest::new(plugin)?,
+            plugin: PluginGuest::new(plugin)?,
         })
     }
 }
@@ -33,7 +33,7 @@ impl AbiGuest for BinaryPluginGuest {
 
 pub struct ConfiguredBinaryPluginGuest {
     factory: Option<ConfiguredPluginFactory>,
-    plugin: Option<JsonlPluginGuest>,
+    plugin: Option<PluginGuest>,
     initialization_attempted: bool,
 }
 
@@ -85,7 +85,7 @@ impl AbiGuest for ConfiguredBinaryPluginGuest {
             .take()
             .ok_or_else(|| abi_failure("abi.factory_missing", "plugin factory unavailable"))
             .and_then(|factory| factory(config))
-            .and_then(JsonlPluginGuest::new)
+            .and_then(PluginGuest::new)
             .and_then(|mut plugin| {
                 let ack = plugin.initialize::<BinaryGuestCodec>(request.hello)?;
                 self.plugin = Some(plugin);

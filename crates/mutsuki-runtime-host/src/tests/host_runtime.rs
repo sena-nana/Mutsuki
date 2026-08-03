@@ -15,7 +15,7 @@ use serde_json::json;
 use crate::{
     HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply, NativeRunner,
     ProcessRunnerSpec, RunnerLimits, RuntimeBootstrapper, ScheduleInput, SchedulerPolicy,
-    SpawnedJsonlRunner, TokioAsyncExecutor, runner_manifest,
+    SpawnedBinaryRunner, TokioAsyncExecutor, runner_manifest,
 };
 
 use super::helpers::{descriptor, descriptor_with_class, runtime_profile, test_resource_ref};
@@ -2121,7 +2121,7 @@ fn hard_timeout_terminates_process_runner_and_recovers_capacity() {
             marker.to_string_lossy().into_owned(),
         )]),
     };
-    let runner = SpawnedJsonlRunner::spawn(runner_descriptor.clone(), &spec).unwrap();
+    let runner = SpawnedBinaryRunner::spawn(runner_descriptor.clone(), &spec).unwrap();
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor]));
     host.register_runner(Box::new(runner));
@@ -2174,6 +2174,13 @@ fn hard_timeout_terminates_process_runner_and_recovers_capacity() {
 #[test]
 #[ignore]
 fn process_runner_helper() {
+    use std::io::Write;
+
+    use mutsuki_runtime_wire::{
+        AnyWireRequest, DEFAULT_WIRE_LIMITS, ProtocolHelloAck, decode_binary_any_request,
+        encode_binary_response, read_binary_frame_bytes,
+    };
+
     let Ok(marker) = std::env::var("MUTSUKI_PROCESS_HELPER_MARKER") else {
         return;
     };
@@ -2182,52 +2189,67 @@ fn process_runner_helper() {
         std::fs::write(&marker, b"started").unwrap();
     }
     let stdin = std::io::stdin();
-    let mut lines = std::io::BufRead::lines(stdin.lock());
-    while let Some(Ok(line)) = lines.next() {
+    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    while let Some(frame) = read_binary_frame_bytes(&mut input, DEFAULT_WIRE_LIMITS).unwrap() {
         if first_process {
             loop {
                 std::thread::sleep(Duration::from_secs(60));
             }
         }
-        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let id = request["id"].clone();
-        let result = if request["method"] == "runner.run_batch" {
-            let batch = &request["params"]["batch"];
-            let results = batch["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|entry| {
-                    let task_id = entry["task_id"].clone();
-                    json!({
-                        "entry_id": entry["entry_id"],
-                        "task_id": task_id,
-                        "result": {
-                            "task_id": task_id,
-                            "deltas": [],
-                            "events": [],
-                            "tasks": [],
-                            "effects": [],
-                            "values": [],
-                            "resources": [],
-                            "status": "completed",
-                            "continuation_ref": null,
-                            "task_await": null
-                        },
-                        "error": null
+        let request = decode_binary_any_request(&frame, DEFAULT_WIRE_LIMITS).unwrap();
+        let opcode = request.request.opcode();
+        let response = match request.request {
+            AnyWireRequest::Initialize(initialize) => {
+                let ack = ProtocolHelloAck::accept(&initialize.hello, None);
+                encode_binary_response(request.request_id, opcode, Ok(&ack), DEFAULT_WIRE_LIMITS)
+            }
+            AnyWireRequest::RunBatch(run) => {
+                let results = run
+                    .batch
+                    .entries
+                    .iter()
+                    .map(|entry| EntryCompletion {
+                        entry_id: entry.entry_id.clone(),
+                        task_id: entry.task_id.clone(),
+                        result: Some(RunnerResult::completed(entry.task_id.clone())),
+                        error: None,
                     })
-                })
-                .collect::<Vec<_>>();
-            json!({
-                "batch_id": batch["batch_id"],
-                "tick_id": batch["tick_id"],
-                "results": results,
-                "metadata": []
-            })
-        } else {
-            serde_json::Value::Null
-        };
-        println!("{}", json!({"id": id, "ok": true, "result": result}));
+                    .collect();
+                let completion = CompletionBatch {
+                    batch_id: run.batch.batch_id,
+                    tick_id: run.batch.tick_id,
+                    results,
+                    metadata: Vec::new(),
+                };
+                encode_binary_response(
+                    request.request_id,
+                    opcode,
+                    Ok(&completion),
+                    DEFAULT_WIRE_LIMITS,
+                )
+            }
+            AnyWireRequest::CancelRunner(_) | AnyWireRequest::DisposeRunner(_) => {
+                encode_binary_response(request.request_id, opcode, Ok(&()), DEFAULT_WIRE_LIMITS)
+            }
+            other => {
+                let error = RuntimeError::new(
+                    ERR_RUNTIME_HOST_FAILED,
+                    "process_runner_helper",
+                    format!("unsupported opcode {:#06x}", other.opcode() as u16),
+                );
+                encode_binary_response::<()>(
+                    request.request_id,
+                    opcode,
+                    Err(&error),
+                    DEFAULT_WIRE_LIMITS,
+                )
+            }
+        }
+        .unwrap();
+        output.write_all(&response).unwrap();
+        output.flush().unwrap();
     }
 }
 
@@ -2342,20 +2364,20 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
             deployment_kind: PluginDeploymentKind::Abi,
             task_client_protocol: "mutsuki.task.v1".into(),
             resource_client_protocol: "mutsuki.resource-plan.v1".into(),
-            codec_id: Some("codec.json".into()),
-            bridge_id: Some("bridge.abi.jsonl".into()),
+            codec_id: Some("mutsuki.codec.typed-msgpack.v1".into()),
+            bridge_id: Some("bridge.abi.binary".into()),
         },
     ];
     manifest.provides.codecs = vec![CodecDescriptor {
-        codec_id: "codec.json".into(),
-        media_type: "application/json".into(),
+        codec_id: "mutsuki.codec.typed-msgpack.v1".into(),
+        media_type: "application/vnd.mutsuki.msgpack".into(),
         version: "1.0.0".into(),
         connection_scoped: true,
     }];
     manifest.provides.bridges = vec![BridgeDescriptor {
-        bridge_id: "bridge.abi.jsonl".into(),
+        bridge_id: "bridge.abi.binary".into(),
         deployment_kind: PluginDeploymentKind::Abi,
-        codec_ids: vec!["codec.json".into()],
+        codec_ids: vec!["mutsuki.codec.typed-msgpack.v1".into()],
         drain_policy: "connection_drain".into(),
     }];
     manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
@@ -2423,12 +2445,14 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
         "plugin_backend:plugin.backend.abi",
     );
     assert_pruned_capability(
-        runtime.capabilities().require_bridge("bridge.abi.jsonl"),
-        "bridge:bridge.abi.jsonl",
+        runtime.capabilities().require_bridge("bridge.abi.binary"),
+        "bridge:bridge.abi.binary",
     );
     assert_pruned_capability(
-        runtime.capabilities().require_codec("codec.json"),
-        "codec:codec.json",
+        runtime
+            .capabilities()
+            .require_codec("mutsuki.codec.typed-msgpack.v1"),
+        "codec:mutsuki.codec.typed-msgpack.v1",
     );
     assert_pruned_capability(
         runtime

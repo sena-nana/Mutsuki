@@ -13,10 +13,10 @@ use mutsuki_runtime_wire::{
     SnapshotReadPlanRequest, SubmitTaskBatchRequest, TaskOutcomeRequest,
 };
 
-use crate::JsonlTransport;
+use crate::BinaryTransport;
 
 pub struct AbiTaskClient<R, W> {
-    transport: JsonlTransport<R, W>,
+    transport: BinaryTransport<R, W>,
 }
 
 impl<R, W> AbiTaskClient<R, W>
@@ -26,7 +26,7 @@ where
 {
     pub fn new(reader: R, writer: W) -> Self {
         Self {
-            transport: JsonlTransport::new(reader, writer),
+            transport: BinaryTransport::new(reader, writer),
         }
     }
 
@@ -58,7 +58,7 @@ where
 }
 
 pub struct AbiResourceClient<R, W> {
-    transport: JsonlTransport<R, W>,
+    transport: BinaryTransport<R, W>,
 }
 
 impl<R, W> AbiResourceClient<R, W>
@@ -68,7 +68,7 @@ where
 {
     pub fn new(reader: R, writer: W) -> Self {
         Self {
-            transport: JsonlTransport::new(reader, writer),
+            transport: BinaryTransport::new(reader, writer),
         }
     }
 

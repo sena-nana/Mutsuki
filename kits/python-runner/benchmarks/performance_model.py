@@ -28,7 +28,6 @@ from mutsuki_runner_kit.testing.batches import multi_entry_batch, runner_context
 from mutsuki_runner_kit.testing.benchmark_runners import calibrated_checksum
 from mutsuki_runner_kit.wire.binary import decode_binary_request, encode_binary_request
 from mutsuki_runner_kit.wire.generated import Opcode
-from mutsuki_runner_kit.wire.jsonl import decode_jsonl_request, encode_jsonl_request
 from mutsuki_runner_kit.wire.protocol import DEFAULT_WIRE_LIMITS, WireProtocolFailure
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,9 +149,9 @@ def codec_cases(mode: str, correctness: dict[str, int]) -> list[dict[str, Any]]:
     matrix.append((1, 1024 * 1024))
     iterations = 3 if mode == "smoke" else 20
     cases: list[dict[str, Any]] = []
-    for codec in ("python-jsonl", "python-binary"):
-        encoder = encode_jsonl_request if codec == "python-jsonl" else encode_binary_request
-        decoder = decode_jsonl_request if codec == "python-jsonl" else decode_binary_request
+    for codec in ("python-binary",):
+        encoder = encode_binary_request
+        decoder = decode_binary_request
         for batch_size, payload_bytes in matrix:
             dimensions = {
                 "codec": codec,
@@ -219,9 +218,9 @@ def codec_cases(mode: str, correctness: dict[str, int]) -> list[dict[str, Any]]:
                         },
                     )
                 )
-    for codec in ("python-jsonl", "python-binary"):
-        decoder = decode_jsonl_request if codec == "python-jsonl" else decode_binary_request
-        malformed = b"{broken}\n" if codec == "python-jsonl" else b"\x00\x00\x00\x01x"
+    for codec in ("python-binary",):
+        decoder = decode_binary_request
+        malformed = b"\x00\x00\x00\x01x"
         try:
             decoder(malformed)
         except Exception:
@@ -238,7 +237,7 @@ def codec_cases(mode: str, correctness: dict[str, int]) -> list[dict[str, Any]]:
     cases.append(
         diagnostic_case(
             "python.codec.rejection",
-            {"layer": "codec-only", "codecs": "python-jsonl,python-binary"},
+            {"layer": "codec-only", "codecs": "python-binary"},
             {
                 "malformed_frames_accepted": correctness["malformed_frames_accepted"],
                 "oversized_frames_accepted": correctness["oversized_frames_accepted"],
@@ -404,7 +403,7 @@ def pipe_cases(
         target_ns: calibrate_cpu_iterations(target_ns)
         for target_ns in (50_000, 1_000_000, 10_000_000)
     }
-    for codec in ("python-jsonl", "python-binary"):
+    for codec in ("python-binary",):
         fixture_hashes.update(pipe_fixture_hashes(codec, correctness))
         startup = []
         negotiation = []
@@ -754,7 +753,7 @@ def environment(mode: str) -> dict[str, Any]:
         "runner_configuration": {
             "mode": mode,
             "gc": "disabled only during codec sampling",
-            "entrypoints": ["python-jsonl", "python-binary"],
+            "entrypoints": ["python-binary"],
         },
     }
 
@@ -804,10 +803,7 @@ def analyze(cases: list[dict[str, Any]], counters: dict[str, int]) -> dict[str, 
         "noisy_cases": noisy,
         "limitations": [
             "ServiceHost end-to-end is intentionally not measured by this owner runner.",
-            (
-                "Use benchmarks/fixture_process.py as the python-jsonl/python-binary "
-                "deployment entrypoint."
-            ),
+            "Use benchmarks/fixture_process.py as the python-binary deployment entrypoint.",
         ],
     }
 
@@ -836,7 +832,7 @@ def main() -> None:
         "repository_revisions": revisions,
         "environment_id": canonical_hash(environment_value),
         "environment": environment_value,
-        "feature_set": ["python-jsonl", "python-binary", "real-stdio-pipe"],
+        "feature_set": ["python-binary", "real-stdio-pipe"],
         "deployment": "Python fixture process over real stdin/stdout pipe",
         "measurement_boundary": (
             "codec-only, in-memory-bridge and real-stdio-pipe are separate; "
@@ -857,7 +853,7 @@ def main() -> None:
             "counters": dict(sorted(correctness.items())),
         },
         "metadata": {
-            "service_host_entrypoints": "python-jsonl,python-binary",
+            "service_host_entrypoints": "python-binary",
             "fixture_manifest": "benchmarks/runner-fixtures-v1.json",
             "fixture_output_hashes": fixture_hashes,
             "service_host_e2e": "not measured in this repository",

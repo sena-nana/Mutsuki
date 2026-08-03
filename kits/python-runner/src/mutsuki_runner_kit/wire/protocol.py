@@ -7,7 +7,6 @@ from typing import Self
 from mutsuki_runner_kit.contracts.codec import JsonDict, as_bool, as_int, as_str, field_value
 from mutsuki_runner_kit.wire.schema import RUNTIME_WIRE_SCHEMA
 
-DEBUG_JSONL_CODEC_ID = "mutsuki.codec.typed-jsonl.v1"
 BINARY_CODEC_ID = "mutsuki.codec.typed-msgpack.v1"
 SCHEMA_REVISION = "mutsuki.runtime.wire/1.3.0"
 
@@ -16,7 +15,6 @@ SCHEMA_REVISION = "mutsuki.runtime.wire/1.3.0"
 class WireLimits:
     max_frame_bytes: int
     max_payload_bytes: int
-    max_jsonl_line_bytes: int
     max_inline_resource_bytes: int
     max_in_flight_requests: int
     management_reserved_requests: int
@@ -25,7 +23,6 @@ class WireLimits:
         if (
             self.max_frame_bytes <= 0
             or self.max_payload_bytes <= 0
-            or self.max_jsonl_line_bytes <= 0
             or self.max_inline_resource_bytes <= 0
             or self.max_payload_bytes > self.max_frame_bytes
             or self.max_inline_resource_bytes > self.max_payload_bytes
@@ -46,7 +43,6 @@ class WireLimits:
         limits = WireLimits(
             max_frame_bytes=max_frame_bytes,
             max_payload_bytes=max_payload_bytes,
-            max_jsonl_line_bytes=self.max_jsonl_line_bytes,
             max_inline_resource_bytes=self.max_inline_resource_bytes,
             max_in_flight_requests=max_in_flight_requests,
             management_reserved_requests=management_reserved_requests,
@@ -63,9 +59,6 @@ if not isinstance(_limits, dict) or not isinstance(_resource_policy, dict):
 DEFAULT_WIRE_LIMITS = WireLimits(
     max_frame_bytes=as_int(field_value(_limits, "max_frame_bytes"), "max_frame_bytes"),
     max_payload_bytes=as_int(field_value(_limits, "max_payload_bytes"), "max_payload_bytes"),
-    max_jsonl_line_bytes=as_int(
-        field_value(_limits, "max_jsonl_line_bytes"), "max_jsonl_line_bytes"
-    ),
     max_inline_resource_bytes=as_int(
         field_value(_resource_policy, "inline_limit_bytes"), "inline_limit_bytes"
     ),

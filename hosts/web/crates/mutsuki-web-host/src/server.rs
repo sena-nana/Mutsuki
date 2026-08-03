@@ -197,36 +197,30 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let Ok(message) = message else {
             break;
         };
-        let Message::Text(text) = message else {
-            continue;
+        let bytes = match message {
+            Message::Binary(bytes) => bytes,
+            Message::Text(_) => {
+                let _ = sender
+                    .send(binary_error(
+                        "unsupported_frame",
+                        "web bridge requires binary frames",
+                    ))
+                    .await;
+                break;
+            }
+            _ => continue,
         };
-        if text.len() > state.bridge.budgets().max_payload_bytes {
+        if bytes.len() > state.bridge.budgets().max_payload_bytes {
             let _ = sender
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "code": "payload_too_large",
-                        "message": "payload exceeds budget",
-                    })
-                    .to_string()
-                    .into(),
-                ))
+                .send(binary_error("payload_too_large", "payload exceeds budget"))
                 .await;
             break;
         }
 
-        let parsed = WireMessage::decode(text.as_bytes());
+        let parsed = WireMessage::decode(&bytes);
         let Ok(wire) = parsed else {
             let _ = sender
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "code": "invalid_message",
-                        "message": "invalid wire message",
-                    })
-                    .to_string()
-                    .into(),
-                ))
+                .send(binary_error("invalid_message", "invalid wire message"))
                 .await;
             continue;
         };
@@ -237,12 +231,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     session_id = Some(session.session_id);
                 }
                 if let Ok(bytes) = reply.encode()
-                    && sender
-                        .send(Message::Text(
-                            String::from_utf8_lossy(&bytes).into_owned().into(),
-                        ))
-                        .await
-                        .is_err()
+                    && sender.send(Message::Binary(bytes.into())).await.is_err()
                 {
                     break;
                 }
@@ -250,15 +239,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             Ok(HandleOutcome::Subscribed(_)) | Ok(HandleOutcome::Unsubscribed(_)) => {}
             Err(err) => {
                 let _ = sender
-                    .send(Message::Text(
-                        serde_json::json!({
-                            "type": "error",
-                            "code": "bridge_error",
-                            "message": err.to_string(),
-                        })
-                        .to_string()
-                        .into(),
-                    ))
+                    .send(binary_error("bridge_error", &err.to_string()))
                     .await;
             }
         }
@@ -269,12 +250,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             state.bridge.set_ws_queue_depth(events.len() as u64);
             for event in events {
                 if let Ok(bytes) = WireMessage::Event(event).encode()
-                    && sender
-                        .send(Message::Text(
-                            String::from_utf8_lossy(&bytes).into_owned().into(),
-                        ))
-                        .await
-                        .is_err()
+                    && sender.send(Message::Binary(bytes.into())).await.is_err()
                 {
                     break;
                 }
@@ -291,9 +267,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         .set_connections(state.connections.load(Ordering::Relaxed));
 }
 
+fn binary_error(code: &str, message: &str) -> Message {
+    match (WireMessage::Error {
+        code: code.into(),
+        message: message.into(),
+    })
+    .encode()
+    {
+        Ok(bytes) => Message::Binary(bytes.into()),
+        Err(_) => Message::Close(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_content_addressed_asset;
+    use super::{binary_error, is_content_addressed_asset};
+    use axum::extract::ws::Message;
+    use mutsuki_web_protocol::WireMessage;
     use std::path::Path;
 
     #[test]
@@ -304,5 +294,16 @@ mod tests {
         assert!(!is_content_addressed_asset(Path::new("mutsuki-ui.css")));
         assert!(!is_content_addressed_asset(Path::new("index.js")));
         assert!(!is_content_addressed_asset(Path::new("foo.bar.js")));
+    }
+
+    #[test]
+    fn socket_errors_are_binary_wire_messages() {
+        let Message::Binary(bytes) = binary_error("invalid_message", "invalid wire message") else {
+            panic!("expected binary error");
+        };
+        assert!(matches!(
+            WireMessage::decode(&bytes).expect("decode"),
+            WireMessage::Error { code, .. } if code == "invalid_message"
+        ));
     }
 }

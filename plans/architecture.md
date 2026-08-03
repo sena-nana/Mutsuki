@@ -37,7 +37,7 @@ RuntimeProfile + PluginManifest
 - `contracts` 只定义 serde 纯协议对象。
 - `core` 依赖 `contracts`，只实现 runtime mechanics。
 - `host` 依赖 `core + contracts`，提供 `HostRuntime` 控制面门面、runtime bootstrapper
-  和 JSONL runner client。
+  和 binary runner client。
 - `sdk` 依赖 `core + contracts`，只提供 Rust 插件作者侧 awaitable 包装。
 - `kits/python-runner` 镜像 contracts，提供 Python runner backend 和 stdio runner
   server；Rust crates 不依赖 Python。
@@ -271,7 +271,7 @@ timeout 不改变 `RunnerContext` wire shape；它们由 actor 监督 running in
 native worker 超时后只会进入 cooperative cancel / quarantine；原线程退出前禁止补充
 replacement。隔离数达到上限后 pool degraded 并拒绝新 dispatch，迟到 completion 只投递
 cancel / dispose，不再复用旧 runner 或提交旧结果。process runner 暴露独立 termination
-handle；hard timeout 会 kill 子进程，使阻塞 JSONL 调用返回，随后重建 process runner，且
+handle；hard timeout 会 kill 子进程，使阻塞 binary 调用返回，随后重建 process runner，且
 仅在原 worker 真实退出后补充 worker capacity。
 
 HostRuntime 的 event-driven driver 复用同一 CoreActor mailbox：外部 submit 与控制命令、
@@ -437,7 +437,7 @@ host-side bridge 可以作为 Host backend 替换；guest-side shim 随插件 ar
 不由 Host 单独热替换。
 
 Host backend / plugin backend 通过 `HostExtensionDescriptor`、`PluginBackendDescriptor`
-和统一 `TaskClient` / `ResourcePlanClient` 边界表达。Builtin 快速路径和 ABI/JSONL 路径
+和统一 `TaskClient` / `ResourcePlanClient` 边界表达。Builtin 快速路径和 ABI/binary 路径
 只能是不同 backend 实现，不能把 `Arc<T>`、`&mut T`、SDK client 或 native handle 暴露给
 插件业务代码。
 
@@ -450,8 +450,8 @@ policy。active backend 引用的 bridge deployment 和 codec 支持关系必须
 完整 backend instantiation supervision、连接 drain / replacement 仍是后续工作。
 
 ABI 动态库不定义第二套 runner/resource 方法面。Core SDK 只为动态库提供版本化的最小
-bytes transport：固定入口建立 connection，Host 与 guest 互相发送既有 JSONL request /
-response。首个 JSONL 请求必须是 `plugin.initialize({ config })`，配置来自与 builtin 相同的
+bytes transport：固定入口建立 connection，Host 与 guest 互相发送 typed MessagePack request /
+response。首个请求必须是 `plugin.initialize({ config })`，配置来自与 builtin 相同的
 owner-defined product config；初始化返回 manifest、codec、bridge 与 provider surface。
 `runner.run_batch`、management cancel/dispose、TaskClient 与 ResourcePlanClient 继续使用同一
 wire shape；平台动态库发现、校验、装载、drain 和卸载仍由具体 Host 负责。

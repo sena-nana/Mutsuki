@@ -1,28 +1,27 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 
 use mutsuki_runtime_wire::{
-    AnyWireRequest, DEBUG_JSONL_CODEC_ID, DEFAULT_WIRE_LIMITS, decode_jsonl_any_request,
-    encode_jsonl_response,
+    AnyWireRequest, BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS, decode_binary_any_request,
+    encode_binary_response, read_binary_frame_bytes,
 };
 
 fn main() {
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
-    for line in stdin.lock().split(b'\n') {
-        let line = line.expect("read Runtime Wire request");
-        if line.is_empty() {
-            continue;
-        }
-        let decoded = decode_jsonl_any_request(&line, DEFAULT_WIRE_LIMITS)
+    let mut stdin = stdin.lock();
+    while let Some(frame) =
+        read_binary_frame_bytes(&mut stdin, DEFAULT_WIRE_LIMITS).expect("read Runtime Wire request")
+    {
+        let decoded = decode_binary_any_request(&frame, DEFAULT_WIRE_LIMITS)
             .expect("decode Runtime Wire request");
         let opcode = decoded.request.opcode();
         let response = match decoded.request {
             AnyWireRequest::Initialize(request) => {
                 let ack = request
                     .hello
-                    .accept(DEBUG_JSONL_CODEC_ID, None)
+                    .accept(BINARY_CODEC_ID, None)
                     .expect("accept Runtime Wire hello");
-                encode_jsonl_response(decoded.request_id, opcode, Ok(&ack), DEFAULT_WIRE_LIMITS)
+                encode_binary_response(decoded.request_id, opcode, Ok(&ack), DEFAULT_WIRE_LIMITS)
             }
             AnyWireRequest::RunBatch(request) => {
                 let mut runner =
@@ -33,14 +32,14 @@ fn main() {
                     request.batch,
                 );
                 match result {
-                    Ok(batch) => encode_jsonl_response(
+                    Ok(batch) => encode_binary_response(
                         decoded.request_id,
                         opcode,
                         Ok(&batch),
                         DEFAULT_WIRE_LIMITS,
                     ),
                     Err(error) => {
-                        encode_jsonl_response::<mutsuki_runtime_contracts::CompletionBatch>(
+                        encode_binary_response::<mutsuki_runtime_contracts::CompletionBatch>(
                             decoded.request_id,
                             opcode,
                             Err(error.error()),
@@ -50,7 +49,7 @@ fn main() {
                 }
             }
             AnyWireRequest::CancelRunner(_) | AnyWireRequest::DisposeRunner(_) => {
-                encode_jsonl_response(decoded.request_id, opcode, Ok(&()), DEFAULT_WIRE_LIMITS)
+                encode_binary_response(decoded.request_id, opcode, Ok(&()), DEFAULT_WIRE_LIMITS)
             }
             _ => panic!("unsupported benchmark Runner operation {opcode:?}"),
         }

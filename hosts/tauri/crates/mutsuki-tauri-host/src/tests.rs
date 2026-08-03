@@ -1146,7 +1146,7 @@ fn loader_records_duplicate_plugin_and_runner_ids() {
 #[test]
 fn external_process_runner_completes_task_and_forwards_stderr() {
     let workspace = TestWorkspace::new("external-runner");
-    let runner = jsonl_fixture_runner();
+    let runner = binary_fixture_runner();
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
@@ -1241,7 +1241,7 @@ fn external_process_runner_completes_task_and_forwards_stderr() {
 #[test]
 fn health_reports_external_runner_runtime_failure() {
     let workspace = TestWorkspace::new("external-runner-failure");
-    let runner = jsonl_fixture_runner();
+    let runner = binary_fixture_runner();
     write_plugin_manifest(
         &workspace.config.paths.plugins_dir.join("plugin"),
         plugin_manifest(
@@ -1757,7 +1757,7 @@ fn write_runner_spec(dir: &Path, spec: &RunnerSpecFixture) {
     std::fs::write(dir.join("runner.toml"), text).expect("runner spec written");
 }
 
-fn jsonl_fixture_runner() -> PathBuf {
+fn binary_fixture_runner() -> PathBuf {
     static RUNNER: OnceLock<PathBuf> = OnceLock::new();
     RUNNER
         .get_or_init(|| {
@@ -1775,15 +1775,15 @@ fn jsonl_fixture_runner() -> PathBuf {
                     "--target-dir",
                     target.to_str().unwrap(),
                     "-p",
-                    "mutsuki-tauri-jsonl-fixture",
+                    "mutsuki-tauri-binary-fixture",
                 ])
                 .status()
-                .expect("build JSONL fixture runner");
-            assert!(status.success(), "JSONL fixture runner build failed");
+                .expect("build binary fixture runner");
+            assert!(status.success(), "binary fixture runner build failed");
             target.join("debug").join(if cfg!(windows) {
-                "mutsuki-tauri-jsonl-fixture.exe"
+                "mutsuki-tauri-binary-fixture.exe"
             } else {
-                "mutsuki-tauri-jsonl-fixture"
+                "mutsuki-tauri-binary-fixture"
             })
         })
         .clone()

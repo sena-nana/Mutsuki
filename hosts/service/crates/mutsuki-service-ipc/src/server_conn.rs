@@ -5,17 +5,14 @@ use std::time::Duration;
 use mutsuki_service_control::{
     ControlError, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore, watch};
 use tokio::task::JoinHandle;
 
-use crate::codec::{
-    ControlRequestBody, decode_jsonl_request, encode_binary_response_with_scratch,
-    encode_jsonl_response,
-};
+use crate::codec::{ControlRequestBody, encode_binary_response_with_scratch};
 use crate::error::{IpcError, IpcResult};
 use crate::frame::{FrameFlags, OPCODE_CANCEL};
-use crate::io::{read_frame_prefix, read_jsonl_line, read_payload_or_discard, write_all_flush};
+use crate::io::{read_frame_prefix, read_payload_or_discard, write_all_flush};
 use crate::limits::ControlIpcProfile;
 
 struct PendingEntry {
@@ -33,120 +30,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let (reader, writer) = tokio::io::split(stream);
-    let writer = Arc::new(Mutex::new(writer));
-    let mut reader = reader;
-    let mut peek = [0_u8; 1];
-    match reader.read_exact(&mut peek).await {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-        Err(error) => return Err(error.into()),
-    }
-    match peek[0] {
-        b'{' => {
-            serve_jsonl(
-                FirstByteReader {
-                    first: Some(peek[0]),
-                    inner: reader,
-                },
-                writer,
-                handler,
-                profile,
-                drain_rx,
-            )
-            .await
-        }
-        _ => {
-            serve_binary(
-                FirstByteReader {
-                    first: Some(peek[0]),
-                    inner: reader,
-                },
-                writer,
-                handler,
-                profile,
-                drain_rx,
-            )
-            .await
-        }
-    }
-}
-
-struct FirstByteReader<R> {
-    first: Option<u8>,
-    inner: R,
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for FirstByteReader<R> {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        if let Some(byte) = self.first.take() {
-            if buf.remaining() > 0 {
-                buf.put_slice(&[byte]);
-                return std::task::Poll::Ready(Ok(()));
-            }
-            self.first = Some(byte);
-        }
-        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
-    }
-}
-
-async fn serve_jsonl<R, W>(
-    mut reader: R,
-    writer: Arc<Mutex<W>>,
-    handler: Arc<dyn ControlHandler>,
-    profile: ControlIpcProfile,
-    mut drain_rx: watch::Receiver<bool>,
-) -> IpcResult<()>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin + Send + 'static,
-{
-    let limits = profile.limits;
-    let idle = Duration::from_millis(limits.idle_timeout_ms.max(1));
-    let mutate_lock = Arc::new(Mutex::new(()));
-    let mut line_buf = Vec::new();
-    let mut encode_buf = Vec::new();
-
-    loop {
-        if *drain_rx.borrow() {
-            return Ok(());
-        }
-        let line = tokio::select! {
-            biased;
-            changed = drain_rx.changed() => {
-                if changed.is_err() || *drain_rx.borrow() {
-                    return Ok(());
-                }
-                continue;
-            }
-            line = tokio::time::timeout(idle, read_jsonl_line(&mut reader, limits, &mut line_buf)) => {
-                match line {
-                    Ok(Ok(Some(line))) => line,
-                    Ok(Ok(None)) => return Ok(()),
-                    Ok(Err(error)) => return Err(error),
-                    Err(_) => return Ok(()),
-                }
-            }
-        };
-
-        if *drain_rx.borrow() {
-            return Err(IpcError::Draining);
-        }
-
-        let response = match decode_jsonl_request(&line, limits) {
-            Ok(request) => {
-                let (_abort_tx, abort_rx) = watch::channel(false);
-                dispatch_request(handler.clone(), request, mutate_lock.clone(), abort_rx).await
-            }
-            Err(error) => ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
-        encode_jsonl_response(&response, limits, &mut encode_buf)?;
-        let mut guard = writer.lock().await;
-        write_all_flush(&mut *guard, &encode_buf).await?;
-    }
+    serve_binary(
+        reader,
+        Arc::new(Mutex::new(writer)),
+        handler,
+        profile,
+        drain_rx,
+    )
+    .await
 }
 
 async fn serve_binary<R, W>(

@@ -19,11 +19,11 @@ use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
 };
 #[cfg(test)]
-use mutsuki_runtime_host::JsonlRunner;
+use mutsuki_runtime_host::BinaryRunner;
 use mutsuki_runtime_host::{
     ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply,
     HostTaskSnapshot, HostTaskState, LaneExecutionPolicy, ProcessRunnerSpec, RunnerLimits,
-    RuntimeBootstrapper, SpawnedJsonlRunner, TokioAsyncExecutor, resolve_load_plan,
+    RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor, resolve_load_plan,
 };
 use mutsuki_runtime_sdk::{
     HostService, LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient,
@@ -2325,7 +2325,7 @@ fn is_bootable_record(record: &PluginRecord) -> bool {
         || record
             .runtime
             .as_ref()
-            .map(|runtime| runtime.runner_link == "jsonl-stdio")
+            .map(|runtime| runtime.runner_link == "binary-stdio")
             .unwrap_or(false)
 }
 
@@ -2336,7 +2336,7 @@ fn register_stdio_runners(
     runtime: &ExternalRuntimeSpec,
     deployment: PluginDeploymentKind,
 ) -> ServiceRuntimeResult<()> {
-    if runtime.runner_link != "jsonl-stdio" {
+    if runtime.runner_link != "binary-stdio" {
         return Err(ServiceRuntimeError::UnsupportedRunnerLink {
             plugin_id: record.manifest.plugin_id.clone(),
             link: runtime.runner_link.clone(),
@@ -2357,7 +2357,7 @@ fn register_stdio_runners(
             env: filtered_environment(&config.runners.env_allowlist, extra_env),
         };
         let mut runner =
-            SpawnedJsonlRunner::spawn(descriptor.clone(), &spec).map_err(|source| {
+            SpawnedBinaryRunner::spawn(descriptor.clone(), &spec).map_err(|source| {
                 ServiceRuntimeError::ExternalRunnerSpawn {
                     runner_id: descriptor.runner_id.clone(),
                     detail: source.to_string(),
@@ -2402,7 +2402,7 @@ fn sidecar_specs(config: &ServiceConfig, catalog: &PluginCatalog) -> Vec<Managed
         .external_records()
         .filter_map(|record| {
             let runtime = record.runtime.as_ref()?;
-            if runtime.runner_link == "jsonl-stdio" && !record.manifest.provides.runners.is_empty()
+            if runtime.runner_link == "binary-stdio" && !record.manifest.provides.runners.is_empty()
             {
                 return None;
             }
@@ -3420,7 +3420,7 @@ mod tests {
     }
 
     #[test]
-    fn service_host_uses_jsonl_run_batch_not_step() {
+    fn service_host_uses_binary_run_batch_not_step() {
         use std::io::Cursor;
 
         use mutsuki_runtime_contracts::{
@@ -3429,11 +3429,12 @@ mod tests {
             WorkResourcePlan,
         };
         use mutsuki_runtime_wire::{
-            DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck, encode_jsonl_response,
+            BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck,
+            RunBatchRequest, decode_binary_request, encode_binary_response,
         };
 
         let descriptor = RunnerDescriptor {
-            runner_id: "jsonl.test".into(),
+            runner_id: "binary.test".into(),
             plugin_id: "plugin.test".into(),
             plugin_generation: 1,
             accepted_protocol_ids: vec!["raw.input".into()],
@@ -3449,14 +3450,14 @@ mod tests {
             ordering: Default::default(),
             control: Default::default(),
             metadata: BTreeMap::new(),
-            contract_surfaces: vec!["runner:jsonl.test".into()],
+            contract_surfaces: vec!["runner:binary.test".into()],
         };
         let mut task = Task::new("task-1", "raw.input", json!({}));
         task.lease_id = Some("lease-1".into());
         let batch = WorkBatch {
             batch_id: "batch-1".into(),
             tick_id: "tick-1".into(),
-            batch_key: "jsonl.test".into(),
+            batch_key: "binary.test".into(),
             entries: vec![BatchEntry {
                 entry_id: "task-1".into(),
                 task_id: "task-1".into(),
@@ -3475,7 +3476,7 @@ mod tests {
             task_leases: vec![TaskLease {
                 lease_id: "lease-1".into(),
                 task_id: "task-1".into(),
-                runner_id: "jsonl.test".into(),
+                runner_id: "binary.test".into(),
                 executor_id: "executor:test".into(),
                 registry_generation: 1,
                 attempt_generation: 0,
@@ -3494,24 +3495,13 @@ mod tests {
             }],
             metadata: Vec::new(),
         };
-        let hello = ProtocolHello::debug_jsonl();
-        let ack = ProtocolHelloAck {
-            protocol: hello.protocol,
-            codec_id: hello.codec_id,
-            schema_revision: hello.schema_revision,
-            max_frame_bytes: hello.max_frame_bytes,
-            max_payload_bytes: hello.max_payload_bytes,
-            max_in_flight_requests: hello.max_in_flight_requests,
-            management_reserved_requests: hello.management_reserved_requests,
-            management_channel: hello.management_channel,
-            feature_flags: hello.feature_flags,
-            plugin: None,
-        };
+        let hello = ProtocolHello::binary();
+        let ack: ProtocolHelloAck = hello.accept(BINARY_CODEC_ID, None).unwrap();
         let mut responses =
-            encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS)
+            encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS)
                 .expect("encode handshake response");
         responses.extend(
-            encode_jsonl_response(
+            encode_binary_response(
                 2,
                 Opcode::RunnerRunBatch,
                 Ok(&completion),
@@ -3521,7 +3511,7 @@ mod tests {
         );
         let reader = Cursor::new(responses);
         let writer = Cursor::new(Vec::<u8>::new());
-        let mut runner = JsonlRunner::new(descriptor, reader, writer);
+        let mut runner = BinaryRunner::new(descriptor, reader, writer);
         let result = runner
             .run_batch(
                 RunnerContext::new(
@@ -3535,11 +3525,16 @@ mod tests {
             )
             .expect("run_batch");
         let (_reader, writer) = runner.into_inner();
-        let request = String::from_utf8(writer.into_inner()).expect("utf8");
+        let written = writer.into_inner();
+        let request_offset = 4 + u32::from_be_bytes(written[..4].try_into().unwrap()) as usize;
+        let (_, request) = decode_binary_request::<RunBatchRequest>(
+            &written[request_offset..],
+            DEFAULT_WIRE_LIMITS,
+        )
+        .unwrap();
         assert_eq!(result.batch_id, "batch-1");
-        assert!(request.contains("\"method\":\"runner.run_batch\""));
-        assert!(request.contains("\"batch\":"));
-        assert!(!request.contains("\"method\":\"runner.step\""));
+        assert_eq!(request.runner_id, "binary.test");
+        assert_eq!(request.batch.batch_id, "batch-1");
     }
 
     #[tokio::test]

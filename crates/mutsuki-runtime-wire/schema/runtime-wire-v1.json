@@ -1,13 +1,11 @@
 {
   "codecs": [
-    "mutsuki.codec.typed-jsonl.v1",
     "mutsuki.codec.typed-msgpack.v1"
   ],
   "limits": {
     "management_reserved_requests": 8,
     "max_frame_bytes": 8388608,
     "max_in_flight_requests": 64,
-    "max_jsonl_line_bytes": 8388608,
     "max_payload_bytes": 4194304
   },
   "operations": [

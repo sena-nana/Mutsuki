@@ -6,6 +6,7 @@ license.workspace = true
 description = "Typed WebHost descriptors, RPC/Event protocol and version contracts"
 
 [dependencies]
+rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

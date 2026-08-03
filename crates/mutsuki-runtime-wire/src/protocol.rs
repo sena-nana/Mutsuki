@@ -4,12 +4,10 @@ use thiserror::Error;
 
 use mutsuki_runtime_contracts::PluginManifest;
 
-pub const DEBUG_JSONL_CODEC_ID: &str = "mutsuki.codec.typed-jsonl.v1";
 pub const BINARY_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
 pub const SCHEMA_REVISION: &str = "mutsuki.runtime.wire/1.3.0";
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_JSONL_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_INLINE_RESOURCE_BYTES: usize = 64 * 1024;
 pub const MAX_IN_FLIGHT_REQUESTS: usize = 64;
 pub const MANAGEMENT_RESERVED_REQUESTS: usize = 8;
@@ -38,7 +36,6 @@ impl WireProtocolVersion {
 pub struct WireLimits {
     pub max_frame_bytes: usize,
     pub max_payload_bytes: usize,
-    pub max_jsonl_line_bytes: usize,
     pub max_inline_resource_bytes: usize,
     pub max_in_flight_requests: usize,
     pub management_reserved_requests: usize,
@@ -48,7 +45,6 @@ impl WireLimits {
     pub fn validate(self) -> Result<(), WireCodecError> {
         if self.max_frame_bytes == 0
             || self.max_payload_bytes == 0
-            || self.max_jsonl_line_bytes == 0
             || self.max_inline_resource_bytes == 0
             || self.max_payload_bytes > self.max_frame_bytes
             || self.max_inline_resource_bytes > self.max_payload_bytes
@@ -65,7 +61,6 @@ impl WireLimits {
 pub const DEFAULT_WIRE_LIMITS: WireLimits = WireLimits {
     max_frame_bytes: MAX_FRAME_BYTES,
     max_payload_bytes: MAX_PAYLOAD_BYTES,
-    max_jsonl_line_bytes: MAX_JSONL_LINE_BYTES,
     max_inline_resource_bytes: MAX_INLINE_RESOURCE_BYTES,
     max_in_flight_requests: MAX_IN_FLIGHT_REQUESTS,
     management_reserved_requests: MANAGEMENT_RESERVED_REQUESTS,
@@ -184,10 +179,6 @@ pub struct ProtocolHello {
 }
 
 impl ProtocolHello {
-    pub fn debug_jsonl() -> Self {
-        Self::for_codec(DEBUG_JSONL_CODEC_ID, DEFAULT_WIRE_LIMITS)
-    }
-
     pub fn binary() -> Self {
         Self::for_codec(BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS)
     }
@@ -195,11 +186,6 @@ impl ProtocolHello {
     pub fn binary_with_limits(limits: WireLimits) -> Result<Self, WireCodecError> {
         limits.validate()?;
         Ok(Self::for_codec(BINARY_CODEC_ID, limits))
-    }
-
-    pub fn debug_jsonl_with_limits(limits: WireLimits) -> Result<Self, WireCodecError> {
-        limits.validate()?;
-        Ok(Self::for_codec(DEBUG_JSONL_CODEC_ID, limits))
     }
 
     fn for_codec(codec_id: &str, limits: WireLimits) -> Self {

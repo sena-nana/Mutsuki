@@ -37,11 +37,10 @@ from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.testing.batches import multi_entry_batch, runner_context
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
-from mutsuki_runner_kit.transport.stdio_jsonl import StdioJsonlBridge
+from mutsuki_runner_kit.transport.stdio_binary import StdioBinaryBridge
 from mutsuki_runner_kit.wire.binary import decode_binary_request, encode_binary_request
 from mutsuki_runner_kit.wire.generated import CORE_WIRE_REVISION, Opcode
-from mutsuki_runner_kit.wire.jsonl import decode_jsonl_request, encode_jsonl_request
-from mutsuki_runner_kit.wire.protocol import DEBUG_JSONL_CODEC_ID, SCHEMA_REVISION, ProtocolHello
+from mutsuki_runner_kit.wire.protocol import BINARY_CODEC_ID, SCHEMA_REVISION, ProtocolHello
 
 
 class BlockingRunner(EchoRunner):
@@ -80,8 +79,8 @@ def benchmark_codec(
         "ctx": to_json_dict(ctx),
         "batch": to_json_dict(batch),
     }
-    encoder = encode_jsonl_request if codec == "typed_jsonl" else encode_binary_request
-    decoder = decode_jsonl_request if codec == "typed_jsonl" else decode_binary_request
+    encoder = encode_binary_request
+    decoder = decode_binary_request
 
     encoded = encoder(1, Opcode.RUNNER_RUN_BATCH, payload)
     decoder(encoded)
@@ -131,20 +130,21 @@ async def benchmark_cancel(iterations: int) -> dict[str, float | int]:
         backend = PythonRunnerBackend()
         runner = BlockingRunner(echo_descriptor())
         backend.register_runner(runner)
-        bridge = StdioJsonlBridge(backend)
-        await bridge.handle_request(
-            json.loads(
-                encode_jsonl_request(
+        bridge = StdioBinaryBridge(backend)
+        await bridge.serve(
+            io.BytesIO(
+                encode_binary_request(
                     1,
                     Opcode.PLUGIN_INITIALIZE,
-                    {"hello": ProtocolHello.for_codec(DEBUG_JSONL_CODEC_ID).to_dict()},
+                    {"hello": ProtocolHello.for_codec(BINARY_CODEC_ID).to_dict()},
                 )
-            )
+            ),
+            io.BytesIO(),
         )
         task = replace(Task.new(f"cancel-task-{index}", "raw.input"), lease_id="lease-cancel")
         batch = multi_entry_batch((task,), lease_ids=("lease-cancel",))
         ctx = runner_context(lease_ids=("lease-cancel",), batch_id=batch.batch_id)
-        run = encode_jsonl_request(
+        run = encode_binary_request(
             2,
             Opcode.RUNNER_RUN_BATCH,
             {
@@ -153,13 +153,13 @@ async def benchmark_cancel(iterations: int) -> dict[str, float | int]:
                 "batch": to_json_dict(batch),
             },
         )
-        cancel = encode_jsonl_request(
+        cancel = encode_binary_request(
             3,
             Opcode.RUNNER_CANCEL,
             {"runner_id": "echo.runner", "invocation_id": ctx.invocation_id},
         )
         started = time.perf_counter_ns()
-        await bridge.serve(io.StringIO((run + cancel).decode()), io.StringIO())
+        await bridge.serve(io.BytesIO(run + cancel), io.BytesIO())
         latencies_ms.append((runner.cancel_received_ns - started) / 1_000_000)
     return {
         "iterations": iterations,
@@ -251,7 +251,7 @@ def main() -> None:
     ]
     codec_results = [
         benchmark_codec(codec, batch, payload, iterations)
-        for codec in ("typed_jsonl", "typed_msgpack")
+        for codec in ("typed_msgpack",)
         for batch, payload, iterations in cases
     ]
     report: dict[str, object] = {

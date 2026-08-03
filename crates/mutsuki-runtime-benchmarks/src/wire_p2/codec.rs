@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::hint::black_box;
 
 use mutsuki_runtime_wire::{
-    AnyWireRequest, RunBatchRequest, decode_binary_any_request, decode_jsonl_any_request,
-    encode_binary_request, encode_jsonl_request,
+    AnyWireRequest, RunBatchRequest, decode_binary_any_request, encode_binary_request,
 };
 
 use crate::allocator::TrackingAllocator;
@@ -13,14 +12,12 @@ use super::fixtures::run_batch_request;
 
 #[derive(Clone, Copy)]
 enum Codec {
-    Jsonl,
     Binary,
 }
 
 impl Codec {
     fn label(self) -> &'static str {
         match self {
-            Self::Jsonl => "jsonl",
             Self::Binary => "binary",
         }
     }
@@ -43,14 +40,20 @@ pub(super) fn run(
             (BenchmarkMode::Full, _) => 3,
         };
         let request = run_batch_request(entries, 32);
-        for codec in [Codec::Jsonl, Codec::Binary] {
-            cases.push(encode_case(
-                allocator, iterations, entries, &request, codec,
-            )?);
-            cases.push(decode_case(
-                allocator, iterations, entries, &request, codec,
-            )?);
-        }
+        cases.push(encode_case(
+            allocator,
+            iterations,
+            entries,
+            &request,
+            Codec::Binary,
+        )?);
+        cases.push(decode_case(
+            allocator,
+            iterations,
+            entries,
+            &request,
+            Codec::Binary,
+        )?);
     }
     Ok(cases)
 }
@@ -115,7 +118,6 @@ fn decode_case(
 
 fn encode(codec: Codec, request: &RunBatchRequest) -> Result<Vec<u8>, String> {
     match codec {
-        Codec::Jsonl => encode_jsonl_request(1, request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS),
         Codec::Binary => {
             encode_binary_request(1, request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
         }
@@ -125,9 +127,6 @@ fn encode(codec: Codec, request: &RunBatchRequest) -> Result<Vec<u8>, String> {
 
 fn decode(codec: Codec, encoded: &[u8]) -> Result<RunBatchRequest, String> {
     let decoded = match codec {
-        Codec::Jsonl => {
-            decode_jsonl_any_request(encoded, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
-        }
         Codec::Binary => {
             decode_binary_any_request(encoded, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
         }

@@ -12,7 +12,7 @@ use mutsuki_runtime_core::{
     RuntimeResult,
 };
 
-use crate::JsonlRunner;
+use crate::BinaryRunner;
 use crate::error::host_failure;
 
 /// Host-neutral launch input. Callers must resolve policy, secrets and the exact
@@ -74,17 +74,17 @@ impl RunnerTerminationHandle for ProcessControl {
     }
 }
 
-type ProcessJsonlRunner = JsonlRunner<BufReader<ChildStdout>, ChildStdin>;
+type ProcessBinaryRunner = BinaryRunner<BufReader<ChildStdout>, ChildStdin>;
 
-pub struct SpawnedJsonlRunner {
+pub struct SpawnedBinaryRunner {
     descriptor: RunnerDescriptor,
     spec: ProcessRunnerSpec,
-    inner: Option<ProcessJsonlRunner>,
+    inner: Option<ProcessBinaryRunner>,
     control: Arc<ProcessControl>,
     stderr: Option<ChildStderr>,
 }
 
-impl SpawnedJsonlRunner {
+impl SpawnedBinaryRunner {
     pub fn spawn(descriptor: RunnerDescriptor, spec: &ProcessRunnerSpec) -> RuntimeResult<Self> {
         let control = Arc::new(ProcessControl::default());
         let (inner, child, stderr) = spawn_process(&descriptor, spec)?;
@@ -191,7 +191,7 @@ impl SpawnedJsonlRunner {
     }
 }
 
-impl Runner for SpawnedJsonlRunner {
+impl Runner for SpawnedBinaryRunner {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }
@@ -236,7 +236,7 @@ impl Runner for SpawnedJsonlRunner {
     }
 }
 
-impl Drop for SpawnedJsonlRunner {
+impl Drop for SpawnedBinaryRunner {
     fn drop(&mut self) {
         self.inner.take();
         if let Ok(mut child) = self.control.child.lock()
@@ -251,7 +251,7 @@ impl Drop for SpawnedJsonlRunner {
 fn spawn_process(
     descriptor: &RunnerDescriptor,
     spec: &ProcessRunnerSpec,
-) -> RuntimeResult<(ProcessJsonlRunner, Child, Option<ChildStderr>)> {
+) -> RuntimeResult<(ProcessBinaryRunner, Child, Option<ChildStderr>)> {
     let mut command = Command::new(&spec.command);
     command
         .args(&spec.args)
@@ -279,7 +279,7 @@ fn spawn_process(
         .ok_or_else(|| host_failure("process_runner.stdout", "child stdout unavailable"))?;
     let stderr = child.stderr.take();
     Ok((
-        JsonlRunner::new(descriptor.clone(), BufReader::new(stdout), stdin),
+        BinaryRunner::new(descriptor.clone(), BufReader::new(stdout), stdin),
         child,
         stderr,
     ))

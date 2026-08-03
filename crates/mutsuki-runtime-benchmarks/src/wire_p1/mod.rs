@@ -24,7 +24,7 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
         &output,
         cases,
         gates,
-        "Runtime Wire JSONL concurrency and management diagnostic with tracking allocator; not headline latency",
+        "Runtime Wire binary concurrency and management diagnostic with tracking allocator; not headline latency",
     )?;
     let passed = report.correctness.passed;
     println!(
@@ -50,12 +50,12 @@ fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
         .iter()
         .map(|case| (case.id.as_str(), case))
         .collect::<BTreeMap<_, _>>();
-    let cancel = &by_id["wire/p1/jsonl/cancel-during-run_batch"];
+    let cancel = &by_id["wire/p1/binary/cancel-during-run_batch"];
     let cancel_p95 = cancel.counters["p95_ns"] as f64;
     let cancel_max = cancel.counters["max_ns"] as f64;
-    let single = &by_id["wire/p1/jsonl/concurrent/in-flight-1"];
-    let concurrent_16 = &by_id["wire/p1/jsonl/concurrent/in-flight-16"];
-    let concurrent_56 = &by_id["wire/p1/jsonl/concurrent/in-flight-56"];
+    let single = &by_id["wire/p1/binary/concurrent/in-flight-1"];
+    let concurrent_16 = &by_id["wire/p1/binary/concurrent/in-flight-16"];
+    let concurrent_56 = &by_id["wire/p1/binary/concurrent/in-flight-56"];
     let single_alloc = single.allocations.allocated_bytes as f64 / single.units as f64;
     let concurrent_56_alloc =
         concurrent_56.allocations.allocated_bytes as f64 / concurrent_56.units as f64;

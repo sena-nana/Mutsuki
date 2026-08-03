@@ -7,7 +7,7 @@ use mutsuki_runtime_core::CoreRuntime;
 use mutsuki_runtime_sdk::{BuiltinPluginLoader, LoadedPlugin, PluginBuilder};
 use serde_json::json;
 
-use crate::{JsonlRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
+use crate::{BinaryRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
 
 use super::helpers::{
     abi_plugin_fixture, descriptor, host_with_echo_runner, host_with_portable_plugin_artifact,
@@ -178,7 +178,7 @@ fn abi_plugin_boots_through_registered_abi_runner_bridge() {
     let writer = Cursor::new(Vec::<u8>::new());
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
-    host.register_abi_runner(Box::new(JsonlRunner::new(
+    host.register_abi_runner(Box::new(BinaryRunner::new(
         runner_descriptor,
         reader,
         writer,
@@ -198,7 +198,7 @@ fn loaded_abi_plugin_keeps_abi_runner_deployment() {
     let mut host = RuntimeBootstrapper::new();
     host.register_loaded_plugin(LoadedPlugin {
         manifest,
-        runners: vec![Box::new(JsonlRunner::new(
+        runners: vec![Box::new(BinaryRunner::new(
             runner_descriptor,
             Cursor::new(Vec::<u8>::new()),
             Cursor::new(Vec::<u8>::new()),
@@ -235,7 +235,7 @@ fn abi_plugin_runner_requires_active_plugin_backend_descriptor() {
     let writer = Cursor::new(Vec::<u8>::new());
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
-    host.register_abi_runner(Box::new(JsonlRunner::new(
+    host.register_abi_runner(Box::new(BinaryRunner::new(
         runner_descriptor,
         reader,
         writer,
@@ -290,7 +290,7 @@ fn active_plugin_backend_requires_matching_bridge_deployment() {
     let writer = Cursor::new(Vec::<u8>::new());
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
-    host.register_abi_runner(Box::new(JsonlRunner::new(
+    host.register_abi_runner(Box::new(BinaryRunner::new(
         runner_descriptor,
         reader,
         writer,
@@ -321,7 +321,7 @@ fn active_plugin_backend_requires_bridge_to_support_configured_codec() {
     let writer = Cursor::new(Vec::<u8>::new());
     let mut host = RuntimeBootstrapper::new();
     host.register_manifest(manifest);
-    host.register_abi_runner(Box::new(JsonlRunner::new(
+    host.register_abi_runner(Box::new(BinaryRunner::new(
         runner_descriptor,
         reader,
         writer,

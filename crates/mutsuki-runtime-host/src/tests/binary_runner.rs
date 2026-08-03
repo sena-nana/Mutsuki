@@ -4,22 +4,24 @@ use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::{Runner, RunnerContext};
 use mutsuki_runtime_wire::{
-    DEFAULT_WIRE_LIMITS, Opcode, ProtocolHello, ProtocolHelloAck, encode_jsonl_response,
+    BINARY_CODEC_ID, CommandBatchRequest, CommandPlanRequest, DEFAULT_WIRE_LIMITS,
+    ExportPlanRequest, Opcode, ProtocolHello, ProtocolHelloAck, RunBatchRequest, SagaPlanRequest,
+    decode_binary_frame, decode_binary_request, encode_binary_response,
 };
 use serde::Serialize;
 use serde_json::json;
 
-use crate::JsonlRunner;
+use crate::BinaryRunner;
 
 use super::helpers::{descriptor, test_resource_ref};
 
 #[test]
-fn jsonl_runner_uses_runner_run_batch_method_surface() {
-    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+fn binary_runner_uses_runner_run_batch_method_surface() {
+    let runner_descriptor = descriptor("binary.runner", "raw.input");
     let mut task = Task::new("task-1", "raw.input", json!({}));
     task.lease_id = Some("task-lease-test".into());
     let batch = single_test_batch("batch-test", "task-lease-test", task);
-    let result = CompletionBatch {
+    let completion = CompletionBatch {
         batch_id: "batch-test".into(),
         tick_id: "tick-1".into(),
         results: vec![EntryCompletion {
@@ -30,10 +32,10 @@ fn jsonl_runner_uses_runner_run_batch_method_surface() {
         }],
         metadata: Vec::new(),
     };
-    let response = typed_responses(&[(Opcode::RunnerRunBatch, &result)]);
+    let response = typed_responses(&[(Opcode::RunnerRunBatch, &completion)]);
     let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
-    let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
+    let mut runner = BinaryRunner::new(runner_descriptor, reader, writer);
 
     let result = runner
         .run_batch(
@@ -48,23 +50,26 @@ fn jsonl_runner_uses_runner_run_batch_method_surface() {
         )
         .unwrap();
     let (_reader, writer) = runner.into_inner();
-    let request = String::from_utf8(writer.into_inner()).unwrap();
+    let bytes = writer.into_inner();
+    let frames = split_frames(&bytes);
+    let (_, request) =
+        decode_binary_request::<RunBatchRequest>(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
 
     assert_eq!(result.batch_id, "batch-test");
-    assert!(request.contains("\"method\":\"runner.run_batch\""));
-    assert!(request.contains("\"batch\":"));
-    assert!(!request.contains("\"task\":"));
-    assert!(request.contains("\"registry_generation\":1"));
-    assert!(request.contains("\"executor_id\":\"executor:test\""));
-    assert!(request.contains("\"task_lease_ids\":[\"task-lease-test\"]"));
+    assert_eq!(request.runner_id, "binary.runner");
+    assert_eq!(request.batch.batch_id, "batch-test");
+    assert_eq!(request.batch.row_payload_tasks().unwrap().len(), 1);
+    assert_eq!(request.ctx.registry_generation, 1);
+    assert_eq!(request.ctx.executor_id, "executor:test");
+    assert_eq!(request.ctx.task_lease_ids, vec!["task-lease-test"]);
 }
 
 #[test]
-fn jsonl_runner_rejects_task_lease_mismatch_before_writing_request() {
-    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+fn binary_runner_rejects_task_lease_mismatch_before_writing_request() {
+    let runner_descriptor = descriptor("binary.runner", "raw.input");
     let reader = Cursor::new(Vec::<u8>::new());
     let writer = Cursor::new(Vec::<u8>::new());
-    let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
+    let mut runner = BinaryRunner::new(runner_descriptor, reader, writer);
     let mut task = Task::new("task-1", "raw.input", json!({}));
     task.lease_id = Some("task-lease-task".into());
     let batch = single_test_batch("batch-test", "task-lease-task", task);
@@ -91,7 +96,7 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
     let lease = TaskLease {
         lease_id: lease_id.into(),
         task_id: task.task_id.clone(),
-        runner_id: "jsonl.runner".into(),
+        runner_id: "binary.runner".into(),
         attempt_generation: 1,
         executor_id: "executor:test".into(),
         registry_generation: 1,
@@ -101,7 +106,7 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
     WorkBatch {
         batch_id: batch_id.into(),
         tick_id: "tick-1".into(),
-        batch_key: "jsonl.runner".into(),
+        batch_key: "binary.runner".into(),
         entries: vec![BatchEntry {
             entry_id: task.task_id.clone(),
             task_id: task.task_id.clone(),
@@ -122,26 +127,30 @@ fn single_test_batch(batch_id: &str, lease_id: &str, task: Task) -> WorkBatch {
 }
 
 #[test]
-fn jsonl_runner_cancel_and_dispose_use_management_methods() {
-    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+fn binary_runner_cancel_and_dispose_use_management_methods() {
+    let runner_descriptor = descriptor("binary.runner", "raw.input");
     let response = typed_responses(&[(Opcode::RunnerCancel, &()), (Opcode::RunnerDispose, &())]);
     let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
-    let mut runner = JsonlRunner::new(runner_descriptor, reader, writer);
+    let mut runner = BinaryRunner::new(runner_descriptor, reader, writer);
 
     runner.cancel("inv-1").unwrap();
     runner.dispose().unwrap();
     let (_reader, writer) = runner.into_inner();
-    let request = String::from_utf8(writer.into_inner()).unwrap();
+    let bytes = writer.into_inner();
+    let frames = split_frames(&bytes);
+    let cancel = decode_binary_frame(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
+    let dispose = decode_binary_frame(frames[2], DEFAULT_WIRE_LIMITS).unwrap();
 
-    assert!(request.contains("\"method\":\"runner.cancel\""));
-    assert!(request.contains("\"invocation_id\":\"inv-1\""));
-    assert!(request.contains("\"method\":\"runner.dispose\""));
+    assert_eq!(cancel.header.opcode, Opcode::RunnerCancel);
+    assert!(cancel.header.opcode.is_management());
+    assert_eq!(dispose.header.opcode, Opcode::RunnerDispose);
+    assert!(dispose.header.opcode.is_management());
 }
 
 #[test]
-fn jsonl_runner_uses_resource_plan_method_surface() {
-    let runner_descriptor = descriptor("jsonl.runner", "raw.input");
+fn binary_runner_uses_resource_plan_method_surface() {
+    let runner_descriptor = descriptor("binary.runner", "raw.input");
     let resource = test_resource_ref("resource:text", "text", ResourceSemantic::FrozenValue);
     let capability = test_resource_ref(
         "resource:db",
@@ -192,7 +201,7 @@ fn jsonl_runner_uses_resource_plan_method_surface() {
     ]);
     let reader = Cursor::new(response);
     let writer = Cursor::new(Vec::<u8>::new());
-    let runner = JsonlRunner::new(runner_descriptor, reader, writer);
+    let runner = BinaryRunner::new(runner_descriptor, reader, writer);
 
     assert_eq!(
         runner.execute_export_plan(&export).unwrap().status,
@@ -225,13 +234,21 @@ fn jsonl_runner_uses_resource_plan_method_surface() {
         1
     );
     let (_reader, writer) = runner.into_inner();
-    let request = String::from_utf8(writer.into_inner()).unwrap();
+    let bytes = writer.into_inner();
+    let frames = split_frames(&bytes);
+    let (_, export_request) =
+        decode_binary_request::<ExportPlanRequest>(frames[1], DEFAULT_WIRE_LIMITS).unwrap();
+    let (_, command_request) =
+        decode_binary_request::<CommandPlanRequest>(frames[2], DEFAULT_WIRE_LIMITS).unwrap();
+    let (_, batch_request) =
+        decode_binary_request::<CommandBatchRequest>(frames[3], DEFAULT_WIRE_LIMITS).unwrap();
+    let (_, saga_request) =
+        decode_binary_request::<SagaPlanRequest>(frames[4], DEFAULT_WIRE_LIMITS).unwrap();
 
-    assert!(request.contains("\"method\":\"resource.export\""));
-    assert!(request.contains("\"method\":\"resource.command\""));
-    assert!(request.contains("\"method\":\"resource.command_batch\""));
-    assert!(request.contains("\"method\":\"resource.saga\""));
-    assert!(request.contains("\"target\":\"inline_utf8\""));
+    assert_eq!(export_request.plan.target, "inline_utf8");
+    assert_eq!(command_request.plan.operation, "query");
+    assert_eq!(batch_request.batch.batch_id, "batch:1");
+    assert_eq!(saga_request.saga.saga_id, "saga:1");
 }
 
 fn typed_responses<T: Serialize>(responses: &[(Opcode, &T)]) -> Vec<u8> {
@@ -244,16 +261,27 @@ fn typed_responses<T: Serialize>(responses: &[(Opcode, &T)]) -> Vec<u8> {
 }
 
 fn typed_response_bytes(responses: &[(Opcode, serde_json::Value)]) -> Vec<u8> {
-    let hello = ProtocolHello::debug_jsonl();
-    let ack: ProtocolHelloAck =
-        serde_json::from_value(serde_json::to_value(hello).unwrap()).unwrap();
+    let hello = ProtocolHello::binary();
+    let ack: ProtocolHelloAck = hello.accept(BINARY_CODEC_ID, None).unwrap();
     let mut encoded =
-        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
     for (index, (opcode, value)) in responses.iter().enumerate() {
         encoded.extend(
-            encode_jsonl_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
+            encode_binary_response(index as u64 + 2, *opcode, Ok(value), DEFAULT_WIRE_LIMITS)
                 .unwrap(),
         );
     }
     encoded
+}
+
+fn split_frames(bytes: &[u8]) -> Vec<&[u8]> {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let len = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let end = offset + 4 + len;
+        frames.push(&bytes[offset..end]);
+        offset = end;
+    }
+    frames
 }

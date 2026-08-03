@@ -9,13 +9,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::codec::{
-    decode_jsonl_response, encode_binary_cancel, encode_binary_request_with_scratch,
-    encode_jsonl_request,
-};
+use crate::codec::{encode_binary_cancel, encode_binary_request_with_scratch};
 use crate::error::{IpcError, IpcResult};
 use crate::frame::{BINARY_HEADER_LEN, BINARY_LENGTH_PREFIX_LEN, FrameFlags};
-use crate::io::{read_binary_frame, read_jsonl_line, write_all_flush};
+use crate::io::{read_binary_frame, write_all_flush};
 use crate::limits::{ControlIpcLimits, ControlIpcProfile};
 use crate::transport::{ControlStream, connect_transport};
 use mutsuki_service_config::IpcTransport;
@@ -96,13 +93,7 @@ impl ControlSession {
         let pending: Arc<Mutex<HashMap<u64, PendingResponse>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let reader_task = spawn_reader(
-            reader,
-            config.codec,
-            config.limits,
-            pending.clone(),
-            closed.clone(),
-        );
+        let reader_task = spawn_reader(reader, config.limits, pending.clone(), closed.clone());
         Ok(Self {
             config,
             writer,
@@ -157,23 +148,16 @@ impl ControlSession {
 
         let mut encode_buf = self.encode_buf.lock().await;
         let mut payload_buf = self.payload_buf.lock().await;
-        let write_result = match self.config.codec {
-            IpcCodec::Binary => {
-                encode_binary_request_with_scratch(
-                    request_id,
-                    &request,
-                    self.config.limits,
-                    &mut encode_buf,
-                    &mut payload_buf,
-                )?;
-                let mut writer = self.writer.lock().await;
-                write_all_flush(&mut *writer, &encode_buf).await
-            }
-            IpcCodec::Jsonl => {
-                encode_jsonl_request(&request, self.config.limits, &mut encode_buf)?;
-                let mut writer = self.writer.lock().await;
-                write_all_flush(&mut *writer, &encode_buf).await
-            }
+        let write_result = {
+            encode_binary_request_with_scratch(
+                request_id,
+                &request,
+                self.config.limits,
+                &mut encode_buf,
+                &mut payload_buf,
+            )?;
+            let mut writer = self.writer.lock().await;
+            write_all_flush(&mut *writer, &encode_buf).await
         };
         drop(payload_buf);
         drop(encode_buf);
@@ -195,12 +179,6 @@ impl ControlSession {
     }
 
     pub async fn cancel(&self, request_id: u64) -> IpcResult<()> {
-        if self.config.codec != IpcCodec::Binary {
-            if let Some(pending) = self.pending.lock().await.remove(&request_id) {
-                let _ = pending.tx.send(Err(IpcError::Cancelled));
-            }
-            return Ok(());
-        }
         let bytes = encode_binary_cancel(request_id, self.config.limits)?;
         let mut writer = self.writer.lock().await;
         write_all_flush(&mut *writer, &bytes).await?;
@@ -228,16 +206,12 @@ impl ControlSession {
 
 fn spawn_reader<R: AsyncRead + Send + Unpin + 'static>(
     mut reader: R,
-    codec: IpcCodec,
     limits: ControlIpcLimits,
     pending: Arc<Mutex<HashMap<u64, PendingResponse>>>,
     closed: Arc<std::sync::atomic::AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let result = match codec {
-            IpcCodec::Binary => read_binary_loop(&mut reader, limits, &pending).await,
-            IpcCodec::Jsonl => read_jsonl_loop(&mut reader, limits, &pending).await,
-        };
+        let result = read_binary_loop(&mut reader, limits, &pending).await;
         closed.store(true, Ordering::Relaxed);
         let mut pending = pending.lock().await;
         for (_, entry) in pending.drain() {
@@ -285,56 +259,13 @@ async fn read_binary_loop<R: AsyncRead + Unpin>(
     }
 }
 
-async fn read_jsonl_loop<R: AsyncRead + Unpin>(
-    reader: &mut R,
-    limits: ControlIpcLimits,
-    pending: &Arc<Mutex<HashMap<u64, PendingResponse>>>,
-) -> IpcResult<()> {
-    let mut line_buf = Vec::new();
-    // JSONL has no request id; pair responses FIFO with the oldest pending request.
-    loop {
-        let Some(line) = read_jsonl_line(reader, limits, &mut line_buf).await? else {
-            return Ok(());
-        };
-        let response = decode_jsonl_response(&line, limits)?;
-        let mut map = pending.lock().await;
-        let Some(request_id) = map.keys().copied().min() else {
-            return Err(IpcError::LateResponse(0));
-        };
-        if let Some(entry) = map.remove(&request_id) {
-            let _ = entry.tx.send(Ok(response));
-        } else {
-            return Err(IpcError::LateResponse(request_id));
-        }
-    }
-}
-
-/// One-shot compatibility helper for benchmarks and migration callers.
+/// One-shot helper for callers that do not need a persistent control session.
 pub async fn request_oneshot(
     config: &ControlClientConfig,
     request: ControlRequest,
 ) -> IpcResult<ControlResponse> {
     let stream = connect_transport(config.transport.clone(), &config.endpoint).await?;
-    match config.codec {
-        IpcCodec::Jsonl => oneshot_jsonl(stream, config.limits, request).await,
-        IpcCodec::Binary => oneshot_binary(stream, config.limits, request).await,
-    }
-}
-
-async fn oneshot_jsonl(
-    stream: ControlStream,
-    limits: ControlIpcLimits,
-    request: ControlRequest,
-) -> IpcResult<ControlResponse> {
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut encode_buf = Vec::new();
-    encode_jsonl_request(&request, limits, &mut encode_buf)?;
-    write_all_flush(&mut writer, &encode_buf).await?;
-    let mut line_buf = Vec::new();
-    let line = read_jsonl_line(&mut reader, limits, &mut line_buf)
-        .await?
-        .ok_or(IpcError::Closed)?;
-    decode_jsonl_response(&line, limits)
+    oneshot_binary(stream, config.limits, request).await
 }
 
 async fn oneshot_binary(

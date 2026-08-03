@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-use mutsuki_runtime_host::{BinaryTransport, JsonlTransport, TypedRequestTransport};
+use mutsuki_runtime_host::{BinaryTransport, TypedRequestTransport};
 
 use crate::allocator::TrackingAllocator;
 use crate::report::{BenchmarkMode, CaseResult};
@@ -14,23 +14,7 @@ pub(super) fn run(
     mode: BenchmarkMode,
     allocator: &TrackingAllocator,
 ) -> Result<Vec<CaseResult>, String> {
-    Ok(vec![jsonl(mode, allocator)?, binary(mode, allocator)?])
-}
-
-fn jsonl(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<CaseResult, String> {
-    let concurrency = 16;
-    let (reader, writer, server) = spawn(Codec::Jsonl, concurrency);
-    let transport = JsonlTransport::with_limits(
-        reader,
-        writer,
-        mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
-        Duration::from_secs(5),
-    )
-    .map_err(|error| error.to_string())?;
-    let case = measure(mode, allocator, "jsonl", &transport, concurrency)?;
-    let (reader, writer) = transport.into_inner();
-    close(reader, writer, server)?;
-    Ok(case)
+    Ok(vec![binary(mode, allocator)?])
 }
 
 fn binary(mode: BenchmarkMode, allocator: &TrackingAllocator) -> Result<CaseResult, String> {

@@ -5,12 +5,13 @@ import contextlib
 import sys
 from typing import BinaryIO, TextIO
 
+from mutsuki_runner_kit.contracts.errors import ERR_RUNTIME_HOST_FAILED, RuntimeError
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
+from mutsuki_runner_kit.runners.protocol import RunnerInvokeError
 from mutsuki_runner_kit.transport.dispatcher import (
     ResourceRequestHandler,
     RunnerRequestDispatcher,
 )
-from mutsuki_runner_kit.transport.stdio_jsonl import _runtime_error
 from mutsuki_runner_kit.wire.binary import (
     BinaryRequestFrame,
     encode_binary_response,
@@ -163,3 +164,21 @@ def run_stdio_binary_bridge(
     bridge = StdioBinaryBridge(runner_backend, resource_handler)
     with contextlib.redirect_stdout(sys.stderr):
         asyncio.run(bridge.serve(input_stream, output_stream))
+
+
+def _runtime_error(exc: Exception) -> RuntimeError:
+    if isinstance(exc, RunnerInvokeError):
+        return exc.error
+    if isinstance(exc, WireProtocolFailure):
+        return RuntimeError(
+            code=ERR_RUNTIME_HOST_FAILED,
+            source="python_runtime_wire",
+            route=exc.code,
+            evidence={"reason": exc.code, "detail": exc.detail[:512]},
+        )
+    return RuntimeError(
+        code=ERR_RUNTIME_HOST_FAILED,
+        source="python_runtime_wire",
+        route="wire.dispatch_failed",
+        evidence={"exception_type": type(exc).__qualname__},
+    )

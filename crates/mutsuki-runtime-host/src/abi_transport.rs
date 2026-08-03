@@ -78,9 +78,6 @@ impl<T: TypedRequestTransport> Runner for TransportRunner<T> {
     }
 }
 
-/// Source-compatible JSONL v1 name retained for the documented ABI retirement window.
-pub type TransportJsonlRunner<T> = TransportRunner<T>;
-
 pub struct TransportResourceProvider<T> {
     provider_id: String,
     transport: Arc<T>,

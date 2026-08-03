@@ -99,7 +99,7 @@ Runner.cancel(invocation_id)
 Runner.dispose()
 ```
 
-JSONL runner ABI 只暴露 batch 方法面：
+Binary runner ABI 只暴露 batch 方法面：
 
 ```text
 runner.run_batch({ runner_id, ctx, batch }) -> CompletionBatch
@@ -107,16 +107,16 @@ runner.cancel({ runner_id, invocation_id })
 runner.dispose({ runner_id })
 ```
 
-这些可读 method 仅是 typed JSONL debug codec 对稳定 Opcode 的生成映射；Host、SDK 和
+这些可读 method 仅是稳定 Opcode 的语义映射；Host、SDK 和
 语言 Kit 调用层不得传入裸 method 或任意 params。每个连接必须先执行 typed
 `InitializeRequest { hello, config? }`；owner-defined config 只存在于该开放控制面字段，
 ABI guest 的 manifest/provider surface 只存在于 `ProtocolHelloAck.plugin`。初始化确认
 protocol major、codec id、schema revision、feature、management 能力和协商上限。正式
 binary codec 使用 4-byte big-endian length prefix、24-byte 显式 header 和 typed
-MessagePack payload；header 字段不得依赖 Rust 内存布局。JSONL 与 binary 必须共享同一
+MessagePack payload；header 字段不得依赖 Rust 内存布局。Runtime Wire 只有这一套
 request 类型、semantic fixtures 和兼容策略。
 
-JSONL 行、binary frame、payload、pending request 与管理保留容量均有硬上限。大于 wire
+binary frame、payload、pending request 与管理保留容量均有硬上限。大于 wire
 inline limit 的资源 bytes 必须改用 `ResourceRef`、stream 或 shared descriptor，不能拆成
 JSON/MessagePack 数组内联。
 
@@ -149,7 +149,7 @@ task.submit_batch({ batch: TaskBatch }) -> TaskHandle[]
 
 `RunnerContext.cancel_requested` 是 dispatch 时可序列化的取消快照，不承担运行期共享状态。
 本地 in-process backend 可额外提供不可序列化的 host-local cancellation probe，但不得把
-指针、原子量或 callback 加入 `RunnerContext`，也不得改变 JSONL/MessagePack、Python mirror
+指针、原子量或 callback 加入 `RunnerContext`，也不得改变 MessagePack、Python mirror
 或 schema shape。
 
 Core 记录 `runner.run_batch` trace span 时必须绑定本次 dispatch 的 batch / entry 事实：
@@ -256,7 +256,7 @@ replacement；达到隔离上限时 Host degraded / 拒绝新 dispatch。若隔�
 返回后重建；该 handle 与恢复方法不是 wire contract，不提供 Rust 线程级强制终止。
 
 `next_required_step` 是 Rust Host 的非 wire 调度提示：它只汇总 TaskPool 增量索引中未来的
-ready/wake/lease step，不改变 Task、Runner 或 JSONL ABI。event-driven Host 将该 step 与
+ready/wake/lease step，不改变 Task、Runner 或 binary ABI。event-driven Host 将该 step 与
 running invocation 的 tick/wall-clock supervision deadline 合并为一次性 timer；mailbox 事件
 立即重新调度。timer 到期可以直接把 `current_step` 推进到目标 step，但仍必须执行完整的
 lease reclaim、wake、expectation、scheduler budget 和 dispatch 校验。
@@ -316,7 +316,7 @@ TaskRecord 仍是唯一权威记录；TaskPool 同步维护可从主记录完整
 
 Task enqueue 时缓存 payload 的 compact JSON 编码字节数。`DispatchBudget.max_bytes` 对所选
 payload 编码字节数之和执行硬限制；payload 在 TaskPool 中不可变，因此缓存值与相同
-`serde_json` ABI payload 编码的允许偏差为 0。该预算不包含 WorkBatch / JSONL envelope、
+`serde_json` payload 编码的允许偏差为 0。该预算不包含 WorkBatch / binary frame、
 lease、entry 或 resource plan 开销；具体 ABI/transport 仍必须在最终发送边界执行自己的完整
 frame/message 硬限制，不能把 payload estimate 当作完整 frame 大小。
 
@@ -675,7 +675,7 @@ binding 自动重新 fan-out；补跑必须显式生成 migration/backfill task�
 
 - `crates/mutsuki-runtime-contracts`：本文件协议对象。
 - `crates/mutsuki-runtime-core`：CoreRuntime、TaskPool、RunnerRegistry、ResourceManager。
-- `crates/mutsuki-runtime-host`：runtime bootstrapper、load-plan resolver、JSONL runner client。
+- `crates/mutsuki-runtime-host`：runtime bootstrapper、load-plan resolver、binary runner client。
 - `crates/mutsuki-runtime-sdk`：Rust SDK async/task/resource helper，以及 host/plugin
   扩展基础 trait；本次没有新增 wire protocol object。
 - `kits/python-runner`：Python mirror、runner backend、stdio bridge、resource manager。

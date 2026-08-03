@@ -159,7 +159,7 @@ Cookie 扫码登录、聊天管理/自助
 绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend
 拒绝这些 Web-only 配置。
 
-外置 ABI 包使用 Core SDK 的版本化 JSONL byte transport，并按
+外置 ABI 包使用 Core SDK 的版本化 binary byte transport，并按
 `<dynamic_dir>/<plugin>/plugin.toml + DLL/SO/dylib` 安装。`artifact.path` 必须留在插件目录，
 `artifact.sha256` 必须匹配文件；ServiceHost 在 LoadPlan 冻结前完成校验、ABI v2
 `plugin.initialize` 和

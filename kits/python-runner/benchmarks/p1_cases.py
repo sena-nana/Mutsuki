@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import io
-import json
+import struct
 import statistics
 import time
 import tracemalloc
@@ -15,10 +15,10 @@ from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.runners.backend import PythonRunnerBackend
 from mutsuki_runner_kit.testing.batches import multi_entry_batch, runner_context
 from mutsuki_runner_kit.testing.runners import EchoRunner, echo_descriptor
-from mutsuki_runner_kit.transport.stdio_jsonl import StdioJsonlBridge
+from mutsuki_runner_kit.transport.stdio_binary import StdioBinaryBridge
+from mutsuki_runner_kit.wire.binary import encode_binary_request
 from mutsuki_runner_kit.wire.generated import Opcode
-from mutsuki_runner_kit.wire.jsonl import encode_jsonl_request
-from mutsuki_runner_kit.wire.protocol import DEBUG_JSONL_CODEC_ID, ProtocolHello
+from mutsuki_runner_kit.wire.protocol import BINARY_CODEC_ID, ProtocolHello
 
 
 class GroupBarrierRunner(EchoRunner):
@@ -57,7 +57,7 @@ class CancelObservedRunner(EchoRunner):
 async def concurrency_case(concurrency: int, groups: int) -> dict[str, int | float]:
     backend = PythonRunnerBackend()
     backend.register_runner(GroupBarrierRunner(echo_descriptor(), concurrency))
-    bridge = StdioJsonlBridge(backend)
+    bridge = StdioBinaryBridge(backend)
     await initialize(bridge)
     frames = request_group(concurrency)
     gc.collect()
@@ -67,11 +67,11 @@ async def concurrency_case(concurrency: int, groups: int) -> dict[str, int | flo
     elapsed_ns = 0
     try:
         for _ in range(groups):
-            output = io.StringIO()
+            output = io.BytesIO()
             started = time.perf_counter_ns()
-            await bridge.serve(io.StringIO(frames), output)
+            await bridge.serve(io.BytesIO(frames), output)
             elapsed_ns += time.perf_counter_ns() - started
-            if len(output.getvalue().splitlines()) != concurrency:
+            if count_frames(output.getvalue()) != concurrency:
                 raise RuntimeError("concurrency benchmark lost a response")
         _, peak_bytes = tracemalloc.get_traced_memory()
     finally:
@@ -96,16 +96,16 @@ async def cancel_case(iterations: int) -> dict[str, int | float]:
         backend = PythonRunnerBackend()
         runner = CancelObservedRunner(echo_descriptor())
         backend.register_runner(runner)
-        bridge = StdioJsonlBridge(backend)
+        bridge = StdioBinaryBridge(backend)
         await initialize(bridge)
         run, invocation_id = run_request(2, index)
-        cancel = encode_jsonl_request(
+        cancel = encode_binary_request(
             3,
             Opcode.RUNNER_CANCEL,
             {"runner_id": "echo.runner", "invocation_id": invocation_id},
         )
         started = time.perf_counter_ns()
-        await bridge.serve(io.StringIO((run + cancel).decode()), io.StringIO())
+        await bridge.serve(io.BytesIO(run + cancel), io.BytesIO())
         samples.append(runner.cancel_received_ns - started)
     samples.sort()
     return {
@@ -116,17 +116,21 @@ async def cancel_case(iterations: int) -> dict[str, int | float]:
     }
 
 
-async def initialize(bridge: StdioJsonlBridge) -> None:
-    hello = ProtocolHello.for_codec(DEBUG_JSONL_CODEC_ID)
-    response = await bridge.handle_request(
-        json.loads(encode_jsonl_request(1, Opcode.PLUGIN_INITIALIZE, {"hello": hello.to_dict()}))
+async def initialize(bridge: StdioBinaryBridge) -> None:
+    hello = ProtocolHello.for_codec(BINARY_CODEC_ID)
+    output = io.BytesIO()
+    await bridge.serve(
+        io.BytesIO(
+            encode_binary_request(1, Opcode.PLUGIN_INITIALIZE, {"hello": hello.to_dict()})
+        ),
+        output,
     )
-    if response["ok"] is not True:
+    if count_frames(output.getvalue()) != 1:
         raise RuntimeError("benchmark bridge initialization failed")
 
 
-def request_group(concurrency: int) -> str:
-    return b"".join(run_request(index + 2, index)[0] for index in range(concurrency)).decode()
+def request_group(concurrency: int) -> bytes:
+    return b"".join(run_request(index + 2, index)[0] for index in range(concurrency))
 
 
 def run_request(request_id: int, index: int) -> tuple[bytes, str]:
@@ -138,10 +142,20 @@ def run_request(request_id: int, index: int) -> tuple[bytes, str]:
         invocation_id=f"invocation-{index}",
     )
     return (
-        encode_jsonl_request(
+        encode_binary_request(
             request_id,
             Opcode.RUNNER_RUN_BATCH,
             {"runner_id": "echo.runner", "ctx": to_json_dict(ctx), "batch": to_json_dict(batch)},
         ),
         ctx.invocation_id,
     )
+
+
+def count_frames(encoded: bytes) -> int:
+    count = 0
+    offset = 0
+    while offset < len(encoded):
+        body_len = struct.unpack_from(">I", encoded, offset)[0]
+        offset += 4 + body_len
+        count += 1
+    return count

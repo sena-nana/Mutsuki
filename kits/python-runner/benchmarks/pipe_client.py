@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import struct
 import subprocess
 import sys
@@ -15,8 +14,7 @@ from mutsuki_runner_kit.contracts.task import Task
 from mutsuki_runner_kit.testing.batches import multi_entry_batch, runner_context
 from mutsuki_runner_kit.wire.binary import binary_response_payload, encode_binary_request
 from mutsuki_runner_kit.wire.generated import Opcode
-from mutsuki_runner_kit.wire.jsonl import encode_jsonl_request
-from mutsuki_runner_kit.wire.protocol import BINARY_CODEC_ID, DEBUG_JSONL_CODEC_ID, ProtocolHello
+from mutsuki_runner_kit.wire.protocol import BINARY_CODEC_ID, ProtocolHello
 
 
 class FixtureProcess:
@@ -38,10 +36,9 @@ class FixtureProcess:
 
     def initialize(self) -> int:
         started = time.perf_counter_ns()
-        codec_id = DEBUG_JSONL_CODEC_ID if self.codec == "python-jsonl" else BINARY_CODEC_ID
         request_id = self.send(
             Opcode.PLUGIN_INITIALIZE,
-            {"hello": ProtocolHello.for_codec(codec_id).to_dict()},
+            {"hello": ProtocolHello.for_codec(BINARY_CODEC_ID).to_dict()},
         )
         response = self.receive()
         if response[0] != request_id or not response[1]:
@@ -51,25 +48,12 @@ class FixtureProcess:
     def send(self, opcode: Opcode, payload: dict[str, object]) -> int:
         request_id = self.next_request_id
         self.next_request_id += 1
-        if self.codec == "python-jsonl":
-            encoded = encode_jsonl_request(request_id, opcode, payload)
-        else:
-            encoded = encode_binary_request(request_id, opcode, payload)
+        encoded = encode_binary_request(request_id, opcode, payload)
         self.input.write(encoded)
         self.input.flush()
         return request_id
 
     def receive(self) -> tuple[int, bool, JsonValue]:
-        if self.codec == "python-jsonl":
-            encoded = self.output.readline()
-            if not encoded:
-                raise RuntimeError("fixture process closed JSONL output")
-            response = json.loads(encoded)
-            return (
-                cast(int, response["request_id"]),
-                cast(bool, response["ok"]),
-                cast(JsonValue, response["result"] if response["ok"] else response["error"]),
-            )
         prefix = self._read_exact(4)
         (body_len,) = struct.unpack(">I", prefix)
         request_id, _, is_error, payload = binary_response_payload(

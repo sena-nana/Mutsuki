@@ -356,22 +356,23 @@ async fn ws_rpc_params(
 ) -> Result<serde_json::Value, String> {
     use tokio_tungstenite::{connect_async, tungstenite::Message};
     let (mut ws, _) = connect_async(format!("ws://{addr}/ws")).await.expect("ws");
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Hello {
+    ws.send(Message::Binary(
+        WireMessage::Hello {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
             capabilities: vec!["runtime.read".into(), "*".into()],
             auth_token: Some("local-dev".into()),
-        })
+        }
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .unwrap();
-    let Message::Text(ack) = ws.next().await.unwrap().unwrap() else {
+    let Message::Binary(ack) = ws.next().await.unwrap().unwrap() else {
         panic!("ack");
     };
     assert!(matches!(
-        serde_json::from_str::<WireMessage>(&ack).unwrap(),
+        WireMessage::decode(ack.as_ref()).unwrap(),
         WireMessage::HelloAck { .. }
     ));
     let id = Uuid::new_v4();
@@ -380,22 +381,23 @@ async fn ws_rpc_params(
         obj.entry("capabilities")
             .or_insert(json!(["runtime.read", "runtime.write", "*"]));
     }
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Rpc(RpcRequest {
+    ws.send(Message::Binary(
+        WireMessage::Rpc(RpcRequest {
             id,
             namespace: namespace.into(),
             method: method.into(),
             params,
-        }))
+        })
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .unwrap();
-    let Message::Text(text) = ws.next().await.unwrap().unwrap() else {
+    let Message::Binary(bytes) = ws.next().await.unwrap().unwrap() else {
         panic!("rpc");
     };
-    match serde_json::from_str::<WireMessage>(&text).unwrap() {
+    match WireMessage::decode(bytes.as_ref()).unwrap() {
         WireMessage::RpcResult(result) => match result.error {
             Some(error) => Err(error.message),
             None => Ok(result.result.unwrap_or(serde_json::Value::Null)),

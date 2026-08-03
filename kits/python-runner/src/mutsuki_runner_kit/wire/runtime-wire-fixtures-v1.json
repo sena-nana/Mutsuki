@@ -3,7 +3,7 @@
     {
       "type": "ProtocolHello",
       "value": {
-        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "codec_id": "mutsuki.codec.typed-msgpack.v1",
         "feature_flags": [
           "typed_requests",
           "out_of_order_responses",
@@ -28,7 +28,7 @@
           "mode": "fixture"
         },
         "hello": {
-          "codec_id": "mutsuki.codec.typed-jsonl.v1",
+          "codec_id": "mutsuki.codec.typed-msgpack.v1",
           "feature_flags": [
             "typed_requests",
             "out_of_order_responses",
@@ -50,7 +50,7 @@
     {
       "type": "ProtocolHelloAck",
       "value": {
-        "codec_id": "mutsuki.codec.typed-jsonl.v1",
+        "codec_id": "mutsuki.codec.typed-msgpack.v1",
         "feature_flags": [
           "typed_requests",
           "out_of_order_responses",

@@ -4,14 +4,19 @@ use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mutsuki_runtime_contracts::{CompletionBatch, RunnerDescriptor, RuntimeError, WorkBatch};
+use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
+use mutsuki_runtime_contracts::{
+    CommandPlan, CompletionBatch, ExportPlan, PlanReceipt, RunnerDescriptor, RuntimeError,
+    ScalarValue, WorkBatch,
+};
 use mutsuki_runtime_core::{
     Runner, RunnerContext, RunnerManagementHandle, RuntimeFailure, RuntimeResult,
 };
 use mutsuki_runtime_wire::{
-    CancelRunnerRequest, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, InitializeRequest,
-    ProtocolHello, ProtocolHelloAck, RunBatchRequest, WireLimits, WireRequest,
-    decode_binary_response, encode_binary_request,
+    CancelRunnerRequest, CommandBatchRequest, CommandPlanRequest, DEFAULT_WIRE_LIMITS,
+    DisposeRunnerRequest, ExportPlanRequest, InitializeRequest, ProtocolHello, ProtocolHelloAck,
+    RunBatchRequest, SagaPlanRequest, WireLimits, WireRequest, decode_binary_response,
+    encode_binary_request,
 };
 use serde_json::Value;
 
@@ -241,6 +246,38 @@ where
     pub fn transport(&self) -> BinaryTransport<R, W> {
         self.transport.clone()
     }
+
+    pub fn into_inner(self) -> (R, W) {
+        self.transport.into_inner()
+    }
+
+    pub fn execute_export_plan(&self, plan: &ExportPlan) -> RuntimeResult<PlanReceipt> {
+        self.transport.request(&ExportPlanRequest {
+            provider_id: None,
+            plan: plan.clone(),
+        })
+    }
+
+    pub fn execute_command_plan(&self, plan: &CommandPlan) -> RuntimeResult<PlanReceipt> {
+        self.transport.request(&CommandPlanRequest {
+            provider_id: None,
+            plan: plan.clone(),
+        })
+    }
+
+    pub fn execute_command_batch(&self, batch: &CommandBatch) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.transport.request(&CommandBatchRequest {
+            provider_id: None,
+            batch: batch.clone(),
+        })
+    }
+
+    pub fn execute_saga_plan(&self, saga: &SagaPlan) -> RuntimeResult<Vec<PlanReceipt>> {
+        self.transport.request(&SagaPlanRequest {
+            provider_id: None,
+            saga: saga.clone(),
+        })
+    }
 }
 
 impl<R, W> Runner for BinaryRunner<R, W>
@@ -257,6 +294,7 @@ where
         ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
+        validate_batch_leases(&ctx, &batch)?;
         self.transport.request(&RunBatchRequest {
             runner_id: self.descriptor.runner_id.clone(),
             ctx,
@@ -313,4 +351,33 @@ where
             runner_id: self.runner_id.clone(),
         })
     }
+}
+
+fn validate_batch_leases(ctx: &RunnerContext, batch: &WorkBatch) -> RuntimeResult<()> {
+    let batch_lease_ids = batch
+        .task_leases
+        .iter()
+        .map(|lease| lease.lease_id.clone())
+        .collect::<Vec<_>>();
+    if batch_lease_ids != ctx.task_lease_ids {
+        let mut error = RuntimeError::new(
+            mutsuki_runtime_contracts::ERR_TASK_CLAIM_CONFLICT,
+            "binary_runner",
+            format!("runner.run_batch.{}", batch.batch_id),
+        );
+        error.evidence.insert(
+            "ctx_task_lease_ids".into(),
+            ScalarValue::String(ctx.task_lease_ids.join(",")),
+        );
+        error.evidence.insert(
+            "batch_task_lease_ids".into(),
+            ScalarValue::String(batch_lease_ids.join(",")),
+        );
+        error.evidence.insert(
+            "executor_id".into(),
+            ScalarValue::String(ctx.executor_id.clone()),
+        );
+        return Err(RuntimeFailure::new(error));
+    }
+    Ok(())
 }

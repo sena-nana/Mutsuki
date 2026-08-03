@@ -29,7 +29,7 @@ impl Deployment {
         match self {
             Self::Builtin => "builtin",
             Self::Abi => "abi",
-            Self::RustProcess => "rust-process-jsonl",
+            Self::RustProcess => "rust-process-binary",
         }
     }
 }
@@ -286,7 +286,7 @@ fn install_process_plugin(config: &ServiceConfig) -> Result<(), String> {
                 args: Vec::new(),
                 env: BTreeMap::new(),
                 cwd: None,
-                runner_link: "jsonl-stdio".into(),
+                runner_link: "binary-stdio".into(),
             }),
         },
     )
@@ -668,7 +668,7 @@ fn build_report(
         "repository_revisions": revisions,
         "environment_id": environment_id,
         "environment": environment,
-        "feature_set": ["actual-ipc", "builtin", "abi", "rust-process-jsonl", "lifecycle-reload"],
+        "feature_set": ["actual-ipc", "builtin", "abi", "rust-process-binary", "lifecycle-reload"],
         "deployment": "service-host-matrix",
         "measurement_boundary": "ServiceRuntime start through authenticated IPC, Core task completion, reload and graceful shutdown",
         "sampling": {"warmup_iterations": args.warmup, "samples_per_process": args.samples, "process_runs": 1},

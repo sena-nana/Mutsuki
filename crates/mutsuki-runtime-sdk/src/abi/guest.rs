@@ -1,20 +1,19 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::{PluginManifest, RuntimeError};
-use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
+use mutsuki_runtime_contracts::PluginManifest;
+use mutsuki_runtime_core::{Runner, RuntimeResult};
 use mutsuki_runtime_wire::{
-    AnyWireRequest, DEBUG_JSONL_CODEC_ID, DecodedWireRequest, InitializedPlugin, Opcode,
-    ProtocolHello, ProtocolHelloAck, decode_jsonl_any_request,
+    AnyWireRequest, BINARY_CODEC_ID, DecodedWireRequest, InitializedPlugin, Opcode, ProtocolHello,
+    ProtocolHelloAck,
 };
 use serde_json::Value;
 
 use crate::{LoadedPlugin, ResourceProviderGateway};
 
-use super::error::{abi_failure, encode_binary_result, encode_result};
-use super::types::AbiGuest;
+use super::error::{abi_failure, encode_binary_result};
 
-pub struct JsonlPluginGuest {
+pub(super) struct PluginGuest {
     manifest: PluginManifest,
     runners: BTreeMap<String, Box<dyn Runner>>,
     providers: BTreeMap<String, Arc<dyn ResourceProviderGateway>>,
@@ -31,24 +30,10 @@ pub(super) trait GuestResponseCodec {
     ) -> Vec<u8>;
 }
 
-pub(super) struct JsonlGuestCodec;
-
-impl GuestResponseCodec for JsonlGuestCodec {
-    const CODEC_ID: &'static str = DEBUG_JSONL_CODEC_ID;
-
-    fn encode<T: serde::Serialize>(
-        request_id: u64,
-        opcode: Opcode,
-        result: RuntimeResult<T>,
-    ) -> Vec<u8> {
-        encode_result(request_id, opcode, result)
-    }
-}
-
 pub(super) struct BinaryGuestCodec;
 
 impl GuestResponseCodec for BinaryGuestCodec {
-    const CODEC_ID: &'static str = mutsuki_runtime_wire::BINARY_CODEC_ID;
+    const CODEC_ID: &'static str = BINARY_CODEC_ID;
 
     fn encode<T: serde::Serialize>(
         request_id: u64,
@@ -59,8 +44,8 @@ impl GuestResponseCodec for BinaryGuestCodec {
     }
 }
 
-impl JsonlPluginGuest {
-    pub fn new(plugin: LoadedPlugin) -> RuntimeResult<Self> {
+impl PluginGuest {
+    pub(super) fn new(plugin: LoadedPlugin) -> RuntimeResult<Self> {
         if !plugin.host_services.is_empty() {
             return Err(abi_failure(
                 "abi.host_service_unsupported",
@@ -272,115 +257,5 @@ impl JsonlPluginGuest {
     }
 }
 
-impl AbiGuest for JsonlPluginGuest {
-    fn request(&mut self, request: &[u8]) -> Vec<u8> {
-        match decode_jsonl_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
-            Ok(decoded) => self.handle::<JsonlGuestCodec>(decoded),
-            Err(error) => serde_json::to_vec(&RuntimeError::new(
-                mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-                "abi.guest",
-                format!("abi.decode:{error}"),
-            ))
-            .unwrap_or_default(),
-        }
-    }
-}
-
 pub(super) type ConfiguredPluginFactory =
     Box<dyn FnOnce(Value) -> RuntimeResult<LoadedPlugin> + Send + 'static>;
-
-pub struct ConfiguredJsonlPluginGuest {
-    factory: Option<ConfiguredPluginFactory>,
-    plugin: Option<JsonlPluginGuest>,
-    initialization_attempted: bool,
-}
-
-impl ConfiguredJsonlPluginGuest {
-    pub fn new(factory: ConfiguredPluginFactory) -> Self {
-        Self {
-            factory: Some(factory),
-            plugin: None,
-            initialization_attempted: false,
-        }
-    }
-}
-
-impl AbiGuest for ConfiguredJsonlPluginGuest {
-    fn request(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let decoded =
-            match decode_jsonl_any_request(bytes, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
-                Ok(decoded) => decoded,
-                Err(error) => {
-                    return serde_json::to_vec(&RuntimeError::new(
-                        mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
-                        "abi.guest",
-                        format!("abi.decode:{error}"),
-                    ))
-                    .unwrap_or_default();
-                }
-            };
-        if let Some(plugin) = self.plugin.as_mut() {
-            return plugin.handle::<JsonlGuestCodec>(decoded);
-        }
-        let request_id = decoded.request_id;
-        let AnyWireRequest::Initialize(request) = decoded.request else {
-            return encode_result::<()>(
-                request_id,
-                decoded.request.opcode(),
-                Err(abi_failure(
-                    "abi.not_initialized",
-                    "plugin.initialize must precede business requests",
-                )),
-            );
-        };
-        if self.initialization_attempted {
-            return encode_result::<()>(
-                request_id,
-                Opcode::PluginInitialize,
-                Err(abi_failure(
-                    "abi.already_initialized",
-                    "plugin.initialize may only be called once",
-                )),
-            );
-        }
-        self.initialization_attempted = true;
-        let config = request.config.unwrap_or(Value::Null);
-        let result = self
-            .factory
-            .take()
-            .ok_or_else(|| abi_failure("abi.factory_missing", "plugin factory unavailable"))
-            .and_then(|factory| factory(config))
-            .and_then(JsonlPluginGuest::new)
-            .and_then(|mut plugin| {
-                let ack = plugin.initialize::<JsonlGuestCodec>(request.hello)?;
-                self.plugin = Some(plugin);
-                Ok(ack)
-            });
-        encode_result(request_id, Opcode::PluginInitialize, result)
-    }
-}
-
-pub struct FailedAbiGuest {
-    error: RuntimeError,
-}
-
-impl FailedAbiGuest {
-    pub fn new(error: RuntimeFailure) -> Self {
-        Self {
-            error: error.error().clone(),
-        }
-    }
-}
-
-impl AbiGuest for FailedAbiGuest {
-    fn request(&mut self, request: &[u8]) -> Vec<u8> {
-        match decode_jsonl_any_request(request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS) {
-            Ok(decoded) => encode_result::<()>(
-                decoded.request_id,
-                decoded.request.opcode(),
-                Err(RuntimeFailure::new(self.error.clone())),
-            ),
-            Err(_) => serde_json::to_vec(&self.error).unwrap_or_default(),
-        }
-    }
-}

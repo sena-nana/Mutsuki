@@ -1,6 +1,7 @@
 use mutsuki_runtime_contracts::{
     ResourceRef, RuntimeError, RuntimeEvent, ScalarValue, Task, TaskOutcome, TaskStatus, TraceSpan,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -9,12 +10,31 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+pub const TAURI_BRIDGE_CODEC_ID: &str = "mutsuki.codec.typed-msgpack.v1";
+
 #[derive(Clone, Debug, Error)]
 pub enum BridgeError {
     #[error("{code}: {message}")]
     Frontend { code: String, message: String },
     #[error("event channel has no active receiver")]
     NoEventReceiver,
+}
+
+pub fn encode_bridge_payload<T: Serialize>(value: &T) -> Result<Vec<u8>, FrontendError> {
+    rmp_serde::to_vec_named(value).map_err(|error| {
+        FrontendError::new(
+            "bridge.payload.encode",
+            "failed to encode binary bridge payload",
+        )
+        .with_details(serde_json::json!({ "error": error.to_string() }))
+    })
+}
+
+pub fn decode_bridge_payload<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FrontendError> {
+    rmp_serde::from_slice(bytes).map_err(|error| {
+        FrontendError::new("bridge.payload.decode", "invalid binary bridge payload")
+            .with_details(serde_json::json!({ "error": error.to_string() }))
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

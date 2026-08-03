@@ -642,7 +642,6 @@ pub struct IpcSection {
     pub tcp_debug_addr: Option<String>,
     pub max_frame_bytes: usize,
     pub max_payload_bytes: usize,
-    pub max_jsonl_line_bytes: usize,
     pub max_in_flight: usize,
     pub idle_timeout_ms: u64,
     pub request_timeout_ms: u64,
@@ -659,7 +658,6 @@ impl Default for IpcSection {
             tcp_debug_addr: None,
             max_frame_bytes: 1024 * 1024,
             max_payload_bytes: 512 * 1024,
-            max_jsonl_line_bytes: 256 * 1024,
             max_in_flight: 64,
             idle_timeout_ms: 60_000,
             request_timeout_ms: 30_000,
@@ -680,7 +678,6 @@ pub enum IpcTransport {
 pub enum IpcCodec {
     #[default]
     Binary,
-    Jsonl,
 }
 
 impl Default for IpcTransport {

@@ -15,7 +15,7 @@ members = [
     "hosts/service/crates/*",
     "hosts/service/fixtures/abi-plugin",
     "hosts/tauri/crates/*",
-    "hosts/tauri/fixtures/jsonl-runner",
+    "hosts/tauri/fixtures/binary-runner",
     "hosts/web/crates/*",
     "hosts/distributed/crates/*",
     "kits/agent/crates/*",

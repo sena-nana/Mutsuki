@@ -11,9 +11,9 @@ Implemented behavior:
 - restart and stop by runner id
 - graceful shutdown before service exit
 
-Core-connected `jsonl-stdio` runners are spawned by ServiceHost and registered with Core through
-`mutsuki-runtime-host::JsonlRunner`. Task execution calls `runner.run_batch`, `runner.cancel`, and
-`runner.dispose` over JSONL stdio (`{ ctx, batch }` -> `CompletionBatch`). ServiceHost does not
+Core-connected `binary-stdio` runners are spawned by ServiceHost and registered with Core through
+`mutsuki-runtime-host::BinaryRunner`. Task execution calls `runner.run_batch`, `runner.cancel`, and
+`runner.dispose` over binary stdio (`{ ctx, batch }` -> `CompletionBatch`). ServiceHost does not
 implement the obsolete `Runner::step` / `runner.step` path.
 
 ## Cancellation and isolation
@@ -26,6 +26,6 @@ dispatch instead of accumulating zombie threads.
 
 Process and Python/Script deployments use a process boundary for hard isolation. On hard timeout,
 the Host kills the child process through a thread-safe termination handle, waits for the blocked
-JSONL call to return, recreates the process, and only then restores the runner and worker capacity.
+binary call to return, recreates the process, and only then restores the runner and worker capacity.
 Untrusted code, crash isolation, and strict wall-clock termination must use a process/ABI sidecar;
 declaring a native runner as `Blocking` or `Script` does not grant thread-level hard termination.

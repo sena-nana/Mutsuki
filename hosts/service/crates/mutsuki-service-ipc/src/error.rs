@@ -8,14 +8,10 @@ pub enum IpcError {
     Io(#[from] std::io::Error),
     #[error("ipc protocol error: {0}")]
     Protocol(String),
-    #[error("json decode error: {0}")]
-    Json(#[from] serde_json::Error),
     #[error("frame oversized: actual={actual} limit={limit}")]
     FrameOversized { actual: usize, limit: usize },
     #[error("payload oversized: actual={actual} limit={limit}")]
     PayloadOversized { actual: usize, limit: usize },
-    #[error("jsonl line oversized: actual={actual} limit={limit}")]
-    JsonlLineOversized { actual: usize, limit: usize },
     #[error("truncated frame: expected={expected} actual={actual}")]
     Truncated { expected: usize, actual: usize },
     #[error("unknown opcode: {0:#06x}")]

@@ -1,7 +1,6 @@
 mod cases;
 mod fixtures;
 
-use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 
@@ -20,7 +19,7 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
         &output,
         cases,
         gates,
-        "Runtime Wire JSONL codec diagnostic with tracking allocator; not headline latency",
+        "Runtime Wire binary codec diagnostic with tracking allocator; not headline latency",
     )?;
     let passed = report.correctness.passed;
     println!(
@@ -68,37 +67,6 @@ fn options() -> Result<(BenchmarkMode, PathBuf, String), String> {
 }
 
 fn performance_gates(cases: &[crate::report::CaseResult]) -> Vec<GateResult> {
-    let by_id = cases
-        .iter()
-        .map(|case| (case.id.as_str(), case))
-        .collect::<BTreeMap<_, _>>();
-    let mut gates = Vec::new();
-    for entries in [1, 16, 256, 4_096] {
-        for direction in ["encode", "decode"] {
-            let legacy =
-                &by_id[format!("wire/p0/legacy_json_rpc/run_batch/{direction}/entries-{entries}")
-                    .as_str()];
-            let typed = &by_id
-                [format!("wire/p0/typed_jsonl/run_batch/{direction}/entries-{entries}").as_str()];
-            let legacy_bytes = legacy.allocations.allocated_bytes as f64;
-            let typed_bytes = typed.allocations.allocated_bytes as f64;
-            gates.push(GateResult {
-                gate_id: format!("p0.{direction}.entries-{entries}.allocated-bytes"),
-                kind: "optimization".into(),
-                passed: typed_bytes < legacy_bytes,
-                actual: typed_bytes,
-                limit: legacy_bytes,
-                unit: "bytes".into(),
-            });
-            gates.push(GateResult {
-                gate_id: format!("p0.{direction}.entries-{entries}.latency"),
-                kind: "non-regression".into(),
-                passed: typed.ns_per_unit <= legacy.ns_per_unit * 1.15,
-                actual: typed.ns_per_unit,
-                limit: legacy.ns_per_unit * 1.15,
-                unit: "ns/entry".into(),
-            });
-        }
-    }
-    gates
+    let _ = cases;
+    Vec::new()
 }

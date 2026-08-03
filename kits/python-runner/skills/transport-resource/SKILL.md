@@ -1,6 +1,6 @@
 ---
 name: transport-resource
-description: Change Python Runner Link transport, stdio JSONL framing, codecs, management messages, resource broker clients, resource plans, descriptor validation, or byte transfer behavior.
+description: Change Python Runner Link transport, stdio binary framing, codecs, management messages, resource broker clients, resource plans, descriptor validation, or byte transfer behavior.
 ---
 
 # Transport And Resource

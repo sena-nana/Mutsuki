@@ -1,15 +1,16 @@
 use std::io::Cursor;
 
-use mutsuki_runtime_contracts::ScalarValue;
+use mutsuki_runtime_contracts::{ERR_RUNTIME_HOST_FAILED, ScalarValue};
 use mutsuki_runtime_wire::{
-    DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, Opcode, ProtocolHello, encode_jsonl_response,
+    BINARY_CODEC_ID, DEFAULT_WIRE_LIMITS, DisposeRunnerRequest, Opcode, ProtocolHello,
+    encode_binary_response,
 };
 
-use crate::JsonlTransport;
+use crate::BinaryTransport;
 
 #[test]
 fn eof_completes_every_pending_request() {
-    let transport = JsonlTransport::new(
+    let transport = BinaryTransport::new(
         Cursor::new(initialized_responses()),
         Cursor::new(Vec::<u8>::new()),
     );
@@ -36,13 +37,19 @@ fn eof_completes_every_pending_request() {
 #[test]
 fn stdout_pollution_fails_transport_with_bounded_diagnostic() {
     let mut responses = initialized_responses();
-    responses.extend_from_slice(b"this is a log line, not a protocol frame\n");
-    let transport = JsonlTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
+    responses.extend_from_slice(b"not-a-binary-frame");
+    let transport = BinaryTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
     initialize(&transport);
 
     let error = transport.request(&dispose_request()).unwrap_err();
 
-    assert!(reason(&error).contains("malformed JSONL response"));
+    assert_eq!(error.error().code, ERR_RUNTIME_HOST_FAILED);
+    assert_eq!(error.error().source, "wire_multiplexer");
+    assert_eq!(error.error().route, "wire.transport");
+    let diagnostic = reason(&error);
+    assert!(!diagnostic.is_empty());
+    assert!(diagnostic.len() <= 256);
+    assert!(!diagnostic.contains("not-a-binary-frame"));
     let _ = transport.into_inner();
 }
 
@@ -50,9 +57,9 @@ fn stdout_pollution_fails_transport_with_bounded_diagnostic() {
 fn unknown_or_late_response_id_fails_transport() {
     let mut responses = initialized_responses();
     responses.extend(
-        encode_jsonl_response(99, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
+        encode_binary_response(99, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
     );
-    let transport = JsonlTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
+    let transport = BinaryTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
     initialize(&transport);
 
     let error = transport.request(&dispose_request()).unwrap_err();
@@ -65,9 +72,9 @@ fn unknown_or_late_response_id_fails_transport() {
 fn typed_response_decode_failure_poison_future_requests() {
     let mut responses = initialized_responses();
     responses.extend(
-        encode_jsonl_response(3, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
+        encode_binary_response(3, Opcode::RunnerCancel, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
     );
-    let transport = JsonlTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
+    let transport = BinaryTransport::new(Cursor::new(responses), Cursor::new(Vec::<u8>::new()));
     initialize(&transport);
 
     let first = transport.request(&dispose_request()).unwrap_err();
@@ -78,19 +85,17 @@ fn typed_response_decode_failure_poison_future_requests() {
 }
 
 fn initialized_responses() -> Vec<u8> {
-    let hello = ProtocolHello::debug_jsonl();
-    let ack = hello
-        .accept(mutsuki_runtime_wire::DEBUG_JSONL_CODEC_ID, None)
-        .unwrap();
+    let hello = ProtocolHello::binary();
+    let ack = hello.accept(BINARY_CODEC_ID, None).unwrap();
     let mut responses =
-        encode_jsonl_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
+        encode_binary_response(1, Opcode::PluginInitialize, Ok(&ack), DEFAULT_WIRE_LIMITS).unwrap();
     responses.extend(
-        encode_jsonl_response(2, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
+        encode_binary_response(2, Opcode::RunnerDispose, Ok(&()), DEFAULT_WIRE_LIMITS).unwrap(),
     );
     responses
 }
 
-fn initialize<R, W>(transport: &JsonlTransport<R, W>)
+fn initialize<R, W>(transport: &BinaryTransport<R, W>)
 where
     R: std::io::BufRead + Send + 'static,
     W: std::io::Write + Send + 'static,
@@ -100,7 +105,7 @@ where
 
 fn dispose_request() -> DisposeRunnerRequest {
     DisposeRunnerRequest {
-        runner_id: "jsonl.runner".into(),
+        runner_id: "binary.runner".into(),
     }
 }
 

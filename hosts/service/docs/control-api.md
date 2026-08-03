@@ -3,17 +3,14 @@
 The control plane speaks a local authenticated request/response protocol over Named Pipe
 (Windows), Unix Socket (POSIX), or loopback-only TCP debug.
 
-## Transport profiles
+## Transport Profile
 
-Production default is a **persistent binary** session:
+The control plane uses a **persistent binary** session:
 
 - length-prefixed frames (`MSHC` magic) with stable `ControlMethod` opcodes;
 - MessagePack payloads (ServiceHost-owned opcode space, separate from Runner Wire);
 - multiplexed in-flight requests correlated by `RequestId`;
 - hard limits on frame/payload size, pending depth, idle timeout, and MessagePack nesting.
-
-`jsonl` remains a **diagnostics / migration** profile: newline-delimited JSON, sequential on a
-persistent connection, with a hard max line length. New high-frequency callers must not default to it.
 
 Public client surface:
 
@@ -22,24 +19,24 @@ ControlClient::connect(...)
 ControlSession::request(...)
 ControlSession::close(...)
 ControlClient::request(...)          // persistent session with reconnect
-ControlClient::request_oneshot(...)  // explicit one-shot compatibility API
+ControlClient::request_oneshot(...)  // binary one-shot helper
 ```
 
-## JSONL compatibility envelope
+## Request Envelope
 
-Request:
+The following JSON examples document the semantic payload shape before MessagePack encoding.
 
 ```json
 {"token":"...","method":"service_status","params":null}
 ```
 
-Response:
+Successful response:
 
 ```json
 {"ok":true,"result":{}}
 ```
 
-Error:
+Error response:
 
 ```json
 {"ok":false,"error":{"code":"failed","message":"core is not running"}}

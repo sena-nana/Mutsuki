@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 mutsuki-runtime-contracts.workspace = true
+rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

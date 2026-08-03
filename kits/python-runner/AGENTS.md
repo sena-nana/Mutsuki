@@ -36,7 +36,7 @@ load-plan 校验和调度事实源。
 - `Kit`：本仓库整体，表示 Python SDK + runner glue。
 - `SDK`：插件作者 API，例如 `Plugin`、`Context`、`TaskError`、resource helper。
 - `Backend`：runner 执行形态，例如 `PythonRunnerBackend`。
-- `Bridge`：跨边界传输/编解码，例如 `StdioJsonlBridge`。
+- `Bridge`：跨边界传输/编解码，例如 `StdioBinaryBridge`。
 - `Protocol` / `contracts`：纯 wire shape mirror。
 - `Provider`：只用于未来的具体 resource/effect provider，不得混入 SDK facade。
 - 禁止把本仓库组件命名为 `Host`；Host 只属于应用运行环境或 native/Tauri/CLI 容器。
@@ -53,7 +53,7 @@ load-plan 校验和调度事实源。
 
 - `skills/contract-mirror/SKILL.md`：Rust contracts 的 Python wire mirror。
 - `skills/runner-backend/SKILL.md`：PythonRunnerBackend、batch 执行、取消和 task.call。
-- `skills/transport-resource/SKILL.md`：JSONL transport、codec 和 resource broker。
+- `skills/transport-resource/SKILL.md`：Binary Wire transport、codec 和 resource broker。
 - `skills/conformance-testing/SKILL.md`：跨语言 conformance、fixture 和兼容验证。
 
 协议变更先读 contract-mirror；跨多个方向时再读 conformance-testing。

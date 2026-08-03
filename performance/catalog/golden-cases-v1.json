@@ -25,7 +25,6 @@
     "stress_payload_bytes": [1048576],
     "resource": ["none", "shared-read", "write-conflict", "strict-order"],
     "observability": ["off", "enabled", "saturated"],
-    "deployment": ["builtin", "abi", "rust-process", "python-jsonl", "python-binary"]
+    "deployment": ["builtin", "abi", "rust-process-binary", "python-binary"]
   }
 }
-

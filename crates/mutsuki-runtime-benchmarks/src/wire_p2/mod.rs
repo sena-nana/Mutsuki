@@ -8,7 +8,6 @@ mod io;
 mod server;
 mod transport;
 
-use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 
@@ -29,7 +28,7 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
         &output,
         cases,
         gates,
-        "Runtime Wire binary/JSONL transport and ABI diagnostic with tracking allocator; not headline latency",
+        "Runtime Wire binary transport and ABI diagnostic with tracking allocator; not headline latency",
     )?;
     let passed = report.correctness.passed;
     println!(
@@ -51,53 +50,8 @@ pub fn run(allocator: &TrackingAllocator) -> Result<(), String> {
 }
 
 fn gates(cases: &[CaseResult]) -> Vec<GateResult> {
-    let cases = cases
-        .iter()
-        .map(|case| (case.id.as_str(), case))
-        .collect::<BTreeMap<_, _>>();
-    let mut gates = Vec::new();
-    for entries in [16, 256, 4_096] {
-        for direction in ["encode", "decode"] {
-            let json = &cases[format!("wire/p2/jsonl/{direction}/entries-{entries}").as_str()];
-            let binary = &cases[format!("wire/p2/binary/{direction}/entries-{entries}").as_str()];
-            gates.push(gate(
-                format!("p2.binary.{direction}.entries-{entries}.latency"),
-                binary.ns_per_unit,
-                json.ns_per_unit * 1.5,
-                "ns/entry",
-            ));
-            if direction == "encode" {
-                gates.push(gate(
-                    format!("p2.binary.entries-{entries}.frame-bytes"),
-                    binary.counters["frame_bytes"] as f64,
-                    json.counters["frame_bytes"] as f64 - 1.0,
-                    "bytes",
-                ));
-            }
-        }
-    }
-    for surface in ["stdio", "native_abi"] {
-        let json = &cases[format!("wire/p2/{surface}/jsonl").as_str()];
-        let binary = &cases[format!("wire/p2/{surface}/binary").as_str()];
-        gates.push(gate(
-            format!("p2.{surface}.binary.latency"),
-            binary.ns_per_unit,
-            json.ns_per_unit * 1.25,
-            "ns/request",
-        ));
-    }
-    gates
-}
-
-fn gate(name: String, actual: f64, limit: f64, unit: &str) -> GateResult {
-    GateResult {
-        gate_id: name,
-        kind: "optimization".into(),
-        passed: actual <= limit,
-        actual,
-        limit,
-        unit: unit.into(),
-    }
+    let _ = cases;
+    Vec::new()
 }
 
 fn options() -> Result<(BenchmarkMode, PathBuf, String), String> {

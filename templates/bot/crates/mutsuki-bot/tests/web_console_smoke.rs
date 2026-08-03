@@ -138,22 +138,23 @@ async fn ws_rpc_with_params(
     let (mut ws, _) = connect_async(format!("ws://{addr}/ws"))
         .await
         .map_err(|err| err.to_string())?;
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Hello {
+    ws.send(Message::Binary(
+        WireMessage::Hello {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
             capabilities: vec!["runtime.read".into(), "*".into()],
             auth_token: Some(auth_token.into()),
-        })
+        }
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .map_err(|err| err.to_string())?;
-    let Message::Text(ack) = ws.next().await.unwrap().unwrap() else {
+    let Message::Binary(ack) = ws.next().await.unwrap().unwrap() else {
         return Err("missing hello ack".into());
     };
     assert!(matches!(
-        serde_json::from_str::<WireMessage>(&ack).unwrap(),
+        WireMessage::decode(ack.as_ref()).unwrap(),
         WireMessage::HelloAck { .. }
     ));
     let id = Uuid::new_v4();
@@ -162,22 +163,23 @@ async fn ws_rpc_with_params(
         obj.entry("capabilities")
             .or_insert(serde_json::json!(["runtime.read", "*"]));
     }
-    ws.send(Message::Text(
-        serde_json::to_string(&WireMessage::Rpc(RpcRequest {
+    ws.send(Message::Binary(
+        WireMessage::Rpc(RpcRequest {
             id,
             namespace: namespace.into(),
             method: method.into(),
             params,
-        }))
+        })
+        .encode()
         .unwrap()
         .into(),
     ))
     .await
     .map_err(|err| err.to_string())?;
-    let Message::Text(text) = ws.next().await.unwrap().unwrap() else {
+    let Message::Binary(bytes) = ws.next().await.unwrap().unwrap() else {
         return Err("missing rpc result".into());
     };
-    match serde_json::from_str::<WireMessage>(&text).unwrap() {
+    match WireMessage::decode(bytes.as_ref()).unwrap() {
         WireMessage::RpcResult(result) => match result.error {
             Some(error) => Err(error.message),
             None => Ok(result.result.unwrap_or(serde_json::Value::Null)),

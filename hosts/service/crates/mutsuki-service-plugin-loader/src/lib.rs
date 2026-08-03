@@ -518,7 +518,7 @@ fn disabled_plugins(disabled_dir: &Path) -> BTreeSet<String> {
 }
 
 fn default_runner_link() -> String {
-    "jsonl-stdio".into()
+    "binary-stdio".into()
 }
 
 #[cfg(test)]

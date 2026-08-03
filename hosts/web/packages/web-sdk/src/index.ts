@@ -1,5 +1,7 @@
 /** Controlled Vue extension SDK. No raw token / IPC access. */
 
+import { decode as decodeMsgpack, encode as encodeMsgpack } from "@msgpack/msgpack";
+
 export type JsonValue =
   | null
   | boolean
@@ -81,6 +83,8 @@ export interface BridgeHelloAck {
   };
 }
 
+type WireRecord = Record<string, unknown>;
+
 /** Browser-side bridge client. Tokens never leave this module. */
 export class WebBridgeClient implements RpcClient, EventClient {
   private ws: WebSocket | null = null;
@@ -108,21 +112,23 @@ export class WebBridgeClient implements RpcClient, EventClient {
     this.closed = false;
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.url);
+      ws.binaryType = "arraybuffer";
       this.ws = ws;
       ws.addEventListener("open", () => {
-        ws.send(
-          JSON.stringify({
-            type: "hello",
-            protocol_version: protocolVersion,
-            capabilities: [],
-            // Token is sent once for auth and never exposed to extensions.
-            auth_token: this.authToken,
-          }),
-        );
+        this.send({
+          type: "hello",
+          protocol_version: protocolVersion,
+          capabilities: [],
+          // Token is sent once for auth and never exposed to extensions.
+          auth_token: this.authToken,
+        });
       });
       ws.addEventListener("message", (event) => {
-        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
-        this.dispatch(message, resolve, reject);
+        void decodeWireMessage(event.data)
+          .then((message) => this.dispatch(message, resolve, reject))
+          .catch((error) => {
+            if (!this.sessionId) reject(asError(error));
+          });
       });
       ws.addEventListener("close", () => {
         if (!this.closed) {
@@ -176,7 +182,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
     };
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws?.send(JSON.stringify(payload));
+      this.send(payload);
     });
   }
 
@@ -187,23 +193,19 @@ export class WebBridgeClient implements RpcClient, EventClient {
   ): Disposable {
     const subscriptionId = crypto.randomUUID();
     this.subscriptions.set(subscriptionId, { topic, handler });
-    this.ws?.send(
-      JSON.stringify({
-        type: "subscribe",
-        subscription_id: subscriptionId,
-        topic,
-        required_capability: requiredCapability,
-      }),
-    );
+    this.send({
+      type: "subscribe",
+      subscription_id: subscriptionId,
+      topic,
+      required_capability: requiredCapability,
+    });
     return {
       dispose: () => {
         this.subscriptions.delete(subscriptionId);
-        this.ws?.send(
-          JSON.stringify({
-            type: "unsubscribe",
-            subscription_id: subscriptionId,
-          }),
-        );
+        this.send({
+          type: "unsubscribe",
+          subscription_id: subscriptionId,
+        });
       },
     };
   }
@@ -228,6 +230,36 @@ export class WebBridgeClient implements RpcClient, EventClient {
       }
     }, delay);
   }
+
+  private send(payload: WireRecord): void {
+    this.ws?.send(encodeWireMessage(payload));
+  }
+}
+
+function encodeWireMessage(payload: WireRecord): Uint8Array {
+  return encodeMsgpack(payload);
+}
+
+async function decodeWireMessage(data: unknown): Promise<WireRecord> {
+  let bytes: Uint8Array;
+  if (data instanceof ArrayBuffer) {
+    bytes = new Uint8Array(data);
+  } else if (ArrayBuffer.isView(data)) {
+    bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  } else if (typeof Blob !== "undefined" && data instanceof Blob) {
+    bytes = new Uint8Array(await data.arrayBuffer());
+  } else {
+    throw new Error("web bridge requires binary frames");
+  }
+  const decoded = decodeMsgpack(bytes);
+  if (decoded && typeof decoded === "object" && !Array.isArray(decoded)) {
+    return decoded as WireRecord;
+  }
+  throw new Error("invalid web bridge message");
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export function createRegistry<T extends { id: string }>(): Registry<T> & {
