@@ -82,7 +82,7 @@ mod tests {
 
     fn fixture_pem() -> (String, String) {
         let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
-        (generated.cert.pem(), generated.key_pair.serialize_pem())
+        (generated.cert.pem(), generated.signing_key.serialize_pem())
     }
 
     #[test]

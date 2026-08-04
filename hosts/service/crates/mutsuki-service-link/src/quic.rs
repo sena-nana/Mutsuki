@@ -247,7 +247,7 @@ mod tests {
         let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
         let certificate = generated.cert.der().clone();
         let private_key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(generated.key_pair.serialize_der());
+            rustls::pki_types::PrivatePkcs8KeyDer::from(generated.signing_key.serialize_der());
         let server =
             ServerConfig::with_single_cert(vec![certificate.clone()], private_key.into()).unwrap();
         let mut roots = RootCertStore::empty();

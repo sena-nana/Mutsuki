@@ -108,7 +108,7 @@ fn stable_hash(
 ) -> Result<String, AgentError> {
     let bytes = serde_json::to_vec(&(version, budget, items, decisions))
         .map_err(|err| AgentError::invalid_input(err.to_string()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 #[cfg(test)]

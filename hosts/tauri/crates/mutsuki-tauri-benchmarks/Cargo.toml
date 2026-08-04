@@ -13,6 +13,7 @@ mutsuki-tauri-bridge.workspace = true
 mutsuki-tauri-host.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+hex.workspace = true
 sha2.workspace = true
 tempfile = "3.10"
 tokio.workspace = true

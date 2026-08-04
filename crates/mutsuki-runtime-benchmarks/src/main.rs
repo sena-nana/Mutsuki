@@ -362,7 +362,7 @@ fn verify_baseline_approval(report_path: &Path, approval_path: &Path) -> Result<
     if approval.schema_version != "mutsuki.performance.baseline-approval/v1" {
         return Err("baseline approval uses an unsupported schema version".into());
     }
-    let digest = format!("{:x}", Sha256::digest(&report));
+    let digest = hex::encode(Sha256::digest(&report));
     if digest != approval.report_sha256 {
         return Err("baseline approval does not match the report SHA-256".into());
     }

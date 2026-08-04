@@ -24,6 +24,7 @@ mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["io-util"] }

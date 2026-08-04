@@ -189,7 +189,7 @@ mod tests {
             let output = &fixture["output"];
             let output_bytes = serde_json::to_vec(output).expect("canonical fixture output");
             assert_eq!(
-                format!("{:x}", Sha256::digest(output_bytes)),
+                hex::encode(Sha256::digest(output_bytes)),
                 fixture["output_sha256"].as_str().expect("output_sha256"),
                 "fixture hash for {protocol_id}"
             );

@@ -304,8 +304,22 @@ fn query_rows(task: &Task, connection: &Connection) -> Result<Vec<Value>, Runtim
 }
 
 fn execute_sql(task: &Task, connection: &Connection) -> Result<usize, RuntimeError> {
+    let sql = sql(task)?;
+    let params = sql_params(task);
+    if params.is_empty() {
+        connection
+            .execute_batch(sql)
+            .map_err(|error| sqlite_error(task, "mutsuki.db.execute_failed", error))?;
+        return usize::try_from(connection.changes()).map_err(|_| {
+            db_error(
+                task,
+                "mutsuki.db.execute_failed",
+                "changed_count.out_of_range",
+            )
+        });
+    }
     connection
-        .execute(sql(task)?, params_from_iter(sql_params(task)))
+        .execute(sql, params_from_iter(params))
         .map_err(|error| sqlite_error(task, "mutsuki.db.execute_failed", error))
 }
 

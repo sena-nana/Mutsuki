@@ -50,8 +50,8 @@ async fn identical_business_config_runs_builtin_then_managed_abi() {
     let installed_artifact = plugin_dir.join(file_name);
     fs::copy(&artifact, &installed_artifact).unwrap();
     let sha256 = format!(
-        "sha256:{:x}",
-        Sha256::digest(fs::read(&installed_artifact).unwrap())
+        "sha256:{}",
+        hex::encode(Sha256::digest(fs::read(&installed_artifact).unwrap()))
     );
     let manifest = mutsuki_plugin_bot_command::bot_command_abi_manifest(file_name, &sha256);
     fs::write(

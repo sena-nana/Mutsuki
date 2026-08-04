@@ -195,7 +195,7 @@ fn ram_bytes() -> u64 {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn canonical_json(value: &impl serde::Serialize) -> Vec<u8> {

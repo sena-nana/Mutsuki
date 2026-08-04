@@ -173,5 +173,5 @@ pub fn process_cpu_time_ns() -> u128 {
 }
 
 pub fn canonical_hash(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
+    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }

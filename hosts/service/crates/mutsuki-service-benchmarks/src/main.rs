@@ -250,7 +250,10 @@ fn install_abi_plugin(config: &ServiceConfig) -> Result<(), String> {
     fs::create_dir_all(&plugin_dir).map_err(|error| error.to_string())?;
     let artifact = plugin_dir.join(platform_abi_name());
     fs::copy(&source, &artifact).map_err(|error| error.to_string())?;
-    let sha256 = format!("sha256:{:x}", Sha256::digest(fs::read(&artifact).unwrap()));
+    let sha256 = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(fs::read(&artifact).unwrap()))
+    );
     let manifest = mutsuki_service_abi_fixture::benchmark_manifest(platform_abi_name(), &sha256);
     write_plugin(
         &plugin_dir,
@@ -743,7 +746,7 @@ fn environment(args: &Args) -> Value {
 }
 
 fn canonical_hash(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
+    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }
 
 fn command_output(program: &str, args: &[&str]) -> String {

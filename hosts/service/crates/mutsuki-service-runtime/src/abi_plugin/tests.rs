@@ -64,7 +64,7 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
         artifact.display()
     );
     let bytes = fs::read(&artifact).unwrap();
-    let sha256 = format!("sha256:{:x}", Sha256::digest(bytes));
+    let sha256 = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
     let manifest = mutsuki_service_abi_fixture::fixture_manifest(file_name, &sha256);
     let root = tempdir().unwrap();
     let mut config = ServiceConfig::default();
