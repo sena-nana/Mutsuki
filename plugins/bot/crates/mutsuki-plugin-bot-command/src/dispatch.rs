@@ -353,7 +353,11 @@ mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v2!(create_abi_plugin_v2);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_bot_protocol::{BotAccountRef, BotEventKind, BotMessage, BotPlatform, BotTarget};
+    use mutsuki_bot_protocol::{
+        BotAccountRef, BotCommandArgumentDescriptor, BotCommandArgumentKind,
+        BotCommandArgumentValue, BotCommandDescriptor, BotEventKind, BotMessage, BotPlatform,
+        BotTarget,
+    };
     use mutsuki_runtime_contracts::{
         BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, WorkResourcePlan,
     };
@@ -389,6 +393,53 @@ mod tests {
         assert_eq!(
             third.target_binding_id.as_deref(),
             Some("binding:mutsuki.bot.command/ping@1")
+        );
+    }
+
+    #[test]
+    fn command_runner_emits_canonical_typed_group_command_events() {
+        let mut runner = BotCommandRunner::with_commands(
+            1,
+            vec!["/".into()],
+            vec![BotCommandDescriptor {
+                path: vec!["admin".into(), "ban".into()],
+                aliases: vec![vec!["a".into(), "b".into()]],
+                arguments: vec![
+                    BotCommandArgumentDescriptor {
+                        name: "user".into(),
+                        kind: BotCommandArgumentKind::String,
+                        optional: false,
+                        variadic: false,
+                        default: None,
+                    },
+                    BotCommandArgumentDescriptor {
+                        name: "days".into(),
+                        kind: BotCommandArgumentKind::Integer,
+                        optional: false,
+                        variadic: false,
+                        default: None,
+                    },
+                ],
+                summary: None,
+            }],
+        );
+        let task = command_task("task-typed", "event-typed", "/a b Alice 7");
+        let completion = runner
+            .run_batch(test_context(11, 1), batch(vec![task]))
+            .unwrap();
+        let child = &completion.results[0].result.as_ref().unwrap().tasks[0];
+        let command: BotCommandEvent = child.payload.decode().unwrap();
+
+        assert_eq!(command.name, "admin.ban");
+        assert_eq!(command.command_path, ["admin", "ban"]);
+        assert_eq!(command.args, ["Alice", "7"]);
+        assert_eq!(
+            command.typed_args["days"],
+            BotCommandArgumentValue::Integer(7)
+        );
+        assert_eq!(
+            child.target_binding_id.as_deref(),
+            Some("binding:mutsuki.bot.command/admin.ban@1")
         );
     }
 

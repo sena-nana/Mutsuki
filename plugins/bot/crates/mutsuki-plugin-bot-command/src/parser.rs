@@ -145,13 +145,17 @@ impl CommandParser {
         let prefix = self
             .prefixes
             .iter()
-            .find(|prefix| trimmed.starts_with(prefix.as_str()))
+            .filter(|prefix| trimmed.starts_with(prefix.as_str()))
+            .max_by_key(|prefix| prefix.len())
             .ok_or(CommandParseError::MissingPrefix)?;
         let command_text = trimmed[prefix.len()..].trim();
         if command_text.is_empty() {
             return Err(CommandParseError::EmptyName);
         }
         let tokens = tokenize(command_text)?;
+        if tokens.first().is_none_or(|token| token.is_empty()) {
+            return Err(CommandParseError::EmptyName);
+        }
         if self.commands.is_empty() {
             return Ok(ParsedCommand {
                 name: normalize_part(&tokens[0], self.case_sensitive),
@@ -316,7 +320,7 @@ fn matching_path_len(
     std::iter::once(&descriptor.path)
         .chain(descriptor.aliases.iter())
         .filter(|path| path.len() <= tokens.len())
-        .find(|path| {
+        .filter(|path| {
             path.iter().zip(tokens).all(|(expected, actual)| {
                 if case_sensitive {
                     expected == actual
@@ -326,6 +330,7 @@ fn matching_path_len(
             })
         })
         .map(Vec::len)
+        .max()
 }
 
 fn normalize_path(path: &[String], case_sensitive: bool) -> Vec<String> {

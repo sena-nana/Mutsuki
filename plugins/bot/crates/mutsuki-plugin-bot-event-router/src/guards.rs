@@ -313,7 +313,8 @@ fn permission_denied(code: &str) -> BotPermissionCheckResult {
 fn administrator(event: &mutsuki_bot_protocol::BotEvent) -> bool {
     event
         .ext
-        .get("qqbot.actor_role")
+        .get("bot.actor_role")
+        .or_else(|| event.ext.get("qqbot.actor_role"))
         .and_then(serde_json::Value::as_str)
         .is_some_and(|role| matches!(role, "administrator" | "owner"))
 }
