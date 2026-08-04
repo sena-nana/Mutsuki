@@ -7,7 +7,7 @@ continuations, repositories, media bridge, Agent bridge, and delivery logic rema
 | Issue | Required result | Owner evidence | Functional evidence |
 | --- | --- | --- | --- |
 | #141 | private/group/channel, quote/mention/media, truthful capabilities and reconnect | `mutsuki-plugin-bot-adapter-qqbot` | adapter tests, inbound-media loopback E2E, service-host fake QQ E2E |
-| #142 | typed commands, composable guards, permission/rate limit, priority/propagation and isolation | protocol, command and event-router crates | command/parser and handler-pipeline behavior tests |
+| #142 | typed commands, composable guards, permission/rate limit, priority/propagation and isolation | protocol, command, SDK, adapter and event-router crates | command/parser, SDK round-trip, guard and handler-pipeline behavior tests; ServiceRuntime smoke |
 | #143 | stable ConversationRef, inherited policy and durable fenced Agent binding | conversation and state-db crates | policy/session tests and SQLite reopen test |
 | #144 | public Agent client bridge, two-turn reuse, stream/final, cancel/reset/fork/regenerate and replay suppression | `mutsuki-plugin-bot-agent` | bridge tests and ServiceRuntime QQ AI E2E |
 | #145 | validated ResourceRef media, STT/TTS and generic MediaService transcode | QQ adapter, Bot media bridge and Agent bridge | inbound-media fake server tests and ServiceRuntime audio→STT→Agent→TTS→QQ E2E |

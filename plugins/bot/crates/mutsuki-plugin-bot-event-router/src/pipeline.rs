@@ -1,3 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::{Arc, Mutex};
+
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_PERMISSION_CHECK_PROTOCOL_ID,
     BOT_RATE_LIMIT_CHECK_PROTOCOL_ID, BotConversationKind, BotCustomPredicateRequest,
@@ -6,7 +9,11 @@ use mutsuki_bot_protocol::{
     BotPermissionCheckResult, BotPropagationPolicy, BotRateLimitCheckRequest,
     BotRateLimitCheckResult, BotTarget, MessageSegment,
 };
-use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task, TaskOutcome};
+use mutsuki_runtime_contracts::{
+    ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
+    RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, Task, TaskOutcome,
+    TimeoutGranularity,
+};
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
@@ -61,6 +68,25 @@ fn handler_pipeline_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor 
     )
     .accepted_protocol(BOT_EVENT_INGEST_PROTOCOL_ID)
     .execution_class(ExecutionClass::Orchestration)
+    .invocation_mode(InvocationMode::AsyncReentrant)
+    .concurrency(RunnerConcurrency::Reentrant {
+        max_inflight_batches: 16,
+        max_inflight_entries: 128,
+    })
+    .batch_capability(RunnerBatchCapability {
+        mode: RunnerMode::NativeBatch,
+        preferred_batch_size: 32,
+        max_batch_entries: 128,
+        max_entry_concurrency: 128,
+        max_inflight_batches: 16,
+        side_effect: RunnerSideEffect::External,
+        ..RunnerBatchCapability::default()
+    })
+    .control_capability(RunnerControlCapability {
+        entry_cancel: true,
+        batch_cancel: true,
+        timeout_granularity: TimeoutGranularity::Entry,
+    })
     .build()
 }
 
@@ -85,20 +111,8 @@ async fn run_pipeline(
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
-                let code = error.error().code.clone();
-                record_hook_failure(
-                    &mut handler_errors,
-                    &ctx,
-                    &handler,
-                    event.as_ref(),
-                    "error",
-                    Some(code.clone()),
-                )
-                .await;
-                handler_errors.push(serde_json::json!({
-                    "handler_id": handler.handler_id,
-                    "code": code,
-                }));
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
                 continue;
             }
         }
@@ -114,20 +128,8 @@ async fn run_pipeline(
             }
             Ok(_) => {}
             Err(error) => {
-                let code = error.error().code.clone();
-                record_hook_failure(
-                    &mut handler_errors,
-                    &ctx,
-                    &handler,
-                    event.as_ref(),
-                    "error",
-                    Some(code.clone()),
-                )
-                .await;
-                handler_errors.push(serde_json::json!({
-                    "handler_id": handler.handler_id,
-                    "code": code,
-                }));
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
                 continue;
             }
         }
@@ -144,20 +146,8 @@ async fn run_pipeline(
             }
             Ok(_) => {}
             Err(error) => {
-                let code = error.error().code.clone();
-                record_hook_failure(
-                    &mut handler_errors,
-                    &ctx,
-                    &handler,
-                    event.as_ref(),
-                    "error",
-                    Some(code.clone()),
-                )
-                .await;
-                handler_errors.push(serde_json::json!({
-                    "handler_id": handler.handler_id,
-                    "code": code,
-                }));
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
                 continue;
             }
         }
@@ -181,14 +171,20 @@ async fn run_pipeline(
             }
         };
         if let Err(error) = invoke_hooks(&ctx, &handler, event.as_ref(), "before", None).await {
-            let code = error.error().code.clone();
-            handler_errors.push(serde_json::json!({
-                "handler_id": handler.handler_id,
-                "code": code,
-            }));
+            record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                .await;
             continue;
         }
-        let outcome = ctx
+        let payload = match serde_json::to_value(event.as_ref()) {
+            Ok(payload) => payload,
+            Err(error) => {
+                let error = failure(&task, "handler.encode", error);
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
+                continue;
+            }
+        };
+        let outcome = match ctx
             .call_targeted_raw(
                 handler.binding_id.clone(),
                 handler.handler_protocol_id.clone(),
@@ -196,41 +192,33 @@ async fn run_pipeline(
                     .runner_hint
                     .clone()
                     .unwrap_or_else(|| handler.handler_id.clone()),
-                serde_json::to_value(event.as_ref())
-                    .map_err(|error| failure(&task, "handler.encode", error))?,
+                payload,
             )
-            .await?;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // A runtime/transport failure is local to this handler. The parent
+                // event must still be offered to lower-priority handlers.
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
+                continue;
+            }
+        };
         invoked += 1;
         let explicit = match decode_optional::<BotHandlerExecutionResult>(&outcome, &task) {
             Ok(result) => result.map(|result| result.outcome),
             Err(error) => {
-                let code = error.error().code.clone();
-                record_hook_failure(
-                    &mut handler_errors,
-                    &ctx,
-                    &handler,
-                    event.as_ref(),
-                    "error",
-                    Some(code.clone()),
-                )
-                .await;
-                handler_errors.push(serde_json::json!({
-                    "handler_id": handler.handler_id,
-                    "code": code,
-                }));
+                record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                    .await;
                 continue;
             }
         };
         claim.commit();
-        record_hook_failure(
-            &mut handler_errors,
-            &ctx,
-            &handler,
-            event.as_ref(),
-            "after",
-            None,
-        )
-        .await;
+        if let Err(error) = invoke_hooks(&ctx, &handler, event.as_ref(), "after", None).await {
+            record_handler_failure(&mut handler_errors, &ctx, &handler, event.as_ref(), &error)
+                .await;
+        }
         if matches!(
             explicit,
             Some(BotHandlerOutcome::Stop | BotHandlerOutcome::Consume)
@@ -248,6 +236,29 @@ async fn run_pipeline(
         "handler_denials": handler_denials,
     }));
     Ok(result)
+}
+
+async fn record_handler_failure(
+    handler_errors: &mut Vec<Value>,
+    ctx: &AsyncRunnerContext,
+    handler: &BotHandlerDescriptor,
+    event: &BotEvent,
+    error: &RuntimeFailure,
+) {
+    let code = error.error().code.clone();
+    record_hook_failure(
+        handler_errors,
+        ctx,
+        handler,
+        event,
+        "error",
+        Some(code.clone()),
+    )
+    .await;
+    handler_errors.push(serde_json::json!({
+        "handler_id": handler.handler_id,
+        "code": code,
+    }));
 }
 
 async fn record_hook_failure(
@@ -498,7 +509,62 @@ pub fn handler_matches(handler: &BotHandlerDescriptor, event: &BotEvent) -> bool
         && handler
             .filter
             .as_ref()
-            .is_none_or(|filter| filter_matches(filter, event))
+            .is_none_or(|filter| static_filter_match(filter, event) != StaticFilterMatch::NoMatch)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticFilterMatch {
+    Match,
+    NoMatch,
+    Unknown,
+}
+
+fn static_filter_match(filter: &BotFilterExpr, event: &BotEvent) -> StaticFilterMatch {
+    match filter {
+        BotFilterExpr::All { filters } => {
+            let mut unknown = false;
+            for filter in filters {
+                match static_filter_match(filter, event) {
+                    StaticFilterMatch::NoMatch => return StaticFilterMatch::NoMatch,
+                    StaticFilterMatch::Unknown => unknown = true,
+                    StaticFilterMatch::Match => {}
+                }
+            }
+            if unknown {
+                StaticFilterMatch::Unknown
+            } else {
+                StaticFilterMatch::Match
+            }
+        }
+        BotFilterExpr::Any { filters } => {
+            let mut unknown = false;
+            for filter in filters {
+                match static_filter_match(filter, event) {
+                    StaticFilterMatch::Match => return StaticFilterMatch::Match,
+                    StaticFilterMatch::Unknown => unknown = true,
+                    StaticFilterMatch::NoMatch => {}
+                }
+            }
+            if unknown {
+                StaticFilterMatch::Unknown
+            } else {
+                StaticFilterMatch::NoMatch
+            }
+        }
+        BotFilterExpr::Not { filter } => match static_filter_match(filter, event) {
+            StaticFilterMatch::Match => StaticFilterMatch::NoMatch,
+            StaticFilterMatch::NoMatch => StaticFilterMatch::Match,
+            StaticFilterMatch::Unknown => StaticFilterMatch::Unknown,
+        },
+        BotFilterExpr::CustomPredicate { .. } => StaticFilterMatch::Unknown,
+        other => {
+            if filter_matches(other, event) {
+                StaticFilterMatch::Match
+            } else {
+                StaticFilterMatch::NoMatch
+            }
+        }
+    }
 }
 
 fn filter_matches(filter: &BotFilterExpr, event: &BotEvent) -> bool {
@@ -512,18 +578,30 @@ fn filter_matches(filter: &BotFilterExpr, event: &BotEvent) -> bool {
         BotFilterExpr::Not { filter } => !filter_matches(filter, event),
         BotFilterExpr::ConversationKind { kind } => conversation_kind(&event.target) == *kind,
         BotFilterExpr::EventKind { kind } => event.kind == *kind,
-        BotFilterExpr::MustMentionBot => event
-            .ext
-            .get("qqbot.mentioned_bot")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        BotFilterExpr::MustMentionBot => {
+            event.message.as_ref().is_some_and(|message| {
+                message.segments.iter().any(|segment| {
+                    matches!(
+                        segment,
+                        MessageSegment::MentionUser { user_id }
+                            if user_id == &event.bot.account_id
+                    )
+                })
+            }) || event
+                .ext
+                .get("bot.mentioned_bot")
+                .or_else(|| event.ext.get("qqbot.mentioned_bot"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        }
         BotFilterExpr::IsReply => event
             .message
             .as_ref()
             .is_some_and(|message| message.reply_to.is_some()),
         BotFilterExpr::ActorRole { role } => event
             .ext
-            .get("qqbot.actor_role")
+            .get("bot.actor_role")
+            .or_else(|| event.ext.get("qqbot.actor_role"))
             .and_then(Value::as_str)
             .is_some_and(|value| value == format!("{role:?}").to_ascii_lowercase()),
         BotFilterExpr::Account { account_id } => event.bot.account_id == *account_id,
@@ -543,8 +621,8 @@ fn filter_matches(filter: &BotFilterExpr, event: &BotEvent) -> bool {
                     .any(|segment| segment_name(segment) == segment_type)
             })
         }
-        // The async pipeline evaluates custom predicates through their declared service protocol.
-        BotFilterExpr::CustomPredicate { .. } => true,
+        // Custom predicates are evaluated asynchronously by `filter_expression_allowed`.
+        BotFilterExpr::CustomPredicate { .. } => false,
     }
 }
 
@@ -672,6 +750,7 @@ mod tests {
     #[derive(Default)]
     struct OutcomeClient {
         outcomes: Mutex<BTreeMap<String, TaskOutcome>>,
+        errors: Mutex<BTreeMap<String, mutsuki_runtime_contracts::RuntimeError>>,
     }
 
     impl OutcomeClient {
@@ -697,6 +776,13 @@ mod tests {
                 },
             );
         }
+
+        fn fail_runtime(&self, task_id: String, code: &str) {
+            self.errors.lock().unwrap().insert(
+                task_id,
+                mutsuki_runtime_contracts::RuntimeError::new(code, "test", "handler"),
+            );
+        }
     }
 
     impl RuntimeClient for OutcomeClient {
@@ -705,6 +791,9 @@ mod tests {
         }
 
         fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
+            if let Some(error) = self.errors.lock().unwrap().get(&handle.task_id).cloned() {
+                return Err(RuntimeFailure::new(error));
+            }
             Ok(self.outcomes.lock().unwrap().get(&handle.task_id).cloned())
         }
     }
@@ -790,6 +879,51 @@ mod tests {
             completed.output.as_ref().unwrap()["handler_errors"][0]["code"],
             "handler.crashed"
         );
+    }
+
+    #[test]
+    fn runtime_failure_is_recorded_and_does_not_block_unrelated_handler() {
+        let client = Arc::new(OutcomeClient::default());
+        let mut runner = handler_pipeline_runner(
+            client.clone(),
+            vec![
+                handler("failed", 10, BotPropagationPolicy::Continue),
+                handler("healthy", 1, BotPropagationPolicy::Continue),
+            ],
+        );
+        let task = event_task();
+        let ctx = context();
+        let failed = single_result(runner.run_batch(ctx.clone(), batch(&task)).unwrap());
+        client.fail_runtime(failed.tasks[0].task_id.clone(), "handler.timeout");
+
+        let healthy = single_result(runner.run_batch(ctx.clone(), batch(&task)).unwrap());
+        assert_eq!(
+            healthy.tasks[0].target_binding_id.as_deref(),
+            Some("healthy-binding")
+        );
+        client.complete(
+            healthy.tasks[0].task_id.clone(),
+            BotHandlerOutcome::Continue,
+        );
+
+        let completed = single_result(runner.run_batch(ctx, batch(&task)).unwrap());
+        assert_eq!(completed.output.as_ref().unwrap()["invoked_handlers"], 1);
+        assert_eq!(
+            completed.output.as_ref().unwrap()["handler_errors"][0]["code"],
+            "handler.timeout"
+        );
+    }
+
+    #[test]
+    fn custom_predicate_inside_composite_filter_is_not_prefiltered() {
+        let mut descriptor = handler("custom", 0, BotPropagationPolicy::Continue);
+        descriptor.filter = Some(BotFilterExpr::Not {
+            filter: Box::new(BotFilterExpr::CustomPredicate {
+                service_id: "test.predicate".into(),
+            }),
+        });
+        let event: BotEvent = event_task().payload.decode().unwrap();
+        assert!(handler_matches(&descriptor, &event));
     }
 
     #[test]
@@ -919,5 +1053,3 @@ mod tests {
             .unwrap()
     }
 }
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::{Arc, Mutex};

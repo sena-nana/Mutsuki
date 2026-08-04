@@ -38,7 +38,7 @@ pub enum GatewayAction {
 #[derive(Clone, Debug)]
 pub struct QqGatewayPump {
     task_account_id: String,
-    task_session_digest: u64,
+    task_id_prefix: String,
     last_sequence: Option<u64>,
     session_id: Option<String>,
     resume_url: Option<String>,
@@ -61,15 +61,17 @@ impl QqGatewayPump {
 
     pub fn with_account(account_id: impl Into<String>, dedup_window: usize) -> Self {
         let account_id = account_id.into();
+        let task_account_id = safe_id(&account_id);
+        let dedup_window = dedup_window.max(1);
         Self {
-            task_account_id: safe_id(&account_id),
-            task_session_digest: digest("unidentified"),
+            task_id_prefix: build_task_id_prefix(&task_account_id, digest("unidentified")),
+            task_account_id,
             last_sequence: None,
             session_id: None,
             resume_url: None,
-            seen_dedup_keys: HashSet::new(),
-            dedup_order: VecDeque::new(),
-            dedup_window: dedup_window.max(1),
+            seen_dedup_keys: HashSet::with_capacity(dedup_window),
+            dedup_order: VecDeque::with_capacity(dedup_window),
+            dedup_window,
             actions: VecDeque::new(),
         }
     }
@@ -90,7 +92,7 @@ impl QqGatewayPump {
         self.session_id = None;
         self.resume_url = None;
         self.last_sequence = None;
-        self.task_session_digest = digest("unidentified");
+        self.task_id_prefix = build_task_id_prefix(&self.task_account_id, digest("unidentified"));
     }
 
     pub fn identify_frame(config: &QqBotConfig, access_token: &str) -> Value {
@@ -187,8 +189,10 @@ impl QqGatewayPump {
                         .or_else(|| data.get("resume_url"))
                         .and_then(Value::as_str)
                         .map(str::to_owned);
-                    self.task_session_digest =
+                    let session_digest =
                         digest(self.session_id.as_deref().unwrap_or("unidentified"));
+                    self.task_id_prefix =
+                        build_task_id_prefix(&self.task_account_id, session_digest);
                 }
                 if !known_event_type(event_type) {
                     self.actions
@@ -196,12 +200,14 @@ impl QqGatewayPump {
                     return Ok(None);
                 }
                 let key = dedup_key_parts(op, event_type, sequence, event_id, data);
-                if self.seen_dedup_keys.contains(key.as_str()) {
+                let key: Arc<str> = key.into();
+                if !self.remember_dedup_key(key.clone()) {
                     return Ok(None);
                 }
                 let task_id = self.task_id(&key);
-                let correlation_id = event_id.map(str::to_owned).or_else(|| Some(key.clone()));
-                self.remember_dedup_key(key);
+                let correlation_id = event_id
+                    .map(str::to_owned)
+                    .or_else(|| Some(key.to_string()));
                 self.actions
                     .push_back(GatewayAction::DispatchTask(task_id.clone()));
                 let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
@@ -308,7 +314,8 @@ impl QqGatewayPump {
                 .get("session_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            self.task_session_digest = digest(self.session_id.as_deref().unwrap_or("unidentified"));
+            let session_digest = digest(self.session_id.as_deref().unwrap_or("unidentified"));
+            self.task_id_prefix = build_task_id_prefix(&self.task_account_id, session_digest);
             self.resume_url = frame
                 .d
                 .get("resume_gateway_url")
@@ -321,13 +328,12 @@ impl QqGatewayPump {
                 .push_back(GatewayAction::UnknownEvent(event_type.to_owned()));
             return Ok(None);
         }
-        let key = dedup_key(&frame);
-        if self.seen_dedup_keys.contains(key.as_str()) {
+        let key: Arc<str> = dedup_key(&frame).into();
+        if !self.remember_dedup_key(key.clone()) {
             return Ok(None);
         }
         let task_id = self.task_id(&key);
-        let correlation_id = frame.id.clone().or_else(|| Some(key.clone()));
-        self.remember_dedup_key(key);
+        let correlation_id = frame.id.clone().or_else(|| Some(key.to_string()));
         self.actions
             .push_back(GatewayAction::DispatchTask(task_id.clone()));
         let mut task = Task::new(task_id, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, raw);
@@ -336,24 +342,35 @@ impl QqGatewayPump {
         Ok(Some(task))
     }
 
-    fn remember_dedup_key(&mut self, key: String) {
-        let key: Arc<str> = key.into();
-        self.seen_dedup_keys.insert(key.clone());
+    fn remember_dedup_key(&mut self, key: Arc<str>) -> bool {
+        if !self.seen_dedup_keys.insert(key.clone()) {
+            return false;
+        }
         self.dedup_order.push_back(key);
         while self.dedup_order.len() > self.dedup_window {
             if let Some(expired) = self.dedup_order.pop_front() {
                 self.seen_dedup_keys.remove(&expired);
             }
         }
+        true
     }
 
     fn task_id(&self, event_fact: &str) -> String {
-        format!(
-            "mutsuki.bot.qqbot.gateway.frame:{}:{:016x}:{:016x}",
-            self.task_account_id,
-            self.task_session_digest,
-            digest(event_fact)
-        )
+        let mut task_id = String::with_capacity(self.task_id_prefix.len() + 16);
+        task_id.push_str(&self.task_id_prefix);
+        append_hex_u64(&mut task_id, digest(event_fact));
+        task_id
+    }
+}
+
+fn build_task_id_prefix(account_id: &str, session_digest: u64) -> String {
+    format!("mutsuki.bot.qqbot.gateway.frame:{account_id}:{session_digest:016x}:")
+}
+
+fn append_hex_u64(output: &mut String, value: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for shift in (0..16).rev() {
+        output.push(HEX[((value >> (shift * 4)) & 0x0f) as usize] as char);
     }
 }
 
@@ -386,7 +403,13 @@ fn dedup_key_parts(
 ) -> String {
     data.get("id")
         .and_then(Value::as_str)
-        .map(|id| format!("{event_type}:message:{id}"))
+        .map(|id| {
+            let mut key = String::with_capacity(event_type.len() + 9 + id.len());
+            key.push_str(event_type);
+            key.push_str(":message:");
+            key.push_str(id);
+            key
+        })
         .or_else(|| id.map(|id| format!("event:{id}")))
         .or_else(|| sequence.map(|sequence| format!("seq:{sequence}")))
         .unwrap_or_else(|| format!("op:{op}:unknown"))
