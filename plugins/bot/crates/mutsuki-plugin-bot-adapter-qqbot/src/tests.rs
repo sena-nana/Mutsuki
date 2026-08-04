@@ -95,6 +95,7 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
             "guild_id": "guild",
             "channel_id": "channel",
             "content": "hello",
+            "thread_id": "thread",
             "mentions": [{"id": "bot", "is_you": true}],
             "message_reference": {"message_id": "quoted"},
             "author": {"id": "actor"}
@@ -118,6 +119,7 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
         Some("quoted")
     );
     assert_eq!(event.ext["qqbot.mentioned_bot"], Value::Bool(true));
+    assert_eq!(event.ext["qqbot.thread_id"], Value::String("thread".into()));
     assert_eq!(event.ext["qqbot.sequence"], Value::from(25));
     assert!(
         event

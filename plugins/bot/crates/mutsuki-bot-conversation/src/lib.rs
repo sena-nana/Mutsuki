@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use mutsuki_bot_protocol::{
     AgentSessionBinding, AgentSessionScope, BotConversationKind, BotEvent, BotTarget,
-    ConversationPolicy, ConversationPolicyPatch, ConversationPolicyRule, DirectMessagePolicy,
-    MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef, ResolvedConversationPolicy,
+    ConversationPolicy, ConversationPolicyLayer, ConversationPolicyPatch, ConversationPolicyRule,
+    ConversationPolicyRuleSource, DirectMessagePolicy, MessageSegment, QQ_CONVERSATION_REF_VERSION,
+    QqConversationRef, ResolvedConversationPolicy,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -66,20 +67,33 @@ impl ConversationService {
         conversation: QqConversationRef,
         actor_id: Option<&str>,
     ) -> Result<ResolvedConversationPolicy, ConversationError> {
+        conversation
+            .validate()
+            .map_err(|error| ConversationError::InvalidConversationRef(error.to_string()))?;
+        let origin_key = conversation.origin_key();
         let mut rules = self
             .repository
             .policy_rules()?
             .into_iter()
-            .filter(|rule| rule_matches(rule, &conversation, actor_id))
+            .filter(|rule| rule_matches(rule, &conversation, &origin_key, actor_id))
             .collect::<Vec<_>>();
         rules.sort_by(|left, right| {
-            rule_specificity(left)
-                .cmp(&rule_specificity(right))
+            rule_layer(left)
+                .cmp(&rule_layer(right))
+                .then_with(|| rule_specificity(left).cmp(&rule_specificity(right)))
+                .then_with(|| left.revision.cmp(&right.revision))
                 .then_with(|| left.rule_id.cmp(&right.rule_id))
         });
         let mut policy = self.product_default.clone();
         let mut matched_rule_ids = Vec::with_capacity(rules.len());
+        let mut matched_rule_sources = Vec::with_capacity(rules.len());
         for rule in rules {
+            let layer = rule_layer(&rule);
+            matched_rule_sources.push(ConversationPolicyRuleSource {
+                rule_id: rule.rule_id.clone(),
+                layer,
+                revision: rule.revision,
+            });
             apply_patch(&mut policy, rule.revision, &rule.patch);
             matched_rule_ids.push(rule.rule_id);
         }
@@ -87,6 +101,7 @@ impl ConversationService {
             conversation,
             policy,
             matched_rule_ids,
+            matched_rule_sources,
         })
     }
 
@@ -155,7 +170,26 @@ impl ConversationService {
             actor_id,
         )?;
         if let Some(binding) = self.repository.session_binding(&binding_key)? {
-            return Ok(binding);
+            if binding.policy_revision == resolved.policy.revision {
+                return Ok(binding);
+            }
+            let refreshed = AgentSessionBinding {
+                policy_revision: resolved.policy.revision,
+                generation: binding.generation.saturating_add(1),
+                ..binding.clone()
+            };
+            return match self.repository.compare_and_set_session_binding(
+                &binding_key,
+                Some(binding.generation),
+                refreshed.clone(),
+            ) {
+                Ok(()) => Ok(refreshed),
+                Err(ConversationError::GenerationConflict) => self
+                    .repository
+                    .session_binding(&binding_key)?
+                    .ok_or(ConversationError::GenerationConflict),
+                Err(error) => Err(error),
+            };
         }
         let binding = AgentSessionBinding {
             origin_key: resolved.conversation.origin_key(),
@@ -270,6 +304,23 @@ impl ConversationService {
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
     ) -> Result<AgentSessionBinding, ConversationError> {
+        self.replace_session_binding(resolved, actor_id, "reset")
+    }
+
+    pub fn expire_session_binding(
+        &self,
+        resolved: &ResolvedConversationPolicy,
+        actor_id: Option<&str>,
+    ) -> Result<AgentSessionBinding, ConversationError> {
+        self.replace_session_binding(resolved, actor_id, "expire")
+    }
+
+    fn replace_session_binding(
+        &self,
+        resolved: &ResolvedConversationPolicy,
+        actor_id: Option<&str>,
+        reason: &str,
+    ) -> Result<AgentSessionBinding, ConversationError> {
         let key = session_binding_key(
             &resolved.conversation,
             resolved.policy.session_scope,
@@ -282,7 +333,7 @@ impl ConversationService {
         let generation = current.generation.saturating_add(1);
         let next = AgentSessionBinding {
             origin_key: current.origin_key,
-            session_id: stable_session_id(&format!("{key}|reset:{generation}")),
+            session_id: stable_session_id(&format!("{key}|{reason}:{generation}")),
             session_version: 0,
             last_event_sequence: 0,
             policy_revision: resolved.policy.revision,
@@ -416,7 +467,7 @@ pub fn qq_conversation_from_event(
             return Err(ConversationError::UnsupportedTarget);
         }
     };
-    Ok(QqConversationRef {
+    let conversation = QqConversationRef {
         version: QQ_CONVERSATION_REF_VERSION,
         account_id: event.bot.account_id.clone(),
         kind,
@@ -427,9 +478,14 @@ pub fn qq_conversation_from_event(
         thread_id: event
             .ext
             .get("qqbot.thread_id")
+            .or_else(|| event.ext.get("qqbot.topic_id"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
-    })
+    };
+    conversation
+        .validate()
+        .map_err(|error| ConversationError::InvalidConversationRef(error.to_string()))?;
+    Ok(conversation)
 }
 
 pub fn session_binding_key(
@@ -437,6 +493,9 @@ pub fn session_binding_key(
     scope: AgentSessionScope,
     actor_id: Option<&str>,
 ) -> Result<String, ConversationError> {
+    conversation
+        .validate()
+        .map_err(|error| ConversationError::InvalidConversationRef(error.to_string()))?;
     let origin = conversation.origin_key();
     match scope {
         AgentSessionScope::SharedConversation => Ok(origin),
@@ -455,6 +514,7 @@ fn stable_session_id(binding_key: &str) -> String {
 fn rule_matches(
     rule: &ConversationPolicyRule,
     conversation: &QqConversationRef,
+    origin_key: &str,
     actor_id: Option<&str>,
 ) -> bool {
     let matcher = &rule.matcher;
@@ -462,6 +522,10 @@ fn rule_matches(
         .account_id
         .as_ref()
         .is_none_or(|value| value == &conversation.account_id)
+        && matcher
+            .kind
+            .as_ref()
+            .is_none_or(|value| value == &conversation.kind)
         && matcher
             .group_id
             .as_ref()
@@ -477,17 +541,35 @@ fn rule_matches(
         && matcher
             .origin_key
             .as_ref()
-            .is_none_or(|value| value == &conversation.origin_key())
+            .is_none_or(|value| value == origin_key)
         && matcher
             .actor_id
             .as_deref()
             .is_none_or(|value| Some(value) == actor_id)
 }
 
+fn rule_layer(rule: &ConversationPolicyRule) -> ConversationPolicyLayer {
+    let matcher = &rule.matcher;
+    if matcher.actor_id.is_some() {
+        ConversationPolicyLayer::ActorInConversation
+    } else if matcher.origin_key.is_some() {
+        ConversationPolicyLayer::Conversation
+    } else if matcher.channel_id.is_some() {
+        ConversationPolicyLayer::Channel
+    } else if matcher.group_id.is_some() {
+        ConversationPolicyLayer::Group
+    } else if matcher.guild_id.is_some() {
+        ConversationPolicyLayer::Guild
+    } else {
+        ConversationPolicyLayer::Account
+    }
+}
+
 fn rule_specificity(rule: &ConversationPolicyRule) -> usize {
     let matcher = &rule.matcher;
     [
         matcher.account_id.is_some(),
+        matcher.kind.is_some(),
         matcher.group_id.is_some(),
         matcher.guild_id.is_some(),
         matcher.channel_id.is_some(),
@@ -559,6 +641,8 @@ pub enum ConversationError {
     EventSequenceConflict { expected: u64, actual: u64 },
     #[error("Bot event target cannot be represented as a QQ conversation")]
     UnsupportedTarget,
+    #[error("invalid QQ conversation ref: {0}")]
+    InvalidConversationRef(String),
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -691,6 +775,110 @@ mod tests {
         assert!(resolved.policy.agent_enabled);
         assert!(!resolved.policy.must_mention);
         assert_eq!(resolved.matched_rule_ids, ["account", "group"]);
+        assert_eq!(
+            resolved
+                .matched_rule_sources
+                .iter()
+                .map(|source| source.layer)
+                .collect::<Vec<_>>(),
+            [
+                mutsuki_bot_protocol::ConversationPolicyLayer::Account,
+                mutsuki_bot_protocol::ConversationPolicyLayer::Group,
+            ]
+        );
+    }
+
+    #[test]
+    fn policy_hierarchy_wins_over_rule_id_order() {
+        let conversation = group_conversation();
+        let repository = Arc::new(MemoryRepository {
+            rules: vec![
+                rule(
+                    "z-account",
+                    ConversationPolicyMatch {
+                        account_id: Some("main".into()),
+                        ..Default::default()
+                    },
+                    ConversationPolicyPatch {
+                        must_mention: Some(true),
+                        ..Default::default()
+                    },
+                ),
+                rule(
+                    "a-conversation",
+                    ConversationPolicyMatch {
+                        origin_key: Some(conversation.origin_key()),
+                        ..Default::default()
+                    },
+                    ConversationPolicyPatch {
+                        must_mention: Some(false),
+                        ..Default::default()
+                    },
+                ),
+                rule(
+                    "0-actor",
+                    ConversationPolicyMatch {
+                        actor_id: Some("actor".into()),
+                        ..Default::default()
+                    },
+                    ConversationPolicyPatch {
+                        must_mention: Some(true),
+                        ..Default::default()
+                    },
+                ),
+            ],
+            ..Default::default()
+        });
+        let resolved = ConversationService::new(repository, default_policy())
+            .resolve_policy(conversation, Some("actor"))
+            .unwrap();
+
+        assert!(resolved.policy.must_mention);
+        assert_eq!(
+            resolved.matched_rule_ids,
+            ["z-account", "a-conversation", "0-actor"]
+        );
+    }
+
+    #[test]
+    fn conversation_refs_round_trip_private_group_and_channel_targets() {
+        let refs = [
+            QqConversationRef {
+                version: QQ_CONVERSATION_REF_VERSION,
+                account_id: "main".into(),
+                kind: BotConversationKind::Private,
+                user_id: Some("user".into()),
+                group_id: None,
+                guild_id: None,
+                channel_id: None,
+                thread_id: Some("topic".into()),
+            },
+            group_conversation(),
+            QqConversationRef {
+                version: QQ_CONVERSATION_REF_VERSION,
+                account_id: "main".into(),
+                kind: BotConversationKind::Channel,
+                user_id: None,
+                group_id: None,
+                guild_id: Some("guild".into()),
+                channel_id: Some("channel".into()),
+                thread_id: Some("thread".into()),
+            },
+        ];
+
+        for conversation in refs {
+            let key = conversation.origin_key();
+            assert_eq!(
+                QqConversationRef::from_origin_key(&key).unwrap(),
+                conversation
+            );
+            assert!(conversation.target().is_some());
+            let encoded = serde_json::to_string(&conversation).unwrap();
+            assert_eq!(
+                serde_json::from_str::<QqConversationRef>(&encoded).unwrap(),
+                conversation
+            );
+        }
     }
 
     #[test]
@@ -726,6 +914,39 @@ mod tests {
             .get_or_create_session_binding(&resolved, Some("actor-b"))
             .unwrap();
         assert_ne!(actor_a.session_id, actor_b.session_id);
+    }
+
+    #[test]
+    fn policy_revision_is_persisted_without_changing_session_and_expire_fences_it() {
+        let repository = Arc::new(MemoryRepository::default());
+        let first_service = ConversationService::new(repository.clone(), default_policy());
+        let conversation = group_conversation();
+        let first_resolved = first_service
+            .resolve_policy(conversation.clone(), None)
+            .unwrap();
+        let first = first_service
+            .get_or_create_session_binding(&first_resolved, None)
+            .unwrap();
+
+        let mut changed_policy = default_policy();
+        changed_policy.revision = 2;
+        let changed_service = ConversationService::new(repository.clone(), changed_policy);
+        let changed_resolved = changed_service
+            .resolve_policy(conversation.clone(), None)
+            .unwrap();
+        let refreshed = changed_service
+            .get_or_create_session_binding(&changed_resolved, None)
+            .unwrap();
+        assert_eq!(refreshed.session_id, first.session_id);
+        assert_eq!(refreshed.policy_revision, 2);
+        assert!(refreshed.generation > first.generation);
+
+        let expired = changed_service
+            .expire_session_binding(&changed_resolved, None)
+            .unwrap();
+        assert_ne!(expired.session_id, refreshed.session_id);
+        assert_eq!(expired.session_version, 0);
+        assert!(expired.generation > refreshed.generation);
     }
 
     #[test]

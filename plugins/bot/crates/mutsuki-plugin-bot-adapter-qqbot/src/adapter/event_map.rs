@@ -46,6 +46,13 @@ pub fn qq_gateway_frame_to_bot_event(
     if let Some(role) = qq_actor_role(data) {
         ext.insert("qqbot.actor_role".into(), Value::String(role.into()));
     }
+    if let Some(thread_id) = data
+        .get("thread_id")
+        .or_else(|| data.get("topic_id"))
+        .and_then(Value::as_str)
+    {
+        ext.insert("qqbot.thread_id".into(), Value::String(thread_id.into()));
+    }
     Ok(BotEvent {
         event_id: frame
             .id
