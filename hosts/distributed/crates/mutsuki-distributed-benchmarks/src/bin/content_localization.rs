@@ -520,7 +520,7 @@ fn write_source(path: &Path, content_bytes: u64) -> ContentId {
     file.sync_all().expect("sync content source");
     ContentId::new(
         "sha256",
-        format!("{:x}", hasher.finalize()),
+        hex::encode(hasher.finalize()),
         content_bytes,
         "blob",
     )

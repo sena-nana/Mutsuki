@@ -534,8 +534,16 @@ fn hash_file(path: &Path) -> Result<String, String> {
 
 fn hash_reader(mut reader: impl Read) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    std::io::copy(&mut reader, &mut hasher)
-        .map_err(|error| format!("failed to hash input: {error}"))?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("failed to hash input: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
     Ok(hex::encode(hasher.finalize()))
 }
 

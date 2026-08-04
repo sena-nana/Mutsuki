@@ -49,7 +49,7 @@ impl AgentResourceStore {
         }
         let bytes = serde_json::to_vec(value)
             .map_err(|error| AgentError::invalid_input(error.to_string()))?;
-        let content_hash = format!("{:x}", Sha256::digest(&bytes));
+        let content_hash = hex::encode(Sha256::digest(&bytes));
         let mut state = self.inner.lock().expect("agent resource store mutex");
         state.next_resource = state.next_resource.saturating_add(1);
         let slot_id = format!("{owner}:{}", state.next_resource);

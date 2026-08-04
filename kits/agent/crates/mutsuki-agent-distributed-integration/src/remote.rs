@@ -221,7 +221,7 @@ fn portable_task(
     }
     let payload_bytes = serde_json::to_vec(&payload)
         .map_err(|error| AgentError::invalid_input(error.to_string()))?;
-    let digest = format!("{:x}", Sha256::digest(&payload_bytes));
+    let digest = hex::encode(Sha256::digest(&payload_bytes));
     let mut task = Task::new(task_id, protocol_id, payload);
     task.input_refs = placement.required_resource_refs.clone();
     let capability = portability_capability(placement);

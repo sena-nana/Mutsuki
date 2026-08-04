@@ -2,7 +2,7 @@ use crate::{
     Coordinator, ResourceLocalizer, WireRemoteWorker, WorkerRegistry, WorkerRequestDispatcher,
     WorkerTransport,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use mutsuki_distributed_contracts::{
     ClusterCommand, ClusterReply, ClusterReplyBody, ClusterRequest, ControllerCommand,
     ControllerReply, ControllerReplyBody, ControllerRequest, ControllerSubmit, DistributedError,
@@ -1518,7 +1518,7 @@ mod tests {
             .map(|index| u8::try_from(index % 251).expect("bounded byte"))
             .collect();
         fs::write(&source_path, &bytes).expect("write content source");
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = hex::encode(Sha256::digest(&bytes));
         let content_id = ContentId::new(
             "sha256",
             digest,
@@ -1774,7 +1774,7 @@ mod tests {
         let content_ready = temporary.path().join("content.ready");
         let content_bytes = vec![0x5a; 2 * 1024 * 1024 + 17];
         fs::write(&source_path, &content_bytes).expect("write content source");
-        let content_digest = format!("{:x}", Sha256::digest(&content_bytes));
+        let content_digest = hex::encode(Sha256::digest(&content_bytes));
         let content_id = ContentId::new(
             "sha256",
             content_digest.clone(),

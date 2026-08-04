@@ -621,7 +621,7 @@ fn canonical_hash(value: &Value) -> String {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn deterministic_bytes(size: usize) -> Vec<u8> {

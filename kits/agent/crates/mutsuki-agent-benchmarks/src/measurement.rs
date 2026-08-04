@@ -128,5 +128,5 @@ pub fn allocation_delta(start: (u64, u64)) -> (u64, u64) {
 }
 
 pub fn canonical_hash(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
+    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }

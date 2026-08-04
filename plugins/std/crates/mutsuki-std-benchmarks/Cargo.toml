@@ -22,6 +22,7 @@ mutsuki-plugin-workflow-linear = { path = "../../plugins/mutsuki-plugin-workflow
 mutsuki-std-effect.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 

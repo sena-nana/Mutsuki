@@ -604,7 +604,7 @@ fn compute_package_hash(parsed: &ParsedSkillPackage) -> AgentResult<String> {
             })?);
         }
     }
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 pub fn confine_package_path(package_dir: &Path, relative: &str) -> AgentResult<PathBuf> {

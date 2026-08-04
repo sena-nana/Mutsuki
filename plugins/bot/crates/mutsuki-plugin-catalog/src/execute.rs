@@ -440,7 +440,7 @@ fn sha256_file(path: &Path) -> CatalogResult<String> {
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 fn pin_guidance_text(

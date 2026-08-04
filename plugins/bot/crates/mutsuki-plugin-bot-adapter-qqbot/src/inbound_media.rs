@@ -677,7 +677,7 @@ mod tests {
             schema: &str,
             bytes: Vec<u8>,
         ) -> Result<ResourceRef, RuntimeFailure> {
-            let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
             let size = bytes.len() as u64;
             self.created.lock().unwrap().push(bytes);
             Ok(ResourceRef {

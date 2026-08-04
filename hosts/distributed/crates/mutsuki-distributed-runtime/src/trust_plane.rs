@@ -1,4 +1,4 @@
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use mutsuki_distributed_contracts::{
     ArtifactIdentity, AttestationEvidence, AttestationVerdict, CommitProof, DataSensitivity,
     DistributedError, DistributedErrorKind, ExecutionReceipt, GlobalTaskId, GovernanceCertificate,

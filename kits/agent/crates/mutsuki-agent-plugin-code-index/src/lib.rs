@@ -1015,7 +1015,7 @@ fn provenance_with_source(
 }
 
 fn hash_text(text: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(text.as_bytes()))
+    format!("sha256:{}", hex::encode(Sha256::digest(text.as_bytes())))
 }
 
 fn hash_index_state(index: &WorkspaceIndex) -> String {
@@ -1027,7 +1027,7 @@ fn hash_index_state(index: &WorkspaceIndex) -> String {
     for symbol_id in index.symbols.keys() {
         hasher.update(symbol_id.as_bytes());
     }
-    format!("sha256:{:x}", hasher.finalize())
+    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 fn hash_index_snapshot(snapshot: &CheckpointSnapshot) -> String {
@@ -1039,7 +1039,7 @@ fn hash_index_snapshot(snapshot: &CheckpointSnapshot) -> String {
     for symbol_id in snapshot.symbols.keys() {
         hasher.update(symbol_id.as_bytes());
     }
-    format!("sha256:{:x}", hasher.finalize())
+    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 fn parse_symbols(path: &str, content: &str, provenance: &CodeIndexProvenance) -> Vec<CodeSymbol> {

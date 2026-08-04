@@ -658,7 +658,7 @@ pub fn chunk_text(content: &str, chunk_size: usize) -> Vec<String> {
 
 fn hash_text(text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
-    format!("sha256:{digest:x}")
+    format!("sha256:{}", hex::encode(digest))
 }
 
 fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {

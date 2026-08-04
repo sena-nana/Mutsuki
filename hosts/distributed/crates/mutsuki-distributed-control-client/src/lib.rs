@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use mutsuki_distributed_contracts::{
     ControllerCommand, ControllerReply, ControllerReplyBody, ControllerRequest, DistributedError,
     DistributedErrorKind, NodeId, SidecarCapabilityProof, decode_control, encode_control,

@@ -437,7 +437,7 @@ fn validate_abi_artifact(
         path: resolved.clone(),
         source,
     })?;
-    let actual = format!("sha256:{:x}", Sha256::digest(bytes));
+    let actual = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
     if actual != expected {
         return Err(PluginLoaderError::ArtifactHashMismatch {
             plugin_id,
@@ -536,7 +536,7 @@ mod tests {
         fs::create_dir_all(&plugin_dir).unwrap();
         let artifact = plugin_dir.join(format!("abi_test.{}", platform_library_extension()));
         fs::write(&artifact, b"fixture-library").unwrap();
-        let hash = format!("sha256:{:x}", Sha256::digest(b"fixture-library"));
+        let hash = format!("sha256:{}", hex::encode(Sha256::digest(b"fixture-library")));
         write_plugin(
             &plugin_dir,
             abi_manifest(
@@ -572,7 +572,7 @@ mod tests {
         fs::create_dir_all(&plugin_dir).unwrap();
         let artifact = plugin_dir.join(format!("abi_bad.{}", platform_library_extension()));
         fs::write(&artifact, b"fixture-library").unwrap();
-        let hash = format!("sha256:{:x}", Sha256::digest(b"fixture-library"));
+        let hash = format!("sha256:{}", hex::encode(Sha256::digest(b"fixture-library")));
         let mut bad = abi_manifest(
             "test.abi.bad",
             artifact.file_name().unwrap().to_string_lossy().as_ref(),

@@ -692,12 +692,12 @@ fn cache_key(request: &CodeCompletionRequest) -> String {
         hasher.update(format_hint(hint).as_bytes());
         hasher.update(b"\0");
     }
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub fn hash_text(text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
-    format!("sha256:{digest:x}")
+    format!("sha256:{}", hex::encode(digest))
 }
 
 fn trim_completion_text(text: &str) -> String {

@@ -415,5 +415,5 @@ fn current_rss_bytes() -> u64 {
 
 #[allow(dead_code)]
 fn stable_hash(value: &Value) -> String {
-    format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()))
+    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }

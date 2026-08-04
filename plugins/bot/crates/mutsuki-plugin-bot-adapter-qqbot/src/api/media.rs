@@ -80,7 +80,7 @@ impl QqMediaProvider for ResourceGatewayQqMediaProvider {
             })
             .map_err(|error| QqMediaError::Failed(error.to_string()))?;
         if let Some(expected) = latest.content_hash.as_deref() {
-            let actual = format!("sha256:{:x}", Sha256::digest(&bytes));
+            let actual = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
             if expected != actual {
                 return Err(QqMediaError::Failed(format!(
                     "resource digest mismatch: expected {expected}, got {actual}"

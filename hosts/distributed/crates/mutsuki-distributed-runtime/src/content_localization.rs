@@ -654,7 +654,7 @@ fn write_and_commit(
         ));
     }
     prepared.output.sync_all().map_err(|_| storage_error())?;
-    let digest = format!("{:x}", prepared.hasher.finalize());
+    let digest = hex::encode(prepared.hasher.finalize());
     drop(prepared.output);
     if digest != expected.digest {
         let _ = fs::remove_file(temporary);
@@ -687,7 +687,7 @@ fn validate_content_file(
         }
         hash.update(&buffer[..read]);
     }
-    if format!("{:x}", hash.finalize()) != source.content_id.digest {
+    if hex::encode(hash.finalize()) != source.content_id.digest {
         return Err(DistributedError::new(
             mismatch_kind,
             "direct content file digest does not match its descriptor",
@@ -795,7 +795,7 @@ mod tests {
     fn identity(bytes: &[u8]) -> ContentId {
         ContentId::new(
             "sha256",
-            format!("{:x}", Sha256::digest(bytes)),
+            hex::encode(Sha256::digest(bytes)),
             u64::try_from(bytes.len()).unwrap(),
             "blob",
         )

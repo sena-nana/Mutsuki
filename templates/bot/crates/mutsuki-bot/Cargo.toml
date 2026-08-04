@@ -39,8 +39,9 @@ mutsuki-bot-testkit.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-service-plugin-loader.workspace = true
+hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 futures-util = "0.3"
-tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 uuid = { version = "1", features = ["v4"] }

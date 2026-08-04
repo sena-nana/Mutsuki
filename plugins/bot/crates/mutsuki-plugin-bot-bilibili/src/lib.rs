@@ -848,13 +848,19 @@ impl SqliteBilibiliRepository {
         cooldown_ms: u64,
     ) -> Result<bool, rusqlite::Error> {
         let connection = self.connection.lock().expect("sqlite mutex");
-        let previous: Option<u64> = connection
+        let previous: Option<i64> = connection
             .query_row(
                 "SELECT seen_ms FROM cooldown WHERE key = ?1",
                 [key],
                 |row| row.get(0),
             )
             .optional()?;
+        let previous = previous
+            .map(|previous| {
+                u64::try_from(previous)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, previous))
+            })
+            .transpose()?;
         if previous.is_some_and(|previous| now_ms.saturating_sub(previous) < cooldown_ms) {
             return Ok(false);
         }
@@ -862,6 +868,8 @@ impl SqliteBilibiliRepository {
     }
 
     fn record_cooldown(&self, key: &str, now_ms: u64) -> Result<(), rusqlite::Error> {
+        let now_ms = i64::try_from(now_ms)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         self.connection.lock().expect("sqlite mutex").execute(
             "INSERT INTO cooldown(key,seen_ms) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET seen_ms=excluded.seen_ms",
             params![key, now_ms],
@@ -903,6 +911,8 @@ impl SqliteBilibiliRepository {
         uid: u64,
         code: &str,
     ) -> Result<(), rusqlite::Error> {
+        let uid = i64::try_from(uid)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         self.connection.lock().expect("sqlite mutex").execute(
             "INSERT INTO binding_challenge(actor_id,uid,code) VALUES(?1,?2,?3) ON CONFLICT(actor_id) DO UPDATE SET uid=excluded.uid,code=excluded.code",
             params![actor_id, uid, code],
@@ -920,7 +930,12 @@ impl SqliteBilibiliRepository {
             .query_row(
                 "SELECT uid,code FROM binding_challenge WHERE actor_id = ?1",
                 [actor_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| {
+                    let uid: i64 = row.get(0)?;
+                    let uid = u64::try_from(uid)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, uid))?;
+                    Ok((uid, row.get(1)?))
+                },
             )
             .optional()
     }
