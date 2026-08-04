@@ -8,10 +8,15 @@ QQ adapter -> event ingest -> interaction waiter -> handler pipeline
 Scheduled Agent result -> opaque conversation binding -> active delivery
 ```
 
-`QqConversationRef` is the stable private/group/channel identity. Conversation policy resolves
-mention/wake-word, allow/deny, Agent profile, session scope, STT/TTS, and active-delivery admission.
-Session bindings and processed event claims are durable and generation-fenced. Reset creates a new
-session; fork invokes Agent `ForkSession` and only then commits the new binding with compare-and-set.
+`QqConversationRef` is the stable private/group/channel identity. Its v1 origin key is length
+delimited and can be parsed back during state migration; persisted keys are validated before they
+are used to rebuild a target. Conversation policy resolves mention/wake-word, allow/deny, Agent
+profile, session scope, STT/TTS, and active-delivery admission. Matching rules are applied in the
+fixed order product default → account → group/guild → channel → conversation → actor, and the
+resolved result reports the rule source chain. Session bindings and processed event claims are
+durable and generation-fenced. Reset and expiry create a new binding while preserving the old
+generation fence; fork invokes Agent `ForkSession` and only then commits the new binding with
+compare-and-set.
 
 The built-in commands are `/ask`, `/chat`, `/cancel <turn_id>`, `/reset`, `/fork`, `/status`, and
 `/regenerate`. Handler timeout and maximum concurrency are installed as ServiceHost runner limits,

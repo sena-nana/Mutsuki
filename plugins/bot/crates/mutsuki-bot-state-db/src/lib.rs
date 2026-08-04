@@ -579,6 +579,13 @@ mod tests {
             AgentEventClaim::Completed
         );
         assert_eq!(
+            DeliveryRepository::request(&reopened, "delivery")
+                .unwrap()
+                .conversation
+                .target(),
+            conversation.target()
+        );
+        assert_eq!(
             DeliveryRepository::due_delivery_ids(&reopened, 150).unwrap(),
             vec!["delivery".to_string()]
         );
@@ -594,6 +601,58 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn sqlite_session_binding_cas_rejects_a_stale_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bot-state.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let conversation = conversation();
+        let key = conversation.origin_key();
+        let initial = binding(&conversation);
+        ConversationRepository::compare_and_set_session_binding(
+            &repository,
+            &key,
+            None,
+            initial.clone(),
+        )
+        .unwrap();
+
+        let current = AgentSessionBinding {
+            session_version: 1,
+            generation: 2,
+            ..initial.clone()
+        };
+        ConversationRepository::compare_and_set_session_binding(
+            &repository,
+            &key,
+            Some(initial.generation),
+            current.clone(),
+        )
+        .unwrap();
+
+        let stale = AgentSessionBinding {
+            session_version: 2,
+            generation: 2,
+            ..initial
+        };
+        assert_eq!(
+            ConversationRepository::compare_and_set_session_binding(
+                &repository,
+                &key,
+                Some(1),
+                stale,
+            )
+            .unwrap_err(),
+            ConversationError::GenerationConflict
+        );
+        assert_eq!(
+            ConversationRepository::session_binding(&repository, &key)
+                .unwrap()
+                .unwrap(),
+            current
         );
     }
 
