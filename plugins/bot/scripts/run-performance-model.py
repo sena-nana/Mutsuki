@@ -325,6 +325,13 @@ def main() -> None:
             )
         )
         reports.append(json.loads(raw.read_text()))
+    warmup_iterations = {
+        int(report.get("warmup_samples", 0))
+        for report in reports
+    }
+    if len(warmup_iterations) != 1:
+        raise SystemExit("Bot benchmark reports disagree on warmup_samples")
+    warmup_iterations = warmup_iterations.pop()
 
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     counters: dict[str, int] = defaultdict(int)
@@ -469,7 +476,7 @@ def main() -> None:
             "samples_per_process": 1 if args.mode == "smoke" else 3,
             "regular_samples_per_process": 3 if args.mode == "smoke" else 30,
             "long_samples_per_process": 1 if args.mode == "smoke" else 3,
-            "warmup_iterations": 0,
+            "warmup_iterations": warmup_iterations,
         },
         "cases": cases,
         "correctness": {

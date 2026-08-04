@@ -15,6 +15,8 @@ use reconnect::{connection_idle_sample, reconnect_sample};
 use serde::Serialize;
 use serde_json::json;
 
+const WARMUP_SAMPLES: usize = 1;
+
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
@@ -26,6 +28,7 @@ struct RawReport {
     mode: String,
     fixed_seed: u64,
     network_boundary: &'static str,
+    warmup_samples: usize,
     cases: Vec<RawCase>,
     correctness: BTreeMap<String, u64>,
 }
@@ -180,6 +183,7 @@ fn main() {
         mode,
         fixed_seed: BENCHMARK_FIXED_SEED,
         network_boundary: "loopback-fake-only",
+        warmup_samples: WARMUP_SAMPLES,
         cases,
         correctness,
     };
@@ -199,6 +203,12 @@ fn repeated_case(
     samples: usize,
     mut sample: impl FnMut() -> measurement::Sample,
 ) -> RawCase {
+    // Each child process starts cold. Keep one same-case invocation outside the
+    // measured set so p95 represents steady-state orchestration rather than
+    // first-use code, cache, and allocator initialization.
+    for _ in 0..WARMUP_SAMPLES {
+        let _ = sample();
+    }
     raw_case(
         case_id,
         dimensions,
