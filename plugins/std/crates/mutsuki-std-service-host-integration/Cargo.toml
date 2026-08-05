@@ -1,12 +1,15 @@
 [package]
-name = "mutsuki-std-plugins"
+name = "mutsuki-std-service-host-integration"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mutsuki-plugin-image-render.workspace = true
 mutsuki-plugin-io-browser-chromium = { path = "../../plugins/mutsuki-plugin-io-browser-chromium" }
 mutsuki-plugin-io-http-client = { path = "../../plugins/mutsuki-plugin-io-http-client" }
-mutsuki-plugin-image-render.workspace = true
 mutsuki-plugin-resource-memory = { path = "../../plugins/mutsuki-plugin-resource-memory" }
-mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-core.workspace = true
+mutsuki-service-runtime.workspace = true
+mutsuki-std-plugins.workspace = true
+serde_json.workspace = true

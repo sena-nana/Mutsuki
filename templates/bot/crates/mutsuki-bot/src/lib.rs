@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
 use mutsuki_service_config::{ExecutionClassName, ExecutionDomainSection, ServiceConfig};
 use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
-use mutsuki_std_plugins::configured_std_plugin_catalog;
+use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
 
 mod distribution;
 mod web_console;

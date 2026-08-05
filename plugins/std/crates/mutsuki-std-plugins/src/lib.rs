@@ -1,93 +1,84 @@
-use mutsuki_plugin_image_render_skia::{SkiaRenderConfig, SkiaRenderRunner};
-use mutsuki_plugin_io_browser_chromium::{BrowserSnapshotRunner, ChromiumConfig};
-use mutsuki_service_runtime::{
-    ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
-};
-use serde_json::Value;
+//! Host-neutral catalog for standard Mutsuki plugins.
+//!
+//! This crate owns plugin identities and manifest construction only. ServiceHost
+//! assembly belongs to `mutsuki-std-service-host-integration`.
 
-pub struct MemoryResourcePluginFactory;
+use mutsuki_plugin_image_render::ImageRenderConfig;
+use mutsuki_plugin_io_browser_chromium::ChromiumConfig;
+use mutsuki_plugin_io_http_client::HttpClientConfig;
+use mutsuki_runtime_contracts::PluginManifest;
 
-impl ConfiguredPluginFactory for MemoryResourcePluginFactory {
-    fn plugin_id(&self) -> &str {
-        mutsuki_plugin_resource_memory::PLUGIN_ID
+pub const STD_PLUGIN_IDS: [&str; 4] = [
+    mutsuki_plugin_resource_memory::PLUGIN_ID,
+    mutsuki_plugin_io_browser_chromium::PLUGIN_ID,
+    mutsuki_plugin_io_http_client::PLUGIN_ID,
+    mutsuki_plugin_image_render::PLUGIN_ID,
+];
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StdPluginCatalog;
+
+impl StdPluginCatalog {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
     }
 
-    fn prepare(
-        &self,
-        config: &Value,
-        builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        if !config.is_null() && config.as_object().is_none_or(|object| !object.is_empty()) {
-            return Err("memory resource provider does not accept product configuration".into());
-        }
-        let manifest = mutsuki_plugin_resource_memory::loaded_plugin().manifest;
-        Ok(
-            builder.register_builtin_loaded_plugin_factory(manifest, || {
-                Ok::<_, String>(mutsuki_plugin_resource_memory::loaded_plugin())
-            }),
-        )
-    }
-}
-
-pub struct ChromiumPluginFactory;
-
-impl ConfiguredPluginFactory for ChromiumPluginFactory {
-    fn plugin_id(&self) -> &str {
-        mutsuki_plugin_io_browser_chromium::PLUGIN_ID
+    #[must_use]
+    pub const fn plugin_ids(self) -> [&'static str; 4] {
+        STD_PLUGIN_IDS
     }
 
-    fn prepare(
-        &self,
-        config: &Value,
-        builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: ChromiumConfig = serde_json::from_value(config.clone())
-            .map_err(|error| format!("invalid Chromium plugin config: {error}"))?;
+    #[must_use]
+    pub fn memory_resource_manifest(self) -> PluginManifest {
+        mutsuki_plugin_resource_memory::loaded_plugin().manifest
+    }
+
+    /// Builds the Chromium plugin manifest after validating deployment config.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Chromium executable, allowlist, or limits are invalid.
+    pub fn chromium_manifest(self, config: &ChromiumConfig) -> Result<PluginManifest, String> {
         config.validate()?;
-        let manifest = mutsuki_plugin_io_browser_chromium::manifest();
-        Ok(builder
-            .register_builtin_plugin(manifest)
-            .register_fallible_runtime_services_runner(move |_client, resources| {
-                BrowserSnapshotRunner::launch(config.clone(), resources)
-                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_core::Runner>)
-            }))
-    }
-}
-
-pub struct SkiaRenderPluginFactory;
-
-impl ConfiguredPluginFactory for SkiaRenderPluginFactory {
-    fn plugin_id(&self) -> &str {
-        mutsuki_plugin_image_render_skia::PLUGIN_ID
+        Ok(mutsuki_plugin_io_browser_chromium::manifest())
     }
 
-    fn prepare(
-        &self,
-        config: &Value,
-        builder: ServiceRuntimeBuilder,
-    ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: SkiaRenderConfig = serde_json::from_value(config.clone())
-            .map_err(|error| format!("invalid Skia renderer config: {error}"))?;
+    /// Builds the HTTP plugin manifest with its configured response resource dependency.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the response provider, domain allowlist, or limits are invalid.
+    pub fn http_client_manifest(self, config: &HttpClientConfig) -> Result<PluginManifest, String> {
         config.validate()?;
-        let mut manifest = mutsuki_plugin_image_render_skia::manifest();
+        let mut manifest = mutsuki_plugin_io_http_client::manifest();
+        manifest
+            .requires
+            .push(format!("resource_strategy:{}", config.response_provider_id));
+        Ok(manifest)
+    }
+
+    /// Builds the image renderer manifest with its configured output resource dependency.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output provider or deployment font files are invalid.
+    pub fn image_render_manifest(
+        self,
+        config: &ImageRenderConfig,
+    ) -> Result<PluginManifest, String> {
+        config.validate()?;
+        let mut manifest = mutsuki_plugin_image_render::manifest();
         manifest
             .requires
             .push(format!("resource_strategy:{}", config.output_provider_id));
-        Ok(builder
-            .register_builtin_plugin(manifest)
-            .register_fallible_runtime_services_runner(move |_client, resources| {
-                SkiaRenderRunner::launch(config.clone(), resources)
-                    .map(|runner| Box::new(runner) as Box<dyn mutsuki_runtime_core::Runner>)
-            }))
+        Ok(manifest)
     }
 }
 
-pub fn configured_std_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = ConfiguredPluginCatalog::new();
-    catalog.register(MemoryResourcePluginFactory)?;
-    catalog.register(ChromiumPluginFactory)?;
-    catalog.register(SkiaRenderPluginFactory)?;
-    Ok(catalog)
+#[must_use]
+pub const fn std_plugin_catalog() -> StdPluginCatalog {
+    StdPluginCatalog::new()
 }
 
 #[cfg(test)]
@@ -95,7 +86,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configured_catalog_contains_memory_chromium_and_skia_factories() {
-        configured_std_plugin_catalog().unwrap();
+    fn catalog_is_host_neutral_and_lists_each_owned_plugin_once() {
+        let catalog = std_plugin_catalog();
+        let ids = catalog.plugin_ids();
+        assert_eq!(ids.len(), STD_PLUGIN_IDS.len());
+        assert!(ids.contains(&mutsuki_plugin_resource_memory::PLUGIN_ID));
+        assert!(ids.contains(&mutsuki_plugin_image_render::PLUGIN_ID));
+        assert_eq!(catalog.memory_resource_manifest().plugin_id, ids[0]);
     }
 }

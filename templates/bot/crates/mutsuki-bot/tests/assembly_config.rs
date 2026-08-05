@@ -12,7 +12,7 @@ use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_runtime::{
     ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
 };
-use mutsuki_std_plugins::configured_std_plugin_catalog;
+use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -133,7 +133,7 @@ secret_file = "{secret_path}"
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
@@ -275,6 +275,13 @@ id = "mutsuki.std.resource.memory"
 id = "template.test.browser"
 
 [[plugins.configured]]
+id = "mutsuki.std.io.http_client"
+
+[plugins.configured.config]
+response_provider_id = "mutsuki.std.resource.memory"
+domain_allowlist = ["mihuashi.com"]
+
+[[plugins.configured]]
 id = "mutsuki.bot.mihuashi"
 
 [plugins.configured.config]
@@ -310,11 +317,18 @@ async fn mihuashi_with_renderer_fails_startup_without_browser_protocol() {
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
 font_files = ["{font}"]
+
+[[plugins.configured]]
+id = "mutsuki.std.io.http_client"
+
+[plugins.configured.config]
+response_provider_id = "mutsuki.std.resource.memory"
+domain_allowlist = ["mihuashi.com"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.mihuashi"
@@ -356,7 +370,14 @@ id = "mutsuki.std.resource.memory"
 id = "template.test.browser"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.io.http_client"
+
+[plugins.configured.config]
+response_provider_id = "mutsuki.std.resource.memory"
+domain_allowlist = ["mihuashi.com"]
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
@@ -382,7 +403,7 @@ media_provider_id = "mutsuki.std.resource.memory"
 }
 
 #[tokio::test]
-async fn skia_renderer_rejects_missing_font_before_startup() {
+async fn image_renderer_rejects_missing_font_before_startup() {
     let root = tempdir().unwrap();
     let config_path = root.path().join("product.toml");
     std::fs::write(
@@ -394,7 +415,7 @@ async fn skia_renderer_rejects_missing_font_before_startup() {
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
@@ -413,7 +434,7 @@ font_files = ["/definitely/missing/NotoSansSC.ttf"]
 }
 
 #[tokio::test]
-async fn skia_renderer_fails_startup_without_output_provider() {
+async fn image_renderer_fails_startup_without_output_provider() {
     let root = tempdir().unwrap();
     let config_path = root.path().join("product.toml");
     let font = test_font_path();
@@ -424,7 +445,7 @@ async fn skia_renderer_fails_startup_without_output_provider() {
             &format!(
                 r#"
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "missing.output.provider"
@@ -467,7 +488,7 @@ secret_file = "{secret_path}"
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
@@ -665,7 +686,7 @@ fn load(path: &Path) -> ServiceConfig {
 
 fn test_font_path() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../plugins/std/plugins/mutsuki-plugin-image-render-skia/tests/fonts/NotoSansSC-Test.ttf")
+        .join("../../../../plugins/std/plugins/mutsuki-plugin-image-render-takumi/tests/fonts/NotoSansSC-Test.ttf")
         .canonicalize()
         .unwrap()
         .to_string_lossy()
@@ -827,7 +848,7 @@ secret_file = "{secret_path}"
 id = "mutsuki.std.resource.memory"
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"

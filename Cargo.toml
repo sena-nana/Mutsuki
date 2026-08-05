@@ -38,7 +38,7 @@ exclude = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.91"
 license = "MIT"
 repository = "https://github.com/sena-nana/Mutsuki"
 
@@ -198,10 +198,12 @@ mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot
 mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
 
 mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
+mutsuki-protocol-http = { path = "plugins/std/protocols/mutsuki-protocol-http" }
 mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
-mutsuki-plugin-image-render-skia = { path = "plugins/std/plugins/mutsuki-plugin-image-render-skia" }
+mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render-takumi" }
 mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }
 mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
+mutsuki-std-service-host-integration = { path = "plugins/std/crates/mutsuki-std-service-host-integration" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
