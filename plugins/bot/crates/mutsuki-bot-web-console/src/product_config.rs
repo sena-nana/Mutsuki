@@ -10,6 +10,9 @@ use mutsuki_bot_config::{
     ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
     MutsukiConfigSchema, RestartPolicy,
 };
+use mutsuki_plugin_bot_agent::{
+    BOT_AGENT_CONFIG_PROVIDER_ID, BotAgentConfig, BotAgentConfigHandle, bot_agent_config_schema,
+};
 use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandConfig};
 use mutsuki_service_config::ConfiguredPluginStore;
 
@@ -21,12 +24,15 @@ pub enum ProductConfigError {
     Invalid(String),
     #[error("product config provider registration failed: {0}")]
     Register(String),
+    #[error("Bot Agent is selected in product config but no live Agent bridge is installed")]
+    MissingBotAgentBridge,
 }
 
 #[derive(Default)]
 pub struct ProductConfigOptions {
     pub store: Option<ConfiguredPluginStore>,
     pub lifecycle: Option<Arc<dyn ConfigLifecycle>>,
+    pub bot_agent_config: Option<BotAgentConfigHandle>,
 }
 
 pub fn product_config_service(
@@ -44,6 +50,7 @@ pub fn product_config_service_with_options(
     })?;
     let product: toml::Value =
         toml::from_str(&text).map_err(|error| ProductConfigError::Invalid(error.to_string()))?;
+    let bot_agent_config = options.bot_agent_config;
     let store = options
         .store
         .unwrap_or_else(|| ConfiguredPluginStore::open(product_config_path));
@@ -73,11 +80,37 @@ pub fn product_config_service_with_options(
             .with_persist(Arc::new(ConfiguredPluginPersist {
                 store: store.clone(),
                 plugin_id: BOT_COMMAND_PLUGIN_ID.into(),
+                bot_agent_config: None,
             })),
         );
         registry
             .register(command_provider)
             .map_err(|error| ProductConfigError::Register(error.to_string()))?;
+    }
+
+    if let Some(handle) = bot_agent_config {
+        if let Some(defaults) = bot_agent_defaults_from_product(&product, &handle)? {
+            let provider = Arc::new(
+                MemoryConfigProvider::new(
+                    bot_agent_config_schema(),
+                    ConfigValue::from_json(
+                        &serde_json::to_value(&defaults)
+                            .map_err(|error| ProductConfigError::Invalid(error.to_string()))?,
+                    ),
+                    ConfigApplyMode::HotReload,
+                )
+                .with_persist(Arc::new(ConfiguredPluginPersist {
+                    store: store.clone(),
+                    plugin_id: BOT_AGENT_CONFIG_PROVIDER_ID.into(),
+                    bot_agent_config: Some(handle),
+                })),
+            );
+            registry
+                .register(provider)
+                .map_err(|error| ProductConfigError::Register(error.to_string()))?;
+        }
+    } else if plugin_selected(&product, BOT_AGENT_CONFIG_PROVIDER_ID) {
+        return Err(ProductConfigError::MissingBotAgentBridge);
     }
 
     let mut service = ConfigService::new(registry);
@@ -125,6 +158,7 @@ impl ConfigPersistSink for ProductSurfacePersist {
 struct ConfiguredPluginPersist {
     store: ConfiguredPluginStore,
     plugin_id: String,
+    bot_agent_config: Option<BotAgentConfigHandle>,
 }
 
 impl ConfigPersistSink for ConfiguredPluginPersist {
@@ -146,24 +180,90 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
                 .validate()
                 .map_err(|reason| ConfigError::ApplyRejected { reason })?;
         }
+        let decoded_bot_agent = if self.plugin_id == BOT_AGENT_CONFIG_PROVIDER_ID {
+            let decoded: BotAgentConfig =
+                serde_json::from_value(json.clone()).map_err(|error| {
+                    ConfigError::PersistenceFailed {
+                        reason: format!("bot-agent config decode failed: {error}"),
+                    }
+                })?;
+            decoded
+                .validate()
+                .map_err(|error| ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                })?;
+            Some(decoded)
+        } else {
+            None
+        };
         self.store
             .replace_config(&self.plugin_id, json)
             .map_err(|error| ConfigError::PersistenceFailed {
                 reason: error.to_string(),
-            })
+            })?;
+        if let (Some(handle), Some(config)) = (&self.bot_agent_config, decoded_bot_agent) {
+            handle
+                .replace(config)
+                .map_err(|error| ConfigError::PersistenceFailed {
+                    reason: format!("live bot-agent config update failed: {error}"),
+                })?;
+        }
+        Ok(())
     }
 }
 
-fn command_defaults_from_product(product: &toml::Value) -> Option<ConfigValue> {
-    let configured = product
+fn bot_agent_defaults_from_product(
+    product: &toml::Value,
+    handle: &BotAgentConfigHandle,
+) -> Result<Option<BotAgentConfig>, ProductConfigError> {
+    let Some(selection) = configured_plugin_selection(product, BOT_AGENT_CONFIG_PROVIDER_ID) else {
+        return Ok(None);
+    };
+    let value = selection
+        .get("config")
+        .cloned()
+        .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
+    let json = serde_json::to_value(value)
+        .map_err(|error| ProductConfigError::Invalid(error.to_string()))?;
+    let config: BotAgentConfig = serde_json::from_value(json)
+        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
+    config
+        .validate()
+        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
+    handle
+        .replace(config.clone())
+        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
+    Ok(Some(config))
+}
+
+fn plugin_selected(product: &toml::Value, plugin_id: &str) -> bool {
+    configured_plugin_selection(product, plugin_id).is_some()
+}
+
+fn configured_plugin_selection<'a>(
+    product: &'a toml::Value,
+    plugin_id: &str,
+) -> Option<&'a toml::Value> {
+    product
         .get("plugins")
         .and_then(|plugins| plugins.get("configured"))
-        .and_then(|value| value.as_array())?;
-    for selection in configured {
-        let id = selection.get("id").and_then(|value| value.as_str())?;
-        if id.trim() != BOT_COMMAND_PLUGIN_ID {
-            continue;
-        }
+        .and_then(|value| value.as_array())
+        .and_then(|configured| {
+            configured.iter().find(|selection| {
+                selection
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|id| id.trim() == plugin_id)
+                    && selection
+                        .get("enabled")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(true)
+            })
+        })
+}
+
+fn command_defaults_from_product(product: &toml::Value) -> Option<ConfigValue> {
+    if let Some(selection) = configured_plugin_selection(product, BOT_COMMAND_PLUGIN_ID) {
         let config = selection
             .get("config")
             .cloned()
@@ -495,6 +595,100 @@ config = { prefixes = ["/", "!"] }
             },
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn bot_agent_provider_updates_the_live_bridge_and_product_file() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("product.toml");
+        std::fs::write(
+            &path,
+            r#"
+[service]
+profile = "bot"
+instance_id = "demo"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.bot.agent"
+config = { enabled = true, default_profile_id = "from-file", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
+"#,
+        )
+        .unwrap();
+        let handle = BotAgentConfigHandle::default();
+        let service = product_config_service_with_options(
+            &path,
+            ProductConfigOptions {
+                bot_agent_config: Some(handle.clone()),
+                ..ProductConfigOptions::default()
+            },
+        )
+        .unwrap();
+        let caps = vec!["*".into()];
+        assert!(
+            service
+                .list_providers(&caps)
+                .unwrap()
+                .iter()
+                .any(|id| id.0 == BOT_AGENT_CONFIG_PROVIDER_ID)
+        );
+        assert_eq!(
+            handle.snapshot().default_profile_id,
+            "from-file".to_string()
+        );
+
+        let snapshot = service
+            .read(
+                BOT_AGENT_CONFIG_PROVIDER_ID,
+                ConfigContext::plugin_instance("default"),
+                &caps,
+            )
+            .await
+            .unwrap();
+        let mut candidate = snapshot.value;
+        candidate.as_object_mut().unwrap().insert(
+            "streaming".into(),
+            ConfigValue::String("segment_messages".into()),
+        );
+        let result = service
+            .apply(
+                BOT_AGENT_CONFIG_PROVIDER_ID,
+                ConfigApplyRequest {
+                    candidate,
+                    expected_revision: snapshot.revision,
+                    dry_run: false,
+                },
+                ConfigContext::plugin_instance("default"),
+                &caps,
+            )
+            .await
+            .unwrap();
+        assert!(result.applied);
+        assert_eq!(result.restart_policy, RestartPolicy::PluginReload);
+        assert_eq!(handle.snapshot().streaming, "segment_messages");
+        let persisted: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            persisted["plugins"]["configured"][0]["config"]["streaming"].as_str(),
+            Some("segment_messages")
+        );
+    }
+
+    #[test]
+    fn selected_bot_agent_without_a_live_bridge_fails_loud() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("product.toml");
+        std::fs::write(
+            &path,
+            r#"
+[[plugins.configured]]
+id = "mutsuki.plugin.bot.agent"
+"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            product_config_service(&path),
+            Err(ProductConfigError::MissingBotAgentBridge)
+        ));
     }
 
     #[test]

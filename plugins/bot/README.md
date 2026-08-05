@@ -71,6 +71,8 @@ WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用
 - `mutsuki-bot-sdk`: author-facing helpers that lower to Mutsuki task protocols.
 - `mutsuki-plugin-bot-event-router`: standard `mutsuki.bot.event/ingest@1` router plugin.
 - `mutsuki-plugin-bot-command`: generic message command parser plugin.
+- `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
+  handling, public AgentClient injection, and Config Web settings.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories and QQ EventSource bundle.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
@@ -83,6 +85,8 @@ descriptors through the Mutsuki SDK `PluginBuilder`:
 
 - `mutsuki-plugin-bot-event-router`: provides `mutsuki.bot.event/ingest@1`.
 - `mutsuki-plugin-bot-command`: provides `mutsuki.bot.command/parse@1`.
+- `mutsuki-plugin-bot-agent`: provides the public Bot Agent bridge and command handling; its
+  AgentClient and product state are injected by an explicit product bundle.
 - `mutsuki-plugin-bot-adapter-qqbot`: provides standard Bot message/media tasks and QQBot-specific account, gateway status, and raw call tasks.
 
 The generated manifest is the only host-loadable source of truth. This repository does not keep

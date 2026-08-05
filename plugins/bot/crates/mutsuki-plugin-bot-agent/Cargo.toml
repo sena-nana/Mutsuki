@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 mutsuki-agent-client.workspace = true
 mutsuki-agent-contracts.workspace = true
+mutsuki-bot-config.workspace = true
 mutsuki-bot-conversation.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true

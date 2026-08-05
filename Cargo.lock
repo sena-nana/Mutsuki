@@ -3729,11 +3729,13 @@ dependencies = [
  "fastrand",
  "futures-util",
  "mutsuki-agent-contracts",
+ "mutsuki-bot-config",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
  "mutsuki-bot-testkit",
+ "mutsuki-bot-web-console",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",
@@ -3746,6 +3748,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
+ "mutsuki-service-control",
  "mutsuki-service-runtime",
  "reqwest",
  "serde",
@@ -3753,6 +3756,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "toml 1.1.4+spec-1.1.0",
  "tracing",
 ]
 
@@ -3789,6 +3793,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "mutsuki-bot-config",
+ "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-web",
  "mutsuki-plugin-bot-command",
@@ -4189,6 +4194,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
+ "mutsuki-bot-config",
  "mutsuki-bot-conversation",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",

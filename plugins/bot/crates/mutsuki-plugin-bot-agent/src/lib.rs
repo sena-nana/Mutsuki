@@ -16,10 +16,14 @@ use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotAgentBridgeRequest, BotCommandArgumentDescriptor,
     BotCommandArgumentKind, BotCommandDescriptor, BotCommandEvent, BotEvent, BotMediaKind,
     BotMediaSynthesizeRequest, BotMediaSynthesizeResult, BotMediaTranscribeRequest,
-    BotMediaTranscribeResult, BotMessage, BotSpeechReplyPolicy, MessageSegment,
+    BotMediaTranscribeResult, BotMessage, BotSpeechReplyPolicy, BotTarget, MessageSegment,
     QqStreamingStrategy, ResolvedConversationPolicy, bot_command_binding_id,
 };
-use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task, TaskOutcome};
+use mutsuki_runtime_contracts::{
+    ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
+    RunnerControlCapability, RunnerMode, RunnerResult, RunnerSideEffect, Task, TaskOutcome,
+    TimeoutGranularity,
+};
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, HandlerBindingBuilder, PluginBuilder,
@@ -27,6 +31,14 @@ use mutsuki_runtime_sdk::{
     RuntimeResult, TaskAwaitRunnerAdapter,
 };
 use thiserror::Error;
+
+mod config;
+
+pub use config::{
+    BOT_AGENT_CONFIG_PROVIDER_ID, BOT_AGENT_CONFIG_SERVICE_ID, BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
+    BOT_AGENT_MIN_MESSAGE_BYTES, BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle,
+    bot_agent_config_schema,
+};
 
 pub const BOT_AGENT_BRIDGE_PLUGIN_ID: &str = "mutsuki.plugin.bot.agent";
 pub const BOT_AGENT_BRIDGE_RUNNER_ID: &str = "mutsuki.bot.agent.bridge";
@@ -118,7 +130,21 @@ fn simple_agent_command(name: &str, summary: &str) -> BotCommandDescriptor {
 pub fn agent_bridge_runner(client: RuntimeClientRef, bridge: BotAgentBridge) -> Box<dyn Runner> {
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let bridge = bridge.clone();
-        Box::pin(run_bridge_task(ctx, task, bridge))
+        let config = bridge.config.snapshot();
+        let permit = bridge.concurrency.try_acquire(config.max_concurrency);
+        Box::pin(async move {
+            let Some(_permit) = permit else {
+                return Err(bridge_failure(
+                    &task,
+                    "concurrency_limited",
+                    format!(
+                        "Bot Agent concurrency limit {} is currently occupied",
+                        config.max_concurrency
+                    ),
+                ));
+            };
+            run_bridge_task(ctx, task, bridge).await
+        })
     });
     Box::new(
         TaskAwaitRunnerAdapter::new(agent_bridge_descriptor(), client, factory)
@@ -131,6 +157,25 @@ fn agent_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .accepted_protocol(BOT_AGENT_BRIDGE_PROTOCOL_ID)
         .accepted_protocol(BOT_COMMAND_HANDLE_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
+        .invocation_mode(InvocationMode::AsyncReentrant)
+        .concurrency(RunnerConcurrency::Reentrant {
+            max_inflight_batches: 128,
+            max_inflight_entries: 128,
+        })
+        .batch_capability(RunnerBatchCapability {
+            mode: RunnerMode::NativeBatch,
+            preferred_batch_size: 1,
+            max_batch_entries: 1,
+            max_entry_concurrency: 1,
+            max_inflight_batches: 128,
+            side_effect: RunnerSideEffect::External,
+            ..RunnerBatchCapability::default()
+        })
+        .control_capability(RunnerControlCapability {
+            entry_cancel: true,
+            batch_cancel: true,
+            timeout_granularity: TimeoutGranularity::Entry,
+        })
         .build()
 }
 
@@ -191,7 +236,7 @@ async fn run_bridge_task(
                 resolved,
                 binding,
                 turn_id,
-                outgoing: Vec::new(),
+                outgoing: command_confirmation(&event.target, "已取消当前 Agent 回复"),
             })
         })(),
         BotAgentBridgeRequest::Reset { event } => (|| {
@@ -204,7 +249,7 @@ async fn run_bridge_task(
                 resolved,
                 binding,
                 turn_id: String::new(),
-                outgoing: Vec::new(),
+                outgoing: command_confirmation(&event.target, "已开启新的 Agent 会话"),
             })
         })(),
         BotAgentBridgeRequest::Fork { event } => (|| {
@@ -214,17 +259,18 @@ async fn run_bridge_task(
                 resolved,
                 binding,
                 turn_id: String::new(),
-                outgoing: Vec::new(),
+                outgoing: command_confirmation(&event.target, "已分叉 Agent 会话，历史记录已保留"),
             })
         })(),
         BotAgentBridgeRequest::Status { event } => (|| {
             let resolved = bridge.resolve_admitted(&event)?;
             let binding = bridge.status(&event)?;
+            let outgoing = status_confirmation(&event.target, &binding);
             Ok(BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id: String::new(),
-                outgoing: Vec::new(),
+                outgoing,
             })
         })(),
     }
@@ -241,7 +287,13 @@ async fn run_bridge_task(
             )
             .await
         {
-            Ok(_) => delivered += 1,
+            Ok(TaskOutcome::Completed { .. }) => delivered += 1,
+            Ok(TaskOutcome::Failed { error, .. }) => delivery_errors.push(error.code),
+            Ok(TaskOutcome::Cancelled { .. }) => delivery_errors.push("delivery.cancelled".into()),
+            Ok(TaskOutcome::Expired { .. }) => delivery_errors.push("delivery.expired".into()),
+            Ok(TaskOutcome::DeadLetter { .. }) => {
+                delivery_errors.push("delivery.dead_letter".into())
+            }
             Err(error) => delivery_errors.push(error.error().code.clone()),
         }
     }
@@ -284,6 +336,19 @@ fn bridge_request_from_command(
         "regenerate" => Ok(BotAgentBridgeRequest::Regenerate { event }),
         _ => Err(BotAgentError::InvalidCommand),
     }
+}
+
+fn command_confirmation(target: &BotTarget, text: &str) -> Vec<BotMessage> {
+    vec![BotMessage::text(target.clone(), text)]
+}
+
+fn status_confirmation(target: &BotTarget, binding: &AgentSessionBinding) -> Vec<BotMessage> {
+    let text = if binding.session_version == 0 {
+        "当前 Agent 会话尚未开始".to_owned()
+    } else {
+        format!("当前 Agent 会话已完成 {} 轮对话", binding.session_version)
+    };
+    command_confirmation(target, &text)
 }
 
 async fn transcribe_event_audio(
@@ -561,7 +626,35 @@ impl<B: AgentClientBackend + Send> AgentBridgeClient for AgentClient<B> {
 pub struct BotAgentBridge {
     conversations: ConversationService,
     client: Arc<Mutex<Box<dyn AgentBridgeClient>>>,
-    streaming: QqStreamingStrategy,
+    config: BotAgentConfigHandle,
+    concurrency: Arc<BotAgentConcurrencyGate>,
+}
+
+#[derive(Default)]
+struct BotAgentConcurrencyGate {
+    active: Mutex<usize>,
+}
+
+struct BotAgentConcurrencyPermit {
+    gate: Arc<BotAgentConcurrencyGate>,
+}
+
+impl BotAgentConcurrencyGate {
+    fn try_acquire(self: &Arc<Self>, limit: usize) -> Option<BotAgentConcurrencyPermit> {
+        let mut active = self.active.lock().expect("Bot Agent gate mutex");
+        if *active >= limit.max(1) {
+            return None;
+        }
+        *active += 1;
+        Some(BotAgentConcurrencyPermit { gate: self.clone() })
+    }
+}
+
+impl Drop for BotAgentConcurrencyPermit {
+    fn drop(&mut self) {
+        let mut active = self.gate.active.lock().expect("Bot Agent gate mutex");
+        *active = active.saturating_sub(1);
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -577,10 +670,26 @@ impl BotAgentBridge {
         client: Box<dyn AgentBridgeClient>,
         streaming: QqStreamingStrategy,
     ) -> Self {
+        let config = BotAgentConfigHandle::default();
+        let mut settings = config.snapshot();
+        settings.streaming = streaming_name(&streaming).into();
+        config
+            .replace(settings)
+            .expect("streaming strategy must produce a valid Bot Agent config");
+        Self::new_with_config(conversations, client, config)
+    }
+
+    #[must_use]
+    pub fn new_with_config(
+        conversations: ConversationService,
+        client: Box<dyn AgentBridgeClient>,
+        config: BotAgentConfigHandle,
+    ) -> Self {
         Self {
             conversations,
             client: Arc::new(Mutex::new(client)),
-            streaming,
+            config,
+            concurrency: Arc::new(BotAgentConcurrencyGate::default()),
         }
     }
 
@@ -594,7 +703,7 @@ impl BotAgentBridge {
         trace: Option<&BotAgentTraceContext>,
     ) -> Result<BotAgentBridgeResult, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve_admitted(event)?;
+        let (resolved, config) = self.resolve_admitted_with_config(event)?;
         let profile_id = resolved
             .policy
             .agent_runtime_profile_id
@@ -639,14 +748,12 @@ impl BotAgentBridge {
             vec![message],
             &event.event_id,
         )?;
-        let binding = self.conversations.advance_session(
-            &resolved,
-            actor_id,
-            binding.session_version,
-            next_version.0,
-        )?;
+        let binding =
+            self.advance_or_reuse_session_version(&resolved, actor_id, &binding, next_version.0)?;
         let page = client.events(&binding.session_id, binding.last_event_sequence)?;
-        let outgoing = outgoing_messages(event, &page, &self.streaming);
+        let strategy = config.streaming_strategy()?;
+        let outgoing =
+            outgoing_messages_with_limit(event, &page, &strategy, config.max_message_bytes);
         let binding = self.conversations.advance_event_sequence(
             &resolved,
             actor_id,
@@ -672,7 +779,7 @@ impl BotAgentBridge {
         event: &BotEvent,
     ) -> Result<Option<BotAgentBridgeResult>, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve_admitted(event)?;
+        let (resolved, _) = self.resolve_admitted_with_config(event)?;
         let binding = self
             .conversations
             .get_or_create_session_binding(&resolved, actor_id)?;
@@ -697,16 +804,70 @@ impl BotAgentBridge {
             .resolve_policy(qq_conversation_from_event(event)?, actor_id)?)
     }
 
+    fn advance_or_reuse_session_version(
+        &self,
+        resolved: &ResolvedConversationPolicy,
+        actor_id: Option<&str>,
+        binding: &AgentSessionBinding,
+        next_session_version: u64,
+    ) -> Result<AgentSessionBinding, BotAgentError> {
+        if next_session_version != binding.session_version {
+            return Ok(self.conversations.advance_session(
+                resolved,
+                actor_id,
+                binding.session_version,
+                next_session_version,
+            )?);
+        }
+
+        // AgentClient may return the already-accepted version when a reconnect retries the
+        // same idempotency key after the first submit succeeded but event retrieval disconnected.
+        // Reusing the persisted binding is safe only while reset/fork/concurrent progress has not
+        // replaced this session lineage.
+        let current = self
+            .conversations
+            .session_binding(resolved, actor_id)?
+            .ok_or(ConversationError::BindingNotFound)?;
+        if current.session_id != binding.session_id {
+            return Err(ConversationError::GenerationConflict.into());
+        }
+        if current.session_version != next_session_version {
+            return Err(ConversationError::SessionVersionConflict {
+                expected: next_session_version,
+                actual: current.session_version,
+            }
+            .into());
+        }
+        Ok(current)
+    }
+
     pub fn resolve_admitted(
         &self,
         event: &BotEvent,
     ) -> Result<ResolvedConversationPolicy, BotAgentError> {
-        let resolved = self.resolve(event)?;
+        self.resolve_admitted_with_config(event)
+            .map(|(resolved, _)| resolved)
+    }
+
+    fn resolve_admitted_with_config(
+        &self,
+        event: &BotEvent,
+    ) -> Result<(ResolvedConversationPolicy, BotAgentConfig), BotAgentError> {
+        let config = self.config.snapshot();
+        if !config.enabled {
+            return Err(BotAgentError::AgentDisabled);
+        }
+        let mut resolved = self.resolve(event)?;
+        if resolved.policy.agent_runtime_profile_id.is_none()
+            && !config.default_profile_id.trim().is_empty()
+        {
+            resolved.policy.agent_runtime_profile_id = Some(config.default_profile_id.clone());
+        }
         self.conversations.admit_event(&resolved, event)?;
         if !resolved.policy.agent_enabled {
             return Err(BotAgentError::AgentDisabled);
         }
-        Ok(resolved)
+        Ok((resolved, config))
     }
 
     pub fn status(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
@@ -881,10 +1042,11 @@ fn validate_agent_media(
     Ok(())
 }
 
-fn outgoing_messages(
+fn outgoing_messages_with_limit(
     source: &BotEvent,
     page: &AgentEventPage,
     strategy: &QqStreamingStrategy,
+    max_message_bytes: usize,
 ) -> Vec<BotMessage> {
     let mut deltas = String::new();
     let mut final_text = None;
@@ -937,20 +1099,26 @@ fn outgoing_messages(
             _ => {}
         }
     }
-    let mut text = final_text.unwrap_or(deltas);
+    let mut text = match strategy {
+        QqStreamingStrategy::FinalOnly => final_text.unwrap_or(deltas),
+        QqStreamingStrategy::SegmentMessages => {
+            if deltas.is_empty() {
+                final_text.unwrap_or_default()
+            } else {
+                deltas
+            }
+        }
+    };
     text.push_str(&supplements);
     if text.is_empty() {
         return artifacts;
     }
-    let mut messages = match strategy {
-        QqStreamingStrategy::SegmentMessages => split_text(&text, 1_800)
-            .into_iter()
-            .map(|chunk| BotMessage::text(source.target.clone(), chunk))
-            .collect(),
-        QqStreamingStrategy::FinalOnly => {
-            vec![BotMessage::text(source.target.clone(), text)]
-        }
-    };
+    // QQ delivery has one size boundary regardless of whether the bridge emits deltas or a
+    // final response. Final-only controls event selection, not an unlimited transport payload.
+    let mut messages = split_text(&text, max_message_bytes)
+        .into_iter()
+        .map(|chunk| BotMessage::text(source.target.clone(), chunk))
+        .collect::<Vec<_>>();
     messages.extend(artifacts);
     messages
 }
@@ -963,6 +1131,12 @@ fn trace_context(task: &Task) -> Option<BotAgentTraceContext> {
 }
 
 fn split_text(text: &str, max_bytes: usize) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if max_bytes < BOT_AGENT_MIN_MESSAGE_BYTES {
+        return vec![text.to_owned()];
+    }
     let mut chunks = Vec::new();
     let mut start = 0;
     while start < text.len() {
@@ -976,6 +1150,13 @@ fn split_text(text: &str, max_bytes: usize) -> Vec<String> {
     chunks
 }
 
+fn streaming_name(strategy: &QqStreamingStrategy) -> &'static str {
+    match strategy {
+        QqStreamingStrategy::FinalOnly => "final_only",
+        QqStreamingStrategy::SegmentMessages => "segment_messages",
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum BotAgentError {
     #[error(transparent)]
@@ -986,6 +1167,8 @@ pub enum BotAgentError {
     AgentClient { code: String, message: String },
     #[error("Agent is disabled for this conversation")]
     AgentDisabled,
+    #[error("Bot Agent configuration is invalid: {0}")]
+    Config(#[from] BotAgentConfigError),
     #[error("Agent runtime profile binding is missing")]
     AgentProfileMissing,
     #[error("Bot message is missing")]
@@ -1096,6 +1279,7 @@ mod tests {
         versions: BTreeMap<String, u64>,
         next_events: BTreeMap<String, AgentEventPage>,
         submitted: Vec<(String, String)>,
+        started_profiles: Arc<Mutex<Vec<String>>>,
     }
 
     impl AgentBridgeClient for FakeAgentClient {
@@ -1111,6 +1295,10 @@ mod tests {
             request: AgentSessionCreateRequest,
         ) -> Result<AgentSession, AgentWireError> {
             let id = request.session_id.unwrap();
+            self.started_profiles
+                .lock()
+                .unwrap()
+                .push(request.profile_id.clone());
             self.sessions.insert(id.clone());
             self.versions.insert(id.clone(), 0);
             Ok(session(&id))
@@ -1182,6 +1370,138 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ReplayableAgentState {
+        sessions: BTreeSet<String>,
+        versions: BTreeMap<String, u64>,
+        idempotency: BTreeMap<String, SessionVersion>,
+        pages: BTreeMap<String, AgentEventPage>,
+        submit_count: usize,
+        event_calls: usize,
+        fail_first_events: bool,
+    }
+
+    #[derive(Clone)]
+    struct ReplayableAgentClient {
+        state: Arc<Mutex<ReplayableAgentState>>,
+    }
+
+    impl AgentBridgeClient for ReplayableAgentClient {
+        fn get_session(&mut self, session_id: &str) -> Result<AgentSession, AgentWireError> {
+            let state = self.state.lock().unwrap();
+            state
+                .sessions
+                .contains(session_id)
+                .then(|| session(session_id))
+                .ok_or_else(|| wire_error("agent.session.not_found"))
+        }
+
+        fn start_session(
+            &mut self,
+            request: AgentSessionCreateRequest,
+        ) -> Result<AgentSession, AgentWireError> {
+            let session_id = request
+                .session_id
+                .ok_or_else(|| wire_error("agent.session.id_missing"))?;
+            let mut state = self.state.lock().unwrap();
+            state.sessions.insert(session_id.clone());
+            state.versions.insert(session_id.clone(), 0);
+            Ok(session(&session_id))
+        }
+
+        fn submit_turn(
+            &mut self,
+            session_id: &str,
+            expected_version: SessionVersion,
+            turn_id: &str,
+            _messages: Vec<AgentMessage>,
+            idempotency_key: &str,
+        ) -> Result<SessionVersion, AgentWireError> {
+            let mut state = self.state.lock().unwrap();
+            if let Some(version) = state.idempotency.get(idempotency_key) {
+                return Ok(*version);
+            }
+            if state.versions.get(session_id).copied() != Some(expected_version.0) {
+                return Err(wire_error("agent.session.version_conflict"));
+            }
+            let next = SessionVersion(expected_version.0 + 1);
+            state.versions.insert(session_id.into(), next.0);
+            state.idempotency.insert(idempotency_key.into(), next);
+            state.submit_count += 1;
+            state.pages.insert(
+                session_id.into(),
+                AgentEventPage {
+                    events: vec![AgentEventEnvelope {
+                        session_id: session_id.into(),
+                        sequence: next.0,
+                        meta: AgentEventMeta::default(),
+                        event: AgentEvent::FinalResponse {
+                            turn_id: turn_id.into(),
+                            summary: "recovered reply".into(),
+                            result: None,
+                        },
+                    }],
+                    next_sequence: next.0,
+                    lost: 0,
+                    truncated: false,
+                },
+            );
+            Ok(next)
+        }
+
+        fn cancel_turn(
+            &mut self,
+            session_id: &str,
+            _turn_id: &str,
+            expected_version: SessionVersion,
+        ) -> Result<SessionVersion, AgentWireError> {
+            let mut state = self.state.lock().unwrap();
+            if state.versions.get(session_id).copied() != Some(expected_version.0) {
+                return Err(wire_error("agent.session.version_conflict"));
+            }
+            let next = expected_version.0 + 1;
+            state.versions.insert(session_id.into(), next);
+            Ok(SessionVersion(next))
+        }
+
+        fn fork_session(
+            &mut self,
+            _source_session_id: &str,
+            _target_session_id: &str,
+            _expected_version: SessionVersion,
+        ) -> Result<SessionVersion, AgentWireError> {
+            Err(wire_error("agent.session.fork_not_used"))
+        }
+
+        fn events(
+            &mut self,
+            session_id: &str,
+            after_sequence: u64,
+        ) -> Result<AgentEventPage, AgentWireError> {
+            let mut state = self.state.lock().unwrap();
+            state.event_calls += 1;
+            if state.fail_first_events && state.event_calls == 1 {
+                return Err(wire_error("agent.transport.disconnected"));
+            }
+            let mut page = state
+                .pages
+                .get(session_id)
+                .cloned()
+                .unwrap_or(AgentEventPage {
+                    events: Vec::new(),
+                    next_sequence: after_sequence,
+                    lost: 0,
+                    truncated: false,
+                });
+            page.events.retain(|event| event.sequence > after_sequence);
+            page.next_sequence = page
+                .events
+                .last()
+                .map_or(after_sequence, |event| event.sequence);
+            Ok(page)
+        }
+    }
+
     #[test]
     fn private_and_group_two_turns_reuse_their_stable_sessions() {
         for target in [
@@ -1233,6 +1553,79 @@ mod tests {
     }
 
     #[test]
+    fn configured_default_profile_is_used_when_policy_does_not_bind_one() {
+        let repository = Arc::new(Repository::default());
+        let mut policy = policy();
+        policy.agent_runtime_profile_id = None;
+        let config = BotAgentConfigHandle::new(BotAgentConfig {
+            default_profile_id: "configured-profile".into(),
+            ..BotAgentConfig::default()
+        })
+        .unwrap();
+        let started_profiles = Arc::new(Mutex::new(Vec::new()));
+        let bridge = BotAgentBridge::new_with_config(
+            ConversationService::new(repository, policy),
+            Box::new(FakeAgentClient {
+                started_profiles: started_profiles.clone(),
+                ..FakeAgentClient::default()
+            }),
+            config,
+        );
+
+        let result = bridge
+            .submit_event(&event(
+                "configured-profile",
+                BotTarget::User {
+                    user_id: "actor".into(),
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            result.resolved.policy.agent_runtime_profile_id.as_deref(),
+            Some("configured-profile")
+        );
+        assert_eq!(
+            started_profiles.lock().unwrap().as_slice(),
+            ["configured-profile"]
+        );
+    }
+
+    #[test]
+    fn globally_disabled_bridge_rejects_before_creating_a_session() {
+        let repository = Arc::new(Repository::default());
+        let config = BotAgentConfigHandle::new(BotAgentConfig {
+            enabled: false,
+            ..BotAgentConfig::default()
+        })
+        .unwrap();
+        let bridge = BotAgentBridge::new_with_config(
+            ConversationService::new(repository.clone(), policy()),
+            Box::new(FakeAgentClient::default()),
+            config,
+        );
+
+        assert!(matches!(
+            bridge.submit_event(&event(
+                "disabled",
+                BotTarget::Group {
+                    group_id: "group".into(),
+                },
+            )),
+            Err(BotAgentError::AgentDisabled)
+        ));
+        assert!(repository.bindings.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn configured_concurrency_gate_releases_after_invocation_drop() {
+        let gate = Arc::new(BotAgentConcurrencyGate::default());
+        let permit = gate.try_acquire(1).expect("first invocation is admitted");
+        assert!(gate.try_acquire(1).is_none());
+        drop(permit);
+        assert!(gate.try_acquire(1).is_some());
+    }
+
+    #[test]
     fn final_response_keeps_non_resource_artifact_summary() {
         let source = event(
             "artifact",
@@ -1278,9 +1671,109 @@ mod tests {
             truncated: false,
         };
 
-        let outgoing = outgoing_messages(&source, &page, &QqStreamingStrategy::FinalOnly);
+        let outgoing = outgoing_messages_with_limit(
+            &source,
+            &page,
+            &QqStreamingStrategy::FinalOnly,
+            BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
+        );
 
         assert_eq!(outgoing[0].plain_text(), "answer\n\ncitation summary");
+    }
+
+    #[test]
+    fn final_only_reply_is_segmented_at_the_configured_transport_boundary() {
+        let source = event(
+            "long-reply",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        let page = AgentEventPage {
+            events: vec![AgentEventEnvelope {
+                session_id: "session".into(),
+                sequence: 1,
+                meta: AgentEventMeta::default(),
+                event: AgentEvent::FinalResponse {
+                    turn_id: "turn".into(),
+                    summary: "abcdefghij".into(),
+                    result: None,
+                },
+            }],
+            next_sequence: 1,
+            lost: 0,
+            truncated: false,
+        };
+
+        let outgoing =
+            outgoing_messages_with_limit(&source, &page, &QqStreamingStrategy::FinalOnly, 4);
+        assert_eq!(
+            outgoing
+                .iter()
+                .map(BotMessage::plain_text)
+                .collect::<Vec<_>>(),
+            vec!["abcd", "efgh", "ij"]
+        );
+    }
+
+    #[test]
+    fn segmented_streaming_uses_model_deltas_while_final_only_uses_final_response() {
+        let source = event(
+            "streaming",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        let page = AgentEventPage {
+            events: vec![
+                AgentEventEnvelope {
+                    session_id: "session".into(),
+                    sequence: 1,
+                    meta: AgentEventMeta::default(),
+                    event: AgentEvent::ModelDelta {
+                        turn_id: "turn".into(),
+                        text: "partial ".into(),
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "session".into(),
+                    sequence: 2,
+                    meta: AgentEventMeta::default(),
+                    event: AgentEvent::ModelDelta {
+                        turn_id: "turn".into(),
+                        text: "reply".into(),
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "session".into(),
+                    sequence: 3,
+                    meta: AgentEventMeta::default(),
+                    event: AgentEvent::FinalResponse {
+                        turn_id: "turn".into(),
+                        summary: "final reply".into(),
+                        result: None,
+                    },
+                },
+            ],
+            next_sequence: 3,
+            lost: 0,
+            truncated: false,
+        };
+
+        let final_only = outgoing_messages_with_limit(
+            &source,
+            &page,
+            &QqStreamingStrategy::FinalOnly,
+            BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
+        );
+        let segmented = outgoing_messages_with_limit(
+            &source,
+            &page,
+            &QqStreamingStrategy::SegmentMessages,
+            BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
+        );
+        assert_eq!(final_only[0].plain_text(), "final reply");
+        assert_eq!(segmented[0].plain_text(), "partial reply");
     }
 
     #[test]
@@ -1307,6 +1800,46 @@ mod tests {
         let duplicate = reloaded_bridge.submit_event(&event).unwrap();
         assert_eq!(duplicate.binding.session_version, 1);
         assert!(duplicate.outgoing.is_empty());
+    }
+
+    #[test]
+    fn pending_event_resumes_after_bridge_reload_without_duplicate_submit() {
+        let repository = Arc::new(Repository::default());
+        let state = Arc::new(Mutex::new(ReplayableAgentState {
+            fail_first_events: true,
+            ..ReplayableAgentState::default()
+        }));
+        let event = event(
+            "pending-reconnect",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        );
+        let first_bridge = BotAgentBridge::new(
+            ConversationService::new(repository.clone(), policy()),
+            Box::new(ReplayableAgentClient {
+                state: state.clone(),
+            }),
+            QqStreamingStrategy::FinalOnly,
+        );
+        assert!(matches!(
+            first_bridge.submit_event(&event),
+            Err(BotAgentError::AgentClient { ref code, .. })
+                if code == "agent.transport.disconnected"
+        ));
+
+        let reloaded_bridge = BotAgentBridge::new(
+            ConversationService::new(repository, policy()),
+            Box::new(ReplayableAgentClient {
+                state: state.clone(),
+            }),
+            QqStreamingStrategy::FinalOnly,
+        );
+        let recovered = reloaded_bridge.submit_event(&event).unwrap();
+        assert_eq!(recovered.outgoing[0].plain_text(), "recovered reply");
+        let state = state.lock().unwrap();
+        assert_eq!(state.submit_count, 1);
+        assert_eq!(state.event_calls, 2);
     }
 
     #[test]

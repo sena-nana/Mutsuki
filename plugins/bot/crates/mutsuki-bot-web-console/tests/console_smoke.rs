@@ -5,9 +5,11 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_web_console::{
-    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    build_console_host, demo_config_service, empty_config_service,
+    ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver, SecretMonitor,
+    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, build_console_host, demo_config_service,
+    empty_config_service, product_config_service_with_options,
 };
+use mutsuki_plugin_bot_agent::BotAgentConfigHandle;
 use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 use mutsuki_web_host::WebHost;
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
@@ -234,6 +236,173 @@ async fn embedded_console_demo_config_provider_is_usable() {
     .await
     .unwrap();
     assert_eq!(providers.as_array().unwrap(), &vec![json!("product")]);
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn embedded_console_manages_bot_agent_provider_over_web_rpc() {
+    let root = tempfile::tempdir().unwrap();
+    let product_path = root.path().join("product.toml");
+    std::fs::write(
+        &product_path,
+        r#"
+[service]
+profile = "bot"
+instance_id = "demo"
+
+[[plugins.configured]]
+id = "mutsuki.plugin.bot.agent"
+config = { enabled = true, default_profile_id = "from-web", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
+"#,
+    )
+    .unwrap();
+
+    let control = Arc::new(FixtureControlHandler::default());
+    let bot_agent_config = BotAgentConfigHandle::default();
+    let service = product_config_service_with_options(
+        &product_path,
+        ProductConfigOptions {
+            lifecycle: Some(Arc::new(ControlPluginReloadLifecycle::new(
+                control.clone(),
+                "fixture",
+            ))),
+            bot_agent_config: Some(bot_agent_config.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        include_config: true,
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, _dirs) = build_console_host(
+        &config,
+        &secrets,
+        control.clone(),
+        "local-dev",
+        Some(service),
+        None,
+        &WebConsolePaths::default(),
+        None,
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let providers = ws_rpc(&addr, "config", "providers.list").await.unwrap();
+    assert!(
+        providers
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|provider| provider == "mutsuki.plugin.bot.agent")
+    );
+
+    let schema = ws_rpc_params(
+        &addr,
+        "config",
+        "schema.get",
+        json!({"provider_id":"mutsuki.plugin.bot.agent"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(schema["provider_id"], "mutsuki.plugin.bot.agent");
+    assert!(
+        schema["root"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["key"] == "streaming")
+    );
+
+    let snapshot = ws_rpc_params(
+        &addr,
+        "config",
+        "snapshot.read",
+        json!({
+            "provider_id":"mutsuki.plugin.bot.agent",
+            "context":{"scope":"plugin_instance","plugin_instance_id":"default"}
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(snapshot["revision"], 1);
+
+    let mut invalid_candidate = snapshot["value"].clone();
+    invalid_candidate["value"]["max_concurrency"]["value"] = json!(0);
+    let invalid_apply = ws_rpc_params(
+        &addr,
+        "config",
+        "apply",
+        json!({
+            "provider_id":"mutsuki.plugin.bot.agent",
+            "context":{"scope":"plugin_instance","plugin_instance_id":"default"},
+            "request":{
+                "expected_revision":snapshot["revision"],
+                "candidate":invalid_candidate
+            }
+        }),
+    )
+    .await;
+    assert!(invalid_apply.is_err());
+    assert_eq!(bot_agent_config.snapshot().max_concurrency, 2);
+
+    let mut candidate = snapshot["value"].clone();
+    candidate["value"]["streaming"]["value"] = json!("segment_messages");
+    candidate["value"]["max_concurrency"]["value"] = json!(3);
+    candidate["value"]["timeout_ms"]["value"] = json!(30000);
+
+    let applied = ws_rpc_params(
+        &addr,
+        "config",
+        "apply",
+        json!({
+            "provider_id":"mutsuki.plugin.bot.agent",
+            "context":{"scope":"plugin_instance","plugin_instance_id":"default"},
+            "request":{
+                "expected_revision":snapshot["revision"],
+                "candidate":candidate
+            }
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied["applied"], true);
+    assert_eq!(applied["restart_policy"], "plugin_reload");
+    assert!(
+        applied["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action == "plugin_reloaded")
+    );
+    assert!(applied["pending_actions"].as_array().unwrap().is_empty());
+    assert_eq!(bot_agent_config.snapshot().streaming, "segment_messages");
+    assert_eq!(bot_agent_config.snapshot().max_concurrency, 3);
+    assert_eq!(bot_agent_config.snapshot().timeout_ms, 30000);
+    assert!(
+        control
+            .mutations
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|mutation| mutation == "plugin_reload")
+    );
+
+    let persisted: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&product_path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["plugins"]["configured"][0]["config"]["streaming"].as_str(),
+        Some("segment_messages")
+    );
+
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

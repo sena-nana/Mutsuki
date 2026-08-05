@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
@@ -22,7 +22,7 @@ use crate::error::{
 };
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
-use crate::scheduler::{DefaultScheduler, SchedulerPolicy};
+use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
 
 #[derive(Default)]
 pub struct RuntimeBootstrapper {
@@ -43,6 +43,7 @@ pub struct PreparedRuntimeReload {
     pub(crate) services: Arc<HostServiceRegistry>,
     pub(crate) profile_id: String,
     pub(crate) registry_generation: u64,
+    pub(crate) runner_limits: Option<BTreeMap<String, RunnerLimits>>,
 }
 
 struct RegisteredRunner {
@@ -222,6 +223,28 @@ impl RuntimeBootstrapper {
         profile: RuntimeProfile,
         registry_generation: u64,
     ) -> RuntimeResult<PreparedRuntimeReload> {
+        self.prepare_reload_with_limits(profile, registry_generation, None)
+    }
+
+    /// Prepares a reload and atomically replaces Host scheduler limits with the supplied map.
+    ///
+    /// The optional form above intentionally preserves the existing limits for callers that do
+    /// not participate in ServiceHost's dynamic product configuration boundary.
+    pub fn prepare_reload_with_runner_limits(
+        self,
+        profile: RuntimeProfile,
+        registry_generation: u64,
+        runner_limits: BTreeMap<String, RunnerLimits>,
+    ) -> RuntimeResult<PreparedRuntimeReload> {
+        self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits))
+    }
+
+    fn prepare_reload_with_limits(
+        self,
+        profile: RuntimeProfile,
+        registry_generation: u64,
+        runner_limits: Option<BTreeMap<String, RunnerLimits>>,
+    ) -> RuntimeResult<PreparedRuntimeReload> {
         let mut prepared = self.prepare_runtime(profile)?;
         prepared.plan.registry_generation = registry_generation;
         for manifest in &mut prepared.plan.plugins {
@@ -254,6 +277,7 @@ impl RuntimeBootstrapper {
             services: prepared.services,
             profile_id: prepared.profile_id,
             registry_generation: prepared.registry_generation,
+            runner_limits,
         })
     }
 
