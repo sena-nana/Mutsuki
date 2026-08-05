@@ -78,6 +78,15 @@ type AsyncHandlerFactory =
 type LoadedPluginFactory = Arc<dyn Fn() -> Result<LoadedPlugin, String> + Send + Sync>;
 type HealthProbe = Arc<dyn Fn() -> Value + Send + Sync>;
 
+#[derive(Clone, Debug)]
+struct RunnerLimitOverride {
+    runner_id: String,
+    max_running: Option<usize>,
+    wall_clock_timeout_ms: Option<u64>,
+}
+
+type RunnerLimitFactory = Arc<dyn Fn() -> RunnerLimitOverride + Send + Sync>;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginDeploymentState {
     #[serde(default = "deployment_state_version")]
@@ -354,6 +363,7 @@ pub struct ServiceRuntimeBuilder {
     health_probes: BTreeMap<String, HealthProbe>,
     event_sources: Vec<Box<dyn HostEventSource>>,
     runner_limits: BTreeMap<String, RunnerLimits>,
+    runner_limit_factories: Vec<RunnerLimitFactory>,
 }
 
 /// Domain-neutral factory for a native product plugin selected by Host configuration.
@@ -431,6 +441,8 @@ struct ServiceRuntimeInner {
     health_probes: BTreeMap<String, HealthProbe>,
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
+    runner_limits: BTreeMap<String, RunnerLimits>,
+    runner_limit_factories: Vec<RunnerLimitFactory>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
 }
 
@@ -462,6 +474,7 @@ impl ServiceRuntimeBuilder {
             health_probes: BTreeMap::new(),
             event_sources: Vec::new(),
             runner_limits: BTreeMap::new(),
+            runner_limit_factories: Vec::new(),
         }
     }
 
@@ -658,6 +671,30 @@ impl ServiceRuntimeBuilder {
         self
     }
 
+    /// Registers a runner limit whose values are resolved again for every ServiceHost reload.
+    ///
+    /// Product configuration owns the source of these values; ServiceHost remains responsible
+    /// for applying the resulting scheduler boundary atomically with the runtime generation.
+    pub fn register_dynamic_runner_limit<F>(
+        mut self,
+        runner_id: impl Into<String>,
+        factory: F,
+    ) -> Self
+    where
+        F: Fn() -> (Option<usize>, Option<u64>) + Send + Sync + 'static,
+    {
+        let runner_id = runner_id.into();
+        self.runner_limit_factories.push(Arc::new(move || {
+            let (max_running, wall_clock_timeout_ms) = factory();
+            RunnerLimitOverride {
+                runner_id: runner_id.clone(),
+                max_running,
+                wall_clock_timeout_ms,
+            }
+        }));
+        self
+    }
+
     pub async fn start(self) -> ServiceRuntimeResult<ServiceRuntime> {
         let self_ = self.install_configured_plugins()?;
         let ServiceRuntimeBuilder {
@@ -671,7 +708,11 @@ impl ServiceRuntimeBuilder {
             health_probes,
             event_sources,
             runner_limits,
+            runner_limit_factories,
         } = self_;
+        let configured_runner_limits = runner_limits;
+        let runner_limits =
+            resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         validate_event_sources(&event_sources, &config)?;
         let observe = mutsuki_service_observe::init_observe(&config);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -709,6 +750,8 @@ impl ServiceRuntimeBuilder {
             health_probes,
             runtime_client,
             deployment_state: Mutex::new(deployment_state),
+            runner_limits: configured_runner_limits,
+            runner_limit_factories,
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
         });
         let ipc_server = mutsuki_service_ipc::start_server(
@@ -782,6 +825,29 @@ impl ServiceRuntimeBuilder {
         }
         Ok(self)
     }
+}
+
+fn resolve_runner_limits(
+    configured: &BTreeMap<String, RunnerLimits>,
+    factories: &[RunnerLimitFactory],
+) -> BTreeMap<String, RunnerLimits> {
+    let mut limits = configured.clone();
+    for factory in factories {
+        let override_ = factory();
+        let current = limits.entry(override_.runner_id).or_default();
+        if let Some(max_running) = override_.max_running {
+            current.max_running = current.max_running.min(max_running.max(1));
+        }
+        if let Some(timeout_ms) = override_.wall_clock_timeout_ms {
+            let timeout = Duration::from_millis(timeout_ms.max(1));
+            current.wall_clock_deadline = Some(
+                current
+                    .wall_clock_deadline
+                    .map_or(timeout, |existing| existing.min(timeout)),
+            );
+        }
+    }
+    limits
 }
 
 fn raw_credential_field(value: &Value, path: &str) -> Option<String> {
@@ -1326,6 +1392,8 @@ impl ServiceRuntimeInner {
             runtime.host_context().registry_generation()
         };
         let registry_generation = previous_generation.saturating_add(1);
+        let runner_limits =
+            resolve_runner_limits(&self.runner_limits, &self.runner_limit_factories);
         let (prepared, runtime_lock) = match runtime_bootstrapper(
             &self.config,
             &new_catalog,
@@ -1346,7 +1414,11 @@ impl ServiceRuntimeInner {
             )?;
             lock.registry_generation = registry_generation;
             Ok((
-                bootstrapper.prepare_reload(profile, registry_generation)?,
+                bootstrapper.prepare_reload_with_runner_limits(
+                    profile,
+                    registry_generation,
+                    runner_limits,
+                )?,
                 lock,
             ))
         }) {
@@ -2686,6 +2758,42 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn dynamic_runner_limits_recompute_from_the_boot_configuration() {
+        let settings = Arc::new(Mutex::new((1_usize, 20_u64)));
+        let factory_settings = settings.clone();
+        let factories: Vec<RunnerLimitFactory> = vec![Arc::new(move || {
+            let (max_running, timeout_ms) = *factory_settings.lock().unwrap();
+            RunnerLimitOverride {
+                runner_id: "test.dynamic.runner".into(),
+                max_running: Some(max_running),
+                wall_clock_timeout_ms: Some(timeout_ms),
+            }
+        })];
+        let configured = BTreeMap::from([(
+            "test.dynamic.runner".into(),
+            RunnerLimits {
+                max_running: 8,
+                ..RunnerLimits::default()
+            },
+        )]);
+
+        let initial = resolve_runner_limits(&configured, &factories);
+        assert_eq!(initial["test.dynamic.runner"].max_running, 1);
+        assert_eq!(
+            initial["test.dynamic.runner"].wall_clock_deadline,
+            Some(Duration::from_millis(20))
+        );
+
+        *settings.lock().unwrap() = (4, 250);
+        let updated = resolve_runner_limits(&configured, &factories);
+        assert_eq!(updated["test.dynamic.runner"].max_running, 4);
+        assert_eq!(
+            updated["test.dynamic.runner"].wall_clock_deadline,
+            Some(Duration::from_millis(250))
+        );
+    }
 
     #[test]
     fn service_execution_domains_map_to_core_topology_without_hidden_fallbacks() {
@@ -4392,6 +4500,8 @@ mod tests {
                 version: deployment_state_version(),
                 plugins: BTreeMap::new(),
             }),
+            runner_limits: BTreeMap::new(),
+            runner_limit_factories: Vec::new(),
             shutdown_tx: Mutex::new(None),
         }
     }

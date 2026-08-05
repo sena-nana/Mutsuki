@@ -24,7 +24,7 @@ use crate::error::host_failure;
 use crate::host::{HostRuntimeConfig, HostRuntimeDriveState, TaskCompletionHub};
 use crate::management::ManagementExecutor;
 use crate::resource_router;
-use crate::scheduler::{apply_lane_qos, decide_schedule};
+use crate::scheduler::{apply_lane_qos, decide_schedule, validate_runner_limits};
 use crate::worker::{WorkerDispatchError, WorkerExited, WorkerPools, WorkerStarted};
 
 use self::cancellation::{queue_management_retry, request_running_cancel};
@@ -332,7 +332,7 @@ fn next_required_tick(
 
 pub(crate) fn core_actor_loop(
     mut core: CoreRuntime,
-    config: HostRuntimeConfig,
+    mut config: HostRuntimeConfig,
     control_rx: ActorReceiver,
     data_rx: ActorReceiver,
     wake_rx: mpsc::Receiver<()>,
@@ -433,7 +433,7 @@ pub(crate) fn core_actor_loop(
                 let result = handle_command(
                     command,
                     &mut core,
-                    &config,
+                    &mut config,
                     &mut pools,
                     &management,
                     &data_rx,
@@ -668,7 +668,7 @@ fn all_task_states_terminal(states: &[HostTaskState]) -> bool {
 fn handle_command(
     command: HostRuntimeCommand,
     core: &mut CoreRuntime,
-    config: &HostRuntimeConfig,
+    config: &mut HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
     rx: &ActorReceiver,
@@ -935,7 +935,7 @@ fn reload_runtime(
     prepared: PreparedRuntimeReload,
     drain_timeout: Duration,
     core: &mut CoreRuntime,
-    config: &HostRuntimeConfig,
+    config: &mut HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
     rx: &ActorReceiver,
@@ -954,12 +954,27 @@ fn reload_runtime(
         draining_invocations,
         drain_timeout,
     )?;
-    let runners = prepared
-        .runners
+    let PreparedRuntimeReload {
+        plan,
+        runners,
+        async_handlers,
+        runner_limits,
+        ..
+    } = prepared;
+    let previous_runner_limits = config.runner_limits.clone();
+    if let Some(runner_limits) = runner_limits {
+        validate_runner_limits(&config.default_runner_limits, &runner_limits)?;
+        config.runner_limits = runner_limits;
+    }
+    let runners = runners
         .into_iter()
         .map(|runner| Box::new(DisposeOnDropRunner::new(runner)) as Box<dyn Runner>)
         .collect();
-    core.reload_with_async_handlers(prepared.plan, runners, prepared.async_handlers)
+    let result = core.reload_with_async_handlers(plan, runners, async_handlers);
+    if result.is_err() {
+        config.runner_limits = previous_runner_limits;
+    }
+    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1144,7 +1159,7 @@ fn send_command_reply(
 #[allow(clippy::too_many_arguments)]
 fn drain_worker_completions(
     core: &mut CoreRuntime,
-    config: &HostRuntimeConfig,
+    config: &mut HostRuntimeConfig,
     pools: &mut WorkerPools,
     management: &ManagementExecutor,
     rx: &ActorReceiver,

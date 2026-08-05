@@ -1,0 +1,249 @@
+use std::fmt;
+use std::sync::{Arc, RwLock};
+
+use mutsuki_bot_config::{
+    ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
+};
+use mutsuki_bot_protocol::QqStreamingStrategy;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::BOT_AGENT_BRIDGE_PLUGIN_ID;
+
+pub const BOT_AGENT_CONFIG_PROVIDER_ID: &str = BOT_AGENT_BRIDGE_PLUGIN_ID;
+pub const BOT_AGENT_CONFIG_SERVICE_ID: &str = "mutsuki.bot.agent.config";
+pub const BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES: usize = 1_800;
+pub const BOT_AGENT_MIN_MESSAGE_BYTES: usize = 4;
+pub const BOT_AGENT_MAX_CONCURRENCY: usize = 64;
+pub const BOT_AGENT_MAX_TIMEOUT_MS: u64 = 600_000;
+
+/// Runtime settings owned by the bot-agent bridge.
+///
+/// Conversation-level policy remains the authority for permissions and explicit profile
+/// bindings. These settings only provide product defaults and delivery/runtime controls.
+#[derive(
+    Clone, Debug, Deserialize, Eq, PartialEq, Serialize, mutsuki_bot_config::MutsukiConfig,
+)]
+#[config(
+    provider_id = "mutsuki.plugin.bot.agent",
+    title = "Bot Agent",
+    schema_version = 1,
+    value_version = 1
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct BotAgentConfig {
+    #[config(
+        title = "启用 Bot Agent",
+        description = "允许通过已授权的 Bot 会话提交 Agent 请求",
+        default = true,
+        restart = "plugin_reload"
+    )]
+    pub enabled: bool,
+    #[config(
+        title = "默认 Agent 配置",
+        description = "未在会话策略中指定时使用的 Agent 配置标识；留空表示必须由会话策略指定",
+        default = "",
+        max_length = 256,
+        restart = "plugin_reload"
+    )]
+    pub default_profile_id: String,
+    #[config(
+        title = "回复方式",
+        description = "选择发送完整回复，或按长度切分后连续发送",
+        default = "final_only",
+        restart = "plugin_reload"
+    )]
+    pub streaming: String,
+    #[config(
+        title = "会话并行数",
+        description = "Agent bridge 同时处理的会话数量",
+        default = 1,
+        min = 1,
+        max = 64,
+        unit = "个",
+        restart = "plugin_reload"
+    )]
+    pub max_concurrency: usize,
+    #[config(
+        title = "单轮响应超时",
+        description = "单轮 Agent 请求允许占用的最长时间",
+        default = 120000,
+        min = 1,
+        max = 600000,
+        unit = "ms",
+        restart = "plugin_reload"
+    )]
+    pub timeout_ms: u64,
+    #[config(
+        title = "单条回复最大长度",
+        description = "超出此长度的文本会被按 UTF-8 字符边界拆分",
+        default = 1800,
+        min = 4,
+        max = 1800,
+        unit = "bytes",
+        restart = "plugin_reload"
+    )]
+    pub max_message_bytes: usize,
+}
+
+impl Default for BotAgentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_profile_id: String::new(),
+            streaming: "final_only".into(),
+            max_concurrency: 1,
+            timeout_ms: 120_000,
+            max_message_bytes: BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
+        }
+    }
+}
+
+impl BotAgentConfig {
+    pub fn validate(&self) -> Result<(), BotAgentConfigError> {
+        if self.default_profile_id.len() > 256
+            || self.default_profile_id.chars().any(char::is_control)
+        {
+            return Err(BotAgentConfigError::InvalidProfileId);
+        }
+        self.streaming_strategy()?;
+        if !(1..=BOT_AGENT_MAX_CONCURRENCY).contains(&self.max_concurrency) {
+            return Err(BotAgentConfigError::InvalidConcurrency(
+                self.max_concurrency,
+            ));
+        }
+        if !(1..=BOT_AGENT_MAX_TIMEOUT_MS).contains(&self.timeout_ms) {
+            return Err(BotAgentConfigError::InvalidTimeout(self.timeout_ms));
+        }
+        if !(BOT_AGENT_MIN_MESSAGE_BYTES..=BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES)
+            .contains(&self.max_message_bytes)
+        {
+            return Err(BotAgentConfigError::InvalidMessageBytes(
+                self.max_message_bytes,
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn streaming_strategy(&self) -> Result<QqStreamingStrategy, BotAgentConfigError> {
+        match self.streaming.trim() {
+            "final_only" => Ok(QqStreamingStrategy::FinalOnly),
+            "segment_messages" => Ok(QqStreamingStrategy::SegmentMessages),
+            other => Err(BotAgentConfigError::InvalidStreaming(other.into())),
+        }
+    }
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum BotAgentConfigError {
+    #[error("default_profile_id must be at most 256 characters and contain no control characters")]
+    InvalidProfileId,
+    #[error("unsupported streaming mode `{0}`")]
+    InvalidStreaming(String),
+    #[error("max_concurrency must be between 1 and {0}")]
+    InvalidConcurrency(usize),
+    #[error("timeout_ms must be between 1 and {0}")]
+    InvalidTimeout(u64),
+    #[error("max_message_bytes must be between 4 and 1800 (got {0})")]
+    InvalidMessageBytes(usize),
+}
+
+/// Shared live settings used by the bridge and the authenticated Config Web backend.
+#[derive(Clone)]
+pub struct BotAgentConfigHandle(Arc<RwLock<BotAgentConfig>>);
+
+impl Default for BotAgentConfigHandle {
+    fn default() -> Self {
+        Self::new(BotAgentConfig::default()).expect("default Bot Agent config is valid")
+    }
+}
+
+impl fmt::Debug for BotAgentConfigHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("BotAgentConfigHandle")
+            .field(&self.snapshot())
+            .finish()
+    }
+}
+
+impl BotAgentConfigHandle {
+    pub fn new(config: BotAgentConfig) -> Result<Self, BotAgentConfigError> {
+        config.validate()?;
+        Ok(Self(Arc::new(RwLock::new(config))))
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> BotAgentConfig {
+        self.0.read().expect("Bot Agent config read lock").clone()
+    }
+
+    pub fn replace(&self, config: BotAgentConfig) -> Result<(), BotAgentConfigError> {
+        config.validate()?;
+        *self.0.write().expect("Bot Agent config write lock") = config;
+        Ok(())
+    }
+}
+
+/// The generic config renderer exposes this field as a select instead of an unbounded string.
+#[must_use]
+pub fn bot_agent_config_schema() -> ConfigDescriptor {
+    let mut descriptor = BotAgentConfig::schema();
+    if let Some(node) = descriptor
+        .root
+        .children
+        .iter_mut()
+        .find(|node| node.key.as_str() == "streaming")
+    {
+        node.value_type = ConfigValueType::Enum {
+            options: vec![
+                EnumOption {
+                    value: "final_only".into(),
+                    label: LocalizedText::new("完整回复"),
+                },
+                EnumOption {
+                    value: "segment_messages".into(),
+                    label: LocalizedText::new("分段回复"),
+                },
+            ],
+            multi: false,
+        };
+    }
+    descriptor
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_valid_and_schema_has_streaming_select() {
+        let config = BotAgentConfig::default();
+        config.validate().unwrap();
+        let schema = bot_agent_config_schema();
+        let streaming = schema
+            .root
+            .children
+            .iter()
+            .find(|node| node.key.as_str() == "streaming")
+            .unwrap();
+        assert!(matches!(
+            streaming.value_type,
+            ConfigValueType::Enum { ref options, multi: false }
+                if options.iter().map(|option| option.value.as_str()).collect::<Vec<_>>()
+                    == ["final_only", "segment_messages"]
+        ));
+    }
+
+    #[test]
+    fn invalid_runtime_settings_are_rejected_before_live_replace() {
+        let handle = BotAgentConfigHandle::default();
+        let mut invalid = handle.snapshot();
+        invalid.streaming = "unknown".into();
+        assert_eq!(
+            handle.replace(invalid),
+            Err(BotAgentConfigError::InvalidStreaming("unknown".into()))
+        );
+        assert_eq!(handle.snapshot(), BotAgentConfig::default());
+    }
+}

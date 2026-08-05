@@ -14,6 +14,7 @@ mutsuki-bot-delivery.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-service-config.workspace = true
+mutsuki-service-control.workspace = true
 mutsuki-service-runtime.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
@@ -33,5 +34,8 @@ tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+mutsuki-bot-config.workspace = true
+mutsuki-bot-web-console.workspace = true
 mutsuki-bot-testkit.workspace = true
+toml.workspace = true
 tempfile.workspace = true

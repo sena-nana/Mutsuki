@@ -14,6 +14,7 @@ mutsuki-plugin-bot-upgrade-web = { workspace = true }
 mutsuki-plugin-bot-overview-web = { workspace = true }
 mutsuki-plugin-bot-bilibili = { workspace = true }
 mutsuki-plugin-bot-bilibili-web = { workspace = true }
+mutsuki-plugin-bot-agent = { workspace = true }
 mutsuki-service-config = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-host = { workspace = true }

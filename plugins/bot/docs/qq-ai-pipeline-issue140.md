@@ -20,7 +20,26 @@ compare-and-set.
 
 The built-in commands are `/ask`, `/chat`, `/cancel <turn_id>`, `/reset`, `/fork`, `/status`, and
 `/regenerate`. Handler timeout and maximum concurrency are installed as ServiceHost runner limits,
-so cancellation and capacity enforcement remain runtime-owned.
+so cancellation and capacity enforcement remain runtime-owned. Config Web applies those limits
+through the same generation reload transaction; a successful reload replaces the scheduler values
+rather than only updating the persisted form.
+
+If a public Agent submit has already been accepted but event retrieval disconnects, the persisted
+pending event claim and session version are resumed after bridge reload. The idempotency key and
+last event sequence prevent a second SubmitTurn while allowing the missing event page to be read.
+
+Bot Agent runtime settings are owned by `mutsuki-plugin-bot-agent` as the versioned
+`BotAgentConfig` provider `mutsuki.plugin.bot.agent`: enablement, default Agent profile, reply
+mode, concurrency, timeout, and QQ text boundary. The explicit `QqAiBotPluginBundle` publishes a
+shared config host service. The embedded Config Web backend registers the provider only when that
+live service and a product selection are both present; schema, revision checks, validation,
+atomic product-file persistence, and plugin-reload lifecycle are then real control-plane paths.
+Without a live bridge, a selected Bot Agent configuration fails startup instead of rendering an
+unbound settings page. Conversation-specific profile, permission, and session policy remains in
+the Conversation owner rather than being duplicated in the admin form. The bridge only injects the
+opaque profile ID into the public AgentKit session request; the product Host compiles its approved
+instructions and profile overrides into that `AgentRuntimeProfile`, so BotPlugins do not recreate a
+Persona or depend on AgentKit Runtime internals.
 
 QQ capability reporting is authoritative per account. The adapter currently advertises final-only
 and segmented-message streaming. It does not advertise message editing, so the pipeline does not
@@ -41,10 +60,12 @@ retry, emits the configured retry prompt through `BOT_MESSAGE_SEND_PROTOCOL_ID`,
 waiting or becomes failed. Completed steps can transition to a new state/wait specification; reload
 recovery cancels stale generations and deterministically times out expired waiters.
 
-Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that routes a QQ
-event with audio through STT, Agent, TTS, QQ text/voice delivery, replay suppression, and `/ask`
-command dispatch. The same E2E covers a two-step non-Agent interaction and an idempotent scheduled
-Agent result delivery. The QQ Web extension exposes account, capability, policy, command, session,
+Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that routes two
+private and two group QQ turns through the same stable Agent sessions, audio through STT, Agent,
+TTS, QQ text/voice delivery, replay suppression, and `/ask` command dispatch. The same E2E covers
+a two-step non-Agent interaction and an idempotent scheduled Agent result delivery. The Config Web
+provider covers Bot Agent settings, validation, persistence, and plugin-reload signaling. The QQ
+Web extension exposes account, capability, policy, command, session,
 delivery, interaction, revision, permission, confirmation, and audit-backed management contracts.
 It cannot be registered without an injected management API and is not enabled by the default
 catalog, so a product must bind those actions to its live account/secret/audit provider before the

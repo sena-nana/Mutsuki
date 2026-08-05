@@ -1092,6 +1092,80 @@ fn host_runtime_reload_increments_generation_and_adds_runner_surface() {
 }
 
 #[test]
+fn host_runtime_reload_applies_replaced_runner_limits() {
+    let runner_descriptor = descriptor_with_class(
+        "reload.limit.runner",
+        "reload.limit",
+        ExecutionClass::Blocking,
+    );
+    let (old_started_tx, _old_started_rx) = mpsc::channel();
+    let (_old_release_tx, old_release_rx) = mpsc::channel();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: runner_descriptor.clone(),
+        started_tx: old_started_tx,
+        release_rx: old_release_rx,
+        cancelled: Arc::new(Mutex::new(Vec::new())),
+        disposed: Arc::new(Mutex::new(false)),
+    }));
+    let mut initial_limits = std::collections::BTreeMap::new();
+    initial_limits.insert(
+        runner_descriptor.runner_id.clone(),
+        RunnerLimits {
+            wall_clock_deadline: Some(Duration::from_millis(20)),
+            ..RunnerLimits::default()
+        },
+    );
+    let mut runtime = host
+        .into_host_runtime_with_config(
+            runtime_profile(),
+            HostRuntimeConfig {
+                event_driven: true,
+                runner_limits: initial_limits,
+                ..HostRuntimeConfig::default()
+            },
+        )
+        .unwrap();
+
+    let (new_started_tx, new_started_rx) = mpsc::channel();
+    let (new_release_tx, new_release_rx) = mpsc::channel();
+    let mut reload_host = RuntimeBootstrapper::new();
+    reload_host.register_manifest(runner_manifest("plugin-a", vec![runner_descriptor.clone()]));
+    reload_host.register_runner(Box::new(BlockingObservedRunner {
+        descriptor: runner_descriptor.clone(),
+        started_tx: new_started_tx,
+        release_rx: new_release_rx,
+        cancelled: Arc::new(Mutex::new(Vec::new())),
+        disposed: Arc::new(Mutex::new(false)),
+    }));
+    let mut replaced_limits = std::collections::BTreeMap::new();
+    replaced_limits.insert(
+        runner_descriptor.runner_id.clone(),
+        RunnerLimits {
+            wall_clock_deadline: Some(Duration::from_millis(500)),
+            ..RunnerLimits::default()
+        },
+    );
+    let prepared = reload_host
+        .prepare_reload_with_runner_limits(runtime_profile(), 2, replaced_limits)
+        .unwrap();
+    SdkHostRuntime::reload(&mut runtime, prepared, Duration::from_secs(1)).unwrap();
+
+    runtime
+        .dispatch(HostRuntimeCommand::SubmitTask(Box::new(Task::new(
+            "reload-limit-task",
+            "reload.limit",
+            json!({}),
+        ))))
+        .unwrap();
+    new_started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    std::thread::sleep(Duration::from_millis(60));
+    new_release_tx.send(()).unwrap();
+    wait_for_task_status(&runtime, "reload-limit-task", TaskStatus::Completed);
+}
+
+#[test]
 fn completion_subscription_survives_reload_and_wakes_for_new_generation() {
     let mut runtime = super::helpers::host_with_echo_runner()
         .into_host_runtime_with_config(

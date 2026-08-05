@@ -18,7 +18,8 @@ use mutsuki_bot_protocol::{
     ConversationPolicy, QqStreamingStrategy,
 };
 use mutsuki_plugin_bot_agent::{
-    AgentBridgeClient, BOT_AGENT_BRIDGE_RUNNER_ID, BotAgentBridge, agent_bridge_runner,
+    AgentBridgeClient, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID, BotAgentBridge,
+    BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle, agent_bridge_runner,
     bot_agent_bridge_manifest, bot_agent_command_descriptors,
 };
 use mutsuki_plugin_bot_command::{BOT_COMMAND_RUNNER_ID, BotCommandRunner, bot_command_manifest};
@@ -27,6 +28,7 @@ use mutsuki_plugin_bot_event_router::{
     handler_pipeline_manifest, handler_pipeline_runner, permission_runner, rate_limit_runner,
 };
 use mutsuki_plugin_bot_media::{bot_media_bridge_manifest, media_bridge_runner};
+use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
 /// Explicit product assembly for the QQ AI pipeline.
@@ -45,7 +47,7 @@ pub struct QqAiBotPluginBundle {
     interaction_matcher: Arc<dyn InteractionConditionMatcher>,
     permission_authorizer: Arc<dyn BotPermissionAuthorizer>,
     handlers: Vec<BotHandlerDescriptor>,
-    streaming: QqStreamingStrategy,
+    agent_config: BotAgentConfigHandle,
     command_prefixes: Vec<String>,
     scheduled_delivery: Option<(
         Arc<dyn ScheduledDeliveryTargetResolver>,
@@ -79,7 +81,7 @@ impl QqAiBotPluginBundle {
             interaction_matcher,
             permission_authorizer,
             handlers: Vec::new(),
-            streaming: QqStreamingStrategy::FinalOnly,
+            agent_config: BotAgentConfigHandle::default(),
             command_prefixes: vec!["/".into()],
             scheduled_delivery: None,
         }
@@ -90,8 +92,30 @@ impl QqAiBotPluginBundle {
         self
     }
 
-    pub fn with_streaming(mut self, streaming: QqStreamingStrategy) -> Self {
-        self.streaming = streaming;
+    pub fn with_streaming(self, streaming: QqStreamingStrategy) -> Self {
+        let mut config = self.agent_config.snapshot();
+        config.streaming = match streaming {
+            QqStreamingStrategy::FinalOnly => "final_only",
+            QqStreamingStrategy::SegmentMessages => "segment_messages",
+        }
+        .into();
+        self.agent_config
+            .replace(config)
+            .expect("streaming strategy must produce a valid Bot Agent config");
+        self
+    }
+
+    pub fn with_agent_config(
+        mut self,
+        config: BotAgentConfig,
+    ) -> Result<Self, BotAgentConfigError> {
+        self.agent_config = BotAgentConfigHandle::new(config)?;
+        Ok(self)
+    }
+
+    #[must_use]
+    pub fn with_agent_config_handle(mut self, handle: BotAgentConfigHandle) -> Self {
+        self.agent_config = handle;
         self
     }
 
@@ -110,8 +134,10 @@ impl QqAiBotPluginBundle {
     }
 
     pub fn install(self, builder: ServiceRuntimeBuilder) -> ServiceRuntimeBuilder {
+        let agent_config = self.agent_config;
         let conversations = ConversationService::new(self.conversations, self.default_policy);
-        let agent = BotAgentBridge::new(conversations, self.agent, self.streaming);
+        let agent =
+            BotAgentBridge::new_with_config(conversations, self.agent, agent_config.clone());
         let delivery = ActiveDeliveryService::new(
             self.deliveries,
             self.delivery_gateway,
@@ -182,7 +208,7 @@ impl QqAiBotPluginBundle {
             rate_limit: None,
             timeout_ms: None,
             side_effects: vec!["agent".into(), "qq_delivery".into()],
-            max_concurrency: Some(1),
+            max_concurrency: None,
             before_hook_protocol_ids: Vec::new(),
             after_hook_protocol_ids: Vec::new(),
             error_hook_protocol_ids: Vec::new(),
@@ -204,11 +230,34 @@ impl QqAiBotPluginBundle {
             );
         }
 
+        let agent_manifest = bot_agent_bridge_manifest();
+        let loaded_agent_manifest = agent_manifest.clone();
+        let config_service = Arc::new(agent_config.clone());
         let builder = builder
+            .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
+                let config = agent_config.clone();
+                move || {
+                    let settings = config.snapshot();
+                    (Some(settings.max_concurrency), Some(settings.timeout_ms))
+                }
+            })
             .register_builtin_plugin(handler_pipeline_manifest())
             .register_builtin_plugin(bot_handler_guard_manifest())
             .register_builtin_plugin(bot_command_manifest(1))
-            .register_builtin_plugin(bot_agent_bridge_manifest())
+            .register_builtin_loaded_plugin_factory(agent_manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_agent_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService {
+                        service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
+                        capability: Some("bot.agent.config".into()),
+                        service: config_service.clone(),
+                    }],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                })
+            })
             .register_builtin_plugin(bot_media_bridge_manifest())
             .register_builtin_plugin(bot_delivery_manifest())
             .register_builtin_plugin(bot_interaction_manifest())

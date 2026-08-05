@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_bot_service_host_integration::BilibiliConsoleBridge;
+use mutsuki_bot_service_host_integration::{BilibiliConsoleBridge, BotAgentConfigConsoleBridge};
 use mutsuki_bot_web_console::{
     ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver,
     SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
@@ -45,6 +45,8 @@ impl WebConsoleGuard {
                     product_config_path,
                     ProductConfigOptions {
                         store: service.configured_plugin_store(),
+                        bot_agent_config: BotAgentConfigConsoleBridge::get(runtime)
+                            .map(|handle| (*handle).clone()),
                         lifecycle: Some(Arc::new(ControlPluginReloadLifecycle::new(
                             runtime.control_handler(),
                             runtime.control_token(),
