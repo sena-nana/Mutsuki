@@ -5,24 +5,25 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
 mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-protocol-browser.workspace = true
+mutsuki-protocol-http.workspace = true
 mutsuki-protocol-image.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
-reqwest.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 image.workspace = true
-mutsuki-plugin-image-render-skia.workspace = true
+mutsuki-plugin-image-render.workspace = true
 mutsuki-plugin-io-browser-chromium = { path = "../../../std/plugins/mutsuki-plugin-io-browser-chromium" }
+mutsuki-plugin-io-http-client = { path = "../../../std/plugins/mutsuki-plugin-io-http-client" }
 mutsuki-plugin-resource-memory = { path = "../../../std/plugins/mutsuki-plugin-resource-memory" }
 mutsuki-service-config.workspace = true
 mutsuki-service-control.workspace = true

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use mutsuki_bot_link_parser::MAX_LINK_CARD_MEDIA_BYTES;
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotExtMap, BotMessage, BotTarget, MessageSegment,
@@ -8,17 +7,18 @@ use mutsuki_bot_protocol::{
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
 };
+use mutsuki_protocol_http::{HttpRequest, HttpResponse, REQUEST as HTTP_REQUEST};
 use mutsuki_protocol_image::{
     CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, Rgba,
 };
 use mutsuki_runtime_contracts::{
-    ExecutionClass, ProtocolClass, ReadPlan, RunnerDescriptor, RunnerPurity, RunnerResult,
-    RuntimeError, ScalarValue, Task, TaskOutcome,
+    ExecutionClass, ProtocolClass, ReadPlan, ResourceRef, RunnerDescriptor, RunnerPurity,
+    RunnerResult, RuntimeError, ScalarValue, Task, TaskOutcome,
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway, RunnerDescriptorBuilder,
-    RuntimeClientRef, TaskAwaitRunnerAdapter,
+    AsyncRunnerContext, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
+    RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter,
 };
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -38,84 +38,17 @@ pub struct MihuashiResolveRequest {
     pub timeout_ms: u64,
 }
 
-#[async_trait]
-pub trait MihuashiImageTransport: Send + Sync {
-    async fn download(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String>;
-}
-
-pub struct ReqwestMihuashiImageTransport {
-    client: reqwest::Client,
-}
-
-impl ReqwestMihuashiImageTransport {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
-    }
-}
-
-impl Default for ReqwestMihuashiImageTransport {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl MihuashiImageTransport for ReqwestMihuashiImageTransport {
-    async fn download(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
-        ensure_mihuashi_url(url)?;
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|error| error.to_string())?
-            .error_for_status()
-            .map_err(|error| error.to_string())?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err(format!("Mihuashi image exceeds {max_bytes} bytes"));
-        }
-        let bytes = response.bytes().await.map_err(|error| error.to_string())?;
-        if bytes.len() > max_bytes {
-            return Err(format!("Mihuashi image exceeds {max_bytes} bytes"));
-        }
-        Ok(bytes.to_vec())
-    }
-}
-
 pub fn runner(
     client: RuntimeClientRef,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-) -> Box<dyn Runner> {
-    runner_with_transport(
-        client,
-        resources,
-        media_provider_id,
-        Arc::new(ReqwestMihuashiImageTransport::new()),
-    )
-}
-
-pub fn runner_with_transport(
-    client: RuntimeClientRef,
-    resources: Arc<dyn ResourceRegistryGateway>,
-    media_provider_id: String,
-    transport: Arc<dyn MihuashiImageTransport>,
 ) -> Box<dyn Runner> {
     let descriptor = descriptor();
     let factory = Box::new(
         move |ctx: mutsuki_runtime_sdk::AsyncRunnerContext, task: Task| {
             let resources = resources.clone();
             let media_provider_id = media_provider_id.clone();
-            let transport = transport.clone();
-            Box::pin(
-                async move { run_task(ctx, task, resources, media_provider_id, transport).await },
-            )
+            Box::pin(async move { run_task(ctx, task, resources, media_provider_id).await })
                 as std::pin::Pin<
                     Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
                 >
@@ -125,17 +58,62 @@ pub fn runner_with_transport(
 }
 
 async fn run_task(
-    ctx: mutsuki_runtime_sdk::AsyncRunnerContext,
+    ctx: AsyncRunnerContext,
     task: Task,
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
-    transport: Arc<dyn MihuashiImageTransport>,
 ) -> RuntimeResult<RunnerResult> {
     let request: MihuashiResolveRequest =
         serde_json::from_value(task.payload.clone().into()).map_err(|error| fail(&task, error))?;
     ensure_mihuashi_url(&request.url).map_err(|error| fail(&task, error))?;
-    let output = resources.create_cow_state_resource(
+    let snapshot = acquire_profile_snapshot(
+        &ctx,
+        &task,
+        resources.as_ref(),
         &media_provider_id,
+        &request,
+    )
+    .await?;
+    let card =
+        parse_profile(&snapshot.html, &snapshot.final_url).map_err(|error| fail(&task, error))?;
+    let image = fetch_profile_image(&ctx, &task, card.2.as_deref()).await?;
+    let rendered = render_profile_card(&ctx, &task, &snapshot.final_url, card, image).await?;
+    let message = BotMessage {
+        message_id: None,
+        target: request.target,
+        sender: None,
+        segments: vec![
+            MessageSegment::Image {
+                resource: rendered.resource,
+            },
+            MessageSegment::Text {
+                text: snapshot.final_url,
+            },
+        ],
+        reply_to: None,
+        time_ms: None,
+        ext: BotExtMap::new(),
+    };
+    let mut outbound = Task::new(
+        format!("{}:notify", task.task_id),
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        serde_json::to_value(message).map_err(|error| fail(&task, error))?,
+    );
+    outbound.target_binding_id = Some(request.outbound_binding);
+    let mut result = RunnerResult::completed(task.task_id);
+    result.tasks.push(outbound);
+    Ok(result)
+}
+
+async fn acquire_profile_snapshot(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    resources: &dyn ResourceRegistryGateway,
+    media_provider_id: &str,
+    request: &MihuashiResolveRequest,
+) -> RuntimeResult<BrowserSnapshot> {
+    let output = resources.create_cow_state_resource(
+        media_provider_id,
         "mutsuki.browser.snapshot.output",
         SNAPSHOT_SCHEMA,
         Vec::new(),
@@ -147,14 +125,14 @@ async fn run_task(
                 url: request.url.clone(),
                 output_resource: output.clone(),
                 wait_mode: BrowserWaitMode::Selector,
-                selector: Some(request.selector),
+                selector: Some(request.selector.clone()),
                 timeout_ms: request.timeout_ms,
             })
-            .map_err(|error| fail(&task, error))?,
+            .map_err(|error| fail(task, error))?,
         )
         .await?;
     if !matches!(outcome, TaskOutcome::Completed { .. }) {
-        return Err(fail(&task, "browser snapshot child task failed"));
+        return Err(fail(task, "browser snapshot child task failed"));
     }
     let latest = resources.open_resource_descriptor(&output.ref_id)?;
     let bytes = resources.collect_read_plan(&ReadPlan {
@@ -163,23 +141,46 @@ async fn run_task(
         operation: "collect".into(),
         args: Value::Null,
     })?;
-    let snapshot: BrowserSnapshot =
-        serde_json::from_slice(&bytes).map_err(|error| fail(&task, error))?;
-    let card =
-        parse_profile(&snapshot.html, &snapshot.final_url).map_err(|error| fail(&task, error))?;
-    let image = if let Some(image_url) = card.2.as_deref() {
-        let bytes = transport
-            .download(image_url, MAX_LINK_CARD_MEDIA_BYTES)
-            .await
-            .map_err(|error| fail(&task, error))?;
-        Some(resources.create_blob_resource(
-            &media_provider_id,
-            "mutsuki.bot.image.original.v1",
-            bytes,
-        )?)
+    serde_json::from_slice(&bytes).map_err(|error| fail(task, error))
+}
+
+async fn fetch_profile_image(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    image_url: Option<&str>,
+) -> RuntimeResult<Option<ResourceRef>> {
+    if let Some(image_url) = image_url {
+        ensure_mihuashi_url(image_url).map_err(|error| fail(task, error))?;
+        let mut request = HttpRequest::get(image_url);
+        request.limits.max_response_bytes = Some(MAX_LINK_CARD_MEDIA_BYTES as u64);
+        let outcome = ctx
+            .call_raw(
+                HTTP_REQUEST,
+                serde_json::to_value(request).map_err(|error| fail(task, error))?,
+            )
+            .await?;
+        let response: HttpResponse = decode_child_output(task, outcome, "HTTP image")?;
+        if !(200..300).contains(&response.metadata.status) {
+            return Err(fail(
+                task,
+                format!("HTTP image returned status {}", response.metadata.status),
+            ));
+        }
+        Ok(Some(response.body.ok_or_else(|| {
+            fail(task, "HTTP image response body missing")
+        })?))
     } else {
-        None
-    };
+        Ok(None)
+    }
+}
+
+async fn render_profile_card(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    final_url: &str,
+    card: (String, String, Option<String>),
+    image: Option<ResourceRef>,
+) -> RuntimeResult<ImageRenderResponse> {
     let render_outcome = ctx
         .call_raw(
             CARD_RENDER,
@@ -187,7 +188,7 @@ async fn run_task(
                 brand: "米画师".into(),
                 title: card.0,
                 description: card.1,
-                url: snapshot.final_url.clone(),
+                url: final_url.to_owned(),
                 cover: image,
                 fallback_gradient: CardGradient {
                     start: Rgba {
@@ -204,45 +205,39 @@ async fn run_task(
                     },
                 },
             })
-            .map_err(|error| fail(&task, error))?,
+            .map_err(|error| fail(task, error))?,
         )
         .await?;
-    let rendered: ImageRenderResponse = match render_outcome {
+    match render_outcome {
         TaskOutcome::Completed {
             output: Some(output),
             ..
-        } => serde_json::from_value(output).map_err(|error| fail(&task, error))?,
+        } => serde_json::from_value(output).map_err(|error| fail(task, error)),
         TaskOutcome::Completed { output: None, .. } => {
-            return Err(fail(&task, "image renderer completed without output"));
+            Err(fail(task, "image renderer completed without output"))
         }
-        _ => return Err(fail(&task, "image renderer child task failed")),
-    };
-    let segments = vec![
-        MessageSegment::Image {
-            resource: rendered.resource,
-        },
-        MessageSegment::Text {
-            text: snapshot.final_url.clone(),
-        },
-    ];
-    let message = BotMessage {
-        message_id: None,
-        target: request.target,
-        sender: None,
-        segments,
-        reply_to: None,
-        time_ms: None,
-        ext: BotExtMap::new(),
-    };
-    let mut outbound = Task::new(
-        format!("{}:notify", task.task_id),
-        BOT_MESSAGE_SEND_PROTOCOL_ID,
-        serde_json::to_value(message).map_err(|error| fail(&task, error))?,
-    );
-    outbound.target_binding_id = Some(request.outbound_binding);
-    let mut result = RunnerResult::completed(task.task_id);
-    result.tasks.push(outbound);
-    Ok(result)
+        _ => Err(fail(task, "image renderer child task failed")),
+    }
+}
+
+fn decode_child_output<T: serde::de::DeserializeOwned>(
+    task: &Task,
+    outcome: TaskOutcome,
+    operation: &str,
+) -> RuntimeResult<T> {
+    match outcome {
+        TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output).map_err(|error| fail(task, error)),
+        TaskOutcome::Completed { output: None, .. } => {
+            Err(fail(task, format!("{operation} completed without output")))
+        }
+        TaskOutcome::Failed { error, .. } => Err(RuntimeFailure::new(error)),
+        TaskOutcome::Cancelled { .. } => Err(fail(task, format!("{operation} cancelled"))),
+        TaskOutcome::Expired { .. } => Err(fail(task, format!("{operation} expired"))),
+        TaskOutcome::DeadLetter { .. } => Err(fail(task, format!("{operation} dead-lettered"))),
+    }
 }
 
 fn parse_profile(html: &str, final_url: &str) -> Result<(String, String, Option<String>), String> {
@@ -299,6 +294,9 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
         .requires
         .push(format!("task_protocol:{CARD_RENDER}"));
     manifest
+        .requires
+        .push(format!("task_protocol:{HTTP_REQUEST}"));
+    manifest
 }
 fn descriptor() -> RunnerDescriptor {
     RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
@@ -335,28 +333,48 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
+    use async_trait::async_trait;
     use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
-    use mutsuki_plugin_image_render_skia::{SkiaRenderConfig, SkiaRenderRunner};
+    use mutsuki_plugin_image_render::{ImageRenderConfig, ImageRenderRunner};
     use mutsuki_plugin_io_browser_chromium::{
         BrowserBackend, BrowserSnapshotRunner, ChromiumConfig,
     };
+    use mutsuki_plugin_io_http_client::{
+        FetchedHttpResponse, HttpEffectHandler, HttpGateway, HttpGatewayError,
+    };
+    use mutsuki_protocol_http::{HttpRequest, HttpResponseMetadata};
     use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, WorkBatch};
     use mutsuki_runtime_sdk::map_work_batch_entries;
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use mutsuki_service_control::{
-        ControlMethod, ControlRequest, TaskSubmitBatchParam, TaskWaitParam, TaskWaitResponse,
+        ControlCommand, ControlRequest, ControlResponse, ControlResult, TaskSubmitBatchParam,
+        TaskWaitParam,
     };
     use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
     use tempfile::tempdir;
 
     use super::*;
 
-    struct FakeImageTransport;
+    struct FakeHttpGateway;
 
     #[async_trait]
-    impl MihuashiImageTransport for FakeImageTransport {
-        async fn download(&self, _: &str, _: usize) -> Result<Vec<u8>, String> {
-            Ok(fixture_png())
+    impl HttpGateway for FakeHttpGateway {
+        async fn execute(
+            &self,
+            request: HttpRequest,
+            _request_body: Option<Vec<u8>>,
+        ) -> Result<FetchedHttpResponse, HttpGatewayError> {
+            Ok(FetchedHttpResponse {
+                metadata: HttpResponseMetadata {
+                    status: 200,
+                    final_url: request.url,
+                    headers: std::collections::BTreeMap::default(),
+                    body_bytes: fixture_png().len() as u64,
+                    redirects_followed: 0,
+                },
+                body: fixture_png(),
+                peak_buffered_bytes: fixture_png().len() as u64,
+            })
         }
     }
 
@@ -473,6 +491,11 @@ mod tests {
                 .requires
                 .contains(&format!("task_protocol:{CARD_RENDER}"))
         );
+        assert!(
+            manifest()
+                .requires
+                .contains(&format!("task_protocol:{HTTP_REQUEST}"))
+        );
     }
 
     #[test]
@@ -484,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_core_routes_browser_skia_and_bot_send_closed_loop() {
+    async fn real_core_routes_browser_image_render_and_bot_send_closed_loop() {
         let root = tempdir().unwrap();
         let snapshot = test_snapshot();
         let captured = Arc::new(Mutex::new(None));
@@ -537,7 +560,8 @@ mod tests {
         config.plugins.configured = [
             mutsuki_plugin_resource_memory::PLUGIN_ID,
             mutsuki_plugin_io_browser_chromium::PLUGIN_ID,
-            mutsuki_plugin_image_render_skia::PLUGIN_ID,
+            mutsuki_plugin_io_http_client::PLUGIN_ID,
+            mutsuki_plugin_image_render::PLUGIN_ID,
             PLUGIN_ID,
             "mihuashi.test.bot-send",
         ]
@@ -563,12 +587,12 @@ mod tests {
             max_dom_bytes: 2 * 1024 * 1024,
         };
         let font = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../std/plugins/mutsuki-plugin-image-render-skia/tests/fonts/NotoSansSC-Test.ttf")
+            .join("../../../std/plugins/mutsuki-plugin-image-render-takumi/tests/fonts/NotoSansSC-Test.ttf")
             .canonicalize()
             .unwrap();
         let memory_manifest = mutsuki_plugin_resource_memory::loaded_plugin().manifest;
-        let mut skia_manifest = mutsuki_plugin_image_render_skia::manifest();
-        skia_manifest.requires.push(format!(
+        let mut image_manifest = mutsuki_plugin_image_render::manifest();
+        image_manifest.requires.push(format!(
             "resource_strategy:{}",
             mutsuki_plugin_resource_memory::PLUGIN_ID
         ));
@@ -580,6 +604,11 @@ mod tests {
                 mutsuki_plugin_resource_memory::PLUGIN_ID
             ),
         ]);
+        let mut http_manifest = mutsuki_plugin_io_http_client::manifest();
+        http_manifest.requires.push(format!(
+            "resource_strategy:{}",
+            mutsuki_plugin_resource_memory::PLUGIN_ID
+        ));
         ServiceRuntimeBuilder::new(config)
             .register_builtin_loaded_plugin_factory(memory_manifest, || {
                 Ok::<_, String>(mutsuki_plugin_resource_memory::loaded_plugin())
@@ -594,10 +623,21 @@ mod tests {
                     }),
                 ))
             })
-            .register_builtin_plugin(skia_manifest)
+            .register_builtin_plugin(http_manifest)
+            .register_runtime_client_runner(mutsuki_plugin_io_http_client::facade_runner)
+            .register_fallible_runtime_services_async_handler(move |_client, resources| {
+                Ok::<Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>, String>(Arc::new(
+                    HttpEffectHandler::new(
+                        Arc::new(FakeHttpGateway),
+                        resources,
+                        mutsuki_plugin_resource_memory::PLUGIN_ID,
+                    ),
+                ))
+            })
+            .register_builtin_plugin(image_manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
-                SkiaRenderRunner::launch(
-                    SkiaRenderConfig {
+                ImageRenderRunner::launch(
+                    ImageRenderConfig {
                         output_provider_id: mutsuki_plugin_resource_memory::PLUGIN_ID.into(),
                         font_files: vec![font.clone()],
                     },
@@ -607,11 +647,10 @@ mod tests {
             })
             .register_builtin_plugin(mihuashi_manifest)
             .register_runtime_services_runner(move |client, resources| {
-                runner_with_transport(
+                runner(
                     client,
                     resources,
                     mutsuki_plugin_resource_memory::PLUGIN_ID.into(),
-                    Arc::new(FakeImageTransport),
                 )
             })
             .register_builtin_plugin(capture_manifest())
@@ -636,10 +675,9 @@ mod tests {
             timeout_ms: 5_000,
         };
         let submit = control
-            .handle(ControlRequest {
-                token: runtime.control_token().into(),
-                method: ControlMethod::TaskSubmitBatch,
-                params: serde_json::to_value(TaskSubmitBatchParam {
+            .handle(ControlRequest::new(
+                runtime.control_token(),
+                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         "mihuashi-real-core-batch",
                         Task::new(
@@ -648,24 +686,25 @@ mod tests {
                             serde_json::to_value(request).unwrap(),
                         ),
                     ),
-                })
-                .unwrap(),
-            })
+                }),
+            ))
             .await;
-        assert!(submit.ok, "submit failed: {:?}", submit.error);
+        assert!(matches!(
+            submit,
+            ControlResponse::Ok(ControlResult::TaskSubmitBatch(_))
+        ));
         let waited = control
-            .handle(ControlRequest {
-                token: runtime.control_token().into(),
-                method: ControlMethod::TaskWait,
-                params: serde_json::to_value(TaskWaitParam {
+            .handle(ControlRequest::new(
+                runtime.control_token(),
+                ControlCommand::TaskWait(TaskWaitParam {
                     ids: vec!["mihuashi-real-core".into()],
                     timeout_ms: 10_000,
-                })
-                .unwrap(),
-            })
+                }),
+            ))
             .await;
-        assert!(waited.ok, "wait failed: {:?}", waited.error);
-        let waited: TaskWaitResponse = serde_json::from_value(waited.result.unwrap()).unwrap();
+        let ControlResponse::Ok(ControlResult::TaskWait(waited)) = waited else {
+            panic!("wait failed: {waited:?}");
+        };
         assert!(!waited.timed_out);
         assert_eq!(waited.outcomes[0].status, "completed");
     }

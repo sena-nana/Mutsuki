@@ -32,3 +32,20 @@ release_set = "releases/mutsuki-0.1-alpha-3.toml"
 # External plugin artifacts are discovered from ServiceHost plugin directories.
 # This template intentionally selects no platform, router, command, Agent,
 # Provider or business implementation.
+#
+# Single image render backend (Takumi): compose / card / QR → PNG.
+# Font paths must be absolute files; missing fonts fail loud (no system fonts).
+# Enable only after memory resource provider and fonts are available:
+#
+# [[plugins.configured]]
+# id = "mutsuki.std.resource.memory"
+#
+# [[plugins.configured]]
+# id = "mutsuki.std.image.render"
+# [plugins.configured.config]
+# output_provider_id = "mutsuki.std.resource.memory"
+# font_files = ["/absolute/path/to/NotoSansSC.ttf"]
+#
+# Protocols: mutsuki.image.compose | mutsuki.image.card.render | mutsuki.image.qr.render
+# Output schema: mutsuki.image.raster.png.v1
+

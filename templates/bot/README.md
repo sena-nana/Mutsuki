@@ -82,6 +82,24 @@ id = "owner.plugin.id"
 # 仅由插件 owner 定义和解析
 ```
 
+图像渲染由单一 StdPlugins 后端 `mutsuki.std.image.render`（Takumi）提供：HTML compose、
+标准卡片与 QR 均输出 `mutsuki.image.raster.png.v1`。先启用内存资源 provider，再显式选择
+渲染插件并配置绝对路径字体文件（不读系统字体；缺字体 fail loud）：
+
+```toml
+[[plugins.configured]]
+id = "mutsuki.std.resource.memory"
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render"
+
+[plugins.configured.config]
+output_provider_id = "mutsuki.std.resource.memory"
+font_files = ["/absolute/path/to/NotoSansSC.ttf"]
+```
+
+协议：`mutsuki.image.compose` / `mutsuki.image.card.render` / `mutsuki.image.qr.render`。
+
 同一份配置同时适用于 builtin 与 ABI。Native factory 由对应依赖仓库链接进 catalog；外部
 artifact 由 ServiceHost 插件目录形成库存，但不会因文件存在而自动启用。Host 在只有一种部署
 时直接选择，同时存在 builtin/ABI 时默认 builtin；管理工具可把部署偏好写入 Host 状态而无需
@@ -134,7 +152,20 @@ timeout_ms = 10000
 max_dom_bytes = 2097152
 
 [[plugins.configured]]
-id = "mutsuki.std.image.render.skia"
+id = "mutsuki.std.io.http_client"
+
+[plugins.configured.config]
+response_provider_id = "mutsuki.std.resource.memory"
+domain_allowlist = ["mihuashi.com"]
+max_response_bytes = 8388608
+connect_timeout_ms = 5000
+header_timeout_ms = 10000
+idle_timeout_ms = 10000
+total_timeout_ms = 30000
+max_redirects = 5
+
+[[plugins.configured]]
+id = "mutsuki.std.image.render"
 
 [plugins.configured.config]
 output_provider_id = "mutsuki.std.resource.memory"
@@ -147,13 +178,14 @@ id = "mutsuki.bot.mihuashi"
 media_provider_id = "mutsuki.std.resource.memory"
 ```
 
-renderer 只读取配置列出的字体文件，不使用系统字体 fallback。标准卡片请求 `Noto Sans SC`
+HTTP 插件逐跳固定已验证 DNS 地址、复验 HTTPS 与域名 allowlist，并将响应 body 写入显式选择的
+Resource Provider；米画师只读取返回的 `ResourceRef`，不再拥有下载 transport。renderer 只读取
+配置列出的字体文件，不使用系统字体 fallback。标准卡片请求 `Noto Sans SC`
 或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及业务文本所需字形。Bilibili 或米画师
 缺少卡片 renderer、Bilibili 管理模式缺少 QR renderer、或缺少字体/输出 Provider/Browser
 Snapshot 协议时，启动或任务边界会结构化失败，不会退回业务插件本地绘制、旧截图或原图。
-renderer 使用 `skia-safe 0.99.0` 官方 CPU 预编译组合；依赖层启用 PDF、SVG、textlayout 与
-完整 WebP 以命中 binary cache，但插件协议仍只公开 CPU Raster 和 PNG，不接受 PDF/SVG 输入，
-也不输出 WebP。没有对应官方资产的平台仍会回退源码构建。
+单一渲染后端为 Takumi（`mutsuki.std.image.render`）：compose / card / QR 均输出 PNG
+ResourceRef。插件协议只公开 CPU Raster PNG，不接受 PDF/SVG 输入，也不输出 WebP。
 
 Cookie 扫码登录、聊天管理/自助
 绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend

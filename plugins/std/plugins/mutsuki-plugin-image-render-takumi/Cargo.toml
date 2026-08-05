@@ -1,10 +1,11 @@
 [package]
-name = "mutsuki-plugin-image-render-skia"
+name = "mutsuki-plugin-image-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+html-escape.workspace = true
 image.workspace = true
 mutsuki-protocol-image.workspace = true
 mutsuki-runtime-contracts.workspace = true
@@ -13,7 +14,7 @@ mutsuki-runtime-sdk.workspace = true
 qrcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-skia-safe = { version = "=0.99.0", features = ["svg", "textlayout", "webp"] }
+takumi = { version = "2.5.7", features = ["from-html"] }
 
 [dev-dependencies]
 mutsuki-plugin-resource-memory = { path = "../mutsuki-plugin-resource-memory" }
