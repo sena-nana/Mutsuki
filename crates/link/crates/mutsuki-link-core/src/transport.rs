@@ -205,7 +205,7 @@ impl Default for TransportBudget {
             control_bytes_per_second: None,
             data_bytes_per_second: None,
             receive_bytes_per_second: None,
-            idle_timeout: Some(Duration::from_secs(60)),
+            idle_timeout: Some(Duration::from_mins(1)),
         }
     }
 }

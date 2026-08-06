@@ -2269,7 +2269,7 @@ fn process_runner_helper() {
     while let Some(frame) = read_binary_frame_bytes(&mut input, DEFAULT_WIRE_LIMITS).unwrap() {
         if first_process {
             loop {
-                std::thread::sleep(Duration::from_secs(60));
+                std::thread::sleep(Duration::from_mins(1));
             }
         }
         let request = decode_binary_any_request(&frame, DEFAULT_WIRE_LIMITS).unwrap();

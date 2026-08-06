@@ -808,7 +808,7 @@ impl<C: Connection> Publisher<C> {
     }
 
     fn note_reconfigure(&mut self, now: Instant) -> Result<(), BindingError> {
-        let cutoff = now.checked_sub(Duration::from_secs(60)).unwrap_or(now);
+        let cutoff = now.checked_sub(Duration::from_mins(1)).unwrap_or(now);
         while self
             .reconfigure_times
             .front()
@@ -1379,7 +1379,7 @@ impl<C: Connection> Subscriber<C> {
     }
 
     fn note_reconfigure(&mut self, now: Instant) -> Result<(), BindingError> {
-        let cutoff = now.checked_sub(Duration::from_secs(60)).unwrap_or(now);
+        let cutoff = now.checked_sub(Duration::from_mins(1)).unwrap_or(now);
         while self
             .reconfigure_times
             .front()
