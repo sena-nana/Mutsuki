@@ -25,7 +25,7 @@ pub const SUMMARY_LIMIT: usize = 512;
 
 /// Process / VCS execution backend. Host injects CLI or test doubles; AgentKit
 /// owns Git domain semantics only.
-pub trait GitBackend: Send + Sync {
+pub trait GitGateway: Send + Sync {
     fn discover(&self, path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError>;
     fn status(&self, worktree: &GitWorktreeRef) -> Result<GitStatusSnapshot, AgentError>;
     fn diff(&self, request: &GitDiffRequest) -> Result<(GitDiffResult, String), AgentError>;
@@ -445,7 +445,7 @@ impl InMemoryGitBackend {
     }
 }
 
-impl GitBackend for InMemoryGitBackend {
+impl GitGateway for InMemoryGitBackend {
     fn discover(&self, path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError> {
         let repos = self.repos.lock().expect("git mutex");
         for state in repos.values() {
@@ -1166,7 +1166,7 @@ impl CliGitBackend {
                     }
                     Ok(None) => {
                         drop(children);
-                        if started.elapsed() > Duration::from_secs(120) {
+                        if started.elapsed() > Duration::from_mins(2) {
                             let _ = self.cancel_process(handle_id);
                             return Err(AgentError::new(
                                 "agent.git.timeout",
@@ -1258,7 +1258,7 @@ impl CliGitBackend {
     }
 }
 
-impl GitBackend for CliGitBackend {
+impl GitGateway for CliGitBackend {
     fn discover(&self, path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError> {
         Self::parse_worktree(path)
     }
@@ -1811,14 +1811,14 @@ struct ActiveOp {
 /// Shared GitService consumed by Agent tools and product Git UI.
 pub struct SharedGitService {
     descriptor: AgentServiceDescriptor,
-    backend: Arc<dyn GitBackend>,
+    backend: Arc<dyn GitGateway>,
     resources: AgentResourceStore,
     next_action: AtomicU64,
     active: Mutex<BTreeMap<String, ActiveOp>>,
 }
 
 impl SharedGitService {
-    pub fn new(backend: Arc<dyn GitBackend>, resources: AgentResourceStore) -> Self {
+    pub fn new(backend: Arc<dyn GitGateway>, resources: AgentResourceStore) -> Self {
         Self {
             descriptor: AgentServiceDescriptor {
                 service_id: SERVICE_ID.into(),

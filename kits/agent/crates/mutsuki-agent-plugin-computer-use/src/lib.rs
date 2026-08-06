@@ -21,7 +21,7 @@ pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.computer-use";
 pub const INLINE_LIMIT: usize = 2_048;
 pub const SUMMARY_LIMIT: usize = 512;
 
-pub trait FilesystemBackend: Send + Sync {
+pub trait FilesystemGateway: Send + Sync {
     fn list(&self, root: &Path, relative: &Path) -> Result<Vec<FsEntry>, AgentError>;
     fn read(
         &self,
@@ -49,7 +49,7 @@ pub trait FilesystemBackend: Send + Sync {
     ) -> Result<Vec<GrepMatch>, AgentError>;
 }
 
-pub trait ProcessBackend: Send + Sync {
+pub trait ProcessGateway: Send + Sync {
     fn exec(
         &self,
         handle_id: &str,
@@ -58,7 +58,7 @@ pub trait ProcessBackend: Send + Sync {
     fn cancel(&self, handle_id: &str) -> Result<(), AgentError>;
 }
 
-pub trait BrowserBackend: Send + Sync {
+pub trait BrowserGateway: Send + Sync {
     fn snapshot(
         &self,
         request: &BrowserNavigateRequest,
@@ -135,7 +135,7 @@ impl InMemoryFilesystemBackend {
     }
 }
 
-impl FilesystemBackend for InMemoryFilesystemBackend {
+impl FilesystemGateway for InMemoryFilesystemBackend {
     fn list(&self, _root: &Path, relative: &Path) -> Result<Vec<FsEntry>, AgentError> {
         let prefix = {
             let key = Self::key(relative);
@@ -308,7 +308,7 @@ fn glob_match(pattern: &str, path: &str) -> bool {
 
 pub struct WorkspaceFilesystemBackend;
 
-impl FilesystemBackend for WorkspaceFilesystemBackend {
+impl FilesystemGateway for WorkspaceFilesystemBackend {
     fn list(&self, root: &Path, relative: &Path) -> Result<Vec<FsEntry>, AgentError> {
         let path = root.join(relative);
         let mut entries = Vec::new();
@@ -468,7 +468,7 @@ pub struct FakeProcessBackend {
     pub response: Mutex<Option<ProcessExecResult>>,
 }
 
-impl ProcessBackend for FakeProcessBackend {
+impl ProcessGateway for FakeProcessBackend {
     fn exec(
         &self,
         _handle_id: &str,
@@ -506,7 +506,7 @@ pub struct FakeBrowserBackend {
     pub cancelled: Mutex<Vec<String>>,
 }
 
-impl BrowserBackend for FakeBrowserBackend {
+impl BrowserGateway for FakeBrowserBackend {
     fn snapshot(
         &self,
         request: &BrowserNavigateRequest,
@@ -537,9 +537,9 @@ impl BrowserBackend for FakeBrowserBackend {
 
 pub struct SharedComputerUseService {
     descriptor: AgentServiceDescriptor,
-    fs: Arc<dyn FilesystemBackend>,
-    process: Option<Arc<dyn ProcessBackend>>,
-    browser: Option<Arc<dyn BrowserBackend>>,
+    fs: Arc<dyn FilesystemGateway>,
+    process: Option<Arc<dyn ProcessGateway>>,
+    browser: Option<Arc<dyn BrowserGateway>>,
     resources: AgentResourceStore,
     next_action: AtomicU64,
     active_handles: Mutex<BTreeMap<String, ComputerUseRisk>>,
@@ -547,9 +547,9 @@ pub struct SharedComputerUseService {
 
 impl SharedComputerUseService {
     pub fn new(
-        fs: Arc<dyn FilesystemBackend>,
-        process: Option<Arc<dyn ProcessBackend>>,
-        browser: Option<Arc<dyn BrowserBackend>>,
+        fs: Arc<dyn FilesystemGateway>,
+        process: Option<Arc<dyn ProcessGateway>>,
+        browser: Option<Arc<dyn BrowserGateway>>,
         resources: AgentResourceStore,
     ) -> Self {
         Self {
