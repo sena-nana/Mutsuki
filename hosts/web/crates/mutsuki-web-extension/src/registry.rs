@@ -369,9 +369,7 @@ impl ExtensionRegistry {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| format!("{namespace}.{method}"));
-            return Err(ExtensionError::Registration(format!(
-                "capability denied: {capability}"
-            )));
+            return Err(ExtensionError::CapabilityDenied(capability));
         }
         Ok(record.rpc.clone())
     }

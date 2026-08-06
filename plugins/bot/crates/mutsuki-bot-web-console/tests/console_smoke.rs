@@ -57,6 +57,7 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
         None,
         &WebConsolePaths::default(),
         None,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -97,13 +98,24 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
-    assert!(
-        html.contains("console-bootstrap-overview.js?v=")
-            || html.contains("console-bootstrap-config.js?v=")
-    );
+    assert!(html.contains("console-bootstrap.js?v="));
+    assert!(html.contains("@mutsuki/web-sdk"));
 
-    let bootstrap = http_get_body(&addr, "/console-bootstrap-overview.js").await;
+    let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
     assert!(bootstrap.contains("index.js?v="));
+    assert!(bootstrap.contains("createWebShellRuntime"));
+    assert!(!bootstrap.contains("new WebSocket"));
+    assert!(!bootstrap.contains("JSON.stringify"));
+    assert!(
+        http_get_body(&addr, "/shared/web-sdk.js")
+            .await
+            .contains("WebBridgeClient")
+    );
+    assert!(
+        http_get_body(&addr, "/shared/web-shell.js")
+            .await
+            .contains("createWebShellRuntime")
+    );
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -129,6 +141,7 @@ async fn embedded_console_reads_overview_and_control() {
         None,
         None,
         &WebConsolePaths::default(),
+        None,
         None,
     )
     .unwrap();
@@ -175,6 +188,7 @@ async fn embedded_console_with_config_shell() {
         None,
         &WebConsolePaths::default(),
         None,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -188,7 +202,7 @@ async fn embedded_console_with_config_shell() {
     assert_eq!(providers.as_array().unwrap().len(), 0);
 
     let addr = host.listen_addr().unwrap().to_string();
-    let bootstrap = http_get_body(&addr, "/console-bootstrap-config.js").await;
+    let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
     assert!(
         bootstrap.contains("mountConsole"),
         "config-enabled console must stay on the overview shell"
@@ -224,6 +238,7 @@ async fn embedded_console_demo_config_provider_is_usable() {
         Some(demo_config_service()),
         None,
         &WebConsolePaths::default(),
+        None,
         None,
     )
     .unwrap();
@@ -291,6 +306,7 @@ config = { enabled = true, default_profile_id = "from-web", streaming = "final_o
         None,
         &WebConsolePaths::default(),
         None,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -353,6 +369,7 @@ config = { enabled = true, default_profile_id = "from-web", streaming = "final_o
     .await;
     assert!(invalid_apply.is_err());
     assert_eq!(bot_agent_config.snapshot().max_concurrency, 2);
+    let generation_before_apply = bot_agent_config.versioned_snapshot().generation;
 
     let mut candidate = snapshot["value"].clone();
     candidate["value"]["streaming"]["value"] = json!("segment_messages");
@@ -387,6 +404,10 @@ config = { enabled = true, default_profile_id = "from-web", streaming = "final_o
     assert_eq!(bot_agent_config.snapshot().streaming, "segment_messages");
     assert_eq!(bot_agent_config.snapshot().max_concurrency, 3);
     assert_eq!(bot_agent_config.snapshot().timeout_ms, 30000);
+    assert_eq!(
+        bot_agent_config.versioned_snapshot().generation,
+        generation_before_apply + 1
+    );
     assert!(
         control
             .mutations
@@ -436,6 +457,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         None,
         &paths,
         None,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -481,6 +503,7 @@ async fn embedded_console_secret_status_is_read_only() {
         Some(monitor),
         &WebConsolePaths::default(),
         None,
+        None,
     )
     .unwrap();
     host.start().await.unwrap();
@@ -491,6 +514,96 @@ async fn embedded_console_secret_status_is_read_only() {
     assert_eq!(secrets.len(), 2);
     assert_eq!(secrets[0]["state"], "present");
     assert_eq!(secrets[1]["state"], "absent");
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn embedded_console_mounts_qq_management_extension() {
+    use mutsuki_bot_protocol::{
+        BotConversationKind, QqBotCapabilityMatrix, QqMessageSegmentKind, QqPermissionRequirement,
+        QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
+    };
+    use mutsuki_plugin_bot_qq_web::{
+        LocalQqManagementProvider, QqBotManagementApi, QqBotManagementService,
+        account_view_from_config,
+    };
+
+    let local = LocalQqManagementProvider::new();
+    local.upsert_account(account_view_from_config(
+        "main",
+        "QQBOT_CLIENT_SECRET",
+        true,
+        QqBotCapabilityMatrix {
+            account_id: "main".into(),
+            conversation_kinds: vec![BotConversationKind::Private],
+            outbound_conversation_kinds: vec![BotConversationKind::Private],
+            active_message_kinds: vec![BotConversationKind::Private],
+            inbound_segments: vec![QqMessageSegmentKind::Text],
+            outbound_segments: vec![QqMessageSegmentKind::Text],
+            inbound_media: Vec::new(),
+            outbound_media: Vec::new(),
+            active_message: true,
+            message_edit: false,
+            message_recall: true,
+            reply: true,
+            quote: true,
+            mention: true,
+            upload: QqUploadConstraints::default(),
+            rate_limit: QqRateLimitPolicy::default(),
+            streaming: vec![QqStreamingStrategy::FinalOnly],
+            configured_intents: 1,
+            shard: [0, 1],
+            required_intents: vec!["group_and_c2c_event".into()],
+            required_permissions: vec![QqPermissionRequirement::ReadC2cMessages],
+        },
+        1,
+        [0, 1],
+        true,
+        true,
+        Some(1),
+        None,
+    ));
+    let api: Arc<dyn QqBotManagementApi> = Arc::new(QqBotManagementService::local(local));
+    let config = WebConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:0".into(),
+        auth_token_key: None,
+        include_config: false,
+        ..Default::default()
+    };
+    let secrets = WebConsoleSecrets {
+        auth_token: "local-dev".into(),
+    };
+    let (mut host, dirs) = build_console_host(
+        &config,
+        &secrets,
+        Arc::new(FixtureControlHandler::default()),
+        "local-dev",
+        None,
+        None,
+        &WebConsolePaths::default(),
+        None,
+        Some(api),
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let addr = host.listen_addr().unwrap().to_string();
+    let options = http_get_body(&addr, "/console-options.json").await;
+    assert!(options.contains("\"includeQq\":true"));
+    let qq_js = http_get_body(&addr, "/qq-bot/index.js").await;
+    assert!(qq_js.contains("mountQqBotPanel"));
+    let snap = ws_rpc_params(
+        &addr,
+        "qq-bot",
+        "snapshot",
+        json!({ "capabilities": ["bot.read", "bot.secret.status"] }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(snap["accounts"][0]["account_id"], "main");
+    assert_eq!(snap["accounts"][0]["credential_status"], "configured");
+    assert!(!dirs.qq_assets.as_os_str().is_empty());
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

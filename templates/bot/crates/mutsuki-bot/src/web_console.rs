@@ -2,7 +2,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_bot_service_host_integration::{BilibiliConsoleBridge, BotAgentConfigConsoleBridge};
+use mutsuki_bot_service_host_integration::{
+    BilibiliConsoleBridge, BotAgentConfigConsoleBridge, QqConsoleBridge,
+};
 use mutsuki_bot_web_console::{
     ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver,
     SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
@@ -70,6 +72,7 @@ impl WebConsoleGuard {
             secret_monitor,
             &WebConsolePaths::resolve(&product_root(product_config_path), &config),
             BilibiliConsoleBridge::get(runtime),
+            QqConsoleBridge::get(runtime),
         )?;
         let mut host = host;
         host.start().await?;

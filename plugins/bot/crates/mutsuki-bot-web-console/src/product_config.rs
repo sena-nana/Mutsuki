@@ -8,13 +8,13 @@ use mutsuki_bot_config::{
     ConfigApplyMode, ConfigContext, ConfigDescriptor, ConfigError, ConfigLifecycle,
     ConfigMutability, ConfigNode, ConfigPersistSink, ConfigProviderId, ConfigProviderRegistry,
     ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
-    MutsukiConfigSchema, RestartPolicy,
+    MutsukiConfigSchema, PreparedConfigPersist, RestartPolicy,
 };
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_CONFIG_PROVIDER_ID, BotAgentConfig, BotAgentConfigHandle, bot_agent_config_schema,
 };
 use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandConfig};
-use mutsuki_service_config::ConfiguredPluginStore;
+use mutsuki_service_config::{ConfiguredPluginStore, PreparedConfiguredPluginChange};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProductConfigError {
@@ -54,6 +54,9 @@ pub fn product_config_service_with_options(
     let store = options
         .store
         .unwrap_or_else(|| ConfiguredPluginStore::open(product_config_path));
+    store
+        .recover()
+        .map_err(|error| ProductConfigError::Invalid(format!("config recovery: {error}")))?;
     let registry = Arc::new(ConfigProviderRegistry::default());
 
     let product_provider = Arc::new(
@@ -125,12 +128,12 @@ struct ProductSurfacePersist {
 }
 
 impl ConfigPersistSink for ProductSurfacePersist {
-    fn persist(
+    fn prepare(
         &self,
         _context: &ConfigContext,
         value: &ConfigValue,
         _secrets: &HashMap<String, String>,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
         let ConfigValue::Object(map) = value else {
             return Err(ConfigError::PersistenceFailed {
                 reason: "product candidate must be an object".into(),
@@ -147,8 +150,32 @@ impl ConfigPersistSink for ProductSurfacePersist {
                 fields.insert(key.to_string(), field.to_json());
             }
         }
-        self.store
-            .patch_product_surface(fields)
+        let prepared = self
+            .store
+            .prepare_product_surface(fields)
+            .map_err(|error| ConfigError::PersistenceFailed {
+                reason: error.to_string(),
+            })?;
+        Ok(Box::new(ProductSurfaceChange { prepared }))
+    }
+}
+
+struct ProductSurfaceChange {
+    prepared: PreparedConfiguredPluginChange,
+}
+
+impl PreparedConfigPersist for ProductSurfaceChange {
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        self.prepared
+            .commit()
+            .map_err(|error| ConfigError::PersistenceFailed {
+                reason: error.to_string(),
+            })
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        self.prepared
+            .rollback()
             .map_err(|error| ConfigError::PersistenceFailed {
                 reason: error.to_string(),
             })
@@ -162,12 +189,12 @@ struct ConfiguredPluginPersist {
 }
 
 impl ConfigPersistSink for ConfiguredPluginPersist {
-    fn persist(
+    fn prepare(
         &self,
         _context: &ConfigContext,
         value: &ConfigValue,
         _secrets: &HashMap<String, String>,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
         let json = value.to_json();
         if self.plugin_id == BOT_COMMAND_PLUGIN_ID {
             let decoded: BotCommandConfig =
@@ -196,19 +223,77 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
         } else {
             None
         };
-        self.store
-            .replace_config(&self.plugin_id, json)
+        let prepared = self
+            .store
+            .prepare_replace_config(&self.plugin_id, json)
             .map_err(|error| ConfigError::PersistenceFailed {
                 reason: error.to_string(),
             })?;
-        if let (Some(handle), Some(config)) = (&self.bot_agent_config, decoded_bot_agent) {
+        let previous_bot_agent = self
+            .bot_agent_config
+            .as_ref()
+            .map(BotAgentConfigHandle::snapshot);
+        Ok(Box::new(ConfiguredPluginChange {
+            prepared,
+            bot_agent_config: self.bot_agent_config.clone(),
+            previous_bot_agent,
+            candidate_bot_agent: decoded_bot_agent,
+        }))
+    }
+}
+
+struct ConfiguredPluginChange {
+    prepared: PreparedConfiguredPluginChange,
+    bot_agent_config: Option<BotAgentConfigHandle>,
+    previous_bot_agent: Option<BotAgentConfig>,
+    candidate_bot_agent: Option<BotAgentConfig>,
+}
+
+impl PreparedConfigPersist for ConfiguredPluginChange {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        if let (Some(handle), Some(config)) = (&self.bot_agent_config, &self.candidate_bot_agent) {
             handle
-                .replace(config)
+                .replace(config.clone())
                 .map_err(|error| ConfigError::PersistenceFailed {
-                    reason: format!("live bot-agent config update failed: {error}"),
+                    reason: format!("candidate bot-agent config activation failed: {error}"),
                 })?;
         }
         Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        self.prepared
+            .commit()
+            .map_err(|error| ConfigError::PersistenceFailed {
+                reason: error.to_string(),
+            })
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        let file_result =
+            self.prepared
+                .rollback()
+                .map_err(|error| ConfigError::PersistenceFailed {
+                    reason: error.to_string(),
+                });
+        let live_result = match (&self.bot_agent_config, &self.previous_bot_agent) {
+            (Some(handle), Some(previous)) => {
+                handle
+                    .replace(previous.clone())
+                    .map_err(|error| ConfigError::PersistenceFailed {
+                        reason: format!("bot-agent config rollback failed: {error}"),
+                    })
+            }
+            _ => Ok(()),
+        };
+        match (file_result, live_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(file), Ok(())) => Err(file),
+            (Ok(()), Err(live)) => Err(live),
+            (Err(file), Err(live)) => Err(ConfigError::PersistenceFailed {
+                reason: format!("{file}; {live}"),
+            }),
+        }
     }
 }
 

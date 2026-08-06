@@ -4,6 +4,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "typecheck": "pnpm --filter @mutsuki/web-sdk build && pnpm --filter @mutsuki/web-sdk typecheck && pnpm --filter @mutsuki/web-build typecheck && pnpm --filter @mutsuki/ui typecheck && pnpm --filter @mutsuki/web-shell typecheck",
-    "build": "pnpm --filter @mutsuki/web-sdk build && pnpm --filter @mutsuki/web-build build && pnpm --filter @mutsuki/ui build && pnpm --filter @mutsuki/web-shell build"
+    "build": "pnpm --filter @mutsuki/web-sdk build && pnpm --filter @mutsuki/web-build build && pnpm --filter @mutsuki/ui build && pnpm --filter @mutsuki/web-shell build",
+    "test": "pnpm --filter @mutsuki/web-sdk test"
   }
 }

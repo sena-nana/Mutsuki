@@ -27,6 +27,10 @@ pub trait WebExtension: Send + Sync {
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ExtensionError {
+    #[error("capability denied: {0}")]
+    CapabilityDenied(String),
+    #[error("rpc failed ({code}): {message}")]
+    Rpc { code: String, message: String },
     #[error("extension registration failed: {0}")]
     Registration(String),
     #[error("extension budget exceeded: {0}")]
@@ -35,4 +39,15 @@ pub enum ExtensionError {
     Manifest(String),
     #[error("extension setup failed: {0}")]
     Setup(String),
+}
+
+impl ExtensionError {
+    /// Stable protocol code exposed to WebBridge callers.
+    pub fn rpc_code(&self) -> &str {
+        match self {
+            Self::CapabilityDenied(_) => "capability_denied",
+            Self::Rpc { code, .. } => code,
+            _ => "rpc_failed",
+        }
+    }
 }

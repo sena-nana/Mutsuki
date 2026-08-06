@@ -10,6 +10,9 @@
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="./console-bootstrap-overview.js"></script>
+  <script type="importmap">
+    {"imports":{"@mutsuki/web-sdk":"./shared/web-sdk.js"}}
+  </script>
+  <script type="module" src="./console-bootstrap.js"></script>
 </body>
 </html>

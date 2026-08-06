@@ -19,6 +19,7 @@ const PAGES = [
   { id: "tasks", label: "任务" },
   { id: "resources", label: "资源" },
   { id: "database", label: "数据库" },
+  { id: "qq-bot", label: "QQ 管理", optional: true },
   { id: "bilibili", label: "B站推送", optional: true },
   { id: "config", label: "配置", optional: true },
   { id: "upgrade", label: "自动升级", optional: true },
@@ -137,86 +138,22 @@ function formatBytes(bytes) {
   return `${(value / (1024 ** 3)).toFixed(2)} GB`;
 }
 
-export class SimpleRpc {
-  constructor(url, options = {}) {
-    this.url = url;
-    this.capabilities = options.capabilities || READ_CAPS;
-    this.authToken = options.authToken || "local-dev";
-    this.ws = null;
-    this.pending = new Map();
+/** @param {unknown} err */
+export function formatRpcError(err) {
+  if (err && typeof err === "object" && "code" in err && err.code) {
+    const code = String(err.code);
+    const message = "message" in err && err.message ? String(err.message) : "操作失败";
+    return `[${code}] ${message}`;
   }
-
-  async connect() {
-    await new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.url);
-      this.ws.addEventListener("open", () => {
-        this.ws.send(
-          JSON.stringify({
-            type: "hello",
-            protocol_version: "1.0.0",
-            capabilities: this.capabilities,
-            auth_token: this.authToken,
-          }),
-        );
-      });
-      this.ws.addEventListener("message", (ev) => {
-        const msg = JSON.parse(String(ev.data));
-        if (msg.type === "hello_ack") return resolve(msg);
-        if (msg.type === "rpc_result") {
-          const p = this.pending.get(msg.id);
-          if (!p) return;
-          this.pending.delete(msg.id);
-          if (msg.error) {
-            const err = new Error(msg.error.message || "rpc failed");
-            err.code = msg.error.code;
-            p.reject(err);
-          } else p.resolve(msg.result);
-        }
-      });
-      this.ws.addEventListener("error", reject);
-    });
-  }
-
-  call(namespace, method, params = {}, capabilities = this.capabilities) {
-    const id = crypto.randomUUID();
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.ws.send(
-        JSON.stringify({
-          type: "rpc",
-          id,
-          namespace,
-          method,
-          params: { capabilities, ...params },
-        }),
-      );
-    });
-  }
-
-  /** @param {unknown} err */
-  static formatError(err) {
-    if (err && typeof err === "object" && "code" in err && err.code) {
-      const code = String(err.code);
-      const message = "message" in err && err.message ? String(err.message) : "操作失败";
-      return `[${code}] ${message}`;
-    }
-    if (err instanceof Error) return err.message;
-    return String(err);
-  }
-
-  read(namespace, method, params = {}) {
-    return this.call(namespace, method, params, READ_CAPS);
-  }
-
-  write(namespace, method, params = {}) {
-    return this.call(namespace, method, params, WRITE_CAPS);
-  }
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 function createShell(rpc, options = {}) {
   const includeConfig = options.includeConfig === true;
   const includeUpgrade = options.includeUpgrade === true;
   const includeBilibili = options.includeBilibili === true;
+  const includeQq = options.includeQq === true;
   const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
   const route = parseRoute();
   const state = {
@@ -249,6 +186,7 @@ function createShell(rpc, options = {}) {
       if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
       if (page.optional === true && page.id === "config" && !includeConfig) continue;
       if (page.optional === true && page.id === "bilibili" && !includeBilibili) continue;
+      if (page.optional === true && page.id === "qq-bot" && !includeQq) continue;
       const btn = document.createElement("button");
       btn.type = "button";
       const active = state.page === page.id;
@@ -288,11 +226,12 @@ function createShell(rpc, options = {}) {
       else if (state.page === "resources") await renderResources(content, rpc);
       else if (state.page === "database") await renderDatabase(content, rpc, app, builtinDatabases);
       else if (state.page === "config") await renderConfig(content, rpc);
+      else if (state.page === "qq-bot") await renderQqBot(content, rpc);
       else if (state.page === "bilibili") await renderBilibili(content, rpc);
       else if (state.page === "ops") await renderOps(content, rpc, app, state, go);
       else await renderOverview(content, rpc, { go });
     } catch (err) {
-      state.error = SimpleRpc.formatError(err);
+      state.error = formatRpcError(err);
       content.innerHTML = `<div class="error-banner"><strong>加载失败</strong><div class="muted">${escapeHtml(state.error)}</div></div>`;
     } finally {
       state.busy = false;
@@ -351,6 +290,8 @@ function pageSubtitle(page, tab) {
       return "产品内置 SQLite 只读浏览（经 task_submit_batch / mutsuki.db.*）";
     case "config":
       return "由 ConfigDescriptor 自动生成表单";
+    case "qq-bot":
+      return "QQ 账号、会话规则、命令、Agent 与主动投递";
     case "bilibili":
       return "B 站推送登陆态、扫码登录与订阅管理";
     case "ops":
@@ -546,7 +487,7 @@ async function renderPlugins(content, rpc, app) {
       flash(app, "插件重载已提交");
       await renderPlugins(content, rpc, app);
     } catch (err) {
-      flash(app, SimpleRpc.formatError(err), true);
+      flash(app, formatRpcError(err), true);
     }
   };
 }
@@ -597,7 +538,7 @@ function renderPluginCard(plugin, rpc, app) {
         flash(app, "部署偏好已清除");
         await rerenderPlugins(app, rpc);
       } catch (err) {
-        flash(app, SimpleRpc.formatError(err), true);
+        flash(app, formatRpcError(err), true);
       }
     };
     actions.appendChild(clearBtn);
@@ -642,7 +583,7 @@ function renderCandidateRow(pluginId, candidate, rpc, app) {
       flash(app, `已设置 ${pluginId} → ${candidate.deployment}`);
       await rerenderPlugins(app, rpc);
     } catch (err) {
-      flash(app, SimpleRpc.formatError(err), true);
+      flash(app, formatRpcError(err), true);
     }
   };
   actions.appendChild(setBtn);
@@ -707,7 +648,7 @@ async function renderConfig(content, rpc) {
     }
     mod.mountConfigPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">${escapeHtml(SimpleRpc.formatError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
   }
 }
 
@@ -722,7 +663,22 @@ async function renderBilibili(content, rpc) {
     }
     mod.mountBilibiliPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">${escapeHtml(SimpleRpc.formatError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>B站推送页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+  }
+}
+
+async function renderQqBot(content, rpc) {
+  try {
+    const mod = await import("./qq-bot/index.js");
+    if (typeof mod.mountQqBotPanel !== "function") {
+      content.appendChild(
+        emptyBlock("QQ 管理扩展未提供 mountQqBotPanel；请确认 qq-bot 插件已装配。"),
+      );
+      return;
+    }
+    mod.mountQqBotPanel(content, rpc);
+  } catch (err) {
+    content.innerHTML = `<div class="error-banner"><strong>QQ 管理页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
   }
 }
 
@@ -844,7 +800,7 @@ async function renderResources(content, rpc) {
   } catch (err) {
     const note = document.createElement("div");
     note.className = "muted";
-    note.textContent = `resource_list 不可用：${SimpleRpc.formatError(err)}`;
+    note.textContent = `resource_list 不可用：${formatRpcError(err)}`;
     content.appendChild(note);
   }
 }
@@ -913,8 +869,8 @@ async function renderDatabase(content, rpc, app, builtinDatabases) {
       output.innerHTML = `<div class="card"><h2>表清单</h2><pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre><p class="muted">只读；写入操作默认关闭。结果为 task_submit_batch 句柄，完整行需 Core 运行并等待 outcome。</p></div>`;
       flash(app, "已提交只读表清单查询");
     } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
-      flash(app, SimpleRpc.formatError(err), true);
+      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
+      flash(app, formatRpcError(err), true);
     }
   };
 }
@@ -951,7 +907,7 @@ async function renderRunners(content, rpc, app) {
         else await rpc.write("control", "runner_stop", { id });
         flash(app, `${label} ${id} 已提交`);
       } catch (err) {
-        flash(app, SimpleRpc.formatError(err), true);
+        flash(app, formatRpcError(err), true);
       }
     };
   });
@@ -991,7 +947,7 @@ async function renderEvents(content, rpc, app) {
         content.innerHTML = "";
         await renderEvents(content, rpc, app);
       } catch (err) {
-        flash(app, SimpleRpc.formatError(err), true);
+        flash(app, formatRpcError(err), true);
       }
     };
   });
@@ -1095,7 +1051,7 @@ async function renderTasks(content, rpc, app, state) {
         flash(app, `任务 ${task.task_id} 取消已提交`);
         await loadTasks();
       } catch (err) {
-        flash(app, SimpleRpc.formatError(err), true);
+        flash(app, formatRpcError(err), true);
       }
     };
   }
@@ -1131,7 +1087,7 @@ async function renderTasks(content, rpc, app, state) {
   }
 
   toolbar.querySelector("#tasks-refresh").onclick = () =>
-    loadTasks().catch((err) => flash(app, SimpleRpc.formatError(err), true));
+    loadTasks().catch((err) => flash(app, formatRpcError(err), true));
 
   timelineCard.querySelector("#task-events-fetch").onclick = async () => {
     const sequence = Number(timelineCard.querySelector("#task-event-seq").value || 0);
@@ -1152,7 +1108,7 @@ async function renderTasks(content, rpc, app, state) {
         output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(page, null, 2))}</pre>`;
       }
     } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
+      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
     }
   };
 
@@ -1167,8 +1123,8 @@ async function renderTasks(content, rpc, app, state) {
       flash(app, "TaskBatch 已提交");
       await loadTasks();
     } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
-      flash(app, SimpleRpc.formatError(err), true);
+      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
+      flash(app, formatRpcError(err), true);
     }
   };
 
@@ -1213,8 +1169,8 @@ async function renderLifecycle(content, rpc, app) {
       output.innerHTML = `<pre class="log-block">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
       flash(app, "Core drain 已提交");
     } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
-      flash(app, SimpleRpc.formatError(err), true);
+      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
+      flash(app, formatRpcError(err), true);
     }
   };
 
@@ -1227,8 +1183,8 @@ async function renderLifecycle(content, rpc, app) {
       output.textContent = "关闭信号已发送";
       flash(app, "Service shutdown 已提交");
     } catch (err) {
-      output.innerHTML = `<div class="err-text">${escapeHtml(SimpleRpc.formatError(err))}</div>`;
-      flash(app, SimpleRpc.formatError(err), true);
+      output.innerHTML = `<div class="err-text">${escapeHtml(formatRpcError(err))}</div>`;
+      flash(app, formatRpcError(err), true);
     }
   };
 }
@@ -1543,11 +1499,14 @@ export function mountConsole(el, rpc, options = {}) {
   const includeBilibili =
     options.includeBilibili === true ||
     globalThis.__MUTSUKI_CONSOLE__?.includeBilibili === true;
+  const includeQq =
+    options.includeQq === true ||
+    globalThis.__MUTSUKI_CONSOLE__?.includeQq === true;
   const builtinDatabases =
     options.builtinDatabases ||
     globalThis.__MUTSUKI_CONSOLE__?.builtinDatabases ||
     [];
-  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, includeBilibili, builtinDatabases }));
+  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, includeBilibili, includeQq, builtinDatabases }));
 }
 
 export default {

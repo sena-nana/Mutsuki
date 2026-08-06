@@ -7,6 +7,7 @@ description = "Web overview console: system status, runtime structure, task/runn
 
 [dependencies]
 mutsuki-plugin-bot-control-web = { workspace = true }
+mutsuki-service-control = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 mutsuki-web-extension = { workspace = true }
 serde = { workspace = true }

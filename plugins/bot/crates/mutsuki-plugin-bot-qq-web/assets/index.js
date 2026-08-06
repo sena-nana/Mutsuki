@@ -36,7 +36,7 @@ function accountCard(account, state, rpc, refresh) {
   const card = element("article", "panel nested");
   card.append(
     element("h3", "", account.account_id),
-    element("p", "muted", `${account.health} · ${account.connected ? "已连接" : "未连接"}`),
+    element("p", "muted", `${account.health} · ${account.connection_state === "disconnected" ? "未连接" : "已连接"}`),
     element("p", "", `心跳 ${text(account.last_heartbeat_unix_ms)} · 分片 ${account.shard.join("/")}`),
     element("p", "", `凭据 ${text(account.credential_status)} · 限流 ${text(account.rate_limit_status)}`),
   );

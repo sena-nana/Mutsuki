@@ -313,9 +313,7 @@ fn require_capability(params: &JsonValue, required: &str) -> Result<(), Extensio
     if caps.iter().any(|cap| cap == "*" || cap == required) {
         return Ok(());
     }
-    Err(ExtensionError::Registration(format!(
-        "capability denied: {required}"
-    )))
+    Err(ExtensionError::CapabilityDenied(required.into()))
 }
 
 fn require_runtime_read(params: &JsonValue) -> Result<(), ExtensionError> {

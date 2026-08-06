@@ -48,6 +48,11 @@ async fn start() -> MutsukiWebHost {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    std::fs::write(
+        assets.join("test-shell.html"),
+        "<!doctype html><title>Mutsuki Console</title><div id=app></div>",
+    )
+    .unwrap();
     let extension = ConfigWebExtension::new(service).with_frontend_assets(&assets);
     let mut host = MutsukiWebHost::builder()
         .application(MinimalWebApplication::new(
@@ -60,7 +65,7 @@ async fn start() -> MutsukiWebHost {
             },
             WebShellAssets {
                 root_dir: assets.clone(),
-                index_file: "index.html".into(),
+                index_file: "test-shell.html".into(),
                 import_map: Default::default(),
             },
         ))

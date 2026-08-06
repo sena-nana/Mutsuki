@@ -33,6 +33,10 @@ use mutsuki_plugin_bot_control_web::{ControlRpcCaller, ControlWebExtension};
 use mutsuki_plugin_bot_overview_web::{
     OverviewWebExtension, materialize_frontend_assets as materialize_overview_assets,
 };
+use mutsuki_plugin_bot_qq_web::{
+    QqBotManagementApi, QqBotWebExtension,
+    materialize_frontend_assets as materialize_qq_assets,
+};
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
 use mutsuki_service_control::ControlHandler;
 use mutsuki_web_extension::content_hash;
@@ -98,7 +102,7 @@ impl WebConsolePaths {
     }
 }
 
-/// Build an embedded WebHost pre-wired with control + overview (+ optional config/upgrade/bilibili) extensions.
+/// Build an embedded WebHost pre-wired with control + overview (+ optional config/upgrade/bilibili/qq) extensions.
 pub fn build_console_host(
     config: &WebConsoleConfig,
     secrets: &WebConsoleSecrets,
@@ -108,6 +112,7 @@ pub fn build_console_host(
     secret_monitor: Option<SecretMonitor>,
     paths: &WebConsolePaths,
     bilibili: Option<Arc<BilibiliManagementService>>,
+    qq: Option<Arc<dyn QqBotManagementApi>>,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     if !config.enabled {
         return Err(mutsuki_web_host::WebHostError::InvalidConfig(
@@ -119,6 +124,7 @@ pub fn build_console_host(
         config.include_config && config_service.is_some(),
         paths.release_set.is_some(),
         bilibili.is_some(),
+        qq.is_some(),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -148,6 +154,11 @@ pub fn build_console_host(
     if let Some(service) = bilibili {
         builder = builder.extension(
             BilibiliWebExtension::new(service).with_frontend_assets(&asset_dirs.bilibili_assets),
+        );
+    }
+    if let Some(api) = qq {
+        builder = builder.extension(
+            QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets),
         );
     }
     Ok((builder.build()?, asset_dirs))
@@ -186,10 +197,12 @@ pub struct ConsoleAssetDirs {
     pub _overview_dir: tempfile::TempDir,
     pub _config_dir: Option<tempfile::TempDir>,
     pub _bilibili_dir: Option<tempfile::TempDir>,
+    pub _qq_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
     pub config_assets: PathBuf,
     pub bilibili_assets: PathBuf,
+    pub qq_assets: PathBuf,
     pub shell_root: PathBuf,
 }
 
@@ -198,6 +211,7 @@ impl ConsoleAssetDirs {
         include_config: bool,
         include_upgrade: bool,
         include_bilibili: bool,
+        include_qq: bool,
     ) -> WebHostResult<Self> {
         let overview_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -229,11 +243,24 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
+        let (qq_dir, qq_assets) = if include_qq {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_qq_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("qq-bot"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
+
         materialize_console_shell(
             &overview_assets,
             include_config,
             include_upgrade,
             include_bilibili,
+            include_qq,
         )
         .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
@@ -243,10 +270,12 @@ impl ConsoleAssetDirs {
             overview_assets: overview_assets.clone(),
             config_assets,
             bilibili_assets,
+            qq_assets,
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _config_dir: config_dir,
             _bilibili_dir: bilibili_dir,
+            _qq_dir: qq_dir,
             _shell_dir: shell_dir,
         })
     }
@@ -266,20 +295,15 @@ pub(crate) fn materialize_console_shell(
     include_config: bool,
     include_upgrade: bool,
     include_bilibili: bool,
+    include_qq: bool,
 ) -> std::io::Result<()> {
-    let (index_template, bootstrap_name, bootstrap_template) = if include_config {
-        (
-            include_str!("../assets/console-shell-config.html"),
-            "console-bootstrap-config.js",
-            include_str!("../assets/console-bootstrap-config.js"),
-        )
+    let index_template = if include_config {
+        include_str!("../assets/console-shell-config.html")
     } else {
-        (
-            include_str!("../assets/console-shell-overview.html"),
-            "console-bootstrap-overview.js",
-            include_str!("../assets/console-bootstrap-overview.js"),
-        )
+        include_str!("../assets/console-shell-overview.html")
     };
+    let bootstrap_name = "console-bootstrap.js";
+    let bootstrap_template = include_str!("../assets/console-bootstrap.js");
 
     let css = include_str!("../assets/mutsuki-ui.css");
     let css_v = asset_version_stamp(css.as_bytes());
@@ -299,6 +323,9 @@ pub(crate) fn materialize_console_shell(
             &format!("import(\"./config/index.js?v={config_v}\")"),
         );
     let bootstrap_v = asset_version_stamp(bootstrap.as_bytes());
+    let web_sdk = include_bytes!("../../../../../hosts/web/packages/web-sdk/browser/web-sdk.js");
+    let web_shell =
+        include_bytes!("../../../../../hosts/web/packages/web-shell/browser/web-shell.js");
 
     let index = index_template
         .replace("./mutsuki-ui.css", &format!("./mutsuki-ui.css?v={css_v}"))
@@ -310,12 +337,16 @@ pub(crate) fn materialize_console_shell(
     std::fs::write(out_dir.join("index.html"), index)?;
     std::fs::write(out_dir.join(bootstrap_name), bootstrap)?;
     std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
+    std::fs::create_dir_all(out_dir.join("shared"))?;
+    std::fs::write(out_dir.join("shared/web-sdk.js"), web_sdk)?;
+    std::fs::write(out_dir.join("shared/web-shell.js"), web_shell)?;
     std::fs::write(
         out_dir.join("console-options.json"),
         serde_json::to_string(&json!({
             "includeConfig": include_config,
             "includeUpgrade": include_upgrade,
             "includeBilibili": include_bilibili,
+            "includeQq": include_qq,
         }))?,
     )?;
     Ok(())

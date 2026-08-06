@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
@@ -24,6 +25,7 @@ mutsuki-plugin-bot-media.workspace = true
 mutsuki-plugin-bot-bilibili.workspace = true
 mutsuki-plugin-bot-bilibili-workshop.workspace = true
 mutsuki-plugin-bot-mihuashi.workspace = true
+mutsuki-plugin-bot-qq-web.workspace = true
 fastrand.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
