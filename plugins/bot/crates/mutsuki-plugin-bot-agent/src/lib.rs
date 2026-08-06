@@ -37,7 +37,7 @@ mod config;
 pub use config::{
     BOT_AGENT_CONFIG_PROVIDER_ID, BOT_AGENT_CONFIG_SERVICE_ID, BOT_AGENT_DEFAULT_MAX_MESSAGE_BYTES,
     BOT_AGENT_MIN_MESSAGE_BYTES, BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle,
-    bot_agent_config_schema,
+    BotAgentConfigSnapshot, bot_agent_config_schema,
 };
 
 pub const BOT_AGENT_BRIDGE_PLUGIN_ID: &str = "mutsuki.plugin.bot.agent";
@@ -184,119 +184,10 @@ async fn run_bridge_task(
     task: Task,
     bridge: BotAgentBridge,
 ) -> RuntimeResult<RunnerResult> {
-    let payload = task.payload.to_value();
-    let request =
-        if let Ok(request) = serde_json::from_value::<BotAgentBridgeRequest>(payload.clone()) {
-            request
-        } else if let Ok(command) = serde_json::from_value::<BotCommandEvent>(payload.clone()) {
-            bridge_request_from_command(command)
-                .map_err(|error| bridge_failure(&task, "command.decode", error))?
-        } else {
-            serde_json::from_value::<BotEvent>(payload)
-                .map(|event| BotAgentBridgeRequest::Submit { event })
-                .map_err(|error| bridge_failure(&task, "request.decode", error))?
-        };
-    let result = match request {
-        BotAgentBridgeRequest::Submit { event } => {
-            if let Some(completed) = bridge
-                .claim_event_before_media(&event)
-                .map_err(|error| bridge_failure(&task, "claim", error))?
-            {
-                Ok(completed)
-            } else {
-                let event = transcribe_event_audio(&ctx, &task, &bridge, event).await?;
-                bridge.submit_event_with_trace(&event, trace_context(&task).as_ref())
-            }
-        }
-        BotAgentBridgeRequest::Regenerate { mut event } => {
-            let binding = bridge.status(&event);
-            match binding {
-                Ok(binding) => {
-                    event.event_id =
-                        format!("{}:regenerate:{}", event.event_id, binding.generation);
-                    if let Some(completed) = bridge
-                        .claim_event_before_media(&event)
-                        .map_err(|error| bridge_failure(&task, "claim", error))?
-                    {
-                        Ok(completed)
-                    } else {
-                        let event = transcribe_event_audio(&ctx, &task, &bridge, event).await?;
-                        bridge.submit_event_with_trace(&event, trace_context(&task).as_ref())
-                    }
-                }
-                Err(error) => Err(error),
-            }
-        }
-        BotAgentBridgeRequest::Cancel { event, turn_id } => (|| {
-            let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-            let resolved = bridge.resolve_admitted(&event)?;
-            let binding = bridge.status(&event)?;
-            let binding = bridge.cancel(&resolved, &binding, actor_id, &turn_id)?;
-            Ok(BotAgentBridgeResult {
-                resolved,
-                binding,
-                turn_id,
-                outgoing: command_confirmation(&event.target, "已取消当前 Agent 回复"),
-            })
-        })(),
-        BotAgentBridgeRequest::Reset { event } => (|| {
-            let resolved = bridge.resolve_admitted(&event)?;
-            let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-            let binding = bridge
-                .conversations
-                .reset_session_binding(&resolved, actor_id)?;
-            Ok(BotAgentBridgeResult {
-                resolved,
-                binding,
-                turn_id: String::new(),
-                outgoing: command_confirmation(&event.target, "已开启新的 Agent 会话"),
-            })
-        })(),
-        BotAgentBridgeRequest::Fork { event } => (|| {
-            let resolved = bridge.resolve_admitted(&event)?;
-            let binding = bridge.fork(&event)?;
-            Ok(BotAgentBridgeResult {
-                resolved,
-                binding,
-                turn_id: String::new(),
-                outgoing: command_confirmation(&event.target, "已分叉 Agent 会话，历史记录已保留"),
-            })
-        })(),
-        BotAgentBridgeRequest::Status { event } => (|| {
-            let resolved = bridge.resolve_admitted(&event)?;
-            let binding = bridge.status(&event)?;
-            let outgoing = status_confirmation(&event.target, &binding);
-            Ok(BotAgentBridgeResult {
-                resolved,
-                binding,
-                turn_id: String::new(),
-                outgoing,
-            })
-        })(),
-    }
-    .map_err(|error: BotAgentError| bridge_failure(&task, "action", error))?;
+    let request = decode_bridge_request(&task)?;
+    let result = execute_bridge_request(&ctx, &task, &bridge, request).await?;
     let (outgoing, media_errors) = speech_reply_messages(&ctx, &task, &result).await;
-    let mut delivered = 0_u64;
-    let mut delivery_errors = Vec::new();
-    for message in outgoing {
-        match ctx
-            .call_raw(
-                BOT_MESSAGE_SEND_PROTOCOL_ID,
-                serde_json::to_value(message)
-                    .map_err(|error| bridge_failure(&task, "message.encode", error))?,
-            )
-            .await
-        {
-            Ok(TaskOutcome::Completed { .. }) => delivered += 1,
-            Ok(TaskOutcome::Failed { error, .. }) => delivery_errors.push(error.code),
-            Ok(TaskOutcome::Cancelled { .. }) => delivery_errors.push("delivery.cancelled".into()),
-            Ok(TaskOutcome::Expired { .. }) => delivery_errors.push("delivery.expired".into()),
-            Ok(TaskOutcome::DeadLetter { .. }) => {
-                delivery_errors.push("delivery.dead_letter".into())
-            }
-            Err(error) => delivery_errors.push(error.error().code.clone()),
-        }
-    }
+    let (delivered, delivery_errors) = deliver_messages(&ctx, &task, outgoing).await?;
     let mut completed = RunnerResult::completed(task.task_id);
     completed.output = Some(serde_json::json!({
         "session_id": result.binding.session_id,
@@ -308,6 +199,162 @@ async fn run_bridge_task(
         "media_errors": media_errors,
     }));
     Ok(completed)
+}
+
+fn decode_bridge_request(task: &Task) -> RuntimeResult<BotAgentBridgeRequest> {
+    let payload = task.payload.to_value();
+    if let Ok(request) = serde_json::from_value::<BotAgentBridgeRequest>(payload.clone()) {
+        return Ok(request);
+    }
+    if let Ok(command) = serde_json::from_value::<BotCommandEvent>(payload.clone()) {
+        return bridge_request_from_command(command)
+            .map_err(|error| bridge_failure(task, "command.decode", error));
+    }
+    serde_json::from_value::<BotEvent>(payload)
+        .map(|event| BotAgentBridgeRequest::Submit { event })
+        .map_err(|error| bridge_failure(task, "request.decode", error))
+}
+
+async fn execute_bridge_request(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    bridge: &BotAgentBridge,
+    request: BotAgentBridgeRequest,
+) -> RuntimeResult<BotAgentBridgeResult> {
+    match request {
+        BotAgentBridgeRequest::Submit { event } => {
+            submit_claimed_event(ctx, task, bridge, event).await
+        }
+        BotAgentBridgeRequest::Regenerate { mut event } => {
+            let binding = bridge
+                .status(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            event.event_id = format!("{}:regenerate:{}", event.event_id, binding.generation);
+            submit_claimed_event(ctx, task, bridge, event).await
+        }
+        BotAgentBridgeRequest::Cancel { event, turn_id } => {
+            let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
+            let resolved = bridge
+                .resolve_admitted(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let binding = bridge
+                .status(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let binding = bridge
+                .cancel(&resolved, &binding, actor_id, &turn_id)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            Ok(BotAgentBridgeResult {
+                resolved,
+                binding,
+                turn_id,
+                outgoing: command_confirmation(&event.target, "已取消当前 Agent 回复"),
+            })
+        }
+        BotAgentBridgeRequest::Reset { event } => {
+            let resolved = bridge
+                .resolve_admitted(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
+            let binding = bridge
+                .conversations
+                .reset_session_binding(&resolved, actor_id)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            Ok(BotAgentBridgeResult {
+                resolved,
+                binding,
+                turn_id: String::new(),
+                outgoing: command_confirmation(&event.target, "已开启新的 Agent 会话"),
+            })
+        }
+        BotAgentBridgeRequest::Fork { event } => {
+            let resolved = bridge
+                .resolve_admitted(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let binding = bridge
+                .fork(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            Ok(BotAgentBridgeResult {
+                resolved,
+                binding,
+                turn_id: String::new(),
+                outgoing: command_confirmation(&event.target, "已分叉 Agent 会话，历史记录已保留"),
+            })
+        }
+        BotAgentBridgeRequest::Status { event } => {
+            let resolved = bridge
+                .resolve_admitted(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let binding = bridge
+                .status(&event)
+                .await
+                .map_err(|error| bridge_failure(task, "action", error))?;
+            let outgoing = status_confirmation(&event.target, &binding);
+            Ok(BotAgentBridgeResult {
+                resolved,
+                binding,
+                turn_id: String::new(),
+                outgoing,
+            })
+        }
+    }
+}
+
+async fn submit_claimed_event(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    bridge: &BotAgentBridge,
+    event: BotEvent,
+) -> RuntimeResult<BotAgentBridgeResult> {
+    if let Some(completed) = bridge
+        .claim_event_before_media(&event)
+        .await
+        .map_err(|error| bridge_failure(task, "claim", error))?
+    {
+        return Ok(completed);
+    }
+    let event = transcribe_event_audio(ctx, task, bridge, event).await?;
+    bridge
+        .submit_event_with_trace(&event, trace_context(task).as_ref())
+        .await
+        .map_err(|error| bridge_failure(task, "action", error))
+}
+
+async fn deliver_messages(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    outgoing: Vec<BotMessage>,
+) -> RuntimeResult<(u64, Vec<String>)> {
+    let mut delivered = 0_u64;
+    let mut delivery_errors = Vec::new();
+    for message in outgoing {
+        match ctx
+            .call_raw(
+                BOT_MESSAGE_SEND_PROTOCOL_ID,
+                serde_json::to_value(message)
+                    .map_err(|error| bridge_failure(task, "message.encode", error))?,
+            )
+            .await
+        {
+            Ok(TaskOutcome::Completed { .. }) => delivered += 1,
+            Ok(TaskOutcome::Failed { error, .. }) => delivery_errors.push(error.code),
+            Ok(TaskOutcome::Cancelled { .. }) => delivery_errors.push("delivery.cancelled".into()),
+            Ok(TaskOutcome::Expired { .. }) => delivery_errors.push("delivery.expired".into()),
+            Ok(TaskOutcome::DeadLetter { .. }) => {
+                delivery_errors.push("delivery.dead_letter".into());
+            }
+            Err(error) => delivery_errors.push(error.error().code.clone()),
+        }
+    }
+    Ok((delivered, delivery_errors))
 }
 
 fn bridge_request_from_command(
@@ -359,6 +406,7 @@ async fn transcribe_event_audio(
 ) -> RuntimeResult<BotEvent> {
     let resolved = bridge
         .resolve_admitted(&event)
+        .await
         .map_err(|error| bridge_failure(task, "policy", error))?;
     if !resolved.policy.stt_enabled {
         return Ok(event);
@@ -523,11 +571,26 @@ fn bridge_failure(task: &Task, route: &str, error: impl std::fmt::Display) -> Ru
 }
 
 pub trait AgentBridgeClient: Send {
+    /// Loads one Agent session snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns the Agent wire error reported by the session owner.
     fn get_session(&mut self, session_id: &str) -> Result<AgentSession, AgentWireError>;
+    /// Creates one Agent session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the Agent wire error reported by the session owner.
     fn start_session(
         &mut self,
         request: AgentSessionCreateRequest,
     ) -> Result<AgentSession, AgentWireError>;
+    /// Submits an idempotent Agent turn against the expected session version.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed wire error for stale versions, invalid input, or execution failure.
     fn submit_turn(
         &mut self,
         session_id: &str,
@@ -536,18 +599,33 @@ pub trait AgentBridgeClient: Send {
         messages: Vec<AgentMessage>,
         idempotency_key: &str,
     ) -> Result<SessionVersion, AgentWireError>;
+    /// Cancels an Agent turn with optimistic session versioning.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed Agent wire failure.
     fn cancel_turn(
         &mut self,
         session_id: &str,
         turn_id: &str,
         expected_version: SessionVersion,
     ) -> Result<SessionVersion, AgentWireError>;
+    /// Forks an Agent session into an owner-provided target identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed Agent wire failure.
     fn fork_session(
         &mut self,
         source_session_id: &str,
         target_session_id: &str,
         expected_version: SessionVersion,
     ) -> Result<SessionVersion, AgentWireError>;
+    /// Reads committed Agent events after the supplied sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed Agent wire failure.
     fn events(
         &mut self,
         session_id: &str,
@@ -665,14 +743,19 @@ pub struct BotAgentTraceContext {
 
 impl BotAgentBridge {
     #[must_use]
+    /// Creates a bridge with a validated default policy and selected streaming strategy.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if an internal enum-to-config mapping produces an invalid default snapshot.
     pub fn new(
         conversations: ConversationService,
         client: Box<dyn AgentBridgeClient>,
-        streaming: QqStreamingStrategy,
+        streaming: &QqStreamingStrategy,
     ) -> Self {
         let config = BotAgentConfigHandle::default();
         let mut settings = config.snapshot();
-        settings.streaming = streaming_name(&streaming).into();
+        settings.streaming = streaming_name(streaming).into();
         config
             .replace(settings)
             .expect("streaming strategy must produce a valid Bot Agent config");
@@ -693,17 +776,30 @@ impl BotAgentBridge {
         }
     }
 
-    pub fn submit_event(&self, event: &BotEvent) -> Result<BotAgentBridgeResult, BotAgentError> {
-        self.submit_event_with_trace(event, None)
+    /// Resolves, admits, and submits one Bot event to the bound Agent session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed policy, session, media, or Agent execution error.
+    pub async fn submit_event(
+        &self,
+        event: &BotEvent,
+    ) -> Result<BotAgentBridgeResult, BotAgentError> {
+        self.submit_event_with_trace(event, None).await
     }
 
-    pub fn submit_event_with_trace(
+    /// Submits one Bot event while preserving the supplied trace context.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed policy, session, media, or Agent execution error.
+    pub async fn submit_event_with_trace(
         &self,
         event: &BotEvent,
         trace: Option<&BotAgentTraceContext>,
     ) -> Result<BotAgentBridgeResult, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let (resolved, config) = self.resolve_admitted_with_config(event)?;
+        let (resolved, config) = self.resolve_admitted_with_config(event).await?;
         let profile_id = resolved
             .policy
             .agent_runtime_profile_id
@@ -711,16 +807,14 @@ impl BotAgentBridge {
             .ok_or(BotAgentError::AgentProfileMissing)?;
         let message = event_message(event, trace)?;
         let turn_id = format!("qq:{}", event.event_id);
-        let mut client = self
-            .client
-            .lock()
-            .map_err(|_| BotAgentError::ClientPoisoned)?;
         let binding = self
             .conversations
-            .get_or_create_session_binding(&resolved, actor_id)?;
+            .get_or_create_session_binding(&resolved, actor_id)
+            .await?;
         if self
             .conversations
-            .begin_agent_event(&resolved, actor_id, &event.event_id, &turn_id)?
+            .begin_agent_event(&resolved, actor_id, &event.event_id, &turn_id)
+            .await?
             == AgentEventClaim::Completed
         {
             return Ok(BotAgentBridgeResult {
@@ -730,38 +824,53 @@ impl BotAgentBridge {
                 outgoing: Vec::new(),
             });
         }
-        match client.get_session(&binding.session_id) {
-            Ok(_) => {}
-            Err(error) if error.code == "agent.session.not_found" => {
-                client.start_session(AgentSessionCreateRequest {
-                    session_id: Some(binding.session_id.clone()),
-                    profile_id,
-                    title: Some(format!("QQ {}", resolved.conversation.origin_key())),
-                })?;
+        let next_version = {
+            let mut client = self
+                .client
+                .lock()
+                .map_err(|_| BotAgentError::ClientPoisoned)?;
+            match client.get_session(&binding.session_id) {
+                Ok(_) => {}
+                Err(error) if error.code == "agent.session.not_found" => {
+                    client.start_session(AgentSessionCreateRequest {
+                        session_id: Some(binding.session_id.clone()),
+                        profile_id,
+                        title: Some(format!("QQ {}", resolved.conversation.origin_key())),
+                    })?;
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(error) => return Err(error.into()),
-        }
-        let next_version = client.submit_turn(
-            &binding.session_id,
-            SessionVersion(binding.session_version),
-            &turn_id,
-            vec![message],
-            &event.event_id,
-        )?;
-        let binding =
-            self.advance_or_reuse_session_version(&resolved, actor_id, &binding, next_version.0)?;
-        let page = client.events(&binding.session_id, binding.last_event_sequence)?;
+            client.submit_turn(
+                &binding.session_id,
+                SessionVersion(binding.session_version),
+                &turn_id,
+                vec![message],
+                &event.event_id,
+            )?
+        };
+        let binding = self
+            .advance_or_reuse_session_version(&resolved, actor_id, &binding, next_version.0)
+            .await?;
+        let page = self
+            .client
+            .lock()
+            .map_err(|_| BotAgentError::ClientPoisoned)?
+            .events(&binding.session_id, binding.last_event_sequence)?;
         let strategy = config.streaming_strategy()?;
         let outgoing =
             outgoing_messages_with_limit(event, &page, &strategy, config.max_message_bytes);
-        let binding = self.conversations.advance_event_sequence(
-            &resolved,
-            actor_id,
-            binding.last_event_sequence,
-            page.next_sequence,
-        )?;
+        let binding = self
+            .conversations
+            .advance_event_sequence(
+                &resolved,
+                actor_id,
+                binding.last_event_sequence,
+                page.next_sequence,
+            )
+            .await?;
         self.conversations
-            .complete_agent_event(&resolved, actor_id, &event.event_id)?;
+            .complete_agent_event(&resolved, actor_id, &event.event_id)
+            .await?;
         Ok(BotAgentBridgeResult {
             resolved,
             binding,
@@ -774,19 +883,26 @@ impl BotAgentBridge {
     ///
     /// A pending claim remains resumable after a Host restart; only a completed claim bypasses
     /// the rest of the bridge.
-    pub fn claim_event_before_media(
+    /// Claims an event before any media side effect and detects completed retries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when conversation resolution or the durable claim fails.
+    pub async fn claim_event_before_media(
         &self,
         event: &BotEvent,
     ) -> Result<Option<BotAgentBridgeResult>, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let (resolved, _) = self.resolve_admitted_with_config(event)?;
+        let (resolved, _) = self.resolve_admitted_with_config(event).await?;
         let binding = self
             .conversations
-            .get_or_create_session_binding(&resolved, actor_id)?;
+            .get_or_create_session_binding(&resolved, actor_id)
+            .await?;
         let turn_id = format!("qq:{}", event.event_id);
-        let claim =
-            self.conversations
-                .begin_agent_event(&resolved, actor_id, &event.event_id, &turn_id)?;
+        let claim = self
+            .conversations
+            .begin_agent_event(&resolved, actor_id, &event.event_id, &turn_id)
+            .await?;
         Ok(
             (claim == AgentEventClaim::Completed).then_some(BotAgentBridgeResult {
                 resolved,
@@ -797,14 +913,23 @@ impl BotAgentBridge {
         )
     }
 
-    pub fn resolve(&self, event: &BotEvent) -> Result<ResolvedConversationPolicy, BotAgentError> {
+    /// Resolves the effective conversation policy for an event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsupported targets, invalid identity, or repository failure.
+    pub async fn resolve(
+        &self,
+        event: &BotEvent,
+    ) -> Result<ResolvedConversationPolicy, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
         Ok(self
             .conversations
-            .resolve_policy(qq_conversation_from_event(event)?, actor_id)?)
+            .resolve_policy(qq_conversation_from_event(event)?, actor_id)
+            .await?)
     }
 
-    fn advance_or_reuse_session_version(
+    async fn advance_or_reuse_session_version(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -812,12 +937,15 @@ impl BotAgentBridge {
         next_session_version: u64,
     ) -> Result<AgentSessionBinding, BotAgentError> {
         if next_session_version != binding.session_version {
-            return Ok(self.conversations.advance_session(
-                resolved,
-                actor_id,
-                binding.session_version,
-                next_session_version,
-            )?);
+            return Ok(self
+                .conversations
+                .advance_session(
+                    resolved,
+                    actor_id,
+                    binding.session_version,
+                    next_session_version,
+                )
+                .await?);
         }
 
         // AgentClient may return the already-accepted version when a reconnect retries the
@@ -826,7 +954,8 @@ impl BotAgentBridge {
         // replaced this session lineage.
         let current = self
             .conversations
-            .session_binding(resolved, actor_id)?
+            .session_binding(resolved, actor_id)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         if current.session_id != binding.session_id {
             return Err(ConversationError::GenerationConflict.into());
@@ -841,15 +970,21 @@ impl BotAgentBridge {
         Ok(current)
     }
 
-    pub fn resolve_admitted(
+    /// Resolves policy and enforces admission without submitting an Agent turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stable policy or admission error.
+    pub async fn resolve_admitted(
         &self,
         event: &BotEvent,
     ) -> Result<ResolvedConversationPolicy, BotAgentError> {
         self.resolve_admitted_with_config(event)
+            .await
             .map(|(resolved, _)| resolved)
     }
 
-    fn resolve_admitted_with_config(
+    async fn resolve_admitted_with_config(
         &self,
         event: &BotEvent,
     ) -> Result<(ResolvedConversationPolicy, BotAgentConfig), BotAgentError> {
@@ -857,7 +992,7 @@ impl BotAgentBridge {
         if !config.enabled {
             return Err(BotAgentError::AgentDisabled);
         }
-        let mut resolved = self.resolve(event)?;
+        let mut resolved = self.resolve(event).await?;
         if resolved.policy.agent_runtime_profile_id.is_none()
             && !config.default_profile_id.trim().is_empty()
         {
@@ -870,15 +1005,26 @@ impl BotAgentBridge {
         Ok((resolved, config))
     }
 
-    pub fn status(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
+    /// Reads or creates the current Agent session binding for an admitted event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when admission, scope derivation, or repository access fails.
+    pub async fn status(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve(event)?;
+        let resolved = self.resolve(event).await?;
         self.conversations
-            .session_binding(&resolved, actor_id)?
+            .session_binding(&resolved, actor_id)
+            .await?
             .ok_or(BotAgentError::SessionBindingMissing)
     }
 
-    pub fn cancel(
+    /// Cancels a turn and atomically advances the conversation binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed Agent or binding version error.
+    pub async fn cancel(
         &self,
         resolved: &ResolvedConversationPolicy,
         binding: &AgentSessionBinding,
@@ -894,39 +1040,54 @@ impl BotAgentBridge {
                 turn_id,
                 SessionVersion(binding.session_version),
             )?;
-        Ok(self.conversations.advance_session(
-            resolved,
-            actor_id,
-            binding.session_version,
-            version.0,
-        )?)
+        Ok(self
+            .conversations
+            .advance_session(resolved, actor_id, binding.session_version, version.0)
+            .await?)
     }
 
-    pub fn cancel_event(
+    /// Resolves an event and cancels the selected Agent turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed admission, Agent, or binding error.
+    pub async fn cancel_event(
         &self,
         event: &BotEvent,
         turn_id: &str,
     ) -> Result<AgentSessionBinding, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve_admitted(event)?;
-        let binding = self.status(event)?;
-        self.cancel(&resolved, &binding, actor_id, turn_id)
+        let resolved = self.resolve_admitted(event).await?;
+        let binding = self.status(event).await?;
+        self.cancel(&resolved, &binding, actor_id, turn_id).await
     }
 
-    pub fn reset(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
+    /// Replaces the event's current session binding with a fresh session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed admission or repository error.
+    pub async fn reset(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve_admitted(event)?;
+        let resolved = self.resolve_admitted(event).await?;
         Ok(self
             .conversations
-            .reset_session_binding(&resolved, actor_id)?)
+            .reset_session_binding(&resolved, actor_id)
+            .await?)
     }
 
-    pub fn fork(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
+    /// Forks the event's session and commits the new binding atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed admission, Agent, or binding conflict error.
+    pub async fn fork(&self, event: &BotEvent) -> Result<AgentSessionBinding, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        let resolved = self.resolve_admitted(event)?;
+        let resolved = self.resolve_admitted(event).await?;
         let (source, target_session_id) = self
             .conversations
-            .prepare_session_fork(&resolved, actor_id)?;
+            .prepare_session_fork(&resolved, actor_id)
+            .await?;
         let target_version = self
             .client
             .lock()
@@ -936,20 +1097,31 @@ impl BotAgentBridge {
                 &target_session_id,
                 SessionVersion(source.session_version),
             )?;
-        Ok(self.conversations.commit_session_fork(
-            &resolved,
-            actor_id,
-            &source,
-            target_session_id,
-            target_version.0,
-        )?)
+        Ok(self
+            .conversations
+            .commit_session_fork(
+                &resolved,
+                actor_id,
+                &source,
+                target_session_id,
+                target_version.0,
+            )
+            .await?)
     }
 
-    pub fn regenerate(&self, event: &BotEvent) -> Result<BotAgentBridgeResult, BotAgentError> {
-        let binding = self.status(event)?;
+    /// Resubmits an event under a new idempotency identity for regeneration.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed status, admission, or Agent execution error.
+    pub async fn regenerate(
+        &self,
+        event: &BotEvent,
+    ) -> Result<BotAgentBridgeResult, BotAgentError> {
+        let binding = self.status(event).await?;
         let mut retry = event.clone();
         retry.event_id = format!("{}:regenerate:{}", event.event_id, binding.generation);
-        self.submit_event(&retry)
+        self.submit_event(&retry).await
     }
 }
 
@@ -1196,6 +1368,7 @@ impl From<AgentWireError> for BotAgentError {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    use async_trait::async_trait;
     use mutsuki_agent_contracts::{
         AgentEventEnvelope, AgentEventMeta, ArtifactRef, ResourceCellRef, ResourceRef,
     };
@@ -1210,25 +1383,30 @@ mod tests {
 
     use super::*;
 
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        futures::executor::block_on(future)
+    }
+
     #[derive(Default)]
     struct Repository {
         bindings: Mutex<BTreeMap<String, AgentSessionBinding>>,
         events: Mutex<BTreeMap<(String, String), bool>>,
     }
 
+    #[async_trait]
     impl ConversationRepository for Repository {
-        fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
+        async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
             Ok(Vec::new())
         }
 
-        fn session_binding(
+        async fn session_binding(
             &self,
             key: &str,
         ) -> Result<Option<AgentSessionBinding>, ConversationError> {
             Ok(self.bindings.lock().unwrap().get(key).cloned())
         }
 
-        fn compare_and_set_session_binding(
+        async fn compare_and_set_session_binding(
             &self,
             key: &str,
             expected: Option<u64>,
@@ -1242,7 +1420,7 @@ mod tests {
             Ok(())
         }
 
-        fn begin_agent_event(
+        async fn begin_agent_event(
             &self,
             binding_key: &str,
             event_id: &str,
@@ -1260,7 +1438,7 @@ mod tests {
             })
         }
 
-        fn complete_agent_event(
+        async fn complete_agent_event(
             &self,
             binding_key: &str,
             event_id: &str,
@@ -1516,10 +1694,10 @@ mod tests {
             let bridge = BotAgentBridge::new(
                 ConversationService::new(repository, policy()),
                 Box::new(FakeAgentClient::default()),
-                QqStreamingStrategy::FinalOnly,
+                &QqStreamingStrategy::FinalOnly,
             );
-            let first = bridge.submit_event(&event("one", target.clone())).unwrap();
-            let second = bridge.submit_event(&event("two", target)).unwrap();
+            let first = block_on(bridge.submit_event(&event("one", target.clone()))).unwrap();
+            let second = block_on(bridge.submit_event(&event("two", target))).unwrap();
             assert_eq!(first.binding.session_id, second.binding.session_id);
             assert_eq!(second.binding.session_version, 2);
             assert_eq!(second.binding.last_event_sequence, 2);
@@ -1535,14 +1713,14 @@ mod tests {
         let bridge = BotAgentBridge::new(
             ConversationService::new(repository.clone(), denied_policy),
             Box::new(FakeAgentClient::default()),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
-        let result = bridge.submit_event(&event(
+        let result = block_on(bridge.submit_event(&event(
             "denied",
             BotTarget::User {
                 user_id: "actor".into(),
             },
-        ));
+        )));
         assert!(matches!(
             result,
             Err(BotAgentError::Admission(
@@ -1572,14 +1750,13 @@ mod tests {
             config,
         );
 
-        let result = bridge
-            .submit_event(&event(
-                "configured-profile",
-                BotTarget::User {
-                    user_id: "actor".into(),
-                },
-            ))
-            .unwrap();
+        let result = block_on(bridge.submit_event(&event(
+            "configured-profile",
+            BotTarget::User {
+                user_id: "actor".into(),
+            },
+        )))
+        .unwrap();
         assert_eq!(
             result.resolved.policy.agent_runtime_profile_id.as_deref(),
             Some("configured-profile")
@@ -1605,12 +1782,12 @@ mod tests {
         );
 
         assert!(matches!(
-            bridge.submit_event(&event(
+            block_on(bridge.submit_event(&event(
                 "disabled",
                 BotTarget::Group {
                     group_id: "group".into(),
                 },
-            )),
+            ))),
             Err(BotAgentError::AgentDisabled)
         ));
         assert!(repository.bindings.lock().unwrap().is_empty());
@@ -1788,16 +1965,16 @@ mod tests {
         let first_bridge = BotAgentBridge::new(
             ConversationService::new(repository.clone(), policy()),
             Box::new(FakeAgentClient::default()),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
-        let first = first_bridge.submit_event(&event).unwrap();
+        let first = block_on(first_bridge.submit_event(&event)).unwrap();
         assert_eq!(first.binding.session_version, 1);
         let reloaded_bridge = BotAgentBridge::new(
             ConversationService::new(repository, policy()),
             Box::new(FakeAgentClient::default()),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
-        let duplicate = reloaded_bridge.submit_event(&event).unwrap();
+        let duplicate = block_on(reloaded_bridge.submit_event(&event)).unwrap();
         assert_eq!(duplicate.binding.session_version, 1);
         assert!(duplicate.outgoing.is_empty());
     }
@@ -1820,10 +1997,10 @@ mod tests {
             Box::new(ReplayableAgentClient {
                 state: state.clone(),
             }),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
         assert!(matches!(
-            first_bridge.submit_event(&event),
+            block_on(first_bridge.submit_event(&event)),
             Err(BotAgentError::AgentClient { ref code, .. })
                 if code == "agent.transport.disconnected"
         ));
@@ -1833,9 +2010,9 @@ mod tests {
             Box::new(ReplayableAgentClient {
                 state: state.clone(),
             }),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
-        let recovered = reloaded_bridge.submit_event(&event).unwrap();
+        let recovered = block_on(reloaded_bridge.submit_event(&event)).unwrap();
         assert_eq!(recovered.outgoing[0].plain_text(), "recovered reply");
         let state = state.lock().unwrap();
         assert_eq!(state.submit_count, 1);
@@ -1848,7 +2025,7 @@ mod tests {
         let bridge = BotAgentBridge::new(
             ConversationService::new(repository, policy()),
             Box::new(FakeAgentClient::default()),
-            QqStreamingStrategy::FinalOnly,
+            &QqStreamingStrategy::FinalOnly,
         );
         let event = event(
             "actions",
@@ -1856,18 +2033,18 @@ mod tests {
                 group_id: "group".into(),
             },
         );
-        let submitted = bridge.submit_event(&event).unwrap();
-        let cancelled = bridge.cancel_event(&event, &submitted.turn_id).unwrap();
+        let submitted = block_on(bridge.submit_event(&event)).unwrap();
+        let cancelled = block_on(bridge.cancel_event(&event, &submitted.turn_id)).unwrap();
         assert_eq!(cancelled.session_version, 2);
-        let forked = bridge.fork(&event).unwrap();
+        let forked = block_on(bridge.fork(&event)).unwrap();
         assert_ne!(forked.session_id, cancelled.session_id);
         assert_eq!(forked.session_version, 1);
         assert!(forked.generation > cancelled.generation);
-        let reset = bridge.reset(&event).unwrap();
+        let reset = block_on(bridge.reset(&event)).unwrap();
         assert_ne!(reset.session_id, submitted.binding.session_id);
         assert_eq!(reset.session_version, 0);
         assert!(reset.generation > forked.generation);
-        let regenerated = bridge.regenerate(&event).unwrap();
+        let regenerated = block_on(bridge.regenerate(&event)).unwrap();
         assert_eq!(regenerated.binding.session_id, reset.session_id);
         assert_eq!(regenerated.binding.session_version, 1);
         assert!(regenerated.turn_id.contains(":regenerate:"));

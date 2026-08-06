@@ -8,6 +8,68 @@ use crate::schema::{ConfigApplyMode, ConfigDescriptor, RestartPolicy};
 use crate::scope::ConfigContext;
 use crate::value::ConfigValue;
 
+pub trait ConfigChangeTransaction: Send {
+    fn activate(&mut self) -> Result<(), ConfigError>;
+    fn commit(&mut self) -> Result<(), ConfigError>;
+    fn rollback(&mut self) -> Result<(), ConfigError>;
+}
+
+pub struct PreparedConfigChange {
+    result: ConfigApplyResult,
+    transaction: Option<Box<dyn ConfigChangeTransaction>>,
+}
+
+impl PreparedConfigChange {
+    pub fn new(result: ConfigApplyResult, transaction: Box<dyn ConfigChangeTransaction>) -> Self {
+        Self {
+            result,
+            transaction: Some(transaction),
+        }
+    }
+
+    pub fn dry_run(result: ConfigApplyResult) -> Self {
+        Self {
+            result,
+            transaction: None,
+        }
+    }
+
+    pub fn result(&self) -> &ConfigApplyResult {
+        &self.result
+    }
+
+    pub fn result_mut(&mut self) -> &mut ConfigApplyResult {
+        &mut self.result
+    }
+
+    pub fn activate(&mut self) -> Result<(), ConfigError> {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.activate()?;
+        }
+        Ok(())
+    }
+
+    pub fn commit(&mut self) -> Result<(), ConfigError> {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.commit()?;
+        }
+        self.transaction = None;
+        Ok(())
+    }
+
+    pub fn rollback(&mut self) -> Result<(), ConfigError> {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.rollback()?;
+        }
+        self.transaction = None;
+        Ok(())
+    }
+
+    pub fn into_result(self) -> ConfigApplyResult {
+        self.result
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConfigRevision(pub u64);
@@ -90,9 +152,20 @@ pub trait ConfigProvider: Send + Sync {
         context: ConfigContext,
     ) -> Result<ValidationResult, ConfigError>;
 
+    async fn prepare(
+        &self,
+        request: ConfigApplyRequest,
+        context: ConfigContext,
+    ) -> Result<PreparedConfigChange, ConfigError>;
+
     async fn apply(
         &self,
         request: ConfigApplyRequest,
         context: ConfigContext,
-    ) -> Result<ConfigApplyResult, ConfigError>;
+    ) -> Result<ConfigApplyResult, ConfigError> {
+        let mut prepared = self.prepare(request, context).await?;
+        prepared.activate()?;
+        prepared.commit()?;
+        Ok(prepared.into_result())
+    }
 }

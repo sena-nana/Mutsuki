@@ -105,47 +105,106 @@ impl ConfigService {
         let dry_run = request.dry_run;
         let entry = self.registry.ensure_scope(provider_id, context.scope)?;
         let started = Instant::now();
-        let result = entry.provider.apply(request, context.clone()).await;
-        self.registry
-            .metrics()
-            .observe_apply(started.elapsed().as_millis() as u64);
-        match &result {
+        let prepared = entry.provider.prepare(request, context.clone()).await;
+        match &prepared {
             Err(ConfigError::RevisionConflict { .. }) => {
                 self.registry.metrics().inc_revision_conflict();
                 self.registry.metrics().inc_apply_failed();
             }
             Err(_) => self.registry.metrics().inc_apply_failed(),
-            Ok(ok) if !ok.pending_actions.is_empty() => {
+            Ok(change) if !change.result().pending_actions.is_empty() => {
                 self.registry.metrics().inc_reload_required();
             }
             Ok(_) => {}
         }
-        let mut result = result?;
-        if !dry_run && result.applied {
-            self.watch.notify(RevisionChangedEvent {
-                provider_id: ConfigProviderId::new(provider_id),
-                revision: result.revision,
-                context,
-            });
-            if let Some(lifecycle) = &self.lifecycle {
-                let completed = lifecycle.execute(
-                    provider_id,
-                    result.restart_policy,
-                    &result.pending_actions,
-                )?;
-                for action in &completed {
-                    result.pending_actions.retain(|pending| pending != action);
-                    if !result.actions.contains(action) {
-                        result.actions.push(action.clone());
+        let mut prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.registry
+                    .metrics()
+                    .observe_apply(started.elapsed().as_millis() as u64);
+                return Err(error);
+            }
+        };
+        if !dry_run && prepared.result().applied {
+            if let Err(error) = prepared.activate() {
+                let rollback = prepared.rollback();
+                self.registry.metrics().inc_apply_failed();
+                self.registry
+                    .metrics()
+                    .observe_apply(started.elapsed().as_millis() as u64);
+                return Err(transaction_error(error, [rollback]));
+            }
+            let policy = prepared.result().restart_policy;
+            let pending = prepared.result().pending_actions.clone();
+            let completed = if let Some(lifecycle) = &self.lifecycle {
+                match lifecycle.execute(provider_id, policy, &pending) {
+                    Ok(completed) => completed,
+                    Err(error) => {
+                        let rollback = prepared.rollback();
+                        let lifecycle_rollback = lifecycle.rollback(provider_id, policy, &[]);
+                        self.registry.metrics().inc_apply_failed();
+                        self.registry
+                            .metrics()
+                            .observe_apply(started.elapsed().as_millis() as u64);
+                        return Err(transaction_error(error, [rollback, lifecycle_rollback]));
                     }
                 }
+            } else {
+                Vec::new()
+            };
+            if let Err(error) = prepared.commit() {
+                let rollback = prepared.rollback();
+                let lifecycle_rollback = self.lifecycle.as_ref().map_or(Ok(()), |lifecycle| {
+                    lifecycle.rollback(provider_id, policy, &completed)
+                });
+                self.registry.metrics().inc_apply_failed();
+                self.registry
+                    .metrics()
+                    .observe_apply(started.elapsed().as_millis() as u64);
+                return Err(transaction_error(error, [rollback, lifecycle_rollback]));
             }
+            let result = prepared.result_mut();
+            for action in completed {
+                result.pending_actions.retain(|pending| pending != &action);
+                if !result.actions.contains(&action) {
+                    result.actions.push(action);
+                }
+            }
+            self.watch.notify(RevisionChangedEvent {
+                provider_id: ConfigProviderId::new(provider_id),
+                revision: prepared.result().revision,
+                context,
+            });
         }
-        Ok(result)
+        self.registry
+            .metrics()
+            .observe_apply(started.elapsed().as_millis() as u64);
+        Ok(prepared.into_result())
     }
 
     pub fn metrics_snapshot(&self) -> ConfigMetricsSnapshot {
         self.registry.metrics().snapshot()
+    }
+}
+
+fn transaction_error<const N: usize>(
+    cause: ConfigError,
+    rollbacks: [Result<(), ConfigError>; N],
+) -> ConfigError {
+    let rollback = rollbacks
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if rollback.is_empty() {
+        cause
+    } else {
+        ConfigError::RollbackFailed {
+            cause: cause.to_string(),
+            rollback,
+        }
     }
 }
 

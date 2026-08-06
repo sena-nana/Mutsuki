@@ -12,4 +12,13 @@ pub trait ConfigLifecycle: Send + Sync {
         policy: RestartPolicy,
         pending: &[ConfigAction],
     ) -> Result<Vec<ConfigAction>, ConfigError>;
+
+    fn rollback(
+        &self,
+        _provider_id: &str,
+        _policy: RestartPolicy,
+        _completed: &[ConfigAction],
+    ) -> Result<(), ConfigError> {
+        Ok(())
+    }
 }

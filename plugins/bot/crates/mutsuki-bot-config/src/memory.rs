@@ -1,16 +1,16 @@
 //! In-memory ConfigProvider used by tests and MVP demo plugins.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
 
 use crate::error::{ConfigError, FieldDiff, ValidationResult};
-use crate::persist::ConfigPersistSink;
+use crate::persist::{ConfigPersistSink, PreparedConfigPersist};
 use crate::provider::{
-    ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigProvider, ConfigRevision,
-    ConfigSnapshot, ConfigSource,
+    ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigChangeTransaction, ConfigProvider,
+    ConfigRevision, ConfigSnapshot, ConfigSource, PreparedConfigChange,
 };
 use crate::schema::{ConfigApplyMode, ConfigDescriptor, RestartPolicy};
 use crate::scope::ConfigContext;
@@ -27,10 +27,81 @@ struct Stored {
     persisted: bool,
 }
 
+struct MemoryChangeTransaction {
+    store: Arc<Mutex<HashMap<String, Stored>>>,
+    pending: Arc<Mutex<HashSet<String>>>,
+    key: String,
+    expected_revision: ConfigRevision,
+    next: Stored,
+    persistence: Option<Box<dyn PreparedConfigPersist>>,
+    finished: bool,
+}
+
+impl MemoryChangeTransaction {
+    fn release(&mut self) {
+        self.pending.lock().remove(&self.key);
+        self.finished = true;
+    }
+}
+
+impl ConfigChangeTransaction for MemoryChangeTransaction {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        if let Some(persistence) = &mut self.persistence {
+            persistence.activate()?;
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        let current_revision = self
+            .store
+            .lock()
+            .get(&self.key)
+            .map(|stored| stored.revision)
+            .unwrap_or_else(ConfigRevision::initial);
+        if current_revision != self.expected_revision {
+            return Err(ConfigError::RevisionConflict {
+                expected: self.expected_revision.0,
+                current: current_revision.0,
+                diff: None,
+            });
+        }
+        if let Some(persistence) = &mut self.persistence {
+            persistence.commit()?;
+        }
+        self.store
+            .lock()
+            .insert(self.key.clone(), self.next.clone());
+        self.persistence = None;
+        self.release();
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        let result = if let Some(persistence) = &mut self.persistence {
+            persistence.rollback()
+        } else {
+            Ok(())
+        };
+        self.persistence = None;
+        self.release();
+        result
+    }
+}
+
+impl Drop for MemoryChangeTransaction {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.rollback();
+        }
+    }
+}
+
 pub struct MemoryConfigProvider {
     descriptor: ConfigDescriptor,
     apply_mode: ConfigApplyMode,
-    store: Mutex<HashMap<String, Stored>>,
+    store: Arc<Mutex<HashMap<String, Stored>>>,
+    pending: Arc<Mutex<HashSet<String>>>,
     defaults: ConfigValue,
     persist: Option<Arc<dyn ConfigPersistSink>>,
 }
@@ -44,7 +115,8 @@ impl MemoryConfigProvider {
         Self {
             descriptor,
             apply_mode,
-            store: Mutex::new(HashMap::new()),
+            store: Arc::new(Mutex::new(HashMap::new())),
+            pending: Arc::new(Mutex::new(HashSet::new())),
             defaults,
             persist: None,
         }
@@ -277,11 +349,11 @@ impl ConfigProvider for MemoryConfigProvider {
         Ok(validate_structure(&self.descriptor, &candidate))
     }
 
-    async fn apply(
+    async fn prepare(
         &self,
         request: ConfigApplyRequest,
         context: ConfigContext,
-    ) -> Result<ConfigApplyResult, ConfigError> {
+    ) -> Result<PreparedConfigChange, ConfigError> {
         context.validate(&crate::budgets::DEFAULT_BUDGETS)?;
         if !self.descriptor.supports_scope(context.scope) {
             return Err(ConfigError::ScopeUnsupported {
@@ -294,7 +366,7 @@ impl ConfigProvider for MemoryConfigProvider {
         }
 
         let key = context.storage_key();
-        let mut guard = self.store.lock();
+        let guard = self.store.lock();
         let previous = guard.get(&key).cloned();
         let current_revision = previous
             .as_ref()
@@ -327,7 +399,7 @@ impl ConfigProvider for MemoryConfigProvider {
         };
 
         if request.dry_run {
-            return Ok(ConfigApplyResult {
+            return Ok(PreparedConfigChange::dry_run(ConfigApplyResult {
                 revision: current_revision,
                 applied: false,
                 dry_run: true,
@@ -335,32 +407,26 @@ impl ConfigProvider for MemoryConfigProvider {
                 pending_actions: pending,
                 restart_policy: policy,
                 diff: Some(diff),
-            });
+            }));
         }
 
-        let persisted = if let Some(sink) = &self.persist {
-            sink.persist(&context, &merged, &secrets)?;
-            true
-        } else {
-            false
-        };
-
-        guard.insert(
-            key,
-            Stored {
-                value: merged,
-                secrets,
-                revision: if previous.is_some() {
-                    current_revision.next()
-                } else {
-                    ConfigRevision(1)
-                },
-                value_version: self.descriptor.value_version,
-                persisted,
+        drop(guard);
+        if !self.pending.lock().insert(key.clone()) {
+            return Err(ConfigError::ApplyRejected {
+                reason: "another prepared change is active for this config scope".into(),
+            });
+        }
+        let persistence = match &self.persist {
+            Some(sink) => match sink.prepare(&context, &merged, &secrets) {
+                Ok(prepared) => Some(prepared),
+                Err(error) => {
+                    self.pending.lock().remove(&key);
+                    return Err(error);
+                }
             },
-        );
-
-        Ok(ConfigApplyResult {
+            None => None,
+        };
+        let result = ConfigApplyResult {
             revision: new_revision,
             applied: true,
             dry_run: false,
@@ -368,6 +434,24 @@ impl ConfigProvider for MemoryConfigProvider {
             pending_actions: pending,
             restart_policy: policy,
             diff: Some(diff),
-        })
+        };
+        Ok(PreparedConfigChange::new(
+            result,
+            Box::new(MemoryChangeTransaction {
+                store: self.store.clone(),
+                pending: self.pending.clone(),
+                key,
+                expected_revision: current_revision,
+                next: Stored {
+                    value: merged,
+                    secrets,
+                    revision: new_revision,
+                    value_version: self.descriptor.value_version,
+                    persisted: self.persist.is_some(),
+                },
+                persistence,
+                finished: false,
+            }),
+        ))
     }
 }
