@@ -1,3 +1,5 @@
+mod management;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -5,6 +7,11 @@ use mutsuki_bot_protocol::{
     AgentSessionBinding, BotCommandDescriptor, BotDeliveryAttempt, BotDeliveryReceipt,
     BotHandlerDescriptor, BotInteractionSession, ConversationPolicy, QqBotCapabilityMatrix,
     QqConversationRef, QqStreamingStrategy,
+};
+
+pub use management::{
+    LocalQqManagementProvider, QqBotManagementService, QqManagementProvider, account_view_from_config,
+    agent_session_view, delivery_view, handler_view,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -65,9 +72,7 @@ pub struct QqAccountView {
     pub account_id: String,
     pub enabled: bool,
     pub health: String,
-    pub connected: bool,
-    pub identified: bool,
-    pub resumable: bool,
+    pub connection_state: QqGatewayConnectionState,
     pub last_heartbeat_unix_ms: Option<u64>,
     pub intents: u64,
     pub shard: [u64; 2],
@@ -75,6 +80,15 @@ pub struct QqAccountView {
     pub credential_status: String,
     pub rate_limit_status: String,
     pub capability: QqBotCapabilityMatrix,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QqGatewayConnectionState {
+    Disconnected,
+    Connected,
+    Identified,
+    Resumable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,11 +198,21 @@ pub struct QqManagementWriteResult {
 }
 
 pub trait QqBotManagementApi: Send + Sync {
+    /// Reads the filtered management snapshot, optionally including secret presence metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed management error when the snapshot owner is unavailable or rejects access.
     fn snapshot(
         &self,
         query: &str,
         include_secret_status: bool,
     ) -> Result<QqBotManagementSnapshot, QqManagementError>;
+    /// Applies one revision-fenced management operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed management error for stale revisions, policy denial, or owner failure.
     fn write(
         &self,
         request: QqManagementWriteRequest,
@@ -303,6 +327,11 @@ impl WebExtension for QqBotWebExtension {
     }
 }
 
+/// Writes the embedded QQ management frontend and its content-addressed manifest.
+///
+/// # Errors
+///
+/// Returns an I/O error when directory creation, manifest encoding, or asset writes fail.
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
@@ -312,10 +341,8 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
         content_hash: content_hash(js.as_bytes()),
         bytes: js.len() as u64,
     }];
-    std::fs::write(
-        out_dir.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest(assets)).expect("manifest serializes"),
-    )?;
+    let manifest = serde_json::to_vec_pretty(&manifest(assets)).map_err(std::io::Error::other)?;
+    std::fs::write(out_dir.join("manifest.json"), manifest)?;
     Ok(out_dir.to_path_buf())
 }
 
@@ -368,7 +395,7 @@ fn has_capability(params: &Value, required: &str) -> bool {
 fn require_capability(params: &Value, required: &str) -> Result<(), ExtensionError> {
     has_capability(params, required)
         .then_some(())
-        .ok_or_else(|| ExtensionError::Registration(format!("capability denied: {required}")))
+        .ok_or_else(|| ExtensionError::CapabilityDenied(required.into()))
 }
 
 fn domain_error(QqManagementError { code, message }: QqManagementError) -> ExtensionError {

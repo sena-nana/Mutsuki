@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use mutsuki_agent_contracts::{
     AGENT_SPEECH_SYNTHESIZE_PROTOCOL, AGENT_TRANSCRIBE_PROTOCOL, AgentError, AgentEvent,
     AgentEventEnvelope, AgentEventMeta, AgentEventPage, AgentMessage, AgentSession,
@@ -27,8 +28,8 @@ use mutsuki_bot_protocol::{
     BotDeliveryContent, BotDeliveryReceipt, BotEvent, BotEventKind, BotInteractionCommand,
     BotInteractionSession, BotMessage, BotPermissionCheckRequest, BotPermissionCheckResult,
     BotPlatform, BotPropagationPolicy, BotSpeechReplyPolicy, BotTarget, BotUser,
-    ConversationPolicy, ConversationPolicyRule, DirectMessagePolicy, InteractionScope,
-    InteractionStatus, InteractionWaitSpec, MessageSegment, QqConversationRef,
+    ConversationPolicy, ConversationPolicyRule, DeliveryStatus, DirectMessagePolicy,
+    InteractionScope, InteractionStatus, InteractionWaitSpec, MessageSegment, QqConversationRef,
 };
 use mutsuki_bot_service_host_integration::QqAiBotPluginBundle;
 use mutsuki_bot_web_console::{
@@ -66,19 +67,20 @@ struct State {
     interactions: Mutex<BTreeMap<String, BotInteractionSession>>,
 }
 
+#[async_trait]
 impl ConversationRepository for State {
-    fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
+    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
         Ok(Vec::new())
     }
 
-    fn session_binding(
+    async fn session_binding(
         &self,
         binding_key: &str,
     ) -> Result<Option<AgentSessionBinding>, ConversationError> {
         Ok(self.bindings.lock().unwrap().get(binding_key).cloned())
     }
 
-    fn compare_and_set_session_binding(
+    async fn compare_and_set_session_binding(
         &self,
         binding_key: &str,
         expected_generation: Option<u64>,
@@ -92,7 +94,7 @@ impl ConversationRepository for State {
         Ok(())
     }
 
-    fn begin_agent_event(
+    async fn begin_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
@@ -110,7 +112,7 @@ impl ConversationRepository for State {
         })
     }
 
-    fn complete_agent_event(
+    async fn complete_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
@@ -123,8 +125,9 @@ impl ConversationRepository for State {
     }
 }
 
+#[async_trait]
 impl DeliveryRepository for State {
-    fn reserve(
+    async fn reserve(
         &self,
         request: &BotActiveDeliveryRequest,
     ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
@@ -149,10 +152,25 @@ impl DeliveryRepository for State {
             .lock()
             .unwrap()
             .insert(request.delivery_id.clone(), request.clone());
+        self.delivery_receipts.lock().unwrap().insert(
+            request.delivery_id.clone(),
+            BotDeliveryReceipt {
+                delivery_id: request.delivery_id.clone(),
+                idempotency_key: request.idempotency_key.clone(),
+                status: DeliveryStatus::Pending,
+                attempt_count: 0,
+                platform_message_ids: Vec::new(),
+                part_receipts: Vec::new(),
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            },
+        );
         Ok(None)
     }
 
-    fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
+    async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
         self.delivery_requests
             .lock()
             .unwrap()
@@ -161,7 +179,7 @@ impl DeliveryRepository for State {
             .ok_or(DeliveryError::NotFound)
     }
 
-    fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+    async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
         self.delivery_receipts
             .lock()
             .unwrap()
@@ -170,7 +188,7 @@ impl DeliveryRepository for State {
             .ok_or(DeliveryError::NotFound)
     }
 
-    fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
+    async fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
         Ok(self
             .delivery_attempts
             .lock()
@@ -181,12 +199,12 @@ impl DeliveryRepository for State {
             .collect())
     }
 
-    fn save_attempt(&self, attempt: BotDeliveryAttempt) -> Result<(), DeliveryError> {
+    async fn save_outcome(
+        &self,
+        attempt: BotDeliveryAttempt,
+        receipt: BotDeliveryReceipt,
+    ) -> Result<(), DeliveryError> {
         self.delivery_attempts.lock().unwrap().push(attempt);
-        Ok(())
-    }
-
-    fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
         self.delivery_receipts
             .lock()
             .unwrap()
@@ -194,13 +212,54 @@ impl DeliveryRepository for State {
         Ok(())
     }
 
-    fn due_delivery_ids(&self, _now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
+    async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
+        self.delivery_receipts
+            .lock()
+            .unwrap()
+            .insert(receipt.delivery_id.clone(), receipt);
+        Ok(())
+    }
+
+    async fn claim_due_delivery_ids(
+        &self,
+        _now_unix_ms: u64,
+    ) -> Result<Vec<String>, DeliveryError> {
         Ok(Vec::new())
+    }
+
+    async fn begin_send(
+        &self,
+        delivery_id: &str,
+        attempt: BotDeliveryAttempt,
+        now_unix_ms: u64,
+        lease_ms: u64,
+    ) -> Result<BotDeliveryReceipt, DeliveryError> {
+        self.delivery_attempts.lock().unwrap().push(attempt);
+        let mut receipts = self.delivery_receipts.lock().unwrap();
+        let receipt = receipts.entry(delivery_id.to_owned()).or_insert_with(|| {
+            BotDeliveryReceipt {
+                delivery_id: delivery_id.to_owned(),
+                idempotency_key: delivery_id.to_owned(),
+                status: DeliveryStatus::Pending,
+                attempt_count: 0,
+                platform_message_ids: Vec::new(),
+                part_receipts: Vec::new(),
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            }
+        });
+        receipt.status = DeliveryStatus::Sending;
+        receipt.generation = receipt.generation.saturating_add(1);
+        receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));
+        Ok(receipt.clone())
     }
 }
 
+#[async_trait]
 impl InteractionRepository for State {
-    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+    async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         self.interactions
             .lock()
             .unwrap()
@@ -208,7 +267,7 @@ impl InteractionRepository for State {
         Ok(())
     }
 
-    fn active_for_origin(
+    async fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
@@ -225,7 +284,7 @@ impl InteractionRepository for State {
             .collect())
     }
 
-    fn compare_and_set(
+    async fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
@@ -242,7 +301,7 @@ impl InteractionRepository for State {
         Ok(())
     }
 
-    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+    async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
         Ok(self
             .interactions
             .lock()

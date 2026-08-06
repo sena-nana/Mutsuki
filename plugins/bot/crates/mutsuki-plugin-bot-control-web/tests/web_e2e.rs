@@ -292,19 +292,20 @@ async fn control_task_debug_and_lifecycle_methods() {
     .await
     .unwrap();
 
+    let batch = mutsuki_runtime_contracts::TaskBatch::one(
+        "console-debug",
+        mutsuki_runtime_contracts::Task::new(
+            "debug-task-1",
+            "control.input",
+            json!({ "value": 1 }),
+        ),
+    );
     ws_rpc(
         &addr,
         "task_submit_batch",
         json!({
             "capabilities": ["runtime.read", "runtime.write"],
-            "batch": {
-                "batch_id": "console-debug",
-                "tasks": [{
-                    "task_id": "debug-task-1",
-                    "protocol_id": "control.input",
-                    "input": { "value": 1 }
-                }]
-            }
+            "batch": batch,
         }),
         &["runtime.read", "runtime.write"],
     )

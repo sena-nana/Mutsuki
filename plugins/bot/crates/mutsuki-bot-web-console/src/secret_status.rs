@@ -110,8 +110,8 @@ fn require_runtime_read(params: &JsonValue) -> Result<(), ExtensionError> {
     {
         Ok(())
     } else {
-        Err(ExtensionError::Registration(format!(
-            "capability denied: {CAPABILITY_RUNTIME_READ}"
-        )))
+        Err(ExtensionError::CapabilityDenied(
+            CAPABILITY_RUNTIME_READ.into(),
+        ))
     }
 }

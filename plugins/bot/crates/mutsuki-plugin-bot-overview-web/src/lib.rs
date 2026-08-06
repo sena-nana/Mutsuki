@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use mutsuki_plugin_bot_control_web::{CAPABILITY_RUNTIME_READ, ControlRpcCaller};
+use mutsuki_service_control::ControlErrorCode;
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
@@ -40,8 +41,8 @@ impl OverviewWebExtension {
         let health = self.control.health()?;
         let tasks = match self.control.runtime_statistics() {
             Ok(stats) => Some(stats.tasks),
-            Err(err) if err.to_string().contains("core is not running") => None,
-            Err(err) => return Err(err),
+            Err(err) if err.code() == Some(ControlErrorCode::CoreUnavailable) => None,
+            Err(err) => return Err(err.into()),
         };
         let plugins = self.control.plugin_list()?;
         let runners = self.control.runner_list()?;
@@ -155,19 +156,12 @@ fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
-    let bootstrap = include_str!("../assets/bootstrap.js");
     let css = include_str!("../assets/mutsuki-ui.css");
-    let shell = include_str!("../assets/shell.html");
     std::fs::write(out_dir.join("index.js"), js)?;
-    std::fs::write(out_dir.join("bootstrap.js"), bootstrap)?;
     std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
-    std::fs::write(out_dir.join("shell.html"), shell)?;
-    std::fs::write(out_dir.join("index.html"), shell)?;
     let assets = [
         ("index.js", js.as_bytes()),
-        ("bootstrap.js", bootstrap.as_bytes()),
         ("mutsuki-ui.css", css.as_bytes()),
-        ("shell.html", shell.as_bytes()),
     ]
     .into_iter()
     .map(|(path, bytes)| AssetEntry {

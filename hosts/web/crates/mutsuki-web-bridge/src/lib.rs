@@ -238,14 +238,7 @@ impl WebBridge {
                     result: Some(result),
                     error: None,
                 },
-                Err(err) => {
-                    let code = if err.to_string().contains("capability denied") {
-                        "capability_denied"
-                    } else {
-                        "rpc_failed"
-                    };
-                    rpc_error(request.id, code, err.to_string())
-                }
+                Err(err) => rpc_error(request.id, err.rpc_code(), err.to_string()),
             }
         };
         self.inner.metrics.dec_rpc_inflight();
@@ -282,22 +275,8 @@ impl WebBridge {
                     result: Some(result),
                     error: None,
                 })
-                .unwrap_or_else(|err| {
-                    let code = if err.to_string().contains("capability denied") {
-                        "capability_denied"
-                    } else {
-                        "rpc_failed"
-                    };
-                    rpc_error(request.id, code, err.to_string())
-                }),
-            Err(err) => {
-                let code = if err.to_string().contains("capability denied") {
-                    "capability_denied"
-                } else {
-                    "rpc_failed"
-                };
-                rpc_error(request.id, code, err.to_string())
-            }
+                .unwrap_or_else(|err| rpc_error(request.id, err.rpc_code(), err.to_string())),
+            Err(err) => rpc_error(request.id, err.rpc_code(), err.to_string()),
         };
         self.inner.metrics.dec_rpc_inflight();
         self.inner

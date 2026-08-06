@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use mutsuki_bot_config::{ConfigAction, ConfigError, ConfigLifecycle, RestartPolicy};
-use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
+use mutsuki_service_control::{
+    ControlCommand, ControlHandler, ControlRequest, ControlResponse, ControlResult,
+};
 
 pub struct ControlPluginReloadLifecycle {
     control: Arc<dyn ControlHandler>,
@@ -37,28 +39,32 @@ impl ConfigLifecycle for ControlPluginReloadLifecycle {
         let token = self.token.clone();
         let response = block_on_control(async move {
             control
-                .handle(ControlRequest {
-                    token,
-                    method: ControlMethod::PluginReload,
-                    params: serde_json::Value::Null,
-                })
+                .handle(ControlRequest::new(token, ControlCommand::PluginReload))
                 .await
         });
         match response {
-            ControlResponse {
-                ok: true,
-                error: None,
-                ..
-            } => Ok(vec![ConfigAction::PluginReloaded]),
-            ControlResponse {
-                error: Some(error), ..
-            } => Err(ConfigError::ReloadFailed {
+            ControlResponse::Ok(ControlResult::PluginReload(_)) => {
+                Ok(vec![ConfigAction::PluginReloaded])
+            }
+            ControlResponse::Error(error) => Err(ConfigError::ReloadFailed {
                 reason: format!("{}: {}", error.code, error.message),
             }),
-            _ => Err(ConfigError::ReloadFailed {
-                reason: "plugin_reload returned non-ok control response".into(),
+            ControlResponse::Ok(result) => Err(ConfigError::ReloadFailed {
+                reason: format!(
+                    "plugin_reload returned {:?} control response",
+                    result.method()
+                ),
             }),
         }
+    }
+
+    fn rollback(
+        &self,
+        provider_id: &str,
+        policy: RestartPolicy,
+        completed: &[ConfigAction],
+    ) -> Result<(), ConfigError> {
+        self.execute(provider_id, policy, completed).map(|_| ())
     }
 }
 

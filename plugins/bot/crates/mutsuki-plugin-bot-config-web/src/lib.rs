@@ -282,18 +282,11 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
 pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::Error> {
     std::fs::create_dir_all(out_dir)?;
     let js = include_str!("../assets/index.js");
-    let bootstrap = include_str!("../assets/bootstrap.js");
     let css = include_str!("../assets/mutsuki-ui.css");
-    let shell = include_str!("../assets/shell.html");
     std::fs::write(out_dir.join("index.js"), js)?;
-    std::fs::write(out_dir.join("bootstrap.js"), bootstrap)?;
     std::fs::write(out_dir.join("mutsuki-ui.css"), css)?;
-    std::fs::write(out_dir.join("shell.html"), shell)?;
-    std::fs::write(out_dir.join("index.html"), shell)?;
     let entry_bytes = js.as_bytes();
-    let bootstrap_bytes = bootstrap.as_bytes();
     let css_bytes = css.as_bytes();
-    let shell_bytes = shell.as_bytes();
     let manifest = ExtensionManifest {
         manifest_version: EXTENSION_MANIFEST_VERSION,
         id: PLUGIN_ID.into(),
@@ -314,19 +307,9 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
                 bytes: entry_bytes.len() as u64,
             },
             AssetEntry {
-                path: "bootstrap.js".into(),
-                content_hash: content_hash(bootstrap_bytes),
-                bytes: bootstrap_bytes.len() as u64,
-            },
-            AssetEntry {
                 path: "mutsuki-ui.css".into(),
                 content_hash: content_hash(css_bytes),
                 bytes: css_bytes.len() as u64,
-            },
-            AssetEntry {
-                path: "shell.html".into(),
-                content_hash: content_hash(shell_bytes),
-                bytes: shell_bytes.len() as u64,
             },
         ],
         protocol_version: WEB_PROTOCOL_VERSION.into(),

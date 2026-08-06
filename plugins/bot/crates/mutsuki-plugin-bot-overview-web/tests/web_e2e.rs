@@ -18,6 +18,11 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
     let assets = materialize_frontend_assets(assets_dir.path()).unwrap();
+    std::fs::write(
+        assets.join("test-shell.html"),
+        "<!doctype html><title>Mutsuki Console</title><div id=app></div>",
+    )
+    .unwrap();
     let fixture = FixtureControlHandler {
         fail_statistics,
         ..FixtureControlHandler::default()
@@ -36,7 +41,7 @@ async fn start(fail_statistics: bool) -> MutsukiWebHost {
             },
             WebShellAssets {
                 root_dir: assets,
-                index_file: "index.html".into(),
+                index_file: "test-shell.html".into(),
                 import_map: Default::default(),
             },
         ))

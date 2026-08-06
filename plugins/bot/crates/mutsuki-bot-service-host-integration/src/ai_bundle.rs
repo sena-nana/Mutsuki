@@ -53,6 +53,7 @@ pub struct QqAiBotPluginBundle {
         Arc<dyn ScheduledDeliveryTargetResolver>,
         Arc<dyn ScheduledDeliveryPolicyProvider>,
     )>,
+    qq_management: Option<Arc<mutsuki_plugin_bot_qq_web::LocalQqManagementProvider>>,
 }
 
 impl QqAiBotPluginBundle {
@@ -84,6 +85,7 @@ impl QqAiBotPluginBundle {
             agent_config: BotAgentConfigHandle::default(),
             command_prefixes: vec!["/".into()],
             scheduled_delivery: None,
+            qq_management: None,
         }
     }
 
@@ -130,6 +132,16 @@ impl QqAiBotPluginBundle {
         policies: Arc<dyn ScheduledDeliveryPolicyProvider>,
     ) -> Self {
         self.scheduled_delivery = Some((targets, policies));
+        self
+    }
+
+    /// Seeds handler/command projections into the QQ console management owner when present.
+    #[must_use]
+    pub fn with_qq_management(
+        mut self,
+        local: Arc<mutsuki_plugin_bot_qq_web::LocalQqManagementProvider>,
+    ) -> Self {
+        self.qq_management = Some(local);
         self
     }
 
@@ -214,6 +226,17 @@ impl QqAiBotPluginBundle {
             error_hook_protocol_ids: Vec::new(),
         });
 
+        if let Some(local) = &self.qq_management {
+            local.replace_handlers(
+                handlers
+                    .iter()
+                    .cloned()
+                    .map(|descriptor| mutsuki_plugin_bot_qq_web::handler_view(descriptor, true))
+                    .collect(),
+            );
+            local.replace_commands(agent_commands.clone());
+        }
+
         let mut builder = builder;
         for handler in &handlers {
             if handler.timeout_ms.is_none() && handler.max_concurrency.is_none() {
@@ -277,15 +300,17 @@ impl QqAiBotPluginBundle {
             .register_runtime_client_runner(move |client| {
                 media_bridge_runner(client, media.clone())
             })
-            .register_builtin_runner(move || delivery_runner(delivery.clone()))
-            .register_builtin_runner(move || interaction_runner(interaction.clone()))
+            .register_runtime_client_runner(move |client| delivery_runner(client, delivery.clone()))
+            .register_runtime_client_runner(move |client| {
+                interaction_runner(client, interaction.clone())
+            })
             .register_builtin_runner(move || permission_runner(permission_authorizer.clone()))
             .register_builtin_runner(move || rate_limit_runner(rate_limits.clone()));
         if let Some(scheduled_delivery) = scheduled_delivery {
             builder
                 .register_builtin_plugin(bot_scheduled_delivery_manifest())
-                .register_builtin_runner(move || {
-                    scheduled_delivery_runner(scheduled_delivery.clone())
+                .register_runtime_client_runner(move |client| {
+                    scheduled_delivery_runner(client, scheduled_delivery.clone())
                 })
         } else {
             builder

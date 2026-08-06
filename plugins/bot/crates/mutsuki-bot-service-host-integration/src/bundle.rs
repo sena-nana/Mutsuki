@@ -10,7 +10,14 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient,
     ResourceGatewayQqMediaProvider, SharedQqCredentials, qqbot_adapter_manifest,
 };
+use mutsuki_plugin_bot_qq_web::{
+    LocalQqManagementProvider, QqBotManagementService, QqManagementAction, QqManagementError,
+    QqManagementProvider, account_view_from_config,
+};
+use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
+use serde_json::Value;
 
+use crate::console_bridge::QQ_MANAGEMENT_SERVICE_ID;
 use crate::event_source::{QqGatewayEventSource, QqGatewayHealthHandle};
 
 type MediaFactory = Arc<
@@ -34,6 +41,8 @@ pub struct QqBotPluginBundle {
     media_factory: Option<MediaFactory>,
     media_provider_id: Option<String>,
     id_factory: IdFactory,
+    management: Arc<QqBotManagementService>,
+    local_management: Arc<LocalQqManagementProvider>,
 }
 
 impl QqBotPluginBundle {
@@ -47,6 +56,29 @@ impl QqBotPluginBundle {
         let event_source =
             QqGatewayEventSource::new(config.clone(), credentials.clone(), auth.clone());
         let health = event_source.health_handle();
+        let local_management = Arc::new(LocalQqManagementProvider::new());
+        local_management.upsert_account(account_view_from_config(
+            &config.account_id,
+            &config.client_secret_key,
+            false,
+            config.capability_matrix(),
+            config.gateway_intents,
+            config.shard,
+            false,
+            false,
+            None,
+            None,
+        ));
+        let provider = Arc::new(GatewayBackedQqManagementProvider {
+            local: local_management.clone(),
+            health: health.clone(),
+            account_id: config.account_id.clone(),
+            secret_key: config.client_secret_key.clone(),
+            capability: config.capability_matrix(),
+            intents: config.gateway_intents,
+            shard: config.shard,
+        });
+        let management = Arc::new(QqBotManagementService::new(provider));
         Ok(Self {
             config,
             credentials,
@@ -56,6 +88,8 @@ impl QqBotPluginBundle {
             media_factory: None,
             media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
+            management,
+            local_management,
         })
     }
 
@@ -91,6 +125,14 @@ impl QqBotPluginBundle {
         self.health.clone()
     }
 
+    pub fn management_service(&self) -> Arc<QqBotManagementService> {
+        self.management.clone()
+    }
+
+    pub fn local_management(&self) -> Arc<LocalQqManagementProvider> {
+        self.local_management.clone()
+    }
+
     pub fn install(
         mut self,
         builder: ServiceRuntimeBuilder,
@@ -104,6 +146,7 @@ impl QqBotPluginBundle {
         let media_enabled = media_factory.is_some();
         let id_factory = self.id_factory.clone();
         let health = self.health.clone();
+        let management = self.management.clone();
         let health_component_id = format!("mutsuki.bot.qqbot.gateway:{}", self.config.account_id);
         let source = self
             .event_source
@@ -115,7 +158,21 @@ impl QqBotPluginBundle {
                 .requires
                 .push(format!("resource_strategy:{provider_id}"));
         }
-        let builder = builder.register_builtin_plugin(manifest);
+        let loaded_manifest = manifest.clone();
+        let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
+            Ok::<LoadedPlugin, String>(LoadedPlugin {
+                manifest: loaded_manifest.clone(),
+                runners: Vec::new(),
+                async_handlers: Vec::new(),
+                host_services: vec![RuntimeBootstrapperService {
+                    service_id: QQ_MANAGEMENT_SERVICE_ID.into(),
+                    capability: None,
+                    service: management.clone(),
+                }],
+                resource_providers: Vec::new(),
+                async_resource_providers: Vec::new(),
+            })
+        });
         let builder = if media_enabled {
             builder.register_fallible_runtime_services_async_handler(move |_runtime, resources| {
                 QqGatewayMediaHandler::new(gateway_config.clone(), resources).map(|handler| {
@@ -173,6 +230,52 @@ impl QqBotPluginBundle {
                 })
             })
             .register_event_source(Box::new(source)))
+    }
+}
+
+struct GatewayBackedQqManagementProvider {
+    local: Arc<LocalQqManagementProvider>,
+    health: QqGatewayHealthHandle,
+    account_id: String,
+    secret_key: String,
+    capability: mutsuki_bot_protocol::QqBotCapabilityMatrix,
+    intents: u64,
+    shard: [u64; 2],
+}
+
+impl GatewayBackedQqManagementProvider {
+    fn refresh_account(&self) {
+        let snapshot = self.health.snapshot();
+        self.local.upsert_account(account_view_from_config(
+            &self.account_id,
+            &self.secret_key,
+            true,
+            self.capability.clone(),
+            self.intents,
+            self.shard,
+            snapshot.connected,
+            snapshot.identified,
+            snapshot
+                .last_heartbeat_unix_ms
+                .map(|value| value.min(u128::from(u64::MAX)) as u64),
+            snapshot.last_error.as_deref(),
+        ));
+    }
+}
+
+impl QqManagementProvider for GatewayBackedQqManagementProvider {
+    fn load_snapshot(
+        &self,
+        query: &str,
+        include_secret_status: bool,
+    ) -> Result<mutsuki_plugin_bot_qq_web::QqBotManagementSnapshot, QqManagementError> {
+        self.refresh_account();
+        self.local.load_snapshot(query, include_secret_status)
+    }
+
+    fn apply(&self, actor_id: &str, action: &QqManagementAction) -> Result<Value, QqManagementError> {
+        self.refresh_account();
+        self.local.apply(actor_id, action)
     }
 }
 

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Web control proxy: ServiceHost ControlMethod as control.* RPC with capability gating."
 
 [dependencies]
+mutsuki-runtime-contracts = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 mutsuki-web-extension = { workspace = true }
