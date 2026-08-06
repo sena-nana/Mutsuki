@@ -21,10 +21,10 @@ use mutsuki_agent_contracts::{
 use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ToolProvider};
 use mutsuki_agent_plugin_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
 use mutsuki_agent_plugin_computer_use::{
-    BrowserBackend, FakeBrowserBackend, FakeProcessBackend, FilesystemBackend,
-    InMemoryFilesystemBackend, ProcessBackend, SharedComputerUseService,
+    BrowserGateway, FakeBrowserBackend, FakeProcessBackend, FilesystemGateway,
+    InMemoryFilesystemBackend, ProcessGateway, SharedComputerUseService,
 };
-use mutsuki_agent_plugin_git::{GitBackend, InMemoryGitBackend, SharedGitService};
+use mutsuki_agent_plugin_git::{GitGateway, InMemoryGitBackend, SharedGitService};
 use mutsuki_agent_plugin_lsp::{LspProcess, LspProcessFactory, SharedLspService};
 use mutsuki_agent_plugin_mcp::{
     McpRequestControl, McpTransport, McpTransportFactory, SharedMcpService,
@@ -92,10 +92,10 @@ pub struct NativeCodingAgentBundle {
 
 /// Injected backends for reference / test assemblies.
 pub struct NativeCodingBackends {
-    pub git: Arc<dyn GitBackend>,
-    pub filesystem: Arc<dyn FilesystemBackend>,
-    pub process: Option<Arc<dyn ProcessBackend>>,
-    pub browser: Option<Arc<dyn BrowserBackend>>,
+    pub git: Arc<dyn GitGateway>,
+    pub filesystem: Arc<dyn FilesystemGateway>,
+    pub process: Option<Arc<dyn ProcessGateway>>,
+    pub browser: Option<Arc<dyn BrowserGateway>>,
     pub lsp: Arc<dyn LspProcessFactory>,
     pub mcp: Arc<dyn McpTransportFactory>,
     pub code_index_lsp: Arc<dyn CodeIndexLspSignals>,

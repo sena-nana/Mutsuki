@@ -20,7 +20,7 @@ pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.web-search";
 pub const INLINE_BODY_LIMIT: usize = 2_048;
 pub const SUMMARY_LIMIT: usize = 512;
 
-pub trait HttpTransport: Send + Sync {
+pub trait WebHttpGateway: Send + Sync {
     fn post_json(
         &self,
         endpoint: &str,
@@ -38,7 +38,7 @@ pub trait HttpTransport: Send + Sync {
     ) -> Result<(u16, String, Vec<u8>, Option<String>), AgentError>;
 }
 
-pub trait BrowserFetchBackend: Send + Sync {
+pub trait BrowserFetchGateway: Send + Sync {
     fn fetch(
         &self,
         url: &str,
@@ -384,7 +384,7 @@ impl FakeHttpTransport {
     }
 }
 
-impl HttpTransport for FakeHttpTransport {
+impl WebHttpGateway for FakeHttpTransport {
     fn post_json(
         &self,
         endpoint: &str,
@@ -434,7 +434,7 @@ impl HttpTransport for FakeHttpTransport {
 #[derive(Default)]
 pub struct ReqwestHttpTransport;
 
-impl HttpTransport for ReqwestHttpTransport {
+impl WebHttpGateway for ReqwestHttpTransport {
     fn post_json(
         &self,
         endpoint: &str,
@@ -550,7 +550,7 @@ impl SearchService for FakeSearchService {
 
 pub struct HttpJsonSearchService {
     config: SearchProviderConfig,
-    transport: Arc<dyn HttpTransport>,
+    transport: Arc<dyn WebHttpGateway>,
     policy: UrlAccessPolicy,
     resources: AgentResourceStore,
 }
@@ -558,7 +558,7 @@ pub struct HttpJsonSearchService {
 impl HttpJsonSearchService {
     pub fn new(
         config: SearchProviderConfig,
-        transport: Arc<dyn HttpTransport>,
+        transport: Arc<dyn WebHttpGateway>,
         resources: AgentResourceStore,
     ) -> Result<Self, AgentError> {
         if !config.enable_http {
@@ -642,8 +642,8 @@ impl SearchService for HttpJsonSearchService {
 }
 
 pub struct HttpPageFetchService {
-    transport: Arc<dyn HttpTransport>,
-    browser: Option<Arc<dyn BrowserFetchBackend>>,
+    transport: Arc<dyn WebHttpGateway>,
+    browser: Option<Arc<dyn BrowserFetchGateway>>,
     policy: UrlAccessPolicy,
     resources: AgentResourceStore,
     enable_http: bool,
@@ -652,11 +652,11 @@ pub struct HttpPageFetchService {
 
 impl HttpPageFetchService {
     pub fn new(
-        transport: Arc<dyn HttpTransport>,
+        transport: Arc<dyn WebHttpGateway>,
         resources: AgentResourceStore,
         enable_http: bool,
         enable_browser_fallback: bool,
-        browser: Option<Arc<dyn BrowserFetchBackend>>,
+        browser: Option<Arc<dyn BrowserFetchGateway>>,
     ) -> Self {
         Self {
             transport,
