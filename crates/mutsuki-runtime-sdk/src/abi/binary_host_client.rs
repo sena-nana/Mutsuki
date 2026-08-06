@@ -16,11 +16,11 @@ use super::error::{abi_failure, wire_failure};
 use super::types::{AbiHostV2, consume_call_result};
 
 #[derive(Clone, Copy)]
-pub struct AbiHostClientV2 {
+pub struct AbiHostClient {
     host: AbiHostV2,
 }
 
-impl AbiHostClientV2 {
+impl AbiHostClient {
     pub fn new(host: AbiHostV2) -> Self {
         Self { host }
     }
@@ -54,7 +54,7 @@ impl AbiHostClientV2 {
     }
 }
 
-impl TaskSubmitter for AbiHostClientV2 {
+impl TaskSubmitter for AbiHostClient {
     fn submit_batch(&self, batch: TaskBatch) -> RuntimeResult<Vec<TaskHandle>> {
         self.request(&SubmitTaskBatchRequest { batch })
     }
@@ -72,7 +72,7 @@ impl TaskSubmitter for AbiHostClientV2 {
     }
 }
 
-impl ResourcePlanGateway for AbiHostClientV2 {
+impl ResourcePlanGateway for AbiHostClient {
     fn collect_read_plan(&self, plan: &ReadPlan) -> RuntimeResult<Vec<u8>> {
         self.request(&CollectReadPlanRequest {
             provider_id: None,

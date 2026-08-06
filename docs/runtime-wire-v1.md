@@ -51,12 +51,11 @@ bounded writer queues、timeout 和 fail-all 语义，不得各自维护 pending
 
 ## Native ABI compatibility
 
-| ABI | Entry | Bridge | Codec | Status |
-| --- | --- | --- | --- | --- |
-| v2 | `mutsuki_plugin_abi_v2` | `mutsuki.bridge.abi.binary.v2` | typed MessagePack | production default |
-| v1 | `mutsuki_plugin_abi_v1` | `mutsuki.bridge.abi.binary.v1` | typed MessagePack | compatibility entry |
+唯一受支持的插件 ABI 是 v2：入口 `mutsuki_plugin_abi_v2`、bridge
+`mutsuki.bridge.abi.binary.v2`、transport version `2` 和 typed MessagePack codec 必须同时
+匹配。ABI v1 已退役；Loader 若发现仅有 `mutsuki_plugin_abi_v1`，必须在调用入口函数或发送
+任何业务请求前返回 `abi.unsupported_version`，不尝试解码、转换或兼容加载。
 
-Loader 按 manifest 声明选择 entry，绝不把 v1 symbol 当作 v2。两版 callback 都是
-`request(context, ptr, len) -> status + buffer`；返回 buffer 由生产方持有，消费方复制或解码后
-必须调用配对 release，context 只 close 一次。null pointer、缺失 callback、错误 transport
-version、panic 或非零 status 均跨边界转换为有界错误。
+ABI callback 为 `request(context, ptr, len) -> status + buffer`；返回 buffer 由生产方持有，
+消费方复制或解码后必须调用配对 release，context 只 close 一次。null pointer、缺失 callback、
+错误 transport version、panic 或非零 status 均跨边界转换为有界错误。

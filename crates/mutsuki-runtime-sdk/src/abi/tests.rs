@@ -74,7 +74,7 @@ fn abi_v2_api_has_distinct_transport_version() {
             "abi.test.failed",
         ),
     )));
-    let api = plugin_api_v2_from_guest(guest);
+    let api = plugin_api_from_guest(guest);
     assert_eq!(api.transport_version, ABI_V2_TRANSPORT_VERSION);
     unsafe { api.close.unwrap()(api.context) };
 }
@@ -88,7 +88,7 @@ fn abi_v2_rejects_invalid_request_pointer_and_releases_error() {
             "abi.test.failed",
         ),
     )));
-    let api = plugin_api_v2_from_guest(guest);
+    let api = plugin_api_from_guest(guest);
     let response = unsafe { api.request.unwrap()(api.context, std::ptr::null(), 1) };
 
     assert_eq!(response.status, 1);
@@ -154,7 +154,7 @@ fn configured_guest_initializes_from_typed_request_and_returns_surface() {
     .unwrap();
 
     assert_eq!(ack.codec_id, BINARY_CODEC_ID);
-    assert_eq!(ABI_CODEC_ID, BINARY_CODEC_ID);
+    assert_eq!(ABI_V2_CODEC_ID, BINARY_CODEC_ID);
     assert_eq!(
         ack.plugin
             .as_ref()
