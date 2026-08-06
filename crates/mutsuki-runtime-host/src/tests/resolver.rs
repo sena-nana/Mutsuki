@@ -545,6 +545,35 @@ fn resolver_rejects_missing_required_capability() {
 }
 
 #[test]
+fn resolver_preserves_at_version_inside_task_protocol_identity() {
+    let protocol_id = "mutsuki.http.request@2";
+    let provider = runner_manifest(
+        "http-provider",
+        vec![descriptor("http.runner", protocol_id)],
+    );
+    let mut consumer = runner_manifest(
+        "http-consumer",
+        vec![descriptor("consumer.runner", "consumer.work")],
+    );
+    consumer.requires = vec![format!("task_protocol:{protocol_id}")];
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec!["http-provider".into(), "http-consumer".into()];
+
+    let plan = crate::resolve_load_plan(&[provider, consumer], &profile).unwrap();
+
+    assert!(
+        plan.capability_graph
+            .active_capabilities
+            .contains(&format!("task_protocol:{protocol_id}"))
+    );
+    assert!(
+        plan.capability_graph
+            .required_capabilities
+            .contains(&format!("task_protocol:{protocol_id}"))
+    );
+}
+
+#[test]
 fn resolver_records_capability_provider_selection_and_permission_audit() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
