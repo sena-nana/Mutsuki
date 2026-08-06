@@ -2,14 +2,15 @@ use std::{
     alloc::{GlobalAlloc, Layout, System},
     collections::BTreeMap,
     env, fs,
-    io::{Read, Write},
-    net::TcpListener,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Instant,
 };
 
+use async_trait::async_trait;
 struct CountingAllocator;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -51,7 +52,8 @@ use mutsuki_plugin_io_fs::{
     EFFECT_FS_READ_PROTOCOL, EFFECT_RUNNER_ID as FS_RUNNER_ID, IoFsEffectRunner,
 };
 use mutsuki_plugin_io_http_client::{
-    EFFECT_HTTP_REQUEST_PROTOCOL, EFFECT_RUNNER_ID as HTTP_RUNNER_ID, HttpEffectRunner,
+    EFFECT_HTTP_REQUEST_PROTOCOL, EFFECT_RUNNER_ID as HTTP_RUNNER_ID, FetchedHttpResponse,
+    HttpEffectHandler, HttpGateway, HttpGatewayError,
 };
 use mutsuki_plugin_observe_log::{LOG_EMIT_PROTOCOL, ObserveLogRunner, RUNNER_ID as LOG_RUNNER_ID};
 use mutsuki_plugin_resource_memory::MemoryResourceProvider;
@@ -62,12 +64,15 @@ use mutsuki_plugin_workflow_broadcast::{
 use mutsuki_plugin_workflow_linear::{
     LINEAR_RUN_PROTOCOL, RUNNER_ID as LINEAR_RUNNER_ID, WorkflowLinearRunner,
 };
+use mutsuki_protocol_http::{HttpRequest, HttpResponseMetadata};
+use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, PatchDescriptor,
-    ReadPlan, RunnerContext, Task, WorkBatch, WorkResourcePlan, WritePlan,
+    BatchEntry, BatchPayload, CommandPlan, CompletionBatch, DispatchLane, ExportPlan,
+    OrderingRequirement, PatchDescriptor, PlanReceipt, ReadPlan, ResourceRef, RunnerContext,
+    SnapshotDescriptor, StreamPlan, Task, WorkBatch, WorkResourcePlan, WritePlan,
 };
-use mutsuki_runtime_core::Runner;
-use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway};
+use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeFailure};
+use mutsuki_runtime_sdk::{ResourcePlanGateway, ResourceProviderGateway, ResourceRegistryGateway};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -172,7 +177,7 @@ fn main() {
         workload_version: "mutsuki.performance.std-workloads/v1",
         mode,
         fixed_seed: 1_297_435_713,
-        network_boundary: "loopback-only-deterministic-http-server",
+        network_boundary: "injected-deterministic-http-gateway",
         cases,
         correctness,
     };
@@ -518,41 +523,32 @@ fn run_setup(runner: &mut dyn Runner, task: Task) {
 fn http_case(samples: usize, correctness: &mut BTreeMap<String, u64>) -> RawCase {
     let mut samples_ns = Vec::new();
     let mut expected = None;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let resources = Arc::new(BenchmarkResources(Arc::new(MemoryResourceProvider::new())));
+    let handler = HttpEffectHandler::new(
+        Arc::new(BenchmarkHttpGateway),
+        resources,
+        "benchmark.memory",
+    );
     let allocation_start = allocation_snapshot();
     for _ in 0..samples {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 4096];
-            let _ = stream.read(&mut request).unwrap();
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\nX-Fixture: v1\r\n\r\nmutsuki-fixed",
-                )
-                .unwrap();
-        });
-        let mut runner = HttpEffectRunner::new();
         let task = Task::new(
             "http",
             EFFECT_HTTP_REQUEST_PROTOCOL,
-            json!({
-                "method": "GET",
-                "url": format!("http://127.0.0.1:{}/fixture", address.port()),
-                "domain_allowlist": ["127.0.0.1"],
-                "deny_private_network": false
-            }),
+            serde_json::to_value(HttpRequest::get("https://benchmark.invalid/fixture")).unwrap(),
         );
         let started = Instant::now();
-        let completion = runner
-            .run_batch(context("http"), batch(HTTP_RUNNER_ID, &task))
+        let completion = runtime
+            .block_on(handler.run_batch(context("http"), batch(HTTP_RUNNER_ID, &task)))
             .unwrap();
         samples_ns.push(started.elapsed().as_nanos());
-        server.join().unwrap();
         let event = &completion.results[0].result.as_ref().unwrap().events[0];
         let hash = canonical_hash(&json!({
-            "status": event.payload["status"],
-            "body": event.payload["body"]
+            "status": event.payload["metadata"]["status"],
+            "body_bytes": event.payload["metadata"]["body_bytes"]
         }));
         if expected.as_ref().is_some_and(|value| value != &hash) {
             *correctness.get_mut("hash_mismatches").unwrap() += 1;
@@ -563,8 +559,8 @@ fn http_case(samples: usize, correctness: &mut BTreeMap<String, u64>) -> RawCase
     RawCase {
         case_id: "std.io.http-client",
         dimensions: json!({
-            "server": "loopback-deterministic",
-            "allocation_boundary": "handler-plus-loopback-fixture"
+            "gateway": "injected-deterministic",
+            "allocation_boundary": "async-handler-plus-resource-write"
         }),
         samples_ns,
         units: 1,
@@ -573,6 +569,117 @@ fn http_case(samples: usize, correctness: &mut BTreeMap<String, u64>) -> RawCase
         bytes: 13,
         allocations,
         allocated_bytes,
+    }
+}
+
+struct BenchmarkHttpGateway;
+
+#[async_trait]
+impl HttpGateway for BenchmarkHttpGateway {
+    async fn execute(
+        &self,
+        request: HttpRequest,
+        _request_body: Option<Vec<u8>>,
+    ) -> Result<FetchedHttpResponse, HttpGatewayError> {
+        Ok(FetchedHttpResponse {
+            metadata: HttpResponseMetadata {
+                status: 200,
+                final_url: request.url,
+                headers: BTreeMap::new(),
+                body_bytes: 13,
+                redirects_followed: 0,
+            },
+            body: b"mutsuki-fixed".to_vec(),
+            peak_buffered_bytes: 13,
+        })
+    }
+}
+
+struct BenchmarkResources(Arc<MemoryResourceProvider>);
+
+impl ResourcePlanGateway for BenchmarkResources {
+    fn collect_read_plan(&self, plan: &ReadPlan) -> Result<Vec<u8>, RuntimeFailure> {
+        self.0.collect_read_plan(plan)
+    }
+
+    fn snapshot_read_plan(
+        &self,
+        plan: &ReadPlan,
+        kind_id: &str,
+        schema: &str,
+    ) -> Result<SnapshotDescriptor, RuntimeFailure> {
+        self.0.snapshot_read_plan(plan, kind_id, schema)
+    }
+
+    fn open_stream_plan(&self, plan: &ReadPlan) -> Result<StreamPlan, RuntimeFailure> {
+        self.0.open_stream_plan(plan)
+    }
+
+    fn execute_export_plan(&self, plan: &ExportPlan) -> Result<PlanReceipt, RuntimeFailure> {
+        self.0.execute_export_plan(plan)
+    }
+
+    fn commit_write_plan(
+        &self,
+        plan: &WritePlan,
+        bytes: Vec<u8>,
+    ) -> Result<PlanReceipt, RuntimeFailure> {
+        self.0.commit_write_plan(plan, bytes)
+    }
+
+    fn execute_command_plan(&self, plan: &CommandPlan) -> Result<PlanReceipt, RuntimeFailure> {
+        self.0.execute_command_plan(plan)
+    }
+
+    fn execute_command_batch(
+        &self,
+        batch: &CommandBatch,
+    ) -> Result<Vec<PlanReceipt>, RuntimeFailure> {
+        self.0.execute_command_batch(batch)
+    }
+
+    fn execute_saga_plan(&self, saga: &SagaPlan) -> Result<Vec<PlanReceipt>, RuntimeFailure> {
+        self.0.execute_saga_plan(saga)
+    }
+}
+
+impl ResourceRegistryGateway for BenchmarkResources {
+    fn open_resource_descriptor(&self, ref_id: &str) -> Result<ResourceRef, RuntimeFailure> {
+        Err(RuntimeFailure::new(
+            mutsuki_runtime_contracts::RuntimeError::new(
+                mutsuki_runtime_contracts::ERR_RESOURCE_NOT_FOUND,
+                "std.benchmark.http",
+                format!("resource.{ref_id}.not_opened"),
+            ),
+        ))
+    }
+
+    fn create_blob_resource(
+        &self,
+        _provider_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ResourceRef, RuntimeFailure> {
+        self.0.create_blob_resource(schema, bytes)
+    }
+
+    fn create_cow_state_resource(
+        &self,
+        _provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ResourceRef, RuntimeFailure> {
+        self.0.create_cow_state_resource(kind_id, schema, bytes)
+    }
+
+    fn create_capability_resource(
+        &self,
+        _provider_id: &str,
+        kind_id: &str,
+        schema: &str,
+    ) -> Result<ResourceRef, RuntimeFailure> {
+        self.0.create_capability_resource(kind_id, schema)
     }
 }
 
