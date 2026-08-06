@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -68,6 +69,8 @@ pub enum ConfigError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("managed config journal failed for {path}: {detail}")]
+    ConfigJournal { path: PathBuf, detail: String },
 }
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
@@ -203,15 +206,100 @@ impl HostSecretStore {
 #[derive(Clone, Debug)]
 pub struct ConfiguredPluginStore {
     path: PathBuf,
-    write_lock: Arc<Mutex<()>>,
+    transactions: Arc<Mutex<ConfigTransactionState>>,
+}
+
+#[derive(Debug, Default)]
+struct ConfigTransactionState {
+    active: Option<u64>,
+    sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ConfigJournalPhase {
+    Prepared,
+    Committing,
+    Committed,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ConfigChangeJournal {
+    version: u32,
+    transaction_id: u64,
+    phase: ConfigJournalPhase,
+    previous: String,
+    candidate: String,
+}
+
+pub struct PreparedConfiguredPluginChange {
+    path: PathBuf,
+    journal_path: PathBuf,
+    transactions: Arc<Mutex<ConfigTransactionState>>,
+    journal: ConfigChangeJournal,
+    finished: bool,
+}
+
+impl PreparedConfiguredPluginChange {
+    pub fn commit(&mut self) -> ConfigResult<()> {
+        self.ensure_active()?;
+        self.journal.phase = ConfigJournalPhase::Committing;
+        write_config_journal(&self.journal_path, &self.journal)?;
+        atomic_write(&self.path, self.journal.candidate.as_bytes(), false)?;
+        self.journal.phase = ConfigJournalPhase::Committed;
+        write_config_journal(&self.journal_path, &self.journal)?;
+        remove_journal(&self.journal_path)?;
+        self.release();
+        Ok(())
+    }
+
+    pub fn rollback(&mut self) -> ConfigResult<()> {
+        self.ensure_active()?;
+        atomic_write(&self.path, self.journal.previous.as_bytes(), false)?;
+        remove_journal(&self.journal_path)?;
+        self.release();
+        Ok(())
+    }
+
+    fn ensure_active(&self) -> ConfigResult<()> {
+        let state = self
+            .transactions
+            .lock()
+            .expect("configured plugin transaction lock");
+        if state.active == Some(self.journal.transaction_id) {
+            Ok(())
+        } else {
+            Err(ConfigError::ConfigJournal {
+                path: self.journal_path.clone(),
+                detail: "prepared transaction is no longer active".into(),
+            })
+        }
+    }
+
+    fn release(&mut self) {
+        self.transactions
+            .lock()
+            .expect("configured plugin transaction lock")
+            .active = None;
+        self.finished = true;
+    }
+}
+
+impl Drop for PreparedConfiguredPluginChange {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.rollback();
+        }
+    }
 }
 
 impl ConfiguredPluginStore {
     /// Open a managed product config file for atomic plugin / product-surface patches.
     pub fn open(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
         Self {
-            path: path.into(),
-            write_lock: Arc::new(Mutex::new(())),
+            transactions: shared_config_transactions(&path),
+            path,
         }
     }
 
@@ -221,53 +309,53 @@ impl ConfiguredPluginStore {
 
     /// Atomically replaces one owner plugin's opaque config in the product config file.
     pub fn replace_config(&self, plugin_id: &str, config: serde_json::Value) -> ConfigResult<()> {
-        let _write = self
-            .write_lock
-            .lock()
-            .expect("configured plugin write lock");
-        let mut document = self.read_document()?;
-        let configured = document
-            .get_mut("plugins")
-            .and_then(toml::Value::as_table_mut)
-            .and_then(|plugins| plugins.get_mut("configured"))
-            .and_then(toml::Value::as_array_mut)
-            .ok_or_else(|| ConfigError::ConfiguredPluginNotFound {
-                plugin_id: plugin_id.into(),
-                path: self.path.clone(),
-            })?;
-        let matches = configured
-            .iter()
-            .enumerate()
-            .filter(|(_, selection)| {
-                selection
-                    .get("id")
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|id| id.trim() == plugin_id.trim())
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        let [index] = matches.as_slice() else {
-            return Err(ConfigError::ConfiguredPluginNotFound {
-                plugin_id: plugin_id.into(),
-                path: self.path.clone(),
-            });
-        };
+        let mut prepared = self.prepare_replace_config(plugin_id, config)?;
+        prepared.commit()
+    }
+
+    pub fn prepare_replace_config(
+        &self,
+        plugin_id: &str,
+        config: serde_json::Value,
+    ) -> ConfigResult<PreparedConfiguredPluginChange> {
         let value =
             json_to_toml(config).map_err(|detail| ConfigError::InvalidConfiguredPluginValue {
                 plugin_id: plugin_id.into(),
                 detail,
             })?;
-        configured[*index]
-            .as_table_mut()
-            .expect("configured plugin selection is a TOML table")
-            .insert("config".into(), value);
-        let content = toml::to_string_pretty(&document).map_err(|source| {
-            ConfigError::InvalidConfiguredPluginValue {
-                plugin_id: plugin_id.into(),
-                detail: source.to_string(),
-            }
-        })?;
-        atomic_write(&self.path, content.as_bytes(), false)
+        self.prepare_document_change(|document| {
+            let configured = document
+                .get_mut("plugins")
+                .and_then(toml::Value::as_table_mut)
+                .and_then(|plugins| plugins.get_mut("configured"))
+                .and_then(toml::Value::as_array_mut)
+                .ok_or_else(|| ConfigError::ConfiguredPluginNotFound {
+                    plugin_id: plugin_id.into(),
+                    path: self.path.clone(),
+                })?;
+            let matches = configured
+                .iter()
+                .enumerate()
+                .filter(|(_, selection)| {
+                    selection
+                        .get("id")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|id| id.trim() == plugin_id.trim())
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            let [index] = matches.as_slice() else {
+                return Err(ConfigError::ConfiguredPluginNotFound {
+                    plugin_id: plugin_id.into(),
+                    path: self.path.clone(),
+                });
+            };
+            configured[*index]
+                .as_table_mut()
+                .expect("configured plugin selection is a TOML table")
+                .insert("config".into(), value);
+            Ok(())
+        })
     }
 
     /// Atomically patches known product surface keys under `service` / `web.console`.
@@ -278,31 +366,175 @@ impl ConfiguredPluginStore {
         &self,
         fields: BTreeMap<String, serde_json::Value>,
     ) -> ConfigResult<()> {
-        let _write = self
-            .write_lock
-            .lock()
-            .expect("configured plugin write lock");
-        let mut document = self.read_document()?;
-        for (field, value) in fields {
-            apply_product_surface_field(&mut document, &field, value)?;
-        }
-        let content =
-            toml::to_string_pretty(&document).map_err(|source| ConfigError::WriteManagedFile {
-                path: self.path.clone(),
-                source: std::io::Error::other(source.to_string()),
-            })?;
-        atomic_write(&self.path, content.as_bytes(), false)
+        let mut prepared = self.prepare_product_surface(fields)?;
+        prepared.commit()
     }
 
-    fn read_document(&self) -> ConfigResult<toml::Value> {
-        let content = fs::read_to_string(&self.path).map_err(|source| ConfigError::ReadFile {
-            path: self.path.clone(),
-            source,
-        })?;
-        toml::from_str(&content).map_err(|source| ConfigError::ParseFile {
-            path: self.path.clone(),
-            source,
+    pub fn prepare_product_surface(
+        &self,
+        fields: BTreeMap<String, serde_json::Value>,
+    ) -> ConfigResult<PreparedConfiguredPluginChange> {
+        self.prepare_document_change(|document| {
+            for (field, value) in fields {
+                apply_product_surface_field(document, &field, value)?;
+            }
+            Ok(())
         })
+    }
+
+    pub fn recover(&self) -> ConfigResult<()> {
+        let transaction_id = self.reserve_transaction()?;
+        let journal_path = config_journal_path(&self.path);
+        let result = (|| {
+            if !journal_path.exists() {
+                return Ok(());
+            }
+            let content =
+                fs::read_to_string(&journal_path).map_err(|source| ConfigError::ConfigJournal {
+                    path: journal_path.clone(),
+                    detail: source.to_string(),
+                })?;
+            let journal: ConfigChangeJournal =
+                toml::from_str(&content).map_err(|source| ConfigError::ConfigJournal {
+                    path: journal_path.clone(),
+                    detail: source.to_string(),
+                })?;
+            if journal.version != 1 {
+                return Err(ConfigError::ConfigJournal {
+                    path: journal_path.clone(),
+                    detail: format!("unsupported journal version {}", journal.version),
+                });
+            }
+            let recovered = match journal.phase {
+                ConfigJournalPhase::Prepared | ConfigJournalPhase::Committing => journal.previous,
+                ConfigJournalPhase::Committed => journal.candidate,
+            };
+            atomic_write(&self.path, recovered.as_bytes(), false)?;
+            remove_journal(&journal_path)
+        })();
+        self.release_transaction(transaction_id);
+        result
+    }
+
+    fn prepare_document_change(
+        &self,
+        change: impl FnOnce(&mut toml::Value) -> ConfigResult<()>,
+    ) -> ConfigResult<PreparedConfiguredPluginChange> {
+        let transaction_id = self.reserve_transaction()?;
+        let journal_path = config_journal_path(&self.path);
+        let result = (|| {
+            if journal_path.exists() {
+                return Err(ConfigError::ConfigJournal {
+                    path: journal_path.clone(),
+                    detail: "unfinished config transaction requires recovery".into(),
+                });
+            }
+            let previous =
+                fs::read_to_string(&self.path).map_err(|source| ConfigError::ReadFile {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            let mut document =
+                toml::from_str(&previous).map_err(|source| ConfigError::ParseFile {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            change(&mut document)?;
+            let candidate = toml::to_string_pretty(&document).map_err(|source| {
+                ConfigError::WriteManagedFile {
+                    path: self.path.clone(),
+                    source: std::io::Error::other(source.to_string()),
+                }
+            })?;
+            let journal = ConfigChangeJournal {
+                version: 1,
+                transaction_id,
+                phase: ConfigJournalPhase::Prepared,
+                previous,
+                candidate,
+            };
+            write_config_journal(&journal_path, &journal)?;
+            Ok(PreparedConfiguredPluginChange {
+                path: self.path.clone(),
+                journal_path,
+                transactions: self.transactions.clone(),
+                journal,
+                finished: false,
+            })
+        })();
+        if result.is_err() {
+            self.release_transaction(transaction_id);
+        }
+        result
+    }
+
+    fn reserve_transaction(&self) -> ConfigResult<u64> {
+        let mut state = self
+            .transactions
+            .lock()
+            .expect("configured plugin transaction lock");
+        if state.active.is_some() {
+            return Err(ConfigError::ConfigJournal {
+                path: config_journal_path(&self.path),
+                detail: "another config transaction is already prepared".into(),
+            });
+        }
+        state.sequence = state.sequence.saturating_add(1);
+        state.active = Some(state.sequence);
+        Ok(state.sequence)
+    }
+
+    fn release_transaction(&self, transaction_id: u64) {
+        let mut state = self
+            .transactions
+            .lock()
+            .expect("configured plugin transaction lock");
+        if state.active == Some(transaction_id) {
+            state.active = None;
+        }
+    }
+}
+
+fn shared_config_transactions(path: &Path) -> Arc<Mutex<ConfigTransactionState>> {
+    static REGISTRY: OnceLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<ConfigTransactionState>>>>> =
+        OnceLock::new();
+    let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut registry = REGISTRY
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+        .expect("configured plugin transaction registry lock");
+    if let Some(transactions) = registry.get(&key).and_then(Weak::upgrade) {
+        return transactions;
+    }
+    let transactions = Arc::new(Mutex::new(ConfigTransactionState::default()));
+    registry.insert(key, Arc::downgrade(&transactions));
+    transactions
+}
+
+fn config_journal_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mutsuki-config");
+    path.with_file_name(format!(".{file_name}.journal"))
+}
+
+fn write_config_journal(path: &Path, journal: &ConfigChangeJournal) -> ConfigResult<()> {
+    let content = toml::to_string(journal).map_err(|source| ConfigError::ConfigJournal {
+        path: path.to_path_buf(),
+        detail: source.to_string(),
+    })?;
+    atomic_write(path, content.as_bytes(), false)
+}
+
+fn remove_journal(path: &Path) -> ConfigResult<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(ConfigError::ConfigJournal {
+            path: path.to_path_buf(),
+            detail: source.to_string(),
+        }),
     }
 }
 
@@ -832,6 +1064,9 @@ impl ServiceConfig {
         if explicit_config_file && !local_file.is_file() {
             return Err(ConfigError::MissingConfigFile { path: local_file });
         }
+        if local_file.is_file() {
+            ConfiguredPluginStore::open(&local_file).recover()?;
+        }
 
         let local_profile = read_optional_config(&local_file)?
             .map(|file_config| file_config.service.profile)
@@ -1088,25 +1323,89 @@ fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     let temp = path.with_extension(format!("mutsuki-{nonce:x}.tmp"));
-    fs::write(&temp, bytes).map_err(|source| ConfigError::WriteManagedFile {
-        path: temp.clone(),
-        source,
-    })?;
-    #[cfg(unix)]
-    if secret {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o600)).map_err(|source| {
-            ConfigError::WriteManagedFile {
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp)
+            .map_err(|source| ConfigError::WriteManagedFile {
                 path: temp.clone(),
                 source,
-            }
+            })?;
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| ConfigError::WriteManagedFile {
+                path: temp.clone(),
+                source,
+            })?;
+        #[cfg(unix)]
+        if secret {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&temp, fs::Permissions::from_mode(0o600)).map_err(|source| {
+                ConfigError::WriteManagedFile {
+                    path: temp.clone(),
+                    source,
+                }
+            })?;
+            file.sync_all()
+                .map_err(|source| ConfigError::WriteManagedFile {
+                    path: temp.clone(),
+                    source,
+                })?;
+        }
+        #[cfg(not(unix))]
+        let _ = secret;
+        #[cfg(test)]
+        if injected_atomic_rename_failure() {
+            return Err(ConfigError::WriteManagedFile {
+                path: path.to_path_buf(),
+                source: std::io::Error::other("injected atomic rename failure"),
+            });
+        }
+        fs::rename(&temp, path).map_err(|source| ConfigError::WriteManagedFile {
+            path: path.to_path_buf(),
+            source,
         })?;
+        if let Some(parent) = path.parent() {
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|source| ConfigError::WriteManagedFile {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
     }
-    #[cfg(not(unix))]
-    let _ = secret;
-    fs::rename(&temp, path).map_err(|source| ConfigError::WriteManagedFile {
-        path: path.to_path_buf(),
-        source,
+    result
+}
+
+#[cfg(test)]
+thread_local! {
+    static ATOMIC_RENAME_FAILURE_COUNTDOWN: std::cell::Cell<Option<usize>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+#[cfg(test)]
+fn fail_atomic_rename_after(successful_renames: usize) {
+    ATOMIC_RENAME_FAILURE_COUNTDOWN.set(Some(successful_renames));
+}
+
+#[cfg(test)]
+fn injected_atomic_rename_failure() -> bool {
+    ATOMIC_RENAME_FAILURE_COUNTDOWN.with(|countdown| match countdown.get() {
+        Some(0) => {
+            countdown.set(None);
+            true
+        }
+        Some(remaining) => {
+            countdown.set(Some(remaining - 1));
+            false
+        }
+        None => false,
     })
 }
 
@@ -1222,6 +1521,35 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn write_configured_plugin_fixture(path: &Path, mode: &str) {
+        fs::write(
+            path,
+            format!(
+                "[[plugins.configured]]\nid = \"owner.plugin\"\n\n[plugins.configured.config]\nmode = \"{mode}\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn configured_plugin_mode(path: &Path) -> String {
+        let document: toml::Value = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        document["plugins"]["configured"][0]["config"]["mode"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn assert_no_atomic_temp_files(directory: &Path) {
+        assert!(fs::read_dir(directory).unwrap().all(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .and_then(|value| value.to_str())
+                != Some("tmp")
+        }));
+    }
 
     #[test]
     fn worker_profiles_keep_default_threads_close_to_compute_plus_bounded_blocking() {
@@ -1422,6 +1750,100 @@ mod tests {
             Some("alice")
         );
         assert_eq!(configured[1]["config"]["mode"].as_str(), Some("kept"));
+    }
+
+    #[test]
+    fn configured_plugin_transaction_is_exclusive_across_store_instances() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("product.toml");
+        write_configured_plugin_fixture(&path, "old");
+        let first_store = ConfiguredPluginStore::open(&path);
+        let second_store = ConfiguredPluginStore::open(&path);
+
+        let mut first = first_store
+            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "first" }))
+            .unwrap();
+        assert!(matches!(
+            second_store
+                .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "second" })),
+            Err(ConfigError::ConfigJournal { .. })
+        ));
+        assert_eq!(configured_plugin_mode(&path), "old");
+
+        first.rollback().unwrap();
+        let mut second = second_store
+            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "second" }))
+            .unwrap();
+        second.commit().unwrap();
+        assert_eq!(configured_plugin_mode(&path), "second");
+        assert!(!config_journal_path(&path).exists());
+    }
+
+    #[test]
+    fn configured_plugin_recovery_chooses_unambiguous_transaction_side() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("product.toml");
+        let journal_path = config_journal_path(&path);
+        let previous = "[[plugins.configured]]\nid = \"owner.plugin\"\n[plugins.configured.config]\nmode = \"old\"\n";
+        let candidate = "[[plugins.configured]]\nid = \"owner.plugin\"\n[plugins.configured.config]\nmode = \"new\"\n";
+        fs::write(&path, candidate).unwrap();
+        write_config_journal(
+            &journal_path,
+            &ConfigChangeJournal {
+                version: 1,
+                transaction_id: 7,
+                phase: ConfigJournalPhase::Committing,
+                previous: previous.into(),
+                candidate: candidate.into(),
+            },
+        )
+        .unwrap();
+
+        ConfiguredPluginStore::open(&path).recover().unwrap();
+        assert_eq!(configured_plugin_mode(&path), "old");
+        assert!(!journal_path.exists());
+
+        write_config_journal(
+            &journal_path,
+            &ConfigChangeJournal {
+                version: 1,
+                transaction_id: 8,
+                phase: ConfigJournalPhase::Committed,
+                previous: previous.into(),
+                candidate: candidate.into(),
+            },
+        )
+        .unwrap();
+        ConfiguredPluginStore::open(&path).recover().unwrap();
+        assert_eq!(configured_plugin_mode(&path), "new");
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn configured_plugin_transaction_rolls_back_atomic_write_failures() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("product.toml");
+        write_configured_plugin_fixture(&path, "old");
+        let store = ConfiguredPluginStore::open(&path);
+
+        fail_atomic_rename_after(0);
+        assert!(
+            store
+                .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "new" }))
+                .is_err()
+        );
+        assert_eq!(configured_plugin_mode(&path), "old");
+        assert!(!config_journal_path(&path).exists());
+
+        let mut prepared = store
+            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "new" }))
+            .unwrap();
+        fail_atomic_rename_after(1);
+        assert!(prepared.commit().is_err());
+        assert_eq!(configured_plugin_mode(&path), "old");
+        prepared.rollback().unwrap();
+        assert!(!config_journal_path(&path).exists());
+        assert_no_atomic_temp_files(root.path());
     }
 
     #[test]
