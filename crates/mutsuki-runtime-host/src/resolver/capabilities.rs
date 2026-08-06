@@ -641,10 +641,12 @@ fn parse_requirements(required: &BTreeSet<String>) -> Vec<CapabilityRequirement>
     required
         .iter()
         .map(|raw| {
-            let (capability, version_constraint) = raw
-                .rsplit_once('@')
-                .map(|(capability, constraint)| (capability.to_string(), Some(constraint.into())))
-                .unwrap_or_else(|| (raw.clone(), None));
+            let (capability, version_constraint) = match raw.rsplit_once('@') {
+                Some((capability, constraint)) if is_version_constraint(constraint) => {
+                    (capability.to_string(), Some(constraint.into()))
+                }
+                _ => (raw.clone(), None),
+            };
             CapabilityRequirement {
                 raw: raw.clone(),
                 capability,
@@ -652,6 +654,16 @@ fn parse_requirements(required: &BTreeSet<String>) -> Vec<CapabilityRequirement>
             }
         })
         .collect()
+}
+
+fn is_version_constraint(constraint: &str) -> bool {
+    for operator in [">=", "<=", ">", "<", "="] {
+        if let Some(version) = constraint.strip_prefix(operator) {
+            return !version.is_empty();
+        }
+    }
+    // Keep ABI suffixes like `mutsuki.http.request@2` in the capability id.
+    constraint.contains('.') && parse_version(constraint).is_some()
 }
 
 fn version_matches_constraint(version: &str, constraint: &str) -> bool {
