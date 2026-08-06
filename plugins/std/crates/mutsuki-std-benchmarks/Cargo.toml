@@ -6,6 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+async-trait.workspace = true
+mutsuki-protocol-http.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
@@ -25,6 +27,7 @@ serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
 
 [[bin]]
 name = "mutsuki-std-benchmarks"
