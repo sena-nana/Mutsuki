@@ -1,4 +1,4 @@
-//! Image render protocols: compose / card / QR → PNG ResourceRef.
+//! Image render protocols: compose / card / QR → PNG `ResourceRef`.
 
 use mutsuki_runtime_contracts::ResourceRef;
 use serde::{Deserialize, Serialize};

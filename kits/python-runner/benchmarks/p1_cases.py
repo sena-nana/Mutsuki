@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import gc
 import io
-import struct
 import statistics
+import struct
 import time
 import tracemalloc
 from dataclasses import replace
