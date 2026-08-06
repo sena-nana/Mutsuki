@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use mutsuki_service_control::ControlMethod;
+use mutsuki_service_control::{ControlCommand, ControlResponse, ControlResult};
 use tempfile::Builder;
 
 use support::{
-    IpcConfig, assert_gateway_health, assert_gateway_only_task_surface, control, fake_qq_product,
-    gateway_ready, try_control,
+    IpcConfig, assert_gateway_health, assert_gateway_only_task_surface, fake_qq_product,
+    gateway_ready, task_list, try_health,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -36,7 +36,7 @@ async fn production_binary_runs_fake_qq_over_unix_ipc_and_shuts_down_cleanly() {
     let health = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             process.assert_running();
-            if let Ok(health) = try_control(&service, ControlMethod::HealthCheck).await
+            if let Ok(health) = try_health(&service).await
                 && gateway_ready(&health)
             {
                 break health;
@@ -48,10 +48,17 @@ async fn production_binary_runs_fake_qq_over_unix_ipc_and_shuts_down_cleanly() {
     .unwrap_or_else(|_| panic!("product did not become healthy: {}", process.diagnostics()));
     assert_gateway_health(&health);
 
-    let tasks = control(&service, ControlMethod::TaskList).await;
+    let tasks = task_list(&service).await;
     assert_gateway_only_task_surface(&tasks);
 
-    control(&service, ControlMethod::ServiceShutdown).await;
+    let response = mutsuki_service_ipc::ControlClient::new((&service).into())
+        .request(ControlCommand::ServiceShutdown)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response,
+        ControlResponse::Ok(ControlResult::ServiceShutdown)
+    ));
     let status = process.wait_for_exit(Duration::from_secs(30)).await;
     assert!(
         status.success(),

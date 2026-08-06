@@ -7,10 +7,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use mutsuki_service_config::{IpcCodec, IpcTransport, ServiceConfig};
-use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
+use mutsuki_service_control::{
+    ControlCommand, ControlError, ControlHandler, ControlRequest, ControlResponse, ControlResult,
+    LogTailParams, LogTailResponse,
+};
 use mutsuki_service_ipc::{ControlClientConfig, ControlSession, IpcServer, start_server};
 use serde::Serialize;
-use serde_json::Value;
 use tempfile::TempDir;
 
 #[global_allocator]
@@ -61,10 +63,16 @@ struct EchoHandler;
 impl ControlHandler for EchoHandler {
     fn handle(&self, request: ControlRequest) -> mutsuki_service_control::ControlFuture {
         Box::pin(async move {
-            ControlResponse {
-                ok: true,
-                result: Some(request.params),
-                error: None,
+            match request.command {
+                ControlCommand::LogTail(_) => {
+                    ControlResponse::ok(ControlResult::LogTail(LogTailResponse {
+                        cursor: 0,
+                        entries: Vec::new(),
+                    }))
+                }
+                other => {
+                    ControlResponse::err(ControlError::Unsupported(format!("{:?}", other.method())))
+                }
             }
         })
     }
@@ -218,14 +226,18 @@ async fn run_case(
 ) -> Result<CaseResult, Box<dyn std::error::Error>> {
     let (_tmp, config, server) = start_echo_server(mode.codec()).await?;
     let client_config = ControlClientConfig::from(&config);
-    let payload = Value::String("x".repeat(payload_bytes));
+    let payload = ControlCommand::LogTail(LogTailParams {
+        cursor: None,
+        lines: Some(1),
+        filters: [("payload".into(), "x".repeat(payload_bytes))]
+            .into_iter()
+            .collect(),
+    });
 
     {
         let session = ControlSession::connect(client_config.clone()).await?;
         for _ in 0..warmup {
-            let _ = session
-                .request(ControlMethod::HealthCheck, payload.clone())
-                .await?;
+            let _ = session.request(payload.clone()).await?;
         }
         session.close().await?;
     }
@@ -247,7 +259,7 @@ async fn run_case(
             handles.push(tokio::spawn(async move {
                 let _permit = permit;
                 let t0 = Instant::now();
-                let result = session.request(ControlMethod::HealthCheck, payload).await;
+                let result = session.request(payload).await;
                 (t0.elapsed().as_nanos() as u64, result)
             }));
         }

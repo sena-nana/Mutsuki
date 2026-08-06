@@ -4,12 +4,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use mutsuki_service_config::IpcCodec;
-use mutsuki_service_control::{ControlMethod, ControlRequest, ControlResponse};
+use mutsuki_service_control::{ControlCommand, ControlMethod, ControlRequest, ControlResponse};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::codec::{encode_binary_cancel, encode_binary_request_with_scratch};
+use crate::codec::{
+    decode_binary_response, encode_binary_cancel, encode_binary_request_with_scratch,
+};
 use crate::error::{IpcError, IpcResult};
 use crate::frame::{BINARY_HEADER_LEN, BINARY_LENGTH_PREFIX_LEN, FrameFlags};
 use crate::io::{read_binary_frame, write_all_flush};
@@ -60,6 +62,7 @@ impl From<&mutsuki_service_config::ServiceConfig> for ControlClientConfig {
 }
 
 struct PendingResponse {
+    method: ControlMethod,
     tx: oneshot::Sender<IpcResult<ControlResponse>>,
 }
 
@@ -111,17 +114,9 @@ impl ControlSession {
         self.connections.load(Ordering::Relaxed)
     }
 
-    pub async fn request(
-        &self,
-        method: ControlMethod,
-        params: serde_json::Value,
-    ) -> IpcResult<ControlResponse> {
-        self.send(ControlRequest {
-            token: self.config.token.clone(),
-            method,
-            params,
-        })
-        .await
+    pub async fn request(&self, command: ControlCommand) -> IpcResult<ControlResponse> {
+        self.send(ControlRequest::new(self.config.token.clone(), command))
+            .await
     }
 
     pub async fn send(&self, request: ControlRequest) -> IpcResult<ControlResponse> {
@@ -141,10 +136,11 @@ impl ControlSession {
             }
         }
         let (tx, rx) = oneshot::channel();
+        let method = request.method();
         self.pending
             .lock()
             .await
-            .insert(request_id, PendingResponse { tx });
+            .insert(request_id, PendingResponse { method, tx });
 
         let mut encode_buf = self.encode_buf.lock().await;
         let mut payload_buf = self.payload_buf.lock().await;
@@ -242,14 +238,23 @@ async fn read_binary_loop<R: AsyncRead + Unpin>(
             return Err(IpcError::UnknownFlags(header.flags.bits()));
         }
         let request_id = header.request_id;
-        let response: ControlResponse = {
-            let mut deserializer = rmp_serde::Deserializer::new(payload_buf.as_slice());
-            deserializer.set_max_depth(limits.max_msgpack_nesting_depth);
-            serde::Deserialize::deserialize(&mut deserializer)?
-        };
+        let method = ControlMethod::from_opcode(header.opcode)
+            .ok_or(IpcError::UnknownOpcode(header.opcode))?;
         let mut map = pending.lock().await;
         match map.remove(&request_id) {
             Some(entry) => {
+                if entry.method != method {
+                    return Err(IpcError::Protocol(format!(
+                        "response opcode {:?} does not match pending {:?}",
+                        method, entry.method
+                    )));
+                }
+                let response = decode_binary_response(
+                    method,
+                    &payload_buf,
+                    header.flags.contains(FrameFlags::ERROR),
+                    limits,
+                )?;
                 let _ = entry.tx.send(Ok(response));
             }
             None => {
@@ -287,7 +292,17 @@ async fn oneshot_binary(
             "oneshot binary response mismatch".into(),
         ));
     }
-    let mut deserializer = rmp_serde::Deserializer::new(frame.payload.as_slice());
-    deserializer.set_max_depth(limits.max_msgpack_nesting_depth);
-    Ok(serde::Deserialize::deserialize(&mut deserializer)?)
+    let method = ControlMethod::from_opcode(frame.header.opcode)
+        .ok_or(IpcError::UnknownOpcode(frame.header.opcode))?;
+    if method != request.method() {
+        return Err(IpcError::Protocol(
+            "oneshot binary response opcode mismatch".into(),
+        ));
+    }
+    decode_binary_response(
+        method,
+        &frame.payload,
+        frame.header.flags.contains(FrameFlags::ERROR),
+        limits,
+    )
 }

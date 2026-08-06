@@ -36,8 +36,8 @@ use mutsuki_service_config::{
     LanePolicySection, ServiceConfig, filtered_environment,
 };
 use mutsuki_service_control::{
-    ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest, ControlResponse,
-    CoreDrainResponse, CoreRuntimeMetrics, CoreStatus, ExecutionDomainMetrics,
+    ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse,
+    ControlResult, CoreDrainResponse, CoreRuntimeMetrics, CoreStatus, ExecutionDomainMetrics,
     ExecutionLaneMetrics, HealthReport, HostMetrics, IdParam, LogTailEntry, LogTailParams,
     LogTailResponse, PluginCandidateStatus, PluginDeploymentClearParam, PluginDeploymentParam,
     PluginInventoryDiagnostic, PluginListResponse, PluginReloadChange, PluginReloadResponse,
@@ -86,6 +86,126 @@ struct RunnerLimitOverride {
 }
 
 type RunnerLimitFactory = Arc<dyn Fn() -> RunnerLimitOverride + Send + Sync>;
+
+#[derive(Default)]
+struct PreparedComponent {
+    manifest: Option<mutsuki_runtime_contracts::PluginManifest>,
+    native_runner_factories: Vec<NativeRunnerFactory>,
+    async_handler_factories: Vec<AsyncHandlerFactory>,
+    loaded_plugin_factory: Option<(String, LoadedPluginFactory)>,
+    health_probe: Option<(String, HealthProbe)>,
+    event_sources: Mutex<Vec<Box<dyn HostEventSource>>>,
+    runner_limits: BTreeMap<String, RunnerLimits>,
+    runner_limit_factories: Vec<RunnerLimitFactory>,
+}
+
+/// Prepared ServiceHost assembly records. A component's manifest, executable factories,
+/// health/event surfaces and limit policy now travel through one owner instead of parallel lists.
+#[derive(Default)]
+struct PreparedComponentRegistry {
+    records: BTreeMap<String, PreparedComponent>,
+    sequence: u64,
+}
+
+impl PreparedComponentRegistry {
+    fn record(&mut self, component_id: impl Into<String>) -> &mut PreparedComponent {
+        self.records.entry(component_id.into()).or_default()
+    }
+
+    fn anonymous(&mut self, kind: &str) -> &mut PreparedComponent {
+        self.sequence = self.sequence.saturating_add(1);
+        self.record(format!("{kind}:{}", self.sequence))
+    }
+
+    fn register_manifest(&mut self, manifest: mutsuki_runtime_contracts::PluginManifest) {
+        let plugin_id = manifest.plugin_id.clone();
+        self.record(plugin_id).manifest = Some(manifest);
+    }
+
+    fn builtin_registry(&self) -> BuiltinRegistry {
+        let mut registry = BuiltinRegistry::new();
+        for manifest in self
+            .records
+            .values()
+            .filter_map(|component| component.manifest.clone())
+        {
+            registry.register_manifest(manifest);
+        }
+        registry
+    }
+
+    fn native_runner_factories(&self) -> Vec<NativeRunnerFactory> {
+        self.records
+            .values()
+            .flat_map(|component| component.native_runner_factories.iter().cloned())
+            .collect()
+    }
+
+    fn async_handler_factories(&self) -> Vec<AsyncHandlerFactory> {
+        self.records
+            .values()
+            .flat_map(|component| component.async_handler_factories.iter().cloned())
+            .collect()
+    }
+
+    fn loaded_plugin_factories(&self) -> BTreeMap<String, LoadedPluginFactory> {
+        self.records
+            .values()
+            .filter_map(|component| component.loaded_plugin_factory.clone())
+            .collect()
+    }
+
+    fn health_probes(&self) -> BTreeMap<String, HealthProbe> {
+        self.records
+            .values()
+            .filter_map(|component| component.health_probe.clone())
+            .collect()
+    }
+
+    fn runner_limits(&self) -> BTreeMap<String, RunnerLimits> {
+        let mut limits = BTreeMap::new();
+        for (runner_id, registered) in self
+            .records
+            .values()
+            .flat_map(|component| component.runner_limits.iter())
+        {
+            merge_runner_limits(limits.entry(runner_id.clone()).or_default(), registered);
+        }
+        limits
+    }
+
+    fn runner_limit_factories(&self) -> Vec<RunnerLimitFactory> {
+        self.records
+            .values()
+            .flat_map(|component| component.runner_limit_factories.iter().cloned())
+            .collect()
+    }
+
+    fn take_event_sources(&self) -> Vec<Box<dyn HostEventSource>> {
+        self.records
+            .values()
+            .flat_map(|component| {
+                component
+                    .event_sources
+                    .lock()
+                    .expect("prepared event source mutex")
+                    .drain(..)
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+}
+
+fn merge_runner_limits(current: &mut RunnerLimits, registered: &RunnerLimits) {
+    current.max_running = current.max_running.min(registered.max_running.max(1));
+    if let Some(timeout) = registered.wall_clock_deadline {
+        current.wall_clock_deadline = Some(
+            current
+                .wall_clock_deadline
+                .map_or(timeout, |existing| existing.min(timeout)),
+        );
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct PluginDeploymentState {
@@ -355,15 +475,8 @@ pub struct ServiceRuntime {
 pub struct ServiceRuntimeBuilder {
     config: ServiceConfig,
     configured_plugins: ConfiguredPluginCatalog,
-    builtin_registry: BuiltinRegistry,
-    native_runner_factories: Vec<NativeRunnerFactory>,
-    async_handler_factories: Vec<AsyncHandlerFactory>,
-    loaded_plugin_factories: BTreeMap<String, LoadedPluginFactory>,
+    components: PreparedComponentRegistry,
     runtime_client: Arc<DeferredRuntimeClient>,
-    health_probes: BTreeMap<String, HealthProbe>,
-    event_sources: Vec<Box<dyn HostEventSource>>,
-    runner_limits: BTreeMap<String, RunnerLimits>,
-    runner_limit_factories: Vec<RunnerLimitFactory>,
 }
 
 /// Domain-neutral factory for a native product plugin selected by Host configuration.
@@ -434,15 +547,9 @@ struct ServiceRuntimeInner {
     host_runtime: Mutex<Option<HostRuntime>>,
     supervisor: RunnerSupervisor,
     event_sources: EventSourceSupervisor,
-    builtin_registry: BuiltinRegistry,
-    native_runner_factories: Vec<NativeRunnerFactory>,
-    async_handler_factories: Vec<AsyncHandlerFactory>,
-    loaded_plugin_factories: BTreeMap<String, LoadedPluginFactory>,
-    health_probes: BTreeMap<String, HealthProbe>,
+    components: PreparedComponentRegistry,
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
-    runner_limits: BTreeMap<String, RunnerLimits>,
-    runner_limit_factories: Vec<RunnerLimitFactory>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
 }
 
@@ -466,15 +573,8 @@ impl ServiceRuntimeBuilder {
         Self {
             config,
             configured_plugins: ConfiguredPluginCatalog::new(),
-            builtin_registry: builtin_registry(),
-            native_runner_factories: Vec::new(),
-            async_handler_factories: Vec::new(),
-            loaded_plugin_factories: BTreeMap::new(),
+            components: PreparedComponentRegistry::default(),
             runtime_client: Arc::new(DeferredRuntimeClient::default()),
-            health_probes: BTreeMap::new(),
-            event_sources: Vec::new(),
-            runner_limits: BTreeMap::new(),
-            runner_limit_factories: Vec::new(),
         }
     }
 
@@ -503,7 +603,7 @@ impl ServiceRuntimeBuilder {
         mut self,
         manifest: mutsuki_runtime_contracts::PluginManifest,
     ) -> Self {
-        self.builtin_registry.register_manifest(manifest);
+        self.components.register_manifest(manifest);
         self
     }
 
@@ -512,7 +612,9 @@ impl ServiceRuntimeBuilder {
     where
         F: Fn() -> Box<dyn Runner> + Send + Sync + 'static,
     {
-        self.native_runner_factories
+        self.components
+            .anonymous("native-runner")
+            .native_runner_factories
             .push(Arc::new(move || Ok(factory())));
         self
     }
@@ -524,9 +626,12 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> Result<Box<dyn Runner>, E> + Send + Sync + 'static,
         E: std::fmt::Display,
     {
-        self.native_runner_factories.push(Arc::new(move || {
-            factory().map_err(|error| error.to_string())
-        }));
+        self.components
+            .anonymous("native-runner")
+            .native_runner_factories
+            .push(Arc::new(move || {
+                factory().map_err(|error| error.to_string())
+            }));
         self
     }
 
@@ -535,7 +640,9 @@ impl ServiceRuntimeBuilder {
     where
         F: Fn() -> Arc<dyn AsyncBatchHandler> + Send + Sync + 'static,
     {
-        self.async_handler_factories
+        self.components
+            .anonymous("async-handler")
+            .async_handler_factories
             .push(Arc::new(move || Ok(factory())));
         self
     }
@@ -546,9 +653,12 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> Result<Arc<dyn AsyncBatchHandler>, E> + Send + Sync + 'static,
         E: std::fmt::Display,
     {
-        self.async_handler_factories.push(Arc::new(move || {
-            factory().map_err(|error| error.to_string())
-        }));
+        self.components
+            .anonymous("async-handler")
+            .async_handler_factories
+            .push(Arc::new(move || {
+                factory().map_err(|error| error.to_string())
+            }));
         self
     }
 
@@ -565,9 +675,12 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let services = self.runtime_client.clone();
-        self.async_handler_factories.push(Arc::new(move || {
-            factory(services.clone(), services.clone()).map_err(|error| error.to_string())
-        }));
+        self.components
+            .anonymous("async-handler")
+            .async_handler_factories
+            .push(Arc::new(move || {
+                factory(services.clone(), services.clone()).map_err(|error| error.to_string())
+            }));
         self
     }
 
@@ -577,7 +690,9 @@ impl ServiceRuntimeBuilder {
         F: Fn(RuntimeClientRef) -> Box<dyn Runner> + Send + Sync + 'static,
     {
         let client = self.runtime_client.clone();
-        self.native_runner_factories
+        self.components
+            .anonymous("native-runner")
+            .native_runner_factories
             .push(Arc::new(move || Ok(factory(client.clone()))));
         self
     }
@@ -591,9 +706,12 @@ impl ServiceRuntimeBuilder {
             + 'static,
     {
         let services = self.runtime_client.clone();
-        self.native_runner_factories.push(Arc::new(move || {
-            Ok(factory(services.clone(), services.clone()))
-        }));
+        self.components
+            .anonymous("native-runner")
+            .native_runner_factories
+            .push(Arc::new(move || {
+                Ok(factory(services.clone(), services.clone()))
+            }));
         self
     }
 
@@ -607,9 +725,12 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let services = self.runtime_client.clone();
-        self.native_runner_factories.push(Arc::new(move || {
-            factory(services.clone(), services.clone()).map_err(|error| error.to_string())
-        }));
+        self.components
+            .anonymous("native-runner")
+            .native_runner_factories
+            .push(Arc::new(move || {
+                factory(services.clone(), services.clone()).map_err(|error| error.to_string())
+            }));
         self
     }
 
@@ -624,11 +745,12 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let plugin_id = manifest.plugin_id.clone();
-        self.builtin_registry.register_manifest(manifest);
-        self.loaded_plugin_factories.insert(
+        let component = self.components.record(plugin_id.clone());
+        component.manifest = Some(manifest);
+        component.loaded_plugin_factory = Some((
             plugin_id,
             Arc::new(move || factory().map_err(|error| error.to_string())),
-        );
+        ));
         self
     }
 
@@ -637,13 +759,20 @@ impl ServiceRuntimeBuilder {
     where
         F: Fn() -> Value + Send + Sync + 'static,
     {
-        self.health_probes
-            .insert(component_id.into(), Arc::new(probe));
+        let component_id = component_id.into();
+        let component = self.components.record(component_id.clone());
+        component.health_probe = Some((component_id, Arc::new(probe)));
         self
     }
 
     pub fn register_event_source(mut self, source: Box<dyn HostEventSource>) -> Self {
-        self.event_sources.push(source);
+        let component_id = source.descriptor().source_id.clone();
+        self.components
+            .record(component_id)
+            .event_sources
+            .get_mut()
+            .expect("prepared event source mutex")
+            .push(source);
         self
     }
 
@@ -657,7 +786,13 @@ impl ServiceRuntimeBuilder {
         max_running: Option<usize>,
         wall_clock_timeout_ms: Option<u64>,
     ) -> Self {
-        let limits = self.runner_limits.entry(runner_id.into()).or_default();
+        let runner_id = runner_id.into();
+        let limits = self
+            .components
+            .record(format!("runner:{runner_id}"))
+            .runner_limits
+            .entry(runner_id)
+            .or_default();
         if let Some(max_running) = max_running {
             limits.max_running = limits.max_running.min(max_running.max(1));
         }
@@ -684,14 +819,17 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> (Option<usize>, Option<u64>) + Send + Sync + 'static,
     {
         let runner_id = runner_id.into();
-        self.runner_limit_factories.push(Arc::new(move || {
-            let (max_running, wall_clock_timeout_ms) = factory();
-            RunnerLimitOverride {
-                runner_id: runner_id.clone(),
-                max_running,
-                wall_clock_timeout_ms,
-            }
-        }));
+        self.components
+            .record(format!("runner:{runner_id}"))
+            .runner_limit_factories
+            .push(Arc::new(move || {
+                let (max_running, wall_clock_timeout_ms) = factory();
+                RunnerLimitOverride {
+                    runner_id: runner_id.clone(),
+                    max_running,
+                    wall_clock_timeout_ms,
+                }
+            }));
         self
     }
 
@@ -700,17 +838,16 @@ impl ServiceRuntimeBuilder {
         let ServiceRuntimeBuilder {
             config,
             configured_plugins: _,
-            builtin_registry,
-            native_runner_factories,
-            async_handler_factories,
-            loaded_plugin_factories,
+            components,
             runtime_client,
-            health_probes,
-            event_sources,
-            runner_limits,
-            runner_limit_factories,
         } = self_;
-        let configured_runner_limits = runner_limits;
+        let builtin_registry = components.builtin_registry();
+        let native_runner_factories = components.native_runner_factories();
+        let async_handler_factories = components.async_handler_factories();
+        let loaded_plugin_factories = components.loaded_plugin_factories();
+        let configured_runner_limits = components.runner_limits();
+        let runner_limit_factories = components.runner_limit_factories();
+        let event_sources = components.take_event_sources();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         validate_event_sources(&event_sources, &config)?;
@@ -743,15 +880,9 @@ impl ServiceRuntimeBuilder {
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor,
             event_sources: event_source_supervisor.clone(),
-            builtin_registry,
-            native_runner_factories,
-            async_handler_factories,
-            loaded_plugin_factories,
-            health_probes,
+            components,
             runtime_client,
             deployment_state: Mutex::new(deployment_state),
-            runner_limits: configured_runner_limits,
-            runner_limit_factories,
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
         });
         let ipc_server = mutsuki_service_ipc::start_server(
@@ -1090,33 +1221,33 @@ impl ServiceRuntimeInner {
         if request.token != self.config.control_token() {
             return ControlResponse::err(ControlError::Unauthorized);
         }
-        match request.method {
-            ControlMethod::ServiceStatus => self.service_status().await,
-            ControlMethod::ServiceShutdown => self.service_shutdown(),
-            ControlMethod::CoreStatus => self.core_status(),
-            ControlMethod::PluginList => self.plugin_list(),
-            ControlMethod::PluginReload => self.plugin_reload().await,
-            ControlMethod::PluginDeploymentSet => self.plugin_deployment_set(request.params).await,
-            ControlMethod::PluginDeploymentClear => {
-                self.plugin_deployment_clear(request.params).await
+        match request.command {
+            ControlCommand::ServiceStatus => self.service_status().await,
+            ControlCommand::ServiceShutdown => self.service_shutdown(),
+            ControlCommand::CoreStatus => self.core_status(),
+            ControlCommand::PluginList => self.plugin_list(),
+            ControlCommand::PluginReload => self.plugin_reload().await,
+            ControlCommand::PluginDeploymentSet(param) => self.plugin_deployment_set(param).await,
+            ControlCommand::PluginDeploymentClear(param) => {
+                self.plugin_deployment_clear(param).await
             }
-            ControlMethod::RunnerList => self.runner_list().await,
-            ControlMethod::RunnerRestart => self.runner_restart(request.params).await,
-            ControlMethod::RunnerStop => self.runner_stop(request.params).await,
-            ControlMethod::EventSourceList => self.event_source_list(),
-            ControlMethod::EventSourceRestart => self.event_source_restart(request.params).await,
-            ControlMethod::CoreBeginDrain => self.core_begin_drain(),
-            ControlMethod::TaskSubmitBatch => self.task_submit_batch(request.params),
-            ControlMethod::TaskList => self.task_list(),
-            ControlMethod::TaskCancel => self.task_cancel(request.params),
-            ControlMethod::TaskOutcome => self.task_outcome(request.params),
-            ControlMethod::TaskOutcomesBatch => self.task_outcomes_batch(request.params),
-            ControlMethod::TaskWait => self.task_wait(request.params),
-            ControlMethod::TaskEventsAfter => self.task_events_after(request.params),
-            ControlMethod::HealthCheck => self.health_check().await,
-            ControlMethod::LogTail => self.log_tail(request.params),
-            ControlMethod::RuntimeStatistics => self.runtime_statistics(),
-            ControlMethod::HostMetrics => self.host_metrics(),
+            ControlCommand::RunnerList => self.runner_list().await,
+            ControlCommand::RunnerRestart(param) => self.runner_restart(param).await,
+            ControlCommand::RunnerStop(param) => self.runner_stop(param).await,
+            ControlCommand::EventSourceList => self.event_source_list(),
+            ControlCommand::EventSourceRestart(param) => self.event_source_restart(param).await,
+            ControlCommand::CoreBeginDrain => self.core_begin_drain(),
+            ControlCommand::TaskSubmitBatch(param) => self.task_submit_batch(param),
+            ControlCommand::TaskList => self.task_list(),
+            ControlCommand::TaskCancel(param) => self.task_cancel(param),
+            ControlCommand::TaskOutcome(param) => self.task_outcome(param),
+            ControlCommand::TaskOutcomesBatch(param) => self.task_outcomes_batch(param),
+            ControlCommand::TaskWait(param) => self.task_wait(param),
+            ControlCommand::TaskEventsAfter(param) => self.task_events_after(param),
+            ControlCommand::HealthCheck => self.health_check().await,
+            ControlCommand::LogTail(param) => self.log_tail(param),
+            ControlCommand::RuntimeStatistics => self.runtime_statistics(),
+            ControlCommand::HostMetrics => self.host_metrics(),
         }
     }
 
@@ -1127,7 +1258,7 @@ impl ServiceRuntimeInner {
             .lock()
             .expect("host runtime mutex")
             .is_some();
-        ControlResponse::ok(ServiceStatus {
+        ControlResponse::ok(ControlResult::ServiceStatus(ServiceStatus {
             instance_id: self.config.service.instance_id.clone(),
             profile: self.config.service.profile.clone(),
             uptime_ms: self.started_at.elapsed().as_millis(),
@@ -1135,7 +1266,7 @@ impl ServiceRuntimeInner {
             core_running,
             plugin_count: self.catalog.lock().expect("catalog mutex").records.len(),
             runner_count: runners.len(),
-        })
+        }))
     }
 
     fn host_metrics(&self) -> ControlResponse {
@@ -1196,21 +1327,21 @@ impl ServiceRuntimeInner {
                     .collect(),
             })
             .collect();
-        ControlResponse::ok(HostMetrics {
+        ControlResponse::ok(ControlResult::HostMetrics(HostMetrics {
             pid: std::process::id(),
             uptime_ms: self.started_at.elapsed().as_millis(),
             rss_bytes: current_rss_bytes(),
             cpu_time_ms: current_cpu_time_ms(),
             core,
             execution_domains,
-        })
+        }))
     }
 
     fn service_shutdown(&self) -> ControlResponse {
         if let Some(tx) = self.shutdown_tx.lock().expect("shutdown mutex").take() {
             let _ = tx.send("control-api".into());
         }
-        ControlResponse::empty_ok()
+        ControlResponse::ok(ControlResult::ServiceShutdown)
     }
 
     fn core_status(&self) -> ControlResponse {
@@ -1220,11 +1351,11 @@ impl ServiceRuntimeInner {
             profile_id: Some(runtime.host_context().profile_id().into()),
             registry_generation: Some(runtime.host_context().registry_generation()),
         });
-        ControlResponse::ok(status.unwrap_or(CoreStatus {
+        ControlResponse::ok(ControlResult::CoreStatus(status.unwrap_or(CoreStatus {
             running: false,
             profile_id: None,
             registry_generation: None,
-        }))
+        })))
     }
 
     fn plugin_list(&self) -> ControlResponse {
@@ -1294,10 +1425,10 @@ impl ServiceRuntimeInner {
                 detail: item.detail.clone(),
             })
             .collect();
-        ControlResponse::ok(PluginListResponse {
+        ControlResponse::ok(ControlResult::PluginList(PluginListResponse {
             plugins,
             diagnostics,
-        })
+        }))
     }
 
     async fn plugin_reload(&self) -> ControlResponse {
@@ -1306,35 +1437,33 @@ impl ServiceRuntimeInner {
             .lock()
             .expect("deployment state mutex")
             .clone();
-        let new_catalog =
-            match load_catalog_with_state(&self.config, &self.builtin_registry, &state) {
-                Ok(catalog) => catalog,
-                Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
-            };
+        let builtin_registry = self.components.builtin_registry();
+        let new_catalog = match load_catalog_with_state(&self.config, &builtin_registry, &state) {
+            Ok(catalog) => catalog,
+            Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
+        };
         self.reload_catalog(new_catalog).await
     }
 
-    async fn plugin_deployment_set(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<PluginDeploymentParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
-        self.change_plugin_deployment(param.plugin_id, Some(param.deployment))
-            .await
+    async fn plugin_deployment_set(&self, param: PluginDeploymentParam) -> ControlResponse {
+        self.change_plugin_deployment(
+            param.plugin_id,
+            Some(param.deployment),
+            ControlResult::PluginDeploymentSet,
+        )
+        .await
     }
 
-    async fn plugin_deployment_clear(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<PluginDeploymentClearParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
-        self.change_plugin_deployment(param.plugin_id, None).await
+    async fn plugin_deployment_clear(&self, param: PluginDeploymentClearParam) -> ControlResponse {
+        self.change_plugin_deployment(param.plugin_id, None, ControlResult::PluginDeploymentClear)
+            .await
     }
 
     async fn change_plugin_deployment(
         &self,
         plugin_id: String,
         deployment: Option<PluginDeploymentKind>,
+        result: fn(PluginReloadResponse) -> ControlResult,
     ) -> ControlResponse {
         if !self
             .config
@@ -1361,8 +1490,8 @@ impl ServiceRuntimeInner {
                 next.plugins.remove(&plugin_id);
             }
         }
-        let new_catalog = match load_catalog_with_state(&self.config, &self.builtin_registry, &next)
-        {
+        let builtin_registry = self.components.builtin_registry();
+        let new_catalog = match load_catalog_with_state(&self.config, &builtin_registry, &next) {
             Ok(catalog) => catalog,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
@@ -1370,7 +1499,7 @@ impl ServiceRuntimeInner {
             return ControlResponse::err(ControlError::Failed(error.to_string()));
         }
         let response = self.reload_catalog(new_catalog).await;
-        if response.ok {
+        if response.is_ok() {
             *self
                 .deployment_state
                 .lock()
@@ -1380,26 +1509,36 @@ impl ServiceRuntimeInner {
                 "deployment reload failed and restoring management state failed: {error}"
             )));
         }
-        response
+        match response {
+            ControlResponse::Ok(ControlResult::PluginReload(response)) => {
+                ControlResponse::ok(result(response))
+            }
+            other => other,
+        }
     }
 
     async fn reload_catalog(&self, new_catalog: PluginCatalog) -> ControlResponse {
         let previous_generation = {
             let guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_ref() else {
-                return ControlResponse::err(ControlError::Failed("core is not running".into()));
+                return ControlResponse::err(ControlError::CoreUnavailable);
             };
             runtime.host_context().registry_generation()
         };
         let registry_generation = previous_generation.saturating_add(1);
+        let native_runner_factories = self.components.native_runner_factories();
+        let async_handler_factories = self.components.async_handler_factories();
+        let loaded_plugin_factories = self.components.loaded_plugin_factories();
+        let configured_runner_limits = self.components.runner_limits();
+        let runner_limit_factories = self.components.runner_limit_factories();
         let runner_limits =
-            resolve_runner_limits(&self.runner_limits, &self.runner_limit_factories);
+            resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         let (prepared, runtime_lock) = match runtime_bootstrapper(
             &self.config,
             &new_catalog,
-            &self.native_runner_factories,
-            &self.async_handler_factories,
-            &self.loaded_plugin_factories,
+            &native_runner_factories,
+            &async_handler_factories,
+            &loaded_plugin_factories,
             self.runtime_client.clone(),
         )
         .await
@@ -1436,7 +1575,7 @@ impl ServiceRuntimeInner {
         let decision = {
             let mut guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_mut() else {
-                return ControlResponse::err(ControlError::Failed("core is not running".into()));
+                return ControlResponse::err(ControlError::CoreUnavailable);
             };
             match runtime.reload(prepared, drain_timeout) {
                 Ok(decision) => decision,
@@ -1459,7 +1598,7 @@ impl ServiceRuntimeInner {
             Duration::from_millis(self.config.runners.graceful_shutdown_ms),
         )
         .await;
-        ControlResponse::ok(PluginReloadResponse {
+        ControlResponse::ok(ControlResult::PluginReload(PluginReloadResponse {
             previous_generation,
             registry_generation,
             plugin_count,
@@ -1473,47 +1612,37 @@ impl ServiceRuntimeInner {
                 .collect(),
             runner_errors,
             event_sources: "kept".into(),
-        })
+        }))
     }
 
     async fn runner_list(&self) -> ControlResponse {
         let snapshots = self.supervisor.list().await;
-        ControlResponse::ok(to_control_runner_status(snapshots))
+        ControlResponse::ok(ControlResult::RunnerList(to_control_runner_status(
+            snapshots,
+        )))
     }
 
-    async fn runner_restart(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<IdParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    async fn runner_restart(&self, param: IdParam) -> ControlResponse {
         match self.supervisor.restart(&param.id).await {
-            Ok(()) => ControlResponse::empty_ok(),
+            Ok(()) => ControlResponse::ok(ControlResult::RunnerRestart),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
-    async fn runner_stop(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<IdParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    async fn runner_stop(&self, param: IdParam) -> ControlResponse {
         match self.supervisor.stop(&param.id).await {
-            Ok(()) => ControlResponse::empty_ok(),
+            Ok(()) => ControlResponse::ok(ControlResult::RunnerStop),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
     fn event_source_list(&self) -> ControlResponse {
-        ControlResponse::ok(self.event_sources.list())
+        ControlResponse::ok(ControlResult::EventSourceList(self.event_sources.list()))
     }
 
-    async fn event_source_restart(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<IdParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    async fn event_source_restart(&self, param: IdParam) -> ControlResponse {
         match self.event_sources.restart(&param.id).await {
-            Ok(()) => ControlResponse::empty_ok(),
+            Ok(()) => ControlResponse::ok(ControlResult::EventSourceRestart),
             Err(error) => ControlResponse::err(ControlError::Failed(error)),
         }
     }
@@ -1521,21 +1650,17 @@ impl ServiceRuntimeInner {
     fn core_begin_drain(&self) -> ControlResponse {
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         match runtime.begin_drain() {
-            Ok(state) => ControlResponse::ok(CoreDrainResponse {
+            Ok(state) => ControlResponse::ok(ControlResult::CoreBeginDrain(CoreDrainResponse {
                 state: runtime_stop_state(state).to_owned(),
-            }),
+            })),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
-    fn task_submit_batch(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<TaskSubmitBatchParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn task_submit_batch(&self, param: TaskSubmitBatchParam) -> ControlResponse {
         if param.batch.tasks.is_empty() {
             return ControlResponse::err(ControlError::BadRequest(
                 "task batch must contain at least one task".into(),
@@ -1543,11 +1668,13 @@ impl ServiceRuntimeInner {
         }
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         match runtime.dispatch(HostRuntimeCommand::SubmitBatch(Box::new(param.batch))) {
             Ok(HostRuntimeReply::TaskBatchSubmitted(handles)) => {
-                ControlResponse::ok(TaskSubmitBatchResponse { handles })
+                ControlResponse::ok(ControlResult::TaskSubmitBatch(TaskSubmitBatchResponse {
+                    handles,
+                }))
             }
             Ok(other) => ControlResponse::err(ControlError::Failed(format!(
                 "unexpected task submit reply: {other:?}"
@@ -1559,10 +1686,12 @@ impl ServiceRuntimeInner {
     fn task_list(&self) -> ControlResponse {
         let mut guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_mut() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         match runtime.task_snapshots() {
-            Ok(snapshots) => ControlResponse::ok(to_control_task_snapshots(snapshots)),
+            Ok(snapshots) => ControlResponse::ok(ControlResult::TaskList(
+                to_control_task_snapshots(snapshots),
+            )),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
@@ -1570,73 +1699,67 @@ impl ServiceRuntimeInner {
     fn runtime_statistics(&self) -> ControlResponse {
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         match runtime.statistics() {
-            Ok(statistics) => ControlResponse::ok(RuntimeStatisticsView {
-                tasks: TaskPoolStatisticsView {
-                    ready: statistics.tasks.ready,
-                    running: statistics.tasks.running,
-                    waiting: statistics.tasks.waiting,
-                    blocked: statistics.tasks.blocked,
-                    completed: statistics.tasks.completed,
-                    failed: statistics.tasks.failed,
-                    cancelled: statistics.tasks.cancelled,
-                    expired: statistics.tasks.expired,
-                    dead_letter: statistics.tasks.dead_letter,
-                    submitted_total: statistics.tasks.submitted_total,
-                    attempts_started: statistics.tasks.attempts_started,
-                    cumulative_queue_steps: statistics.tasks.cumulative_queue_steps,
-                    cumulative_execution_steps: statistics.tasks.cumulative_execution_steps,
-                    stale_results_rejected: statistics.tasks.stale_results_rejected,
-                    terminal_records_evicted: statistics.tasks.terminal_records_evicted,
-                },
-                retained_events: statistics.retained_events,
-                dropped_events: statistics.dropped_events,
-                retained_traces: statistics.retained_traces,
-                dropped_traces: statistics.dropped_traces,
-                scheduler_decisions: statistics.scheduler_decisions,
-            }),
+            Ok(statistics) => {
+                ControlResponse::ok(ControlResult::RuntimeStatistics(RuntimeStatisticsView {
+                    tasks: TaskPoolStatisticsView {
+                        ready: statistics.tasks.ready,
+                        running: statistics.tasks.running,
+                        waiting: statistics.tasks.waiting,
+                        blocked: statistics.tasks.blocked,
+                        completed: statistics.tasks.completed,
+                        failed: statistics.tasks.failed,
+                        cancelled: statistics.tasks.cancelled,
+                        expired: statistics.tasks.expired,
+                        dead_letter: statistics.tasks.dead_letter,
+                        submitted_total: statistics.tasks.submitted_total,
+                        attempts_started: statistics.tasks.attempts_started,
+                        cumulative_queue_steps: statistics.tasks.cumulative_queue_steps,
+                        cumulative_execution_steps: statistics.tasks.cumulative_execution_steps,
+                        stale_results_rejected: statistics.tasks.stale_results_rejected,
+                        terminal_records_evicted: statistics.tasks.terminal_records_evicted,
+                    },
+                    retained_events: statistics.retained_events,
+                    dropped_events: statistics.dropped_events,
+                    retained_traces: statistics.retained_traces,
+                    dropped_traces: statistics.dropped_traces,
+                    scheduler_decisions: statistics.scheduler_decisions,
+                }))
+            }
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
-    fn task_cancel(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<IdParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn task_cancel(&self, param: IdParam) -> ControlResponse {
         let mut guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_mut() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         let handle = match resolve_task_handle(runtime, &param.id) {
             Ok(handle) => handle,
             Err(error) => return ControlResponse::err(error),
         };
         match runtime.dispatch(HostRuntimeCommand::CancelTask(handle)) {
-            Ok(_) => ControlResponse::empty_ok(),
+            Ok(_) => ControlResponse::ok(ControlResult::TaskCancel),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
-    fn task_outcome(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<IdParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn task_outcome(&self, param: IdParam) -> ControlResponse {
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         let handle = match resolve_task_handle(runtime, &param.id) {
             Ok(handle) => handle,
             Err(error) => return ControlResponse::err(error),
         };
         match runtime.dispatch(HostRuntimeCommand::TaskOutcome(handle.clone())) {
-            Ok(HostRuntimeReply::TaskOutcome(outcome)) => {
-                ControlResponse::ok(to_control_task_outcome(&handle.task_id, outcome))
-            }
+            Ok(HostRuntimeReply::TaskOutcome(outcome)) => ControlResponse::ok(
+                ControlResult::TaskOutcome(to_control_task_outcome(&handle.task_id, outcome)),
+            ),
             Ok(other) => ControlResponse::err(ControlError::Failed(format!(
                 "unexpected task outcome reply: {other:?}"
             ))),
@@ -1644,11 +1767,7 @@ impl ServiceRuntimeInner {
         }
     }
 
-    fn task_outcomes_batch(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<TaskOutcomesBatchParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn task_outcomes_batch(&self, param: TaskOutcomesBatchParam) -> ControlResponse {
         if param.ids.is_empty() {
             return ControlResponse::err(ControlError::BadRequest(
                 "task outcomes batch requires at least one id".into(),
@@ -1656,28 +1775,26 @@ impl ServiceRuntimeInner {
         }
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         let handles = match resolve_task_handles(runtime, &param.ids) {
             Ok(handles) => handles,
             Err(error) => return ControlResponse::err(error),
         };
         match runtime.task_states(handles) {
-            Ok(states) => ControlResponse::ok(TaskOutcomesBatchResponse {
-                outcomes: states
-                    .into_iter()
-                    .map(|state| to_control_task_outcome(&state.handle.task_id, state.outcome))
-                    .collect(),
-            }),
+            Ok(states) => ControlResponse::ok(ControlResult::TaskOutcomesBatch(
+                TaskOutcomesBatchResponse {
+                    outcomes: states
+                        .into_iter()
+                        .map(|state| to_control_task_outcome(&state.handle.task_id, state.outcome))
+                        .collect(),
+                },
+            )),
             Err(error) => ControlResponse::err(ControlError::Failed(error.to_string())),
         }
     }
 
-    fn task_wait(&self, params: Value) -> ControlResponse {
-        let param = match serde_json::from_value::<TaskWaitParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn task_wait(&self, param: TaskWaitParam) -> ControlResponse {
         if param.ids.is_empty() {
             return ControlResponse::err(ControlError::BadRequest(
                 "task wait requires at least one id".into(),
@@ -1686,7 +1803,7 @@ impl ServiceRuntimeInner {
         let (subscription, handles) = {
             let guard = self.host_runtime.lock().expect("host runtime mutex");
             let Some(runtime) = guard.as_ref() else {
-                return ControlResponse::err(ControlError::Failed("core is not running".into()));
+                return ControlResponse::err(ControlError::CoreUnavailable);
             };
             let handles = match resolve_task_handles(runtime, &param.ids) {
                 Ok(handles) => handles,
@@ -1701,9 +1818,7 @@ impl ServiceRuntimeInner {
             let states = {
                 let guard = self.host_runtime.lock().expect("host runtime mutex");
                 let Some(runtime) = guard.as_ref() else {
-                    return ControlResponse::err(ControlError::Failed(
-                        "core is not running".into(),
-                    ));
+                    return ControlResponse::err(ControlError::CoreUnavailable);
                 };
                 match runtime.task_states(handles.clone()) {
                     Ok(states) => states,
@@ -1728,9 +1843,7 @@ impl ServiceRuntimeInner {
                 None => {
                     let guard = self.host_runtime.lock().expect("host runtime mutex");
                     let Some(runtime) = guard.as_ref() else {
-                        return ControlResponse::err(ControlError::Failed(
-                            "core is not running".into(),
-                        ));
+                        return ControlResponse::err(ControlError::CoreUnavailable);
                     };
                     return match runtime.task_states(handles) {
                         Ok(states) => task_wait_response(states, true),
@@ -1741,13 +1854,9 @@ impl ServiceRuntimeInner {
         }
     }
 
-    fn task_events_after(&self, params: Value) -> ControlResponse {
+    fn task_events_after(&self, param: TaskEventsAfterParam) -> ControlResponse {
         const MAX_EVENTS_PER_PAGE: usize = 1_024;
 
-        let param = match serde_json::from_value::<TaskEventsAfterParam>(params) {
-            Ok(param) => param,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
         if param.limit == 0 || param.limit > MAX_EVENTS_PER_PAGE {
             return ControlResponse::err(ControlError::BadRequest(format!(
                 "event page limit must be in 1..={MAX_EVENTS_PER_PAGE}"
@@ -1755,13 +1864,13 @@ impl ServiceRuntimeInner {
         }
         let guard = self.host_runtime.lock().expect("host runtime mutex");
         let Some(runtime) = guard.as_ref() else {
-            return ControlResponse::err(ControlError::Failed("core is not running".into()));
+            return ControlResponse::err(ControlError::CoreUnavailable);
         };
         let page = match runtime.events_after(param.sequence, param.limit) {
             Ok(page) => page,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
-        ControlResponse::ok(TaskEventPage {
+        ControlResponse::ok(ControlResult::TaskEventsAfter(TaskEventPage {
             next_sequence: page.next_sequence,
             earliest_available_sequence: page.earliest_available_sequence,
             latest_sequence: page.latest_sequence,
@@ -1769,7 +1878,7 @@ impl ServiceRuntimeInner {
             dropped: page.dropped,
             has_more: page.truncated,
             events: page.items,
-        })
+        }))
     }
 
     async fn health_check(&self) -> ControlResponse {
@@ -1813,7 +1922,8 @@ impl ServiceRuntimeInner {
             recent_errors.push("worker_pool:isolation_capacity_exhausted".into());
         }
         let mut components = self
-            .health_probes
+            .components
+            .health_probes()
             .iter()
             .map(|(id, probe)| (id.clone(), probe()))
             .collect::<BTreeMap<_, _>>();
@@ -1846,14 +1956,10 @@ impl ServiceRuntimeInner {
             recent_errors,
             components,
         };
-        ControlResponse::ok(report)
+        ControlResponse::ok(ControlResult::HealthCheck(report))
     }
 
-    fn log_tail(&self, params: Value) -> ControlResponse {
-        let params = match serde_json::from_value::<LogTailParams>(params) {
-            Ok(params) => params,
-            Err(error) => return ControlResponse::err(ControlError::BadRequest(error.to_string())),
-        };
+    fn log_tail(&self, params: LogTailParams) -> ControlResponse {
         match read_log_tail(
             self.config
                 .service
@@ -1861,7 +1967,7 @@ impl ServiceRuntimeInner {
                 .join(&self.config.observe.log_file),
             params,
         ) {
-            Ok(response) => ControlResponse::ok(response),
+            Ok(response) => ControlResponse::ok(ControlResult::LogTail(response)),
             Err(error) => ControlResponse::err(error),
         }
     }
@@ -2047,10 +2153,6 @@ fn save_deployment_state(
         path: path.display().to_string(),
         detail: error.to_string(),
     })
-}
-
-fn builtin_registry() -> BuiltinRegistry {
-    BuiltinRegistry::new()
 }
 
 fn read_log_tail(
@@ -2713,13 +2815,13 @@ fn is_terminal_task_status(status: Option<&TaskStatus>) -> bool {
 }
 
 fn task_wait_response(states: Vec<HostTaskState>, timed_out: bool) -> ControlResponse {
-    ControlResponse::ok(TaskWaitResponse {
+    ControlResponse::ok(ControlResult::TaskWait(TaskWaitResponse {
         outcomes: states
             .into_iter()
             .map(|state| to_control_task_outcome(&state.handle.task_id, state.outcome))
             .collect(),
         timed_out,
-    })
+    }))
 }
 
 fn duration_nanos(duration: Duration) -> u64 {
@@ -2752,12 +2854,21 @@ mod tests {
     };
     use mutsuki_runtime_sdk::map_work_batch_entries;
     use mutsuki_service_control::{
-        HostMetrics, PluginReloadResponse, TaskOutcomeView, TaskSnapshot,
+        ControlErrorCode, HostMetrics, PluginReloadResponse, TaskOutcomeView, TaskSnapshot,
     };
     use serde_json::json;
     use tempfile::tempdir;
 
     use super::*;
+
+    macro_rules! control_result {
+        ($response:expr, $variant:path) => {{
+            match $response {
+                ControlResponse::Ok($variant(value)) => value,
+                other => panic!("unexpected control response: {other:?}"),
+            }
+        }};
+    }
 
     #[test]
     fn dynamic_runner_limits_recompute_from_the_boot_configuration() {
@@ -2920,7 +3031,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            builder.builtin_registry.load_all().unwrap().records.len(),
+            builder
+                .components
+                .builtin_registry()
+                .load_all()
+                .unwrap()
+                .records
+                .len(),
             1
         );
     }
@@ -3211,16 +3328,10 @@ mod tests {
         }
 
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskList,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::TaskList))
             .await;
 
-        assert!(response.ok);
-        let snapshots: Vec<TaskSnapshot> =
-            serde_json::from_value(response.result.expect("result")).expect("task snapshots");
+        let snapshots: Vec<TaskSnapshot> = control_result!(response, ControlResult::TaskList);
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].task_id, "control-task-1");
         assert_eq!(snapshots[0].protocol_id, "control.input");
@@ -3240,15 +3351,9 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let inner = test_started_runtime_inner("token", dir.path()).await;
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::HostMetrics,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::HostMetrics))
             .await;
-        assert!(response.ok, "{response:?}");
-        let metrics: HostMetrics =
-            serde_json::from_value(response.result.expect("result")).expect("host metrics");
+        let metrics: HostMetrics = control_result!(response, ControlResult::HostMetrics);
         assert_eq!(metrics.pid, std::process::id());
         assert!(metrics.cpu_time_ms.is_some());
         assert!(metrics.core.is_some());
@@ -3293,9 +3398,8 @@ mod tests {
         };
         let inner = test_started_runtime_inner_with_core("token", dir.path(), core).await;
 
-        let response = inner.host_metrics();
         let metrics: HostMetrics =
-            serde_json::from_value(response.result.expect("result")).expect("host metrics");
+            control_result!(inner.host_metrics(), ControlResult::HostMetrics);
         assert_eq!(metrics.execution_domains.len(), 2);
         assert!(
             metrics
@@ -3334,16 +3438,14 @@ mod tests {
         }
 
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::RuntimeStatistics,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::RuntimeStatistics,
+            ))
             .await;
 
-        assert!(response.ok);
         let stats: RuntimeStatisticsView =
-            serde_json::from_value(response.result.expect("result")).expect("runtime statistics");
+            control_result!(response, ControlResult::RuntimeStatistics);
         assert_eq!(stats.tasks.ready, 1);
         assert_eq!(stats.tasks.submitted_total, 1);
 
@@ -3352,14 +3454,15 @@ mod tests {
             *guard = None;
         }
         let missing = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::RuntimeStatistics,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::RuntimeStatistics,
+            ))
             .await;
-        assert!(!missing.ok);
-        assert_eq!(missing.error.expect("failed").code, "failed");
+        assert_eq!(
+            missing.error().expect("failed").code,
+            ControlErrorCode::CoreUnavailable
+        );
     }
 
     #[tokio::test]
@@ -3379,24 +3482,27 @@ mod tests {
         }
 
         let cancel = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskCancel,
-                params: json!({ "id": "cancel-task-1" }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskCancel(IdParam {
+                    id: "cancel-task-1".into(),
+                }),
+            ))
             .await;
-        assert!(cancel.ok);
+        assert!(matches!(
+            cancel,
+            ControlResponse::Ok(ControlResult::TaskCancel)
+        ));
 
         let outcome = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskOutcome,
-                params: json!({ "id": "cancel-task-1" }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskOutcome(IdParam {
+                    id: "cancel-task-1".into(),
+                }),
+            ))
             .await;
-        assert!(outcome.ok);
-        let view: TaskOutcomeView =
-            serde_json::from_value(outcome.result.expect("result")).expect("outcome");
+        let view: TaskOutcomeView = control_result!(outcome, ControlResult::TaskOutcome);
         assert_eq!(view.task_id, "cancel-task-1");
         assert_eq!(view.status, "cancelled");
     }
@@ -3406,34 +3512,31 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let inner = test_started_runtime_inner("token", dir.path()).await;
         let submit = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskSubmitBatch,
-                params: serde_json::to_value(TaskSubmitBatchParam {
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         "control-batch-1",
                         Task::new("submitted-task-1", "control.input", json!({ "value": 1 })),
                     ),
-                })
-                .expect("submit params"),
-            })
+                }),
+            ))
             .await;
-        assert!(submit.ok);
         let submitted: TaskSubmitBatchResponse =
-            serde_json::from_value(submit.result.expect("submit result")).expect("handles");
+            control_result!(submit, ControlResult::TaskSubmitBatch);
         assert_eq!(submitted.handles.len(), 1);
         assert_eq!(submitted.handles[0].task_id, "submitted-task-1");
 
         let events = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskEventsAfter,
-                params: json!({ "sequence": 0, "limit": 16 }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskEventsAfter(TaskEventsAfterParam {
+                    sequence: 0,
+                    limit: 16,
+                }),
+            ))
             .await;
-        assert!(events.ok);
-        let page: TaskEventPage =
-            serde_json::from_value(events.result.expect("event result")).expect("event page");
+        let page: TaskEventPage = control_result!(events, ControlResult::TaskEventsAfter);
         assert!(!page.events.is_empty());
         assert!(page.next_sequence > 0);
         assert_eq!(page.lost, 0);
@@ -3446,45 +3549,40 @@ mod tests {
         }));
 
         let invalid_events = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskEventsAfter,
-                params: json!({ "sequence": 0, "limit": 0 }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskEventsAfter(TaskEventsAfterParam {
+                    sequence: 0,
+                    limit: 0,
+                }),
+            ))
             .await;
-        assert!(!invalid_events.ok);
         assert_eq!(
-            invalid_events.error.expect("invalid event error").code,
-            "bad_request"
+            invalid_events.error().expect("invalid event error").code,
+            ControlErrorCode::BadRequest
         );
 
         let drain = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::CoreBeginDrain,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::CoreBeginDrain))
             .await;
-        assert!(drain.ok);
-        let drain: CoreDrainResponse =
-            serde_json::from_value(drain.result.expect("drain result")).expect("drain state");
+        let drain: CoreDrainResponse = control_result!(drain, ControlResult::CoreBeginDrain);
         assert_eq!(drain.state, "draining");
 
         let rejected = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::TaskSubmitBatch,
-                params: serde_json::to_value(TaskSubmitBatchParam {
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         "control-batch-2",
                         Task::new("submitted-task-2", "control.input", json!({})),
                     ),
-                })
-                .expect("submit params"),
-            })
+                }),
+            ))
             .await;
-        assert!(!rejected.ok);
-        assert_eq!(rejected.error.expect("drain rejection").code, "failed");
+        assert_eq!(
+            rejected.error().expect("drain rejection").code,
+            ControlErrorCode::Failed
+        );
     }
 
     #[test]
@@ -3651,32 +3749,22 @@ mod tests {
         let inner = test_started_runtime_inner("token", dir.path()).await;
 
         let unauthorized = inner
-            .handle_request(ControlRequest {
-                token: "wrong".into(),
-                method: ControlMethod::PluginReload,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("wrong", ControlCommand::PluginReload))
             .await;
-        assert!(!unauthorized.ok);
-        assert_eq!(unauthorized.error.expect("error").code, "unauthorized");
+        assert_eq!(
+            unauthorized.error().expect("error").code,
+            ControlErrorCode::Unauthorized
+        );
 
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginReload,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::PluginReload))
             .await;
-        assert!(response.ok);
-        let reload: PluginReloadResponse =
-            serde_json::from_value(response.result.expect("result")).expect("reload response");
+        let reload: PluginReloadResponse = control_result!(response, ControlResult::PluginReload);
         assert_eq!(reload.previous_generation, 1);
         assert_eq!(reload.registry_generation, 2);
         assert_eq!(reload.plugin_count, 1);
 
-        let status = inner.core_status();
-        let status: CoreStatus =
-            serde_json::from_value(status.result.expect("status")).expect("core status");
+        let status: CoreStatus = control_result!(inner.core_status(), ControlResult::CoreStatus);
         assert_eq!(status.registry_generation, Some(2));
         let guard = inner.host_runtime.lock().expect("host runtime mutex");
         assert_eq!(
@@ -3694,23 +3782,30 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let inner = test_started_runtime_inner("token", dir.path()).await;
         let unavailable = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginDeploymentSet,
-                params: json!({ "plugin_id": TEST_PLUGIN_ID, "deployment": "abi" }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
+                    plugin_id: TEST_PLUGIN_ID.into(),
+                    deployment: PluginDeploymentKind::Abi,
+                }),
+            ))
             .await;
-        assert!(!unavailable.ok);
+        assert!(unavailable.error().is_some());
         assert!(!deployment_state_path(&inner.config).exists());
 
         let selected = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginDeploymentSet,
-                params: json!({ "plugin_id": TEST_PLUGIN_ID, "deployment": "builtin" }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
+                    plugin_id: TEST_PLUGIN_ID.into(),
+                    deployment: PluginDeploymentKind::Builtin,
+                }),
+            ))
             .await;
-        assert!(selected.ok);
+        assert!(matches!(
+            selected,
+            ControlResponse::Ok(ControlResult::PluginDeploymentSet(_))
+        ));
         let state = load_deployment_state(&inner.config).unwrap();
         assert_eq!(
             state.plugins.get(TEST_PLUGIN_ID),
@@ -3718,13 +3813,17 @@ mod tests {
         );
 
         let cleared = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginDeploymentClear,
-                params: json!({ "plugin_id": TEST_PLUGIN_ID }),
-            })
+            .handle_request(ControlRequest::new(
+                "token",
+                ControlCommand::PluginDeploymentClear(PluginDeploymentClearParam {
+                    plugin_id: TEST_PLUGIN_ID.into(),
+                }),
+            ))
             .await;
-        assert!(cleared.ok);
+        assert!(matches!(
+            cleared,
+            ControlResponse::Ok(ControlResult::PluginDeploymentClear(_))
+        ));
         assert!(
             load_deployment_state(&inner.config)
                 .unwrap()
@@ -3745,21 +3844,17 @@ mod tests {
         .expect("write invalid manifest");
 
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginReload,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::PluginReload))
             .await;
-        assert!(response.ok);
+        assert!(matches!(
+            response,
+            ControlResponse::Ok(ControlResult::PluginReload(_))
+        ));
 
-        let status = inner.core_status();
-        let status: CoreStatus =
-            serde_json::from_value(status.result.expect("status")).expect("core status");
+        let status: CoreStatus = control_result!(inner.core_status(), ControlResult::CoreStatus);
         assert_eq!(status.registry_generation, Some(2));
-        let plugins = inner.plugin_list();
         let plugins: PluginListResponse =
-            serde_json::from_value(plugins.result.expect("plugins")).expect("plugin list");
+            control_result!(inner.plugin_list(), ControlResult::PluginList);
         assert_eq!(plugins.plugins.len(), 1);
         assert_eq!(plugins.plugins[0].plugin_id, TEST_PLUGIN_ID);
         assert_eq!(plugins.diagnostics.len(), 1);
@@ -3786,20 +3881,13 @@ mod tests {
         .expect("write manifest");
 
         let response = inner
-            .handle_request(ControlRequest {
-                token: "token".into(),
-                method: ControlMethod::PluginReload,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new("token", ControlCommand::PluginReload))
             .await;
-        assert!(response.ok);
-        let reload: PluginReloadResponse =
-            serde_json::from_value(response.result.expect("result")).expect("reload response");
+        let reload: PluginReloadResponse = control_result!(response, ControlResult::PluginReload);
         assert_eq!(reload.plugin_count, 1);
 
-        let plugins = inner.plugin_list();
         let plugins: PluginListResponse =
-            serde_json::from_value(plugins.result.expect("plugins")).expect("plugin list");
+            control_result!(inner.plugin_list(), ControlResult::PluginList);
         assert!(
             plugins
                 .plugins
@@ -3872,8 +3960,10 @@ mod tests {
             .start()
             .await
             .expect("runtime starts");
-        let response = runtime.inner.health_check().await;
-        let report: HealthReport = serde_json::from_value(response.result.unwrap()).unwrap();
+        let report: HealthReport = control_result!(
+            runtime.inner.health_check().await,
+            ControlResult::HealthCheck
+        );
         assert_eq!(report.components["test.component"]["status"], "ok");
         assert_eq!(report.components["test.component"]["ready"], true);
         runtime.shutdown().await;
@@ -3960,9 +4050,10 @@ mod tests {
             .expect("task submitted");
         let report = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
-                let response = runtime.inner.health_check().await;
-                let report: HealthReport =
-                    serde_json::from_value(response.result.unwrap()).unwrap();
+                let report: HealthReport = control_result!(
+                    runtime.inner.health_check().await,
+                    ControlResult::HealthCheck
+                );
                 if report.core == "degraded" {
                     break report;
                 }
@@ -4024,8 +4115,7 @@ mod tests {
         let health = tokio::time::timeout(Duration::from_secs(1), runtime.inner.health_check())
             .await
             .expect("health remains responsive while Core actor sleeps");
-        let report: HealthReport =
-            serde_json::from_value(health.result.expect("health report")).expect("health shape");
+        let report: HealthReport = control_result!(health, ControlResult::HealthCheck);
         assert_eq!(report.core, "ok");
         let after = runtime
             .inner
@@ -4154,55 +4244,56 @@ mod tests {
 
         let unauthorized_sources = runtime
             .inner
-            .handle_request(ControlRequest {
-                token: "wrong".into(),
-                method: ControlMethod::EventSourceList,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new(
+                "wrong",
+                ControlCommand::EventSourceList,
+            ))
             .await;
         assert_eq!(
-            unauthorized_sources.error.expect("unauthorized").code,
-            "unauthorized"
+            unauthorized_sources.error().expect("unauthorized").code,
+            ControlErrorCode::Unauthorized
         );
         let sources = runtime
             .inner
-            .handle_request(ControlRequest {
-                token: "test-token".into(),
-                method: ControlMethod::EventSourceList,
-                params: Value::Null,
-            })
+            .handle_request(ControlRequest::new(
+                "test-token",
+                ControlCommand::EventSourceList,
+            ))
             .await;
         let sources: Vec<mutsuki_service_control::EventSourceStatus> =
-            serde_json::from_value(sources.result.expect("sources")).expect("source statuses");
+            control_result!(sources, ControlResult::EventSourceList);
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].state, "running");
         assert_eq!(sources[0].health, "healthy");
         assert!(sources[0].last_event_unix_ms.is_some());
         assert!(sources[0].started_at_unix_ms.is_some());
 
-        let health = runtime.inner.health_check().await;
-        let health: HealthReport =
-            serde_json::from_value(health.result.expect("health")).expect("health report");
+        let health: HealthReport = control_result!(
+            runtime.inner.health_check().await,
+            ControlResult::HealthCheck
+        );
         assert_eq!(health.event_sources, "ok");
         assert_eq!(health.event_source_details[0].source_id, "mock-source");
 
         let reload = runtime.inner.plugin_reload().await;
-        assert!(reload.ok);
-        let reload: PluginReloadResponse =
-            serde_json::from_value(reload.result.expect("reload")).expect("reload response");
+        let reload: PluginReloadResponse = control_result!(reload, ControlResult::PluginReload);
         assert_eq!(reload.event_sources, "kept");
         assert_eq!(source_starts.load(Ordering::SeqCst), 1);
         assert_eq!(client_factory_count.load(Ordering::SeqCst), 2);
 
         let restart = runtime
             .inner
-            .handle_request(ControlRequest {
-                token: "test-token".into(),
-                method: ControlMethod::EventSourceRestart,
-                params: json!({ "id": "mock-source" }),
-            })
+            .handle_request(ControlRequest::new(
+                "test-token",
+                ControlCommand::EventSourceRestart(IdParam {
+                    id: "mock-source".into(),
+                }),
+            ))
             .await;
-        assert!(restart.ok);
+        assert!(matches!(
+            restart,
+            ControlResponse::Ok(ControlResult::EventSourceRestart)
+        ));
         wait_for_count(&terminal_count, 2).await;
         assert_eq!(client_checks.load(Ordering::SeqCst), 2);
         let sources = runtime.inner.event_sources.list();
@@ -4244,9 +4335,10 @@ mod tests {
         .await
         .expect("source fails");
 
-        let health = runtime.inner.health_check().await;
-        let health: HealthReport =
-            serde_json::from_value(health.result.expect("health")).expect("health report");
+        let health: HealthReport = control_result!(
+            runtime.inner.health_check().await,
+            ControlResult::HealthCheck
+        );
         assert_eq!(health.service, "ok");
         assert_eq!(health.core, "ok");
         assert_eq!(health.event_sources, "degraded");
@@ -4471,6 +4563,10 @@ mod tests {
         config.plugins.disabled_dir = root.join("disabled");
         let registry = test_builtin_registry();
         let catalog = load_catalog(&config, &registry).expect("catalog");
+        let mut components = PreparedComponentRegistry::default();
+        for record in registry.load_all().expect("builtin components").records {
+            components.register_manifest(record.manifest);
+        }
         let runtime_client = Arc::new(DeferredRuntimeClient::default());
         let host_runtime = boot_core(
             &config,
@@ -4490,18 +4586,12 @@ mod tests {
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor: RunnerSupervisor::new(),
             event_sources: EventSourceSupervisor::default(),
-            builtin_registry: registry,
-            native_runner_factories: Vec::new(),
-            async_handler_factories: Vec::new(),
-            loaded_plugin_factories: BTreeMap::new(),
-            health_probes: BTreeMap::new(),
+            components,
             runtime_client,
             deployment_state: Mutex::new(PluginDeploymentState {
                 version: deployment_state_version(),
                 plugins: BTreeMap::new(),
             }),
-            runner_limits: BTreeMap::new(),
-            runner_limit_factories: Vec::new(),
             shutdown_tx: Mutex::new(None),
         }
     }

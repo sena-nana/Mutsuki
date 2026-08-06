@@ -145,7 +145,7 @@ async fn serve_connection(
     let response = handler.handle(request).await;
     let _ = send_json(
         connection,
-        &LinkControlServerFrame::ControlResponse(response),
+        &LinkControlServerFrame::ControlResponse(Box::new(response)),
     )
     .await;
 }
@@ -196,7 +196,7 @@ async fn relay_quic(
         .await
         .map_err(|error| format!("{STANDALONE_LINK_PROTOCOL_ERROR}: recv: {error}"))?
     {
-        LinkControlServerFrame::ControlResponse(response) => Ok(response),
+        LinkControlServerFrame::ControlResponse(response) => Ok(*response),
         LinkControlServerFrame::Rejected { code, message } => {
             Err(format!("{STANDALONE_LINK_REJECTED}: {code:?}: {message}"))
         }
@@ -209,8 +209,8 @@ mod tests {
 
     use mutsuki_link_quic::{QuicConnector, QuicListener, QuicOptions};
     use mutsuki_service_control::{
-        ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest,
-        ControlResponse, HealthReport,
+        ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest,
+        ControlResponse, ControlResult, HealthReport,
     };
     use rustls::RootCertStore;
 
@@ -226,18 +226,23 @@ mod tests {
                 if request.token != "local-dev" {
                     return ControlResponse::err(ControlError::Unauthorized);
                 }
-                match request.method {
-                    ControlMethod::HealthCheck => ControlResponse::ok(HealthReport {
-                        service: "ok".into(),
-                        core: "ok".into(),
-                        plugins: "ok".into(),
-                        runners: "ok".into(),
-                        event_sources: "ok".into(),
-                        event_source_details: Vec::new(),
-                        recent_errors: Vec::new(),
-                        components: Default::default(),
-                    }),
-                    other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
+                match request.command {
+                    ControlCommand::HealthCheck => {
+                        ControlResponse::ok(ControlResult::HealthCheck(HealthReport {
+                            service: "ok".into(),
+                            core: "ok".into(),
+                            plugins: "ok".into(),
+                            runners: "ok".into(),
+                            event_sources: "ok".into(),
+                            event_source_details: Vec::new(),
+                            recent_errors: Vec::new(),
+                            components: Default::default(),
+                        }))
+                    }
+                    other => ControlResponse::err(ControlError::Unsupported(format!(
+                        "{:?}",
+                        other.method()
+                    ))),
                 }
             })
         }
@@ -292,11 +297,7 @@ mod tests {
         let mut server_conn = server_conn.unwrap();
         let mut client_conn = client_conn.unwrap();
 
-        let request = ControlRequest {
-            token: "local-dev".into(),
-            method: ControlMethod::HealthCheck,
-            params: serde_json::Value::Null,
-        };
+        let request = ControlRequest::new("local-dev", ControlCommand::HealthCheck);
         send_json(
             &mut client_conn,
             &LinkControlClientFrame::ControlRequest(request),
@@ -310,7 +311,7 @@ mod tests {
         let response = HealthHandler.handle(received).await;
         send_json(
             &mut server_conn,
-            &LinkControlServerFrame::ControlResponse(response),
+            &LinkControlServerFrame::ControlResponse(Box::new(response)),
         )
         .await
         .expect("server send");
@@ -320,8 +321,10 @@ mod tests {
         let LinkControlServerFrame::ControlResponse(response) = frame else {
             panic!("expected control response");
         };
-        assert!(response.ok, "{response:?}");
-        assert_eq!(response.result.unwrap()["service"], "ok");
+        let ControlResponse::Ok(ControlResult::HealthCheck(report)) = *response else {
+            panic!("unexpected response: {response:?}");
+        };
+        assert_eq!(report.service, "ok");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -337,12 +340,14 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let client = QuicLinkControlHandler::new(server.local_addr(), "localhost", client_config);
         let response = client
-            .handle(ControlRequest {
-                token: "local-dev".into(),
-                method: ControlMethod::HealthCheck,
-                params: serde_json::Value::Null,
-            })
+            .handle(ControlRequest::new(
+                "local-dev",
+                ControlCommand::HealthCheck,
+            ))
             .await;
-        assert!(response.ok, "{response:?}");
+        assert!(matches!(
+            response,
+            ControlResponse::Ok(ControlResult::HealthCheck(_))
+        ));
     }
 }

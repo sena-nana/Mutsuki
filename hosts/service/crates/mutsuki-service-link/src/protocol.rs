@@ -21,7 +21,7 @@ pub enum LinkControlClientFrame {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum LinkControlServerFrame {
-    ControlResponse(ControlResponse),
+    ControlResponse(Box<ControlResponse>),
     Rejected {
         code: LinkControlRejectCode,
         message: String,

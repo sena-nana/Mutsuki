@@ -7,7 +7,9 @@ use std::time::Instant;
 use mutsuki_runtime_contracts::{ArtifactType, PluginArtifact, Task, TaskBatch};
 use mutsuki_service_benchmarks::{FixtureRunner, PLUGIN_ID, fixture_manifest_for};
 use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
-use mutsuki_service_control::{ControlMethod, TaskSubmitBatchParam, TaskSubmitBatchResponse};
+use mutsuki_service_control::{
+    ControlCommand, ControlResponse, ControlResult, TaskSubmitBatchParam, TaskWaitParam,
+};
 use mutsuki_service_ipc::{ControlClient, ControlClientConfig};
 use mutsuki_service_plugin_loader::{ExternalRuntimeSpec, PluginToml};
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
@@ -114,7 +116,10 @@ async fn run_sample(
     let client = ControlClient::new(ControlClientConfig::from(&prepared.config));
 
     let health = Instant::now();
-    checked_request(&client, ControlMethod::HealthCheck, Value::Null).await?;
+    match checked_request(&client, ControlCommand::HealthCheck).await? {
+        ControlResult::HealthCheck(_) => {}
+        result => return Err(unexpected_control_result(&result)),
+    }
     let health_ipc_ns = health.elapsed().as_nanos() as f64;
 
     let echo = Instant::now();
@@ -146,7 +151,10 @@ async fn run_sample(
     }
 
     let reload = Instant::now();
-    checked_request(&client, ControlMethod::PluginReload, Value::Null).await?;
+    match checked_request(&client, ControlCommand::PluginReload).await? {
+        ControlResult::PluginReload(_) => {}
+        result => return Err(unexpected_control_result(&result)),
+    }
     let reload_ns = reload.elapsed().as_nanos() as f64;
 
     let shutdown = Instant::now();
@@ -369,32 +377,31 @@ async fn execute_fixture(
 ) -> Result<Value, String> {
     let submitted = checked_request(
         client,
-        ControlMethod::TaskSubmitBatch,
-        serde_json::to_value(TaskSubmitBatchParam {
+        ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
             batch: TaskBatch::one(
                 format!("batch-{task_id}"),
                 Task::new(task_id, protocol, payload),
             ),
-        })
-        .map_err(|error| error.to_string())?,
+        }),
     )
     .await?;
-    let submitted: TaskSubmitBatchResponse =
-        serde_json::from_value(submitted).map_err(|error| error.to_string())?;
+    let ControlResult::TaskSubmitBatch(submitted) = submitted else {
+        return Err(unexpected_control_result(&submitted));
+    };
     if submitted.handles.len() != 1 {
         return Err("submission returned an unexpected handle count".into());
     }
     let wait = checked_request(
         client,
-        ControlMethod::TaskWait,
-        json!({
-            "ids": [task_id],
-            "timeout_ms": 5_000,
+        ControlCommand::TaskWait(TaskWaitParam {
+            ids: vec![task_id.into()],
+            timeout_ms: 5_000,
         }),
     )
     .await?;
-    let wait: mutsuki_service_control::TaskWaitResponse =
-        serde_json::from_value(wait).map_err(|error| error.to_string())?;
+    let ControlResult::TaskWait(wait) = wait else {
+        return Err(unexpected_control_result(&wait));
+    };
     let outcome = wait
         .outcomes
         .into_iter()
@@ -429,20 +436,19 @@ async fn run_task_wave(client: &ControlClient, prefix: &str, tasks: usize) -> Re
     }
     let submitted = checked_request(
         client,
-        ControlMethod::TaskSubmitBatch,
-        serde_json::to_value(TaskSubmitBatchParam {
+        ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
             batch: TaskBatch {
                 batch_id: format!("batch-{prefix}"),
                 tick_id: None,
                 tasks: batch_tasks,
                 resource_plan: None,
             },
-        })
-        .map_err(|error| error.to_string())?,
+        }),
     )
     .await?;
-    let submitted: TaskSubmitBatchResponse =
-        serde_json::from_value(submitted).map_err(|error| error.to_string())?;
+    let ControlResult::TaskSubmitBatch(submitted) = submitted else {
+        return Err(unexpected_control_result(&submitted));
+    };
     if submitted.handles.len() != tasks {
         return Err(format!(
             "wave submitted {} handles, expected {tasks}",
@@ -465,8 +471,7 @@ async fn run_sustained_inflight(
             let task_id = format!("{prefix}-{next_id}");
             let submitted = checked_request(
                 client,
-                ControlMethod::TaskSubmitBatch,
-                serde_json::to_value(TaskSubmitBatchParam {
+                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         format!("batch-{task_id}"),
                         Task::new(
@@ -475,12 +480,12 @@ async fn run_sustained_inflight(
                             json!({"message": "sustained", "sequence": next_id}),
                         ),
                     ),
-                })
-                .map_err(|error| error.to_string())?,
+                }),
             )
             .await?;
-            let submitted: TaskSubmitBatchResponse =
-                serde_json::from_value(submitted).map_err(|error| error.to_string())?;
+            let ControlResult::TaskSubmitBatch(submitted) = submitted else {
+                return Err(unexpected_control_result(&submitted));
+            };
             if submitted.handles.len() != 1 {
                 return Err("sustained submit returned unexpected handle count".into());
             }
@@ -499,15 +504,15 @@ async fn wait_task_ids(client: &ControlClient, ids: &[String]) -> Result<(), Str
     }
     let wait = checked_request(
         client,
-        ControlMethod::TaskWait,
-        json!({
-            "ids": ids,
-            "timeout_ms": 10_000,
+        ControlCommand::TaskWait(TaskWaitParam {
+            ids: ids.to_vec(),
+            timeout_ms: 10_000,
         }),
     )
     .await?;
-    let wait: mutsuki_service_control::TaskWaitResponse =
-        serde_json::from_value(wait).map_err(|error| error.to_string())?;
+    let ControlResult::TaskWait(wait) = wait else {
+        return Err(unexpected_control_result(&wait));
+    };
     if wait.outcomes.len() != ids.len() {
         return Err(format!(
             "task wait returned {} outcomes, expected {}",
@@ -531,21 +536,20 @@ async fn wait_task_ids(client: &ControlClient, ids: &[String]) -> Result<(), Str
 
 async fn checked_request(
     client: &ControlClient,
-    method: ControlMethod,
-    params: Value,
-) -> Result<Value, String> {
+    command: ControlCommand,
+) -> Result<ControlResult, String> {
     let response = client
-        .request(method, params)
+        .request(command)
         .await
         .map_err(|error| error.to_string())?;
-    if response.ok {
-        Ok(response.result.unwrap_or(Value::Null))
-    } else {
-        Err(response
-            .error
-            .map(|error| format!("{}: {}", error.code, error.message))
-            .unwrap_or_else(|| "control request failed without an error".into()))
+    match response {
+        ControlResponse::Ok(result) => Ok(result),
+        ControlResponse::Error(error) => Err(format!("{}: {}", error.code, error.message)),
     }
+}
+
+fn unexpected_control_result(result: &ControlResult) -> String {
+    format!("unexpected control response: {:?}", result.method())
 }
 
 fn build_report(

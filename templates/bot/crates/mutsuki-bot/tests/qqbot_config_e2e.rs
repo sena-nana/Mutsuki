@@ -3,13 +3,12 @@ mod support;
 use std::time::Duration;
 
 use mutsuki_bot::assemble_service;
-use mutsuki_service_control::ControlMethod;
 use tempfile::tempdir;
 use tokio::net::TcpListener;
 
 use support::{
-    IpcConfig, assert_gateway_health, assert_gateway_only_task_surface, control, fake_qq_product,
-    gateway_ready,
+    IpcConfig, assert_gateway_health, assert_gateway_only_task_surface, fake_qq_product,
+    gateway_ready, task_list, try_health,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -32,7 +31,7 @@ async fn external_config_runs_real_service_runtime_through_fake_qq_boundaries() 
     let runtime = assemble_service(service).unwrap().start().await.unwrap();
     let health = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            let health = control(&control_config, ControlMethod::HealthCheck).await;
+            let health = try_health(&control_config).await.unwrap();
             if gateway_ready(&health) {
                 break health;
             }
@@ -43,7 +42,7 @@ async fn external_config_runs_real_service_runtime_through_fake_qq_boundaries() 
     .expect("configured QQ Gateway becomes healthy");
     assert_gateway_health(&health);
 
-    let tasks = control(&control_config, ControlMethod::TaskList).await;
+    let tasks = task_list(&control_config).await;
     assert_gateway_only_task_surface(&tasks);
 
     runtime.shutdown().await;

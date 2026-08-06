@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore, watch};
 use tokio::task::JoinHandle;
 
-use crate::codec::{ControlRequestBody, encode_binary_response_with_scratch};
+use crate::codec::{decode_binary_request, encode_binary_response_with_scratch};
 use crate::error::{IpcError, IpcResult};
 use crate::frame::{FrameFlags, OPCODE_CANCEL};
 use crate::io::{read_frame_prefix, read_payload_or_discard, write_all_flush};
@@ -143,35 +143,25 @@ where
                 return Err(IpcError::UnknownOpcode(header.opcode));
             }
         };
-        let body: ControlRequestBody = {
-            let mut deserializer = rmp_serde::Deserializer::new(payload.as_slice());
-            deserializer.set_max_depth(limits.max_msgpack_nesting_depth);
-            match serde::Deserialize::deserialize(&mut deserializer) {
-                Ok(body) => body,
-                Err(error) => {
-                    drop(permit);
-                    let response =
-                        ControlResponse::err(ControlError::BadRequest(error.to_string()));
-                    let mut encode_buf = Vec::new();
-                    let mut payload_buf = Vec::new();
-                    encode_binary_response_with_scratch(
-                        header.request_id,
-                        method,
-                        &response,
-                        limits,
-                        &mut encode_buf,
-                        &mut payload_buf,
-                    )?;
-                    let mut guard = writer.lock().await;
-                    write_all_flush(&mut *guard, &encode_buf).await?;
-                    continue;
-                }
+        let request = match decode_binary_request(method, &payload, limits) {
+            Ok(request) => request,
+            Err(error) => {
+                drop(permit);
+                let response = ControlResponse::err(ControlError::BadRequest(error.to_string()));
+                let mut encode_buf = Vec::new();
+                let mut payload_buf = Vec::new();
+                encode_binary_response_with_scratch(
+                    header.request_id,
+                    method,
+                    &response,
+                    limits,
+                    &mut encode_buf,
+                    &mut payload_buf,
+                )?;
+                let mut guard = writer.lock().await;
+                write_all_flush(&mut *guard, &encode_buf).await?;
+                continue;
             }
-        };
-        let request = ControlRequest {
-            token: body.token,
-            method,
-            params: body.params,
         };
         let request_id = header.request_id;
         let (abort_tx, abort_rx) = watch::channel(false);
@@ -219,7 +209,7 @@ async fn dispatch_request(
     mutate_lock: Arc<Mutex<()>>,
     mut abort_rx: watch::Receiver<bool>,
 ) -> ControlResponse {
-    let _guard: Option<OwnedMutexGuard<()>> = if request.method.is_mutating() {
+    let _guard: Option<OwnedMutexGuard<()>> = if request.method().is_mutating() {
         Some(mutate_lock.lock_owned().await)
     } else {
         None
