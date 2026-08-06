@@ -98,7 +98,7 @@ async fn serve_connection(handler: &Arc<dyn ControlHandler>, connection: &mut Lo
     let response = handler.handle(request).await;
     let _ = send_json(
         connection,
-        &LinkControlServerFrame::ControlResponse(response),
+        &LinkControlServerFrame::ControlResponse(Box::new(response)),
     )
     .await;
     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -113,8 +113,8 @@ mod tests {
         AppId, SessionIdentity, connect, endpoint_id_for_app, local_address_for_app,
     };
     use mutsuki_service_control::{
-        ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest,
-        ControlResponse, HealthReport,
+        ControlCommand, ControlError, ControlErrorCode, ControlFuture, ControlHandler,
+        ControlRequest, ControlResponse, ControlResult, HealthReport,
     };
     use tempfile::tempdir;
 
@@ -129,18 +129,23 @@ mod tests {
                 if request.token != "local-dev" {
                     return ControlResponse::err(ControlError::Unauthorized);
                 }
-                match request.method {
-                    ControlMethod::HealthCheck => ControlResponse::ok(HealthReport {
-                        service: "ok".into(),
-                        core: "ok".into(),
-                        plugins: "ok".into(),
-                        runners: "ok".into(),
-                        event_sources: "ok".into(),
-                        event_source_details: Vec::new(),
-                        recent_errors: Vec::new(),
-                        components: Default::default(),
-                    }),
-                    other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
+                match request.command {
+                    ControlCommand::HealthCheck => {
+                        ControlResponse::ok(ControlResult::HealthCheck(HealthReport {
+                            service: "ok".into(),
+                            core: "ok".into(),
+                            plugins: "ok".into(),
+                            runners: "ok".into(),
+                            event_sources: "ok".into(),
+                            event_source_details: Vec::new(),
+                            recent_errors: Vec::new(),
+                            components: Default::default(),
+                        }))
+                    }
+                    other => ControlResponse::err(ControlError::Unsupported(format!(
+                        "{:?}",
+                        other.method()
+                    ))),
                 }
             })
         }
@@ -172,11 +177,10 @@ mod tests {
         .unwrap();
         send_json(
             &mut connection,
-            &LinkControlClientFrame::ControlRequest(ControlRequest {
-                token: "local-dev".into(),
-                method: ControlMethod::HealthCheck,
-                params: serde_json::Value::Null,
-            }),
+            &LinkControlClientFrame::ControlRequest(ControlRequest::new(
+                "local-dev",
+                ControlCommand::HealthCheck,
+            )),
         )
         .await
         .unwrap();
@@ -186,8 +190,10 @@ mod tests {
         let LinkControlServerFrame::ControlResponse(response) = frame else {
             panic!("unexpected frame");
         };
-        assert!(response.ok);
-        assert_eq!(response.result.unwrap()["service"], "ok");
+        let ControlResponse::Ok(ControlResult::HealthCheck(report)) = *response else {
+            panic!("unexpected response: {response:?}");
+        };
+        assert_eq!(report.service, "ok");
 
         let mut bad_connection = connect(
             &address,
@@ -200,11 +206,10 @@ mod tests {
         .unwrap();
         send_json(
             &mut bad_connection,
-            &LinkControlClientFrame::ControlRequest(ControlRequest {
-                token: "wrong".into(),
-                method: ControlMethod::HealthCheck,
-                params: serde_json::Value::Null,
-            }),
+            &LinkControlClientFrame::ControlRequest(ControlRequest::new(
+                "wrong",
+                ControlCommand::HealthCheck,
+            )),
         )
         .await
         .unwrap();
@@ -214,8 +219,10 @@ mod tests {
         let LinkControlServerFrame::ControlResponse(response) = frame else {
             panic!("unexpected frame");
         };
-        assert!(!response.ok);
-        assert_eq!(response.error.unwrap().code, "unauthorized");
+        assert_eq!(
+            response.error().expect("unauthorized").code,
+            ControlErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -250,11 +257,10 @@ mod tests {
                     .unwrap();
                     send_json(
                         &mut connection,
-                        &LinkControlClientFrame::ControlRequest(ControlRequest {
-                            token: "local-dev".into(),
-                            method: ControlMethod::HealthCheck,
-                            params: serde_json::Value::Null,
-                        }),
+                        &LinkControlClientFrame::ControlRequest(ControlRequest::new(
+                            "local-dev",
+                            ControlCommand::HealthCheck,
+                        )),
                     )
                     .await
                     .unwrap();
@@ -268,6 +274,9 @@ mod tests {
         let LinkControlServerFrame::ControlResponse(response) = frame else {
             panic!("unexpected frame");
         };
-        assert!(response.ok);
+        assert!(matches!(
+            *response,
+            ControlResponse::Ok(ControlResult::HealthCheck(_))
+        ));
     }
 }

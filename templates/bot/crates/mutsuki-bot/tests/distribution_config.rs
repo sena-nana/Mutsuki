@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use mutsuki_bot::{assemble_service, prepare_distribution, validate_distribution_config};
 use mutsuki_distributed_contracts::DistributionMode;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::ControlMethod;
+use mutsuki_service_control::{ControlCommand, ControlResponse, ControlResult};
 use tempfile::tempdir;
 
 fn workspace_root() -> PathBuf {
@@ -204,16 +204,14 @@ async fn explicit_fast_fallback_starts_only_as_visible_degraded_local_execution(
         .await
         .unwrap();
     let response = mutsuki_service_ipc::ControlClient::new((&control_config).into())
-        .request(ControlMethod::HealthCheck, serde_json::Value::Null)
+        .request(ControlCommand::HealthCheck)
         .await
         .unwrap();
-    assert!(response.ok);
-    let health = response.result.unwrap();
-    assert_eq!(health["components"]["distribution"]["state"], "degraded");
-    assert_eq!(
-        health["components"]["distribution"]["remote_execution"],
-        false
-    );
+    let ControlResponse::Ok(ControlResult::HealthCheck(health)) = response else {
+        panic!("unexpected response: {response:?}");
+    };
+    assert_eq!(health.components["distribution"]["state"], "degraded");
+    assert_eq!(health.components["distribution"]["remote_execution"], false);
     runtime.shutdown().await;
     let monitor = distribution.start_monitor();
     assert!(monitor.is_some());

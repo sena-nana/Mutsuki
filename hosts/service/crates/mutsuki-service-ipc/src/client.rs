@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use mutsuki_service_control::{ControlMethod, ControlRequest, ControlResponse};
-use serde_json::Value;
+use mutsuki_service_control::{ControlCommand, ControlRequest, ControlResponse};
 use tokio::sync::Mutex;
 
 use crate::error::IpcResult;
@@ -33,17 +32,9 @@ impl ControlClient {
         Ok(())
     }
 
-    pub async fn request(
-        &self,
-        method: ControlMethod,
-        params: Value,
-    ) -> IpcResult<ControlResponse> {
-        self.send(ControlRequest {
-            token: self.config.token.clone(),
-            method,
-            params,
-        })
-        .await
+    pub async fn request(&self, command: ControlCommand) -> IpcResult<ControlResponse> {
+        self.send(ControlRequest::new(self.config.token.clone(), command))
+            .await
     }
 
     /// Reuse a persistent session; reconnect once on disconnect.
@@ -69,18 +60,10 @@ impl ControlClient {
     }
 
     /// Explicit one-shot compatibility API for migration callers and benchmarks.
-    pub async fn request_oneshot(
-        &self,
-        method: ControlMethod,
-        params: Value,
-    ) -> IpcResult<ControlResponse> {
+    pub async fn request_oneshot(&self, command: ControlCommand) -> IpcResult<ControlResponse> {
         request_oneshot(
             &self.config,
-            ControlRequest {
-                token: self.config.token.clone(),
-                method,
-                params,
-            },
+            ControlRequest::new(self.config.token.clone(), command),
         )
         .await
     }

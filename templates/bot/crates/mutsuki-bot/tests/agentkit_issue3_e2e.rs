@@ -16,9 +16,11 @@ use mutsuki_plugin_agent_model_gateway::{ModelProvider, ModelProviderFuture};
 use mutsuki_runtime_contracts::{PluginManifest, RunnerResult, Task, TaskBatch};
 use mutsuki_runtime_sdk::{PluginBuilder, ProtocolSpec, SdkProtocol, TaskAwaitRunnerAdapter};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::{ControlMethod, TaskOutcomeView, TaskSubmitBatchParam};
+use mutsuki_service_control::{
+    ControlCommand, ControlResponse, ControlResult, IdParam, TaskOutcomeView, TaskSubmitBatchParam,
+};
 use mutsuki_service_ipc::ControlClient;
-use serde_json::{Value, json};
+use serde_json::json;
 use tempfile::tempdir;
 
 const TEST_PLUGIN_ID: &str = "mutsuki.test.agent.targets";
@@ -462,10 +464,15 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     })
     .await;
     let cancelled = client
-        .request(ControlMethod::TaskCancel, json!({"id": cancel_id}))
+        .request(ControlCommand::TaskCancel(IdParam {
+            id: cancel_id.into(),
+        }))
         .await
         .unwrap();
-    assert!(cancelled.ok, "cancel failed: {:?}", cancelled.error);
+    assert!(matches!(
+        cancelled,
+        ControlResponse::Ok(ControlResult::TaskCancel)
+    ));
     let cancelled = wait_outcome(&client, cancel_id).await;
     assert_eq!(cancelled.status, "cancelled");
     wait_until("cancel provider drop", || {
@@ -526,33 +533,31 @@ async fn submit(
         ),
     };
     let response = client
-        .request(
-            ControlMethod::TaskSubmitBatch,
-            serde_json::to_value(request).unwrap(),
-        )
+        .request(ControlCommand::TaskSubmitBatch(request))
         .await
         .unwrap();
-    assert!(response.ok, "submit failed: {:?}", response.error);
+    assert!(matches!(
+        response,
+        ControlResponse::Ok(ControlResult::TaskSubmitBatch(_))
+    ));
 }
 
 async fn wait_outcome(client: &ControlClient, task_id: &str) -> TaskOutcomeView {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let response = client
-            .request(ControlMethod::TaskOutcome, json!({"id": task_id}))
+            .request(ControlCommand::TaskOutcome(IdParam { id: task_id.into() }))
             .await
             .unwrap();
-        assert!(response.ok, "outcome failed: {:?}", response.error);
-        let outcome: TaskOutcomeView = serde_json::from_value(response.result.unwrap()).unwrap();
+        let ControlResponse::Ok(ControlResult::TaskOutcome(outcome)) = response else {
+            panic!("outcome failed: {response:?}");
+        };
         if outcome.status != "pending" {
             return outcome;
         }
         if tokio::time::Instant::now() >= deadline {
-            let tasks = client
-                .request(ControlMethod::TaskList, Value::Null)
-                .await
-                .unwrap();
-            panic!("task {task_id} timed out: {:?}", tasks.result);
+            let tasks = client.request(ControlCommand::TaskList).await.unwrap();
+            panic!("task {task_id} timed out: {tasks:?}");
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

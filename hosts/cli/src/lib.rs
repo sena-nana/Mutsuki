@@ -8,7 +8,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use mutsuki_service_control::{
-    ControlErrorBody, ControlMethod, HealthReport, LogTailParams, LogTailResponse, ServiceStatus,
+    ControlCommand, ControlErrorBody, ControlResponse, ControlResult, HealthReport, LogTailParams,
+    LogTailResponse, ServiceStatus,
 };
 use mutsuki_service_ipc::ControlClient;
 use ratatui::Terminal;
@@ -16,8 +17,6 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
 
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -208,8 +207,14 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &CliApp) {
 }
 
 async fn refresh_status(client: &ControlClient, app: &mut CliApp) -> anyhow::Result<()> {
-    let status = request_control(client, ControlMethod::ServiceStatus, Value::Null).await?;
-    let health = request_control(client, ControlMethod::HealthCheck, Value::Null).await?;
+    let status = match request_control(client, ControlCommand::ServiceStatus).await? {
+        ControlResult::ServiceStatus(status) => status,
+        result => return Err(unexpected_result(&result)),
+    };
+    let health = match request_control(client, ControlCommand::HealthCheck).await? {
+        ControlResult::HealthCheck(health) => health,
+        result => return Err(unexpected_result(&result)),
+    };
     app.status = Some(status);
     app.health = Some(health);
     app.last_error = None;
@@ -221,37 +226,39 @@ async fn refresh_logs(
     app: &mut CliApp,
     lines: Option<usize>,
 ) -> anyhow::Result<()> {
-    let response = request_control(
+    let response = match request_control(
         client,
-        ControlMethod::LogTail,
-        json!(LogTailParams {
+        ControlCommand::LogTail(LogTailParams {
             cursor: app.log_cursor,
             lines,
             filters: Default::default(),
         }),
     )
-    .await?;
+    .await?
+    {
+        ControlResult::LogTail(response) => response,
+        result => return Err(unexpected_result(&result)),
+    };
     app.apply_log_tail(response);
     Ok(())
 }
 
-async fn request_control<T: DeserializeOwned>(
+async fn request_control(
     client: &ControlClient,
-    method: ControlMethod,
-    params: Value,
-) -> anyhow::Result<T> {
-    let response = client.request(method, params).await?;
-    if !response.ok {
-        return Err(control_error(response.error));
+    command: ControlCommand,
+) -> anyhow::Result<ControlResult> {
+    match client.request(command).await? {
+        ControlResponse::Ok(result) => Ok(result),
+        ControlResponse::Error(error) => Err(control_error(error)),
     }
-    serde_json::from_value(response.result.unwrap_or(Value::Null)).map_err(Into::into)
 }
 
-fn control_error(error: Option<ControlErrorBody>) -> anyhow::Error {
-    match error {
-        Some(error) => anyhow::anyhow!("{}: {}", error.code, error.message),
-        None => anyhow::anyhow!("control request failed"),
-    }
+fn control_error(error: ControlErrorBody) -> anyhow::Error {
+    anyhow::anyhow!("{}: {}", error.code, error.message)
+}
+
+fn unexpected_result(result: &ControlResult) -> anyhow::Error {
+    anyhow::anyhow!("control response type mismatch for {:?}", result.method())
 }
 
 #[cfg(test)]

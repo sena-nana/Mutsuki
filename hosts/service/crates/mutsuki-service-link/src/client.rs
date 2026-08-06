@@ -92,7 +92,7 @@ async fn relay_request(app_id: &str, request: ControlRequest) -> Result<ControlR
         .await
         .map_err(|error| format!("{STANDALONE_LINK_PROTOCOL_ERROR}: {error}"))?
     {
-        LinkControlServerFrame::ControlResponse(response) => Ok(response),
+        LinkControlServerFrame::ControlResponse(response) => Ok(*response),
         LinkControlServerFrame::Rejected { code, message } => {
             Err(format!("{STANDALONE_LINK_REJECTED}: {code:?}: {message}"))
         }
@@ -104,8 +104,8 @@ mod tests {
     use std::sync::Arc;
 
     use mutsuki_service_control::{
-        ControlError, ControlFuture, ControlHandler, ControlMethod, ControlRequest,
-        ControlResponse, HealthReport,
+        ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest,
+        ControlResponse, ControlResult, HealthReport,
     };
     use tempfile::tempdir;
 
@@ -120,18 +120,23 @@ mod tests {
                 if request.token != "local-dev" {
                     return ControlResponse::err(ControlError::Unauthorized);
                 }
-                match request.method {
-                    ControlMethod::HealthCheck => ControlResponse::ok(HealthReport {
-                        service: "ok".into(),
-                        core: "ok".into(),
-                        plugins: "ok".into(),
-                        runners: "ok".into(),
-                        event_sources: "ok".into(),
-                        event_source_details: Vec::new(),
-                        recent_errors: Vec::new(),
-                        components: Default::default(),
-                    }),
-                    other => ControlResponse::err(ControlError::Unsupported(format!("{other:?}"))),
+                match request.command {
+                    ControlCommand::HealthCheck => {
+                        ControlResponse::ok(ControlResult::HealthCheck(HealthReport {
+                            service: "ok".into(),
+                            core: "ok".into(),
+                            plugins: "ok".into(),
+                            runners: "ok".into(),
+                            event_sources: "ok".into(),
+                            event_source_details: Vec::new(),
+                            recent_errors: Vec::new(),
+                            components: Default::default(),
+                        }))
+                    }
+                    other => ControlResponse::err(ControlError::Unsupported(format!(
+                        "{:?}",
+                        other.method()
+                    ))),
                 }
             })
         }
@@ -147,14 +152,15 @@ mod tests {
 
         let client = LinkControlHandler::service_host();
         let response = client
-            .handle(ControlRequest {
-                token: "local-dev".into(),
-                method: ControlMethod::HealthCheck,
-                params: serde_json::Value::Null,
-            })
+            .handle(ControlRequest::new(
+                "local-dev",
+                ControlCommand::HealthCheck,
+            ))
             .await;
-        assert!(response.ok, "{response:?}");
-        assert_eq!(response.result.unwrap()["service"], "ok");
+        let ControlResponse::Ok(ControlResult::HealthCheck(report)) = response else {
+            panic!("unexpected response: {response:?}");
+        };
+        assert_eq!(report.service, "ok");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -162,14 +168,12 @@ mod tests {
         let _guard = crate::LINK_TEST_LOCK.lock().await;
         let client = LinkControlHandler::for_app("mutsuki.nolink.test");
         let response = client
-            .handle(ControlRequest {
-                token: "local-dev".into(),
-                method: ControlMethod::HealthCheck,
-                params: serde_json::Value::Null,
-            })
+            .handle(ControlRequest::new(
+                "local-dev",
+                ControlCommand::HealthCheck,
+            ))
             .await;
-        assert!(!response.ok);
-        let message = response.error.unwrap().message;
+        let message = response.error().expect("link failure").message.clone();
         assert!(
             message.contains(STANDALONE_LINK_CONNECT_FAILED),
             "{message}"

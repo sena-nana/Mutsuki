@@ -9,7 +9,7 @@ use mutsuki_plugin_bot_event_router::BOT_EVENT_ROUTER_PLUGIN_ID;
 use mutsuki_service_config::{
     ConfigOverrides, ConfiguredPluginSelection, IpcTransport, ServiceConfig,
 };
-use mutsuki_service_control::ControlMethod;
+use mutsuki_service_control::{ControlCommand, ControlResponse, ControlResult, HealthReport};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -67,8 +67,12 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
     assert_eq!(sends[0]["content"], "hello");
     assert_eq!(sends[1]["content"], "pong");
 
-    let plugins = control(&control_config, ControlMethod::PluginList).await;
-    let plugin_json = plugins.to_string();
+    let ControlResult::PluginList(plugins) =
+        control(&control_config, ControlCommand::PluginList).await
+    else {
+        panic!("unexpected plugin response");
+    };
+    let plugin_json = serde_json::to_string(&plugins).unwrap();
     for id in [
         QQBOT_ADAPTER_PLUGIN_ID,
         BOT_EVENT_ROUTER_PLUGIN_ID,
@@ -77,33 +81,44 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
     ] {
         assert!(plugin_json.contains(id), "missing configured plugin {id}");
     }
-    let mut last_health = Value::Null;
+    let mut last_health: Option<HealthReport> = None;
     let health = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            last_health = control(&control_config, ControlMethod::HealthCheck).await;
-            if last_health["event_sources"] == "ok" {
-                break last_health.clone();
+            let ControlResult::HealthCheck(health) =
+                control(&control_config, ControlCommand::HealthCheck).await
+            else {
+                panic!("unexpected health response");
+            };
+            let ready = health.event_sources == "ok";
+            last_health = Some(health);
+            if ready {
+                break last_health.clone().unwrap();
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .unwrap_or_else(|_| panic!("QQ Gateway health becomes ready; last health: {last_health}"));
-    assert_eq!(health["service"], "ok");
-    assert_eq!(health["event_sources"], "ok");
+    .unwrap_or_else(|_| panic!("QQ Gateway health becomes ready; last health: {last_health:?}"));
+    assert_eq!(health.service, "ok");
+    assert_eq!(health.event_sources, "ok");
     assert_eq!(
-        health["components"]["mutsuki.bot.qqbot.gateway:integration"]["connected"],
+        health.components["mutsuki.bot.qqbot.gateway:integration"]["connected"],
         true
     );
-    let task_json = control(&control_config, ControlMethod::TaskList)
-        .await
-        .to_string();
+    let ControlResult::TaskList(tasks) = control(&control_config, ControlCommand::TaskList).await
+    else {
+        panic!("unexpected task list response");
+    };
+    let task_json = serde_json::to_string(&tasks).unwrap();
     assert!(task_json.contains("echo-1"));
     assert!(task_json.contains("ping-1"));
     assert!(!task_json.contains("TEST_CLIENT_SECRET"));
     assert!(!task_json.contains("TEST_ACCESS_TOKEN"));
 
-    control(&control_config, ControlMethod::ServiceShutdown).await;
+    assert!(matches!(
+        control(&control_config, ControlCommand::ServiceShutdown).await,
+        ControlResult::ServiceShutdown
+    ));
     runtime
         .run_until_shutdown_signal(std::future::pending::<String>())
         .await
@@ -230,9 +245,10 @@ async fn test_service_config() -> (ServiceConfig, tempfile::TempDir) {
     (service, home)
 }
 
-async fn control(config: &ServiceConfig, method: ControlMethod) -> Value {
+async fn control(config: &ServiceConfig, command: ControlCommand) -> ControlResult {
     let client = mutsuki_service_ipc::ControlClient::new(config.into());
-    let response = client.request(method, Value::Null).await.unwrap();
-    assert!(response.ok, "control failed: {:?}", response.error);
-    response.result.unwrap_or(Value::Null)
+    match client.request(command).await.unwrap() {
+        ControlResponse::Ok(result) => result,
+        response => panic!("control failed: {response:?}"),
+    }
 }

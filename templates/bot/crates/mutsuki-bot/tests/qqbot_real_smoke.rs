@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use mutsuki_bot::{assemble_service, repository_local_config_path};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::ControlMethod;
-use serde_json::Value;
+use mutsuki_service_control::{ControlCommand, ControlResponse, ControlResult, HealthReport};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires ignored local QQBot config and secret files"]
@@ -31,8 +30,8 @@ async fn real_qqbot_gateway_health_smoke() {
 
     let health = tokio::time::timeout(Duration::from_secs(45), async {
         loop {
-            let health = control(&control_config, ControlMethod::HealthCheck).await;
-            if health["event_sources"] == "ok" {
+            let health = fetch_health(&control_config).await;
+            if health.event_sources == "ok" {
                 break health;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -42,19 +41,20 @@ async fn real_qqbot_gateway_health_smoke() {
     let health = match health {
         Ok(health) => health,
         Err(_) => {
-            let health = control(&control_config, ControlMethod::HealthCheck).await;
+            let health = fetch_health(&control_config).await;
             runtime.shutdown().await;
-            panic!("QQ Gateway did not become healthy: {health}");
+            panic!("QQ Gateway did not become healthy: {health:?}");
         }
     };
-    assert_eq!(health["service"], "ok");
-    assert_eq!(health["core"], "ok");
+    assert_eq!(health.service, "ok");
+    assert_eq!(health.core, "ok");
     runtime.shutdown().await;
 }
 
-async fn control(config: &ServiceConfig, method: ControlMethod) -> Value {
+async fn fetch_health(config: &ServiceConfig) -> HealthReport {
     let client = mutsuki_service_ipc::ControlClient::new(config.into());
-    let response = client.request(method, Value::Null).await.unwrap();
-    assert!(response.ok, "control failed: {:?}", response.error);
-    response.result.unwrap_or(Value::Null)
+    match client.request(ControlCommand::HealthCheck).await.unwrap() {
+        ControlResponse::Ok(ControlResult::HealthCheck(health)) => health,
+        response => panic!("control failed: {response:?}"),
+    }
 }

@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use mutsuki_runtime_contracts::{RuntimeEvent, TaskBatch, TaskHandle};
+use mutsuki_runtime_contracts::{RuntimeEvent, ScalarValue, TaskBatch, TaskHandle};
 
 pub type ControlFuture = Pin<Box<dyn Future<Output = ControlResponse> + Send>>;
 
@@ -16,9 +16,20 @@ pub trait ControlHandler: Send + Sync + 'static {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ControlRequest {
     pub token: String,
-    pub method: ControlMethod,
-    #[serde(default)]
-    pub params: Value,
+    pub command: ControlCommand,
+}
+
+impl ControlRequest {
+    pub fn new(token: impl Into<String>, command: ControlCommand) -> Self {
+        Self {
+            token: token.into(),
+            command,
+        }
+    }
+
+    pub const fn method(&self) -> ControlMethod {
+        self.command.method()
+    }
 }
 
 #[repr(u16)]
@@ -106,18 +117,168 @@ impl ControlMethod {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ControlResponse {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ControlErrorBody>,
+#[serde(tag = "operation", content = "request", rename_all = "snake_case")]
+pub enum ControlCommand {
+    ServiceStatus,
+    ServiceShutdown,
+    CoreStatus,
+    PluginList,
+    PluginReload,
+    PluginDeploymentSet(PluginDeploymentParam),
+    PluginDeploymentClear(PluginDeploymentClearParam),
+    RunnerList,
+    RunnerRestart(IdParam),
+    RunnerStop(IdParam),
+    EventSourceList,
+    EventSourceRestart(IdParam),
+    CoreBeginDrain,
+    TaskSubmitBatch(TaskSubmitBatchParam),
+    TaskList,
+    TaskCancel(IdParam),
+    TaskOutcome(IdParam),
+    TaskEventsAfter(TaskEventsAfterParam),
+    HealthCheck,
+    LogTail(LogTailParams),
+    TaskOutcomesBatch(TaskOutcomesBatchParam),
+    TaskWait(TaskWaitParam),
+    RuntimeStatistics,
+    HostMetrics,
+}
+
+impl ControlCommand {
+    pub const fn method(&self) -> ControlMethod {
+        match self {
+            Self::ServiceStatus => ControlMethod::ServiceStatus,
+            Self::ServiceShutdown => ControlMethod::ServiceShutdown,
+            Self::CoreStatus => ControlMethod::CoreStatus,
+            Self::PluginList => ControlMethod::PluginList,
+            Self::PluginReload => ControlMethod::PluginReload,
+            Self::PluginDeploymentSet(_) => ControlMethod::PluginDeploymentSet,
+            Self::PluginDeploymentClear(_) => ControlMethod::PluginDeploymentClear,
+            Self::RunnerList => ControlMethod::RunnerList,
+            Self::RunnerRestart(_) => ControlMethod::RunnerRestart,
+            Self::RunnerStop(_) => ControlMethod::RunnerStop,
+            Self::EventSourceList => ControlMethod::EventSourceList,
+            Self::EventSourceRestart(_) => ControlMethod::EventSourceRestart,
+            Self::CoreBeginDrain => ControlMethod::CoreBeginDrain,
+            Self::TaskSubmitBatch(_) => ControlMethod::TaskSubmitBatch,
+            Self::TaskList => ControlMethod::TaskList,
+            Self::TaskCancel(_) => ControlMethod::TaskCancel,
+            Self::TaskOutcome(_) => ControlMethod::TaskOutcome,
+            Self::TaskEventsAfter(_) => ControlMethod::TaskEventsAfter,
+            Self::HealthCheck => ControlMethod::HealthCheck,
+            Self::LogTail(_) => ControlMethod::LogTail,
+            Self::TaskOutcomesBatch(_) => ControlMethod::TaskOutcomesBatch,
+            Self::TaskWait(_) => ControlMethod::TaskWait,
+            Self::RuntimeStatistics => ControlMethod::RuntimeStatistics,
+            Self::HostMetrics => ControlMethod::HostMetrics,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "operation", content = "response", rename_all = "snake_case")]
+pub enum ControlResult {
+    ServiceStatus(ServiceStatus),
+    ServiceShutdown,
+    CoreStatus(CoreStatus),
+    PluginList(PluginListResponse),
+    PluginReload(PluginReloadResponse),
+    PluginDeploymentSet(PluginReloadResponse),
+    PluginDeploymentClear(PluginReloadResponse),
+    RunnerList(Vec<RunnerStatus>),
+    RunnerRestart,
+    RunnerStop,
+    EventSourceList(Vec<EventSourceStatus>),
+    EventSourceRestart,
+    CoreBeginDrain(CoreDrainResponse),
+    TaskSubmitBatch(TaskSubmitBatchResponse),
+    TaskList(Vec<TaskSnapshot>),
+    TaskCancel,
+    TaskOutcome(TaskOutcomeView),
+    TaskEventsAfter(TaskEventPage),
+    HealthCheck(HealthReport),
+    LogTail(LogTailResponse),
+    TaskOutcomesBatch(TaskOutcomesBatchResponse),
+    TaskWait(TaskWaitResponse),
+    RuntimeStatistics(RuntimeStatisticsView),
+    HostMetrics(HostMetrics),
+}
+
+impl ControlResult {
+    pub const fn method(&self) -> ControlMethod {
+        match self {
+            Self::ServiceStatus(_) => ControlMethod::ServiceStatus,
+            Self::ServiceShutdown => ControlMethod::ServiceShutdown,
+            Self::CoreStatus(_) => ControlMethod::CoreStatus,
+            Self::PluginList(_) => ControlMethod::PluginList,
+            Self::PluginReload(_) => ControlMethod::PluginReload,
+            Self::PluginDeploymentSet(_) => ControlMethod::PluginDeploymentSet,
+            Self::PluginDeploymentClear(_) => ControlMethod::PluginDeploymentClear,
+            Self::RunnerList(_) => ControlMethod::RunnerList,
+            Self::RunnerRestart => ControlMethod::RunnerRestart,
+            Self::RunnerStop => ControlMethod::RunnerStop,
+            Self::EventSourceList(_) => ControlMethod::EventSourceList,
+            Self::EventSourceRestart => ControlMethod::EventSourceRestart,
+            Self::CoreBeginDrain(_) => ControlMethod::CoreBeginDrain,
+            Self::TaskSubmitBatch(_) => ControlMethod::TaskSubmitBatch,
+            Self::TaskList(_) => ControlMethod::TaskList,
+            Self::TaskCancel => ControlMethod::TaskCancel,
+            Self::TaskOutcome(_) => ControlMethod::TaskOutcome,
+            Self::TaskEventsAfter(_) => ControlMethod::TaskEventsAfter,
+            Self::HealthCheck(_) => ControlMethod::HealthCheck,
+            Self::LogTail(_) => ControlMethod::LogTail,
+            Self::TaskOutcomesBatch(_) => ControlMethod::TaskOutcomesBatch,
+            Self::TaskWait(_) => ControlMethod::TaskWait,
+            Self::RuntimeStatistics(_) => ControlMethod::RuntimeStatistics,
+            Self::HostMetrics(_) => ControlMethod::HostMetrics,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", content = "payload", rename_all = "snake_case")]
+pub enum ControlResponse {
+    Ok(ControlResult),
+    Error(ControlErrorBody),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlErrorCode {
+    Unauthorized,
+    Unsupported,
+    BadRequest,
+    CoreUnavailable,
+    Failed,
+    DeliveryUnknown,
+}
+
+impl ControlErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unauthorized => "unauthorized",
+            Self::Unsupported => "unsupported",
+            Self::BadRequest => "bad_request",
+            Self::CoreUnavailable => "core_unavailable",
+            Self::Failed => "failed",
+            Self::DeliveryUnknown => "delivery_unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for ControlErrorCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ControlErrorBody {
-    pub code: String,
+    pub code: ControlErrorCode,
     pub message: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub evidence: BTreeMap<String, ScalarValue>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,45 +289,61 @@ pub enum ControlError {
     Unsupported(String),
     #[error("bad request: {0}")]
     BadRequest(String),
+    #[error("core is not running")]
+    CoreUnavailable,
     #[error("operation failed: {0}")]
     Failed(String),
 }
 
 impl ControlResponse {
-    pub fn ok<T: Serialize>(result: T) -> Self {
-        match serde_json::to_value(result) {
-            Ok(value) => Self {
-                ok: true,
-                result: Some(value),
-                error: None,
-            },
-            Err(error) => Self::err(ControlError::Failed(error.to_string())),
+    pub fn ok(result: ControlResult) -> Self {
+        Self::Ok(result)
+    }
+
+    pub const fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok(_))
+    }
+
+    pub fn into_result(self) -> Result<ControlResult, ControlErrorBody> {
+        match self {
+            Self::Ok(result) => Ok(result),
+            Self::Error(error) => Err(error),
         }
     }
 
-    pub fn empty_ok() -> Self {
-        Self {
-            ok: true,
-            result: Some(Value::Null),
-            error: None,
+    pub fn result(&self) -> Option<&ControlResult> {
+        match self {
+            Self::Ok(result) => Some(result),
+            Self::Error(_) => None,
+        }
+    }
+
+    pub fn error(&self) -> Option<&ControlErrorBody> {
+        match self {
+            Self::Ok(_) => None,
+            Self::Error(error) => Some(error),
         }
     }
 
     pub fn err(error: ControlError) -> Self {
         let (code, message) = match error {
-            ControlError::Unauthorized => ("unauthorized".into(), error.to_string()),
+            ControlError::Unauthorized => (ControlErrorCode::Unauthorized, error.to_string()),
             ControlError::Unsupported(method) => (
-                "unsupported".into(),
+                ControlErrorCode::Unsupported,
                 format!("{method} is not supported by the current runtime API"),
             ),
-            ControlError::BadRequest(message) => ("bad_request".into(), message),
-            ControlError::Failed(message) => ("failed".into(), message),
+            ControlError::BadRequest(message) => (ControlErrorCode::BadRequest, message),
+            ControlError::CoreUnavailable => (
+                ControlErrorCode::CoreUnavailable,
+                "core is not running".into(),
+            ),
+            ControlError::Failed(message) => (ControlErrorCode::Failed, message),
         };
-        Self {
-            ok: false,
-            result: None,
-            error: Some(ControlErrorBody { code, message }),
-        }
+        Self::Error(ControlErrorBody {
+            code,
+            message,
+            evidence: BTreeMap::new(),
+        })
     }
 }
 

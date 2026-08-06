@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mutsuki_service_config::{IpcCodec, IpcTransport, ServiceConfig};
-use mutsuki_service_control::{ControlHandler, ControlMethod, ControlRequest, ControlResponse};
-use serde_json::{Value, json};
+use mutsuki_service_control::{
+    ControlCommand, ControlHandler, ControlMethod, ControlRequest, ControlResponse, ControlResult,
+    HealthReport,
+};
 use tokio::sync::Mutex;
 
 use super::*;
@@ -12,9 +14,22 @@ use crate::frame::{BINARY_LENGTH_PREFIX_LEN, FrameFlags, encode_frame};
 
 struct OkHandler;
 
+fn healthy_report() -> HealthReport {
+    HealthReport {
+        service: "healthy".into(),
+        core: "healthy".into(),
+        plugins: "healthy".into(),
+        runners: "healthy".into(),
+        event_sources: "healthy".into(),
+        event_source_details: Vec::new(),
+        recent_errors: Vec::new(),
+        components: Default::default(),
+    }
+}
+
 impl ControlHandler for OkHandler {
     fn handle(&self, _request: ControlRequest) -> mutsuki_service_control::ControlFuture {
-        Box::pin(async { ControlResponse::ok(Value::Null) })
+        Box::pin(async { ControlResponse::ok(ControlResult::HealthCheck(healthy_report())) })
     }
 }
 
@@ -27,10 +42,10 @@ impl ControlHandler for SlowHandler {
         let started = self.started.clone();
         Box::pin(async move {
             *started.lock().await += 1;
-            if request.method == ControlMethod::HealthCheck {
+            if request.method() == ControlMethod::HealthCheck {
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
-            ControlResponse::ok(json!({"method": format!("{:?}", request.method)}))
+            ControlResponse::ok(ControlResult::HealthCheck(healthy_report()))
         })
     }
 }
@@ -151,11 +166,8 @@ async fn persistent_binary_handles_multiple_requests_on_one_connection() {
         .await
         .unwrap();
     for _ in 0..8 {
-        let response = session
-            .request(ControlMethod::HealthCheck, Value::Null)
-            .await
-            .unwrap();
-        assert!(response.ok);
+        let response = session.request(ControlCommand::HealthCheck).await.unwrap();
+        assert!(response.is_ok());
     }
     assert_eq!(session.connection_count(), 1);
     session.close().await.unwrap();
@@ -187,7 +199,7 @@ async fn binary_multiplex_cancel_and_timeout() {
     .unwrap();
     let session = ControlSession::connect((&config).into()).await.unwrap();
     let err = session
-        .request(ControlMethod::HealthCheck, Value::Null)
+        .request(ControlCommand::HealthCheck)
         .await
         .expect_err("timeout");
     assert!(matches!(err, IpcError::Timeout));
@@ -215,9 +227,7 @@ async fn drain_rejects_new_requests() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     let result = ControlSession::connect((&config).into()).await;
     if let Ok(session) = result {
-        let _ = session
-            .request(ControlMethod::HealthCheck, Value::Null)
-            .await;
+        let _ = session.request(ControlCommand::HealthCheck).await;
         let _ = session.close().await;
     }
     server.shutdown().await;
@@ -238,22 +248,18 @@ async fn named_pipe_server_is_ready_when_start_returns() {
         .unwrap()
         .unwrap();
     let response = ControlClient::new((&config).into())
-        .request(ControlMethod::HealthCheck, Value::Null)
+        .request(ControlCommand::HealthCheck)
         .await
         .unwrap();
 
-    assert!(response.ok);
+    assert!(response.is_ok());
     server.shutdown().await;
 }
 
 #[test]
 fn encode_helpers_reuse_caller_buffers() {
     let limits = ControlIpcLimits::default();
-    let request = ControlRequest {
-        token: "t".into(),
-        method: ControlMethod::HealthCheck,
-        params: json!({"n": 1}),
-    };
+    let request = ControlRequest::new("t", ControlCommand::HealthCheck);
     let mut frame = Vec::with_capacity(64);
     let mut payload = Vec::with_capacity(64);
     crate::codec::encode_binary_request_with_scratch(1, &request, limits, &mut frame, &mut payload)

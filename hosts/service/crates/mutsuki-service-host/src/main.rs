@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::{ControlMethod, IdParam};
-use serde_json::{Value, json};
+use mutsuki_service_control::{
+    ControlCommand, IdParam, PluginDeploymentClearParam, PluginDeploymentParam,
+};
 
 #[derive(Parser)]
 #[command(name = "mutsuki-service")]
@@ -118,15 +119,9 @@ async fn main() -> anyhow::Result<()> {
             let runtime = mutsuki_service_runtime::ServiceRuntime::start(config).await?;
             runtime.run_foreground().await?;
         }
-        Command::Status => {
-            request_and_print(&config, ControlMethod::ServiceStatus, Value::Null).await?
-        }
-        Command::Stop => {
-            request_and_print(&config, ControlMethod::ServiceShutdown, Value::Null).await?
-        }
-        Command::Health => {
-            request_and_print(&config, ControlMethod::HealthCheck, Value::Null).await?
-        }
+        Command::Status => request_and_print(&config, ControlCommand::ServiceStatus).await?,
+        Command::Stop => request_and_print(&config, ControlCommand::ServiceShutdown).await?,
+        Command::Health => request_and_print(&config, ControlCommand::HealthCheck).await?,
         Command::Install {
             scope,
             service_user,
@@ -156,83 +151,56 @@ async fn main() -> anyhow::Result<()> {
             mutsuki_service_daemon::run_windows_service(config)?;
         }
         Command::Plugin(command) => match command {
-            PluginCommand::List => {
-                request_and_print(&config, ControlMethod::PluginList, Value::Null).await?
-            }
+            PluginCommand::List => request_and_print(&config, ControlCommand::PluginList).await?,
             PluginCommand::Reload => {
-                request_and_print(&config, ControlMethod::PluginReload, Value::Null).await?
+                request_and_print(&config, ControlCommand::PluginReload).await?
             }
             PluginCommand::Set { id, deployment } => {
                 let deployment = parse_deployment(&deployment)?;
                 request_and_print(
                     &config,
-                    ControlMethod::PluginDeploymentSet,
-                    json!({ "plugin_id": id, "deployment": deployment }),
+                    ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
+                        plugin_id: id,
+                        deployment,
+                    }),
                 )
                 .await?
             }
             PluginCommand::Clear { id } => {
                 request_and_print(
                     &config,
-                    ControlMethod::PluginDeploymentClear,
-                    json!({ "plugin_id": id }),
+                    ControlCommand::PluginDeploymentClear(PluginDeploymentClearParam {
+                        plugin_id: id,
+                    }),
                 )
                 .await?
             }
         },
         Command::Runner(command) => match command {
-            RunnerCommand::List => {
-                request_and_print(&config, ControlMethod::RunnerList, Value::Null).await?
-            }
+            RunnerCommand::List => request_and_print(&config, ControlCommand::RunnerList).await?,
             RunnerCommand::Restart { id } => {
-                request_and_print(
-                    &config,
-                    ControlMethod::RunnerRestart,
-                    serde_json::to_value(IdParam { id })?,
-                )
-                .await?
+                request_and_print(&config, ControlCommand::RunnerRestart(IdParam { id })).await?
             }
             RunnerCommand::Stop { id } => {
-                request_and_print(
-                    &config,
-                    ControlMethod::RunnerStop,
-                    serde_json::to_value(IdParam { id })?,
-                )
-                .await?
+                request_and_print(&config, ControlCommand::RunnerStop(IdParam { id })).await?
             }
         },
         Command::EventSource(command) => match command {
             EventSourceCommand::List => {
-                request_and_print(&config, ControlMethod::EventSourceList, Value::Null).await?
+                request_and_print(&config, ControlCommand::EventSourceList).await?
             }
             EventSourceCommand::Restart { id } => {
-                request_and_print(
-                    &config,
-                    ControlMethod::EventSourceRestart,
-                    serde_json::to_value(IdParam { id })?,
-                )
-                .await?
+                request_and_print(&config, ControlCommand::EventSourceRestart(IdParam { id }))
+                    .await?
             }
         },
         Command::Task(command) => match command {
-            TaskCommand::List => {
-                request_and_print(&config, ControlMethod::TaskList, Value::Null).await?
-            }
+            TaskCommand::List => request_and_print(&config, ControlCommand::TaskList).await?,
             TaskCommand::Cancel { id } => {
-                request_and_print(
-                    &config,
-                    ControlMethod::TaskCancel,
-                    serde_json::to_value(IdParam { id })?,
-                )
-                .await?
+                request_and_print(&config, ControlCommand::TaskCancel(IdParam { id })).await?
             }
             TaskCommand::Outcome { id } => {
-                request_and_print(
-                    &config,
-                    ControlMethod::TaskOutcome,
-                    serde_json::to_value(IdParam { id })?,
-                )
-                .await?
+                request_and_print(&config, ControlCommand::TaskOutcome(IdParam { id })).await?
             }
         },
     }
@@ -263,14 +231,10 @@ fn print_daemon_action(action: &str, config: &ServiceConfig) {
     println!("{action} {}", mutsuki_service_daemon::service_name(config));
 }
 
-async fn request_and_print(
-    config: &ServiceConfig,
-    method: ControlMethod,
-    params: Value,
-) -> anyhow::Result<()> {
+async fn request_and_print(config: &ServiceConfig, command: ControlCommand) -> anyhow::Result<()> {
     let client = mutsuki_service_ipc::ControlClient::new(config.into());
-    let response = client.request(method, params).await?;
+    let response = client.request(command).await?;
     let _ = client.close().await;
-    println!("{}", serde_json::to_string_pretty(&json!(response))?);
+    println!("{}", serde_json::to_string_pretty(&response)?);
     Ok(())
 }

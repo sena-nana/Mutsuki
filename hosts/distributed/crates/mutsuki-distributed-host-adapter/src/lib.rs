@@ -9,15 +9,21 @@ use mutsuki_distributed_contracts::{
 };
 use mutsuki_runtime_contracts::{RuntimeEvent, TaskBatch, TaskHandle};
 use mutsuki_service_control::{
-    ControlMethod, ControlResponse, CoreDrainResponse, CoreStatus, HealthReport, IdParam,
-    TaskEventPage, TaskEventsAfterParam, TaskOutcomeView, TaskSnapshot, TaskSubmitBatchParam,
-    TaskSubmitBatchResponse,
+    ControlCommand, ControlErrorCode, ControlResponse, ControlResult, IdParam,
+    TaskEventsAfterParam, TaskSnapshot, TaskSubmitBatchParam,
 };
 use mutsuki_service_ipc::{ControlClient, ControlClientConfig, IpcTransport};
-use serde::de::DeserializeOwned;
-use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
+
+macro_rules! control_result {
+    ($result:expr, $variant:ident) => {
+        match $result {
+            ControlResult::$variant(value) => Ok(value),
+            _ => Err(protocol_error()),
+        }
+    };
+}
 
 pub type HostFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DistributedError>> + Send + 'a>>;
 
@@ -60,14 +66,10 @@ impl ServiceHostAdapter {
         Self::new(ControlClientConfig::new(transport, endpoint, token))
     }
 
-    async fn request<T: DeserializeOwned>(
-        &self,
-        method: ControlMethod,
-        params: Value,
-    ) -> Result<T, DistributedError> {
+    async fn request(&self, command: ControlCommand) -> Result<ControlResult, DistributedError> {
         let response = self
             .client
-            .request(method, params)
+            .request(command)
             .await
             .map_err(|_| host_unavailable())?;
         decode_response(response)
@@ -77,10 +79,13 @@ impl ServiceHostAdapter {
 impl HostAdapter for ServiceHostAdapter {
     fn submit_batch(&self, batch: TaskBatch) -> HostFuture<'_, Vec<TaskHandle>> {
         Box::pin(async move {
-            let params = serde_json::to_value(TaskSubmitBatchParam { batch })
-                .map_err(|_| protocol_error())?;
-            let response: TaskSubmitBatchResponse =
-                self.request(ControlMethod::TaskSubmitBatch, params).await?;
+            let response = control_result!(
+                self.request(ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
+                    batch,
+                }))
+                .await?,
+                TaskSubmitBatch
+            )?;
             Ok(response.handles)
         })
     }
@@ -88,16 +93,20 @@ impl HostAdapter for ServiceHostAdapter {
     fn cancel(&self, handle: &TaskHandle) -> HostFuture<'_, ()> {
         let id = handle.task_id.clone();
         Box::pin(async move {
-            let params = serde_json::to_value(IdParam { id }).map_err(|_| protocol_error())?;
-            let _: Value = self.request(ControlMethod::TaskCancel, params).await?;
-            Ok(())
+            match self
+                .request(ControlCommand::TaskCancel(IdParam { id }))
+                .await?
+            {
+                ControlResult::TaskCancel => Ok(()),
+                _ => Err(protocol_error()),
+            }
         })
     }
 
     fn snapshots(&self) -> HostFuture<'_, Vec<LocalTaskSnapshot>> {
         Box::pin(async move {
-            let snapshots: Vec<TaskSnapshot> =
-                self.request(ControlMethod::TaskList, Value::Null).await?;
+            let snapshots =
+                control_result!(self.request(ControlCommand::TaskList).await?, TaskList)?;
             Ok(snapshots.into_iter().map(map_snapshot).collect())
         })
     }
@@ -105,8 +114,11 @@ impl HostAdapter for ServiceHostAdapter {
     fn outcome(&self, handle: &TaskHandle) -> HostFuture<'_, Option<LocalTaskOutcome>> {
         let id = handle.task_id.clone();
         Box::pin(async move {
-            let params = serde_json::to_value(IdParam { id }).map_err(|_| protocol_error())?;
-            let outcome: TaskOutcomeView = self.request(ControlMethod::TaskOutcome, params).await?;
+            let outcome = control_result!(
+                self.request(ControlCommand::TaskOutcome(IdParam { id }))
+                    .await?,
+                TaskOutcome
+            )?;
             Ok(Some(LocalTaskOutcome {
                 task_id: outcome.task_id,
                 status: outcome.status,
@@ -119,18 +131,24 @@ impl HostAdapter for ServiceHostAdapter {
 
     fn events_after(&self, sequence: u64, limit: usize) -> HostFuture<'_, Vec<RuntimeEvent>> {
         Box::pin(async move {
-            let params = serde_json::to_value(TaskEventsAfterParam { sequence, limit })
-                .map_err(|_| protocol_error())?;
-            let page: TaskEventPage = self.request(ControlMethod::TaskEventsAfter, params).await?;
+            let page = control_result!(
+                self.request(ControlCommand::TaskEventsAfter(TaskEventsAfterParam {
+                    sequence,
+                    limit,
+                }))
+                .await?,
+                TaskEventsAfter
+            )?;
             Ok(page.events)
         })
     }
 
     fn begin_drain(&self) -> HostFuture<'_, ()> {
         Box::pin(async move {
-            let response: CoreDrainResponse = self
-                .request(ControlMethod::CoreBeginDrain, Value::Null)
-                .await?;
+            let response = control_result!(
+                self.request(ControlCommand::CoreBeginDrain).await?,
+                CoreBeginDrain
+            )?;
             if response.state != "draining" {
                 return Err(DistributedError::new(
                     DistributedErrorKind::HostUnavailable,
@@ -143,35 +161,35 @@ impl HostAdapter for ServiceHostAdapter {
 
     fn health(&self) -> HostFuture<'_, String> {
         Box::pin(async move {
-            let core: CoreStatus = self.request(ControlMethod::CoreStatus, Value::Null).await?;
+            let core =
+                control_result!(self.request(ControlCommand::CoreStatus).await?, CoreStatus)?;
             if !core.running {
                 return Err(host_unavailable());
             }
-            let health: HealthReport = self
-                .request(ControlMethod::HealthCheck, Value::Null)
-                .await?;
+            let health = control_result!(
+                self.request(ControlCommand::HealthCheck).await?,
+                HealthCheck
+            )?;
             Ok(health.core)
         })
     }
 }
 
-fn decode_response<T: DeserializeOwned>(response: ControlResponse) -> Result<T, DistributedError> {
-    if !response.ok {
-        let kind = if response
-            .error
-            .as_ref()
-            .is_some_and(|error| error.code == "unsupported")
-        {
-            DistributedErrorKind::Incompatible
-        } else {
-            DistributedErrorKind::HostUnavailable
-        };
-        return Err(DistributedError::new(
-            kind,
-            "local Host rejected the control request",
-        ));
+fn decode_response(response: ControlResponse) -> Result<ControlResult, DistributedError> {
+    match response {
+        ControlResponse::Ok(result) => Ok(result),
+        ControlResponse::Error(error) => {
+            let kind = if error.code == ControlErrorCode::Unsupported {
+                DistributedErrorKind::Incompatible
+            } else {
+                DistributedErrorKind::HostUnavailable
+            };
+            Err(DistributedError::new(
+                kind,
+                "local Host rejected the control request",
+            ))
+        }
     }
-    serde_json::from_value(response.result.unwrap_or(Value::Null)).map_err(|_| protocol_error())
 }
 
 fn map_snapshot(snapshot: TaskSnapshot) -> LocalTaskSnapshot {
@@ -202,22 +220,31 @@ const fn protocol_error() -> DistributedError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_service_control::{ControlError, ControlResponse};
+    use mutsuki_service_control::{ControlError, ControlResponse, ServiceStatus};
 
     #[test]
     fn unsupported_control_surface_is_reported_as_incompatible() {
         let response = ControlResponse::err(ControlError::Unsupported("task_submit_batch".into()));
         assert_eq!(
-            decode_response::<Value>(response).unwrap_err().kind,
+            decode_response(response).unwrap_err().kind,
             DistributedErrorKind::Incompatible
         );
     }
 
     #[test]
-    fn malformed_success_response_is_a_protocol_error() {
-        let response = ControlResponse::ok("not-a-core-status");
+    fn mismatched_success_response_is_a_protocol_error() {
+        let response = ControlResponse::ok(ControlResult::ServiceStatus(ServiceStatus {
+            instance_id: "test".into(),
+            profile: "test".into(),
+            uptime_ms: 0,
+            ipc_endpoint: "test".into(),
+            core_running: true,
+            plugin_count: 0,
+            runner_count: 0,
+        }));
+        let result = decode_response(response).expect("typed response");
         assert_eq!(
-            decode_response::<CoreStatus>(response).unwrap_err().kind,
+            control_result!(result, CoreStatus).unwrap_err().kind,
             DistributedErrorKind::Protocol
         );
     }

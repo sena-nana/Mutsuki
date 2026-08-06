@@ -2,8 +2,12 @@ use std::fs;
 use std::process::Command;
 
 use mutsuki_bot::assemble_service;
+use mutsuki_runtime_contracts::PluginDeploymentKind;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::ControlMethod;
+use mutsuki_service_control::{
+    ControlCommand, ControlResponse, ControlResult, PluginDeploymentClearParam,
+    PluginDeploymentParam,
+};
 use mutsuki_service_ipc::{ControlClient, ControlClientConfig};
 use mutsuki_service_plugin_loader::PluginToml;
 use sha2::{Digest, Sha256};
@@ -137,16 +141,16 @@ panic_file = "panic.log"
         .unwrap();
     let client = ControlClient::new(ControlClientConfig::from(&service));
     let switched = client
-        .request(
-            ControlMethod::PluginDeploymentSet,
-            serde_json::json!({
-                "plugin_id": "mutsuki.bot.command",
-                "deployment": "abi"
-            }),
-        )
+        .request(ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
+            plugin_id: "mutsuki.bot.command".into(),
+            deployment: PluginDeploymentKind::Abi,
+        }))
         .await
         .unwrap();
-    assert!(switched.ok, "switch ABI: {:?}", switched.error);
+    assert!(matches!(
+        switched,
+        ControlResponse::Ok(ControlResult::PluginDeploymentSet(_))
+    ));
     let abi_lock: serde_json::Value = serde_json::from_slice(
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
     )
@@ -166,13 +170,17 @@ panic_file = "panic.log"
     assert_eq!(abi_lock["plugin_deployments"]["mutsuki.bot.command"], "abi");
     let client = ControlClient::new(ControlClientConfig::from(&service));
     let cleared = client
-        .request(
-            ControlMethod::PluginDeploymentClear,
-            serde_json::json!({ "plugin_id": "mutsuki.bot.command" }),
-        )
+        .request(ControlCommand::PluginDeploymentClear(
+            PluginDeploymentClearParam {
+                plugin_id: "mutsuki.bot.command".into(),
+            },
+        ))
         .await
         .unwrap();
-    assert!(cleared.ok, "clear deployment: {:?}", cleared.error);
+    assert!(matches!(
+        cleared,
+        ControlResponse::Ok(ControlResult::PluginDeploymentClear(_))
+    ));
     let cleared_lock: serde_json::Value = serde_json::from_slice(
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
     )
