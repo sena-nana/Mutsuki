@@ -664,6 +664,43 @@ fn resolver_rejects_unsatisfied_capability_version_constraint() {
 }
 
 #[test]
+fn resolver_keeps_protocol_abi_suffix_inside_capability_id() {
+    let mut provider = descriptor("http.facade", "mutsuki.http.request@2");
+    provider.plugin_id = "mutsuki.std.io.http_client".into();
+    let mut provider_manifest = runner_manifest("mutsuki.std.io.http_client", vec![provider]);
+    provider_manifest.provides.protocols = vec![ProtocolDescriptor {
+        protocol_id: "mutsuki.http.request@2".into(),
+        version: "0.2.0".into(),
+        input_schema: json!({"type": "object"}),
+        output_schema: json!({"type": "object"}),
+        error_schema: json!({"type": "object"}),
+        codec: "json".into(),
+        compatibility: "semver".into(),
+    }];
+
+    let mut consumer = descriptor("mihuashi.runner", "mutsuki.bot.mihuashi.link/resolve@1");
+    consumer.plugin_id = "mutsuki.bot.mihuashi".into();
+    let mut consumer_manifest = runner_manifest("mutsuki.bot.mihuashi", vec![consumer]);
+    consumer_manifest.requires = vec!["task_protocol:mutsuki.http.request@2".into()];
+
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec![
+        "mutsuki.std.io.http_client".into(),
+        "mutsuki.bot.mihuashi".into(),
+    ];
+
+    let plan = crate::resolve_load_plan(&[provider_manifest, consumer_manifest], &profile)
+        .expect("abi-suffixed protocol ids must not be parsed as version constraints");
+
+    assert!(
+        plan.capability_graph
+            .provided_capabilities
+            .iter()
+            .any(|capability| capability == "task_protocol:mutsuki.http.request@2")
+    );
+}
+
+#[test]
 fn resolver_rejects_unbacked_permission_grant() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
