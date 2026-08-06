@@ -177,7 +177,7 @@ fn runtime_metrics(metrics: HostRuntimeMetricsSnapshot) -> RuntimeMetrics {
 }
 
 fn mean(total: u64, samples: u64) -> u64 {
-    if samples == 0 { 0 } else { total / samples }
+    total.checked_div(samples).unwrap_or(0)
 }
 
 fn run_dedicated_tokio(options: &Options) -> Result<Distribution, String> {

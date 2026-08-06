@@ -1,4 +1,4 @@
-//! Single image render backend (Takumi): compose / card / QR → PNG ResourceRef.
+//! Single image render backend (Takumi): compose / card / QR → PNG `ResourceRef`.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -47,6 +47,11 @@ pub struct ImageRenderConfig {
 
 impl ImageRenderConfig {
     /// Validates provider selection and absolute font file paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the output provider is empty, no font is configured, or a font path
+    /// is not an existing absolute file.
     pub fn validate(&self) -> Result<(), String> {
         if self.output_provider_id.trim().is_empty() {
             return Err("output_provider_id is required".into());
@@ -76,6 +81,11 @@ pub struct ImageRenderRunner {
 
 impl ImageRenderRunner {
     /// Loads configured fonts; never reads system fonts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the configuration is invalid, a font cannot be read or registered,
+    /// or a registered font has no usable family name.
     pub fn launch(
         config: ImageRenderConfig,
         resources: Arc<dyn ResourceRegistryGateway>,
@@ -87,7 +97,10 @@ impl ImageRenderRunner {
             let bytes = std::fs::read(path)
                 .map_err(|error| format!("failed to read font {}: {error}", path.display()))?;
             let registered = fonts.register(FontResource::new(bytes)).map_err(|error| {
-                format!("invalid or unsupported font file {}: {error}", path.display())
+                format!(
+                    "invalid or unsupported font file {}: {error}",
+                    path.display()
+                )
             })?;
             if registered.is_empty() {
                 return Err(format!("font registered no families: {}", path.display()));
@@ -199,8 +212,7 @@ impl ImageRenderRunner {
         let family = self
             .font_families
             .first()
-            .map(String::as_str)
-            .unwrap_or("sans-serif");
+            .map_or("sans-serif", String::as_str);
         let html = format!(
             r#"<div style="width:100%;height:100%;position:relative;overflow:hidden;font-family:'{family}',sans-serif;color:#fff;">
   {background}
@@ -333,7 +345,8 @@ fn render_qr(task: &Task, request: &QrRenderRequest) -> Result<(Vec<u8>, u32, u3
     if request.content.is_empty() {
         return Err(render_error(task, "qr.content", "QR content is empty"));
     }
-    if request.min_dimensions == 0 || request.min_dimensions > mutsuki_protocol_image::MAX_CANVAS_EDGE
+    if request.min_dimensions == 0
+        || request.min_dimensions > mutsuki_protocol_image::MAX_CANVAS_EDGE
     {
         return Err(render_error(
             task,
@@ -398,7 +411,10 @@ fn runner_descriptor() -> RunnerDescriptor {
             side_effect: RunnerSideEffect::External,
             ..Default::default()
         })
-        .metadata("standard_plugin", ScalarValue::String("image_render".into()))
+        .metadata(
+            "standard_plugin",
+            ScalarValue::String("image_render".into()),
+        )
         .build()
 }
 
@@ -621,8 +637,7 @@ mod tests {
     }
 
     fn output_png(resources: &TestGateway, result: RunnerResult, plan_id: &str) -> Vec<u8> {
-        let response: ImageRenderResponse =
-            serde_json::from_value(result.output.unwrap()).unwrap();
+        let response: ImageRenderResponse = serde_json::from_value(result.output.unwrap()).unwrap();
         resources
             .collect_read_plan(&ReadPlan {
                 plan_id: plan_id.into(),
@@ -636,7 +651,12 @@ mod tests {
     fn fixture_png() -> Vec<u8> {
         let mut bytes = Vec::new();
         PngEncoder::new(&mut bytes)
-            .write_image(&[240, 91, 122, 255, 91, 72, 176, 255], 2, 1, ColorType::Rgba8.into())
+            .write_image(
+                &[240, 91, 122, 255, 91, 72, 176, 255],
+                2,
+                1,
+                ColorType::Rgba8.into(),
+            )
             .unwrap();
         bytes
     }
