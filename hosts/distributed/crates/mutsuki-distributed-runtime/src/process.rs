@@ -374,7 +374,7 @@ impl WorkerProcess {
         connection: &mut LocalConnection,
     ) -> Result<bool, DistributedError> {
         loop {
-            let bytes = match receive_message(connection, Duration::from_secs(24 * 60 * 60)).await {
+            let bytes = match receive_message(connection, Duration::from_hours(24)).await {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind == DistributedErrorKind::TransportClosed => {
                     return Ok(false);
@@ -649,7 +649,7 @@ impl ControllerProcess {
         timeout: Duration,
     ) -> Result<(), DistributedError> {
         loop {
-            let bytes = match receive_message(connection, Duration::from_secs(24 * 60 * 60)).await {
+            let bytes = match receive_message(connection, Duration::from_hours(24)).await {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind == DistributedErrorKind::TransportClosed => return Ok(()),
                 Err(error) => return Err(error),

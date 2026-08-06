@@ -476,7 +476,7 @@ mod tests {
         let now = Instant::now();
         let mut provider = ManualDiscovery::new(RateLimit {
             attempts: 1,
-            window: Duration::from_secs(60),
+            window: Duration::from_mins(1),
             max_sources: 2,
             max_candidates: 2,
         })
@@ -577,7 +577,7 @@ mod tests {
                     "same-source",
                     DiscoveryId::from_bytes([1; 16]),
                     endpoint.clone(),
-                    Duration::from_secs(60),
+                    Duration::from_mins(1),
                     now + Duration::from_millis(index),
                 )
                 .unwrap();
@@ -590,7 +590,7 @@ mod tests {
                     "same-source",
                     DiscoveryId::from_bytes([2; 16]),
                     endpoint,
-                    Duration::from_secs(60),
+                    Duration::from_mins(1),
                     now + Duration::from_secs(2),
                 )
                 .unwrap_err()

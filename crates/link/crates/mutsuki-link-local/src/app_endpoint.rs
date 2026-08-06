@@ -377,7 +377,7 @@ mod tests {
         let loaded = EndpointLease::read(&dir, &app).unwrap().unwrap();
         assert_eq!(loaded.instance_id, "instance-1");
         assert_eq!(loaded.pid, lease.pid);
-        assert!(!reclaim_stale_lease(&dir, &app, Duration::from_secs(3600)).unwrap());
+        assert!(!reclaim_stale_lease(&dir, &app, Duration::from_hours(1)).unwrap());
         // Force stale by writing a dead pid.
         let path = lease_path(&dir, &app);
         fs::write(&path, format!("{}\ndead\n4294967294\n0\n", app.as_str())).unwrap();

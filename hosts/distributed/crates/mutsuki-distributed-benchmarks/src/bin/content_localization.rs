@@ -264,7 +264,7 @@ async fn run_sample(
             NodeId(format!("content-worker-{sample}-{index}")),
             secret.clone(),
             destination,
-            Duration::from_secs(120),
+            Duration::from_mins(2),
             hit_io.clone(),
         )
         .await
@@ -347,7 +347,7 @@ async fn transfer_group(
                 content_id: content_id.clone(),
                 path: source_path.to_owned(),
             }],
-            Duration::from_secs(120),
+            Duration::from_mins(2),
             origin_io.clone(),
         )
         .await
@@ -356,7 +356,7 @@ async fn transfer_group(
             worker,
             secret.clone(),
             destination,
-            Duration::from_secs(120),
+            Duration::from_mins(2),
             worker_io.clone(),
         )
         .await
