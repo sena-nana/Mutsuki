@@ -1,0 +1,89 @@
+version = 1
+
+# Rules apply to normal and build dependencies. Test-only integration dependencies are
+# intentionally excluded because they do not enter production package ownership.
+
+[[rules]]
+name = "runtime-contracts-remain-pure"
+source_roots = ["crates/mutsuki-runtime-contracts"]
+forbidden_target_roots = [
+  "crates/mutsuki-runtime-core",
+  "crates/mutsuki-runtime-host",
+  "crates/mutsuki-runtime-sdk",
+  "crates/link",
+  "hosts",
+  "kits",
+  "plugins",
+  "templates",
+]
+
+[[rules]]
+name = "runtime-wire-remains-a-contract-owner"
+source_roots = ["crates/mutsuki-runtime-wire"]
+forbidden_target_roots = [
+  "crates/mutsuki-runtime-core",
+  "crates/mutsuki-runtime-host",
+  "crates/mutsuki-runtime-sdk",
+  "crates/link",
+  "hosts",
+  "kits",
+  "plugins",
+  "templates",
+]
+
+[[rules]]
+name = "runtime-core-remains-domain-neutral"
+source_roots = ["crates/mutsuki-runtime-core"]
+forbidden_target_roots = [
+  "crates/mutsuki-runtime-host",
+  "crates/mutsuki-runtime-sdk",
+  "crates/link",
+  "hosts",
+  "kits",
+  "plugins",
+  "templates",
+]
+
+[[rules]]
+name = "link-does-not-own-host-or-business-behavior"
+source_roots = ["crates/link"]
+forbidden_target_roots = ["hosts", "kits/agent", "plugins/bot", "templates"]
+
+[[rules]]
+name = "host-neutral-kits-and-plugins-use-explicit-integration-packages"
+source_roots = ["kits/agent", "plugins/bot", "plugins/std"]
+forbidden_target_packages = [
+  "mutsuki-distributed-runtime",
+  "mutsuki-service-runtime",
+  "mutsuki-tauri-host",
+  "mutsuki-web-host",
+]
+allow_source_packages = [
+  "config-demo",
+  "mutsuki-agent-benchmarks",
+  "mutsuki-agent-distributed-integration",
+  "mutsuki-agent-service-host-integration",
+  "mutsuki-bot-benchmarks",
+  "mutsuki-bot-service-host-integration",
+  "mutsuki-bot-web-console",
+  "mutsuki-std-service-host-integration",
+]
+
+[[rules]]
+name = "protocol-packages-do-not-depend-on-execution-layers"
+source_package_prefixes = ["mutsuki-protocol-"]
+source_packages = [
+  "mutsuki-agent-contracts",
+  "mutsuki-bot-protocol",
+  "mutsuki-distributed-contracts",
+  "mutsuki-service-control",
+  "mutsuki-web-protocol",
+]
+forbidden_target_roots = [
+  "crates/mutsuki-runtime-core",
+  "crates/mutsuki-runtime-host",
+  "crates/mutsuki-runtime-sdk",
+  "hosts/service/crates/mutsuki-service-runtime",
+  "hosts/web/crates/mutsuki-web-host",
+  "hosts/distributed/crates/mutsuki-distributed-runtime",
+]

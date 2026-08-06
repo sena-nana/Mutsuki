@@ -39,9 +39,12 @@ REQUIRED_PATHS = (
     "plugins/std",
     "templates/bot",
     "docs/architecture/monorepo.md",
+    "docs/architecture/package-boundaries.toml",
+    "docs/architecture/refactor-behavior-matrix.md",
     "docs/decisions/0001-mutsuki-monorepo.md",
     "docs/migration/issue-44-ledger.md",
 )
+PACKAGE_BOUNDARIES = ROOT / "docs/architecture/package-boundaries.toml"
 
 
 def fail(message: str) -> None:
@@ -120,6 +123,52 @@ def check_metadata(metadata: dict[str, object]) -> None:
                 )
 
 
+def _matches_source(rule: dict[str, object], package: dict[str, object]) -> bool:
+    name = str(package["name"])
+    manifest = Path(str(package["manifest_path"])).resolve()
+    source = manifest.parent.relative_to(ROOT).as_posix()
+    return any(
+        (
+            any(source == root or source.startswith(f"{root}/") for root in rule.get("source_roots", [])),
+            name in rule.get("source_packages", []),
+            any(name.startswith(prefix) for prefix in rule.get("source_package_prefixes", [])),
+            any(name.endswith(suffix) for suffix in rule.get("source_package_suffixes", [])),
+        )
+    )
+
+
+def check_package_boundaries(metadata: dict[str, object]) -> None:
+    with PACKAGE_BOUNDARIES.open("rb") as handle:
+        config = tomllib.load(handle)
+    if config.get("version") != 1:
+        fail("package-boundaries.toml must declare version = 1")
+
+    violations: list[str] = []
+    for rule in config.get("rules", []):
+        rule_name = str(rule.get("name", "unnamed"))
+        allowed_sources = set(rule.get("allow_source_packages", []))
+        for package in metadata["packages"]:
+            if package["name"] in allowed_sources or not _matches_source(rule, package):
+                continue
+            for dependency in package["dependencies"]:
+                if dependency.get("kind") == "dev" or not dependency.get("path"):
+                    continue
+                target_path = Path(str(dependency["path"])).resolve()
+                if not target_path.is_relative_to(ROOT):
+                    continue
+                target = target_path.relative_to(ROOT).as_posix()
+                forbidden = any(
+                    target == root or target.startswith(f"{root}/")
+                    for root in rule.get("forbidden_target_roots", [])
+                ) or dependency["name"] in rule.get("forbidden_target_packages", [])
+                if forbidden:
+                    violations.append(
+                        f"{rule_name}: {package['name']} -> {dependency['name']} ({target})"
+                    )
+    if violations:
+        fail("forbidden package dependencies:\n  " + "\n  ".join(sorted(violations)))
+
+
 def check_manifest_urls() -> None:
     for manifest in ROOT.rglob("Cargo.toml"):
         if "target" in manifest.parts:
@@ -139,6 +188,7 @@ def main() -> None:
     check_single_workspace()
     metadata = cargo_metadata()
     check_metadata(metadata)
+    check_package_boundaries(metadata)
     check_manifest_urls()
     print(
         "workspace boundary check passed: "
