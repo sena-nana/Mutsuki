@@ -641,10 +641,19 @@ fn parse_requirements(required: &BTreeSet<String>) -> Vec<CapabilityRequirement>
     required
         .iter()
         .map(|raw| {
-            let (capability, version_constraint) = raw
-                .rsplit_once('@')
-                .map(|(capability, constraint)| (capability.to_string(), Some(constraint.into())))
-                .unwrap_or_else(|| (raw.clone(), None));
+            let (capability, version_constraint) = raw.rsplit_once('@').map_or_else(
+                || (raw.clone(), None),
+                |(capability, constraint)| {
+                    if [">=", "<=", ">", "<", "="]
+                        .iter()
+                        .any(|operator| constraint.starts_with(operator))
+                    {
+                        (capability.to_string(), Some(constraint.into()))
+                    } else {
+                        (raw.clone(), None)
+                    }
+                },
+            );
             CapabilityRequirement {
                 raw: raw.clone(),
                 capability,
