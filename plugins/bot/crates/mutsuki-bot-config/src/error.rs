@@ -105,6 +105,8 @@ pub enum ConfigError {
     PersistenceFailed { reason: String },
     #[error("reload failed: {reason}")]
     ReloadFailed { reason: String },
+    #[error("config transaction failed: {cause}; rollback failed: {rollback}")]
+    RollbackFailed { cause: String, rollback: String },
     #[error("secret unavailable")]
     SecretUnavailable,
     #[error("budget exceeded: {reason}")]

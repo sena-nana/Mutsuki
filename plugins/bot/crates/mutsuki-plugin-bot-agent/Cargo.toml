@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 mutsuki-agent-client.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-bot-config.workspace = true
@@ -13,9 +14,13 @@ mutsuki-bot-protocol.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
 
 [lints]
 workspace = true

@@ -384,36 +384,29 @@ struct AbiSymbolContract {
     entry_symbol: &'static str,
 }
 
-const ABI_ENTRY_CANDIDATES: &[AbiSymbolContract] = &[
-    AbiSymbolContract {
-        transport_version: 2,
-        entry_symbol: "mutsuki_plugin_abi_v2",
-    },
-    AbiSymbolContract {
-        transport_version: 1,
-        entry_symbol: "mutsuki_plugin_abi_v1",
-    },
-];
+const ABI_ENTRY_CONTRACT: AbiSymbolContract = AbiSymbolContract {
+    transport_version: 2,
+    entry_symbol: "mutsuki_plugin_abi_v2",
+};
+const RETIRED_ABI_V1_ENTRY_SYMBOL: &str = "mutsuki_plugin_abi_v1";
 
 fn verify_abi_entry_symbol(path: &Path) -> Result<AbiSymbolContract, String> {
     // Safety: only resolving presence of known ABI entry symbols; never calling them.
     let library = unsafe { libloading::Library::new(path) }
         .map_err(|error| format!("not a loadable ABI dynamic library ({error})"))?;
-    for contract in ABI_ENTRY_CANDIDATES {
-        let mut symbol = contract.entry_symbol.as_bytes().to_vec();
-        symbol.push(0);
-        let found = unsafe { library.get::<libloading::Symbol<*const ()>>(symbol.as_slice()) };
-        if found.is_ok() {
-            return Ok(*contract);
-        }
+    let mut symbol = ABI_ENTRY_CONTRACT.entry_symbol.as_bytes().to_vec();
+    symbol.push(0);
+    if unsafe { library.get::<libloading::Symbol<*const ()>>(symbol.as_slice()) }.is_ok() {
+        return Ok(ABI_ENTRY_CONTRACT);
+    }
+    let mut retired = RETIRED_ABI_V1_ENTRY_SYMBOL.as_bytes().to_vec();
+    retired.push(0);
+    if unsafe { library.get::<libloading::Symbol<*const ()>>(retired.as_slice()) }.is_ok() {
+        return Err("unsupported ABI version 1; rebuild the plugin for ABI v2".into());
     }
     Err(format!(
-        "missing ABI entry symbol (expected one of {})",
-        ABI_ENTRY_CANDIDATES
-            .iter()
-            .map(|c| c.entry_symbol)
-            .collect::<Vec<_>>()
-            .join(", ")
+        "missing ABI entry symbol (expected {})",
+        ABI_ENTRY_CONTRACT.entry_symbol
     ))
 }
 

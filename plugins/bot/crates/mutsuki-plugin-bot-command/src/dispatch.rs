@@ -14,8 +14,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AbiHostClient, AbiHostClientV2, LoadedPlugin, PluginBuilder, ProtocolDescriptorBuilder,
-    map_work_batch_entries,
+    AbiHostClient, LoadedPlugin, PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -116,11 +115,7 @@ fn command_plugin(
         .build()
 }
 
-fn create_abi_plugin_v1(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
-    create_configured_abi_plugin(config)
-}
-
-fn create_abi_plugin_v2(_host: AbiHostClientV2, config: Value) -> RuntimeResult<LoadedPlugin> {
+fn create_abi_plugin(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
     create_configured_abi_plugin(config)
 }
 
@@ -347,8 +342,7 @@ fn parse_failure(
     error
 }
 
-mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v1!(create_abi_plugin_v1);
-mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v2!(create_abi_plugin_v2);
+mutsuki_runtime_sdk::export_mutsuki_plugin_abi_v2!(create_abi_plugin);
 
 #[cfg(test)]
 mod tests {

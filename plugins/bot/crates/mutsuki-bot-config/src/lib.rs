@@ -31,10 +31,10 @@ pub use lifecycle::ConfigLifecycle;
 pub use memory::MemoryConfigProvider;
 pub use metrics::{ConfigMetrics, ConfigMetricsSnapshot};
 pub use migrate::{MigrationPlan, MigrationStep, migrate, require_migration};
-pub use persist::ConfigPersistSink;
+pub use persist::{ConfigPersistSink, PreparedConfigPersist};
 pub use provider::{
-    ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigProvider, ConfigRegistration,
-    ConfigRevision, ConfigSnapshot, ConfigSource,
+    ConfigAction, ConfigApplyRequest, ConfigApplyResult, ConfigChangeTransaction, ConfigProvider,
+    ConfigRegistration, ConfigRevision, ConfigSnapshot, ConfigSource, PreparedConfigChange,
 };
 pub use registry::{ConfigProviderRegistry, ProviderEntry};
 pub use schema::{

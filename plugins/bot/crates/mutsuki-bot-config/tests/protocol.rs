@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_config::*;
 
@@ -39,6 +40,175 @@ fn provider() -> Arc<MemoryConfigProvider> {
         defaults(),
         ConfigApplyMode::HotReload,
     ))
+}
+
+#[derive(Clone)]
+struct PersistenceState {
+    live: ConfigValue,
+    durable: ConfigValue,
+    fail_commit: bool,
+    activations: usize,
+    commits: usize,
+    rollbacks: usize,
+}
+
+struct RecordingPersistSink {
+    state: Arc<Mutex<PersistenceState>>,
+}
+
+impl ConfigPersistSink for RecordingPersistSink {
+    fn prepare(
+        &self,
+        _context: &ConfigContext,
+        value: &ConfigValue,
+        _secrets: &std::collections::HashMap<String, String>,
+    ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
+        let state = self.state.lock().unwrap();
+        Ok(Box::new(RecordingPersistChange {
+            state: self.state.clone(),
+            previous_live: state.live.clone(),
+            previous_durable: state.durable.clone(),
+            candidate: value.clone(),
+        }))
+    }
+}
+
+struct RecordingPersistChange {
+    state: Arc<Mutex<PersistenceState>>,
+    previous_live: ConfigValue,
+    previous_durable: ConfigValue,
+    candidate: ConfigValue,
+}
+
+impl PreparedConfigPersist for RecordingPersistChange {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        let mut state = self.state.lock().unwrap();
+        state.activations += 1;
+        state.live = self.candidate.clone();
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        let mut state = self.state.lock().unwrap();
+        state.commits += 1;
+        if state.fail_commit {
+            return Err(ConfigError::PersistenceFailed {
+                reason: "injected durable commit failure".into(),
+            });
+        }
+        state.durable = self.candidate.clone();
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        let mut state = self.state.lock().unwrap();
+        state.rollbacks += 1;
+        state.live = self.previous_live.clone();
+        state.durable = self.previous_durable.clone();
+        Ok(())
+    }
+}
+
+struct RecordingLifecycle {
+    persistence: Arc<Mutex<PersistenceState>>,
+    fail_execute: bool,
+    observed_live: Mutex<Vec<ConfigValue>>,
+    rollbacks: AtomicUsize,
+}
+
+impl ConfigLifecycle for RecordingLifecycle {
+    fn execute(
+        &self,
+        _provider_id: &str,
+        _policy: RestartPolicy,
+        pending: &[ConfigAction],
+    ) -> Result<Vec<ConfigAction>, ConfigError> {
+        self.observed_live
+            .lock()
+            .unwrap()
+            .push(self.persistence.lock().unwrap().live.clone());
+        if self.fail_execute {
+            Err(ConfigError::ReloadFailed {
+                reason: "injected runtime reload failure".into(),
+            })
+        } else {
+            Ok(pending.to_vec())
+        }
+    }
+
+    fn rollback(
+        &self,
+        _provider_id: &str,
+        _policy: RestartPolicy,
+        _completed: &[ConfigAction],
+    ) -> Result<(), ConfigError> {
+        self.rollbacks.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+fn transactional_service(
+    fail_commit: bool,
+    fail_execute: bool,
+) -> (
+    ConfigService,
+    Arc<MemoryConfigProvider>,
+    Arc<Mutex<PersistenceState>>,
+    Arc<RecordingLifecycle>,
+) {
+    let state = Arc::new(Mutex::new(PersistenceState {
+        live: defaults(),
+        durable: defaults(),
+        fail_commit,
+        activations: 0,
+        commits: 0,
+        rollbacks: 0,
+    }));
+    let provider = Arc::new(
+        MemoryConfigProvider::new(
+            DiscordConfig::schema(),
+            defaults(),
+            ConfigApplyMode::HotReload,
+        )
+        .with_persist(Arc::new(RecordingPersistSink {
+            state: state.clone(),
+        })),
+    );
+    let registry = Arc::new(ConfigProviderRegistry::default());
+    registry.register(provider.clone()).unwrap();
+    let lifecycle = Arc::new(RecordingLifecycle {
+        persistence: state.clone(),
+        fail_execute,
+        observed_live: Mutex::new(Vec::new()),
+        rollbacks: AtomicUsize::new(0),
+    });
+    (
+        ConfigService::new(registry).with_lifecycle(lifecycle.clone()),
+        provider,
+        state,
+        lifecycle,
+    )
+}
+
+fn changed_candidate(prefix: &str) -> ConfigValue {
+    let mut candidate = defaults();
+    candidate
+        .as_object_mut()
+        .unwrap()
+        .insert("command_prefix".into(), ConfigValue::String(prefix.into()));
+    candidate
+        .as_object_mut()
+        .unwrap()
+        .insert("reconnect_interval".into(), ConfigValue::Integer(6));
+    candidate
+}
+
+fn write_capabilities() -> Vec<String> {
+    vec![
+        capability::APPLY.into(),
+        capability::VALUE_WRITE.into(),
+        capability::SECRET_WRITE.into(),
+    ]
 }
 
 #[tokio::test]
@@ -284,6 +454,135 @@ async fn expression_and_restart_policy_on_apply() {
             .contains(&ConfigAction::PluginReloaded)
     );
     assert!(!result.actions.contains(&ConfigAction::PluginReloaded));
+}
+
+#[tokio::test]
+async fn failed_reload_restores_live_durable_and_provider_snapshots() {
+    let (service, provider, persistence, lifecycle) = transactional_service(false, true);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let notification_count = notifications.clone();
+    service.subscribe_revision_changed(Arc::new(move |_| {
+        notification_count.fetch_add(1, Ordering::SeqCst);
+    }));
+    let context = ConfigContext::plugin_instance("reload-failure");
+    let candidate = changed_candidate("!");
+
+    assert!(matches!(
+        service
+            .apply(
+                "discord",
+                ConfigApplyRequest {
+                    candidate: candidate.clone(),
+                    expected_revision: ConfigRevision(1),
+                    dry_run: false,
+                },
+                context.clone(),
+                &write_capabilities(),
+            )
+            .await,
+        Err(ConfigError::ReloadFailed { .. })
+    ));
+
+    let state = persistence.lock().unwrap().clone();
+    assert_eq!(state.live, defaults());
+    assert_eq!(state.durable, defaults());
+    assert_eq!(
+        (state.activations, state.commits, state.rollbacks),
+        (1, 0, 1)
+    );
+    assert_eq!(
+        lifecycle.observed_live.lock().unwrap().as_slice(),
+        &[candidate]
+    );
+    assert_eq!(lifecycle.rollbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(notifications.load(Ordering::SeqCst), 0);
+    let snapshot = provider.read(context).await.unwrap();
+    assert_eq!(snapshot.revision, ConfigRevision(1));
+    assert_eq!(snapshot.value, defaults());
+}
+
+#[tokio::test]
+async fn failed_durable_commit_reloads_the_previous_candidate_and_never_publishes() {
+    let (service, provider, persistence, lifecycle) = transactional_service(true, false);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let notification_count = notifications.clone();
+    service.subscribe_revision_changed(Arc::new(move |_| {
+        notification_count.fetch_add(1, Ordering::SeqCst);
+    }));
+    let context = ConfigContext::plugin_instance("commit-failure");
+    let candidate = changed_candidate("!");
+
+    assert!(matches!(
+        service
+            .apply(
+                "discord",
+                ConfigApplyRequest {
+                    candidate: candidate.clone(),
+                    expected_revision: ConfigRevision(1),
+                    dry_run: false,
+                },
+                context.clone(),
+                &write_capabilities(),
+            )
+            .await,
+        Err(ConfigError::PersistenceFailed { .. })
+    ));
+
+    let state = persistence.lock().unwrap().clone();
+    assert_eq!(state.live, defaults());
+    assert_eq!(state.durable, defaults());
+    assert_eq!(
+        (state.activations, state.commits, state.rollbacks),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        lifecycle.observed_live.lock().unwrap().as_slice(),
+        &[candidate]
+    );
+    assert_eq!(lifecycle.rollbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(notifications.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.read(context).await.unwrap().value, defaults());
+}
+
+#[tokio::test]
+async fn successful_config_transaction_publishes_only_after_reload_and_commit() {
+    let (service, provider, persistence, lifecycle) = transactional_service(false, false);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let notification_count = notifications.clone();
+    service.subscribe_revision_changed(Arc::new(move |_| {
+        notification_count.fetch_add(1, Ordering::SeqCst);
+    }));
+    let context = ConfigContext::plugin_instance("success");
+    let candidate = changed_candidate("!");
+
+    let result = service
+        .apply(
+            "discord",
+            ConfigApplyRequest {
+                candidate: candidate.clone(),
+                expected_revision: ConfigRevision(1),
+                dry_run: false,
+            },
+            context.clone(),
+            &write_capabilities(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.actions.contains(&ConfigAction::PluginReloaded));
+    assert!(result.pending_actions.is_empty());
+    let state = persistence.lock().unwrap().clone();
+    assert_eq!(state.live, candidate);
+    assert_eq!(state.durable, candidate);
+    assert_eq!(
+        (state.activations, state.commits, state.rollbacks),
+        (1, 1, 0)
+    );
+    assert_eq!(lifecycle.rollbacks.load(Ordering::SeqCst), 0);
+    assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    let snapshot = provider.read(context).await.unwrap();
+    assert_eq!(snapshot.revision, result.revision);
+    assert_eq!(snapshot.value, candidate);
 }
 
 #[tokio::test]

@@ -1,10 +1,11 @@
 use std::fmt;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use mutsuki_bot_config::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
 use mutsuki_bot_protocol::QqStreamingStrategy;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -100,6 +101,11 @@ impl Default for BotAgentConfig {
 }
 
 impl BotAgentConfig {
+    /// Validates every live Bot Agent runtime policy field as one snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed invalid field or unsupported streaming strategy.
     pub fn validate(&self) -> Result<(), BotAgentConfigError> {
         if self.default_profile_id.len() > 256
             || self.default_profile_id.chars().any(char::is_control)
@@ -125,6 +131,11 @@ impl BotAgentConfig {
         Ok(())
     }
 
+    /// Decodes the configured streaming policy into the QQ delivery strategy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the persisted streaming name is unsupported.
     pub fn streaming_strategy(&self) -> Result<QqStreamingStrategy, BotAgentConfigError> {
         match self.streaming.trim() {
             "final_only" => Ok(QqStreamingStrategy::FinalOnly),
@@ -150,7 +161,18 @@ pub enum BotAgentConfigError {
 
 /// Shared live settings used by the bridge and the authenticated Config Web backend.
 #[derive(Clone)]
-pub struct BotAgentConfigHandle(Arc<RwLock<BotAgentConfig>>);
+pub struct BotAgentConfigHandle(Arc<RwLock<VersionedBotAgentConfig>>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotAgentConfigSnapshot {
+    pub generation: u64,
+    pub config: BotAgentConfig,
+}
+
+struct VersionedBotAgentConfig {
+    generation: u64,
+    config: BotAgentConfig,
+}
 
 impl Default for BotAgentConfigHandle {
     fn default() -> Self {
@@ -168,19 +190,43 @@ impl fmt::Debug for BotAgentConfigHandle {
 }
 
 impl BotAgentConfigHandle {
+    /// Creates a live generation handle from a fully validated policy snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any runtime policy field is invalid.
     pub fn new(config: BotAgentConfig) -> Result<Self, BotAgentConfigError> {
         config.validate()?;
-        Ok(Self(Arc::new(RwLock::new(config))))
+        Ok(Self(Arc::new(RwLock::new(VersionedBotAgentConfig {
+            generation: 1,
+            config,
+        }))))
     }
 
     #[must_use]
     pub fn snapshot(&self) -> BotAgentConfig {
-        self.0.read().expect("Bot Agent config read lock").clone()
+        self.versioned_snapshot().config
     }
 
+    #[must_use]
+    pub fn versioned_snapshot(&self) -> BotAgentConfigSnapshot {
+        let live = self.0.read();
+        BotAgentConfigSnapshot {
+            generation: live.generation,
+            config: live.config.clone(),
+        }
+    }
+
+    /// Atomically publishes all runtime policy fields as the next generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without advancing the generation when validation fails.
     pub fn replace(&self, config: BotAgentConfig) -> Result<(), BotAgentConfigError> {
         config.validate()?;
-        *self.0.write().expect("Bot Agent config write lock") = config;
+        let mut live = self.0.write();
+        live.generation = live.generation.saturating_add(1);
+        live.config = config;
         Ok(())
     }
 }
@@ -238,12 +284,30 @@ mod tests {
     #[test]
     fn invalid_runtime_settings_are_rejected_before_live_replace() {
         let handle = BotAgentConfigHandle::default();
+        let initial = handle.versioned_snapshot();
         let mut invalid = handle.snapshot();
         invalid.streaming = "unknown".into();
         assert_eq!(
             handle.replace(invalid),
             Err(BotAgentConfigError::InvalidStreaming("unknown".into()))
         );
-        assert_eq!(handle.snapshot(), BotAgentConfig::default());
+        assert_eq!(handle.versioned_snapshot(), initial);
+    }
+
+    #[test]
+    fn runtime_policy_is_published_as_one_monotonic_generation() {
+        let handle = BotAgentConfigHandle::default();
+        let before = handle.versioned_snapshot();
+        let mut candidate = before.config.clone();
+        candidate.max_concurrency = 8;
+        candidate.timeout_ms = 30_000;
+        candidate.streaming = "segment_messages".into();
+        candidate.default_profile_id = "support".into();
+
+        handle.replace(candidate.clone()).unwrap();
+
+        let after = handle.versioned_snapshot();
+        assert_eq!(after.generation, before.generation + 1);
+        assert_eq!(after.config, candidate);
     }
 }
