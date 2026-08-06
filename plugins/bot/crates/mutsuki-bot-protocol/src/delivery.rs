@@ -43,6 +43,8 @@ pub enum DeliveryStatus {
     PermanentlyFailed,
     Cancelled,
     Previewed,
+    /// External send may have completed while local receipt was lost; requires manual reconcile.
+    ReconcileRequired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +90,12 @@ pub struct BotDeliveryReceipt {
     pub delivered_at_unix_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// Monotonic claim generation used by CAS lease recovery.
+    #[serde(default)]
+    pub generation: u64,
+    /// Exclusive send lease deadline; expired `Sending` becomes `ReconcileRequired`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -101,6 +109,9 @@ pub enum BotActiveDeliveryCommand {
         now_unix_ms: u64,
     },
     Inspect {
+        delivery_id: String,
+    },
+    Preview {
         delivery_id: String,
     },
     Retry {

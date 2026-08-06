@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use async_trait::async_trait;
 use mutsuki_bot_conversation::{ConversationError, ConversationRepository, ConversationService};
 use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
@@ -219,16 +220,21 @@ pub fn conversation_sample(event_count: usize) -> Sample {
     let conversation = mutsuki_bot_conversation::qq_conversation_from_event(&event).unwrap();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
-    let mut session_id = String::new();
-    for _ in 0..event_count {
-        let resolved = service
-            .resolve_policy(conversation.clone(), Some("user-7"))
-            .unwrap();
-        session_id = service
-            .get_or_create_session_binding(&resolved, Some("user-7"))
-            .unwrap()
-            .session_id;
-    }
+    let session_id = futures::executor::block_on(async {
+        let mut session_id = String::new();
+        for _ in 0..event_count {
+            let resolved = service
+                .resolve_policy(conversation.clone(), Some("user-7"))
+                .await
+                .unwrap();
+            session_id = service
+                .get_or_create_session_binding(&resolved, Some("user-7"))
+                .await
+                .unwrap()
+                .session_id;
+        }
+        session_id
+    });
     let elapsed_ns = started.elapsed().as_nanos();
     assert!(!session_id.is_empty());
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
@@ -253,28 +259,30 @@ pub fn delivery_idempotency_sample(delivery_count: usize) -> Sample {
         mutsuki_bot_conversation::qq_conversation_from_event(&benchmark_event(7, 1, true)).unwrap();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
-    for index in 0..delivery_count {
-        let request = BotActiveDeliveryRequest {
-            delivery_id: format!("delivery-{index}"),
-            idempotency_key: format!("delivery-key-{index}"),
-            conversation: conversation.clone(),
-            content: BotDeliveryContent {
-                segments: vec![MessageSegment::text("benchmark")],
-                summary: None,
-            },
-            policy: DeliveryPolicy {
-                max_attempts: 3,
-                initial_backoff_ms: 10,
-                max_backoff_ms: 1_000,
-                not_before_unix_ms: None,
-                expires_at_unix_ms: None,
-            },
-            dry_run: false,
-            source_execution_id: None,
-        };
-        service.submit(&request, index as u64).unwrap();
-        service.submit(&request, index as u64).unwrap();
-    }
+    futures::executor::block_on(async {
+        for index in 0..delivery_count {
+            let request = BotActiveDeliveryRequest {
+                delivery_id: format!("delivery-{index}"),
+                idempotency_key: format!("delivery-key-{index}"),
+                conversation: conversation.clone(),
+                content: BotDeliveryContent {
+                    segments: vec![MessageSegment::text("benchmark")],
+                    summary: None,
+                },
+                policy: DeliveryPolicy {
+                    max_attempts: 3,
+                    initial_backoff_ms: 10,
+                    max_backoff_ms: 1_000,
+                    not_before_unix_ms: None,
+                    expires_at_unix_ms: None,
+                },
+                dry_run: false,
+                source_execution_id: None,
+            };
+            service.submit(&request, index as u64).await.unwrap();
+            service.submit(&request, index as u64).await.unwrap();
+        }
+    });
     let elapsed_ns = started.elapsed().as_nanos();
     assert_eq!(*gateway.calls.lock().unwrap(), delivery_count as u64);
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
@@ -295,39 +303,43 @@ pub fn interaction_transition_sample(session_count: usize) -> Sample {
     let actor_id = event.actor.as_ref().unwrap().user_id.clone();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
-    for index in 0..session_count {
-        service
-            .create(BotInteractionSession {
-                session_id: format!("interaction-{index}"),
-                conversation: conversation.clone(),
-                scope: InteractionScope::ActorInConversation,
-                actor_id: Some(actor_id.clone()),
-                state_ref_id: format!("state-{index}"),
-                wait: InteractionWaitSpec {
-                    event_kinds: vec![BotEventKind::MessageCreated],
-                    command: None,
-                    predicate_service_id: None,
-                    timeout_at_unix_ms: u64::MAX,
-                    propagation: BotPropagationPolicy::ConsumeOnSuccess,
-                    retry_prompt: None,
-                },
-                status: InteractionStatus::Waiting,
-                generation: 1,
-                version: 1,
-                exclusive: false,
-                retries_remaining: 1,
-            })
-            .unwrap();
-        let mut next = event.clone();
-        next.event_id = format!("interaction-event-{index}");
-        assert!(
+    futures::executor::block_on(async {
+        for index in 0..session_count {
             service
-                .match_event(&next, index as u64)
-                .unwrap()
-                .unwrap()
-                .accepted
-        );
-    }
+                .create(BotInteractionSession {
+                    session_id: format!("interaction-{index}"),
+                    conversation: conversation.clone(),
+                    scope: InteractionScope::ActorInConversation,
+                    actor_id: Some(actor_id.clone()),
+                    state_ref_id: format!("state-{index}"),
+                    wait: InteractionWaitSpec {
+                        event_kinds: vec![BotEventKind::MessageCreated],
+                        command: None,
+                        predicate_service_id: None,
+                        timeout_at_unix_ms: u64::MAX,
+                        propagation: BotPropagationPolicy::ConsumeOnSuccess,
+                        retry_prompt: None,
+                    },
+                    status: InteractionStatus::Waiting,
+                    generation: 1,
+                    version: 1,
+                    exclusive: false,
+                    retries_remaining: 1,
+                })
+                .await
+                .unwrap();
+            let mut next = event.clone();
+            next.event_id = format!("interaction-event-{index}");
+            assert!(
+                service
+                    .match_event(&next, index as u64)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .accepted
+            );
+        }
+    });
     let elapsed_ns = started.elapsed().as_nanos();
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
     compact_sample(
@@ -371,16 +383,20 @@ struct BenchmarkConversationRepository {
     events: Mutex<BTreeMap<(String, String), bool>>,
 }
 
+#[async_trait]
 impl ConversationRepository for BenchmarkConversationRepository {
-    fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
+    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
         Ok(Vec::new())
     }
 
-    fn session_binding(&self, _: &str) -> Result<Option<AgentSessionBinding>, ConversationError> {
+    async fn session_binding(
+        &self,
+        _: &str,
+    ) -> Result<Option<AgentSessionBinding>, ConversationError> {
         Ok(self.binding.lock().unwrap().clone())
     }
 
-    fn compare_and_set_session_binding(
+    async fn compare_and_set_session_binding(
         &self,
         _: &str,
         expected: Option<u64>,
@@ -394,7 +410,7 @@ impl ConversationRepository for BenchmarkConversationRepository {
         Ok(())
     }
 
-    fn begin_agent_event(
+    async fn begin_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
@@ -413,7 +429,7 @@ impl ConversationRepository for BenchmarkConversationRepository {
         })
     }
 
-    fn complete_agent_event(
+    async fn complete_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
@@ -433,8 +449,9 @@ struct BenchmarkDeliveryRepository {
     receipts: Mutex<BTreeMap<String, BotDeliveryReceipt>>,
 }
 
+#[async_trait]
 impl DeliveryRepository for BenchmarkDeliveryRepository {
-    fn reserve(
+    async fn reserve(
         &self,
         request: &BotActiveDeliveryRequest,
     ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
@@ -449,10 +466,25 @@ impl DeliveryRepository for BenchmarkDeliveryRepository {
             .lock()
             .unwrap()
             .insert(request.delivery_id.clone(), request.clone());
+        self.receipts.lock().unwrap().insert(
+            request.delivery_id.clone(),
+            BotDeliveryReceipt {
+                delivery_id: request.delivery_id.clone(),
+                idempotency_key: request.idempotency_key.clone(),
+                status: DeliveryStatus::Pending,
+                attempt_count: 0,
+                platform_message_ids: Vec::new(),
+                part_receipts: Vec::new(),
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            },
+        );
         Ok(None)
     }
 
-    fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
+    async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
         self.requests
             .lock()
             .unwrap()
@@ -461,7 +493,7 @@ impl DeliveryRepository for BenchmarkDeliveryRepository {
             .ok_or(DeliveryError::NotFound)
     }
 
-    fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+    async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
         self.receipts
             .lock()
             .unwrap()
@@ -470,15 +502,15 @@ impl DeliveryRepository for BenchmarkDeliveryRepository {
             .ok_or(DeliveryError::NotFound)
     }
 
-    fn attempts(&self, _delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
+    async fn attempts(&self, _delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
         Ok(Vec::new())
     }
 
-    fn save_attempt(&self, _attempt: BotDeliveryAttempt) -> Result<(), DeliveryError> {
-        Ok(())
-    }
-
-    fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
+    async fn save_outcome(
+        &self,
+        _attempt: BotDeliveryAttempt,
+        receipt: BotDeliveryReceipt,
+    ) -> Result<(), DeliveryError> {
         self.receipts
             .lock()
             .unwrap()
@@ -486,8 +518,48 @@ impl DeliveryRepository for BenchmarkDeliveryRepository {
         Ok(())
     }
 
-    fn due_delivery_ids(&self, _now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
+    async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
+        self.receipts
+            .lock()
+            .unwrap()
+            .insert(receipt.delivery_id.clone(), receipt);
+        Ok(())
+    }
+
+    async fn claim_due_delivery_ids(
+        &self,
+        _now_unix_ms: u64,
+    ) -> Result<Vec<String>, DeliveryError> {
         Ok(Vec::new())
+    }
+
+    async fn begin_send(
+        &self,
+        delivery_id: &str,
+        attempt: BotDeliveryAttempt,
+        now_unix_ms: u64,
+        lease_ms: u64,
+    ) -> Result<BotDeliveryReceipt, DeliveryError> {
+        let _ = attempt;
+        let mut receipts = self.receipts.lock().unwrap();
+        let receipt = receipts.entry(delivery_id.to_owned()).or_insert_with(|| {
+            BotDeliveryReceipt {
+                delivery_id: delivery_id.to_owned(),
+                idempotency_key: delivery_id.to_owned(),
+                status: DeliveryStatus::Pending,
+                attempt_count: 0,
+                platform_message_ids: Vec::new(),
+                part_receipts: Vec::new(),
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            }
+        });
+        receipt.status = DeliveryStatus::Sending;
+        receipt.generation = receipt.generation.saturating_add(1);
+        receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));
+        Ok(receipt.clone())
     }
 }
 
@@ -527,8 +599,9 @@ struct BenchmarkInteractionRepository {
     sessions: Mutex<BTreeMap<String, BotInteractionSession>>,
 }
 
+#[async_trait]
 impl InteractionRepository for BenchmarkInteractionRepository {
-    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+    async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         self.sessions
             .lock()
             .unwrap()
@@ -536,7 +609,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
         Ok(())
     }
 
-    fn active_for_origin(
+    async fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
@@ -553,7 +626,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
             .collect())
     }
 
-    fn compare_and_set(
+    async fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
@@ -570,7 +643,7 @@ impl InteractionRepository for BenchmarkInteractionRepository {
         Ok(())
     }
 
-    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+    async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
         Ok(self
             .sessions
             .lock()

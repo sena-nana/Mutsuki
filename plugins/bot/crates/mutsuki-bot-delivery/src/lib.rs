@@ -1,15 +1,15 @@
+use async_trait::async_trait;
 use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{
     BOT_ACTIVE_DELIVERY_PROTOCOL_ID, BotActiveDeliveryCommand, BotActiveDeliveryRequest,
     BotDeliveryAttempt, BotDeliveryContent, BotDeliveryPartReceipt, BotDeliveryReceipt,
     DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
-use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, PluginManifest, RunnerResult, Task, WorkBatch,
-};
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task};
+use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
+    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef,
+    TaskAwaitRunnerAdapter,
 };
 use std::sync::Arc;
 use thiserror::Error;
@@ -20,20 +20,42 @@ pub struct ScheduledDeliveryRequest {
     pub now_unix_ms: u64,
 }
 
+#[async_trait]
 pub trait DeliveryRepository: Send + Sync {
-    fn reserve(
+    async fn reserve(
         &self,
         request: &BotActiveDeliveryRequest,
     ) -> Result<Option<BotDeliveryReceipt>, DeliveryError>;
-    fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError>;
-    fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError>;
-    fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError>;
-    fn save_attempt(&self, attempt: BotDeliveryAttempt) -> Result<(), DeliveryError>;
-    fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError>;
-    fn due_delivery_ids(&self, now_unix_ms: u64) -> Result<Vec<String>, DeliveryError>;
+    async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError>;
+    async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError>;
+    async fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError>;
+    async fn save_outcome(
+        &self,
+        attempt: BotDeliveryAttempt,
+        receipt: BotDeliveryReceipt,
+    ) -> Result<(), DeliveryError>;
+    async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError>;
+    /// Claims due deliveries with a send lease: Pending, due RetryScheduled.
+    /// Expired Sending leases become ReconcileRequired and are not returned.
+    async fn claim_due_delivery_ids(&self, now_unix_ms: u64) -> Result<Vec<String>, DeliveryError>;
+    /// CAS-claims a single delivery for an outbound send attempt.
+    async fn begin_send(
+        &self,
+        delivery_id: &str,
+        attempt: BotDeliveryAttempt,
+        now_unix_ms: u64,
+        lease_ms: u64,
+    ) -> Result<BotDeliveryReceipt, DeliveryError>;
 }
 
+pub const DELIVERY_SEND_LEASE_MS: u64 = 30_000;
+
 pub trait QqDeliveryGateway: Send + Sync {
+    /// Sends one logical delivery to QQ.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed partial-delivery failure with retry evidence when QQ rejects the send.
     fn send(
         &self,
         conversation: &QqConversationRef,
@@ -42,6 +64,11 @@ pub trait QqDeliveryGateway: Send + Sync {
 }
 
 pub trait DeliveryPolicyResolver: Send + Sync {
+    /// Resolves whether active delivery is allowed for the conversation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the policy owner cannot resolve the conversation.
     fn active_delivery_allowed(
         &self,
         conversation: &QqConversationRef,
@@ -68,7 +95,12 @@ impl ActiveDeliveryService {
         }
     }
 
-    pub fn submit(
+    /// Reserves and attempts one idempotent active delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid input, policy denial, or repository failure.
+    pub async fn submit(
         &self,
         request: &BotActiveDeliveryRequest,
         now_unix_ms: u64,
@@ -88,61 +120,77 @@ impl ActiveDeliveryService {
                 None,
             ));
         }
-        if let Some(existing) = self.repository.reserve(request)? {
+        if let Some(existing) = self.repository.reserve(request).await? {
             return Ok(existing);
         }
-        self.attempt(request, now_unix_ms, 1)
+        self.attempt(request, now_unix_ms, 1).await
     }
 
-    pub fn resume_due(&self, now_unix_ms: u64) -> Result<Vec<BotDeliveryReceipt>, DeliveryError> {
-        self.repository
-            .due_delivery_ids(now_unix_ms)?
-            .into_iter()
-            .filter_map(|delivery_id| match self.repository.receipt(&delivery_id) {
-                Ok(receipt) if receipt.status == DeliveryStatus::RetryScheduled => {
-                    Some(Ok(delivery_id))
-                }
-                Ok(_) | Err(DeliveryError::NotFound) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .map(|delivery_id| {
-                let delivery_id = delivery_id?;
-                let request = self.repository.request(&delivery_id)?;
-                let attempt = self.next_attempt(&delivery_id)?;
-                self.attempt(&request, now_unix_ms, attempt)
-            })
-            .collect()
+    /// Claims and resumes every delivery due at the supplied timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when claiming, loading, or attempting a due delivery fails.
+    pub async fn resume_due(
+        &self,
+        now_unix_ms: u64,
+    ) -> Result<Vec<BotDeliveryReceipt>, DeliveryError> {
+        let delivery_ids = self.repository.claim_due_delivery_ids(now_unix_ms).await?;
+        let mut receipts = Vec::with_capacity(delivery_ids.len());
+        for delivery_id in delivery_ids {
+            let request = self.repository.request(&delivery_id).await?;
+            let attempt = self.next_attempt(&delivery_id).await?;
+            receipts.push(self.attempt(&request, now_unix_ms, attempt).await?);
+        }
+        Ok(receipts)
     }
 
-    pub fn inspect(
+    /// Reads the current receipt and complete attempt history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the delivery does not exist or repository access fails.
+    pub async fn inspect(
         &self,
         delivery_id: &str,
     ) -> Result<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>), DeliveryError> {
         Ok((
-            self.repository.receipt(delivery_id)?,
-            self.repository.attempts(delivery_id)?,
+            self.repository.receipt(delivery_id).await?,
+            self.repository.attempts(delivery_id).await?,
         ))
     }
 
-    pub fn preview(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
-        let mut request = self.repository.request(delivery_id)?;
+    /// Builds a dry-run receipt without sending or mutating delivery state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the stored request is unavailable or invalid.
+    pub async fn preview(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+        let mut request = self.repository.request(delivery_id).await?;
         request.dry_run = true;
-        self.submit(&request, 0)
+        self.submit(&request, 0).await
     }
 
-    pub fn retry(
+    /// Retries a retryable, permanently failed, or reconcile-required delivery under policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid state, policy denial, or repository failure.
+    pub async fn retry(
         &self,
         delivery_id: &str,
         now_unix_ms: u64,
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
-        let current = self.repository.receipt(delivery_id)?;
+        let current = self.repository.receipt(delivery_id).await?;
         if !matches!(
             current.status,
-            DeliveryStatus::RetryScheduled | DeliveryStatus::PermanentlyFailed
+            DeliveryStatus::RetryScheduled
+                | DeliveryStatus::PermanentlyFailed
+                | DeliveryStatus::ReconcileRequired
         ) {
             return Err(DeliveryError::InvalidState);
         }
-        let request = self.repository.request(delivery_id)?;
+        let request = self.repository.request(delivery_id).await?;
         if !self.policy.active_delivery_allowed(&request.conversation)? {
             return Err(DeliveryError::PolicyDenied);
         }
@@ -151,56 +199,48 @@ impl ActiveDeliveryService {
             now_unix_ms,
             current.attempt_count.saturating_add(1),
         )
+        .await
     }
 
-    pub fn cancel(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
-        let mut current = self.repository.receipt(delivery_id)?;
-        if current.status != DeliveryStatus::RetryScheduled {
+    /// Cancels a delivery that is waiting for retry or manual reconcile.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the delivery is not cancellable or persistence fails.
+    pub async fn cancel(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+        let mut current = self.repository.receipt(delivery_id).await?;
+        if !matches!(
+            current.status,
+            DeliveryStatus::RetryScheduled | DeliveryStatus::ReconcileRequired
+        ) {
             return Err(DeliveryError::InvalidState);
         }
         current.status = DeliveryStatus::Cancelled;
         current.error_code = None;
-        self.repository.save_receipt(current.clone())?;
+        current.lease_expires_at_unix_ms = None;
+        self.repository.save_receipt(current.clone()).await?;
         Ok(current)
     }
 
-    fn next_attempt(&self, delivery_id: &str) -> Result<u32, DeliveryError> {
+    async fn next_attempt(&self, delivery_id: &str) -> Result<u32, DeliveryError> {
         Ok(self
             .repository
-            .receipt(delivery_id)?
+            .receipt(delivery_id)
+            .await?
             .attempt_count
             .saturating_add(1))
     }
 
-    fn attempt(
+    async fn attempt(
         &self,
         request: &BotActiveDeliveryRequest,
         now_unix_ms: u64,
         attempt_number: u32,
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
-        if request
-            .policy
-            .not_before_unix_ms
-            .is_some_and(|not_before| now_unix_ms < not_before)
+        if let Some(receipt) = self
+            .defer_until_not_before(request, now_unix_ms, attempt_number)
+            .await?
         {
-            let receipt = receipt(
-                request,
-                DeliveryStatus::RetryScheduled,
-                attempt_number.saturating_sub(1),
-                Vec::new(),
-                Vec::new(),
-                None,
-                None,
-            );
-            self.repository.save_attempt(BotDeliveryAttempt {
-                delivery_id: request.delivery_id.clone(),
-                attempt: attempt_number.saturating_sub(1),
-                status: DeliveryStatus::RetryScheduled,
-                started_at_unix_ms: now_unix_ms,
-                retry_at_unix_ms: request.policy.not_before_unix_ms,
-                error_code: None,
-            })?;
-            self.repository.save_receipt(receipt.clone())?;
             return Ok(receipt);
         }
         if request
@@ -208,23 +248,85 @@ impl ActiveDeliveryService {
             .expires_at_unix_ms
             .is_some_and(|expires| now_unix_ms >= expires)
         {
-            return self.finish_failure(
-                request,
-                attempt_number,
-                "delivery.expired",
-                Vec::new(),
-                Vec::new(),
-            );
+            return self
+                .finish_failure(
+                    request,
+                    attempt_number,
+                    now_unix_ms,
+                    "delivery.expired",
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .await;
         }
-        self.repository.save_attempt(BotDeliveryAttempt {
+        let sending = BotDeliveryAttempt {
             delivery_id: request.delivery_id.clone(),
             attempt: attempt_number,
             status: DeliveryStatus::Sending,
             started_at_unix_ms: now_unix_ms,
             retry_at_unix_ms: None,
             error_code: None,
-        })?;
-        match self.gateway.send(&request.conversation, &request.content) {
+        };
+        self.repository
+            .begin_send(
+                &request.delivery_id,
+                sending,
+                now_unix_ms,
+                DELIVERY_SEND_LEASE_MS,
+            )
+            .await?;
+        self.finish_gateway_attempt(
+            request,
+            now_unix_ms,
+            attempt_number,
+            self.gateway.send(&request.conversation, &request.content),
+        )
+        .await
+    }
+
+    async fn defer_until_not_before(
+        &self,
+        request: &BotActiveDeliveryRequest,
+        now_unix_ms: u64,
+        attempt_number: u32,
+    ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
+        let Some(not_before) = request.policy.not_before_unix_ms else {
+            return Ok(None);
+        };
+        if now_unix_ms >= not_before {
+            return Ok(None);
+        }
+        let receipt = receipt(
+            request,
+            DeliveryStatus::RetryScheduled,
+            attempt_number.saturating_sub(1),
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+        );
+        let attempt = BotDeliveryAttempt {
+            delivery_id: request.delivery_id.clone(),
+            attempt: attempt_number.saturating_sub(1),
+            status: DeliveryStatus::RetryScheduled,
+            started_at_unix_ms: now_unix_ms,
+            retry_at_unix_ms: Some(not_before),
+            error_code: None,
+        };
+        self.repository
+            .save_outcome(attempt, receipt.clone())
+            .await?;
+        Ok(Some(receipt))
+    }
+
+    async fn finish_gateway_attempt(
+        &self,
+        request: &BotActiveDeliveryRequest,
+        now_unix_ms: u64,
+        attempt_number: u32,
+        result: Result<QqDeliverySuccess, QqDeliveryFailure>,
+    ) -> Result<BotDeliveryReceipt, DeliveryError> {
+        match result {
             Ok(success) => {
                 let receipt = receipt(
                     request,
@@ -235,7 +337,17 @@ impl ActiveDeliveryService {
                     Some(now_unix_ms),
                     None,
                 );
-                self.repository.save_receipt(receipt.clone())?;
+                let attempt = BotDeliveryAttempt {
+                    delivery_id: request.delivery_id.clone(),
+                    attempt: attempt_number,
+                    status: DeliveryStatus::Succeeded,
+                    started_at_unix_ms: now_unix_ms,
+                    retry_at_unix_ms: None,
+                    error_code: None,
+                };
+                self.repository
+                    .save_outcome(attempt, receipt.clone())
+                    .await?;
                 Ok(receipt)
             }
             Err(failure)
@@ -250,14 +362,14 @@ impl ActiveDeliveryService {
                     .unwrap_or(exponential)
                     .min(request.policy.max_backoff_ms);
                 let retry_at = now_unix_ms.saturating_add(delay);
-                self.repository.save_attempt(BotDeliveryAttempt {
+                let attempt = BotDeliveryAttempt {
                     delivery_id: request.delivery_id.clone(),
                     attempt: attempt_number,
                     status: DeliveryStatus::RetryScheduled,
                     started_at_unix_ms: now_unix_ms,
                     retry_at_unix_ms: Some(retry_at),
                     error_code: Some(failure.code.clone()),
-                })?;
+                };
                 let receipt = receipt(
                     request,
                     DeliveryStatus::RetryScheduled,
@@ -267,23 +379,30 @@ impl ActiveDeliveryService {
                     None,
                     Some(failure.code),
                 );
-                self.repository.save_receipt(receipt.clone())?;
+                self.repository
+                    .save_outcome(attempt, receipt.clone())
+                    .await?;
                 Ok(receipt)
             }
-            Err(failure) => self.finish_failure(
-                request,
-                attempt_number,
-                &failure.code,
-                failure.sent_message_ids,
-                failure.part_receipts,
-            ),
+            Err(failure) => {
+                self.finish_failure(
+                    request,
+                    attempt_number,
+                    now_unix_ms,
+                    &failure.code,
+                    failure.sent_message_ids,
+                    failure.part_receipts,
+                )
+                .await
+            }
         }
     }
 
-    fn finish_failure(
+    async fn finish_failure(
         &self,
         request: &BotActiveDeliveryRequest,
         attempts: u32,
+        started_at_unix_ms: u64,
         code: &str,
         sent_message_ids: Vec<String>,
         part_receipts: Vec<BotDeliveryPartReceipt>,
@@ -297,7 +416,17 @@ impl ActiveDeliveryService {
             None,
             Some(code.into()),
         );
-        self.repository.save_receipt(receipt.clone())?;
+        let attempt = BotDeliveryAttempt {
+            delivery_id: request.delivery_id.clone(),
+            attempt: attempts,
+            status: DeliveryStatus::PermanentlyFailed,
+            started_at_unix_ms,
+            retry_at_unix_ms: None,
+            error_code: Some(code.into()),
+        };
+        self.repository
+            .save_outcome(attempt, receipt.clone())
+            .await?;
         Ok(receipt)
     }
 }
@@ -308,10 +437,20 @@ pub const BOT_SCHEDULED_DELIVERY_PLUGIN_ID: &str = "mutsuki.plugin.bot.delivery.
 pub const BOT_SCHEDULED_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.delivery.scheduled.runner";
 
 pub trait ScheduledDeliveryTargetResolver: Send + Sync {
+    /// Resolves an owner-persisted opaque target binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binding is missing, invalid, or unavailable.
     fn resolve_binding(&self, binding_id: &str) -> Result<QqConversationRef, DeliveryError>;
 }
 
 pub trait ScheduledDeliveryPolicyProvider: Send + Sync {
+    /// Resolves the current delivery policy for a bound conversation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when policy state cannot be resolved.
     fn delivery_policy(
         &self,
         conversation: &QqConversationRef,
@@ -338,7 +477,12 @@ impl ScheduledAgentDeliveryBridge {
         }
     }
 
-    pub fn deliver(
+    /// Converts a successful scheduled Agent result into an active Bot delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsuccessful run, invalid target, or delivery failure.
+    pub async fn deliver(
         &self,
         result: ScheduledRunResult,
         now_unix_ms: u64,
@@ -388,7 +532,7 @@ impl ScheduledAgentDeliveryBridge {
             dry_run: false,
             source_execution_id: Some(result.execution_id),
         };
-        self.delivery.submit(&request, now_unix_ms)
+        self.delivery.submit(&request, now_unix_ms).await
     }
 }
 
@@ -406,41 +550,37 @@ pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
 }
 
 #[must_use]
-pub fn scheduled_delivery_runner(bridge: ScheduledAgentDeliveryBridge) -> Box<dyn Runner> {
-    Box::new(ScheduledDeliveryRunner {
-        descriptor: scheduled_delivery_descriptor(),
-        bridge,
-    })
-}
-
-struct ScheduledDeliveryRunner {
-    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+pub fn scheduled_delivery_runner(
+    client: RuntimeClientRef,
     bridge: ScheduledAgentDeliveryBridge,
+) -> Box<dyn Runner> {
+    let factory = Box::new(move |_ctx, task: Task| {
+        let bridge = bridge.clone();
+        Box::pin(async move { scheduled_delivery_result(&bridge, &task).await })
+            as std::pin::Pin<
+                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
+            >
+    });
+    Box::new(
+        TaskAwaitRunnerAdapter::new(scheduled_delivery_descriptor(), client, factory)
+            .with_self_call_policy(false),
+    )
 }
 
-impl Runner for ScheduledDeliveryRunner {
-    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| {
-            let request: ScheduledDeliveryRequest = serde_json::from_value(task.payload.to_value())
-                .map_err(|error| runtime_error(task, error))?;
-            let receipt = self
-                .bridge
-                .deliver(request.result, request.now_unix_ms)
-                .map_err(|error| runtime_error(task, error))?;
-            let mut completed = RunnerResult::completed(task.task_id.clone());
-            completed.output =
-                Some(serde_json::to_value(receipt).map_err(|error| runtime_error(task, error))?);
-            Ok(completed)
-        })
-    }
+async fn scheduled_delivery_result(
+    bridge: &ScheduledAgentDeliveryBridge,
+    task: &Task,
+) -> RuntimeResult<RunnerResult> {
+    let request: ScheduledDeliveryRequest = serde_json::from_value(task.payload.to_value())
+        .map_err(|error| runtime_error(task, error))?;
+    let receipt = bridge
+        .deliver(request.result, request.now_unix_ms)
+        .await
+        .map_err(|error| runtime_error(task, error))?;
+    let mut completed = RunnerResult::completed(task.task_id.clone());
+    completed.output =
+        Some(serde_json::to_value(receipt).map_err(|error| runtime_error(task, error))?);
+    Ok(completed)
 }
 
 fn scheduled_delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
@@ -501,30 +641,21 @@ pub fn bot_delivery_manifest() -> PluginManifest {
 }
 
 #[must_use]
-pub fn delivery_runner(service: ActiveDeliveryService) -> Box<dyn Runner> {
-    Box::new(DeliveryRunner {
-        descriptor: delivery_descriptor(),
-        service,
-    })
-}
-
-struct DeliveryRunner {
-    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+pub fn delivery_runner(
+    client: RuntimeClientRef,
     service: ActiveDeliveryService,
-}
-
-impl Runner for DeliveryRunner {
-    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| delivery_result(&self.service, task))
-    }
+) -> Box<dyn Runner> {
+    let factory = Box::new(move |_ctx, task: Task| {
+        let service = service.clone();
+        Box::pin(async move { delivery_result(&service, &task).await })
+            as std::pin::Pin<
+                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
+            >
+    });
+    Box::new(
+        TaskAwaitRunnerAdapter::new(delivery_descriptor(), client, factory)
+            .with_self_call_policy(false),
+    )
 }
 
 fn delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
@@ -534,10 +665,10 @@ fn delivery_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .build()
 }
 
-fn delivery_result(
+async fn delivery_result(
     service: &ActiveDeliveryService,
     task: &Task,
-) -> Result<RunnerResult, mutsuki_runtime_contracts::RuntimeError> {
+) -> RuntimeResult<RunnerResult> {
     let command: BotActiveDeliveryCommand = serde_json::from_value(task.payload.to_value())
         .map_err(|error| runtime_error(task, error))?;
     let output = match command {
@@ -547,16 +678,25 @@ fn delivery_result(
         } => serde_json::to_value(
             service
                 .submit(&request, now_unix_ms)
+                .await
                 .map_err(|error| runtime_error(task, error))?,
         ),
         BotActiveDeliveryCommand::ResumeDue { now_unix_ms } => serde_json::to_value(
             service
                 .resume_due(now_unix_ms)
+                .await
                 .map_err(|error| runtime_error(task, error))?,
         ),
         BotActiveDeliveryCommand::Inspect { delivery_id } => serde_json::to_value(
             service
                 .inspect(&delivery_id)
+                .await
+                .map_err(|error| runtime_error(task, error))?,
+        ),
+        BotActiveDeliveryCommand::Preview { delivery_id } => serde_json::to_value(
+            service
+                .preview(&delivery_id)
+                .await
                 .map_err(|error| runtime_error(task, error))?,
         ),
         BotActiveDeliveryCommand::Retry {
@@ -565,11 +705,13 @@ fn delivery_result(
         } => serde_json::to_value(
             service
                 .retry(&delivery_id, now_unix_ms)
+                .await
                 .map_err(|error| runtime_error(task, error))?,
         ),
         BotActiveDeliveryCommand::Cancel { delivery_id } => serde_json::to_value(
             service
                 .cancel(&delivery_id)
+                .await
                 .map_err(|error| runtime_error(task, error))?,
         ),
     }
@@ -579,15 +721,12 @@ fn delivery_result(
     Ok(result)
 }
 
-fn runtime_error(
-    task: &Task,
-    error: impl std::fmt::Display,
-) -> mutsuki_runtime_contracts::RuntimeError {
-    mutsuki_runtime_contracts::RuntimeError::new(
+fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
+    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
         mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
         BOT_DELIVERY_PLUGIN_ID,
         format!("{}.{}", task.task_id, error),
-    )
+    ))
 }
 
 fn receipt(
@@ -608,6 +747,8 @@ fn receipt(
         part_receipts,
         delivered_at_unix_ms,
         error_code,
+        generation: 0,
+        lease_expires_at_unix_ms: None,
     }
 }
 
@@ -666,8 +807,9 @@ mod tests {
         receipts: Mutex<BTreeMap<String, BotDeliveryReceipt>>,
     }
 
+    #[async_trait]
     impl DeliveryRepository for Repository {
-        fn reserve(
+        async fn reserve(
             &self,
             request: &BotActiveDeliveryRequest,
         ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
@@ -687,6 +829,8 @@ mod tests {
                             part_receipts: Vec::new(),
                             delivered_at_unix_ms: None,
                             error_code: None,
+                            generation: 0,
+                            lease_expires_at_unix_ms: None,
                         }),
                 ));
             }
@@ -706,10 +850,29 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(request.delivery_id.clone(), request.clone());
+            let pending = BotDeliveryReceipt {
+                delivery_id: request.delivery_id.clone(),
+                idempotency_key: request.idempotency_key.clone(),
+                status: DeliveryStatus::Pending,
+                attempt_count: 0,
+                platform_message_ids: Vec::new(),
+                part_receipts: Vec::new(),
+                delivered_at_unix_ms: None,
+                error_code: None,
+                generation: 0,
+                lease_expires_at_unix_ms: None,
+            };
+            self.receipts
+                .lock()
+                .unwrap()
+                .insert(request.delivery_id.clone(), pending);
             Ok(None)
         }
 
-        fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
+        async fn request(
+            &self,
+            delivery_id: &str,
+        ) -> Result<BotActiveDeliveryRequest, DeliveryError> {
             self.requests
                 .lock()
                 .unwrap()
@@ -718,7 +881,7 @@ mod tests {
                 .ok_or(DeliveryError::NotFound)
         }
 
-        fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
+        async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
             self.receipts
                 .lock()
                 .unwrap()
@@ -727,7 +890,10 @@ mod tests {
                 .ok_or(DeliveryError::NotFound)
         }
 
-        fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
+        async fn attempts(
+            &self,
+            delivery_id: &str,
+        ) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
             Ok(self
                 .attempts
                 .lock()
@@ -738,12 +904,12 @@ mod tests {
                 .collect())
         }
 
-        fn save_attempt(&self, attempt: BotDeliveryAttempt) -> Result<(), DeliveryError> {
+        async fn save_outcome(
+            &self,
+            attempt: BotDeliveryAttempt,
+            receipt: BotDeliveryReceipt,
+        ) -> Result<(), DeliveryError> {
             self.attempts.lock().unwrap().push(attempt);
-            Ok(())
-        }
-
-        fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
             self.receipts
                 .lock()
                 .unwrap()
@@ -751,20 +917,104 @@ mod tests {
             Ok(())
         }
 
-        fn due_delivery_ids(&self, now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
-            Ok(self
-                .attempts
+        async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
+            self.receipts
                 .lock()
                 .unwrap()
-                .iter()
-                .filter(|attempt| {
-                    attempt.status == DeliveryStatus::RetryScheduled
-                        && attempt
-                            .retry_at_unix_ms
-                            .is_some_and(|retry_at| retry_at <= now_unix_ms)
-                })
-                .map(|attempt| attempt.delivery_id.clone())
-                .collect())
+                .insert(receipt.delivery_id.clone(), receipt);
+            Ok(())
+        }
+
+        async fn claim_due_delivery_ids(
+            &self,
+            now_unix_ms: u64,
+        ) -> Result<Vec<String>, DeliveryError> {
+            let mut receipts = self.receipts.lock().unwrap();
+            let mut claimed = Vec::new();
+            let ids = receipts.keys().cloned().collect::<Vec<_>>();
+            for delivery_id in ids {
+                let Some(receipt) = receipts.get_mut(&delivery_id) else {
+                    continue;
+                };
+                match receipt.status {
+                    DeliveryStatus::Sending => {
+                        if receipt
+                            .lease_expires_at_unix_ms
+                            .is_none_or(|expires| expires <= now_unix_ms)
+                        {
+                            receipt.status = DeliveryStatus::ReconcileRequired;
+                            receipt.lease_expires_at_unix_ms = None;
+                            receipt.error_code = Some("delivery.reconcile_required".into());
+                        }
+                    }
+                    DeliveryStatus::Pending => {
+                        receipt.status = DeliveryStatus::Sending;
+                        receipt.generation = receipt.generation.saturating_add(1);
+                        receipt.lease_expires_at_unix_ms =
+                            Some(now_unix_ms.saturating_add(DELIVERY_SEND_LEASE_MS));
+                        claimed.push(delivery_id);
+                    }
+                    DeliveryStatus::RetryScheduled => {
+                        let due = self.attempts.lock().unwrap().iter().any(|attempt| {
+                            attempt.delivery_id == delivery_id
+                                && attempt.status == DeliveryStatus::RetryScheduled
+                                && attempt
+                                    .retry_at_unix_ms
+                                    .is_some_and(|retry_at| retry_at <= now_unix_ms)
+                        });
+                        if !due {
+                            continue;
+                        }
+                        receipt.status = DeliveryStatus::Sending;
+                        receipt.generation = receipt.generation.saturating_add(1);
+                        receipt.lease_expires_at_unix_ms =
+                            Some(now_unix_ms.saturating_add(DELIVERY_SEND_LEASE_MS));
+                        claimed.push(delivery_id);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(claimed)
+        }
+
+        async fn begin_send(
+            &self,
+            delivery_id: &str,
+            attempt: BotDeliveryAttempt,
+            now_unix_ms: u64,
+            lease_ms: u64,
+        ) -> Result<BotDeliveryReceipt, DeliveryError> {
+            let mut receipts = self.receipts.lock().unwrap();
+            let receipt = receipts
+                .get_mut(delivery_id)
+                .ok_or(DeliveryError::NotFound)?;
+            let claimable = match receipt.status {
+                DeliveryStatus::Pending
+                | DeliveryStatus::RetryScheduled
+                | DeliveryStatus::PermanentlyFailed
+                | DeliveryStatus::ReconcileRequired => true,
+                DeliveryStatus::Sending => receipt
+                    .lease_expires_at_unix_ms
+                    .is_some_and(|expires| expires > now_unix_ms),
+                _ => false,
+            };
+            if !claimable {
+                return Err(DeliveryError::InvalidState);
+            }
+            if !matches!(receipt.status, DeliveryStatus::Sending)
+                || receipt
+                    .lease_expires_at_unix_ms
+                    .is_none_or(|expires| expires <= now_unix_ms)
+            {
+                receipt.status = DeliveryStatus::Sending;
+                receipt.generation = receipt.generation.saturating_add(1);
+                receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));
+                receipt.error_code = None;
+            }
+            let claimed = receipt.clone();
+            drop(receipts);
+            self.attempts.lock().unwrap().push(attempt);
+            Ok(claimed)
         }
     }
 
@@ -796,57 +1046,135 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_key_sends_once_and_transient_attempt_resumes_after_restart() {
-        let repository = Arc::new(Repository::default());
-        let gateway = Arc::new(Gateway {
-            results: Mutex::new(VecDeque::from([
-                Err(QqDeliveryFailure {
-                    code: "qq.rate_limited".into(),
-                    transient: true,
-                    retry_after_ms: Some(50),
-                    sent_message_ids: Vec::new(),
-                    part_receipts: Vec::new(),
-                }),
-                Ok(QqDeliverySuccess {
-                    platform_message_ids: vec!["message".into()],
-                    part_receipts: vec![BotDeliveryPartReceipt {
-                        part_index: 0,
-                        status: mutsuki_bot_protocol::DeliveryPartStatus::Succeeded,
-                        platform_message_id: Some("message".into()),
-                        error_code: None,
-                    }],
-                }),
-            ])),
-            calls: Mutex::new(0),
-        });
-        let service = ActiveDeliveryService::new(
-            repository.clone(),
-            gateway.clone(),
-            Arc::new(AllowDelivery),
-        );
-        let request = request();
-        let retry = service.submit(&request, 100).unwrap();
-        assert_eq!(retry.status, DeliveryStatus::RetryScheduled);
-        assert!(service.resume_due(149).unwrap().is_empty());
+    fn pending_resume_expired_sending_reconcile_retry_and_cancel() {
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let gateway = Arc::new(Gateway {
+                results: Mutex::new(VecDeque::from([
+                    Ok(QqDeliverySuccess {
+                        platform_message_ids: vec!["recovered".into()],
+                        part_receipts: Vec::new(),
+                    }),
+                    Ok(QqDeliverySuccess {
+                        platform_message_ids: vec!["reconciled".into()],
+                        part_receipts: Vec::new(),
+                    }),
+                ])),
+                calls: Mutex::new(0),
+            });
+            let request = request();
+            assert!(repository.reserve(&request).await.unwrap().is_none());
+            assert_eq!(
+                repository.receipt("delivery").await.unwrap().status,
+                DeliveryStatus::Pending
+            );
 
-        let restarted =
-            ActiveDeliveryService::new(repository, gateway.clone(), Arc::new(AllowDelivery));
-        let receipts = restarted.resume_due(150).unwrap();
-        assert_eq!(receipts[0].status, DeliveryStatus::Succeeded);
-        let duplicate = restarted.submit(&request, 200).unwrap();
-        assert_eq!(duplicate.status, DeliveryStatus::Succeeded);
-        assert_eq!(*gateway.calls.lock().unwrap(), 2);
+            let restarted =
+                ActiveDeliveryService::new(repository.clone(), gateway.clone(), Arc::new(AllowDelivery));
+            let receipts = restarted.resume_due(100).await.unwrap();
+            assert_eq!(receipts[0].status, DeliveryStatus::Succeeded);
+            assert_eq!(*gateway.calls.lock().unwrap(), 1);
+
+            let mut sending = request.clone();
+            sending.delivery_id = "unknown".into();
+            sending.idempotency_key = "unknown-key".into();
+            assert!(repository.reserve(&sending).await.unwrap().is_none());
+            let mut lease = repository.receipt("unknown").await.unwrap();
+            lease.status = DeliveryStatus::Sending;
+            lease.generation = 1;
+            lease.lease_expires_at_unix_ms = Some(50);
+            repository.save_receipt(lease).await.unwrap();
+            assert!(restarted.resume_due(100).await.unwrap().is_empty());
+            assert_eq!(
+                repository.receipt("unknown").await.unwrap().status,
+                DeliveryStatus::ReconcileRequired
+            );
+            assert_eq!(*gateway.calls.lock().unwrap(), 1);
+
+            let reconciled = restarted
+                .retry("unknown", 110)
+                .await
+                .unwrap();
+            assert_eq!(reconciled.status, DeliveryStatus::Succeeded);
+            assert_eq!(*gateway.calls.lock().unwrap(), 2);
+
+            let mut cancelled = request.clone();
+            cancelled.delivery_id = "cancel-reconcile".into();
+            cancelled.idempotency_key = "cancel-reconcile-key".into();
+            assert!(repository.reserve(&cancelled).await.unwrap().is_none());
+            let mut lease = repository.receipt("cancel-reconcile").await.unwrap();
+            lease.status = DeliveryStatus::ReconcileRequired;
+            lease.generation = 1;
+            lease.error_code = Some("delivery.reconcile_required".into());
+            repository.save_receipt(lease).await.unwrap();
+            assert_eq!(
+                restarted.cancel("cancel-reconcile").await.unwrap().status,
+                DeliveryStatus::Cancelled
+            );
+            assert!(restarted.resume_due(200).await.unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn duplicate_key_sends_once_and_transient_attempt_resumes_after_restart() {
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let gateway = Arc::new(Gateway {
+                results: Mutex::new(VecDeque::from([
+                    Err(QqDeliveryFailure {
+                        code: "qq.rate_limited".into(),
+                        transient: true,
+                        retry_after_ms: Some(50),
+                        sent_message_ids: Vec::new(),
+                        part_receipts: Vec::new(),
+                    }),
+                    Ok(QqDeliverySuccess {
+                        platform_message_ids: vec!["message".into()],
+                        part_receipts: vec![BotDeliveryPartReceipt {
+                            part_index: 0,
+                            status: mutsuki_bot_protocol::DeliveryPartStatus::Succeeded,
+                            platform_message_id: Some("message".into()),
+                            error_code: None,
+                        }],
+                    }),
+                ])),
+                calls: Mutex::new(0),
+            });
+            let service = ActiveDeliveryService::new(
+                repository.clone(),
+                gateway.clone(),
+                Arc::new(AllowDelivery),
+            );
+            let request = request();
+            let retry = service.submit(&request, 100).await.unwrap();
+            assert_eq!(retry.status, DeliveryStatus::RetryScheduled);
+            assert!(service.resume_due(149).await.unwrap().is_empty());
+
+            let restarted =
+                ActiveDeliveryService::new(repository, gateway.clone(), Arc::new(AllowDelivery));
+            let receipts = restarted.resume_due(150).await.unwrap();
+            assert_eq!(receipts[0].status, DeliveryStatus::Succeeded);
+            let duplicate = restarted.submit(&request, 200).await.unwrap();
+            assert_eq!(duplicate.status, DeliveryStatus::Succeeded);
+            assert_eq!(*gateway.calls.lock().unwrap(), 2);
+        });
     }
 
     #[test]
     fn in_flight_duplicate_returns_the_original_delivery_identity() {
         let repository = Repository::default();
         let original = request();
-        assert!(repository.reserve(&original).unwrap().is_none());
+        assert!(
+            futures::executor::block_on(repository.reserve(&original))
+                .unwrap()
+                .is_none()
+        );
         let mut duplicate = original.clone();
         duplicate.delivery_id = "duplicate-delivery".into();
 
-        let receipt = repository.reserve(&duplicate).unwrap().unwrap();
+        let receipt = futures::executor::block_on(repository.reserve(&duplicate))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(receipt.delivery_id, original.delivery_id);
         assert_eq!(receipt.status, DeliveryStatus::Pending);
@@ -854,64 +1182,66 @@ mod tests {
 
     #[test]
     fn management_operations_expose_history_cancel_due_work_and_retry_failure() {
-        let repository = Arc::new(Repository::default());
-        let gateway = Arc::new(Gateway {
-            results: Mutex::new(VecDeque::from([
-                Err(QqDeliveryFailure {
-                    code: "qq.rate_limited".into(),
-                    transient: true,
-                    retry_after_ms: Some(50),
-                    sent_message_ids: Vec::new(),
-                    part_receipts: Vec::new(),
-                }),
-                Err(QqDeliveryFailure {
-                    code: "qq.rejected".into(),
-                    transient: false,
-                    retry_after_ms: None,
-                    sent_message_ids: Vec::new(),
-                    part_receipts: Vec::new(),
-                }),
-                Ok(QqDeliverySuccess {
-                    platform_message_ids: vec!["manual-retry".into()],
-                    part_receipts: Vec::new(),
-                }),
-            ])),
-            calls: Mutex::new(0),
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let gateway = Arc::new(Gateway {
+                results: Mutex::new(VecDeque::from([
+                    Err(QqDeliveryFailure {
+                        code: "qq.rate_limited".into(),
+                        transient: true,
+                        retry_after_ms: Some(50),
+                        sent_message_ids: Vec::new(),
+                        part_receipts: Vec::new(),
+                    }),
+                    Err(QqDeliveryFailure {
+                        code: "qq.rejected".into(),
+                        transient: false,
+                        retry_after_ms: None,
+                        sent_message_ids: Vec::new(),
+                        part_receipts: Vec::new(),
+                    }),
+                    Ok(QqDeliverySuccess {
+                        platform_message_ids: vec!["manual-retry".into()],
+                        part_receipts: Vec::new(),
+                    }),
+                ])),
+                calls: Mutex::new(0),
+            });
+            let service = ActiveDeliveryService::new(
+                repository.clone(),
+                gateway.clone(),
+                Arc::new(AllowDelivery),
+            );
+
+            assert_eq!(
+                service.submit(&request(), 100).await.unwrap().status,
+                DeliveryStatus::RetryScheduled
+            );
+            let (receipt, attempts) = service.inspect("delivery").await.unwrap();
+            assert_eq!(receipt.attempt_count, 1);
+            assert_eq!(attempts.len(), 2);
+            assert_eq!(
+                service.cancel("delivery").await.unwrap().status,
+                DeliveryStatus::Cancelled
+            );
+            assert!(service.resume_due(150).await.unwrap().is_empty());
+            assert_eq!(
+                service.retry("delivery", 151).await,
+                Err(DeliveryError::InvalidState)
+            );
+
+            let mut second = request();
+            second.delivery_id = "failed-delivery".into();
+            second.idempotency_key = "failed-key".into();
+            assert_eq!(
+                service.submit(&second, 200).await.unwrap().status,
+                DeliveryStatus::PermanentlyFailed
+            );
+            let retried = service.retry("failed-delivery", 201).await.unwrap();
+            assert_eq!(retried.status, DeliveryStatus::Succeeded);
+            assert_eq!(retried.attempt_count, 2);
+            assert_eq!(*gateway.calls.lock().unwrap(), 3);
         });
-        let service = ActiveDeliveryService::new(
-            repository.clone(),
-            gateway.clone(),
-            Arc::new(AllowDelivery),
-        );
-
-        assert_eq!(
-            service.submit(&request(), 100).unwrap().status,
-            DeliveryStatus::RetryScheduled
-        );
-        let (receipt, attempts) = service.inspect("delivery").unwrap();
-        assert_eq!(receipt.attempt_count, 1);
-        assert_eq!(attempts.len(), 2);
-        assert_eq!(
-            service.cancel("delivery").unwrap().status,
-            DeliveryStatus::Cancelled
-        );
-        assert!(service.resume_due(150).unwrap().is_empty());
-        assert_eq!(
-            service.retry("delivery", 151),
-            Err(DeliveryError::InvalidState)
-        );
-
-        let mut second = request();
-        second.delivery_id = "failed-delivery".into();
-        second.idempotency_key = "failed-key".into();
-        assert_eq!(
-            service.submit(&second, 200).unwrap().status,
-            DeliveryStatus::PermanentlyFailed
-        );
-        let retried = service.retry("failed-delivery", 201).unwrap();
-        assert_eq!(retried.status, DeliveryStatus::Succeeded);
-        assert_eq!(retried.attempt_count, 2);
-        assert_eq!(*gateway.calls.lock().unwrap(), 3);
     }
 
     struct ScheduledTarget;
@@ -934,71 +1264,75 @@ mod tests {
 
     #[test]
     fn scheduled_agent_result_resolves_persisted_binding_and_is_idempotent() {
-        let repository = Arc::new(Repository::default());
-        let gateway = Arc::new(Gateway {
-            results: Mutex::new(VecDeque::from([Ok(QqDeliverySuccess {
-                platform_message_ids: vec!["scheduled-message".into()],
-                part_receipts: Vec::new(),
-            })])),
-            calls: Mutex::new(0),
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let gateway = Arc::new(Gateway {
+                results: Mutex::new(VecDeque::from([Ok(QqDeliverySuccess {
+                    platform_message_ids: vec!["scheduled-message".into()],
+                    part_receipts: Vec::new(),
+                })])),
+                calls: Mutex::new(0),
+            });
+            let active =
+                ActiveDeliveryService::new(repository, gateway.clone(), Arc::new(AllowDelivery));
+            let bridge = ScheduledAgentDeliveryBridge::new(
+                active,
+                Arc::new(ScheduledTarget),
+                Arc::new(AllowDelivery),
+            );
+            let result = ScheduledRunResult {
+                schedule_id: "daily-report".into(),
+                execution_id: "execution-1".into(),
+                status: ScheduleExecutionStatus::Succeeded,
+                summary: "report ready".into(),
+                output_ref: None,
+                target: Some(ScheduleTargetRef {
+                    target_id: "daily-report-target".into(),
+                    kind: SCHEDULE_TARGET_KIND_BOT_CONVERSATION_BINDING.into(),
+                    metadata: serde_json::json!({"user_id": "must-not-be-trusted"}),
+                }),
+            };
+
+            let first = bridge.deliver(result.clone(), 100).await.unwrap();
+            let duplicate = bridge.deliver(result, 101).await.unwrap();
+
+            assert_eq!(first.delivery_id, "agent-scheduled:execution-1");
+            assert_eq!(duplicate, first);
+            assert_eq!(*gateway.calls.lock().unwrap(), 1);
         });
-        let active =
-            ActiveDeliveryService::new(repository, gateway.clone(), Arc::new(AllowDelivery));
-        let bridge = ScheduledAgentDeliveryBridge::new(
-            active,
-            Arc::new(ScheduledTarget),
-            Arc::new(AllowDelivery),
-        );
-        let result = ScheduledRunResult {
-            schedule_id: "daily-report".into(),
-            execution_id: "execution-1".into(),
-            status: ScheduleExecutionStatus::Succeeded,
-            summary: "report ready".into(),
-            output_ref: None,
-            target: Some(ScheduleTargetRef {
-                target_id: "daily-report-target".into(),
-                kind: SCHEDULE_TARGET_KIND_BOT_CONVERSATION_BINDING.into(),
-                metadata: serde_json::json!({"user_id": "must-not-be-trusted"}),
-            }),
-        };
-
-        let first = bridge.deliver(result.clone(), 100).unwrap();
-        let duplicate = bridge.deliver(result, 101).unwrap();
-
-        assert_eq!(first.delivery_id, "agent-scheduled:execution-1");
-        assert_eq!(duplicate, first);
-        assert_eq!(*gateway.calls.lock().unwrap(), 1);
     }
 
     #[test]
     fn scheduled_result_rejects_raw_platform_target_kind() {
-        let repository = Arc::new(Repository::default());
-        let gateway = Arc::new(Gateway {
-            results: Mutex::new(VecDeque::new()),
-            calls: Mutex::new(0),
-        });
-        let bridge = ScheduledAgentDeliveryBridge::new(
-            ActiveDeliveryService::new(repository, gateway, Arc::new(AllowDelivery)),
-            Arc::new(ScheduledTarget),
-            Arc::new(AllowDelivery),
-        );
-        let result = ScheduledRunResult {
-            schedule_id: "schedule".into(),
-            execution_id: "execution".into(),
-            status: ScheduleExecutionStatus::Succeeded,
-            summary: "summary".into(),
-            output_ref: None,
-            target: Some(ScheduleTargetRef {
-                target_id: "raw-openid".into(),
-                kind: "qq.user_id".into(),
-                metadata: serde_json::Value::Null,
-            }),
-        };
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let gateway = Arc::new(Gateway {
+                results: Mutex::new(VecDeque::new()),
+                calls: Mutex::new(0),
+            });
+            let bridge = ScheduledAgentDeliveryBridge::new(
+                ActiveDeliveryService::new(repository, gateway, Arc::new(AllowDelivery)),
+                Arc::new(ScheduledTarget),
+                Arc::new(AllowDelivery),
+            );
+            let result = ScheduledRunResult {
+                schedule_id: "schedule".into(),
+                execution_id: "execution".into(),
+                status: ScheduleExecutionStatus::Succeeded,
+                summary: "summary".into(),
+                output_ref: None,
+                target: Some(ScheduleTargetRef {
+                    target_id: "raw-openid".into(),
+                    kind: "qq.user_id".into(),
+                    metadata: serde_json::Value::Null,
+                }),
+            };
 
-        assert_eq!(
-            bridge.deliver(result, 100),
-            Err(DeliveryError::InvalidScheduleTarget)
-        );
+            assert_eq!(
+                bridge.deliver(result, 100).await,
+                Err(DeliveryError::InvalidScheduleTarget)
+            );
+        });
     }
 
     fn request() -> BotActiveDeliveryRequest {
