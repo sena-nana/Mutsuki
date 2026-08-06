@@ -6,7 +6,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
+async-trait.workspace = true
 bot-echo.workspace = true
+futures.workspace = true
 mutsuki-bot-conversation.workspace = true
 mutsuki-bot-delivery.workspace = true
 mutsuki-bot-interaction.workspace = true

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use mutsuki_bot_conversation::qq_conversation_from_event;
 use mutsuki_bot_protocol::{
     BOT_INTERACTION_SESSION_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent,
@@ -7,31 +8,42 @@ use mutsuki_bot_protocol::{
     BotPropagationPolicy, InteractionMatch, InteractionScope, InteractionStatus,
     InteractionWaitSpec,
 };
-use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, PluginManifest, RunnerResult, Task, TaskPayload, WorkBatch,
-};
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task, TaskPayload};
+use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
+    PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef,
+    TaskAwaitRunnerAdapter,
 };
 use thiserror::Error;
 
+#[async_trait]
 pub trait InteractionRepository: Send + Sync {
-    fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError>;
-    fn active_for_origin(
+    async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError>;
+    async fn active_for_origin(
         &self,
         origin_key: &str,
     ) -> Result<Vec<BotInteractionSession>, InteractionError>;
-    fn compare_and_set(
+    async fn compare_and_set(
         &self,
         expected_version: u64,
         session: BotInteractionSession,
     ) -> Result<(), InteractionError>;
-    fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError>;
+    async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError>;
 }
 
 pub trait InteractionConditionMatcher: Send + Sync {
+    /// Tests whether an event satisfies a named interaction command.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed matcher error when the command cannot be evaluated.
     fn command_matches(&self, command: &str, event: &BotEvent) -> Result<bool, InteractionError>;
+
+    /// Tests whether an event satisfies an owner-provided predicate service.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed matcher error when the predicate cannot be evaluated.
     fn predicate_matches(
         &self,
         service_id: &str,
@@ -56,21 +68,32 @@ impl InteractionService {
         }
     }
 
-    pub fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+    /// Creates a validated interaction waiter when its scope is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid waiter, an exclusive-scope conflict, or repository failure.
+    pub async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
         validate(&session)?;
         let origin = session.conversation.origin_key();
         let conflict = self
             .repository
-            .active_for_origin(&origin)?
+            .active_for_origin(&origin)
+            .await?
             .into_iter()
             .any(|current| conflicts(&current, &session));
         if conflict {
             return Err(InteractionError::WaiterConflict);
         }
-        self.repository.create(session)
+        self.repository.create(session).await
     }
 
-    pub fn match_event(
+    /// Matches an event against the active waiters and persists the resulting transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsupported targets, matcher failure, or repository conflict.
+    pub async fn match_event(
         &self,
         event: &BotEvent,
         now_unix_ms: u64,
@@ -79,7 +102,8 @@ impl InteractionService {
             qq_conversation_from_event(event).map_err(|_| InteractionError::UnsupportedTarget)?;
         let mut sessions = self
             .repository
-            .active_for_origin(&conversation.origin_key())?;
+            .active_for_origin(&conversation.origin_key())
+            .await?;
         sessions.sort_by(|left, right| {
             right
                 .exclusive
@@ -91,7 +115,8 @@ impl InteractionService {
                 session.status = InteractionStatus::TimedOut;
                 session.version += 1;
                 self.repository
-                    .compare_and_set(session.version - 1, session)?;
+                    .compare_and_set(session.version - 1, session)
+                    .await?;
                 continue;
             }
             if !actor_matches(&session, event) || !event_matches(&session, event) {
@@ -129,23 +154,33 @@ impl InteractionService {
                     .then(|| session.wait.retry_prompt.clone())
                     .flatten(),
             };
-            self.repository.compare_and_set(expected, session)?;
+            self.repository.compare_and_set(expected, session).await?;
             return Ok(Some(matched));
         }
         Ok(None)
     }
 
-    pub fn cancel(&self, mut session: BotInteractionSession) -> Result<(), InteractionError> {
+    /// Cancels a waiting interaction with an optimistic version check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is not waiting or persistence fails.
+    pub async fn cancel(&self, mut session: BotInteractionSession) -> Result<(), InteractionError> {
         if session.status != InteractionStatus::Waiting {
             return Err(InteractionError::NotWaiting);
         }
         let expected = session.version;
         session.version += 1;
         session.status = InteractionStatus::Cancelled;
-        self.repository.compare_and_set(expected, session)
+        self.repository.compare_and_set(expected, session).await
     }
 
-    pub fn transition(
+    /// Publishes the next waiting step after a completed interaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid transition or repository conflict.
+    pub async fn transition(
         &self,
         mut session: BotInteractionSession,
         next_state_ref_id: String,
@@ -165,21 +200,28 @@ impl InteractionService {
         session.wait = next_wait;
         session.retries_remaining = retries_remaining;
         session.status = InteractionStatus::Waiting;
-        self.repository.compare_and_set(expected, session.clone())?;
+        self.repository
+            .compare_and_set(expected, session.clone())
+            .await?;
         Ok(session)
     }
 
-    pub fn recover(
+    /// Recovers active waiters and persists timeouts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when repository recovery or a timeout transition fails.
+    pub async fn recover(
         &self,
         now_unix_ms: u64,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
         let mut recovered = Vec::new();
-        for mut session in self.repository.recover_waiting()? {
+        for mut session in self.repository.recover_waiting().await? {
             if session.wait.timeout_at_unix_ms <= now_unix_ms {
                 let expected = session.version;
                 session.version += 1;
                 session.status = InteractionStatus::TimedOut;
-                self.repository.compare_and_set(expected, session)?;
+                self.repository.compare_and_set(expected, session).await?;
             } else {
                 recovered.push(session);
             }
@@ -187,22 +229,27 @@ impl InteractionService {
         Ok(recovered)
     }
 
-    pub fn recover_generation(
+    /// Recovers only waiters from the active runtime generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when cancelling stale waiters or persisting timeouts fails.
+    pub async fn recover_generation(
         &self,
         now_unix_ms: u64,
         active_generation: u64,
     ) -> Result<Vec<BotInteractionSession>, InteractionError> {
         let mut recovered = Vec::new();
-        for mut session in self.repository.recover_waiting()? {
+        for mut session in self.repository.recover_waiting().await? {
             let expected = session.version;
             if session.generation != active_generation {
                 session.version += 1;
                 session.status = InteractionStatus::Cancelled;
-                self.repository.compare_and_set(expected, session)?;
+                self.repository.compare_and_set(expected, session).await?;
             } else if session.wait.timeout_at_unix_ms <= now_unix_ms {
                 session.version += 1;
                 session.status = InteractionStatus::TimedOut;
-                self.repository.compare_and_set(expected, session)?;
+                self.repository.compare_and_set(expected, session).await?;
             } else {
                 recovered.push(session);
             }
@@ -228,30 +275,21 @@ pub fn bot_interaction_manifest() -> PluginManifest {
 }
 
 #[must_use]
-pub fn interaction_runner(service: InteractionService) -> Box<dyn Runner> {
-    Box::new(InteractionRunner {
-        descriptor: interaction_descriptor(),
-        service,
-    })
-}
-
-struct InteractionRunner {
-    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+pub fn interaction_runner(
+    client: RuntimeClientRef,
     service: InteractionService,
-}
-
-impl Runner for InteractionRunner {
-    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
-        &self.descriptor
-    }
-
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| interaction_result(&self.service, task))
-    }
+) -> Box<dyn Runner> {
+    let factory = Box::new(move |_ctx, task: Task| {
+        let service = service.clone();
+        Box::pin(async move { interaction_result(&service, &task).await })
+            as std::pin::Pin<
+                Box<dyn std::future::Future<Output = RuntimeResult<RunnerResult>> + Send>,
+            >
+    });
+    Box::new(
+        TaskAwaitRunnerAdapter::new(interaction_descriptor(), client, factory)
+            .with_self_call_policy(false),
+    )
 }
 
 fn interaction_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
@@ -261,14 +299,15 @@ fn interaction_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .build()
 }
 
-fn interaction_result(
+async fn interaction_result(
     service: &InteractionService,
     task: &Task,
-) -> Result<RunnerResult, mutsuki_runtime_contracts::RuntimeError> {
+) -> RuntimeResult<RunnerResult> {
     let payload = task.payload.to_value();
     if let Ok(event) = serde_json::from_value::<BotEvent>(payload.clone()) {
         let matched = service
             .match_event(&event, event.time_ms.max(0).cast_unsigned())
+            .await
             .map_err(|error| runtime_error(task, error))?;
         let outcome = matched
             .as_ref()
@@ -302,15 +341,18 @@ fn interaction_result(
     let output = match command {
         BotInteractionCommand::Create { session } => service
             .create(session)
+            .await
             .map(|()| serde_json::json!({"created": true})),
-        BotInteractionCommand::MatchEvent { event, now_unix_ms } => {
-            service.match_event(&event, now_unix_ms).and_then(|value| {
+        BotInteractionCommand::MatchEvent { event, now_unix_ms } => service
+            .match_event(&event, now_unix_ms)
+            .await
+            .and_then(|value| {
                 serde_json::to_value(value)
                     .map_err(|error| InteractionError::Repository(error.to_string()))
-            })
-        }
+            }),
         BotInteractionCommand::Cancel { session } => service
             .cancel(session)
+            .await
             .map(|()| serde_json::json!({"cancelled": true})),
         BotInteractionCommand::Transition {
             session,
@@ -319,12 +361,13 @@ fn interaction_result(
             retries_remaining,
         } => service
             .transition(session, next_state_ref_id, next_wait, retries_remaining)
+            .await
             .and_then(|value| {
                 serde_json::to_value(value)
                     .map_err(|error| InteractionError::Repository(error.to_string()))
             }),
         BotInteractionCommand::Recover { now_unix_ms } => {
-            service.recover(now_unix_ms).and_then(|value| {
+            service.recover(now_unix_ms).await.and_then(|value| {
                 serde_json::to_value(value)
                     .map_err(|error| InteractionError::Repository(error.to_string()))
             })
@@ -334,6 +377,7 @@ fn interaction_result(
             active_generation,
         } => service
             .recover_generation(now_unix_ms, active_generation)
+            .await
             .and_then(|value| {
                 serde_json::to_value(value)
                     .map_err(|error| InteractionError::Repository(error.to_string()))
@@ -345,15 +389,12 @@ fn interaction_result(
     Ok(result)
 }
 
-fn runtime_error(
-    task: &Task,
-    error: impl std::fmt::Display,
-) -> mutsuki_runtime_contracts::RuntimeError {
-    mutsuki_runtime_contracts::RuntimeError::new(
+fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
+    RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
         mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED,
         BOT_INTERACTION_PLUGIN_ID,
         format!("{}.{}", task.task_id, error),
-    )
+    ))
 }
 
 fn validate(session: &BotInteractionSession) -> Result<(), InteractionError> {
@@ -465,8 +506,9 @@ mod tests {
         InteractionService::new(repository, Arc::new(MatchAll))
     }
 
+    #[async_trait]
     impl InteractionRepository for Repository {
-        fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
+        async fn create(&self, session: BotInteractionSession) -> Result<(), InteractionError> {
             self.sessions
                 .lock()
                 .unwrap()
@@ -474,7 +516,7 @@ mod tests {
             Ok(())
         }
 
-        fn active_for_origin(
+        async fn active_for_origin(
             &self,
             origin_key: &str,
         ) -> Result<Vec<BotInteractionSession>, InteractionError> {
@@ -491,7 +533,7 @@ mod tests {
                 .collect())
         }
 
-        fn compare_and_set(
+        async fn compare_and_set(
             &self,
             expected_version: u64,
             session: BotInteractionSession,
@@ -508,7 +550,7 @@ mod tests {
             Ok(())
         }
 
-        fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
+        async fn recover_waiting(&self) -> Result<Vec<BotInteractionSession>, InteractionError> {
             Ok(self
                 .sessions
                 .lock()
@@ -522,126 +564,147 @@ mod tests {
 
     #[test]
     fn actor_waiter_ignores_other_member_and_recovers_across_service_restart() {
-        let repository = Arc::new(Repository::default());
-        service(repository.clone())
-            .create(session("wait", "actor", 1_000))
-            .unwrap();
-        assert!(
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
             service(repository.clone())
-                .match_event(&event("other"), 100)
+                .create(session("wait", "actor", 1_000))
+                .await
+                .unwrap();
+            assert!(
+                service(repository.clone())
+                    .match_event(&event("other"), 100)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            let restarted = service(repository.clone());
+            assert_eq!(restarted.recover(100).await.unwrap().len(), 1);
+            let matched = restarted
+                .match_event(&event("actor"), 101)
+                .await
                 .unwrap()
-                .is_none()
-        );
-        let restarted = service(repository.clone());
-        assert_eq!(restarted.recover(100).unwrap().len(), 1);
-        let matched = restarted
-            .match_event(&event("actor"), 101)
-            .unwrap()
-            .unwrap();
-        assert_eq!(matched.session_id, "wait");
-        assert_eq!(
-            repository.sessions.lock().unwrap()["wait"].status,
-            InteractionStatus::Completed
-        );
+                .unwrap();
+            assert_eq!(matched.session_id, "wait");
+            assert_eq!(
+                repository.sessions.lock().unwrap()["wait"].status,
+                InteractionStatus::Completed
+            );
+        });
     }
 
     #[test]
     fn exclusive_waiter_rejects_conflict_and_timeout_is_persisted() {
-        let repository = Arc::new(Repository::default());
-        let service = service(repository.clone());
-        service.create(session("first", "actor", 50)).unwrap();
-        assert_eq!(
-            service.create(session("second", "actor", 50)),
-            Err(InteractionError::WaiterConflict)
-        );
-        assert!(service.recover(50).unwrap().is_empty());
-        assert_eq!(
-            repository.sessions.lock().unwrap()["first"].status,
-            InteractionStatus::TimedOut
-        );
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let service = service(repository.clone());
+            service.create(session("first", "actor", 50)).await.unwrap();
+            assert_eq!(
+                service.create(session("second", "actor", 50)).await,
+                Err(InteractionError::WaiterConflict)
+            );
+            assert!(service.recover(50).await.unwrap().is_empty());
+            assert_eq!(
+                repository.sessions.lock().unwrap()["first"].status,
+                InteractionStatus::TimedOut
+            );
+        });
     }
 
     #[test]
     fn rejected_attempt_consumes_retry_and_completed_step_can_transition() {
-        let repository = Arc::new(Repository::default());
-        let service = InteractionService::new(repository.clone(), Arc::new(MatchCode));
-        let mut first = session("verification", "actor", 1_000);
-        first.retries_remaining = 2;
-        first.wait.predicate_service_id = Some("verify-code".into());
-        service.create(first).unwrap();
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let service = InteractionService::new(repository.clone(), Arc::new(MatchCode));
+            let mut first = session("verification", "actor", 1_000);
+            first.retries_remaining = 2;
+            first.wait.predicate_service_id = Some("verify-code".into());
+            service.create(first).await.unwrap();
 
-        let rejected = service.match_event(&event("actor"), 100).unwrap().unwrap();
-        assert!(!rejected.accepted);
-        assert_eq!(rejected.status, InteractionStatus::Waiting);
-        assert_eq!(rejected.retries_remaining, 1);
+            let rejected = service
+                .match_event(&event("actor"), 100)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!rejected.accepted);
+            assert_eq!(rejected.status, InteractionStatus::Waiting);
+            assert_eq!(rejected.retries_remaining, 1);
 
-        let mut valid = event("actor");
-        valid.event_id = "event-valid".into();
-        let accepted = service.match_event(&valid, 101).unwrap().unwrap();
-        assert!(accepted.accepted);
-        assert_eq!(accepted.status, InteractionStatus::Completed);
+            let mut valid = event("actor");
+            valid.event_id = "event-valid".into();
+            let accepted = service.match_event(&valid, 101).await.unwrap().unwrap();
+            assert!(accepted.accepted);
+            assert_eq!(accepted.status, InteractionStatus::Completed);
 
-        let completed = repository.sessions.lock().unwrap()["verification"].clone();
-        let transitioned = service
-            .transition(
-                completed,
-                "confirm-profile".into(),
-                InteractionWaitSpec {
-                    event_kinds: vec![BotEventKind::MessageCreated],
-                    command: None,
-                    predicate_service_id: None,
-                    timeout_at_unix_ms: 2_000,
-                    propagation: BotPropagationPolicy::ConsumeOnSuccess,
-                    retry_prompt: None,
-                },
-                1,
-            )
-            .unwrap();
-        assert_eq!(transitioned.status, InteractionStatus::Waiting);
-        assert_eq!(transitioned.state_ref_id, "confirm-profile");
-        assert_eq!(transitioned.version, accepted.next_version + 1);
+            let completed = repository.sessions.lock().unwrap()["verification"].clone();
+            let transitioned = service
+                .transition(
+                    completed,
+                    "confirm-profile".into(),
+                    InteractionWaitSpec {
+                        event_kinds: vec![BotEventKind::MessageCreated],
+                        command: None,
+                        predicate_service_id: None,
+                        timeout_at_unix_ms: 2_000,
+                        propagation: BotPropagationPolicy::ConsumeOnSuccess,
+                        retry_prompt: None,
+                    },
+                    1,
+                )
+                .await
+                .unwrap();
+            assert_eq!(transitioned.status, InteractionStatus::Waiting);
+            assert_eq!(transitioned.state_ref_id, "confirm-profile");
+            assert_eq!(transitioned.version, accepted.next_version + 1);
+        });
     }
 
     #[test]
     fn rejected_handler_attempt_emits_configured_retry_prompt() {
-        let repository = Arc::new(Repository::default());
-        let service = InteractionService::new(repository.clone(), Arc::new(MatchCode));
-        let mut waiting = session("prompt", "actor", 1_000);
-        waiting.retries_remaining = 2;
-        waiting.wait.predicate_service_id = Some("verify-code".into());
-        waiting.wait.retry_prompt = Some(mutsuki_bot_protocol::BotMessage::text(
-            BotTarget::Group {
-                group_id: "group".into(),
-            },
-            "验证码无效，请重试",
-        ));
-        service.create(waiting).unwrap();
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let service = InteractionService::new(repository.clone(), Arc::new(MatchCode));
+            let mut waiting = session("prompt", "actor", 1_000);
+            waiting.retries_remaining = 2;
+            waiting.wait.predicate_service_id = Some("verify-code".into());
+            waiting.wait.retry_prompt = Some(mutsuki_bot_protocol::BotMessage::text(
+                BotTarget::Group {
+                    group_id: "group".into(),
+                },
+                "验证码无效，请重试",
+            ));
+            service.create(waiting).await.unwrap();
 
-        let task = Task::new(
-            "interaction-event",
-            BOT_INTERACTION_SESSION_PROTOCOL_ID,
-            TaskPayload::from_local(event("actor")),
-        );
-        let result = interaction_result(&service, &task).unwrap();
+            let task = Task::new(
+                "interaction-event",
+                BOT_INTERACTION_SESSION_PROTOCOL_ID,
+                TaskPayload::from_local(event("actor")),
+            );
+            let result = interaction_result(&service, &task).await.unwrap();
 
-        assert_eq!(result.tasks.len(), 1);
-        assert_eq!(result.tasks[0].protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
-        let prompt: mutsuki_bot_protocol::BotMessage =
-            serde_json::from_value(result.tasks[0].payload.to_value()).unwrap();
-        assert_eq!(prompt.plain_text(), "验证码无效，请重试");
+            assert_eq!(result.tasks.len(), 1);
+            assert_eq!(result.tasks[0].protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
+            let prompt: mutsuki_bot_protocol::BotMessage =
+                serde_json::from_value(result.tasks[0].payload.to_value()).unwrap();
+            assert_eq!(prompt.plain_text(), "验证码无效，请重试");
+        });
     }
 
     #[test]
     fn reload_cancels_waiters_from_an_old_generation() {
-        let repository = Arc::new(Repository::default());
-        let service = service(repository.clone());
-        service.create(session("old", "actor", 1_000)).unwrap();
+        futures::executor::block_on(async {
+            let repository = Arc::new(Repository::default());
+            let service = service(repository.clone());
+            service
+                .create(session("old", "actor", 1_000))
+                .await
+                .unwrap();
 
-        assert!(service.recover_generation(100, 2).unwrap().is_empty());
-        assert_eq!(
-            repository.sessions.lock().unwrap()["old"].status,
-            InteractionStatus::Cancelled
-        );
+            assert!(service.recover_generation(100, 2).await.unwrap().is_empty());
+            assert_eq!(
+                repository.sessions.lock().unwrap()["old"].status,
+                InteractionStatus::Cancelled
+            );
+        });
     }
 
     fn session(id: &str, actor: &str, timeout: u64) -> BotInteractionSession {

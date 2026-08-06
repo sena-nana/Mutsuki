@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, AgentSessionScope, BotConversationKind, BotEvent, BotTarget,
     ConversationPolicy, ConversationPolicyLayer, ConversationPolicyPatch, ConversationPolicyRule,
@@ -9,29 +10,30 @@ use mutsuki_bot_protocol::{
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+#[async_trait]
 pub trait ConversationRepository: Send + Sync {
-    fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError>;
+    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError>;
 
-    fn session_binding(
+    async fn session_binding(
         &self,
         binding_key: &str,
     ) -> Result<Option<AgentSessionBinding>, ConversationError>;
 
-    fn compare_and_set_session_binding(
+    async fn compare_and_set_session_binding(
         &self,
         binding_key: &str,
         expected_generation: Option<u64>,
         binding: AgentSessionBinding,
     ) -> Result<(), ConversationError>;
 
-    fn begin_agent_event(
+    async fn begin_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
         turn_id: &str,
     ) -> Result<AgentEventClaim, ConversationError>;
 
-    fn complete_agent_event(
+    async fn complete_agent_event(
         &self,
         binding_key: &str,
         event_id: &str,
@@ -62,7 +64,12 @@ impl ConversationService {
         }
     }
 
-    pub fn resolve_policy(
+    /// Resolves the effective policy from product defaults and matching repository rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conversation reference is invalid or policy storage fails.
+    pub async fn resolve_policy(
         &self,
         conversation: QqConversationRef,
         actor_id: Option<&str>,
@@ -73,7 +80,8 @@ impl ConversationService {
         let origin_key = conversation.origin_key();
         let mut rules = self
             .repository
-            .policy_rules()?
+            .policy_rules()
+            .await?
             .into_iter()
             .filter(|rule| rule_matches(rule, &conversation, &origin_key, actor_id))
             .collect::<Vec<_>>();
@@ -105,6 +113,11 @@ impl ConversationService {
         })
     }
 
+    /// Applies the resolved admission policy to one incoming event.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stable denial reason when the event is disabled, denied, or lacks a trigger.
     pub fn admit_event(
         &self,
         resolved: &ResolvedConversationPolicy,
@@ -159,7 +172,12 @@ impl ConversationService {
         Ok(())
     }
 
-    pub fn get_or_create_session_binding(
+    /// Loads or atomically creates the session binding for the resolved scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the scope key is invalid, storage fails, or CAS cannot converge.
+    pub async fn get_or_create_session_binding(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -169,7 +187,7 @@ impl ConversationService {
             resolved.policy.session_scope,
             actor_id,
         )?;
-        if let Some(binding) = self.repository.session_binding(&binding_key)? {
+        if let Some(binding) = self.repository.session_binding(&binding_key).await? {
             if binding.policy_revision == resolved.policy.revision {
                 return Ok(binding);
             }
@@ -178,15 +196,20 @@ impl ConversationService {
                 generation: binding.generation.saturating_add(1),
                 ..binding.clone()
             };
-            return match self.repository.compare_and_set_session_binding(
-                &binding_key,
-                Some(binding.generation),
-                refreshed.clone(),
-            ) {
+            return match self
+                .repository
+                .compare_and_set_session_binding(
+                    &binding_key,
+                    Some(binding.generation),
+                    refreshed.clone(),
+                )
+                .await
+            {
                 Ok(()) => Ok(refreshed),
                 Err(ConversationError::GenerationConflict) => self
                     .repository
-                    .session_binding(&binding_key)?
+                    .session_binding(&binding_key)
+                    .await?
                     .ok_or(ConversationError::GenerationConflict),
                 Err(error) => Err(error),
             };
@@ -202,17 +225,24 @@ impl ConversationService {
         match self
             .repository
             .compare_and_set_session_binding(&binding_key, None, binding.clone())
+            .await
         {
             Ok(()) => Ok(binding),
             Err(ConversationError::GenerationConflict) => self
                 .repository
-                .session_binding(&binding_key)?
+                .session_binding(&binding_key)
+                .await?
                 .ok_or(ConversationError::GenerationConflict),
             Err(error) => Err(error),
         }
     }
 
-    pub fn advance_session(
+    /// Advances the bound Agent session with an optimistic version check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid versions, missing bindings, storage failures, or CAS conflicts.
+    pub async fn advance_session(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -229,7 +259,8 @@ impl ConversationService {
         )?;
         let current = self
             .repository
-            .session_binding(&binding_key)?
+            .session_binding(&binding_key)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         if current.session_version != expected_session_version {
             return Err(ConversationError::SessionVersionConflict {
@@ -243,15 +274,18 @@ impl ConversationService {
             policy_revision: resolved.policy.revision,
             ..current.clone()
         };
-        self.repository.compare_and_set_session_binding(
-            &binding_key,
-            Some(current.generation),
-            next.clone(),
-        )?;
+        self.repository
+            .compare_and_set_session_binding(&binding_key, Some(current.generation), next.clone())
+            .await?;
         Ok(next)
     }
 
-    pub fn advance_event_sequence(
+    /// Advances the committed event sequence with an optimistic version check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing bindings, non-monotonic sequences, or storage conflicts.
+    pub async fn advance_event_sequence(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -265,7 +299,8 @@ impl ConversationService {
         )?;
         let current = self
             .repository
-            .session_binding(&binding_key)?
+            .session_binding(&binding_key)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         if current.last_event_sequence != expected_sequence || next_sequence < expected_sequence {
             return Err(ConversationError::EventSequenceConflict {
@@ -278,15 +313,18 @@ impl ConversationService {
             generation: current.generation + 1,
             ..current.clone()
         };
-        self.repository.compare_and_set_session_binding(
-            &binding_key,
-            Some(current.generation),
-            next.clone(),
-        )?;
+        self.repository
+            .compare_and_set_session_binding(&binding_key, Some(current.generation), next.clone())
+            .await?;
         Ok(next)
     }
 
-    pub fn session_binding(
+    /// Reads the session binding for the resolved conversation scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the scope key is invalid or repository access fails.
+    pub async fn session_binding(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -296,26 +334,38 @@ impl ConversationService {
             resolved.policy.session_scope,
             actor_id,
         )?;
-        self.repository.session_binding(&key)
+        self.repository.session_binding(&key).await
     }
 
-    pub fn reset_session_binding(
+    /// Replaces the current binding with a fresh reset session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binding is missing or the atomic replacement fails.
+    pub async fn reset_session_binding(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
     ) -> Result<AgentSessionBinding, ConversationError> {
         self.replace_session_binding(resolved, actor_id, "reset")
+            .await
     }
 
-    pub fn expire_session_binding(
+    /// Replaces the current binding after session expiry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binding is missing or the atomic replacement fails.
+    pub async fn expire_session_binding(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
     ) -> Result<AgentSessionBinding, ConversationError> {
         self.replace_session_binding(resolved, actor_id, "expire")
+            .await
     }
 
-    fn replace_session_binding(
+    async fn replace_session_binding(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -328,7 +378,8 @@ impl ConversationService {
         )?;
         let current = self
             .repository
-            .session_binding(&key)?
+            .session_binding(&key)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         let generation = current.generation.saturating_add(1);
         let next = AgentSessionBinding {
@@ -339,15 +390,18 @@ impl ConversationService {
             policy_revision: resolved.policy.revision,
             generation,
         };
-        self.repository.compare_and_set_session_binding(
-            &key,
-            Some(current.generation),
-            next.clone(),
-        )?;
+        self.repository
+            .compare_and_set_session_binding(&key, Some(current.generation), next.clone())
+            .await?;
         Ok(next)
     }
 
-    pub fn prepare_session_fork(
+    /// Computes a deterministic fork target without publishing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the binding scope is invalid, missing, or unavailable.
+    pub async fn prepare_session_fork(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -359,14 +413,20 @@ impl ConversationService {
         )?;
         let current = self
             .repository
-            .session_binding(&key)?
+            .session_binding(&key)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         let next_generation = current.generation.saturating_add(1);
         let target_session_id = stable_session_id(&format!("{key}|fork:{next_generation}"));
         Ok((current, target_session_id))
     }
 
-    pub fn commit_session_fork(
+    /// Atomically publishes a previously prepared session fork.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid target state, a stale source binding, or repository failure.
+    pub async fn commit_session_fork(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -384,7 +444,8 @@ impl ConversationService {
         )?;
         let current = self
             .repository
-            .session_binding(&key)?
+            .session_binding(&key)
+            .await?
             .ok_or(ConversationError::BindingNotFound)?;
         if current.generation != source.generation || current.session_id != source.session_id {
             return Err(ConversationError::GenerationConflict);
@@ -397,15 +458,18 @@ impl ConversationService {
             policy_revision: resolved.policy.revision,
             generation: current.generation.saturating_add(1),
         };
-        self.repository.compare_and_set_session_binding(
-            &key,
-            Some(current.generation),
-            next.clone(),
-        )?;
+        self.repository
+            .compare_and_set_session_binding(&key, Some(current.generation), next.clone())
+            .await?;
         Ok(next)
     }
 
-    pub fn begin_agent_event(
+    /// Claims an Agent event exactly once for the bound conversation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scope derivation or the repository claim fails.
+    pub async fn begin_agent_event(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -417,10 +481,17 @@ impl ConversationService {
             resolved.policy.session_scope,
             actor_id,
         )?;
-        self.repository.begin_agent_event(&key, event_id, turn_id)
+        self.repository
+            .begin_agent_event(&key, event_id, turn_id)
+            .await
     }
 
-    pub fn complete_agent_event(
+    /// Marks a previously claimed Agent event as completed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scope derivation or repository completion fails.
+    pub async fn complete_agent_event(
         &self,
         resolved: &ResolvedConversationPolicy,
         actor_id: Option<&str>,
@@ -431,10 +502,15 @@ impl ConversationService {
             resolved.policy.session_scope,
             actor_id,
         )?;
-        self.repository.complete_agent_event(&key, event_id)
+        self.repository.complete_agent_event(&key, event_id).await
     }
 }
 
+/// Converts a QQ Bot event target into the canonical conversation identity.
+///
+/// # Errors
+///
+/// Returns an error for unsupported targets or invalid QQ conversation fields.
 pub fn qq_conversation_from_event(
     event: &BotEvent,
 ) -> Result<QqConversationRef, ConversationError> {
@@ -488,6 +564,11 @@ pub fn qq_conversation_from_event(
     Ok(conversation)
 }
 
+/// Builds the stable repository key for a scoped Agent session binding.
+///
+/// # Errors
+///
+/// Returns an error for an invalid conversation or a missing actor in actor-scoped mode.
 pub fn session_binding_key(
     conversation: &QqConversationRef,
     scope: AgentSessionScope,
@@ -673,6 +754,10 @@ mod tests {
 
     use super::*;
 
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        futures::executor::block_on(future)
+    }
+
     #[derive(Default)]
     struct MemoryRepository {
         rules: Vec<ConversationPolicyRule>,
@@ -680,19 +765,20 @@ mod tests {
         events: Mutex<BTreeMap<(String, String), bool>>,
     }
 
+    #[async_trait]
     impl ConversationRepository for MemoryRepository {
-        fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
+        async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
             Ok(self.rules.clone())
         }
 
-        fn session_binding(
+        async fn session_binding(
             &self,
             binding_key: &str,
         ) -> Result<Option<AgentSessionBinding>, ConversationError> {
             Ok(self.bindings.lock().unwrap().get(binding_key).cloned())
         }
 
-        fn compare_and_set_session_binding(
+        async fn compare_and_set_session_binding(
             &self,
             binding_key: &str,
             expected_generation: Option<u64>,
@@ -707,7 +793,7 @@ mod tests {
             Ok(())
         }
 
-        fn begin_agent_event(
+        async fn begin_agent_event(
             &self,
             binding_key: &str,
             event_id: &str,
@@ -725,7 +811,7 @@ mod tests {
             })
         }
 
-        fn complete_agent_event(
+        async fn complete_agent_event(
             &self,
             binding_key: &str,
             event_id: &str,
@@ -769,9 +855,9 @@ mod tests {
             ],
             ..Default::default()
         });
-        let resolved = ConversationService::new(repository, default_policy())
-            .resolve_policy(group_conversation(), Some("actor"))
-            .unwrap();
+        let service = ConversationService::new(repository, default_policy());
+        let resolved =
+            block_on(service.resolve_policy(group_conversation(), Some("actor"))).unwrap();
         assert!(resolved.policy.agent_enabled);
         assert!(!resolved.policy.must_mention);
         assert_eq!(resolved.matched_rule_ids, ["account", "group"]);
@@ -829,9 +915,8 @@ mod tests {
             ],
             ..Default::default()
         });
-        let resolved = ConversationService::new(repository, default_policy())
-            .resolve_policy(conversation, Some("actor"))
-            .unwrap();
+        let service = ConversationService::new(repository, default_policy());
+        let resolved = block_on(service.resolve_policy(conversation, Some("actor"))).unwrap();
 
         assert!(resolved.policy.must_mention);
         assert_eq!(
@@ -886,33 +971,29 @@ mod tests {
         let repository = Arc::new(MemoryRepository::default());
         let shared = ConversationService::new(repository.clone(), default_policy());
         let conversation = group_conversation();
-        let resolved = shared
-            .resolve_policy(conversation.clone(), Some("actor-a"))
-            .unwrap();
-        let first = shared
-            .get_or_create_session_binding(&resolved, Some("actor-a"))
-            .unwrap();
-        let after_restart = ConversationService::new(repository.clone(), default_policy())
-            .get_or_create_session_binding(&resolved, Some("actor-b"))
-            .unwrap();
+        let resolved =
+            block_on(shared.resolve_policy(conversation.clone(), Some("actor-a"))).unwrap();
+        let first =
+            block_on(shared.get_or_create_session_binding(&resolved, Some("actor-a"))).unwrap();
+        let restarted = ConversationService::new(repository.clone(), default_policy());
+        let after_restart =
+            block_on(restarted.get_or_create_session_binding(&resolved, Some("actor-b"))).unwrap();
         assert_eq!(first.session_id, after_restart.session_id);
-        let advanced = shared.advance_session(&resolved, None, 0, 1).unwrap();
+        let advanced = block_on(shared.advance_session(&resolved, None, 0, 1)).unwrap();
         assert_eq!(advanced.session_version, 1);
         assert!(matches!(
-            shared.advance_session(&resolved, None, 0, 2),
+            block_on(shared.advance_session(&resolved, None, 0, 2)),
             Err(ConversationError::SessionVersionConflict { actual: 1, .. })
         ));
 
         let mut actor_policy = default_policy();
         actor_policy.session_scope = AgentSessionScope::ActorInConversation;
         let actors = ConversationService::new(Arc::new(MemoryRepository::default()), actor_policy);
-        let resolved = actors.resolve_policy(conversation, None).unwrap();
-        let actor_a = actors
-            .get_or_create_session_binding(&resolved, Some("actor-a"))
-            .unwrap();
-        let actor_b = actors
-            .get_or_create_session_binding(&resolved, Some("actor-b"))
-            .unwrap();
+        let resolved = block_on(actors.resolve_policy(conversation, None)).unwrap();
+        let actor_a =
+            block_on(actors.get_or_create_session_binding(&resolved, Some("actor-a"))).unwrap();
+        let actor_b =
+            block_on(actors.get_or_create_session_binding(&resolved, Some("actor-b"))).unwrap();
         assert_ne!(actor_a.session_id, actor_b.session_id);
     }
 
@@ -921,29 +1002,25 @@ mod tests {
         let repository = Arc::new(MemoryRepository::default());
         let first_service = ConversationService::new(repository.clone(), default_policy());
         let conversation = group_conversation();
-        let first_resolved = first_service
-            .resolve_policy(conversation.clone(), None)
-            .unwrap();
-        let first = first_service
-            .get_or_create_session_binding(&first_resolved, None)
-            .unwrap();
+        let first_resolved =
+            block_on(first_service.resolve_policy(conversation.clone(), None)).unwrap();
+        let first =
+            block_on(first_service.get_or_create_session_binding(&first_resolved, None)).unwrap();
 
         let mut changed_policy = default_policy();
         changed_policy.revision = 2;
         let changed_service = ConversationService::new(repository.clone(), changed_policy);
-        let changed_resolved = changed_service
-            .resolve_policy(conversation.clone(), None)
-            .unwrap();
-        let refreshed = changed_service
-            .get_or_create_session_binding(&changed_resolved, None)
-            .unwrap();
+        let changed_resolved =
+            block_on(changed_service.resolve_policy(conversation.clone(), None)).unwrap();
+        let refreshed =
+            block_on(changed_service.get_or_create_session_binding(&changed_resolved, None))
+                .unwrap();
         assert_eq!(refreshed.session_id, first.session_id);
         assert_eq!(refreshed.policy_revision, 2);
         assert!(refreshed.generation > first.generation);
 
-        let expired = changed_service
-            .expire_session_binding(&changed_resolved, None)
-            .unwrap();
+        let expired =
+            block_on(changed_service.expire_session_binding(&changed_resolved, None)).unwrap();
         assert_ne!(expired.session_id, refreshed.session_id);
         assert_eq!(expired.session_version, 0);
         assert!(expired.generation > refreshed.generation);
@@ -970,12 +1047,11 @@ mod tests {
             "denied",
             vec![MessageSegment::text("hello")],
         );
-        let resolved = service
-            .resolve_policy(
-                qq_conversation_from_event(&direct_denied).unwrap(),
-                Some("denied"),
-            )
-            .unwrap();
+        let resolved = block_on(service.resolve_policy(
+            qq_conversation_from_event(&direct_denied).unwrap(),
+            Some("denied"),
+        ))
+        .unwrap();
         assert_eq!(
             service.admit_event(&resolved, &direct_denied),
             Err(ConversationAdmissionError::ActorDenied)
@@ -988,12 +1064,11 @@ mod tests {
             "allowed",
             vec![MessageSegment::text("hello")],
         );
-        let resolved = service
-            .resolve_policy(
-                qq_conversation_from_event(&group_unaddressed).unwrap(),
-                Some("allowed"),
-            )
-            .unwrap();
+        let resolved = block_on(service.resolve_policy(
+            qq_conversation_from_event(&group_unaddressed).unwrap(),
+            Some("allowed"),
+        ))
+        .unwrap();
         assert_eq!(
             service.admit_event(&resolved, &group_unaddressed),
             Err(ConversationAdmissionError::TriggerMissing)
