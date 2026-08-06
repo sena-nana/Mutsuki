@@ -17,10 +17,6 @@ use mutsuki_runtime_wire::{
     AnyWireRequest, DecodedWireRequest, Opcode, decode_binary_any_request, encode_binary_response,
 };
 
-pub const ABI_V1_TRANSPORT_VERSION: u32 = 1;
-pub const ABI_V1_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
-pub const ABI_V1_CODEC_ID: &str = mutsuki_runtime_wire::BINARY_CODEC_ID;
-pub const ABI_V1_BRIDGE_ID: &str = "mutsuki.bridge.abi.binary.v1";
 pub const ABI_V2_TRANSPORT_VERSION: u32 = 2;
 pub const ABI_V2_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v2\0";
 pub const ABI_V2_CODEC_ID: &str = mutsuki_runtime_wire::BINARY_CODEC_ID;
@@ -458,24 +454,6 @@ pub type AbiCloseFn = unsafe extern "C" fn(*mut c_void);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct AbiHostV1 {
-    pub context: *mut c_void,
-    pub request: Option<AbiRequestFn>,
-    pub release: Option<AbiReleaseFn>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct AbiPluginV1 {
-    pub transport_version: u32,
-    pub context: *mut c_void,
-    pub request: Option<AbiRequestFn>,
-    pub release: Option<AbiReleaseFn>,
-    pub close: Option<AbiCloseFn>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
 pub struct AbiHostV2 {
     pub context: *mut c_void,
     pub request: Option<AbiRequestFn>,
@@ -492,11 +470,8 @@ pub struct AbiPluginV2 {
     pub close: Option<AbiCloseFn>,
 }
 
-pub type AbiEntryV1 = unsafe extern "C" fn(AbiHostV1) -> AbiPluginV1;
 pub type AbiEntryV2 = unsafe extern "C" fn(AbiHostV2) -> AbiPluginV2;
 
-unsafe impl Send for AbiHostV1 {}
-unsafe impl Sync for AbiHostV1 {}
 unsafe impl Send for AbiHostV2 {}
 unsafe impl Sync for AbiHostV2 {}
 
@@ -504,25 +479,10 @@ pub trait AbiGuest: Send {
     fn request(&mut self, request: &[u8]) -> Vec<u8>;
 }
 
-pub fn plugin_api_from_guest(guest: Box<dyn AbiGuest>) -> AbiPluginV1 {
-    plugin_api_from_guest_with_version(guest, ABI_V1_TRANSPORT_VERSION)
-}
-
-pub fn plugin_api_v2_from_guest(guest: Box<dyn AbiGuest>) -> AbiPluginV2 {
+pub fn plugin_api_from_guest(guest: Box<dyn AbiGuest>) -> AbiPluginV2 {
     let context = Box::into_raw(Box::new(Mutex::new(guest))).cast::<c_void>();
     AbiPluginV2 {
         transport_version: ABI_V2_TRANSPORT_VERSION,
-        context,
-        request: Some(guest_request),
-        release: Some(release_buffer),
-        close: Some(close_guest),
-    }
-}
-
-fn plugin_api_from_guest_with_version(guest: Box<dyn AbiGuest>, version: u32) -> AbiPluginV1 {
-    let context = Box::into_raw(Box::new(Mutex::new(guest))).cast::<c_void>();
-    AbiPluginV1 {
-        transport_version: version,
         context,
         request: Some(guest_request),
         release: Some(release_buffer),

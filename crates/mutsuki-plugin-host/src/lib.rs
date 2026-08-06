@@ -30,6 +30,7 @@ const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_WORK_QUEUE_LIMIT: usize = 56;
 const DEFAULT_MANAGEMENT_QUEUE_LIMIT: usize = 8;
 const DEFAULT_WORKER_COUNT: usize = 4;
+const RETIRED_ABI_V1_ENTRY_SYMBOL: &[u8] = b"mutsuki_plugin_abi_v1\0";
 
 #[derive(Clone, Debug)]
 pub struct PluginHostConfig {
@@ -361,18 +362,30 @@ impl PluginConnection {
             )
         })?;
         let entry: AbiEntryV2 = unsafe {
-            *library
-                .get::<AbiEntryV2>(ABI_V2_ENTRY_SYMBOL)
-                .map_err(|error| {
-                    plugin_failure(
+            match library.get::<AbiEntryV2>(ABI_V2_ENTRY_SYMBOL) {
+                Ok(entry) => *entry,
+                Err(error) => {
+                    if library
+                        .get::<*const ()>(RETIRED_ABI_V1_ENTRY_SYMBOL)
+                        .is_ok()
+                    {
+                        return Err(plugin_failure_code(
+                            plugin_id,
+                            "abi.unsupported_version",
+                            "abi.v2.symbol_missing",
+                            "ABI v1 is retired; rebuild the plugin for ABI v2",
+                        ));
+                    }
+                    return Err(plugin_failure(
                         plugin_id,
                         "abi.v2.symbol_missing",
                         format!(
                             "missing {}: {error}",
                             String::from_utf8_lossy(ABI_V2_ENTRY_SYMBOL)
                         ),
-                    )
-                })?
+                    ));
+                }
+            }
         };
         let api = unsafe { entry(host) };
         if api.transport_version != ABI_V2_TRANSPORT_VERSION
@@ -381,11 +394,11 @@ impl PluginConnection {
             || api.release.is_none()
             || api.close.is_none()
         {
-            if !api.context.is_null() {
-                if let Some(close) = api.close {
-                    unsafe {
-                        close(api.context);
-                    }
+            if !api.context.is_null()
+                && let Some(close) = api.close
+            {
+                unsafe {
+                    close(api.context);
                 }
             }
             return Err(plugin_failure(
@@ -505,6 +518,15 @@ fn plugin_failure(plugin_id: &str, route: &str, detail: impl Into<String>) -> Pl
     let mut error = plugin_error(route, detail);
     error.error.source = format!("plugin:{plugin_id}");
     error
+}
+
+fn plugin_failure_code(
+    plugin_id: &str,
+    code: &str,
+    route: &str,
+    detail: impl Into<String>,
+) -> PluginHostError {
+    PluginHostError::new(code, format!("plugin:{plugin_id}"), route, detail)
 }
 
 fn with_context(error: PluginHostError, plugin_id: &str, route: &str) -> PluginHostError {

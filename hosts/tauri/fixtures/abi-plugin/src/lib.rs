@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AbiHostClientV2, PluginBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
+    AbiHostClient, PluginBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
 use serde_json::{Value, json};
 
@@ -51,7 +51,7 @@ pub fn fixture_manifest(path: &str, sha256: &str) -> PluginManifest {
 }
 
 fn create_plugin(
-    _host: AbiHostClientV2,
+    _host: AbiHostClient,
     config: Value,
 ) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
     if config.get("enabled").and_then(Value::as_bool) != Some(true) {

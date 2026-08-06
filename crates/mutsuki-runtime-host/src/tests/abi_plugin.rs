@@ -98,6 +98,19 @@ fn abi_v2_loader_rejects_missing_symbol_and_wrong_version() {
 }
 
 #[test]
+fn abi_v2_loader_rejects_retired_v1_before_invoking_its_entry() {
+    let error = expect_load_failure(load(
+        compile_minimal_fixture("legacy-abi-v1.rs", "legacy_abi_v1"),
+        expected_manifest(),
+        json!({}),
+        Arc::new(TestHostGateways::default()),
+    ));
+
+    assert_eq!(error.error().code, "abi.unsupported_version");
+    assert_eq!(error.error().route, "abi.v2.symbol_missing");
+}
+
+#[test]
 fn abi_v2_loader_requires_successful_initialize_and_matching_manifest() {
     let library_path = build_real_fixture();
     let gateways = Arc::new(TestHostGateways::default());

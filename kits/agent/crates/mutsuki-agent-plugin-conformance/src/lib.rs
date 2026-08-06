@@ -15,7 +15,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
-    AbiHostClientV2, PluginBuilder, RunnerDescriptorBuilder, RuntimeResult, map_work_batch_entries,
+    AbiHostClient, PluginBuilder, RunnerDescriptorBuilder, RuntimeResult, map_work_batch_entries,
 };
 use serde_json::{Value, json};
 
@@ -258,7 +258,7 @@ pub fn plugin_builder(
 }
 
 fn create_abi_plugin(
-    _host: AbiHostClientV2,
+    _host: AbiHostClient,
     config: Value,
 ) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
     let generation = config

@@ -10,7 +10,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AbiHostClientV2, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
+    AbiHostClient, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
     RunnerDescriptorBuilder, TaskSubmitter, map_work_batch_entries,
 };
 use serde_json::{Value, json};
@@ -127,7 +127,7 @@ impl ResourceProviderGateway for FixtureProvider {
 }
 
 fn create_plugin(
-    host: AbiHostClientV2,
+    host: AbiHostClient,
     config: Value,
 ) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
     if config.get("fail_initialize").and_then(Value::as_bool) == Some(true) {

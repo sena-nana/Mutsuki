@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::hint::black_box;
 
-use mutsuki_runtime_sdk::abi::{
-    AbiCallResult, AbiGuest, AbiReleaseFn, plugin_api_from_guest, plugin_api_v2_from_guest,
-};
+use mutsuki_runtime_sdk::abi::{AbiCallResult, AbiGuest, AbiReleaseFn, plugin_api_from_guest};
 use mutsuki_runtime_wire::{DisposeRunnerRequest, encode_binary_request};
 
 use crate::allocator::TrackingAllocator;
@@ -28,17 +26,7 @@ pub(super) fn run(
     };
     let binary = encode_binary_request(1, &request, mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS)
         .map_err(|error| error.to_string())?;
-    let v1 = plugin_api_from_guest(Box::new(EchoGuest));
-    let v2 = plugin_api_v2_from_guest(Box::new(EchoGuest));
-    let v1_case = measure(
-        allocator,
-        iterations,
-        "binary-v1",
-        &binary,
-        v1.context,
-        v1.request.expect("v1 request"),
-        v1.release.expect("v1 release"),
-    );
+    let v2 = plugin_api_from_guest(Box::new(EchoGuest));
     let binary_case = measure(
         allocator,
         iterations,
@@ -48,9 +36,8 @@ pub(super) fn run(
         v2.request.expect("v2 request"),
         v2.release.expect("v2 release"),
     );
-    unsafe { v1.close.expect("v1 close")(v1.context) };
     unsafe { v2.close.expect("v2 close")(v2.context) };
-    Ok(vec![v1_case, binary_case])
+    Ok(vec![binary_case])
 }
 
 fn measure(

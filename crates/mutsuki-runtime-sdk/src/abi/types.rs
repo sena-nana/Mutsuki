@@ -1,19 +1,14 @@
-//! Backward-compatible ABI exports backed by the independent plugin API crate.
+//! ABI v2 exports backed by the independent plugin API crate.
 
 use std::ptr;
 
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 
 pub use mutsuki_plugin_api::{
-    AbiBuffer, AbiCallResult, AbiCloseFn, AbiEntryV1, AbiEntryV2, AbiGuest, AbiHostV1, AbiHostV2,
-    AbiPluginV1, AbiPluginV2, AbiReleaseFn, AbiRequestFn, plugin_api_from_guest,
-    plugin_api_v2_from_guest,
+    AbiBuffer, AbiCallResult, AbiCloseFn, AbiEntryV2, AbiGuest, AbiHostV2, AbiPluginV2,
+    AbiReleaseFn, AbiRequestFn, plugin_api_from_guest,
 };
 
-pub const ABI_TRANSPORT_VERSION: u32 = mutsuki_plugin_api::ABI_V1_TRANSPORT_VERSION;
-pub const ABI_ENTRY_SYMBOL: &[u8] = mutsuki_plugin_api::ABI_V1_ENTRY_SYMBOL;
-pub const ABI_CODEC_ID: &str = mutsuki_plugin_api::ABI_V1_CODEC_ID;
-pub const ABI_BRIDGE_ID: &str = mutsuki_plugin_api::ABI_V1_BRIDGE_ID;
 pub const ABI_V2_TRANSPORT_VERSION: u32 = mutsuki_plugin_api::ABI_V2_TRANSPORT_VERSION;
 pub const ABI_V2_ENTRY_SYMBOL: &[u8] = mutsuki_plugin_api::ABI_V2_ENTRY_SYMBOL;
 pub const ABI_V2_CODEC_ID: &str = mutsuki_plugin_api::ABI_V2_CODEC_ID;

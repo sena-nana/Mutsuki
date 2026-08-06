@@ -8,7 +8,7 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AbiHostClientV2, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
+    AbiHostClient, PluginBuilder, ResourcePlanGateway, ResourceProviderGateway,
     RunnerDescriptorBuilder, map_work_batch_entries,
 };
 use serde_json::{Value, json};
@@ -134,7 +134,7 @@ pub fn benchmark_manifest(path: &str, sha256: &str) -> PluginManifest {
 }
 
 fn create_plugin_v2(
-    _host: AbiHostClientV2,
+    _host: AbiHostClient,
     config: Value,
 ) -> RuntimeResult<mutsuki_runtime_sdk::LoadedPlugin> {
     create_plugin(config)
