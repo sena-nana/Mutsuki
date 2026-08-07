@@ -380,6 +380,7 @@ impl SecureHttpGateway {
         request_body: Option<Vec<u8>>,
         limits: EffectiveLimits,
     ) -> Result<FetchedHttpResponse, HttpGatewayError> {
+        let request_allowlist = request.limits.domain_allowlist;
         let mut url = Url::parse(&request.url)
             .map_err(|error| HttpGatewayError::new(HttpErrorCode::InvalidUrl, error.to_string()))?;
         let mut method = request.method;
@@ -387,7 +388,7 @@ impl SecureHttpGateway {
         let mut headers = request.headers;
         let mut redirects_followed = 0_u8;
         loop {
-            self.validate_url(&url, redirects_followed > 0)?;
+            self.validate_url(&url, redirects_followed > 0, request_allowlist.as_deref())?;
             let host = url.host_str().ok_or_else(|| {
                 HttpGatewayError::new(HttpErrorCode::InvalidUrl, "URL host is missing")
             })?;
@@ -429,7 +430,7 @@ impl SecureHttpGateway {
                 let next = url.join(&location).map_err(|error| {
                     HttpGatewayError::new(HttpErrorCode::RedirectDenied, error.to_string())
                 })?;
-                self.validate_url(&next, true)?;
+                self.validate_url(&next, true, request_allowlist.as_deref())?;
                 if next.host_str() != url.host_str() {
                     remove_sensitive_headers(&mut headers);
                 }
@@ -471,7 +472,12 @@ impl SecureHttpGateway {
         }
     }
 
-    fn validate_url(&self, url: &Url, redirect: bool) -> Result<(), HttpGatewayError> {
+    fn validate_url(
+        &self,
+        url: &Url,
+        redirect: bool,
+        request_allowlist: Option<&[String]>,
+    ) -> Result<(), HttpGatewayError> {
         let denied_code = if redirect {
             HttpErrorCode::RedirectDenied
         } else {
@@ -500,7 +506,7 @@ impl SecureHttpGateway {
         let host = url.host_str().ok_or_else(|| {
             HttpGatewayError::new(HttpErrorCode::InvalidUrl, "URL host is missing")
         })?;
-        if !self.domain_allowed(host) {
+        if !self.domain_allowed(host, request_allowlist) {
             return Err(HttpGatewayError::new(
                 denied_code,
                 "URL host is not in the configured allowlist",
@@ -510,15 +516,17 @@ impl SecureHttpGateway {
         Ok(())
     }
 
-    fn domain_allowed(&self, host: &str) -> bool {
+    fn domain_allowed(&self, host: &str, request_allowlist: Option<&[String]>) -> bool {
         let host = normalize_domain(host);
-        self.config.domain_allowlist.iter().any(|allowed| {
+        let matches = |allowed: &str| {
             let allowed = normalize_domain(allowed);
             host == allowed
                 || host
                     .strip_suffix(&allowed)
                     .is_some_and(|prefix| prefix.ends_with('.'))
-        })
+        };
+        self.config.domain_allowlist.iter().any(|allowed| matches(allowed))
+            && request_allowlist.map_or(true, |list| list.iter().any(|allowed| matches(allowed)))
     }
 }
 
@@ -1050,6 +1058,7 @@ mod tests {
     struct FakeReply {
         status: u16,
         location: Option<String>,
+        content_length: Option<u64>,
         chunks: Vec<Vec<u8>>,
         header_delay: Duration,
     }
@@ -1076,7 +1085,7 @@ mod tests {
                 status: reply.status,
                 headers: BTreeMap::new(),
                 location: reply.location,
-                content_length: None,
+                content_length: reply.content_length,
                 body: Box::pin(stream::iter(
                     reply.chunks.into_iter().map(|chunk| Ok(Bytes::from(chunk))),
                 )),
@@ -1088,7 +1097,18 @@ mod tests {
         FakeReply {
             status,
             location: None,
+            content_length: None,
             chunks: chunks.iter().map(|chunk| chunk.to_vec()).collect(),
+            header_delay: Duration::ZERO,
+        }
+    }
+
+    fn redirect(location: &str) -> FakeReply {
+        FakeReply {
+            status: 302,
+            location: Some(location.into()),
+            content_length: None,
+            chunks: Vec::new(),
             header_delay: Duration::ZERO,
         }
     }
@@ -1147,12 +1167,7 @@ mod tests {
     #[tokio::test]
     async fn cross_domain_redirect_is_revalidated_and_denied() {
         let dns = Arc::new(FakeDns::new([vec![public_address()]]));
-        let hop = Arc::new(FakeHop::new([FakeReply {
-            status: 302,
-            location: Some("https://blocked.invalid/next".into()),
-            chunks: Vec::new(),
-            header_delay: Duration::ZERO,
-        }]));
+        let hop = Arc::new(FakeHop::new([redirect("https://blocked.invalid/next")]));
         let gateway = SecureHttpGateway::with_gateways(config(), dns, hop);
         let error = gateway
             .execute(HttpRequest::get("https://example.com/start"), None)
@@ -1183,6 +1198,7 @@ mod tests {
         let hop = Arc::new(FakeHop::new([FakeReply {
             status: 200,
             location: None,
+            content_length: None,
             chunks: Vec::new(),
             header_delay: Duration::from_millis(75),
         }]));
@@ -1301,5 +1317,116 @@ mod tests {
         task.abort();
         let _ = task.await;
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn request_domain_allowlist_rejects_hosts_outside_the_request_scope() {
+        let mut cfg = config();
+        cfg.domain_allowlist = vec!["example.com".into(), "cdn.example.net".into()];
+        let dns = Arc::new(FakeDns::new([vec![public_address()]]));
+        let hop = Arc::new(FakeHop::new([redirect("https://cdn.example.net/image")]));
+        let gateway = SecureHttpGateway::with_gateways(cfg, dns, hop);
+        let mut request = HttpRequest::get("https://example.com/start");
+        request.limits.domain_allowlist = Some(vec!["example.com".into()]);
+        let error = gateway.execute(request, None).await.unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::RedirectDenied);
+        assert_eq!(error.evidence.get("host").map(String::as_str), Some("cdn.example.net"));
+    }
+
+    #[tokio::test]
+    async fn http_redirect_target_is_denied() {
+        let dns = Arc::new(FakeDns::new([vec![public_address()]]));
+        let hop = Arc::new(FakeHop::new([redirect("http://example.com/insecure")]));
+        let gateway = SecureHttpGateway::with_gateways(config(), dns, hop);
+        let error = gateway
+            .execute(HttpRequest::get("https://example.com/start"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::RedirectDenied);
+    }
+
+    #[tokio::test]
+    async fn redirect_loop_exceeding_max_redirects_is_rejected() {
+        let dns = Arc::new(FakeDns::new([
+            vec![public_address()],
+            vec![public_address()],
+            vec![public_address()],
+        ]));
+        let hop = Arc::new(FakeHop::new([
+            redirect("https://example.com/a"),
+            redirect("https://example.com/b"),
+            redirect("https://example.com/c"),
+        ]));
+        let gateway = SecureHttpGateway::with_gateways(config(), dns, hop);
+        let error = gateway
+            .execute(HttpRequest::get("https://example.com/start"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::TooManyRedirects);
+    }
+
+    #[tokio::test]
+    async fn private_dns_on_redirect_target_is_rejected() {
+        let dns = Arc::new(FakeDns::new([
+            vec![public_address()],
+            vec!["127.0.0.1:443".parse().unwrap()],
+        ]));
+        let hop = Arc::new(FakeHop::new([redirect("https://example.com/private")]));
+        let gateway = SecureHttpGateway::with_gateways(config(), dns, hop);
+        let error = gateway
+            .execute(HttpRequest::get("https://example.com/start"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::PrivateAddress);
+    }
+
+    #[tokio::test]
+    async fn forged_content_length_still_stops_when_stream_exceeds_limit() {
+        let dns = Arc::new(FakeDns::new([vec![public_address()]]));
+        let hop = Arc::new(FakeHop::new([FakeReply {
+            status: 200,
+            location: None,
+            content_length: Some(4),
+            chunks: vec![b"123456".to_vec(), b"789012".to_vec()],
+            header_delay: Duration::ZERO,
+        }]));
+        let gateway = SecureHttpGateway::with_gateways(config(), dns, hop);
+        let error = gateway
+            .execute(HttpRequest::get("https://example.com/forged-length"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::BodyTooLarge);
+        assert_eq!(
+            error.evidence.get("observed_bytes").map(String::as_str),
+            Some("12")
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_chunked_body_does_not_buffer_the_full_response() {
+        let dns = Arc::new(FakeDns::new([vec![public_address()]]));
+        let large = vec![b'x'; 64];
+        let hop = Arc::new(FakeHop::new([FakeReply {
+            status: 200,
+            location: None,
+            content_length: None,
+            chunks: vec![large.clone(), large.clone(), large],
+            header_delay: Duration::ZERO,
+        }]));
+        let mut cfg = config();
+        cfg.max_response_bytes = 80;
+        let gateway = SecureHttpGateway::with_gateways(cfg, dns, hop);
+        let error = gateway
+            .execute(HttpRequest::get("https://example.com/chunked"), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HttpErrorCode::BodyTooLarge);
+        let observed = error
+            .evidence
+            .get("observed_bytes")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap();
+        // Fail on the second 64-byte chunk (80 limit); never buffer all three chunks (192).
+        assert!(observed <= 128, "observed_bytes={observed}");
     }
 }

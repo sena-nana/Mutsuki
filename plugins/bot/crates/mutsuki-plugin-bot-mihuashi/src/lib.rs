@@ -29,6 +29,18 @@ pub const PLUGIN_ID: &str = "mutsuki.bot.mihuashi";
 pub const RUNNER_ID: &str = "mutsuki.bot.mihuashi.runner";
 pub const LINK_RESOLVE: &str = "mutsuki.bot.mihuashi.link/resolve@1";
 
+const MIHUASHI_DOMAIN: &str = "mihuashi.com";
+const MEDIA_CONNECT_TIMEOUT_MS: u64 = 5_000;
+const MEDIA_HEADER_TIMEOUT_MS: u64 = 10_000;
+const MEDIA_IDLE_TIMEOUT_MS: u64 = 10_000;
+const MEDIA_TOTAL_TIMEOUT_MS: u64 = 30_000;
+const MEDIA_MAX_REDIRECTS: u8 = 5;
+
+const ERROR_URL_NOT_ALLOWED: &str = "mihuashi.url_not_allowed";
+const ERROR_REDIRECT_NOT_ALLOWED: &str = "mihuashi.redirect_not_allowed";
+const ERROR_MEDIA_OVERSIZED: &str = "mihuashi.media_oversized";
+const ERROR_MEDIA_TIMEOUT: &str = "mihuashi.media_timeout";
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MihuashiResolveRequest {
     pub url: String,
@@ -149,29 +161,81 @@ async fn fetch_profile_image(
     task: &Task,
     image_url: Option<&str>,
 ) -> RuntimeResult<Option<ResourceRef>> {
-    if let Some(image_url) = image_url {
-        ensure_mihuashi_url(image_url).map_err(|error| fail(task, error))?;
-        let mut request = HttpRequest::get(image_url);
-        request.limits.max_response_bytes = Some(MAX_LINK_CARD_MEDIA_BYTES as u64);
-        let outcome = ctx
-            .call_raw(
-                HTTP_REQUEST,
-                serde_json::to_value(request).map_err(|error| fail(task, error))?,
-            )
-            .await?;
-        let response: HttpResponse = decode_child_output(task, outcome, "HTTP image")?;
-        if !(200..300).contains(&response.metadata.status) {
-            return Err(fail(
-                task,
-                format!("HTTP image returned status {}", response.metadata.status),
-            ));
-        }
-        Ok(Some(response.body.ok_or_else(|| {
-            fail(task, "HTTP image response body missing")
-        })?))
-    } else {
-        Ok(None)
+    let Some(image_url) = image_url else {
+        return Ok(None);
+    };
+    ensure_mihuashi_url(image_url).map_err(|error| fail_code(task, ERROR_URL_NOT_ALLOWED, error))?;
+    let outcome = ctx
+        .call_raw(
+            HTTP_REQUEST,
+            serde_json::to_value(media_http_request(image_url)).map_err(|error| fail(task, error))?,
+        )
+        .await?;
+    let response = decode_http_image(task, outcome)?;
+    if !(200..300).contains(&response.metadata.status) {
+        return Err(fail(
+            task,
+            format!("HTTP image returned status {}", response.metadata.status),
+        ));
     }
+    ensure_mihuashi_url(&response.metadata.final_url)
+        .map_err(|error| fail_code(task, ERROR_REDIRECT_NOT_ALLOWED, error))?;
+    Ok(Some(response.body.ok_or_else(|| {
+        fail(task, "HTTP image response body missing")
+    })?))
+}
+
+fn media_http_request(image_url: &str) -> HttpRequest {
+    let mut request = HttpRequest::get(image_url);
+    request.limits.max_response_bytes = Some(MAX_LINK_CARD_MEDIA_BYTES as u64);
+    request.limits.connect_timeout_ms = Some(MEDIA_CONNECT_TIMEOUT_MS);
+    request.limits.header_timeout_ms = Some(MEDIA_HEADER_TIMEOUT_MS);
+    request.limits.idle_timeout_ms = Some(MEDIA_IDLE_TIMEOUT_MS);
+    request.limits.total_timeout_ms = Some(MEDIA_TOTAL_TIMEOUT_MS);
+    request.limits.max_redirects = Some(MEDIA_MAX_REDIRECTS);
+    request.limits.domain_allowlist = Some(vec![MIHUASHI_DOMAIN.into()]);
+    request
+}
+
+fn decode_http_image(task: &Task, outcome: TaskOutcome) -> RuntimeResult<HttpResponse> {
+    match outcome {
+        TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output).map_err(|error| fail(task, error)),
+        TaskOutcome::Completed { output: None, .. } => {
+            Err(fail(task, "HTTP image completed without output"))
+        }
+        TaskOutcome::Failed { error, .. } => Err(map_http_media_failure(task, error)),
+        TaskOutcome::Cancelled { .. } | TaskOutcome::Expired { .. } => Err(fail_code(
+            task,
+            ERROR_MEDIA_TIMEOUT,
+            "HTTP image download timed out",
+        )),
+        TaskOutcome::DeadLetter { .. } => Err(fail(task, "HTTP image was dead-lettered")),
+    }
+}
+
+fn map_http_media_failure(task: &Task, error: RuntimeError) -> RuntimeFailure {
+    let code = match error.code.as_str() {
+        "http.domain_denied" | "http.https_required" | "http.invalid_url" => ERROR_URL_NOT_ALLOWED,
+        "http.redirect_denied" | "http.too_many_redirects" | "http.private_address" => {
+            ERROR_REDIRECT_NOT_ALLOWED
+        }
+        "http.body_too_large" => ERROR_MEDIA_OVERSIZED,
+        "http.header_timeout" | "http.idle_timeout" | "http.total_timeout" => ERROR_MEDIA_TIMEOUT,
+        _ => "mihuashi.resolve_failed",
+    };
+    let mut mapped = RuntimeError::new(code, PLUGIN_ID, format!("mihuashi.{}", task.task_id));
+    mapped.evidence = error.evidence;
+    mapped.evidence.insert(
+        "http_code".into(),
+        ScalarValue::String(error.code.clone()),
+    );
+    mapped
+        .evidence
+        .insert("detail".into(), ScalarValue::String(error.route.clone()));
+    RuntimeFailure::new(mapped)
 }
 
 async fn render_profile_card(
@@ -217,26 +281,6 @@ async fn render_profile_card(
             Err(fail(task, "image renderer completed without output"))
         }
         _ => Err(fail(task, "image renderer child task failed")),
-    }
-}
-
-fn decode_child_output<T: serde::de::DeserializeOwned>(
-    task: &Task,
-    outcome: TaskOutcome,
-    operation: &str,
-) -> RuntimeResult<T> {
-    match outcome {
-        TaskOutcome::Completed {
-            output: Some(output),
-            ..
-        } => serde_json::from_value(output).map_err(|error| fail(task, error)),
-        TaskOutcome::Completed { output: None, .. } => {
-            Err(fail(task, format!("{operation} completed without output")))
-        }
-        TaskOutcome::Failed { error, .. } => Err(RuntimeFailure::new(error)),
-        TaskOutcome::Cancelled { .. } => Err(fail(task, format!("{operation} cancelled"))),
-        TaskOutcome::Expired { .. } => Err(fail(task, format!("{operation} expired"))),
-        TaskOutcome::DeadLetter { .. } => Err(fail(task, format!("{operation} dead-lettered"))),
     }
 }
 
@@ -308,19 +352,22 @@ fn descriptor() -> RunnerDescriptor {
 }
 fn ensure_mihuashi_url(value: &str) -> Result<(), String> {
     let url = Url::parse(value).map_err(|error| error.to_string())?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Mihuashi URL userinfo is not allowed".into());
+    }
     let host = url.host_str().unwrap_or_default();
-    if url.scheme() == "https" && (host == "mihuashi.com" || host.ends_with(".mihuashi.com")) {
+    if url.scheme() == "https" && (host == MIHUASHI_DOMAIN || host.ends_with(".mihuashi.com")) {
         Ok(())
     } else {
         Err(format!("Mihuashi domain denied: {host}"))
     }
 }
 fn fail(task: &Task, detail: impl std::fmt::Display) -> RuntimeFailure {
-    let mut error = RuntimeError::new(
-        "mihuashi.resolve_failed",
-        PLUGIN_ID,
-        format!("mihuashi.{}", task.task_id),
-    );
+    fail_code(task, "mihuashi.resolve_failed", detail)
+}
+
+fn fail_code(task: &Task, code: &str, detail: impl std::fmt::Display) -> RuntimeFailure {
+    let mut error = RuntimeError::new(code, PLUGIN_ID, format!("mihuashi.{}", task.task_id));
     error
         .evidence
         .insert("detail".into(), ScalarValue::String(detail.to_string()));
@@ -342,35 +389,43 @@ mod tests {
     use mutsuki_plugin_io_http_client::{
         FetchedHttpResponse, HttpEffectHandler, HttpGateway, HttpGatewayError,
     };
-    use mutsuki_protocol_http::{HttpRequest, HttpResponseMetadata};
+    use mutsuki_protocol_http::{HttpErrorCode, HttpRequest, HttpResponseMetadata};
     use mutsuki_runtime_contracts::{PluginManifest, TaskBatch, WorkBatch};
     use mutsuki_runtime_sdk::map_work_batch_entries;
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use mutsuki_service_control::{
-        ControlCommand, ControlRequest, ControlResponse, ControlResult, TaskSubmitBatchParam,
-        TaskWaitParam,
+        ControlMethod, ControlRequest, TaskSubmitBatchParam, TaskWaitParam, TaskWaitResponse,
     };
     use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
     use tempfile::tempdir;
 
     use super::*;
 
-    struct FakeHttpGateway;
+    struct ScriptedHttpGateway {
+        final_url: Option<String>,
+        error: Option<HttpGatewayError>,
+        captured: Arc<Mutex<Option<HttpRequest>>>,
+    }
 
     #[async_trait]
-    impl HttpGateway for FakeHttpGateway {
+    impl HttpGateway for ScriptedHttpGateway {
         async fn execute(
             &self,
             request: HttpRequest,
             _request_body: Option<Vec<u8>>,
         ) -> Result<FetchedHttpResponse, HttpGatewayError> {
+            *self.captured.lock().unwrap() = Some(request.clone());
+            if let Some(error) = self.error.clone() {
+                return Err(error);
+            }
+            let final_url = self.final_url.clone().unwrap_or_else(|| request.url.clone());
             Ok(FetchedHttpResponse {
                 metadata: HttpResponseMetadata {
                     status: 200,
-                    final_url: request.url,
+                    final_url,
                     headers: std::collections::BTreeMap::default(),
                     body_bytes: fixture_png().len() as u64,
-                    redirects_followed: 0,
+                    redirects_followed: u8::from(self.final_url.is_some()),
                 },
                 body: fixture_png(),
                 peak_buffered_bytes: fixture_png().len() as u64,
@@ -506,6 +561,52 @@ mod tests {
         assert_eq!(parsed.1, "Window");
     }
 
+    #[test]
+    fn media_http_request_pins_mihuashi_allowlist_budgets_and_deadlines() {
+        let request = media_http_request("https://img.mihuashi.com/a.jpg");
+        assert_eq!(
+            request.limits.max_response_bytes,
+            Some(MAX_LINK_CARD_MEDIA_BYTES as u64)
+        );
+        assert_eq!(request.limits.connect_timeout_ms, Some(MEDIA_CONNECT_TIMEOUT_MS));
+        assert_eq!(request.limits.header_timeout_ms, Some(MEDIA_HEADER_TIMEOUT_MS));
+        assert_eq!(request.limits.idle_timeout_ms, Some(MEDIA_IDLE_TIMEOUT_MS));
+        assert_eq!(request.limits.total_timeout_ms, Some(MEDIA_TOTAL_TIMEOUT_MS));
+        assert_eq!(request.limits.max_redirects, Some(MEDIA_MAX_REDIRECTS));
+        assert_eq!(
+            request.limits.domain_allowlist.as_deref(),
+            Some([MIHUASHI_DOMAIN.to_owned()].as_slice())
+        );
+    }
+
+    #[test]
+    fn ensure_mihuashi_url_rejects_http_foreign_hosts_and_userinfo() {
+        assert!(ensure_mihuashi_url("https://www.mihuashi.com/x").is_ok());
+        assert!(ensure_mihuashi_url("http://www.mihuashi.com/x").is_err());
+        assert!(ensure_mihuashi_url("https://evil.example/x").is_err());
+        assert!(ensure_mihuashi_url("https://user:pass@www.mihuashi.com/x").is_err());
+    }
+
+    #[test]
+    fn http_failures_map_to_distinct_mihuashi_media_codes() {
+        let task = Task::new("t1", LINK_RESOLVE, json!({}));
+        let cases = [
+            ("http.domain_denied", ERROR_URL_NOT_ALLOWED),
+            ("http.redirect_denied", ERROR_REDIRECT_NOT_ALLOWED),
+            ("http.too_many_redirects", ERROR_REDIRECT_NOT_ALLOWED),
+            ("http.private_address", ERROR_REDIRECT_NOT_ALLOWED),
+            ("http.body_too_large", ERROR_MEDIA_OVERSIZED),
+            ("http.header_timeout", ERROR_MEDIA_TIMEOUT),
+            ("http.idle_timeout", ERROR_MEDIA_TIMEOUT),
+            ("http.total_timeout", ERROR_MEDIA_TIMEOUT),
+        ];
+        for (http_code, expected) in cases {
+            let error = RuntimeError::new(http_code, "runtime.io_http_client", "boom");
+            let mapped = map_http_media_failure(&task, error);
+            assert_eq!(mapped.error().code, expected, "http_code={http_code}");
+        }
+    }
+
     #[tokio::test]
     async fn real_core_routes_browser_image_render_and_bot_send_closed_loop() {
         let root = tempdir().unwrap();
@@ -515,6 +616,11 @@ mod tests {
             test_service_config(root.path()),
             snapshot.clone(),
             captured.clone(),
+            Arc::new(ScriptedHttpGateway {
+                final_url: None,
+                error: None,
+                captured: Arc::new(Mutex::new(None)),
+            }),
         )
         .start()
         .await
@@ -534,6 +640,95 @@ mod tests {
             }
         );
         runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn foreign_final_url_after_redirect_is_rejected_as_redirect_not_allowed() {
+        let root = tempdir().unwrap();
+        let snapshot = test_snapshot();
+        let captured = Arc::new(Mutex::new(None));
+        let http_capture = Arc::new(Mutex::new(None));
+        let runtime = closed_loop_builder(
+            test_service_config(root.path()),
+            snapshot.clone(),
+            captured,
+            Arc::new(ScriptedHttpGateway {
+                final_url: Some("https://evil.example/steal".into()),
+                error: None,
+                captured: http_capture.clone(),
+            }),
+        )
+        .start()
+        .await
+        .unwrap();
+        let waited = submit_and_wait_outcome(&runtime, snapshot.final_url).await;
+        assert_eq!(waited.outcomes[0].status, "failed");
+        assert_eq!(
+            waited.outcomes[0].error_code.as_deref(),
+            Some(ERROR_REDIRECT_NOT_ALLOWED)
+        );
+        assert_eq!(
+            http_capture
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|request| request.limits.domain_allowlist.as_deref()),
+            Some([MIHUASHI_DOMAIN.to_owned()].as_slice())
+        );
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn oversized_http_body_maps_to_media_oversized() {
+        assert_eq!(
+            resolve_with_http_error(HttpGatewayError {
+                code: HttpErrorCode::BodyTooLarge,
+                message: "streamed response exceeded the configured response limit".into(),
+                evidence: std::collections::BTreeMap::from([(
+                    "observed_bytes".into(),
+                    "12".into(),
+                )]),
+            })
+            .await,
+            ERROR_MEDIA_OVERSIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn media_timeout_http_error_maps_to_media_timeout() {
+        assert_eq!(
+            resolve_with_http_error(HttpGatewayError {
+                code: HttpErrorCode::TotalTimeout,
+                message: "request exceeded the configured total timeout".into(),
+                evidence: Default::default(),
+            })
+            .await,
+            ERROR_MEDIA_TIMEOUT
+        );
+    }
+
+    async fn resolve_with_http_error(error: HttpGatewayError) -> String {
+        let root = tempdir().unwrap();
+        let snapshot = test_snapshot();
+        let captured = Arc::new(Mutex::new(None));
+        let runtime = closed_loop_builder(
+            test_service_config(root.path()),
+            snapshot.clone(),
+            captured,
+            Arc::new(ScriptedHttpGateway {
+                final_url: Some("https://img.mihuashi.com/a.jpg".into()),
+                error: Some(error),
+                captured: Arc::new(Mutex::new(None)),
+            }),
+        )
+        .start()
+        .await
+        .unwrap();
+        let waited = submit_and_wait_outcome(&runtime, snapshot.final_url).await;
+        assert_eq!(waited.outcomes[0].status, "failed");
+        let code = waited.outcomes[0].error_code.clone().expect("error code");
+        runtime.shutdown().await;
+        code
     }
 
     fn test_snapshot() -> BrowserSnapshot {
@@ -579,6 +774,7 @@ mod tests {
         config: ServiceConfig,
         snapshot: BrowserSnapshot,
         captured: CapturedSendSlot,
+        http_gateway: Arc<dyn HttpGateway>,
     ) -> ServiceRuntimeBuilder {
         let browser_config = ChromiumConfig {
             executable: std::env::current_exe().unwrap(),
@@ -628,7 +824,7 @@ mod tests {
             .register_fallible_runtime_services_async_handler(move |_client, resources| {
                 Ok::<Arc<dyn mutsuki_runtime_core::AsyncBatchHandler>, String>(Arc::new(
                     HttpEffectHandler::new(
-                        Arc::new(FakeHttpGateway),
+                        http_gateway.clone(),
                         resources,
                         mutsuki_plugin_resource_memory::PLUGIN_ID,
                     ),
@@ -664,6 +860,15 @@ mod tests {
     }
 
     async fn submit_and_wait(runtime: &ServiceRuntime, url: String) {
+        let waited = submit_and_wait_outcome(runtime, url).await;
+        assert!(!waited.timed_out);
+        assert_eq!(waited.outcomes[0].status, "completed");
+    }
+
+    async fn submit_and_wait_outcome(
+        runtime: &ServiceRuntime,
+        url: String,
+    ) -> TaskWaitResponse {
         let control = runtime.control_handler();
         let request = MihuashiResolveRequest {
             url,
@@ -675,9 +880,10 @@ mod tests {
             timeout_ms: 5_000,
         };
         let submit = control
-            .handle(ControlRequest::new(
-                runtime.control_token(),
-                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
+            .handle(ControlRequest {
+                token: runtime.control_token().into(),
+                method: ControlMethod::TaskSubmitBatch,
+                params: serde_json::to_value(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         "mihuashi-real-core-batch",
                         Task::new(
@@ -686,27 +892,27 @@ mod tests {
                             serde_json::to_value(request).unwrap(),
                         ),
                     ),
-                }),
-            ))
+                })
+                .unwrap(),
+            })
             .await;
-        assert!(matches!(
-            submit,
-            ControlResponse::Ok(ControlResult::TaskSubmitBatch(_))
-        ));
+        assert!(submit.ok, "submit failed: {:?}", submit.error);
         let waited = control
-            .handle(ControlRequest::new(
-                runtime.control_token(),
-                ControlCommand::TaskWait(TaskWaitParam {
+            .handle(ControlRequest {
+                token: runtime.control_token().into(),
+                method: ControlMethod::TaskWait,
+                params: serde_json::to_value(TaskWaitParam {
                     ids: vec!["mihuashi-real-core".into()],
                     timeout_ms: 10_000,
-                }),
-            ))
+                })
+                .unwrap(),
+            })
             .await;
-        let ControlResponse::Ok(ControlResult::TaskWait(waited)) = waited else {
-            panic!("wait failed: {waited:?}");
-        };
+        assert!(waited.ok, "wait failed: {:?}", waited.error);
+        let waited: TaskWaitResponse =
+            serde_json::from_value(waited.result.expect("wait result")).unwrap();
         assert!(!waited.timed_out);
-        assert_eq!(waited.outcomes[0].status, "completed");
+        waited
     }
 
     async fn wait_for_capture(captured: &CapturedSendSlot) -> CapturedSend {
