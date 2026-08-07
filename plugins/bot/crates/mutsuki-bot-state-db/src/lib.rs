@@ -27,6 +27,8 @@ struct RepositoryInner {
     path: PathBuf,
     jobs: mpsc::Sender<DbJob>,
     metrics: Arc<ActorMetrics>,
+    /// Effective `journal_mode` after open (`wal`, or a non-WAL fallback such as `delete`).
+    journal_mode: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,8 +131,8 @@ impl BotStateDbRepository {
             .spawn(move || {
                 let connection = open_connection(&actor_path, &actor_metrics);
                 match connection {
-                    Ok(connection) => {
-                        let _ = started_tx.send(Ok(()));
+                    Ok((connection, journal_mode)) => {
+                        let _ = started_tx.send(Ok(journal_mode));
                         actor_loop(connection, receiver, &actor_metrics);
                     }
                     Err(error) => {
@@ -139,7 +141,7 @@ impl BotStateDbRepository {
                 }
             })
             .map_err(|error| BotStateDbError::ActorStart(error.to_string()))?;
-        started_rx
+        let journal_mode = started_rx
             .recv()
             .map_err(|_| BotStateDbError::ActorStopped)?
             .map_err(BotStateDbError::ActorStart)?;
@@ -148,6 +150,7 @@ impl BotStateDbRepository {
                 path,
                 jobs,
                 metrics,
+                journal_mode,
             }),
         })
     }
@@ -155,6 +158,12 @@ impl BotStateDbRepository {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.inner.path
+    }
+
+    /// Effective SQLite `journal_mode` after open (prefer `wal`; may be a fallback mode).
+    #[must_use]
+    pub fn journal_mode(&self) -> &str {
+        &self.inner.journal_mode
     }
 
     #[must_use]
@@ -415,17 +424,28 @@ fn send_reply<T>(reply: DbReply<T>, result: Result<T, BotStateDbError>, metrics:
     let _ = reply.send(result);
 }
 
-fn open_connection(path: &Path, metrics: &ActorMetrics) -> Result<Connection, BotStateDbError> {
+fn open_connection(
+    path: &Path,
+    metrics: &ActorMetrics,
+) -> Result<(Connection, String), BotStateDbError> {
     let connection = Connection::open(path)?;
     metrics
         .connection_open_count
         .fetch_add(1, Ordering::Relaxed);
+    let journal_mode = configure_connection(&connection)?;
+    migrate_schema(&connection)?;
+    Ok((connection, journal_mode))
+}
+
+/// Single-connection factory: busy timeout, foreign keys, prefer WAL, then synchronous=NORMAL.
+/// When WAL is unavailable, SQLite keeps another mode and open still succeeds.
+fn configure_connection(connection: &Connection) -> Result<String, BotStateDbError> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
     connection.pragma_update(None, "foreign_keys", true)?;
-    connection.pragma_update(None, "journal_mode", "WAL")?;
+    let journal_mode: String =
+        connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
-    migrate_schema(&connection)?;
-    Ok(connection)
+    Ok(journal_mode.to_ascii_lowercase())
 }
 
 fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
@@ -1314,6 +1334,7 @@ pub enum BotStateDbError {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::atomic::AtomicUsize;
 
     use mutsuki_bot_protocol::{
         AgentSessionScope, BotConversationKind, BotDeliveryContent, BotInteractionSession,
@@ -1409,9 +1430,11 @@ mod tests {
             .unwrap();
         repository.create(interaction(&conversation)).await.unwrap();
         assert_eq!(repository.metrics().connection_open_count, 1);
+        assert_eq!(repository.journal_mode(), "wal");
         drop(repository);
 
         let reopened = BotStateDbRepository::open(&path).unwrap();
+        assert_eq!(reopened.journal_mode(), "wal");
         assert_eq!(reopened.policy_rules().await.unwrap().len(), 1);
         assert_eq!(
             reopened
@@ -1524,6 +1547,7 @@ mod tests {
         assert_eq!(claim_counts.get("New"), Some(&1));
         assert_eq!(claim_counts.get("ResumePending"), Some(&63));
         assert_eq!(repository.metrics().connection_open_count, 1);
+        assert_eq!(repository.metrics().busy_count, 0);
         assert!(repository.metrics().transaction_count >= 194);
     }
 
@@ -1553,6 +1577,150 @@ mod tests {
         let second_receipt = repository.receipt("second").await.unwrap();
         assert_eq!(second_receipt.status, DeliveryStatus::Pending);
         assert_eq!(second_receipt.idempotency_key, "key-second");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn database_wait_does_not_block_async_runtime_worker() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        repository.upsert_policy_rule(policy_rule()).await.unwrap();
+
+        let lock_path = path.clone();
+        let holder = std::thread::spawn(move || {
+            let connection = Connection::open(lock_path).unwrap();
+            connection
+                .busy_timeout(Duration::from_millis(1))
+                .unwrap();
+            connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+            std::thread::sleep(Duration::from_millis(250));
+            connection.execute_batch("COMMIT").unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(30));
+
+        let progress = Arc::new(AtomicUsize::new(0));
+        let ticker_progress = progress.clone();
+        let ticker = async {
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while Instant::now() < deadline {
+                ticker_progress.fetch_add(1, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+        };
+
+        let mut rule = policy_rule();
+        rule.revision = 3;
+        let (write_result, _) = tokio::join!(repository.upsert_policy_rule(rule), ticker);
+        write_result.unwrap();
+        holder.join().unwrap();
+        assert!(
+            progress.load(Ordering::Relaxed) > 0,
+            "async runtime worker must keep scheduling while the DB actor waits on SQLITE_BUSY"
+        );
+        assert_eq!(repository.metrics().connection_open_count, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn external_writer_contention_stays_correct() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.db");
+        let repository = Arc::new(BotStateDbRepository::open(&path).unwrap());
+        let conversation = conversation();
+        let binding_key = conversation.origin_key();
+        repository
+            .compare_and_set_session_binding(&binding_key, None, binding(&conversation, 1))
+            .await
+            .unwrap();
+        let waiting = interaction(&conversation);
+        repository.create(waiting.clone()).await.unwrap();
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lock_path = path.clone();
+        let stop_flag = stop.clone();
+        let contender = std::thread::spawn(move || {
+            let connection = Connection::open(lock_path).unwrap();
+            connection.busy_timeout(BUSY_TIMEOUT).unwrap();
+            while !stop_flag.load(Ordering::Relaxed) {
+                connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+                std::thread::sleep(Duration::from_millis(5));
+                connection.execute_batch("COMMIT").unwrap();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        let mut jobs = JoinSet::new();
+        let iterations = 256_u32;
+        for index in 0..iterations {
+            let repository = repository.clone();
+            let conversation = conversation.clone();
+            let binding_key = binding_key.clone();
+            let waiting = waiting.clone();
+            jobs.spawn(async move {
+                let started = Instant::now();
+                match index % 4 {
+                    0 => {
+                        let request = delivery(
+                            &conversation,
+                            &format!("delivery-{index}"),
+                            &format!("key-{index}"),
+                        );
+                        repository.reserve(&request).await.unwrap();
+                    }
+                    1 => {
+                        let _ = repository
+                            .begin_agent_event(&binding_key, &format!("event-{index}"), "turn")
+                            .await
+                            .unwrap();
+                    }
+                    2 => {
+                        let mut next = waiting.clone();
+                        next.version = u64::from(index) + 2;
+                        next.retries_remaining = index;
+                        let _ = repository.compare_and_set(1, next).await;
+                    }
+                    _ => {
+                        let mut next = binding(&conversation, 2);
+                        next.session_version = u64::from(index);
+                        let _ = repository
+                            .compare_and_set_session_binding(&binding_key, Some(1), next)
+                            .await;
+                    }
+                }
+                started.elapsed()
+            });
+        }
+
+        let mut latencies = Vec::with_capacity(iterations as usize);
+        while let Some(result) = jobs.join_next().await {
+            latencies.push(result.unwrap());
+        }
+        stop.store(true, Ordering::Relaxed);
+        contender.join().unwrap();
+
+        latencies.sort_unstable();
+        let p95 = latencies[((latencies.len() * 95) / 100).saturating_sub(1)];
+        let p99 = latencies[((latencies.len() * 99) / 100).saturating_sub(1)];
+        eprintln!(
+            "issue-164 contention: n={} p95={p95:?} p99={p99:?} open={} busy={}",
+            latencies.len(),
+            repository.metrics().connection_open_count,
+            repository.metrics().busy_count
+        );
+
+        assert_eq!(repository.metrics().connection_open_count, 1);
+        assert_eq!(
+            repository.metrics().busy_count,
+            0,
+            "actor busy_timeout must absorb SQLITE_BUSY instead of surfacing it"
+        );
+        assert!(
+            p95 < Duration::from_secs(2),
+            "p95 under injected contention should stay under 2s, got {p95:?}"
+        );
+        assert!(
+            p99 < Duration::from_secs(5),
+            "p99 under injected contention should stay under busy_timeout, got {p99:?}"
+        );
     }
 
     fn conversation() -> QqConversationRef {
