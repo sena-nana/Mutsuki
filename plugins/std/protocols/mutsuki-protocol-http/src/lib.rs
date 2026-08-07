@@ -53,6 +53,8 @@ pub struct HttpRequestLimits {
     pub total_timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_redirects: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain_allowlist: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
