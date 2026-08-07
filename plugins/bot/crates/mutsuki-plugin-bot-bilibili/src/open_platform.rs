@@ -13,7 +13,7 @@ use url::Url;
 use super::{
     BilibiliCredentialStore, BilibiliError, BilibiliItem, BilibiliPollKind, BilibiliProfile,
     BilibiliQrCode, BilibiliQrPoll, BilibiliTransport, ResolvedLinkCard, SharedBilibiliCredential,
-    ensure_bilibili_domain,
+    ensure_bilibili_domain, secure_media,
 };
 
 const OFFICIAL_API_BASE: &str = "https://member.bilibili.com";
@@ -136,13 +136,10 @@ impl ReqwestOpenPlatformHttpClient {
 
     fn client(&mut self) -> Result<&Client, BilibiliError> {
         if self.client.is_none() {
-            self.client = Some(
-                Client::builder()
-                    .timeout(self.timeout)
-                    .user_agent("MutsukiBot/0.1 BilibiliOpenPlatform")
-                    .build()
-                    .map_err(|error| BilibiliError::Transport(error.to_string()))?,
-            );
+            self.client = Some(secure_media::try_media_client(
+                self.timeout,
+                "MutsukiBot/0.1 BilibiliOpenPlatform",
+            )?);
         }
         Ok(self.client.as_ref().expect("client initialized"))
     }
@@ -180,20 +177,14 @@ impl BilibiliOpenPlatformHttpClient for ReqwestOpenPlatformHttpClient {
     }
 
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
-        ensure_bilibili_domain(url)?;
-        let bytes = self
-            .client()?
-            .get(url)
-            .send()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?
-            .bytes()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        if bytes.len() > max_bytes {
-            return Err(BilibiliError::InvalidResponse(
-                "media exceeds configured limit".into(),
-            ));
-        }
-        Ok(bytes.to_vec())
+        let client = self.client()?;
+        secure_media::secure_media_download(
+            client,
+            url,
+            max_bytes,
+            secure_media::MEDIA_MAX_REDIRECTS,
+            |parsed| ensure_bilibili_domain(parsed.as_str()),
+        )
     }
 }
 
