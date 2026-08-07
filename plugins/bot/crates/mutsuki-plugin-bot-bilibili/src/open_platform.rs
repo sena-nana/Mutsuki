@@ -13,7 +13,7 @@ use url::Url;
 use super::{
     BilibiliCredentialStore, BilibiliError, BilibiliItem, BilibiliPollKind, BilibiliProfile,
     BilibiliQrCode, BilibiliQrPoll, BilibiliTransport, ResolvedLinkCard, SharedBilibiliCredential,
-    ensure_bilibili_domain, secure_media,
+    secure_media,
 };
 
 const OFFICIAL_API_BASE: &str = "https://member.bilibili.com";
@@ -178,13 +178,7 @@ impl BilibiliOpenPlatformHttpClient for ReqwestOpenPlatformHttpClient {
 
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
         let client = self.client()?;
-        secure_media::secure_media_download(
-            client,
-            url,
-            max_bytes,
-            secure_media::MEDIA_MAX_REDIRECTS,
-            |parsed| ensure_bilibili_domain(parsed.as_str()),
-        )
+        secure_media::secure_media_download(client, url, max_bytes, crate::allow_bilibili_url)
     }
 }
 

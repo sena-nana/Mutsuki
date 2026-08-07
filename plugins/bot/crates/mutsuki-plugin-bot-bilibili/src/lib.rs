@@ -683,12 +683,7 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
             Url::parse(url).map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         if parsed.host_str() == Some("b23.tv") {
             let client = self.client()?;
-            parsed = secure_media::secure_resolve_redirect(
-                client,
-                parsed,
-                secure_media::MEDIA_MAX_REDIRECTS,
-                allow_bilibili_url,
-            )?;
+            parsed = secure_media::secure_resolve_redirect(client, parsed, allow_bilibili_url)?;
         }
         let path = parsed.path();
         let bvid = path.split('/').find(|part| part.starts_with("BV"));
@@ -714,13 +709,7 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
 
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
         let client = self.client()?;
-        secure_media::secure_media_download(
-            client,
-            url,
-            max_bytes,
-            secure_media::MEDIA_MAX_REDIRECTS,
-            allow_bilibili_url,
-        )
+        secure_media::secure_media_download(client, url, max_bytes, allow_bilibili_url)
     }
 
     fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
@@ -2177,7 +2166,7 @@ fn ensure_bilibili_domain(value: &str) -> Result<(), BilibiliError> {
     allow_bilibili_url(&url)
 }
 
-fn allow_bilibili_url(url: &Url) -> Result<(), BilibiliError> {
+pub(crate) fn allow_bilibili_url(url: &Url) -> Result<(), BilibiliError> {
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let allowed = host == "b23.tv"
         || host == "bilibili.com"
