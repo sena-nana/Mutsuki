@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use crate::{
     QqAccountView, QqAgentSessionView, QqBotManagementApi, QqBotManagementSnapshot,
-    QqConversationView, QqDeliveryView, QqGatewayConnectionState, QqHandlerView, QqManagementAction,
-    QqManagementError, QqManagementWriteRequest, QqManagementWriteResult,
+    QqConversationView, QqDeliveryView, QqGatewayConnectionState, QqHandlerView,
+    QqManagementAction, QqManagementError, QqManagementWriteRequest, QqManagementWriteResult,
 };
 
 /// Live snapshot/action backend injected into [`QqBotManagementService`].
@@ -172,11 +172,17 @@ impl LocalQqManagementProvider {
     }
 
     pub fn replace_handlers(&self, handlers: Vec<QqHandlerView>) {
-        self.state.lock().expect("qq local management mutex").handlers = handlers;
+        self.state
+            .lock()
+            .expect("qq local management mutex")
+            .handlers = handlers;
     }
 
     pub fn replace_commands(&self, commands: Vec<BotCommandDescriptor>) {
-        self.state.lock().expect("qq local management mutex").commands = commands;
+        self.state
+            .lock()
+            .expect("qq local management mutex")
+            .commands = commands;
     }
 
     pub fn upsert_conversation(&self, conversation: QqConversationView) {
@@ -238,12 +244,18 @@ impl QqManagementProvider for LocalQqManagementProvider {
         query: &str,
         include_secret_status: bool,
     ) -> Result<QqBotManagementSnapshot, QqManagementError> {
-        let state = self.state.lock().expect("qq local management mutex").clone();
+        let state = self
+            .state
+            .lock()
+            .expect("qq local management mutex")
+            .clone();
         let query = query.trim().to_ascii_lowercase();
         let accounts = state
             .accounts
             .into_iter()
-            .filter(|account| query.is_empty() || account.account_id.to_ascii_lowercase().contains(&query))
+            .filter(|account| {
+                query.is_empty() || account.account_id.to_ascii_lowercase().contains(&query)
+            })
             .map(|mut account| {
                 if !include_secret_status {
                     account.credential_reference.clear();
@@ -262,9 +274,10 @@ impl QqManagementProvider for LocalQqManagementProvider {
                         .origin_key()
                         .to_ascii_lowercase()
                         .contains(&query)
-                    || item.matched_rule_ids.iter().any(|rule| {
-                        rule.to_ascii_lowercase().contains(&query)
-                    })
+                    || item
+                        .matched_rule_ids
+                        .iter()
+                        .any(|rule| rule.to_ascii_lowercase().contains(&query))
             })
             .collect();
         let deliveries = state
@@ -435,7 +448,10 @@ impl QqManagementProvider for LocalQqManagementProvider {
             }
             QqManagementAction::AgentFork { origin_key } => {
                 let session = agent_mut(&mut state, origin_key)?;
-                let forked_id = format!("{}:fork:{}", session.binding.session_id, session.binding.generation);
+                let forked_id = format!(
+                    "{}:fork:{}",
+                    session.binding.session_id, session.binding.generation
+                );
                 session.binding.session_id = forked_id.clone();
                 session.binding.session_version = 1;
                 session.binding.generation = session.binding.generation.saturating_add(1);
@@ -445,7 +461,10 @@ impl QqManagementProvider for LocalQqManagementProvider {
             }
             QqManagementAction::AgentRegenerate { origin_key } => {
                 let session = agent_mut(&mut state, origin_key)?;
-                let turn_id = format!("regen-{}", session.binding.session_version.saturating_add(1));
+                let turn_id = format!(
+                    "regen-{}",
+                    session.binding.session_version.saturating_add(1)
+                );
                 session.current_turn_id = Some(turn_id.clone());
                 session.status = "regenerating".into();
                 Ok(json!({ "origin_key": origin_key, "turn_id": turn_id }))
@@ -460,7 +479,9 @@ impl QqManagementProvider for LocalQqManagementProvider {
                     other => {
                         return Err(QqManagementError {
                             code: "invalid_state".into(),
-                            message: format!("delivery `{delivery_id}` status {other:?} cannot retry"),
+                            message: format!(
+                                "delivery `{delivery_id}` status {other:?} cannot retry"
+                            ),
                         });
                     }
                 }
@@ -598,7 +619,10 @@ pub fn agent_session_view(
 }
 
 #[must_use]
-pub fn delivery_view(receipt: BotDeliveryReceipt, attempts: Vec<BotDeliveryAttempt>) -> QqDeliveryView {
+pub fn delivery_view(
+    receipt: BotDeliveryReceipt,
+    attempts: Vec<BotDeliveryAttempt>,
+) -> QqDeliveryView {
     QqDeliveryView { receipt, attempts }
 }
 
@@ -799,10 +823,7 @@ mod tests {
             exclusive: true,
             retries_remaining: 0,
         });
-        (
-            QqBotManagementService::new(local.clone()),
-            local,
-        )
+        (QqBotManagementService::new(local.clone()), local)
     }
 
     #[test]

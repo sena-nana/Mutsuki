@@ -10,8 +10,8 @@ use mutsuki_bot_protocol::{
 };
 
 pub use management::{
-    LocalQqManagementProvider, QqBotManagementService, QqManagementProvider, account_view_from_config,
-    agent_session_view, delivery_view, handler_view,
+    LocalQqManagementProvider, QqBotManagementService, QqManagementProvider,
+    account_view_from_config, agent_session_view, delivery_view, handler_view,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,

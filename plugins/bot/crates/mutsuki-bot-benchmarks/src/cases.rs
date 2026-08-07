@@ -542,20 +542,21 @@ impl DeliveryRepository for BenchmarkDeliveryRepository {
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
         let _ = attempt;
         let mut receipts = self.receipts.lock().unwrap();
-        let receipt = receipts.entry(delivery_id.to_owned()).or_insert_with(|| {
-            BotDeliveryReceipt {
-                delivery_id: delivery_id.to_owned(),
-                idempotency_key: delivery_id.to_owned(),
-                status: DeliveryStatus::Pending,
-                attempt_count: 0,
-                platform_message_ids: Vec::new(),
-                part_receipts: Vec::new(),
-                delivered_at_unix_ms: None,
-                error_code: None,
-                generation: 0,
-                lease_expires_at_unix_ms: None,
-            }
-        });
+        let receipt =
+            receipts
+                .entry(delivery_id.to_owned())
+                .or_insert_with(|| BotDeliveryReceipt {
+                    delivery_id: delivery_id.to_owned(),
+                    idempotency_key: delivery_id.to_owned(),
+                    status: DeliveryStatus::Pending,
+                    attempt_count: 0,
+                    platform_message_ids: Vec::new(),
+                    part_receipts: Vec::new(),
+                    delivered_at_unix_ms: None,
+                    error_code: None,
+                    generation: 0,
+                    lease_expires_at_unix_ms: None,
+                });
         receipt.status = DeliveryStatus::Sending;
         receipt.generation = receipt.generation.saturating_add(1);
         receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));

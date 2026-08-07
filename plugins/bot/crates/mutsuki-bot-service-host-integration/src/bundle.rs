@@ -273,7 +273,11 @@ impl QqManagementProvider for GatewayBackedQqManagementProvider {
         self.local.load_snapshot(query, include_secret_status)
     }
 
-    fn apply(&self, actor_id: &str, action: &QqManagementAction) -> Result<Value, QqManagementError> {
+    fn apply(
+        &self,
+        actor_id: &str,
+        action: &QqManagementAction,
+    ) -> Result<Value, QqManagementError> {
         self.refresh_account();
         self.local.apply(actor_id, action)
     }
