@@ -394,7 +394,8 @@ mod tests {
     use mutsuki_runtime_sdk::map_work_batch_entries;
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use mutsuki_service_control::{
-        ControlMethod, ControlRequest, TaskSubmitBatchParam, TaskWaitParam, TaskWaitResponse,
+        ControlCommand, ControlRequest, ControlResponse, ControlResult, TaskSubmitBatchParam,
+        TaskWaitParam, TaskWaitResponse,
     };
     use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeBuilder};
     use tempfile::tempdir;
@@ -880,10 +881,9 @@ mod tests {
             timeout_ms: 5_000,
         };
         let submit = control
-            .handle(ControlRequest {
-                token: runtime.control_token().into(),
-                method: ControlMethod::TaskSubmitBatch,
-                params: serde_json::to_value(TaskSubmitBatchParam {
+            .handle(ControlRequest::new(
+                runtime.control_token(),
+                ControlCommand::TaskSubmitBatch(TaskSubmitBatchParam {
                     batch: TaskBatch::one(
                         "mihuashi-real-core-batch",
                         Task::new(
@@ -892,25 +892,28 @@ mod tests {
                             serde_json::to_value(request).unwrap(),
                         ),
                     ),
-                })
-                .unwrap(),
-            })
+                }),
+            ))
             .await;
-        assert!(submit.ok, "submit failed: {:?}", submit.error);
+        assert!(
+            matches!(
+                submit,
+                ControlResponse::Ok(ControlResult::TaskSubmitBatch(_))
+            ),
+            "submit failed: {submit:?}"
+        );
         let waited = control
-            .handle(ControlRequest {
-                token: runtime.control_token().into(),
-                method: ControlMethod::TaskWait,
-                params: serde_json::to_value(TaskWaitParam {
+            .handle(ControlRequest::new(
+                runtime.control_token(),
+                ControlCommand::TaskWait(TaskWaitParam {
                     ids: vec!["mihuashi-real-core".into()],
                     timeout_ms: 10_000,
-                })
-                .unwrap(),
-            })
+                }),
+            ))
             .await;
-        assert!(waited.ok, "wait failed: {:?}", waited.error);
-        let waited: TaskWaitResponse =
-            serde_json::from_value(waited.result.expect("wait result")).unwrap();
+        let ControlResponse::Ok(ControlResult::TaskWait(waited)) = waited else {
+            panic!("wait failed: {waited:?}");
+        };
         assert!(!waited.timed_out);
         waited
     }
