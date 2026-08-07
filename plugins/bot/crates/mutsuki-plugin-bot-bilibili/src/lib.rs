@@ -38,6 +38,7 @@ use url::Url;
 
 mod management;
 mod open_platform;
+mod secure_media;
 
 pub use management::{
     BilibiliManagementService, BilibiliQrRenderer, BilibiliSecretPresence, BindChallengeResult,
@@ -599,13 +600,10 @@ impl ReqwestBilibiliTransport {
 
     fn client(&mut self) -> Result<&Client, BilibiliError> {
         if self.client.is_none() {
-            self.client = Some(
-                Client::builder()
-                    .timeout(self.timeout)
-                    .user_agent("Mozilla/5.0 MutsukiBot/0.1")
-                    .build()
-                    .map_err(|error| BilibiliError::Transport(error.to_string()))?,
-            );
+            self.client = Some(secure_media::try_media_client(
+                self.timeout,
+                "Mozilla/5.0 MutsukiBot/0.1",
+            )?);
         }
         Ok(self.client.as_ref().expect("client initialized"))
     }
@@ -684,13 +682,13 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
         let mut parsed =
             Url::parse(url).map_err(|error| BilibiliError::InvalidResponse(error.to_string()))?;
         if parsed.host_str() == Some("b23.tv") {
-            let response = self
-                .client()?
-                .get(parsed.clone())
-                .send()
-                .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-            parsed = response.url().clone();
-            ensure_bilibili_domain(parsed.as_str())?;
+            let client = self.client()?;
+            parsed = secure_media::secure_resolve_redirect(
+                client,
+                parsed,
+                secure_media::MEDIA_MAX_REDIRECTS,
+                allow_bilibili_url,
+            )?;
         }
         let path = parsed.path();
         let bvid = path.split('/').find(|part| part.starts_with("BV"));
@@ -715,21 +713,14 @@ impl BilibiliTransport for ReqwestBilibiliTransport {
     }
 
     fn download(&mut self, url: &str, max_bytes: usize) -> Result<Vec<u8>, BilibiliError> {
-        ensure_bilibili_domain(url)?;
-        let response = self
-            .client()?
-            .get(url)
-            .send()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        let bytes = response
-            .bytes()
-            .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        if bytes.len() > max_bytes {
-            return Err(BilibiliError::InvalidResponse(
-                "media exceeds configured limit".into(),
-            ));
-        }
-        Ok(bytes.to_vec())
+        let client = self.client()?;
+        secure_media::secure_media_download(
+            client,
+            url,
+            max_bytes,
+            secure_media::MEDIA_MAX_REDIRECTS,
+            allow_bilibili_url,
+        )
     }
 
     fn qr_start(&mut self) -> Result<BilibiliQrCode, BilibiliError> {
@@ -2183,13 +2174,17 @@ fn risk_control_failure(task: &Task, route: &str, detail: impl fmt::Display) -> 
 
 fn ensure_bilibili_domain(value: &str) -> Result<(), BilibiliError> {
     let url = Url::parse(value).map_err(|error| BilibiliError::DomainDenied(error.to_string()))?;
+    allow_bilibili_url(&url)
+}
+
+fn allow_bilibili_url(url: &Url) -> Result<(), BilibiliError> {
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let allowed = host == "b23.tv"
         || host == "bilibili.com"
         || host.ends_with(".bilibili.com")
         || host == "hdslb.com"
         || host.ends_with(".hdslb.com");
-    if url.scheme() == "https" && allowed {
+    if url.scheme() == "https" && allowed && url.username().is_empty() && url.password().is_none() {
         Ok(())
     } else {
         Err(BilibiliError::DomainDenied(host))
