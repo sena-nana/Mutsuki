@@ -34,8 +34,7 @@ use mutsuki_plugin_bot_overview_web::{
     OverviewWebExtension, materialize_frontend_assets as materialize_overview_assets,
 };
 use mutsuki_plugin_bot_qq_web::{
-    QqBotManagementApi, QqBotWebExtension,
-    materialize_frontend_assets as materialize_qq_assets,
+    QqBotManagementApi, QqBotWebExtension, materialize_frontend_assets as materialize_qq_assets,
 };
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
 use mutsuki_service_control::ControlHandler;
@@ -157,9 +156,8 @@ pub fn build_console_host(
         );
     }
     if let Some(api) = qq {
-        builder = builder.extension(
-            QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets),
-        );
+        builder = builder
+            .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
     }
     Ok((builder.build()?, asset_dirs))
 }

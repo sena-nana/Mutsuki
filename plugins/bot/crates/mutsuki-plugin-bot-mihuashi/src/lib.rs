@@ -164,11 +164,13 @@ async fn fetch_profile_image(
     let Some(image_url) = image_url else {
         return Ok(None);
     };
-    ensure_mihuashi_url(image_url).map_err(|error| fail_code(task, ERROR_URL_NOT_ALLOWED, error))?;
+    ensure_mihuashi_url(image_url)
+        .map_err(|error| fail_code(task, ERROR_URL_NOT_ALLOWED, error))?;
     let outcome = ctx
         .call_raw(
             HTTP_REQUEST,
-            serde_json::to_value(media_http_request(image_url)).map_err(|error| fail(task, error))?,
+            serde_json::to_value(media_http_request(image_url))
+                .map_err(|error| fail(task, error))?,
         )
         .await?;
     let response = decode_http_image(task, outcome)?;
@@ -228,10 +230,9 @@ fn map_http_media_failure(task: &Task, error: RuntimeError) -> RuntimeFailure {
     };
     let mut mapped = RuntimeError::new(code, PLUGIN_ID, format!("mihuashi.{}", task.task_id));
     mapped.evidence = error.evidence;
-    mapped.evidence.insert(
-        "http_code".into(),
-        ScalarValue::String(error.code.clone()),
-    );
+    mapped
+        .evidence
+        .insert("http_code".into(), ScalarValue::String(error.code.clone()));
     mapped
         .evidence
         .insert("detail".into(), ScalarValue::String(error.route.clone()));
@@ -419,7 +420,10 @@ mod tests {
             if let Some(error) = self.error.clone() {
                 return Err(error);
             }
-            let final_url = self.final_url.clone().unwrap_or_else(|| request.url.clone());
+            let final_url = self
+                .final_url
+                .clone()
+                .unwrap_or_else(|| request.url.clone());
             Ok(FetchedHttpResponse {
                 metadata: HttpResponseMetadata {
                     status: 200,
@@ -569,10 +573,19 @@ mod tests {
             request.limits.max_response_bytes,
             Some(MAX_LINK_CARD_MEDIA_BYTES as u64)
         );
-        assert_eq!(request.limits.connect_timeout_ms, Some(MEDIA_CONNECT_TIMEOUT_MS));
-        assert_eq!(request.limits.header_timeout_ms, Some(MEDIA_HEADER_TIMEOUT_MS));
+        assert_eq!(
+            request.limits.connect_timeout_ms,
+            Some(MEDIA_CONNECT_TIMEOUT_MS)
+        );
+        assert_eq!(
+            request.limits.header_timeout_ms,
+            Some(MEDIA_HEADER_TIMEOUT_MS)
+        );
         assert_eq!(request.limits.idle_timeout_ms, Some(MEDIA_IDLE_TIMEOUT_MS));
-        assert_eq!(request.limits.total_timeout_ms, Some(MEDIA_TOTAL_TIMEOUT_MS));
+        assert_eq!(
+            request.limits.total_timeout_ms,
+            Some(MEDIA_TOTAL_TIMEOUT_MS)
+        );
         assert_eq!(request.limits.max_redirects, Some(MEDIA_MAX_REDIRECTS));
         assert_eq!(
             request.limits.domain_allowlist.as_deref(),
@@ -866,10 +879,7 @@ mod tests {
         assert_eq!(waited.outcomes[0].status, "completed");
     }
 
-    async fn submit_and_wait_outcome(
-        runtime: &ServiceRuntime,
-        url: String,
-    ) -> TaskWaitResponse {
+    async fn submit_and_wait_outcome(runtime: &ServiceRuntime, url: String) -> TaskWaitResponse {
         let control = runtime.control_handler();
         let request = MihuashiResolveRequest {
             url,

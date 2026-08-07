@@ -525,7 +525,10 @@ impl SecureHttpGateway {
                     .strip_suffix(&allowed)
                     .is_some_and(|prefix| prefix.ends_with('.'))
         };
-        self.config.domain_allowlist.iter().any(|allowed| matches(allowed))
+        self.config
+            .domain_allowlist
+            .iter()
+            .any(|allowed| matches(allowed))
             && request_allowlist.map_or(true, |list| list.iter().any(|allowed| matches(allowed)))
     }
 }
@@ -1330,7 +1333,10 @@ mod tests {
         request.limits.domain_allowlist = Some(vec!["example.com".into()]);
         let error = gateway.execute(request, None).await.unwrap_err();
         assert_eq!(error.code, HttpErrorCode::RedirectDenied);
-        assert_eq!(error.evidence.get("host").map(String::as_str), Some("cdn.example.net"));
+        assert_eq!(
+            error.evidence.get("host").map(String::as_str),
+            Some("cdn.example.net")
+        );
     }
 
     #[tokio::test]

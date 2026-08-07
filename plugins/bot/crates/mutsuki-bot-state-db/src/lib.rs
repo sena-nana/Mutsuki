@@ -834,11 +834,7 @@ fn upsert_delivery_receipt(
     )?)
 }
 
-fn claim_send_lease_on_receipt(
-    receipt: &mut BotDeliveryReceipt,
-    now_unix_ms: u64,
-    lease_ms: u64,
-) {
+fn claim_send_lease_on_receipt(receipt: &mut BotDeliveryReceipt, now_unix_ms: u64, lease_ms: u64) {
     receipt.status = DeliveryStatus::Sending;
     receipt.generation = receipt.generation.saturating_add(1);
     receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));
@@ -948,7 +944,9 @@ fn begin_send_delivery(
             |row| row.get::<_, String>(0),
         )
         .optional()?
-        .ok_or_else(|| BotStateDbError::Invariant(format!("delivery receipt missing: {delivery_id}")))?;
+        .ok_or_else(|| {
+            BotStateDbError::Invariant(format!("delivery receipt missing: {delivery_id}"))
+        })?;
     let mut receipt: BotDeliveryReceipt = decode(&body)?;
     let claimable = match receipt.status {
         DeliveryStatus::Pending
@@ -1589,9 +1587,7 @@ mod tests {
         let lock_path = path.clone();
         let holder = std::thread::spawn(move || {
             let connection = Connection::open(lock_path).unwrap();
-            connection
-                .busy_timeout(Duration::from_millis(1))
-                .unwrap();
+            connection.busy_timeout(Duration::from_millis(1)).unwrap();
             connection.execute_batch("BEGIN IMMEDIATE").unwrap();
             std::thread::sleep(Duration::from_millis(250));
             connection.execute_batch("COMMIT").unwrap();

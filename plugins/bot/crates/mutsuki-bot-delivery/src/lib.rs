@@ -1069,8 +1069,11 @@ mod tests {
                 DeliveryStatus::Pending
             );
 
-            let restarted =
-                ActiveDeliveryService::new(repository.clone(), gateway.clone(), Arc::new(AllowDelivery));
+            let restarted = ActiveDeliveryService::new(
+                repository.clone(),
+                gateway.clone(),
+                Arc::new(AllowDelivery),
+            );
             let receipts = restarted.resume_due(100).await.unwrap();
             assert_eq!(receipts[0].status, DeliveryStatus::Succeeded);
             assert_eq!(*gateway.calls.lock().unwrap(), 1);
@@ -1091,10 +1094,7 @@ mod tests {
             );
             assert_eq!(*gateway.calls.lock().unwrap(), 1);
 
-            let reconciled = restarted
-                .retry("unknown", 110)
-                .await
-                .unwrap();
+            let reconciled = restarted.retry("unknown", 110).await.unwrap();
             assert_eq!(reconciled.status, DeliveryStatus::Succeeded);
             assert_eq!(*gateway.calls.lock().unwrap(), 2);
 
