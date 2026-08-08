@@ -21,8 +21,15 @@ use mutsuki_runtime_sdk::contracts::{
 };
 
 mod media;
+mod responses;
 pub use media::*;
+pub use responses::{
+    ADAPTER_ID as RESPONSES_ADAPTER_ID, OpenAiResponsesAdapter, PLUGIN_ID as RESPONSES_PLUGIN_ID,
+    PROTOCOL as RESPONSES_PROTOCOL, RUNNER_ID as RESPONSES_RUNNER_ID,
+};
 
+pub const ADAPTER_ID: &str = "openai-compatible";
+pub const PROTOCOL: &str = "openai.chat-completions";
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.adapter.openai-compatible";
 pub const RUNNER_ID: &str = "mutsuki.agent.adapter.openai-compatible.runner";
 
@@ -53,6 +60,22 @@ impl OpenAiCompatibleAdapter {
             credentials,
             client,
         })
+    }
+
+    pub fn default_descriptor() -> ModelProtocolAdapterDescriptor {
+        ModelProtocolAdapterDescriptor {
+            adapter_id: ADAPTER_ID.into(),
+            protocol: PROTOCOL.into(),
+            version: "1".into(),
+            runner_id: RUNNER_ID.into(),
+            capability: mutsuki_agent_contracts::ModelCapability {
+                context_window: 128_000,
+                streaming: true,
+                tools: true,
+                structured_output: true,
+                ..mutsuki_agent_contracts::ModelCapability::default()
+            },
+        }
     }
 
     async fn request(

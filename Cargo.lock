@@ -3396,6 +3396,8 @@ name = "mutsuki-agent-adapter-api"
 version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
