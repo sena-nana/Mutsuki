@@ -3,6 +3,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+pub mod simple_react;
+pub use simple_react::*;
+
 pub use mutsuki_agent_contracts::{
     CredentialRef, ModelGenerateRequest, ModelGenerateResult, ModelProtocolAdapterDescriptor,
     ModelSelector, ModelStreamEvent, ProtocolError, ProviderInstanceDescriptor,

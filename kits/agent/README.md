@@ -37,7 +37,7 @@ MutsukiAgentKit   Runtime + Adapter + Plugin
 ## Workspace
 
 - `crates/mutsuki-agent-contracts` · `mutsuki-agent-runtime`
-- `crates/mutsuki-agent-adapter-api` · `mutsuki-agent-adapter-openai` · `mutsuki-agent-adapter-anthropic`
+- `crates/mutsuki-agent-adapter-api`（含 `SimpleReact`）· `mutsuki-agent-adapter-openai`（Chat Completions + Responses）· `mutsuki-agent-adapter-anthropic`
 - `crates/mutsuki-agent-plugin-api` · `mutsuki-agent-plugin-conformance`
 - `crates/mutsuki-agent-client` · `mutsuki-agent-distributed-integration`
 - `crates/mutsuki-agent-sdk` · `mutsuki-agent-macros`
@@ -63,6 +63,8 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 实例并注入凭据引用和传输实现；测试 Provider 只存在于 testkit 或测试代码。
 
 详见 [`docs/architecture.md`](docs/architecture.md)、
+[`docs/model-protocols.md`](docs/model-protocols.md)、
+[`docs/simple-react.md`](docs/simple-react.md)、
 [`docs/runtime-profile.md`](docs/runtime-profile.md)、
 [`docs/adapter-authoring.md`](docs/adapter-authoring.md)、
 [`docs/plugin-authoring.md`](docs/plugin-authoring.md) 和

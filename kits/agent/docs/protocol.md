@@ -37,8 +37,13 @@
 - Model Adapter 必须保留 assistant tool call 与后续 tool result 的因果顺序。缺失、重复、
   孤立或 malformed call id 是确定性的 protocol error，禁止静默跳过。
 - Anthropic Messages 将同一批连续 Tool message 合并为一个 user turn 的多个
-  `tool_result` block，并为失败结果设置 `is_error: true`；OpenAI-compatible 路径保留
-  同一 `tool_call_id` 与结构化错误 content。
+  `tool_result` block，并为失败结果设置 `is_error: true`；OpenAI Chat Completions
+  路径保留同一 `tool_call_id` 与结构化错误 content；OpenAI Responses 路径使用
+  `function_call` / `function_call_output` 项并通过 `call_id` 绑定。
+
+三种基础模型协议 id：`openai.chat-completions`、`openai.responses`、
+`anthropic.messages`。详见 [`model-protocols.md`](model-protocols.md) 与
+[`simple-react.md`](simple-react.md)。
 
 ## Completion 与 Next Edit
 

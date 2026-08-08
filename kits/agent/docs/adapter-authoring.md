@@ -10,14 +10,20 @@ not a provider daemon and does not own scheduling.
 5. Return large or streaming bodies through `ResourceRef`; keep only summaries in messages.
 6. Let Host policy resolve endpoint, timeout, transport and `CredentialRef`.
 
-`mutsuki-agent-adapter-openai` is the reference Chat Completions implementation. It accepts an
-injected transport, maps tools and structured output, bounds retries/timeouts, and drops the
-in-flight transport future on cancellation. It does not read environment variables or ship a
-default credential.
+AgentKit ships three basic protocol adapters (see [`model-protocols.md`](model-protocols.md)):
 
-`mutsuki-agent-adapter-anthropic` is the Anthropic Messages counterpart (`x-api-key`,
-`anthropic-version`, `/v1/messages`). It is generate-first in the current slice; Hosts inject
-`CredentialRef` and provider endpoints the same way as the OpenAI-compatible Adapter.
+| Adapter | Protocol | Notes |
+| --- | --- | --- |
+| `OpenAiCompatibleAdapter` | `openai.chat-completions` | Chat Completions; tools, structured output, SSE stream |
+| `OpenAiResponsesAdapter` | `openai.responses` | Responses API (`/v1/responses`); function_call causal chain |
+| `AnthropicMessagesAdapter` | `anthropic.messages` | Messages API (`x-api-key`, `anthropic-version`); generate-first |
+
+All accept an injected `CredentialBroker` and Host-provided endpoint. They do not read environment
+variables or ship a default credential. Retries/timeouts come from
+`ProviderInstanceDescriptor.compatibility`.
+
+For a minimal model↔tool loop without session/approval, use
+[`SimpleReact`](simple-react.md) over any `ModelProtocolAdapter`.
 
 Breaking DTO/wire changes require a contract major-version change. Provider endpoint, brand or
 model-catalog changes belong to instance configuration and must not break the authoring API.
