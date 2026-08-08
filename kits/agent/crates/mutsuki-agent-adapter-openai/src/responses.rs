@@ -4,9 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_agent_adapter_api::{
-    CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter,
-};
+use mutsuki_agent_adapter_api::{CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter};
 use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentToolCall,
     AgentToolResultMetadata, AgentUsage, ModelCapability, ModelGenerateRequest,
