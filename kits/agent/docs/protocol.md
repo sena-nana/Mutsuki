@@ -43,7 +43,7 @@
 
 三种基础模型协议 id：`openai.chat-completions`、`openai.responses`、
 `anthropic.messages`。详见 [`model-protocols.md`](model-protocols.md) 与
-[`simple-react.md`](simple-react.md)。
+`SimpleReact`。
 
 ## Completion 与 Next Edit
 

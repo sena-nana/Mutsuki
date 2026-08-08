@@ -24,8 +24,8 @@ mod media;
 mod responses;
 pub use media::*;
 pub use responses::{
-    ADAPTER_ID as RESPONSES_ADAPTER_ID, OpenAiResponsesAdapter, PLUGIN_ID as RESPONSES_PLUGIN_ID,
-    PROTOCOL as RESPONSES_PROTOCOL, RUNNER_ID as RESPONSES_RUNNER_ID,
+    ADAPTER_ID as RESPONSES_ADAPTER_ID, OpenAiResponsesAdapter, PROTOCOL as RESPONSES_PROTOCOL,
+    RUNNER_ID as RESPONSES_RUNNER_ID,
 };
 
 pub const ADAPTER_ID: &str = "openai-compatible";
@@ -660,11 +660,11 @@ fn parse_sse(body: &str) -> Result<Vec<ModelStreamEvent>, ProtocolError> {
     Ok(events)
 }
 
-fn retryable_status(status: StatusCode) -> bool {
+pub(crate) fn retryable_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
-fn status_error(status: StatusCode) -> ProtocolError {
+pub(crate) fn status_error(status: StatusCode) -> ProtocolError {
     let class = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ProtocolErrorClass::Authentication,
         StatusCode::TOO_MANY_REQUESTS => ProtocolErrorClass::RateLimited,
@@ -678,7 +678,7 @@ fn status_error(status: StatusCode) -> ProtocolError {
     )
 }
 
-fn transport_error(value: &reqwest::Error) -> ProtocolError {
+pub(crate) fn transport_error(value: &reqwest::Error) -> ProtocolError {
     let class = if value.is_timeout() {
         ProtocolErrorClass::Timeout
     } else {
@@ -695,7 +695,7 @@ fn transport_error(value: &reqwest::Error) -> ProtocolError {
     )
 }
 
-fn error(
+pub(crate) fn error(
     code: impl Into<String>,
     class: ProtocolErrorClass,
     message: impl Into<String>,
