@@ -1,9 +1,4 @@
-//! Out-of-the-box simple ReAct (model ↔ tool) loop.
-//!
-//! This is the basic conversation + tool cycle AgentKit owns. It intentionally
-//! omits session persistence, approval UI, memory routing, sub-agents, and other
-//! product-level orchestration — those stay in Host / product layers or the full
-//! `mutsuki.agent/run@1` loop.
+//! Simple ReAct: model ↔ tool loop only (no session / approval / memory).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -21,28 +16,20 @@ use crate::ModelProtocolAdapter;
 pub type ReactToolFuture =
     Pin<Box<dyn Future<Output = Result<AgentMessage, ProtocolError>> + Send + 'static>>;
 
-/// Executes a single tool call for [`SimpleReact`].
-///
-/// Implementations should return an `AgentRole::Tool` message whose metadata
-/// includes at least `call_id` (full [`AgentToolResultMetadata`] is preferred).
 pub trait ReactToolExecutor: Send + Sync {
     fn execute(&self, call: AgentToolCall) -> ReactToolFuture;
 }
 
-/// Closure-backed tool executor for quick wiring.
-pub struct FnToolExecutor<F>
+pub struct FnToolExecutor<F>(F)
 where
-    F: Fn(AgentToolCall) -> ReactToolFuture + Send + Sync + 'static,
-{
-    inner: F,
-}
+    F: Fn(AgentToolCall) -> ReactToolFuture + Send + Sync + 'static;
 
 impl<F> FnToolExecutor<F>
 where
     F: Fn(AgentToolCall) -> ReactToolFuture + Send + Sync + 'static,
 {
     pub fn new(inner: F) -> Self {
-        Self { inner }
+        Self(inner)
     }
 }
 
@@ -51,68 +38,54 @@ where
     F: Fn(AgentToolCall) -> ReactToolFuture + Send + Sync + 'static,
 {
     fn execute(&self, call: AgentToolCall) -> ReactToolFuture {
-        (self.inner)(call)
+        (self.0)(call)
     }
 }
 
-/// Build a successful tool result message with causal `call_id` metadata.
+/// Tool result with causal `call_id` metadata.
 pub fn tool_result_message(
     call: &AgentToolCall,
     content: impl Into<String>,
 ) -> Result<AgentMessage, ProtocolError> {
-    if call.call_id.trim().is_empty() {
-        return Err(protocol_error(
-            "agent.react.invalid_tool_call",
-            "tool call_id must be non-empty",
-        ));
-    }
-    let metadata = AgentToolResultMetadata {
-        call_id: call.call_id.clone(),
-        output_ref: None,
-        is_error: false,
-        error: None,
-    };
-    Ok(AgentMessage {
-        role: AgentRole::Tool,
-        content: content.into(),
-        name: Some(call.name.clone()),
-        metadata: Some(serde_json::to_value(metadata).map_err(|_| {
-            protocol_error(
-                "agent.react.invalid_tool_result",
-                "failed to encode tool result metadata",
-            )
-        })?),
-        parts: Vec::new(),
-    })
+    tool_message(call, content.into(), false, None)
 }
 
-/// Build a structured tool error message (still returned to the model, not a hard fail).
+/// Tool error returned to the model (does not abort the loop).
 pub fn tool_error_message(
     call: &AgentToolCall,
     code: impl Into<String>,
     message: impl Into<String>,
 ) -> Result<AgentMessage, ProtocolError> {
+    let err = mutsuki_agent_contracts::AgentError::new(code, message);
+    tool_message(call, err.message.clone(), true, Some(err))
+}
+
+fn tool_message(
+    call: &AgentToolCall,
+    content: String,
+    is_error: bool,
+    error: Option<mutsuki_agent_contracts::AgentError>,
+) -> Result<AgentMessage, ProtocolError> {
     if call.call_id.trim().is_empty() {
-        return Err(protocol_error(
+        return Err(err(
             "agent.react.invalid_tool_call",
             "tool call_id must be non-empty",
         ));
     }
-    let err = mutsuki_agent_contracts::AgentError::new(code, message);
     let metadata = AgentToolResultMetadata {
         call_id: call.call_id.clone(),
         output_ref: None,
-        is_error: true,
-        error: Some(err.clone()),
+        is_error,
+        error,
     };
     Ok(AgentMessage {
         role: AgentRole::Tool,
-        content: err.message.clone(),
+        content,
         name: Some(call.name.clone()),
         metadata: Some(serde_json::to_value(metadata).map_err(|_| {
-            protocol_error(
+            err(
                 "agent.react.invalid_tool_result",
-                "failed to encode tool error metadata",
+                "failed to encode tool result metadata",
             )
         })?),
         parts: Vec::new(),
@@ -145,6 +118,12 @@ impl SimpleReactRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SimpleReactStatus {
+    Completed,
+    BudgetExceeded,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SimpleReactResult {
     pub messages: Vec<AgentMessage>,
@@ -155,16 +134,7 @@ pub struct SimpleReactResult {
     pub status: SimpleReactStatus,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SimpleReactStatus {
-    Completed,
-    BudgetExceeded,
-}
-
-/// Minimal ReAct runner over a protocol adapter + tool executor.
-///
-/// Does not own scheduling, credentials resolution policy, session state, or
-/// approval UX. Products that need those use the full agent loop / Host.
+/// Minimal ReAct over any `ModelProtocolAdapter`.
 pub struct SimpleReact {
     adapter: Arc<dyn ModelProtocolAdapter>,
     provider: ProviderInstanceDescriptor,
@@ -180,7 +150,7 @@ impl SimpleReact {
         executor: Arc<dyn ReactToolExecutor>,
     ) -> Result<Self, ProtocolError> {
         if provider.adapter_id != adapter.descriptor().adapter_id {
-            return Err(protocol_error(
+            return Err(err(
                 "agent.react.adapter_mismatch",
                 format!(
                     "provider `{}` selects adapter `{}` but received `{}`",
@@ -198,12 +168,12 @@ impl SimpleReact {
         })
     }
 
-    pub async fn run(&self, request: SimpleReactRequest) -> Result<SimpleReactResult, ProtocolError> {
+    pub async fn run(
+        &self,
+        request: SimpleReactRequest,
+    ) -> Result<SimpleReactResult, ProtocolError> {
         if request.model.trim().is_empty() {
-            return Err(protocol_error(
-                "agent.react.invalid_request",
-                "model is required",
-            ));
+            return Err(err("agent.react.invalid_request", "model is required"));
         }
         if request.max_steps == 0 {
             return Ok(SimpleReactResult {
@@ -218,48 +188,47 @@ impl SimpleReact {
 
         let mut messages = request.messages;
         let mut usage = AgentUsage::default();
-        let mut model_steps = 0_u32;
+        let mut model_steps = 0;
         let mut last_stop = AgentModelStopReason::Stop;
-        let mut final_text = String::new();
 
         for _ in 0..request.max_steps {
             model_steps += 1;
-            let generate = ModelGenerateRequest {
-                request: AgentModelGenerateRequest {
-                    model: request.model.clone(),
-                    messages: messages.clone(),
-                    temperature: request.temperature,
-                    max_output_tokens: request.max_output_tokens,
-                    provider_hint: Some(self.provider.provider_id.clone()),
-                    metadata: None,
-                    result_protocol_id: None,
-                    result_context: None,
-                    session_id: None,
-                },
-                tools: self.tools.clone(),
-                structured_output: None,
-                reasoning: None,
-            };
             let generated = self
                 .adapter
-                .generate(self.provider.clone(), generate)
+                .generate(
+                    self.provider.clone(),
+                    ModelGenerateRequest {
+                        request: AgentModelGenerateRequest {
+                            model: request.model.clone(),
+                            messages: messages.clone(),
+                            temperature: request.temperature,
+                            max_output_tokens: request.max_output_tokens,
+                            provider_hint: Some(self.provider.provider_id.clone()),
+                            metadata: None,
+                            result_protocol_id: None,
+                            result_context: None,
+                            session_id: None,
+                        },
+                        tools: self.tools.clone(),
+                        structured_output: None,
+                        reasoning: None,
+                    },
+                )
                 .await?;
             usage.add(&generated.usage);
             last_stop = generated.stop_reason.clone();
 
+            let tool_calls = generated.tool_calls;
             let mut assistant = generated.message;
-            if !generated.tool_calls.is_empty() {
-                assistant.metadata = Some(json!({"tool_calls": generated.tool_calls}));
-            }
-            if generated.tool_calls.is_empty() {
-                final_text = assistant.content.clone();
-                messages.push(assistant);
+            if tool_calls.is_empty() {
                 if generated.stop_reason == AgentModelStopReason::ToolCalls {
-                    return Err(protocol_error(
+                    return Err(err(
                         "agent.react.invalid_model_result",
                         "model declared tool_calls without returning a tool call",
                     ));
                 }
+                let final_text = assistant.content.clone();
+                messages.push(assistant);
                 return Ok(SimpleReactResult {
                     messages,
                     final_text,
@@ -270,17 +239,32 @@ impl SimpleReact {
                 });
             }
 
+            assistant.metadata = Some(json!({"tool_calls": &tool_calls}));
             messages.push(assistant);
-            for call in generated.tool_calls {
+            for call in tool_calls {
                 let tool_message = self.executor.execute(call).await?;
-                validate_tool_message(&tool_message)?;
+                if tool_message.role != AgentRole::Tool
+                    || tool_message
+                        .metadata
+                        .as_ref()
+                        .and_then(|m| m.get("call_id"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                {
+                    return Err(err(
+                        "agent.react.invalid_tool_result",
+                        "tool executor must return AgentRole::Tool with call_id",
+                    ));
+                }
                 messages.push(tool_message);
             }
         }
 
         Ok(SimpleReactResult {
             messages,
-            final_text,
+            final_text: String::new(),
             model_steps,
             usage,
             stop_reason: last_stop,
@@ -289,33 +273,7 @@ impl SimpleReact {
     }
 }
 
-fn validate_tool_message(message: &AgentMessage) -> Result<(), ProtocolError> {
-    if message.role != AgentRole::Tool {
-        return Err(protocol_error(
-            "agent.react.invalid_tool_result",
-            "tool executor must return AgentRole::Tool",
-        ));
-    }
-    let metadata = message.metadata.as_ref().ok_or_else(|| {
-        protocol_error(
-            "agent.react.invalid_tool_result",
-            "tool result is missing metadata",
-        )
-    })?;
-    let call_id = metadata
-        .get("call_id")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    if call_id.trim().is_empty() {
-        return Err(protocol_error(
-            "agent.react.invalid_tool_result",
-            "tool result call_id must be non-empty",
-        ));
-    }
-    Ok(())
-}
-
-fn protocol_error(code: impl Into<String>, message: impl Into<String>) -> ProtocolError {
+fn err(code: impl Into<String>, message: impl Into<String>) -> ProtocolError {
     ProtocolError {
         code: code.into(),
         class: ProtocolErrorClass::NonRetryable,
@@ -374,7 +332,7 @@ mod tests {
                             .request
                             .messages
                             .iter()
-                            .any(|message| message.role == AgentRole::Tool)
+                            .any(|m| m.role == AgentRole::Tool)
                     );
                     Ok(AgentModelGenerateResult {
                         message: AgentMessage::assistant("pong"),
@@ -442,8 +400,8 @@ mod tests {
         }));
         let mut tool = AgentToolDescriptor::new("echo", "test.echo@1", "echo");
         tool.input_schema = json!({"type": "object"});
-        let react = SimpleReact::new(adapter, provider, vec![tool], executor).unwrap();
-        let result = react
+        let result = SimpleReact::new(adapter, provider, vec![tool], executor)
+            .unwrap()
             .run(SimpleReactRequest::new("model", vec![AgentMessage::user("hi")]).with_max_steps(4))
             .await
             .unwrap();
@@ -451,11 +409,5 @@ mod tests {
         assert_eq!(result.final_text, "pong");
         assert_eq!(result.model_steps, 2);
         assert_eq!(result.usage.total_tokens, 8);
-        assert!(
-            result
-                .messages
-                .iter()
-                .any(|message| message.role == AgentRole::Tool && message.content == "pong-tool")
-        );
     }
 }

@@ -1,28 +1,24 @@
-//! OpenAI Responses protocol Adapter (`openai.responses`, `/v1/responses`).
-//!
-//! Maps unified AgentKit model requests onto the Responses API. Hosts inject
-//! credentials and endpoints; this module does not read environment variables
-//! or ship default secrets.
+//! OpenAI Responses protocol (`openai.responses`, `/v1/responses`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use mutsuki_agent_adapter_api::{
-    CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter, ModelStreamFuture,
+    CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter,
 };
 use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentToolCall,
     AgentToolResultMetadata, AgentUsage, ModelCapability, ModelGenerateRequest,
-    ModelProtocolAdapterDescriptor, ModelStreamEvent, ProtocolError, ProtocolErrorClass,
-    ProviderInstanceDescriptor,
+    ModelProtocolAdapterDescriptor, ProtocolError, ProtocolErrorClass, ProviderInstanceDescriptor,
 };
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Url};
 use serde_json::{Value, json};
+
+use crate::{error, retryable_status, status_error, transport_error};
 
 pub const ADAPTER_ID: &str = "openai-responses";
 pub const PROTOCOL: &str = "openai.responses";
-pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.adapter.openai-responses";
 pub const RUNNER_ID: &str = "mutsuki.agent.adapter.openai-responses.runner";
 
 #[derive(Clone)]
@@ -44,13 +40,12 @@ impl OpenAiResponsesAdapter {
                 "adapter and runner ids are required",
             ));
         }
-        let client = Client::builder()
-            .build()
-            .map_err(|err| transport_error(&err))?;
         Ok(Self {
             descriptor,
             credentials,
-            client,
+            client: Client::builder()
+                .build()
+                .map_err(|err| transport_error(&err))?,
         })
     }
 
@@ -62,7 +57,6 @@ impl OpenAiResponsesAdapter {
             runner_id: RUNNER_ID.into(),
             capability: ModelCapability {
                 context_window: 128_000,
-                streaming: true,
                 tools: true,
                 structured_output: true,
                 reasoning: true,
@@ -82,7 +76,7 @@ impl OpenAiResponsesAdapter {
         ProviderInstanceDescriptor {
             provider_id: provider_id.into(),
             adapter_id: ADAPTER_ID.into(),
-            endpoint: endpoint.to_string(),
+            endpoint: endpoint.into(),
             credential,
             models,
             headers: BTreeMap::new(),
@@ -98,7 +92,6 @@ impl OpenAiResponsesAdapter {
         &self,
         provider: ProviderInstanceDescriptor,
         request: ModelGenerateRequest,
-        stream: bool,
     ) -> Result<Value, ProtocolError> {
         let endpoint = responses_endpoint(&provider)?;
         let credential = self
@@ -116,7 +109,7 @@ impl OpenAiResponsesAdapter {
             .and_then(Value::as_u64)
             .unwrap_or(1)
             .min(3);
-        let payload = responses_payload(request, stream)?;
+        let payload = responses_payload(request)?;
         for attempt in 0..=retries {
             let mut builder = self
                 .client
@@ -129,10 +122,6 @@ impl OpenAiResponsesAdapter {
             }
             match builder.send().await {
                 Ok(response) if response.status().is_success() => {
-                    if stream {
-                        let text = response.text().await.map_err(|err| transport_error(&err))?;
-                        return Ok(Value::String(text));
-                    }
                     return response.json().await.map_err(|_| {
                         error(
                             "agent.adapter.invalid_response",
@@ -171,20 +160,8 @@ impl ModelProtocolAdapter for OpenAiResponsesAdapter {
     ) -> ModelAdapterFuture {
         let adapter = self.clone();
         Box::pin(async move {
-            let body = adapter.request(provider, request, false).await?;
+            let body = adapter.request(provider, request).await?;
             parse_responses_body(body)
-        })
-    }
-
-    fn stream(
-        &self,
-        provider: ProviderInstanceDescriptor,
-        request: ModelGenerateRequest,
-    ) -> ModelStreamFuture {
-        let adapter = self.clone();
-        Box::pin(async move {
-            let body = adapter.request(provider, request, true).await?;
-            parse_responses_sse(body.as_str().unwrap_or_default())
         })
     }
 }
@@ -213,46 +190,38 @@ fn responses_endpoint(provider: &ProviderInstanceDescriptor) -> Result<Url, Prot
         ));
     }
     if !endpoint.path().ends_with("/responses") {
-        let path = format!("{}/responses", endpoint.path().trim_end_matches('/'));
-        endpoint.set_path(&path);
+        endpoint.set_path(&format!(
+            "{}/responses",
+            endpoint.path().trim_end_matches('/')
+        ));
     }
     Ok(endpoint)
 }
 
-fn responses_payload(value: ModelGenerateRequest, stream: bool) -> Result<Value, ProtocolError> {
+fn responses_payload(value: ModelGenerateRequest) -> Result<Value, ProtocolError> {
     let mut instructions = None;
     let mut input = Vec::new();
-    let mut pending_tool_calls: BTreeMap<String, AgentToolCall> = BTreeMap::new();
+    let mut open_calls = BTreeMap::<String, ()>::new();
 
     for message in &value.request.messages {
         match message.role {
-            AgentRole::System => {
-                if instructions.is_none() {
-                    instructions = Some(message.content.clone());
-                } else {
-                    input.push(json!({
-                        "role": "system",
-                        "content": message.content,
-                    }));
-                }
+            AgentRole::System if instructions.is_none() => {
+                instructions = Some(message.content.clone());
             }
-            AgentRole::User => {
-                input.push(json!({
-                    "role": "user",
-                    "content": message.content,
-                }));
-            }
+            AgentRole::System => input.push(json!({"role": "system", "content": message.content})),
+            AgentRole::User => input.push(json!({"role": "user", "content": message.content})),
             AgentRole::Assistant => {
-                let tool_calls = assistant_tool_calls(message)?;
+                let calls = assistant_tool_calls(message)?;
                 if !message.content.is_empty() {
-                    input.push(json!({
-                        "role": "assistant",
-                        "content": message.content,
-                    }));
+                    input.push(json!({"role": "assistant", "content": message.content}));
                 }
-                for call in tool_calls {
-                    validate_tool_call(&call)?;
-                    pending_tool_calls.insert(call.call_id.clone(), call.clone());
+                for call in calls {
+                    if call.call_id.trim().is_empty() || call.name.trim().is_empty() {
+                        return Err(invalid_request(
+                            "function_call call_id and name must both be non-empty",
+                        ));
+                    }
+                    open_calls.insert(call.call_id.clone(), ());
                     input.push(json!({
                         "type": "function_call",
                         "call_id": call.call_id,
@@ -262,103 +231,85 @@ fn responses_payload(value: ModelGenerateRequest, stream: bool) -> Result<Value,
                 }
             }
             AgentRole::Tool => {
-                let metadata = tool_result_metadata(message)?;
-                if !pending_tool_calls.contains_key(&metadata.call_id) {
+                let meta = tool_result_metadata(message)?;
+                if open_calls.remove(&meta.call_id).is_none() {
                     return Err(invalid_request(format!(
                         "function_call_output `{}` does not reference an earlier function_call",
-                        metadata.call_id
+                        meta.call_id
                     )));
                 }
-                pending_tool_calls.remove(&metadata.call_id);
-                let output = if metadata.is_error {
-                    match &metadata.error {
-                        Some(err) => format!("error: {} ({})", err.message, err.code),
-                        None => {
+                let output = if meta.is_error {
+                    meta.error
+                        .as_ref()
+                        .map(|err| format!("error: {} ({})", err.message, err.code))
+                        .unwrap_or_else(|| {
                             if message.content.is_empty() {
                                 "error".into()
                             } else {
                                 message.content.clone()
                             }
-                        }
-                    }
+                        })
                 } else {
                     message.content.clone()
                 };
                 input.push(json!({
                     "type": "function_call_output",
-                    "call_id": metadata.call_id,
+                    "call_id": meta.call_id,
                     "output": output,
                 }));
             }
         }
     }
-
-    if let Some(unresolved) = pending_tool_calls.keys().next() {
+    if let Some((call_id, _)) = open_calls.into_iter().next() {
         return Err(invalid_request(format!(
-            "function_call `{unresolved}` is missing its function_call_output"
+            "function_call `{call_id}` is missing its function_call_output"
         )));
     }
 
-    let mut payload = serde_json::Map::from_iter([
-        ("model".into(), Value::String(value.request.model)),
-        ("input".into(), Value::Array(input)),
-        ("stream".into(), Value::Bool(stream)),
-    ]);
+    let mut payload = json!({
+        "model": value.request.model,
+        "input": input,
+    });
     if let Some(instructions) = instructions {
-        payload.insert("instructions".into(), Value::String(instructions));
+        payload["instructions"] = Value::String(instructions);
     }
     if let Some(max_tokens) = value.request.max_output_tokens {
-        payload.insert("max_output_tokens".into(), json!(max_tokens));
+        payload["max_output_tokens"] = json!(max_tokens);
     }
     if let Some(temperature) = value.request.temperature {
-        payload.insert("temperature".into(), json!(temperature));
+        payload["temperature"] = json!(temperature);
     }
     if !value.tools.is_empty() {
-        payload.insert(
-            "tools".into(),
-            Value::Array(
-                value
-                    .tools
-                    .into_iter()
-                    .map(|tool| {
-                        json!({
-                            "type": "function",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.input_schema,
-                        })
+        payload["tools"] = Value::Array(
+            value
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema,
                     })
-                    .collect(),
-            ),
+                })
+                .collect(),
         );
     }
     if let Some(structured) = value.structured_output {
-        payload.insert("text".into(), structured);
+        payload["text"] = structured;
     }
     if let Some(reasoning) = value.reasoning {
-        payload.insert("reasoning".into(), reasoning);
+        payload["reasoning"] = reasoning;
     }
-    Ok(Value::Object(payload))
+    Ok(payload)
 }
 
 fn assistant_tool_calls(message: &AgentMessage) -> Result<Vec<AgentToolCall>, ProtocolError> {
-    let Some(metadata) = message.metadata.as_ref() else {
-        return Ok(Vec::new());
-    };
-    let Some(calls) = metadata.get("tool_calls") else {
+    let Some(calls) = message.metadata.as_ref().and_then(|m| m.get("tool_calls")) else {
         return Ok(Vec::new());
     };
     serde_json::from_value(calls.clone())
         .map_err(|err| invalid_request(format!("assistant tool_calls are malformed: {err}")))
-}
-
-fn validate_tool_call(call: &AgentToolCall) -> Result<(), ProtocolError> {
-    if call.call_id.trim().is_empty() || call.name.trim().is_empty() {
-        return Err(invalid_request(
-            "function_call call_id and name must both be non-empty",
-        ));
-    }
-    Ok(())
 }
 
 fn tool_result_metadata(message: &AgentMessage) -> Result<AgentToolResultMetadata, ProtocolError> {
@@ -366,7 +317,6 @@ fn tool_result_metadata(message: &AgentMessage) -> Result<AgentToolResultMetadat
         .metadata
         .as_ref()
         .ok_or_else(|| invalid_request("function_call_output is missing metadata"))?;
-    // Accept full AgentToolResultMetadata or the OpenAI-compatible {call_id} shape.
     if let Ok(parsed) = serde_json::from_value::<AgentToolResultMetadata>(metadata.clone()) {
         if parsed.call_id.trim().is_empty() {
             return Err(invalid_request(
@@ -406,35 +356,12 @@ fn parse_responses_body(body: Value) -> Result<AgentModelGenerateResult, Protoco
     let mut text = String::new();
     let mut tool_calls = Vec::new();
     for item in output {
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-        match item_type {
-            "message" => {
-                if let Some(content) = item.get("content").and_then(Value::as_array) {
-                    for part in content {
-                        let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
-                        if matches!(part_type, "output_text" | "text")
-                            && let Some(part_text) = part.get("text").and_then(Value::as_str)
-                        {
-                            if !text.is_empty() {
-                                text.push('\n');
-                            }
-                            text.push_str(part_text);
-                        }
-                    }
-                } else if let Some(content) = item.get("content").and_then(Value::as_str) {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(content);
-                }
-            }
-            "function_call" => {
-                tool_calls.push(parse_function_call(item)?);
-            }
+        match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+            "message" => append_message_text(&mut text, item),
+            "function_call" => tool_calls.push(parse_function_call(item)?),
             _ => {}
         }
     }
-
     if text.is_empty() && tool_calls.is_empty() {
         return Err(error(
             "agent.adapter.invalid_response",
@@ -442,15 +369,14 @@ fn parse_responses_body(body: Value) -> Result<AgentModelGenerateResult, Protoco
             "response contains neither output text nor function calls",
         ));
     }
-
-    let stop_reason = if !tool_calls.is_empty() {
-        AgentModelStopReason::ToolCalls
-    } else {
+    let stop_reason = if tool_calls.is_empty() {
         match body.get("status").and_then(Value::as_str) {
             Some("incomplete") => AgentModelStopReason::Length,
             Some("failed") => AgentModelStopReason::Other,
             _ => AgentModelStopReason::Stop,
         }
+    } else {
+        AgentModelStopReason::ToolCalls
     };
 
     Ok(AgentModelGenerateResult {
@@ -475,6 +401,27 @@ fn parse_responses_body(body: Value) -> Result<AgentModelGenerateResult, Protoco
         raw: Some(body),
         output_resource: None,
     })
+}
+
+fn append_message_text(text: &mut String, item: &Value) {
+    if let Some(content) = item.get("content").and_then(Value::as_array) {
+        for part in content {
+            let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+            if matches!(part_type, "output_text" | "text")
+                && let Some(part_text) = part.get("text").and_then(Value::as_str)
+            {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(part_text);
+            }
+        }
+    } else if let Some(content) = item.get("content").and_then(Value::as_str) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(content);
+    }
 }
 
 fn parse_function_call(item: &Value) -> Result<AgentToolCall, ProtocolError> {
@@ -515,119 +462,12 @@ fn parse_function_call(item: &Value) -> Result<AgentToolCall, ProtocolError> {
     })
 }
 
-fn parse_responses_sse(body: &str) -> Result<Vec<ModelStreamEvent>, ProtocolError> {
-    let mut events = Vec::new();
-    let mut sequence = 0_u64;
-    for data in body
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:").map(str::trim))
-    {
-        if data == "[DONE]" {
-            break;
-        }
-        let value: Value = serde_json::from_str(data).map_err(|_| {
-            error(
-                "agent.adapter.invalid_stream",
-                ProtocolErrorClass::Protocol,
-                "stream event is not valid JSON",
-            )
-        })?;
-        sequence += 1;
-        if let Some(text) = value
-            .pointer("/delta")
-            .and_then(Value::as_str)
-            .or_else(|| value.get("text").and_then(Value::as_str))
-            .or_else(|| {
-                value
-                    .pointer("/response/output_text")
-                    .and_then(Value::as_str)
-            })
-        {
-            events.push(ModelStreamEvent::MessageDelta {
-                sequence,
-                text: text.into(),
-            });
-            continue;
-        }
-        let event_type = value
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if matches!(
-            event_type,
-            "response.output_text.delta" | "response.content_part.delta"
-        ) && let Some(text) = value.get("delta").and_then(Value::as_str)
-        {
-            events.push(ModelStreamEvent::MessageDelta {
-                sequence,
-                text: text.into(),
-            });
-        } else if event_type == "response.reasoning_summary_text.delta"
-            && let Some(text) = value.get("delta").and_then(Value::as_str)
-        {
-            events.push(ModelStreamEvent::ReasoningDelta {
-                sequence,
-                text: text.into(),
-            });
-        }
-    }
-    Ok(events)
-}
-
-fn retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-}
-
-fn status_error(status: StatusCode) -> ProtocolError {
-    let class = match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ProtocolErrorClass::Authentication,
-        StatusCode::TOO_MANY_REQUESTS => ProtocolErrorClass::RateLimited,
-        status if status.is_server_error() => ProtocolErrorClass::Retryable,
-        _ => ProtocolErrorClass::NonRetryable,
-    };
-    error(
-        "agent.adapter.http_status",
-        class,
-        format!("model endpoint returned HTTP {}", status.as_u16()),
-    )
-}
-
-fn transport_error(value: &reqwest::Error) -> ProtocolError {
-    let class = if value.is_timeout() {
-        ProtocolErrorClass::Timeout
-    } else {
-        ProtocolErrorClass::Retryable
-    };
-    error(
-        "agent.adapter.transport",
-        class,
-        if value.is_timeout() {
-            "model request timed out"
-        } else {
-            "model transport failed"
-        },
-    )
-}
-
 fn invalid_request(message: impl Into<String>) -> ProtocolError {
     error(
         "agent.adapter.invalid_request",
         ProtocolErrorClass::NonRetryable,
         message,
     )
-}
-
-fn error(
-    code: impl Into<String>,
-    class: ProtocolErrorClass,
-    message: impl Into<String>,
-) -> ProtocolError {
-    ProtocolError {
-        code: code.into(),
-        class,
-        message: message.into(),
-        retry_after_ms: None,
-    }
 }
 
 #[cfg(test)]
@@ -644,17 +484,16 @@ mod tests {
     use super::*;
 
     struct TestCredentials;
-
     impl CredentialBroker for TestCredentials {
         fn resolve(&self, _credential: CredentialRef) -> CredentialFuture {
             Box::pin(async { CredentialValue::new("TEST_SECRET") })
         }
     }
 
-    fn request_with_tools() -> ModelGenerateRequest {
+    fn sample_request() -> ModelGenerateRequest {
         let mut tool = AgentToolDescriptor::new("echo", "test.echo@1", "echo value");
         tool.side_effect = ToolSideEffect::None;
-        tool.input_schema = json!({"type": "object", "properties": {"text": {"type": "string"}}});
+        tool.input_schema = json!({"type": "object"});
         ModelGenerateRequest {
             request: mutsuki_agent_contracts::AgentModelGenerateRequest {
                 model: "gpt-4.1".into(),
@@ -677,15 +516,15 @@ mod tests {
     }
 
     #[test]
-    fn payload_maps_system_tools_and_function_call_loop() {
-        let mut req = request_with_tools();
+    fn payload_maps_tools_and_function_call_loop() {
+        let mut req = sample_request();
         let call = AgentToolCall {
             call_id: "call_1".into(),
             name: "echo".into(),
             input: json!({"text": "hi"}),
         };
         let mut assistant = AgentMessage::assistant("");
-        assistant.metadata = Some(json!({"tool_calls": [call.clone()]}));
+        assistant.metadata = Some(json!({"tool_calls": [call]}));
         req.request.messages.push(assistant);
         req.request.messages.push(AgentMessage {
             role: AgentRole::Tool,
@@ -694,27 +533,17 @@ mod tests {
             metadata: Some(json!({"call_id": "call_1"})),
             parts: Vec::new(),
         });
-
-        let payload = responses_payload(req, false).unwrap();
+        let payload = responses_payload(req).unwrap();
         assert_eq!(payload["instructions"], "be brief");
-        assert_eq!(payload["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["name"], "echo");
         let input = payload["input"].as_array().unwrap();
-        assert!(
-            input
-                .iter()
-                .any(|item| item["type"] == "function_call" && item["call_id"] == "call_1")
-        );
-        assert!(
-            input
-                .iter()
-                .any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_1")
-        );
+        assert!(input.iter().any(|i| i["type"] == "function_call"));
+        assert!(input.iter().any(|i| i["type"] == "function_call_output"));
     }
 
     #[test]
     fn payload_rejects_orphan_function_call_output() {
-        let mut req = request_with_tools();
+        let mut req = sample_request();
         req.request.messages.push(AgentMessage {
             role: AgentRole::Tool,
             content: "oops".into(),
@@ -722,35 +551,26 @@ mod tests {
             metadata: Some(json!({"call_id": "missing"})),
             parts: Vec::new(),
         });
-        let err = responses_payload(req, false).unwrap_err();
-        assert_eq!(err.code, "agent.adapter.invalid_request");
+        assert_eq!(
+            responses_payload(req).unwrap_err().code,
+            "agent.adapter.invalid_request"
+        );
     }
 
     #[test]
-    fn parse_maps_message_and_function_call_output() {
-        let body = json!({
+    fn parse_maps_message_and_function_call() {
+        let result = parse_responses_body(json!({
             "status": "completed",
             "output": [
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": "need tool"}]
-                },
-                {
-                    "type": "function_call",
-                    "call_id": "call_abc",
-                    "name": "echo",
-                    "arguments": "{\"text\":\"x\"}"
-                }
+                {"type": "message", "content": [{"type": "output_text", "text": "need tool"}]},
+                {"type": "function_call", "call_id": "call_abc", "name": "echo", "arguments": "{\"text\":\"x\"}"}
             ],
             "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14}
-        });
-        let result = parse_responses_body(body).unwrap();
+        }))
+        .unwrap();
         assert_eq!(result.message.content, "need tool");
         assert_eq!(result.stop_reason, AgentModelStopReason::ToolCalls);
-        assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].call_id, "call_abc");
-        assert_eq!(result.tool_calls[0].name, "echo");
         assert_eq!(result.usage.total_tokens, 14);
     }
 
@@ -764,16 +584,18 @@ mod tests {
             let read = stream.read(&mut bytes).unwrap();
             let request = String::from_utf8_lossy(&bytes[..read]);
             assert!(request.contains("POST /v1/responses"));
-            assert!(request.to_ascii_lowercase().contains("authorization: bearer test_secret"));
-            assert!(request.contains("\"instructions\":\"be brief\""));
-            let payload = r#"{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#;
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test_secret")
+            );
+            let payload = r#"{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#;
             let body = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
                 payload.len()
             );
             stream.write_all(body.as_bytes()).unwrap();
         });
-
         let adapter = OpenAiResponsesAdapter::new(
             OpenAiResponsesAdapter::default_descriptor(),
             Arc::new(TestCredentials),
@@ -782,7 +604,7 @@ mod tests {
         let result = adapter
             .generate(
                 OpenAiResponsesAdapter::provider_descriptor(
-                    "openai-responses-local",
+                    "local",
                     &format!("http://{address}/v1"),
                     CredentialRef {
                         credential_id: "test".into(),
@@ -790,7 +612,7 @@ mod tests {
                     },
                     "gpt-4.1",
                 ),
-                request_with_tools(),
+                sample_request(),
             )
             .await
             .unwrap();

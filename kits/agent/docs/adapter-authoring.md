@@ -23,7 +23,7 @@ variables or ship a default credential. Retries/timeouts come from
 `ProviderInstanceDescriptor.compatibility`.
 
 For a minimal model↔tool loop without session/approval, use
-[`SimpleReact`](simple-react.md) over any `ModelProtocolAdapter`.
+`SimpleReact`（见 model-protocols.md） over any `ModelProtocolAdapter`.
 
 Breaking DTO/wire changes require a contract major-version change. Provider endpoint, brand or
 model-catalog changes belong to instance configuration and must not break the authoring API.
