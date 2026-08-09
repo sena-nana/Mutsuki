@@ -155,7 +155,7 @@ impl AgentClientBackend for ConfigSelectedAgentBackend {
                 retryable: false,
             })?;
         self.connections
-            .deferred_client_backend(connection_id)
+            .client_backend(&connection_id)
             .request(request)
     }
 }

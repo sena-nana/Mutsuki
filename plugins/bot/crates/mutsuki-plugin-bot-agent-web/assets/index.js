@@ -33,7 +33,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
     list.querySelectorAll("[data-reconnect]").forEach((button) => {
       button.onclick = async () => {
         try {
-          await rpc.call("bot-agent", "connections.reconnect", { capabilities: ALL, actor_id: "web-console", expected_revision: revision, connection_id: button.dataset.reconnect });
+          await rpc.call("bot-agent", "connections.reconnect", { capabilities: ALL, expected_revision: revision, connection_id: button.dataset.reconnect });
           await refresh();
         } catch (error) { result.textContent = errorText(error); }
       };
@@ -47,7 +47,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
   };
   el.querySelector("#agent-save").onclick = async () => {
     try {
-      await rpc.call("bot-agent", "connections.upsert", { capabilities: ALL, actor_id: "web-console", expected_revision: revision, config: config() });
+      await rpc.call("bot-agent", "connections.upsert", { capabilities: ALL, expected_revision: revision, config: config() });
       result.textContent = "连接验证成功，已原子切换。";
       await refresh();
     } catch (error) { result.textContent = errorText(error); }
