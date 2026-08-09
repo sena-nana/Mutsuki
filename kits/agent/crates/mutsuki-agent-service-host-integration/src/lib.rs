@@ -220,31 +220,10 @@ impl AgentConnectionRegistry {
     pub fn client_backend(
         &self,
         connection_id: &AgentConnectionId,
-    ) -> Result<Box<dyn AgentClientBackend + Send>, AgentConnectionError> {
-        if !self.is_healthy(connection_id) {
-            return Err(AgentConnectionError::ConnectionUnavailable(
-                connection_id.clone(),
-            ));
-        }
-        Ok(Box::new(RegistryAgentBackend {
-            registry: self.clone(),
-            connection_id: connection_id.clone(),
-        }))
-    }
-
-    /// Creates a registry-backed client before catalog installation has finished.
-    ///
-    /// The runtime load-plan capability check remains the startup authority. Calls still fail
-    /// structurally unless the selected generation is healthy, so this removes configured-plugin
-    /// list ordering as a semantic input without creating an implicit fallback.
-    #[must_use]
-    pub fn deferred_client_backend(
-        &self,
-        connection_id: AgentConnectionId,
     ) -> Box<dyn AgentClientBackend + Send> {
         Box::new(RegistryAgentBackend {
             registry: self.clone(),
-            connection_id,
+            connection_id: connection_id.clone(),
         })
     }
 
@@ -441,16 +420,6 @@ pub struct AgentConnectionManager {
     secrets: HostSecretStore,
     store: Option<ConfiguredPluginStore>,
     config: Mutex<AgentConnectionsConfig>,
-    audits: Mutex<Vec<AgentConnectionAuditEntry>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct AgentConnectionAuditEntry {
-    pub audit_id: String,
-    pub actor_id: String,
-    pub action: String,
-    pub revision: u64,
-    pub connection_id: AgentConnectionId,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -472,7 +441,6 @@ impl AgentConnectionManager {
             secrets,
             store,
             config: Mutex::new(AgentConnectionsConfig::default()),
-            audits: Mutex::new(Vec::new()),
         }
     }
 
@@ -498,11 +466,6 @@ impl AgentConnectionManager {
         }
     }
 
-    #[must_use]
-    pub fn audits(&self) -> Vec<AgentConnectionAuditEntry> {
-        self.audits.lock().clone()
-    }
-
     pub fn test_connection(
         &self,
         config: AgentConnectionConfig,
@@ -522,11 +485,24 @@ impl AgentConnectionManager {
     /// Validates and handshakes a candidate, persists it, then atomically swaps the live backend.
     pub fn upsert(
         &self,
-        actor_id: &str,
         expected_revision: u64,
         config: AgentConnectionConfig,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         config.validate()?;
+        let mut current = self.config.lock();
+        if current.revision != expected_revision {
+            return Err(AgentConnectionError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision,
+            });
+        }
+        let index = current
+            .connections
+            .iter()
+            .position(|item| item.connection_id == config.connection_id)
+            .ok_or_else(|| {
+                AgentConnectionError::ConnectionNotFound(config.connection_id.clone())
+            })?;
         let candidate = if config.enabled {
             Some(AgentConnectionRegistry::prepare(
                 config.clone(),
@@ -536,25 +512,8 @@ impl AgentConnectionManager {
         } else {
             None
         };
-        let mut current = self.config.lock();
-        if current.revision != expected_revision {
-            return Err(AgentConnectionError::RevisionConflict {
-                expected: expected_revision,
-                actual: current.revision,
-            });
-        }
         let mut next = current.clone();
-        if let Some(existing) = next
-            .connections
-            .iter_mut()
-            .find(|item| item.connection_id == config.connection_id)
-        {
-            *existing = config.clone();
-        } else {
-            return Err(AgentConnectionError::ConnectionNotFound(
-                config.connection_id.clone(),
-            ));
-        }
+        next.connections[index] = config.clone();
         next.connections
             .sort_by(|left, right| left.connection_id.cmp(&right.connection_id));
         next.revision = next.revision.saturating_add(1);
@@ -564,13 +523,11 @@ impl AgentConnectionManager {
             None => self.registry.commit_disabled(config.clone()),
         };
         *current = next;
-        self.record_audit(actor_id, "upsert", current.revision, config.connection_id);
         Ok(status)
     }
 
     pub fn reconnect(
         &self,
-        actor_id: &str,
         expected_revision: u64,
         connection_id: &AgentConnectionId,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
@@ -587,7 +544,6 @@ impl AgentConnectionManager {
             .find(|item| &item.connection_id == connection_id)
             .cloned()
             .ok_or_else(|| AgentConnectionError::ConnectionNotFound(connection_id.clone()))?;
-        drop(current);
         if !config.enabled {
             return Err(AgentConnectionError::ConnectionDisabled(
                 connection_id.clone(),
@@ -610,12 +566,6 @@ impl AgentConnectionManager {
                 }
             };
         let status = self.registry.commit(candidate);
-        self.record_audit(
-            actor_id,
-            "reconnect",
-            expected_revision,
-            connection_id.clone(),
-        );
         Ok(status)
     }
 
@@ -629,22 +579,6 @@ impl AgentConnectionManager {
         store
             .replace_config(AGENT_CONNECTIONS_PLUGIN_ID, value)
             .map_err(|error| AgentConnectionError::Persistence(error.to_string()))
-    }
-
-    fn record_audit(
-        &self,
-        actor_id: &str,
-        action: &str,
-        revision: u64,
-        connection_id: AgentConnectionId,
-    ) {
-        self.audits.lock().push(AgentConnectionAuditEntry {
-            audit_id: format!("agent-connection-audit-{revision}"),
-            actor_id: actor_id.into(),
-            action: action.into(),
-            revision,
-            connection_id,
-        });
     }
 }
 
@@ -877,8 +811,6 @@ fn endpoint_id(value: &str) -> Result<EndpointId, AgentConnectionError> {
 
 #[derive(Debug, Error)]
 pub enum AgentConnectionError {
-    #[error("invalid Agent connection id `{0}`")]
-    InvalidConnectionId(String),
     #[error("duplicate Agent connection id `{0}`")]
     DuplicateConnectionId(AgentConnectionId),
     #[error("invalid Agent connector id `{0}`")]
@@ -891,8 +823,6 @@ pub enum AgentConnectionError {
     ConnectionNotFound(AgentConnectionId),
     #[error("Agent connection `{0}` is disabled")]
     ConnectionDisabled(AgentConnectionId),
-    #[error("Agent connection `{0}` is unavailable")]
-    ConnectionUnavailable(AgentConnectionId),
     #[error("Agent connector config is invalid: {0}")]
     Config(String),
     #[error("Agent connector failed: {0}")]
@@ -913,16 +843,13 @@ impl AgentConnectionError {
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
-            Self::InvalidConnectionId(_) | Self::InvalidConnectorId(_) | Self::Config(_) => {
-                "agent.connection.invalid_config"
-            }
+            Self::InvalidConnectorId(_) | Self::Config(_) => "agent.connection.invalid_config",
             Self::DuplicateConnectionId(_) | Self::DuplicateConnectorId(_) => {
                 "agent.connection.duplicate"
             }
             Self::ConnectorNotFound(_) => "agent.connection.connector_not_found",
             Self::ConnectionNotFound(_) => "agent.connection.not_found",
             Self::ConnectionDisabled(_) => "agent.connection.disabled",
-            Self::ConnectionUnavailable(_) => "agent.connection.unavailable",
             Self::Connector(_) | Self::InvalidEndpointId(_) => "agent.connection.connect_failed",
             Self::Handshake(_) => "agent.connection.handshake_failed",
             Self::RevisionConflict { .. } => "agent.connection.revision_conflict",
@@ -1068,7 +995,7 @@ mod tests {
             })
             .unwrap();
         let id = AgentConnectionId::new("primary").unwrap();
-        let mut backend = manager.registry.client_backend(&id).unwrap();
+        let mut backend = manager.registry.client_backend(&id);
         fail.store(true, Ordering::SeqCst);
         let error = backend
             .request(AgentWireRequestEnvelope {
@@ -1123,7 +1050,7 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
             })
             .unwrap();
 
-        let status = manager.upsert("admin", 0, config(false)).unwrap();
+        let status = manager.upsert(0, config(false)).unwrap();
         assert_eq!(status.generation, 2);
         assert_eq!(manager.snapshot().revision, 1);
         let persisted: toml::Value =
@@ -1134,17 +1061,16 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
         );
 
         let before = std::fs::read_to_string(&product).unwrap();
-        assert!(manager.upsert("admin", 1, config(true)).is_err());
+        assert!(manager.upsert(1, config(true)).is_err());
         assert_eq!(std::fs::read_to_string(&product).unwrap(), before);
         assert_eq!(manager.snapshot().revision, 1);
-        assert_eq!(manager.audits().len(), 1);
 
         let unknown = AgentConnectionConfig {
             connection_id: AgentConnectionId::new("not-declared").unwrap(),
             ..config(false)
         };
         assert!(matches!(
-            manager.upsert("admin", 1, unknown),
+            manager.upsert(1, unknown),
             Err(AgentConnectionError::ConnectionNotFound(_))
         ));
     }

@@ -75,10 +75,7 @@ impl WebExtension for BotAgentWebExtension {
             let manager = manager.clone();
             registry.register("connections.snapshot", move |params| {
                 require_capability(&params, CAPABILITY_CONNECTION_READ)?;
-                Ok(json!({
-                    "snapshot": manager.snapshot(),
-                    "audits": manager.audits(),
-                }))
+                serde_json::to_value(manager.snapshot()).map_err(encode_error)
             });
 
             let manager = self.connections.as_ref().expect("checked").clone();
@@ -92,12 +89,11 @@ impl WebExtension for BotAgentWebExtension {
             let manager = self.connections.as_ref().expect("checked").clone();
             registry.register("connections.upsert", move |params| {
                 require_capability(&params, CAPABILITY_CONNECTION_WRITE)?;
-                let actor_id = required_str(&params, "actor_id")?;
                 let expected_revision = required_u64(&params, "expected_revision")?;
                 let config = decode::<AgentConnectionConfig>(&params, "config")?;
                 serde_json::to_value(
                     manager
-                        .upsert(&actor_id, expected_revision, config)
+                        .upsert(expected_revision, config)
                         .map_err(agent_error)?,
                 )
                 .map_err(encode_error)
@@ -106,13 +102,12 @@ impl WebExtension for BotAgentWebExtension {
             let manager = self.connections.as_ref().expect("checked").clone();
             registry.register("connections.reconnect", move |params| {
                 require_capability(&params, CAPABILITY_CONNECTION_WRITE)?;
-                let actor_id = required_str(&params, "actor_id")?;
                 let expected_revision = required_u64(&params, "expected_revision")?;
                 let connection_id = AgentConnectionId::new(required_str(&params, "connection_id")?)
                     .map_err(|error| ExtensionError::Registration(error.to_string()))?;
                 serde_json::to_value(
                     manager
-                        .reconnect(&actor_id, expected_revision, &connection_id)
+                        .reconnect(expected_revision, &connection_id)
                         .map_err(agent_error)?,
                 )
                 .map_err(encode_error)
