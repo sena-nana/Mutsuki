@@ -71,6 +71,10 @@ pub fn plugin_error(route: impl Into<String>, detail: impl Into<String>) -> Plug
 pub trait PluginTaskGateway: Send + Sync {
     fn submit_batch(&self, batch: TaskBatch) -> PluginResult<Vec<TaskHandle>>;
     fn cancel_task(&self, handle: &TaskHandle) -> PluginResult<()>;
+    /// Returns a retained terminal outcome, or `None` while the registered task is non-terminal.
+    ///
+    /// A gateway with bounded outcome retention must return `ERR_TASK_EXPIRED` after evicting a
+    /// known terminal outcome and `ERR_TASK_NOT_FOUND` for a handle it cannot identify.
     fn task_outcome(&self, handle: &TaskHandle) -> PluginResult<Option<TaskOutcome>>;
 }
 
@@ -566,10 +570,75 @@ pub fn consume_call_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_runtime_contracts::{Task, TaskBatch};
-    use mutsuki_runtime_wire::{
-        SubmitTaskBatchRequest, decode_binary_response, encode_binary_request,
+    use mutsuki_runtime_contracts::{
+        CancelPolicy, ERR_TASK_EXPIRED, ERR_TASK_NOT_FOUND, Task, TaskBatch,
     };
+    use mutsuki_runtime_wire::{
+        SubmitTaskBatchRequest, TaskOutcomeRequest, decode_binary_response, encode_binary_request,
+    };
+
+    struct OutcomeGateway;
+
+    impl PluginTaskGateway for OutcomeGateway {
+        fn submit_batch(&self, _batch: TaskBatch) -> PluginResult<Vec<TaskHandle>> {
+            unreachable!("outcome contract test does not submit tasks")
+        }
+
+        fn cancel_task(&self, _handle: &TaskHandle) -> PluginResult<()> {
+            unreachable!("outcome contract test does not cancel tasks")
+        }
+
+        fn task_outcome(&self, handle: &TaskHandle) -> PluginResult<Option<TaskOutcome>> {
+            match handle.task_id.as_str() {
+                "running" => Ok(None),
+                "expired" => Err(PluginHostError::new(
+                    ERR_TASK_EXPIRED,
+                    "plugin.test",
+                    "plugin.task.outcome",
+                    "terminal outcome was evicted",
+                )),
+                _ => Err(PluginHostError::new(
+                    ERR_TASK_NOT_FOUND,
+                    "plugin.test",
+                    "plugin.task.outcome",
+                    "task handle is unknown",
+                )),
+            }
+        }
+    }
+
+    fn task_handle(task_id: &str) -> TaskHandle {
+        TaskHandle {
+            task_id: task_id.into(),
+            protocol_id: "demo.task".into(),
+            target_binding_id: None,
+            cancel_policy: CancelPolicy::Cascade,
+            trace_id: None,
+            correlation_id: None,
+        }
+    }
+
+    fn dispatch_outcome(
+        context: &PluginHostContext,
+        request_id: u64,
+        task_id: &str,
+    ) -> Result<Option<TaskOutcome>, RuntimeError> {
+        let request = TaskOutcomeRequest {
+            handle: task_handle(task_id),
+        };
+        let frame = encode_binary_request(
+            request_id,
+            &request,
+            mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+        )
+        .expect("request should encode");
+        let response = context.dispatch_binary_request(&frame);
+        decode_binary_response::<TaskOutcomeRequest>(
+            &response,
+            request_id,
+            mutsuki_runtime_wire::DEFAULT_WIRE_LIMITS,
+        )
+    }
 
     #[test]
     fn missing_task_gateway_is_a_structured_capability_error() {
@@ -590,5 +659,24 @@ mod tests {
         .expect_err("missing task gateway should fail");
         assert_eq!(error.code, "plugin.capability_unavailable");
         assert_eq!(error.lost_capability.as_deref(), Some("task.submit"));
+    }
+
+    #[test]
+    fn task_outcome_dispatch_distinguishes_running_expired_and_unknown_handles() {
+        let context = PluginHostContext::default().with_task_gateway(Arc::new(OutcomeGateway));
+
+        assert_eq!(dispatch_outcome(&context, 10, "running").unwrap(), None);
+        assert_eq!(
+            dispatch_outcome(&context, 11, "expired")
+                .expect_err("evicted outcome should be expired")
+                .code,
+            ERR_TASK_EXPIRED
+        );
+        assert_eq!(
+            dispatch_outcome(&context, 12, "unknown")
+                .expect_err("unregistered handle should be unknown")
+                .code,
+            ERR_TASK_NOT_FOUND
+        );
     }
 }

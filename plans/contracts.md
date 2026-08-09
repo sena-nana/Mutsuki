@@ -129,6 +129,12 @@ task.submit_batch({ batch: TaskBatch }) -> TaskHandle[]
 `submit_task` / `submit_one` 只允许作为 SDK / host facade，它们内部必须构造
 `TaskBatch::one(...)`，不得重新引入 `task.submit` 或 runner single-step ABI。
 
+`PluginTaskGateway::task_outcome` 保持 `Result<Option<TaskOutcome>>`：`Ok(Some(...))`
+表示仍保留的 terminal outcome，`Ok(None)` 只表示已注册但尚未 terminal 的 task。
+采用有界终态留存的 Host 在淘汰已知 outcome 后必须返回 `ERR_TASK_EXPIRED`；无法识别的
+handle 必须返回 `ERR_TASK_NOT_FOUND`。expired 识别本身也可以有界，tombstone 再淘汰后
+允许转为 not found，但不得把已淘汰或未知 handle 误报为 running。
+
 `RunnerDescriptor.execution_class` 只描述 host 物理执行池选择，不是业务协议语义。
 `Control` 仅用于 core kernel 控制任务；普通插件不得因为声明 Control 而在 core 控制面
 执行。
