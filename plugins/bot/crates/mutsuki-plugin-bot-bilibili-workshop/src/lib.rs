@@ -53,6 +53,7 @@ impl ReqwestWorkshopTransport {
     }
     fn client(&mut self) -> Result<&Client, String> {
         if self.client.is_none() {
+            let _ = rustls::crypto::ring::default_provider().install_default();
             self.client = Some(
                 Client::builder()
                     .timeout(MEDIA_TIMEOUT)
@@ -326,6 +327,7 @@ mod tests {
     }
 
     fn client() -> Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         Client::builder()
             .timeout(Duration::from_secs(2))
             .redirect(Policy::none())

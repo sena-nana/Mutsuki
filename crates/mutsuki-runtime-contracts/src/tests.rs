@@ -439,6 +439,7 @@ fn local_task_payload_preserves_row_wire_shape_without_local_roundtrip() {
 #[test]
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
+        capabilities: Vec::new(),
         runners: Vec::new(),
         protocols: vec![ProtocolDescriptor {
             protocol_id: "im.message.received.v1".into(),

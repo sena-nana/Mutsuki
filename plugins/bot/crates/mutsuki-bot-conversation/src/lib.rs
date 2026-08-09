@@ -641,8 +641,10 @@ fn rule_layer(rule: &ConversationPolicyRule) -> ConversationPolicyLayer {
         ConversationPolicyLayer::Group
     } else if matcher.guild_id.is_some() {
         ConversationPolicyLayer::Guild
-    } else {
+    } else if matcher.account_id.is_some() {
         ConversationPolicyLayer::Account
+    } else {
+        ConversationPolicyLayer::Product
     }
 }
 
@@ -829,6 +831,14 @@ mod tests {
         let repository = Arc::new(MemoryRepository {
             rules: vec![
                 rule(
+                    "product",
+                    ConversationPolicyMatch::default(),
+                    ConversationPolicyPatch {
+                        agent_enabled: Some(false),
+                        ..Default::default()
+                    },
+                ),
+                rule(
                     "account",
                     ConversationPolicyMatch {
                         account_id: Some("main".into()),
@@ -860,7 +870,7 @@ mod tests {
             block_on(service.resolve_policy(group_conversation(), Some("actor"))).unwrap();
         assert!(resolved.policy.agent_enabled);
         assert!(!resolved.policy.must_mention);
-        assert_eq!(resolved.matched_rule_ids, ["account", "group"]);
+        assert_eq!(resolved.matched_rule_ids, ["product", "account", "group"]);
         assert_eq!(
             resolved
                 .matched_rule_sources
@@ -868,6 +878,7 @@ mod tests {
                 .map(|source| source.layer)
                 .collect::<Vec<_>>(),
             [
+                mutsuki_bot_protocol::ConversationPolicyLayer::Product,
                 mutsuki_bot_protocol::ConversationPolicyLayer::Account,
                 mutsuki_bot_protocol::ConversationPolicyLayer::Group,
             ]

@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_config::{
     ConfigApplyMode, ConfigContext, ConfigDescriptor, ConfigError, ConfigLifecycle,
     ConfigMutability, ConfigNode, ConfigPersistSink, ConfigProviderId, ConfigProviderRegistry,
@@ -33,6 +34,7 @@ pub struct ProductConfigOptions {
     pub store: Option<ConfiguredPluginStore>,
     pub lifecycle: Option<Arc<dyn ConfigLifecycle>>,
     pub bot_agent_config: Option<BotAgentConfigHandle>,
+    pub agent_connections: Option<AgentConnectionRegistry>,
 }
 
 pub fn product_config_service(
@@ -51,6 +53,7 @@ pub fn product_config_service_with_options(
     let product: toml::Value =
         toml::from_str(&text).map_err(|error| ProductConfigError::Invalid(error.to_string()))?;
     let bot_agent_config = options.bot_agent_config;
+    let agent_connections = options.agent_connections;
     let store = options
         .store
         .unwrap_or_else(|| ConfiguredPluginStore::open(product_config_path));
@@ -84,6 +87,7 @@ pub fn product_config_service_with_options(
                 store: store.clone(),
                 plugin_id: BOT_COMMAND_PLUGIN_ID.into(),
                 bot_agent_config: None,
+                agent_connections: None,
             })),
         );
         registry
@@ -106,6 +110,7 @@ pub fn product_config_service_with_options(
                     store: store.clone(),
                     plugin_id: BOT_AGENT_CONFIG_PROVIDER_ID.into(),
                     bot_agent_config: Some(handle),
+                    agent_connections: agent_connections.clone(),
                 })),
             );
             registry
@@ -186,6 +191,7 @@ struct ConfiguredPluginPersist {
     store: ConfiguredPluginStore,
     plugin_id: String,
     bot_agent_config: Option<BotAgentConfigHandle>,
+    agent_connections: Option<AgentConnectionRegistry>,
 }
 
 impl ConfigPersistSink for ConfiguredPluginPersist {
@@ -207,22 +213,38 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
                 .validate()
                 .map_err(|reason| ConfigError::ApplyRejected { reason })?;
         }
-        let decoded_bot_agent = if self.plugin_id == BOT_AGENT_CONFIG_PROVIDER_ID {
-            let decoded: BotAgentConfig =
-                serde_json::from_value(json.clone()).map_err(|error| {
-                    ConfigError::PersistenceFailed {
-                        reason: format!("bot-agent config decode failed: {error}"),
+        let decoded_bot_agent =
+            if self.plugin_id == BOT_AGENT_CONFIG_PROVIDER_ID {
+                let decoded: BotAgentConfig =
+                    serde_json::from_value(json.clone()).map_err(|error| {
+                        ConfigError::PersistenceFailed {
+                            reason: format!("bot-agent config decode failed: {error}"),
+                        }
+                    })?;
+                decoded
+                    .validate()
+                    .map_err(|error| ConfigError::ApplyRejected {
+                        reason: error.to_string(),
+                    })?;
+                if let Some(connection_id) = decoded.selected_connection_id().map_err(|error| {
+                    ConfigError::ApplyRejected {
+                        reason: error.to_string(),
                     }
-                })?;
-            decoded
-                .validate()
-                .map_err(|error| ConfigError::ApplyRejected {
-                    reason: error.to_string(),
-                })?;
-            Some(decoded)
-        } else {
-            None
-        };
+                })? && self
+                    .agent_connections
+                    .as_ref()
+                    .is_some_and(|registry| !registry.is_healthy(&connection_id))
+                {
+                    return Err(ConfigError::ApplyRejected {
+                        reason: format!(
+                            "Agent connection `{connection_id}` is not registered and healthy"
+                        ),
+                    });
+                }
+                Some(decoded)
+            } else {
+                None
+            };
         let prepared = self
             .store
             .prepare_replace_config(&self.plugin_id, json)
@@ -695,7 +717,7 @@ instance_id = "demo"
 
 [[plugins.configured]]
 id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, default_profile_id = "from-file", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
+config = { enabled = true, connection_id = "primary", default_profile_id = "from-file", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
 "#,
         )
         .unwrap();

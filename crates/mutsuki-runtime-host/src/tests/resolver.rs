@@ -8,6 +8,35 @@ use crate::{runner_manifest, runner_manifest_with_artifact};
 use super::helpers::{descriptor, runtime_profile};
 
 #[test]
+fn resolver_activates_owner_defined_capabilities_and_fences_consumers() {
+    let mut provider = runner_manifest("agent-connections", Vec::new());
+    provider.provides.capabilities = vec!["agent_connection:primary".into()];
+    let mut consumer = runner_manifest("bot-agent", Vec::new());
+    consumer.requires = vec!["agent_connection:primary".into()];
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec!["agent-connections".into(), "bot-agent".into()];
+
+    let plan = crate::resolve_load_plan(&[provider, consumer.clone()], &profile).unwrap();
+    assert!(
+        plan.capability_graph
+            .active_capabilities
+            .contains(&"agent_connection:primary".into())
+    );
+    assert_eq!(
+        plan.capability_graph
+            .active_capability_providers
+            .iter()
+            .find(|selection| selection.capability == "agent_connection:primary")
+            .map(|selection| selection.provider_plugin_id.as_str()),
+        Some("agent-connections")
+    );
+
+    profile.enabled_plugins = vec!["bot-agent".into()];
+    let error = crate::resolve_load_plan(&[consumer], &profile).unwrap_err();
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+}
+
+#[test]
 fn resolver_normalizes_legacy_protocol_classes_and_accepted_protocols() {
     let mut runner = descriptor("legacy.runner", "sim.beta");
     runner.accepted_protocol_ids = vec!["sim.beta".into(), "sim.alpha".into(), "sim.beta".into()];

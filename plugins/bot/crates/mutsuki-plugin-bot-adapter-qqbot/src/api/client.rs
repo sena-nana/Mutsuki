@@ -267,6 +267,7 @@ impl ReqwestQqHttpClient {
         config
             .validate()
             .map_err(|error| QqOpenApiError::InvalidPayload(error.to_string()))?;
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .timeout(Duration::from_millis(config.request_timeout_ms))

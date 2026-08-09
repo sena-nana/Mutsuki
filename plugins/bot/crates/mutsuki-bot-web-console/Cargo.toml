@@ -7,6 +7,8 @@ description = "Embedded Bot admin console assembly: WebHost + control/overview/c
 
 [dependencies]
 mutsuki-bot-config = { workspace = true }
+mutsuki-bot-state-db = { workspace = true }
+mutsuki-agent-service-host-integration = { workspace = true }
 mutsuki-plugin-bot-command = { workspace = true }
 mutsuki-plugin-bot-config-web = { workspace = true }
 mutsuki-plugin-bot-control-web = { workspace = true }
@@ -16,6 +18,7 @@ mutsuki-plugin-bot-bilibili = { workspace = true }
 mutsuki-plugin-bot-bilibili-web = { workspace = true }
 mutsuki-plugin-bot-qq-web = { workspace = true }
 mutsuki-plugin-bot-agent = { workspace = true }
+mutsuki-plugin-bot-agent-web = { workspace = true }
 mutsuki-service-config = { workspace = true }
 mutsuki-service-control = { workspace = true }
 mutsuki-web-host = { workspace = true }

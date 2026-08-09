@@ -52,6 +52,7 @@ impl OpenAiCompatibleAdapter {
                 "adapter and runner ids are required",
             ));
         }
+        install_crypto_provider();
         let client = Client::builder()
             .build()
             .map_err(|err| transport_error(&err))?;
@@ -141,6 +142,10 @@ impl OpenAiCompatibleAdapter {
             "model request retry budget was exhausted",
         ))
     }
+}
+
+pub(crate) fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 impl ModelProtocolAdapter for OpenAiCompatibleAdapter {

@@ -266,12 +266,44 @@ pub struct ResolvedConversationPolicy {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationPolicyLayer {
+    Product,
     Account,
     Group,
     Guild,
     Channel,
     Conversation,
     ActorInConversation,
+}
+
+/// Console presets for mapping product intent onto the existing conversation policy fields.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationAgentTriggerPreset {
+    #[default]
+    Disabled,
+    AllUnconsumedMessages,
+    MentionOrWakeWord,
+}
+
+impl ConversationAgentTriggerPreset {
+    /// Applies only the Agent admission fields, preserving unrelated policy settings.
+    pub fn apply(self, patch: &mut ConversationPolicyPatch, wake_words: Vec<String>) {
+        match self {
+            Self::Disabled => {
+                patch.agent_enabled = Some(false);
+            }
+            Self::AllUnconsumedMessages => {
+                patch.agent_enabled = Some(true);
+                patch.must_mention = Some(false);
+                patch.wake_words = Some(Vec::new());
+            }
+            Self::MentionOrWakeWord => {
+                patch.agent_enabled = Some(true);
+                patch.must_mention = Some(true);
+                patch.wake_words = Some(wake_words);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -354,4 +386,59 @@ pub enum BotAgentBridgeRequest {
     Regenerate {
         event: crate::BotEvent,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationPolicyRuleUpsert {
+    pub actor_id: String,
+    pub expected_revision: u64,
+    pub rule: ConversationPolicyRule,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationPolicyRuleDelete {
+    pub actor_id: String,
+    pub expected_revision: u64,
+    pub rule_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationPolicyRuleWriteResult {
+    pub revision: u64,
+    pub audit_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationPolicyRuleAuditEntry {
+    pub audit_id: String,
+    pub actor_id: String,
+    pub action: String,
+    pub rule_id: String,
+    pub revision: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trigger_presets_map_to_existing_policy_fields() {
+        let mut disabled = ConversationPolicyPatch::default();
+        ConversationAgentTriggerPreset::Disabled.apply(&mut disabled, vec!["wake".into()]);
+        assert_eq!(disabled.agent_enabled, Some(false));
+
+        let mut all = ConversationPolicyPatch::default();
+        ConversationAgentTriggerPreset::AllUnconsumedMessages
+            .apply(&mut all, vec!["ignored".into()]);
+        assert_eq!(all.agent_enabled, Some(true));
+        assert_eq!(all.must_mention, Some(false));
+        assert_eq!(all.wake_words, Some(Vec::new()));
+
+        let mut triggered = ConversationPolicyPatch::default();
+        ConversationAgentTriggerPreset::MentionOrWakeWord
+            .apply(&mut triggered, vec!["mutsuki".into()]);
+        assert_eq!(triggered.agent_enabled, Some(true));
+        assert_eq!(triggered.must_mention, Some(true));
+        assert_eq!(triggered.wake_words, Some(vec!["mutsuki".into()]));
+    }
 }

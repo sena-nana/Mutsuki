@@ -1366,6 +1366,7 @@ fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
             path: path.to_path_buf(),
             source,
         })?;
+        #[cfg(not(windows))]
         if let Some(parent) = path.parent() {
             fs::File::open(parent)
                 .and_then(|directory| directory.sync_all())

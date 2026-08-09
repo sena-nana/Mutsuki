@@ -1,12 +1,31 @@
-use mutsuki_bot_protocol::BotEventSubscription;
+use mutsuki_agent_client::{AgentClient, AgentClientBackend};
+use mutsuki_agent_contracts::{
+    AgentWireError, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
+};
+use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
+use mutsuki_bot_conversation::ConversationService;
+use mutsuki_bot_protocol::{
+    AgentSessionScope, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotEventSubscription, BotHandlerDescriptor,
+    BotPropagationPolicy, BotSpeechReplyPolicy, ConversationPolicy, DirectMessagePolicy,
+};
+use mutsuki_bot_state_db::{BOT_CONVERSATION_POLICY_SERVICE_ID, BotStateDbRepository};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
+use mutsuki_plugin_bot_agent::{
+    BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID,
+    BotAgentBridge, BotAgentConfig, BotAgentConfigHandle, agent_bridge_runner,
+    bot_agent_bridge_manifest, bot_agent_command_descriptors,
+};
 use mutsuki_plugin_bot_command::{
-    BOT_COMMAND_PLUGIN_ID, BotCommandConfig, BotCommandRunner, bot_command_manifest,
+    BOT_COMMAND_PLUGIN_ID, BOT_COMMAND_RUNNER_ID, BotCommandConfig, BotCommandRunner,
+    bot_command_manifest,
 };
 use mutsuki_plugin_bot_event_router::{
     BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
+    handler_pipeline_manifest_for, handler_pipeline_runner_for,
 };
-use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
+use mutsuki_runtime_contracts::PluginManifest;
+use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
 use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
@@ -80,9 +99,290 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         config.validate()?;
         let prefixes = config.prefixes;
+        let mut commands = config.commands;
+        if builder
+            .configured_plugin_selection(BOT_AGENT_BRIDGE_PLUGIN_ID)
+            .and_then(|selection| {
+                serde_json::from_value::<BotAgentConfig>(selection.config.clone()).ok()
+            })
+            .is_some_and(|config| config.enabled)
+        {
+            for command in bot_agent_command_descriptors() {
+                if !commands
+                    .iter()
+                    .any(|existing| existing.path == command.path)
+                {
+                    commands.push(command);
+                }
+            }
+        }
         Ok(builder
             .register_builtin_plugin(bot_command_manifest(1))
-            .register_builtin_runner(move || Box::new(BotCommandRunner::new(1, prefixes.clone()))))
+            .register_builtin_runner(move || {
+                Box::new(BotCommandRunner::with_commands(
+                    1,
+                    prefixes.clone(),
+                    commands.clone(),
+                ))
+            }))
+    }
+}
+
+pub const BOT_AGENT_PIPELINE_RUNNER_ID: &str = "mutsuki.bot.agent.pipeline";
+
+struct ConfigSelectedAgentBackend {
+    connections: AgentConnectionRegistry,
+    config: BotAgentConfigHandle,
+}
+
+impl AgentClientBackend for ConfigSelectedAgentBackend {
+    fn request(
+        &mut self,
+        request: AgentWireRequestEnvelope,
+    ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
+        let connection_id = self
+            .config
+            .snapshot()
+            .selected_connection_id()
+            .map_err(|error| AgentWireError {
+                code: "bot.agent.connection.invalid".into(),
+                message: error.to_string(),
+                retryable: false,
+            })?
+            .ok_or_else(|| AgentWireError {
+                code: "bot.agent.disabled".into(),
+                message: "Bot Agent is disabled".into(),
+                retryable: false,
+            })?;
+        self.connections
+            .deferred_client_backend(connection_id)
+            .request(request)
+    }
+}
+
+pub struct BotAgentConfiguredPlugin {
+    connections: AgentConnectionRegistry,
+    handlers: Vec<BotHandlerDescriptor>,
+}
+
+impl BotAgentConfiguredPlugin {
+    #[must_use]
+    pub fn new(connections: AgentConnectionRegistry) -> Self {
+        Self {
+            connections,
+            handlers: Vec::new(),
+        }
+    }
+
+    /// Adds product-owned handlers that must run before the Agent fallback.
+    #[must_use]
+    pub fn with_handlers(mut self, handlers: Vec<BotHandlerDescriptor>) -> Self {
+        self.handlers = handlers;
+        self
+    }
+}
+
+impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        BOT_AGENT_BRIDGE_PLUGIN_ID
+    }
+
+    fn prepare(
+        &self,
+        config: &Value,
+        builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        let config: BotAgentConfig =
+            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        config.validate().map_err(|error| error.to_string())?;
+        let config_handle =
+            BotAgentConfigHandle::new(config.clone()).map_err(|error| error.to_string())?;
+        let state_dir = builder.data_dir().join("bot");
+        std::fs::create_dir_all(&state_dir).map_err(|error| {
+            format!(
+                "failed to create Bot Agent state directory {}: {error}",
+                state_dir.display()
+            )
+        })?;
+        let repository = Arc::new(
+            BotStateDbRepository::open(state_dir.join("state.sqlite3"))
+                .map_err(|error| error.to_string())?,
+        );
+
+        if !config.enabled {
+            return Ok(register_bot_agent_services(
+                builder,
+                PluginBuilder::new(BOT_AGENT_BRIDGE_PLUGIN_ID)
+                    .build()
+                    .manifest,
+                config_handle,
+                repository,
+            ));
+        }
+
+        let connection_id = config
+            .selected_connection_id()
+            .map_err(|error| error.to_string())?
+            .expect("enabled Bot Agent config has a connection id");
+        let backend = ConfigSelectedAgentBackend {
+            connections: self.connections.clone(),
+            config: config_handle.clone(),
+        };
+        let client = AgentClient::new(backend);
+        let conversations = ConversationService::new(repository.clone(), disabled_product_policy());
+        let bridge =
+            BotAgentBridge::new_with_config(conversations, Box::new(client), config_handle.clone());
+
+        let mut handlers = self.handlers.clone();
+        handlers.push(command_handler());
+        handlers.push(agent_fallback_handler());
+
+        let mut manifest = merge_manifests(
+            bot_agent_bridge_manifest(),
+            handler_pipeline_manifest_for(BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_PIPELINE_RUNNER_ID),
+        );
+        manifest.requires.extend([
+            connection_id.capability(),
+            format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
+            format!("task_protocol:{BOT_MESSAGE_SEND_PROTOCOL_ID}"),
+        ]);
+        let builder =
+            register_bot_agent_services(builder, manifest, config_handle.clone(), repository);
+        Ok(builder
+            .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
+                let config = config_handle.clone();
+                move || {
+                    let settings = config.snapshot();
+                    (Some(settings.max_concurrency), Some(settings.timeout_ms))
+                }
+            })
+            .register_runtime_client_runner(move |client| {
+                handler_pipeline_runner_for(
+                    client,
+                    handlers.clone(),
+                    BOT_AGENT_BRIDGE_PLUGIN_ID,
+                    BOT_AGENT_PIPELINE_RUNNER_ID,
+                )
+            })
+            .register_runtime_client_runner(move |client| {
+                agent_bridge_runner(client, bridge.clone())
+            }))
+    }
+}
+
+fn register_bot_agent_services(
+    builder: ServiceRuntimeBuilder,
+    manifest: PluginManifest,
+    config: BotAgentConfigHandle,
+    repository: Arc<BotStateDbRepository>,
+) -> ServiceRuntimeBuilder {
+    let loaded_manifest = manifest.clone();
+    let config = Arc::new(config);
+    builder.register_builtin_loaded_plugin_factory(manifest, move || {
+        Ok::<LoadedPlugin, String>(LoadedPlugin {
+            manifest: loaded_manifest.clone(),
+            runners: Vec::new(),
+            async_handlers: Vec::new(),
+            host_services: vec![
+                RuntimeBootstrapperService {
+                    service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
+                    capability: Some("bot.agent.config".into()),
+                    service: config.clone(),
+                },
+                RuntimeBootstrapperService {
+                    service_id: BOT_CONVERSATION_POLICY_SERVICE_ID.into(),
+                    capability: Some("bot.agent.policy".into()),
+                    service: repository.clone(),
+                },
+            ],
+            resource_providers: Vec::new(),
+            async_resource_providers: Vec::new(),
+        })
+    })
+}
+
+fn merge_manifests(mut left: PluginManifest, right: PluginManifest) -> PluginManifest {
+    debug_assert_eq!(left.plugin_id, right.plugin_id);
+    left.provides
+        .capabilities
+        .extend(right.provides.capabilities);
+    left.provides.runners.extend(right.provides.runners);
+    left.provides.protocols.extend(right.provides.protocols);
+    left.provides
+        .protocol_classes
+        .extend(right.provides.protocol_classes);
+    left.provides
+        .handler_bindings
+        .extend(right.provides.handler_bindings);
+    left
+}
+
+fn command_handler() -> BotHandlerDescriptor {
+    BotHandlerDescriptor {
+        handler_id: "mutsuki.bot.agent.command-parser".into(),
+        binding_id: format!("binding:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
+        generation: 1,
+        handler_protocol_id: BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
+        runner_hint: Some(BOT_COMMAND_RUNNER_ID.into()),
+        event_kinds: vec![BotEventKind::MessageCreated],
+        conversation_kinds: Vec::new(),
+        filter: None,
+        permissions: Vec::new(),
+        priority: 100,
+        propagation: BotPropagationPolicy::Continue,
+        rate_limit: None,
+        timeout_ms: None,
+        side_effects: Vec::new(),
+        max_concurrency: None,
+        before_hook_protocol_ids: Vec::new(),
+        after_hook_protocol_ids: Vec::new(),
+        error_hook_protocol_ids: Vec::new(),
+    }
+}
+
+fn agent_fallback_handler() -> BotHandlerDescriptor {
+    BotHandlerDescriptor {
+        handler_id: "mutsuki.bot.agent.message".into(),
+        binding_id: format!("binding:{BOT_AGENT_BRIDGE_PROTOCOL_ID}"),
+        generation: 1,
+        handler_protocol_id: BOT_AGENT_BRIDGE_PROTOCOL_ID.into(),
+        runner_hint: Some(BOT_AGENT_BRIDGE_RUNNER_ID.into()),
+        event_kinds: vec![BotEventKind::MessageCreated],
+        conversation_kinds: Vec::new(),
+        filter: None,
+        permissions: Vec::new(),
+        priority: i32::MIN,
+        propagation: BotPropagationPolicy::StopOnSuccess,
+        rate_limit: None,
+        timeout_ms: None,
+        side_effects: vec!["agent".into(), "bot_delivery".into()],
+        max_concurrency: None,
+        before_hook_protocol_ids: Vec::new(),
+        after_hook_protocol_ids: Vec::new(),
+        error_hook_protocol_ids: Vec::new(),
+    }
+}
+
+fn disabled_product_policy() -> ConversationPolicy {
+    ConversationPolicy {
+        revision: 0,
+        enabled: true,
+        agent_enabled: false,
+        direct_message_policy: DirectMessagePolicy::Allow,
+        must_mention: false,
+        wake_words: Vec::new(),
+        allowlist: Vec::new(),
+        denylist: Vec::new(),
+        rate_limit_profile_id: None,
+        session_scope: AgentSessionScope::SharedConversation,
+        business_profile_binding_id: None,
+        agent_runtime_profile_id: None,
+        stt_enabled: false,
+        tts_enabled: false,
+        speech_reply_policy: BotSpeechReplyPolicy::TextOnly,
+        stt_selector_id: None,
+        tts_selector_id: None,
+        active_delivery_enabled: false,
     }
 }
 
@@ -420,6 +720,23 @@ pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginC
     catalog.register(BilibiliConfiguredPlugin)?;
     catalog.register(WorkshopConfiguredPlugin)?;
     catalog.register(MihuashiConfiguredPlugin)?;
+    Ok(catalog)
+}
+
+/// Production Bot catalog with the configurable Agent fallback wired to a shared Agent owner
+/// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
+pub fn configured_bot_plugin_catalog_with_agent(
+    connections: AgentConnectionRegistry,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    configured_bot_plugin_catalog_with_agent_handlers(connections, Vec::new())
+}
+
+pub fn configured_bot_plugin_catalog_with_agent_handlers(
+    connections: AgentConnectionRegistry,
+    handlers: Vec<BotHandlerDescriptor>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    let mut catalog = configured_bot_plugin_catalog()?;
+    catalog.register(BotAgentConfiguredPlugin::new(connections).with_handlers(handlers))?;
     Ok(catalog)
 }
 

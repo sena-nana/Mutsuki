@@ -113,6 +113,7 @@ fn manifest(
             companion_artifacts: Vec::new(),
         },
         provides: PluginProvides {
+            capabilities: Vec::new(),
             runners,
             protocols: Vec::new(),
             protocol_classes,

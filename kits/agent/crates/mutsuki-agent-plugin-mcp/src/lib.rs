@@ -204,6 +204,7 @@ impl McpHttpClient for ReqwestMcpHttpClient {
         body: &Value,
         timeout: Duration,
     ) -> Result<Value, AgentError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let mut request = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .build()
@@ -1430,6 +1431,18 @@ mod tests {
 
     use super::*;
 
+    fn python_command() -> &'static str {
+        ["python3", "python"]
+            .into_iter()
+            .find(|command| {
+                Command::new(command)
+                    .arg("--version")
+                    .status()
+                    .is_ok_and(|status| status.success())
+            })
+            .expect("Python 3 is required for the real stdio MCP test")
+    }
+
     struct MockFactory {
         responses: BTreeMap<String, Value>,
         stalled: BTreeSet<String>,
@@ -1827,7 +1840,7 @@ while True:
                 server_id: "fixture".into(),
                 source: "local-test".into(),
                 transport: McpTransportKind::Stdio,
-                command: Some("python3".into()),
+                command: Some(python_command().into()),
                 args: vec![script.to_string_lossy().into_owned()],
                 env_allowlist: Vec::new(),
                 url: None,

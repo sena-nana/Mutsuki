@@ -755,6 +755,8 @@ impl BotAgentBridge {
     ) -> Self {
         let config = BotAgentConfigHandle::default();
         let mut settings = config.snapshot();
+        settings.enabled = true;
+        settings.connection_id = "injected".into();
         settings.streaming = streaming_name(streaming).into();
         config
             .replace(settings)
@@ -1736,6 +1738,8 @@ mod tests {
         let mut policy = policy();
         policy.agent_runtime_profile_id = None;
         let config = BotAgentConfigHandle::new(BotAgentConfig {
+            enabled: true,
+            connection_id: "injected".into(),
             default_profile_id: "configured-profile".into(),
             ..BotAgentConfig::default()
         })

@@ -162,6 +162,7 @@ mutsuki-agent-plugin-mcp = { path = "kits/agent/crates/mutsuki-agent-plugin-mcp"
 mutsuki-agent-plugin-next-edit = { path = "kits/agent/crates/mutsuki-agent-plugin-next-edit" }
 mutsuki-agent-plugin-web-search = { path = "kits/agent/crates/mutsuki-agent-plugin-web-search" }
 mutsuki-agent-runtime = { path = "kits/agent/crates/mutsuki-agent-runtime" }
+mutsuki-agent-service-host-integration = { path = "kits/agent/crates/mutsuki-agent-service-host-integration" }
 mutsuki-agent-sdk = { path = "kits/agent/crates/mutsuki-agent-sdk" }
 mutsuki-plugin-agent-credential = { path = "kits/agent/crates/mutsuki-plugin-agent-credential" }
 mutsuki-plugin-agent-knowledge = { path = "kits/agent/crates/mutsuki-plugin-agent-knowledge" }
@@ -183,6 +184,7 @@ mutsuki-bot-testkit = { path = "plugins/bot/crates/mutsuki-bot-testkit" }
 mutsuki-bot-web-console = { path = "plugins/bot/crates/mutsuki-bot-web-console" }
 mutsuki-plugin-bot-adapter-qqbot = { path = "plugins/bot/crates/mutsuki-plugin-bot-adapter-qqbot" }
 mutsuki-plugin-bot-agent = { path = "plugins/bot/crates/mutsuki-plugin-bot-agent" }
+mutsuki-plugin-bot-agent-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-agent-web" }
 mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili" }
 mutsuki-plugin-bot-bilibili-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-web" }
 mutsuki-plugin-bot-bilibili-workshop = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-workshop" }

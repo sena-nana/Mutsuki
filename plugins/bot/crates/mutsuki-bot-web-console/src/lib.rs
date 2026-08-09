@@ -21,7 +21,12 @@ pub use product_config::{
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use watch_bridge::attach_revision_changed_bridge;
 
+use mutsuki_agent_service_host_integration::AgentConnectionManager;
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
+use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_plugin_bot_agent_web::{
+    BotAgentWebExtension, materialize_frontend_assets as materialize_bot_agent_assets,
+};
 use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
 use mutsuki_plugin_bot_bilibili_web::{
     BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
@@ -113,6 +118,41 @@ pub fn build_console_host(
     bilibili: Option<Arc<BilibiliManagementService>>,
     qq: Option<Arc<dyn QqBotManagementApi>>,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
+    build_console_host_with_agent(
+        config,
+        secrets,
+        control,
+        control_token,
+        config_service,
+        secret_monitor,
+        paths,
+        bilibili,
+        qq,
+        BotAgentConsoleServices::default(),
+    )
+}
+
+/// Owner services that make the Agent connection and Bot Agent rule pages real.
+#[derive(Default)]
+pub struct BotAgentConsoleServices {
+    pub connections: Option<Arc<AgentConnectionManager>>,
+    pub policies: Option<Arc<BotStateDbRepository>>,
+}
+
+/// Builds the console and exposes each Agent page only when its owner service is registered.
+#[allow(clippy::too_many_arguments)]
+pub fn build_console_host_with_agent(
+    config: &WebConsoleConfig,
+    secrets: &WebConsoleSecrets,
+    control: Arc<dyn ControlHandler>,
+    control_token: &str,
+    config_service: Option<Arc<ConfigService>>,
+    secret_monitor: Option<SecretMonitor>,
+    paths: &WebConsolePaths,
+    bilibili: Option<Arc<BilibiliManagementService>>,
+    qq: Option<Arc<dyn QqBotManagementApi>>,
+    bot_agent: BotAgentConsoleServices,
+) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     if !config.enabled {
         return Err(mutsuki_web_host::WebHostError::InvalidConfig(
             "web.console.enabled is false".into(),
@@ -124,6 +164,8 @@ pub fn build_console_host(
         paths.release_set.is_some(),
         bilibili.is_some(),
         qq.is_some(),
+        bot_agent.connections.is_some(),
+        bot_agent.policies.is_some(),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -158,6 +200,12 @@ pub fn build_console_host(
     if let Some(api) = qq {
         builder = builder
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
+    }
+    if bot_agent.connections.is_some() || bot_agent.policies.is_some() {
+        builder = builder.extension(
+            BotAgentWebExtension::new(bot_agent.connections, bot_agent.policies)
+                .with_frontend_assets(&asset_dirs.bot_agent_assets),
+        );
     }
     Ok((builder.build()?, asset_dirs))
 }
@@ -196,11 +244,13 @@ pub struct ConsoleAssetDirs {
     pub _config_dir: Option<tempfile::TempDir>,
     pub _bilibili_dir: Option<tempfile::TempDir>,
     pub _qq_dir: Option<tempfile::TempDir>,
+    pub _bot_agent_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
     pub config_assets: PathBuf,
     pub bilibili_assets: PathBuf,
     pub qq_assets: PathBuf,
+    pub bot_agent_assets: PathBuf,
     pub shell_root: PathBuf,
 }
 
@@ -210,6 +260,8 @@ impl ConsoleAssetDirs {
         include_upgrade: bool,
         include_bilibili: bool,
         include_qq: bool,
+        include_agent_connections: bool,
+        include_bot_agent_rules: bool,
     ) -> WebHostResult<Self> {
         let overview_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -253,12 +305,27 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
+        let (bot_agent_dir, bot_agent_assets) =
+            if include_agent_connections || include_bot_agent_rules {
+                let dir = tempfile::tempdir()
+                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+                let assets = materialize_bot_agent_assets(dir.path())
+                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+                copy_dir(&assets, &overview_assets.join("bot-agent"))
+                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+                (Some(dir), assets)
+            } else {
+                (None, PathBuf::new())
+            };
+
         materialize_console_shell(
             &overview_assets,
             include_config,
             include_upgrade,
             include_bilibili,
             include_qq,
+            include_agent_connections,
+            include_bot_agent_rules,
         )
         .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
@@ -269,11 +336,13 @@ impl ConsoleAssetDirs {
             config_assets,
             bilibili_assets,
             qq_assets,
+            bot_agent_assets,
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _config_dir: config_dir,
             _bilibili_dir: bilibili_dir,
             _qq_dir: qq_dir,
+            _bot_agent_dir: bot_agent_dir,
             _shell_dir: shell_dir,
         })
     }
@@ -294,6 +363,8 @@ pub(crate) fn materialize_console_shell(
     include_upgrade: bool,
     include_bilibili: bool,
     include_qq: bool,
+    include_agent_connections: bool,
+    include_bot_agent_rules: bool,
 ) -> std::io::Result<()> {
     let index_template = if include_config {
         include_str!("../assets/console-shell-config.html")
@@ -345,6 +416,8 @@ pub(crate) fn materialize_console_shell(
             "includeUpgrade": include_upgrade,
             "includeBilibili": include_bilibili,
             "includeQq": include_qq,
+            "includeAgentConnections": include_agent_connections,
+            "includeBotAgentRules": include_bot_agent_rules,
         }))?,
     )?;
     Ok(())
@@ -362,4 +435,24 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod agent_console_tests {
+    use super::*;
+
+    #[test]
+    fn agent_pages_are_materialized_only_for_registered_owner_services() {
+        let dirs = ConsoleAssetDirs::materialize(false, false, false, false, true, true).unwrap();
+        assert!(dirs.overview_assets.join("bot-agent/index.js").is_file());
+        let options: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dirs.overview_assets.join("console-options.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(options["includeAgentConnections"], true);
+        assert_eq!(options["includeBotAgentRules"], true);
+
+        let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
+        assert!(!dirs.overview_assets.join("bot-agent").exists());
+    }
 }

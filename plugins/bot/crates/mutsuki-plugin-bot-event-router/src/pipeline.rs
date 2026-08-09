@@ -28,11 +28,19 @@ pub const BOT_HANDLER_PIPELINE_RUNNER_ID: &str = "mutsuki.bot.router.handler.pip
 
 #[must_use]
 pub fn handler_pipeline_manifest() -> PluginManifest {
-    PluginBuilder::new(BOT_HANDLER_PIPELINE_PLUGIN_ID)
-        .runner_descriptor(handler_pipeline_descriptor())
+    handler_pipeline_manifest_for(
+        BOT_HANDLER_PIPELINE_PLUGIN_ID,
+        BOT_HANDLER_PIPELINE_RUNNER_ID,
+    )
+}
+
+#[must_use]
+pub fn handler_pipeline_manifest_for(plugin_id: &str, runner_id: &str) -> PluginManifest {
+    PluginBuilder::new(plugin_id)
+        .runner_descriptor(handler_pipeline_descriptor_for(plugin_id, runner_id))
         .protocol_handler(
             ProtocolDescriptorBuilder::new(BOT_EVENT_INGEST_PROTOCOL_ID).build(),
-            BOT_HANDLER_PIPELINE_RUNNER_ID,
+            runner_id,
             "bot-handler-pipeline",
         )
         .build()
@@ -41,7 +49,21 @@ pub fn handler_pipeline_manifest() -> PluginManifest {
 
 pub fn handler_pipeline_runner(
     client: RuntimeClientRef,
+    handlers: Vec<BotHandlerDescriptor>,
+) -> Box<dyn Runner> {
+    handler_pipeline_runner_for(
+        client,
+        handlers,
+        BOT_HANDLER_PIPELINE_PLUGIN_ID,
+        BOT_HANDLER_PIPELINE_RUNNER_ID,
+    )
+}
+
+pub fn handler_pipeline_runner_for(
+    client: RuntimeClientRef,
     mut handlers: Vec<BotHandlerDescriptor>,
+    plugin_id: &str,
+    runner_id: &str,
 ) -> Box<dyn Runner> {
     handlers.sort_by(|left, right| {
         right
@@ -56,38 +78,42 @@ pub fn handler_pipeline_runner(
         Box::pin(run_pipeline(ctx, task, handlers, ledger))
     });
     Box::new(
-        TaskAwaitRunnerAdapter::new(handler_pipeline_descriptor(), client, factory)
-            .with_self_call_policy(false),
+        TaskAwaitRunnerAdapter::new(
+            handler_pipeline_descriptor_for(plugin_id, runner_id),
+            client,
+            factory,
+        )
+        .with_self_call_policy(false),
     )
 }
 
-fn handler_pipeline_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(
-        BOT_HANDLER_PIPELINE_RUNNER_ID,
-        BOT_HANDLER_PIPELINE_PLUGIN_ID,
-    )
-    .accepted_protocol(BOT_EVENT_INGEST_PROTOCOL_ID)
-    .execution_class(ExecutionClass::Orchestration)
-    .invocation_mode(InvocationMode::AsyncReentrant)
-    .concurrency(RunnerConcurrency::Reentrant {
-        max_inflight_batches: 16,
-        max_inflight_entries: 128,
-    })
-    .batch_capability(RunnerBatchCapability {
-        mode: RunnerMode::NativeBatch,
-        preferred_batch_size: 32,
-        max_batch_entries: 128,
-        max_entry_concurrency: 128,
-        max_inflight_batches: 16,
-        side_effect: RunnerSideEffect::External,
-        ..RunnerBatchCapability::default()
-    })
-    .control_capability(RunnerControlCapability {
-        entry_cancel: true,
-        batch_cancel: true,
-        timeout_granularity: TimeoutGranularity::Entry,
-    })
-    .build()
+fn handler_pipeline_descriptor_for(
+    plugin_id: &str,
+    runner_id: &str,
+) -> mutsuki_runtime_contracts::RunnerDescriptor {
+    RunnerDescriptorBuilder::new(runner_id, plugin_id)
+        .accepted_protocol(BOT_EVENT_INGEST_PROTOCOL_ID)
+        .execution_class(ExecutionClass::Orchestration)
+        .invocation_mode(InvocationMode::AsyncReentrant)
+        .concurrency(RunnerConcurrency::Reentrant {
+            max_inflight_batches: 16,
+            max_inflight_entries: 128,
+        })
+        .batch_capability(RunnerBatchCapability {
+            mode: RunnerMode::NativeBatch,
+            preferred_batch_size: 32,
+            max_batch_entries: 128,
+            max_entry_concurrency: 128,
+            max_inflight_batches: 16,
+            side_effect: RunnerSideEffect::External,
+            ..RunnerBatchCapability::default()
+        })
+        .control_capability(RunnerControlCapability {
+            entry_cancel: true,
+            batch_cancel: true,
+            timeout_granularity: TimeoutGranularity::Entry,
+        })
+        .build()
 }
 
 async fn run_pipeline(
