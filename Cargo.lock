@@ -3348,6 +3348,7 @@ dependencies = [
  "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
@@ -3373,6 +3374,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
@@ -3584,6 +3586,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "url",
 ]
 
 [[package]]
@@ -3594,6 +3597,7 @@ dependencies = [
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",
@@ -3654,6 +3658,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-agent-service-host-integration"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "mutsuki-agent-client",
+ "mutsuki-agent-contracts",
+ "mutsuki-link-core",
+ "mutsuki-link-local",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
+ "mutsuki-service-config",
+ "mutsuki-service-runtime",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
 name = "mutsuki-agent-testkit"
 version = "0.1.0"
 dependencies = [
@@ -3683,6 +3709,7 @@ dependencies = [
  "mutsuki-agent-bundle",
  "mutsuki-agent-contracts",
  "mutsuki-agent-sdk",
+ "mutsuki-agent-service-host-integration",
  "mutsuki-bot-service-host-integration",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-console",
@@ -3868,12 +3895,15 @@ dependencies = [
  "async-trait",
  "fastrand",
  "futures-util",
+ "mutsuki-agent-client",
  "mutsuki-agent-contracts",
+ "mutsuki-agent-service-host-integration",
  "mutsuki-bot-config",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
  "mutsuki-bot-web-console",
  "mutsuki-plugin-bot-adapter-qqbot",
@@ -3935,9 +3965,12 @@ name = "mutsuki-bot-web-console"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "mutsuki-agent-service-host-integration",
  "mutsuki-bot-config",
  "mutsuki-bot-protocol",
+ "mutsuki-bot-state-db",
  "mutsuki-plugin-bot-agent",
+ "mutsuki-plugin-bot-agent-web",
  "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-web",
  "mutsuki-plugin-bot-command",
@@ -4236,6 +4269,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
@@ -4322,6 +4356,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4354,6 +4389,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-plugin-bot-agent-web"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "mutsuki-agent-service-host-integration",
+ "mutsuki-bot-protocol",
+ "mutsuki-bot-state-db",
+ "mutsuki-web-extension",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "mutsuki-plugin-bot-bilibili"
 version = "0.1.0"
 dependencies = [
@@ -4370,6 +4420,7 @@ dependencies = [
  "mutsuki-runtime-sdk",
  "reqwest",
  "rusqlite",
+ "rustls",
  "scraper",
  "serde",
  "serde_json",
@@ -4403,6 +4454,7 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "reqwest",
+ "rustls",
  "scraper",
  "serde",
  "serde_json",

@@ -4,9 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use mutsuki_agent_adapter_api::{
-    CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter,
-};
+use mutsuki_agent_adapter_api::{CredentialBroker, ModelAdapterFuture, ModelProtocolAdapter};
 use mutsuki_agent_contracts::{
     AgentMessage, AgentModelGenerateResult, AgentModelStopReason, AgentRole, AgentToolCall,
     AgentToolResultMetadata, AgentUsage, ModelCapability, ModelGenerateRequest,
@@ -15,7 +13,7 @@ use mutsuki_agent_contracts::{
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
 
-use crate::{error, retryable_status, status_error, transport_error};
+use crate::{error, install_crypto_provider, retryable_status, status_error, transport_error};
 
 pub const ADAPTER_ID: &str = "openai-responses";
 pub const PROTOCOL: &str = "openai.responses";
@@ -40,6 +38,7 @@ impl OpenAiResponsesAdapter {
                 "adapter and runner ids are required",
             ));
         }
+        install_crypto_provider();
         Ok(Self {
             descriptor,
             credentials,

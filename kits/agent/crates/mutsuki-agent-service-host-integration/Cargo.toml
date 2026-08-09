@@ -1,0 +1,28 @@
+[package]
+name = "mutsuki-agent-service-host-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hex.workspace = true
+mutsuki-agent-client.workspace = true
+mutsuki-agent-contracts.workspace = true
+mutsuki-link-core.workspace = true
+mutsuki-link-local.workspace = true
+mutsuki-runtime-contracts.workspace = true
+mutsuki-runtime-sdk.workspace = true
+mutsuki-service-config.workspace = true
+mutsuki-service-runtime.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -292,6 +292,7 @@ impl HttpModelProvider {
                 "model provider secret is missing",
             ));
         }
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::builder()
             .build()
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;

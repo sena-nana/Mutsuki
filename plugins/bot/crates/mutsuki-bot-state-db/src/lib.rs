@@ -9,7 +9,9 @@ use mutsuki_bot_delivery::{DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryReposi
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotInteractionSession, ConversationPolicyRule, DeliveryStatus, InteractionStatus,
+    BotInteractionSession, ConversationPolicyRule, ConversationPolicyRuleAuditEntry,
+    ConversationPolicyRuleDelete, ConversationPolicyRuleUpsert, ConversationPolicyRuleWriteResult,
+    DeliveryStatus, InteractionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -17,6 +19,7 @@ use tokio::sync::{mpsc, oneshot};
 
 const DEFAULT_QUEUE_CAPACITY: usize = 256;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const BOT_CONVERSATION_POLICY_SERVICE_ID: &str = "mutsuki.bot.conversation.policy";
 
 #[derive(Clone)]
 pub struct BotStateDbRepository {
@@ -184,6 +187,39 @@ impl BotStateDbRepository {
             .await
     }
 
+    /// Applies a persistent rule upsert under the global policy revision fence.
+    pub async fn upsert_policy_rule_fenced(
+        &self,
+        request: ConversationPolicyRuleUpsert,
+    ) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
+        self.call(|reply| DbJob::UpsertPolicyRuleFenced { request, reply })
+            .await
+    }
+
+    /// Applies a persistent rule deletion under the global policy revision fence.
+    pub async fn delete_policy_rule_fenced(
+        &self,
+        request: ConversationPolicyRuleDelete,
+    ) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
+        self.call(|reply| DbJob::DeletePolicyRuleFenced { request, reply })
+            .await
+    }
+
+    /// Loads the durable rule revision, rules, and audit trail after restart.
+    pub async fn policy_management_snapshot(
+        &self,
+    ) -> Result<
+        (
+            u64,
+            Vec<ConversationPolicyRule>,
+            Vec<ConversationPolicyRuleAuditEntry>,
+        ),
+        BotStateDbError,
+    > {
+        self.call(|reply| DbJob::PolicyManagementSnapshot { reply })
+            .await
+    }
+
     async fn call<T>(
         &self,
         make_job: impl FnOnce(oneshot::Sender<Result<T, BotStateDbError>>) -> DbJob,
@@ -196,6 +232,26 @@ impl BotStateDbRepository {
         }
         response.await.map_err(|_| BotStateDbError::ActorStopped)?
     }
+
+    fn call_sync<T>(
+        &self,
+        make_job: impl FnOnce(std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>) -> DbJob,
+    ) -> Result<T, BotStateDbError> {
+        let (reply, response) = std::sync::mpsc::sync_channel(1);
+        self.inner.metrics.queued();
+        match self.inner.jobs.try_send(make_job(reply)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.inner.metrics.dequeued();
+                return Err(BotStateDbError::QueueFull);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.inner.metrics.dequeued();
+                return Err(BotStateDbError::ActorStopped);
+            }
+        }
+        response.recv().map_err(|_| BotStateDbError::ActorStopped)?
+    }
 }
 
 enum DbJob {
@@ -203,29 +259,44 @@ enum DbJob {
         rule: ConversationPolicyRule,
         reply: DbReply<()>,
     },
-    PolicyRules {
-        reply: DbReply<Vec<ConversationPolicyRule>>,
+    UpsertPolicyRuleFenced {
+        request: ConversationPolicyRuleUpsert,
+        reply: DbReply<ConversationPolicyRuleWriteResult>,
     },
-    SessionBinding {
+    DeletePolicyRuleFenced {
+        request: ConversationPolicyRuleDelete,
+        reply: DbReply<ConversationPolicyRuleWriteResult>,
+    },
+    PolicyManagementSnapshot {
+        reply: DbReply<(
+            u64,
+            Vec<ConversationPolicyRule>,
+            Vec<ConversationPolicyRuleAuditEntry>,
+        )>,
+    },
+    PolicyRulesSync {
+        reply: SyncDbReply<Vec<ConversationPolicyRule>>,
+    },
+    SessionBindingSync {
         binding_key: String,
-        reply: DbReply<Option<AgentSessionBinding>>,
+        reply: SyncDbReply<Option<AgentSessionBinding>>,
     },
-    CompareAndSetSessionBinding {
+    CompareAndSetSessionBindingSync {
         binding_key: String,
         expected_generation: Option<u64>,
         binding: AgentSessionBinding,
-        reply: DbReply<bool>,
+        reply: SyncDbReply<bool>,
     },
-    BeginAgentEvent {
+    BeginAgentEventSync {
         binding_key: String,
         event_id: String,
         turn_id: String,
-        reply: DbReply<AgentEventClaim>,
+        reply: SyncDbReply<AgentEventClaim>,
     },
-    CompleteAgentEvent {
+    CompleteAgentEventSync {
         binding_key: String,
         event_id: String,
-        reply: DbReply<bool>,
+        reply: SyncDbReply<bool>,
     },
     ReserveDelivery {
         request: BotActiveDeliveryRequest,
@@ -282,13 +353,16 @@ enum DbJob {
 }
 
 type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
+type SyncDbReply<T> = std::sync::mpsc::SyncSender<Result<T, BotStateDbError>>;
 
 impl DbJob {
     fn transactional(&self) -> bool {
         matches!(
             self,
-            Self::CompareAndSetSessionBinding { .. }
-                | Self::BeginAgentEvent { .. }
+            Self::UpsertPolicyRuleFenced { .. }
+                | Self::DeletePolicyRuleFenced { .. }
+                | Self::CompareAndSetSessionBindingSync { .. }
+                | Self::BeginAgentEventSync { .. }
                 | Self::ReserveDelivery { .. }
                 | Self::SaveDeliveryOutcome { .. }
                 | Self::ClaimDueDeliveries { .. }
@@ -303,18 +377,35 @@ impl DbJob {
             Self::UpsertPolicyRule { rule, reply } => {
                 send_reply(reply, upsert_policy_rule(connection, &rule), metrics);
             }
-            Self::PolicyRules { reply } => {
-                send_reply(reply, policy_rules(connection), metrics);
+            Self::UpsertPolicyRuleFenced { request, reply } => {
+                send_reply(
+                    reply,
+                    upsert_policy_rule_fenced(connection, request),
+                    metrics,
+                );
             }
-            Self::SessionBinding { binding_key, reply } => {
-                send_reply(reply, session_binding(connection, &binding_key), metrics);
+            Self::DeletePolicyRuleFenced { request, reply } => {
+                send_reply(
+                    reply,
+                    delete_policy_rule_fenced(connection, request),
+                    metrics,
+                );
             }
-            Self::CompareAndSetSessionBinding {
+            Self::PolicyManagementSnapshot { reply } => {
+                send_reply(reply, policy_management_snapshot(connection), metrics);
+            }
+            Self::PolicyRulesSync { reply } => {
+                send_sync_reply(reply, policy_rules(connection), metrics);
+            }
+            Self::SessionBindingSync { binding_key, reply } => {
+                send_sync_reply(reply, session_binding(connection, &binding_key), metrics);
+            }
+            Self::CompareAndSetSessionBindingSync {
                 binding_key,
                 expected_generation,
                 binding,
                 reply,
-            } => send_reply(
+            } => send_sync_reply(
                 reply,
                 compare_and_set_session_binding(
                     connection,
@@ -324,21 +415,21 @@ impl DbJob {
                 ),
                 metrics,
             ),
-            Self::BeginAgentEvent {
+            Self::BeginAgentEventSync {
                 binding_key,
                 event_id,
                 turn_id,
                 reply,
-            } => send_reply(
+            } => send_sync_reply(
                 reply,
                 begin_agent_event(connection, &binding_key, &event_id, &turn_id),
                 metrics,
             ),
-            Self::CompleteAgentEvent {
+            Self::CompleteAgentEventSync {
                 binding_key,
                 event_id,
                 reply,
-            } => send_reply(
+            } => send_sync_reply(
                 reply,
                 complete_agent_event(connection, &binding_key, &event_id),
                 metrics,
@@ -424,6 +515,17 @@ fn send_reply<T>(reply: DbReply<T>, result: Result<T, BotStateDbError>, metrics:
     let _ = reply.send(result);
 }
 
+fn send_sync_reply<T>(
+    reply: SyncDbReply<T>,
+    result: Result<T, BotStateDbError>,
+    metrics: &ActorMetrics,
+) {
+    if let Err(error) = &result {
+        metrics.observe_error(error);
+    }
+    let _ = reply.send(result);
+}
+
 fn open_connection(
     path: &Path,
     metrics: &ActorMetrics,
@@ -453,6 +555,16 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
         "BEGIN IMMEDIATE;
          CREATE TABLE IF NOT EXISTS bot_conversation_policy(
              rule_id TEXT PRIMARY KEY,
+             body TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_conversation_policy_meta(
+             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+             revision INTEGER NOT NULL
+         );
+         INSERT OR IGNORE INTO bot_conversation_policy_meta(singleton, revision) VALUES (1, 0);
+         CREATE TABLE IF NOT EXISTS bot_conversation_policy_audit(
+             revision INTEGER PRIMARY KEY,
+             audit_id TEXT NOT NULL UNIQUE,
              body TEXT NOT NULL
          );
          CREATE TABLE IF NOT EXISTS bot_agent_binding(
@@ -499,7 +611,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=2;
+         PRAGMA user_version=3;
          COMMIT;",
     )?;
 
@@ -546,6 +658,136 @@ fn upsert_policy_rule(
          ON CONFLICT(rule_id) DO UPDATE SET body=excluded.body",
         params![rule.rule_id, encode(rule)?],
     )?;
+    Ok(())
+}
+
+fn upsert_policy_rule_fenced(
+    connection: &mut Connection,
+    request: ConversationPolicyRuleUpsert,
+) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
+    validate_policy_write(&request.actor_id, &request.rule.rule_id)?;
+    let transaction = immediate(connection)?;
+    let current = policy_revision(&transaction)?;
+    if current != request.expected_revision {
+        return Err(BotStateDbError::RevisionConflict {
+            expected: request.expected_revision,
+            actual: current,
+        });
+    }
+    let next = current.saturating_add(1);
+    let mut rule = request.rule;
+    rule.revision = next;
+    transaction.execute(
+        "INSERT INTO bot_conversation_policy(rule_id, body) VALUES (?1, ?2)
+         ON CONFLICT(rule_id) DO UPDATE SET body=excluded.body",
+        params![rule.rule_id, encode(&rule)?],
+    )?;
+    let result = record_policy_write(
+        &transaction,
+        &request.actor_id,
+        "upsert",
+        &rule.rule_id,
+        next,
+    )?;
+    transaction.commit()?;
+    Ok(result)
+}
+
+fn delete_policy_rule_fenced(
+    connection: &mut Connection,
+    request: ConversationPolicyRuleDelete,
+) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
+    validate_policy_write(&request.actor_id, &request.rule_id)?;
+    let transaction = immediate(connection)?;
+    let current = policy_revision(&transaction)?;
+    if current != request.expected_revision {
+        return Err(BotStateDbError::RevisionConflict {
+            expected: request.expected_revision,
+            actual: current,
+        });
+    }
+    let changed = transaction.execute(
+        "DELETE FROM bot_conversation_policy WHERE rule_id=?1",
+        params![request.rule_id],
+    )?;
+    if changed != 1 {
+        return Err(BotStateDbError::PolicyRuleNotFound(request.rule_id));
+    }
+    let next = current.saturating_add(1);
+    let result = record_policy_write(
+        &transaction,
+        &request.actor_id,
+        "delete",
+        &request.rule_id,
+        next,
+    )?;
+    transaction.commit()?;
+    Ok(result)
+}
+
+fn record_policy_write(
+    transaction: &Transaction<'_>,
+    actor_id: &str,
+    action: &str,
+    rule_id: &str,
+    revision: u64,
+) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
+    let audit_id = format!("conversation-policy-audit-{revision}");
+    let audit = ConversationPolicyRuleAuditEntry {
+        audit_id: audit_id.clone(),
+        actor_id: actor_id.into(),
+        action: action.into(),
+        rule_id: rule_id.into(),
+        revision,
+    };
+    transaction.execute(
+        "UPDATE bot_conversation_policy_meta SET revision=?1 WHERE singleton=1",
+        params![sqlite_integer(revision)?],
+    )?;
+    transaction.execute(
+        "INSERT INTO bot_conversation_policy_audit(revision, audit_id, body) VALUES (?1, ?2, ?3)",
+        params![sqlite_integer(revision)?, audit_id, encode(&audit)?],
+    )?;
+    Ok(ConversationPolicyRuleWriteResult { revision, audit_id })
+}
+
+fn policy_revision(connection: &Connection) -> Result<u64, BotStateDbError> {
+    let revision = connection.query_row(
+        "SELECT revision FROM bot_conversation_policy_meta WHERE singleton=1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    u64::try_from(revision)
+        .map_err(|_| BotStateDbError::Invariant("negative policy revision".into()))
+}
+
+fn policy_management_snapshot(
+    connection: &Connection,
+) -> Result<
+    (
+        u64,
+        Vec<ConversationPolicyRule>,
+        Vec<ConversationPolicyRuleAuditEntry>,
+    ),
+    BotStateDbError,
+> {
+    let revision = policy_revision(connection)?;
+    let rules = policy_rules(connection)?;
+    let mut statement =
+        connection.prepare("SELECT body FROM bot_conversation_policy_audit ORDER BY revision")?;
+    let audits = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .map(|body| decode(&body?))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((revision, rules, audits))
+}
+
+fn validate_policy_write(actor_id: &str, rule_id: &str) -> Result<(), BotStateDbError> {
+    if actor_id.trim().is_empty() || rule_id.trim().is_empty() {
+        return Err(BotStateDbError::InvalidPolicyWrite(
+            "actor_id and rule_id are required".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -1085,8 +1327,7 @@ fn interaction_status_name(status: InteractionStatus) -> &'static str {
 #[async_trait]
 impl ConversationRepository for BotStateDbRepository {
     async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
-        self.call(|reply| DbJob::PolicyRules { reply })
-            .await
+        self.call_sync(|reply| DbJob::PolicyRulesSync { reply })
             .map_err(conversation_error)
     }
 
@@ -1095,8 +1336,7 @@ impl ConversationRepository for BotStateDbRepository {
         binding_key: &str,
     ) -> Result<Option<AgentSessionBinding>, ConversationError> {
         let binding_key = binding_key.to_owned();
-        self.call(|reply| DbJob::SessionBinding { binding_key, reply })
-            .await
+        self.call_sync(|reply| DbJob::SessionBindingSync { binding_key, reply })
             .map_err(conversation_error)
     }
 
@@ -1108,13 +1348,12 @@ impl ConversationRepository for BotStateDbRepository {
     ) -> Result<(), ConversationError> {
         let binding_key = binding_key.to_owned();
         let changed = self
-            .call(|reply| DbJob::CompareAndSetSessionBinding {
+            .call_sync(|reply| DbJob::CompareAndSetSessionBindingSync {
                 binding_key,
                 expected_generation,
                 binding,
                 reply,
             })
-            .await
             .map_err(conversation_error)?;
         changed
             .then_some(())
@@ -1130,13 +1369,12 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let turn_id = turn_id.to_owned();
-        self.call(|reply| DbJob::BeginAgentEvent {
+        self.call_sync(|reply| DbJob::BeginAgentEventSync {
             binding_key,
             event_id,
             turn_id,
             reply,
         })
-        .await
         .map_err(conversation_error)
     }
 
@@ -1148,12 +1386,11 @@ impl ConversationRepository for BotStateDbRepository {
         let binding_key = binding_key.to_owned();
         let event_id = event_id.to_owned();
         let changed = self
-            .call(|reply| DbJob::CompleteAgentEvent {
+            .call_sync(|reply| DbJob::CompleteAgentEventSync {
                 binding_key,
                 event_id,
                 reply,
             })
-            .await
             .map_err(conversation_error)?;
         changed
             .then_some(())
@@ -1325,8 +1562,16 @@ pub enum BotStateDbError {
     ActorStart(String),
     #[error("database actor stopped")]
     ActorStopped,
+    #[error("database actor queue is full")]
+    QueueFull,
     #[error("invalid database actor configuration: {0}")]
     InvalidConfiguration(String),
+    #[error("expected conversation policy revision {expected}, current revision is {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+    #[error("conversation policy rule `{0}` was not found")]
+    PolicyRuleNotFound(String),
+    #[error("invalid conversation policy write: {0}")]
+    InvalidPolicyWrite(String),
 }
 
 #[cfg(test)]
@@ -1343,6 +1588,57 @@ mod tests {
     use tokio::task::JoinSet;
 
     use super::*;
+
+    #[tokio::test]
+    async fn policy_rule_writes_are_revision_fenced_audited_and_recovered() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("policy.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let upsert = repository
+            .upsert_policy_rule_fenced(ConversationPolicyRuleUpsert {
+                actor_id: "admin".into(),
+                expected_revision: 0,
+                rule: policy_rule(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(upsert.revision, 1);
+        assert!(matches!(
+            repository
+                .upsert_policy_rule_fenced(ConversationPolicyRuleUpsert {
+                    actor_id: "stale".into(),
+                    expected_revision: 0,
+                    rule: policy_rule(),
+                })
+                .await,
+            Err(BotStateDbError::RevisionConflict {
+                expected: 0,
+                actual: 1
+            })
+        ));
+        drop(repository);
+
+        let reopened = BotStateDbRepository::open(&path).unwrap();
+        let (revision, rules, audits) = reopened.policy_management_snapshot().await.unwrap();
+        assert_eq!(revision, 1);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].revision, 1);
+        assert_eq!(audits[0].actor_id, "admin");
+        let deleted = reopened
+            .delete_policy_rule_fenced(ConversationPolicyRuleDelete {
+                actor_id: "admin".into(),
+                expected_revision: 1,
+                rule_id: rules[0].rule_id.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted.revision, 2);
+        let (revision, rules, audits) = reopened.policy_management_snapshot().await.unwrap();
+        assert_eq!(revision, 2);
+        assert!(rules.is_empty());
+        assert_eq!(audits.len(), 2);
+        assert_eq!(audits[1].action, "delete");
+    }
 
     #[tokio::test]
     async fn pending_after_reserve_and_expired_sending_are_recoverable() {

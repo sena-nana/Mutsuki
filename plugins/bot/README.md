@@ -72,7 +72,10 @@ WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用
 - `mutsuki-plugin-bot-event-router`: standard `mutsuki.bot.event/ingest@1` router plugin.
 - `mutsuki-plugin-bot-command`: generic message command parser plugin.
 - `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
-  handling, public AgentClient injection, and Config Web settings.
+  handling and production configured factory `mutsuki.plugin.bot.agent`. Its config stores only
+  `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
+- `mutsuki-plugin-bot-agent-web`: authenticated Agent connection and persistent conversation-rule
+  pages, mounted only when the corresponding owner Host services exist.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories and QQ EventSource bundle.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
@@ -127,6 +130,11 @@ disallowed intent/shard configurations as permanent structured failures.
 See `docs/qqbot-adapter.md` and `examples/service-host-example` for configured ServiceHost
 assembly, fake-server E2E and real-account smoke boundaries. `configured_bot_plugin_catalog()`
 exports owner-defined config factories without moving QQ fields into ServiceHost.
+Products that opt into Agent use `configured_bot_plugin_catalog_with_agent()` with the same shared
+`AgentConnectionRegistry` passed to AgentKit's configured catalog. The Bot Agent-owned pipeline
+runs command/business handlers first and the Agent bridge at `i32::MIN`; Stop/Consume prevents the
+fallback, while ordinary and unknown-command messages continue to policy admission. The default
+Product rule disables Agent, so selecting the plugin alone never creates conversations.
 Issue #141's criterion-by-criterion functional and performance evidence is recorded in
 `docs/issue141-acceptance.md`.
 

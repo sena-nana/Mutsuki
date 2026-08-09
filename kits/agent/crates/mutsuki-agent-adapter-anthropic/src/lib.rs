@@ -45,6 +45,7 @@ impl AnthropicMessagesAdapter {
                 "adapter and runner ids are required",
             ));
         }
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = Client::builder()
             .build()
             .map_err(|err| transport_error(&err))?;

@@ -37,6 +37,7 @@ impl QqGatewayMediaHandler {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "QQ inbound media requires media_provider_id".to_string())?;
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let client = Client::builder()
             .connect_timeout(std::time::Duration::from_millis(config.connect_timeout_ms))
             .timeout(std::time::Duration::from_millis(config.request_timeout_ms))

@@ -16,6 +16,7 @@ pub(crate) fn try_media_client(
     timeout: std::time::Duration,
     user_agent: &str,
 ) -> Result<Client, BilibiliError> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     Client::builder()
         .timeout(timeout)
         .user_agent(user_agent)

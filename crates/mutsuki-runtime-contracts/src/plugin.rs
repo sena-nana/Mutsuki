@@ -101,6 +101,13 @@ pub struct LifecyclePolicy {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PluginProvides {
+    /// Owner-defined load-plan capabilities that do not imply a runner, protocol, resource,
+    /// or Host backend surface.
+    ///
+    /// Values use the same fully-qualified capability syntax as `PluginManifest::requires`.
+    /// They are validated and activated by the Host resolver, but remain opaque to Core.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
     pub runners: Vec<RunnerDescriptor>,
     pub protocols: Vec<ProtocolDescriptor>,
     /// Runtime semantic class for each task protocol.

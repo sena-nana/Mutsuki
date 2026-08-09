@@ -40,6 +40,8 @@ MutsukiAgentKit   Runtime + Adapter + Plugin
 - `crates/mutsuki-agent-adapter-api`（含 SimpleReact）· `mutsuki-agent-adapter-openai`（Chat Completions + Responses）· `mutsuki-agent-adapter-anthropic`
 - `crates/mutsuki-agent-plugin-api` · `mutsuki-agent-plugin-conformance`
 - `crates/mutsuki-agent-client` · `mutsuki-agent-distributed-integration`
+- `crates/mutsuki-agent-service-host-integration` · configured connection catalog、健康状态、
+  revision-fenced 管理与 Local Link connector；endpoint/认证仍由 connector owner 配置
 - `crates/mutsuki-agent-sdk` · `mutsuki-agent-macros`
 - `crates/mutsuki-plugin-agent-*` · `mutsuki-agent-testkit`
 - `crates/mutsuki-agent-bundle` · Host-neutral Agent services 与 manifest 集合
@@ -81,6 +83,7 @@ provider 资源存储，runtime task 只携带 `ResourceRef`。
 | model-gateway | deterministic/provider-neutral model 编排与 Host-driven async provider | AgentLoop 与 bundle |
 | `mutsuki-agent-testkit` | fake model/tool 与 conformance | workspace tests、跨仓库产品验收 |
 | `mutsuki-agent-bundle` | Host-neutral manifest/runner catalog | ServiceHost 或产品装配层 |
+| `mutsuki-agent-service-host-integration` | `AgentConnectionRegistry`、connector catalog、握手/重连/原子 generation 切换 | ServiceHost 产品与 Bot Agent |
 
 这些 plugin crate 保留独立 manifest、runner 与可选装配边界；它们不是第二套 runtime，产品
 可只注册实际选择的能力。

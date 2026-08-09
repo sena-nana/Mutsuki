@@ -29,11 +29,9 @@ use mutsuki_runtime_sdk::{
     HostService, LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient,
     RuntimeClientRef, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
-#[cfg(test)]
-use mutsuki_service_config::ConfiguredPluginSelection;
 use mutsuki_service_config::{
-    ConfiguredPluginStore, DispatchLaneName, ExecutionClassName, HostSecretStore,
-    LanePolicySection, ServiceConfig, filtered_environment,
+    ConfiguredPluginSelection, ConfiguredPluginStore, DispatchLaneName, ExecutionClassName,
+    HostSecretStore, LanePolicySection, ServiceConfig, filtered_environment,
 };
 use mutsuki_service_control::{
     ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse,
@@ -596,6 +594,20 @@ impl ServiceRuntimeBuilder {
     /// Host-owned persistence boundary for owner-defined configured plugin data.
     pub fn configured_plugin_store(&self) -> Option<ConfiguredPluginStore> {
         self.config.configured_plugin_store()
+    }
+
+    /// Reads one owner-defined configured selection during boot-time catalog composition.
+    /// Domain factories may use this only to combine declared plugin contributions before the
+    /// load plan is frozen.
+    pub fn configured_plugin_selection(
+        &self,
+        plugin_id: &str,
+    ) -> Option<&ConfiguredPluginSelection> {
+        self.config
+            .plugins
+            .configured
+            .iter()
+            .find(|selection| selection.id == plugin_id && selection.enabled)
     }
 
     /// Registers and enables a product-provided builtin manifest before the load plan is built.

@@ -11,6 +11,7 @@ mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-runtime-sdk.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -180,7 +180,7 @@ instance_id = "demo"
 
 [[plugins.configured]]
 id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, default_profile_id = "stable", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
+config = { enabled = true, connection_id = "primary", default_profile_id = "stable", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
 "#,
     )
     .unwrap();

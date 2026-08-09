@@ -775,7 +775,7 @@ async fn service_runtime_routes_qq_event_through_agent_and_suppresses_replay() {
         r#"
 [[plugins.configured]]
 id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, default_profile_id = "", streaming = "final_only", max_concurrency = 1, timeout_ms = 120000, max_message_bytes = 1800 }
+config = { enabled = true, connection_id = "injected", default_profile_id = "", streaming = "final_only", max_concurrency = 1, timeout_ms = 120000, max_message_bytes = 1800 }
 "#,
     )
     .unwrap();
@@ -788,6 +788,7 @@ config = { enabled = true, default_profile_id = "", streaming = "final_only", ma
                 runtime.control_token(),
             ))),
             bot_agent_config: Some((*live_agent_config).clone()),
+            agent_connections: None,
         },
     )
     .unwrap();

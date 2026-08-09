@@ -1163,7 +1163,9 @@ mod tests {
     use super::*;
 
     fn file_uri(path: &Path) -> String {
-        format!("file://{}", path.to_string_lossy())
+        url::Url::from_file_path(path)
+            .expect("fixture path converts to a file URL")
+            .to_string()
     }
 
     struct MockFactory {

@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_bot_service_host_integration::{
-    BilibiliConsoleBridge, BotAgentConfigConsoleBridge, QqConsoleBridge,
+    AgentConnectionConsoleBridge, AgentConnectionRegistryConsoleBridge, BilibiliConsoleBridge,
+    BotAgentConfigConsoleBridge, BotConversationPolicyConsoleBridge, QqConsoleBridge,
 };
 use mutsuki_bot_web_console::{
-    ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver,
-    SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
-    attach_revision_changed_bridge, build_console_host, product_config_service_with_options,
+    BotAgentConsoleServices, ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions,
+    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
+    attach_revision_changed_bridge, build_console_host_with_agent,
+    product_config_service_with_options,
 };
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
@@ -49,6 +51,7 @@ impl WebConsoleGuard {
                         store: service.configured_plugin_store(),
                         bot_agent_config: BotAgentConfigConsoleBridge::get(runtime)
                             .map(|handle| (*handle).clone()),
+                        agent_connections: AgentConnectionRegistryConsoleBridge::get(runtime),
                         lifecycle: Some(Arc::new(ControlPluginReloadLifecycle::new(
                             runtime.control_handler(),
                             runtime.control_token(),
@@ -63,7 +66,7 @@ impl WebConsoleGuard {
         } else {
             None
         };
-        let (host, assets) = build_console_host(
+        let (host, assets) = build_console_host_with_agent(
             &config,
             &secrets,
             runtime.control_handler(),
@@ -73,6 +76,10 @@ impl WebConsoleGuard {
             &WebConsolePaths::resolve(&product_root(product_config_path), &config),
             BilibiliConsoleBridge::get(runtime),
             QqConsoleBridge::get(runtime),
+            BotAgentConsoleServices {
+                connections: AgentConnectionConsoleBridge::get(runtime),
+                policies: BotConversationPolicyConsoleBridge::get(runtime),
+            },
         )?;
         let mut host = host;
         host.start().await?;

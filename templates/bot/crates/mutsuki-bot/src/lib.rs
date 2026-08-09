@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
+use mutsuki_agent_service_host_integration::{
+    AgentConnectionRegistry, configured_standard_agent_plugin_catalog,
+};
+use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog_with_agent;
 use mutsuki_service_config::{ExecutionClassName, ExecutionDomainSection, ServiceConfig};
 use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
 use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
@@ -52,7 +55,11 @@ fn execution_domain(
 
 pub fn assemble_service(mut service: ServiceConfig) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
     apply_product_runtime_profile(&mut service);
+    let agent_connections = AgentConnectionRegistry::new();
     let mut catalog = configured_std_plugin_catalog()?;
-    catalog.merge(configured_bot_plugin_catalog()?)?;
+    catalog.merge(configured_standard_agent_plugin_catalog(
+        agent_connections.clone(),
+    )?)?;
+    catalog.merge(configured_bot_plugin_catalog_with_agent(agent_connections)?)?;
     Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
 }

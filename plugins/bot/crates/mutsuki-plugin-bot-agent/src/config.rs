@@ -1,6 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use mutsuki_agent_client::{AgentConnectionId, AgentConnectionIdError};
 use mutsuki_bot_config::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
@@ -36,10 +37,18 @@ pub struct BotAgentConfig {
     #[config(
         title = "启用 Bot Agent",
         description = "允许通过已授权的 Bot 会话提交 Agent 请求",
-        default = true,
+        default = false,
         restart = "plugin_reload"
     )]
     pub enabled: bool,
+    #[config(
+        title = "Agent 连接",
+        description = "选择由 Agent owner catalog 管理的连接标识；Bot 不保存 endpoint 或认证配置",
+        default = "",
+        max_length = 128,
+        restart = "plugin_reload"
+    )]
+    pub connection_id: String,
     #[config(
         title = "默认 Agent 配置",
         description = "未在会话策略中指定时使用的 Agent 配置标识；留空表示必须由会话策略指定",
@@ -90,7 +99,8 @@ pub struct BotAgentConfig {
 impl Default for BotAgentConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
+            connection_id: String::new(),
             default_profile_id: String::new(),
             streaming: "final_only".into(),
             max_concurrency: 1,
@@ -107,6 +117,11 @@ impl BotAgentConfig {
     ///
     /// Returns the typed invalid field or unsupported streaming strategy.
     pub fn validate(&self) -> Result<(), BotAgentConfigError> {
+        if self.enabled {
+            AgentConnectionId::new(self.connection_id.clone())?;
+        } else if !self.connection_id.is_empty() {
+            AgentConnectionId::new(self.connection_id.clone())?;
+        }
         if self.default_profile_id.len() > 256
             || self.default_profile_id.chars().any(char::is_control)
         {
@@ -131,6 +146,16 @@ impl BotAgentConfig {
         Ok(())
     }
 
+    /// Returns the selected typed connection id when the plugin is enabled.
+    pub fn selected_connection_id(&self) -> Result<Option<AgentConnectionId>, BotAgentConfigError> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        AgentConnectionId::new(self.connection_id.clone())
+            .map(Some)
+            .map_err(BotAgentConfigError::from)
+    }
+
     /// Decodes the configured streaming policy into the QQ delivery strategy.
     ///
     /// # Errors
@@ -147,6 +172,8 @@ impl BotAgentConfig {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum BotAgentConfigError {
+    #[error(transparent)]
+    InvalidConnectionId(#[from] AgentConnectionIdError),
     #[error("default_profile_id must be at most 256 characters and contain no control characters")]
     InvalidProfileId,
     #[error("unsupported streaming mode `{0}`")]
@@ -266,6 +293,8 @@ mod tests {
     fn default_config_is_valid_and_schema_has_streaming_select() {
         let config = BotAgentConfig::default();
         config.validate().unwrap();
+        assert!(!config.enabled);
+        assert!(config.connection_id.is_empty());
         let schema = bot_agent_config_schema();
         let streaming = schema
             .root
@@ -279,6 +308,21 @@ mod tests {
                 if options.iter().map(|option| option.value.as_str()).collect::<Vec<_>>()
                     == ["final_only", "segment_messages"]
         ));
+    }
+
+    #[test]
+    fn enabled_config_requires_a_valid_connection_id() {
+        let mut config = BotAgentConfig::default();
+        config.enabled = true;
+        assert!(matches!(
+            config.validate(),
+            Err(BotAgentConfigError::InvalidConnectionId(_))
+        ));
+        config.connection_id = "primary".into();
+        assert_eq!(
+            config.selected_connection_id().unwrap().unwrap().as_str(),
+            "primary"
+        );
     }
 
     #[test]

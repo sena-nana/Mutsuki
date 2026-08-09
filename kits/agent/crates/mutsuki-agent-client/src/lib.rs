@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -20,11 +22,93 @@ pub const DEFAULT_LINK_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_EVENT_PAGE_SIZE: u32 = 1_000;
 pub const MAX_RESOURCE_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
 
+/// Stable product-facing id for a configured Agent connection.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AgentConnectionId(String);
+
+impl AgentConnectionId {
+    pub fn new(value: impl Into<String>) -> Result<Self, AgentConnectionIdError> {
+        let value = value.into();
+        let valid = !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+        if !valid {
+            return Err(AgentConnectionIdError(value));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn capability(&self) -> String {
+        format!("agent_connection:{}", self.0)
+    }
+}
+
+impl fmt::Display for AgentConnectionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl FromStr for AgentConnectionId {
+    type Err = AgentConnectionIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl serde::Serialize for AgentConnectionId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AgentConnectionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentConnectionIdError(String);
+
+impl fmt::Display for AgentConnectionIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "invalid Agent connection id `{}`", self.0)
+    }
+}
+
+impl std::error::Error for AgentConnectionIdError {}
+
 pub trait AgentClientBackend {
     fn request(
         &mut self,
         request: AgentWireRequestEnvelope,
     ) -> Result<AgentWireResponseEnvelope, AgentWireError>;
+}
+
+impl<T: AgentClientBackend + ?Sized> AgentClientBackend for Box<T> {
+    fn request(
+        &mut self,
+        request: AgentWireRequestEnvelope,
+    ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
+        (**self).request(request)
+    }
 }
 
 pub trait InProcessAgentService {

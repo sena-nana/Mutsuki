@@ -70,6 +70,9 @@ impl QqAiBotPluginBundle {
         interaction_matcher: Arc<dyn InteractionConditionMatcher>,
         permission_authorizer: Arc<dyn BotPermissionAuthorizer>,
     ) -> Self {
+        let mut agent_config = BotAgentConfig::default();
+        agent_config.enabled = true;
+        agent_config.connection_id = "injected".into();
         Self {
             conversations,
             deliveries,
@@ -82,7 +85,8 @@ impl QqAiBotPluginBundle {
             interaction_matcher,
             permission_authorizer,
             handlers: Vec::new(),
-            agent_config: BotAgentConfigHandle::default(),
+            agent_config: BotAgentConfigHandle::new(agent_config)
+                .expect("explicitly injected Agent config is valid"),
             command_prefixes: vec!["/".into()],
             scheduled_delivery: None,
             qq_management: None,

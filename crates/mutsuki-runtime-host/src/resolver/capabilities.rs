@@ -202,6 +202,9 @@ fn collect_base_capabilities(
     active: &mut BTreeSet<String>,
     providers: &mut BTreeMap<String, Vec<CapabilityProvider>>,
 ) {
+    for capability in &manifest.provides.capabilities {
+        collect_named_capability(manifest, provided, active, providers, capability);
+    }
     collect_active_capability(
         manifest,
         provided,
@@ -303,6 +306,29 @@ fn collect_base_capabilities(
             Some(resource_type.compatibility.schema_version.clone()),
         );
     }
+}
+
+fn collect_named_capability(
+    manifest: &PluginManifest,
+    provided: &mut BTreeSet<String>,
+    active: &mut BTreeSet<String>,
+    providers: &mut BTreeMap<String, Vec<CapabilityProvider>>,
+    capability: &str,
+) {
+    let capability = capability.trim();
+    if capability.is_empty() {
+        return;
+    }
+    provided.insert(capability.to_owned());
+    active.insert(capability.to_owned());
+    providers
+        .entry(capability.to_owned())
+        .or_default()
+        .push(CapabilityProvider {
+            provider_plugin_id: manifest.plugin_id.clone(),
+            provider_version: None,
+            surface_id: capability.to_owned(),
+        });
 }
 
 fn collect_system_extension_capabilities(
