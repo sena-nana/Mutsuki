@@ -17,6 +17,10 @@ function errorText(error) {
   return String(error);
 }
 
+function connectionSnapshot(body) {
+  return body?.snapshot || body || {};
+}
+
 export async function mountAgentConnectionsPanel(el, rpc) {
   el.innerHTML = `<div class="card"><h2>Agent 连接</h2><p class="muted">连接配置由 Agent owner 解释；Bot 仅引用 connection_id。</p><div id="agent-connection-list"></div></div>
     <div class="card"><h3>测试并应用</h3><div class="field"><label>连接配置 JSON</label><textarea id="agent-connection-json" rows="12">{\n  "connection_id": "primary",\n  "connector_id": "mutsuki.agent.connector.link.local",\n  "enabled": true,\n  "config": {}\n}</textarea></div><div class="toolbar nested"><button id="agent-test">测试连接</button><button id="agent-save">验证并切换</button></div><div id="agent-connection-result" class="muted"></div></div>`;
@@ -26,7 +30,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
 
   async function refresh() {
     const body = await rpc.call("bot-agent", "connections.snapshot", { capabilities: ALL });
-    const snapshot = body.snapshot || body;
+    const snapshot = connectionSnapshot(body);
     revision = snapshot.revision || 0;
     const items = snapshot.connections || [];
     list.innerHTML = items.length ? items.map((item) => `<div class="tree-item row-item"><div><strong>${esc(item.connection_id)}</strong><div class="muted">${esc(item.connector_id)} · generation ${esc(item.generation)}</div></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${esc(item.state)}</span><button class="ghost" data-reconnect="${esc(item.connection_id)}">重连</button></div></div>`).join("") : `<div class="muted">尚未配置连接</div>`;
@@ -81,7 +85,7 @@ export async function mountBotAgentRulesPanel(el, rpc) {
   async function refreshConnections() {
     try {
       const body = await rpc.call("bot-agent", "connections.snapshot", { capabilities: ALL });
-      const healthy = (body.snapshot?.connections || []).filter((item) => item.state === "healthy");
+      const healthy = (connectionSnapshot(body).connections || []).filter((item) => item.state === "healthy");
       el.querySelector("#rule-connection").insertAdjacentHTML("beforeend", healthy.map((item) => `<option value="${esc(item.connection_id)}">${esc(item.connection_id)}</option>`).join(""));
     } catch { /* Connection owner is optional and its page is hidden independently. */ }
   }
