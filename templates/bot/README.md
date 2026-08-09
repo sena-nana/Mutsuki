@@ -218,10 +218,14 @@ shutdown、Gateway Identify/Resume、WebSocket clean close 和 socket 清理：
 cargo test -p mutsuki-bot --test unix_product_smoke
 ```
 
-真实账号 smoke 只验证鉴权、Gateway 连接和 health：
+真实账号 smoke 会启动真实 `mutsuki-bot` 产品进程，验证 QQ 鉴权、Gateway
+`connected + identified`、service/core/event_sources health 和控制面 graceful shutdown。
+Windows 使用默认 named-pipe IPC，并在启动前和退出后检查 endpoint；测试继续保持 ignored，
+只读取被 Git 忽略的本地配置和 Secret，且审计本次进程输出、service log 和 panic log 不含凭据：
 
 ```powershell
-cargo test -p mutsuki-bot --test qqbot_real_smoke -- --ignored --nocapture
+$env:MUTSUKI_QQBOT_SMOKE_CONFIG = "config/local.toml"
+cargo test -p mutsuki-bot --test qqbot_real_smoke --locked -- --ignored
 ```
 
 ## Verification
