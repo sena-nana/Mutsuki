@@ -686,7 +686,7 @@ fn load(path: &Path) -> ServiceConfig {
 
 fn test_font_path() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../plugins/std/plugins/mutsuki-plugin-image-render-takumi/tests/fonts/NotoSansSC-Test.ttf")
+        .join("tests/fonts/NotoSansSC-Test.ttf")
         .canonicalize()
         .unwrap()
         .to_string_lossy()
