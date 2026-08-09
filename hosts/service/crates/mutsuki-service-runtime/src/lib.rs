@@ -834,6 +834,7 @@ impl ServiceRuntimeBuilder {
     }
 
     pub async fn start(self) -> ServiceRuntimeResult<ServiceRuntime> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let self_ = self.install_configured_plugins()?;
         let ServiceRuntimeBuilder {
             config,

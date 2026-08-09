@@ -39,6 +39,7 @@ mutsuki-bot-testkit.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-core.workspace = true
 mutsuki-service-plugin-loader.workspace = true
+reqwest.workspace = true
 hex.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
