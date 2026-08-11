@@ -489,20 +489,17 @@ impl AgentConnectionManager {
         config: AgentConnectionConfig,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         config.validate()?;
-        let mut current = self.config.lock();
-        if current.revision != expected_revision {
-            return Err(AgentConnectionError::RevisionConflict {
-                expected: expected_revision,
-                actual: current.revision,
-            });
-        }
-        let index = current
-            .connections
-            .iter()
-            .position(|item| item.connection_id == config.connection_id)
-            .ok_or_else(|| {
-                AgentConnectionError::ConnectionNotFound(config.connection_id.clone())
-            })?;
+        let index = {
+            let current = self.config.lock();
+            ensure_revision(&current, expected_revision)?;
+            current
+                .connections
+                .iter()
+                .position(|item| item.connection_id == config.connection_id)
+                .ok_or_else(|| {
+                    AgentConnectionError::ConnectionNotFound(config.connection_id.clone())
+                })?
+        };
         let candidate = if config.enabled {
             Some(AgentConnectionRegistry::prepare(
                 config.clone(),
@@ -512,6 +509,8 @@ impl AgentConnectionManager {
         } else {
             None
         };
+        let mut current = self.config.lock();
+        ensure_revision(&current, expected_revision)?;
         let mut next = current.clone();
         next.connections[index] = config.clone();
         next.connections
@@ -531,40 +530,24 @@ impl AgentConnectionManager {
         expected_revision: u64,
         connection_id: &AgentConnectionId,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
-        let current = self.config.lock();
-        if current.revision != expected_revision {
-            return Err(AgentConnectionError::RevisionConflict {
-                expected: expected_revision,
-                actual: current.revision,
-            });
-        }
-        let config = current
-            .connections
-            .iter()
-            .find(|item| &item.connection_id == connection_id)
-            .cloned()
-            .ok_or_else(|| AgentConnectionError::ConnectionNotFound(connection_id.clone()))?;
+        let config = {
+            let current = self.config.lock();
+            ensure_revision(&current, expected_revision)?;
+            current
+                .connections
+                .iter()
+                .find(|item| &item.connection_id == connection_id)
+                .cloned()
+                .ok_or_else(|| AgentConnectionError::ConnectionNotFound(connection_id.clone()))?
+        };
         if !config.enabled {
             return Err(AgentConnectionError::ConnectionDisabled(
                 connection_id.clone(),
             ));
         }
-        if let Some(connection) = self.registry.connections.write().get_mut(connection_id) {
-            connection.state = AgentConnectionState::Reconnecting;
-        }
-        let candidate =
-            match AgentConnectionRegistry::prepare(config, &self.connectors, &self.secrets) {
-                Ok(candidate) => candidate,
-                Err(error) => {
-                    if let Some(connection) =
-                        self.registry.connections.write().get_mut(connection_id)
-                    {
-                        connection.state = AgentConnectionState::Unavailable;
-                        connection.last_error_code = Some(error.code().into());
-                    }
-                    return Err(error);
-                }
-            };
+        let candidate = AgentConnectionRegistry::prepare(config, &self.connectors, &self.secrets)?;
+        let current = self.config.lock();
+        ensure_revision(&current, expected_revision)?;
         let status = self.registry.commit(candidate);
         Ok(status)
     }
@@ -579,6 +562,20 @@ impl AgentConnectionManager {
         store
             .replace_config(AGENT_CONNECTIONS_PLUGIN_ID, value)
             .map_err(|error| AgentConnectionError::Persistence(error.to_string()))
+    }
+}
+
+fn ensure_revision(
+    current: &AgentConnectionsConfig,
+    expected_revision: u64,
+) -> Result<(), AgentConnectionError> {
+    if current.revision == expected_revision {
+        Ok(())
+    } else {
+        Err(AgentConnectionError::RevisionConflict {
+            expected: expected_revision,
+            actual: current.revision,
+        })
     }
 }
 
@@ -863,6 +860,7 @@ impl AgentConnectionError {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Condvar, Mutex as StdMutex};
 
     use mutsuki_agent_contracts::{
         AGENT_WIRE_SUPPORTED_FEATURES, AGENT_WIRE_VERSION, AgentWireRequest, AgentWireResponse,
@@ -875,6 +873,18 @@ mod tests {
     #[derive(Clone)]
     struct FakeConnector {
         fail_requests: Arc<AtomicBool>,
+        fail_handshakes: Arc<AtomicBool>,
+        handshake_gate: Option<Arc<HandshakeGate>>,
+    }
+
+    impl FakeConnector {
+        fn new(fail_requests: Arc<AtomicBool>) -> Self {
+            Self {
+                fail_requests,
+                fail_handshakes: Arc::new(AtomicBool::new(false)),
+                handshake_gate: None,
+            }
+        }
     }
 
     impl AgentConnectorFactory for FakeConnector {
@@ -892,12 +902,16 @@ mod tests {
             }
             Ok(Box::new(FakeBackend {
                 fail_requests: self.fail_requests.clone(),
+                fail_handshakes: self.fail_handshakes.clone(),
+                handshake_gate: self.handshake_gate.clone(),
             }))
         }
     }
 
     struct FakeBackend {
         fail_requests: Arc<AtomicBool>,
+        fail_handshakes: Arc<AtomicBool>,
+        handshake_gate: Option<Arc<HandshakeGate>>,
     }
 
     impl AgentClientBackend for FakeBackend {
@@ -905,6 +919,18 @@ mod tests {
             &mut self,
             request: AgentWireRequestEnvelope,
         ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
+            if matches!(request.request, AgentWireRequest::Negotiate) {
+                if let Some(gate) = &self.handshake_gate {
+                    gate.wait_if_blocked();
+                }
+                if self.fail_handshakes.load(Ordering::SeqCst) {
+                    return Err(wire_error(
+                        "agent.handshake.rejected",
+                        "handshake rejected".into(),
+                        false,
+                    ));
+                }
+            }
             if self.fail_requests.load(Ordering::SeqCst)
                 && !matches!(request.request, AgentWireRequest::Negotiate)
             {
@@ -933,6 +959,52 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct HandshakeGate {
+        state: StdMutex<HandshakeGateState>,
+        changed: Condvar,
+    }
+
+    #[derive(Default)]
+    struct HandshakeGateState {
+        blocked: bool,
+        started: bool,
+    }
+
+    impl HandshakeGate {
+        fn block(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.blocked = true;
+            state.started = false;
+        }
+
+        fn wait_until_started(&self) -> bool {
+            let state = self.state.lock().unwrap();
+            let (state, _) = self
+                .changed
+                .wait_timeout_while(state, Duration::from_secs(5), |state| !state.started)
+                .unwrap();
+            state.started
+        }
+
+        fn release(&self) {
+            self.state.lock().unwrap().blocked = false;
+            self.changed.notify_all();
+        }
+
+        fn wait_if_blocked(&self) {
+            let mut state = self.state.lock().unwrap();
+            if !state.blocked {
+                return;
+            }
+            state.started = true;
+            self.changed.notify_all();
+            while state.blocked {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+    }
+
     fn config(reject: bool) -> AgentConnectionConfig {
         AgentConnectionConfig {
             connection_id: AgentConnectionId::new("primary").unwrap(),
@@ -943,16 +1015,73 @@ mod tests {
     }
 
     fn manager(fail_requests: Arc<AtomicBool>) -> AgentConnectionManager {
+        manager_with_connector(FakeConnector::new(fail_requests), None)
+    }
+
+    fn manager_with_connector(
+        connector: FakeConnector,
+        store: Option<ConfiguredPluginStore>,
+    ) -> AgentConnectionManager {
         let mut connectors = AgentConnectorCatalog::new();
-        connectors
-            .register(FakeConnector { fail_requests })
-            .unwrap();
+        connectors.register(connector).unwrap();
         AgentConnectionManager::new(
             AgentConnectionRegistry::new(),
             connectors,
             ServiceConfig::default().host_secret_store(),
-            None,
+            store,
         )
+    }
+
+    fn disabled_config() -> AgentConnectionConfig {
+        AgentConnectionConfig {
+            enabled: false,
+            ..config(false)
+        }
+    }
+
+    fn write_disabled_product_config(path: &std::path::Path) {
+        std::fs::write(
+            path,
+            r#"
+[[plugins.configured]]
+id = "mutsuki.agent.connections"
+enabled = true
+config = { revision = 0, connections = [{ connection_id = "primary", connector_id = "test.connector", enabled = false, config = {} }] }
+"#,
+        )
+        .unwrap();
+    }
+
+    fn gated_connector(gate: Arc<HandshakeGate>) -> FakeConnector {
+        FakeConnector {
+            fail_requests: Arc::new(AtomicBool::new(false)),
+            fail_handshakes: Arc::new(AtomicBool::new(false)),
+            handshake_gate: Some(gate),
+        }
+    }
+
+    fn stored_manager(
+        connector: FakeConnector,
+        initial: AgentConnectionConfig,
+    ) -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        Arc<AgentConnectionManager>,
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let product = root.path().join("local.toml");
+        write_disabled_product_config(&product);
+        let manager = Arc::new(manager_with_connector(
+            connector,
+            Some(ConfiguredPluginStore::open(&product)),
+        ));
+        manager
+            .bootstrap(AgentConnectionsConfig {
+                revision: 0,
+                connections: vec![initial],
+            })
+            .unwrap();
+        (root, product, manager)
     }
 
     #[test]
@@ -1016,39 +1145,206 @@ mod tests {
     }
 
     #[test]
-    fn successful_management_update_is_revision_fenced_persisted_and_atomic() {
-        let root = tempfile::tempdir().unwrap();
-        let product = root.path().join("local.toml");
-        std::fs::write(
-            &product,
-            r#"
-[[plugins.configured]]
-id = "mutsuki.agent.connections"
-enabled = true
-config = { revision = 0, connections = [{ connection_id = "primary", connector_id = "test.connector", enabled = false, config = {} }] }
-"#,
-        )
-        .unwrap();
-        let mut connectors = AgentConnectorCatalog::new();
-        connectors
-            .register(FakeConnector {
-                fail_requests: Arc::new(AtomicBool::new(false)),
+    fn slow_upsert_handshake_does_not_block_snapshot() {
+        let gate = Arc::new(HandshakeGate::default());
+        let (_root, _product, manager) =
+            stored_manager(gated_connector(gate.clone()), disabled_config());
+
+        gate.block();
+        let updating = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.upsert(0, config(false)))
+        };
+        let started = gate.wait_until_started();
+        let (snapshot_tx, snapshot_rx) = mpsc::sync_channel(1);
+        let reading = {
+            let manager = manager.clone();
+            thread::spawn(move || {
+                let snapshot = manager.snapshot();
+                let _ = snapshot_tx.send(snapshot.clone());
+                snapshot
+            })
+        };
+        let timely_snapshot = snapshot_rx.recv_timeout(Duration::from_secs(2));
+        gate.release();
+        let update = updating.join().unwrap();
+        let completed_snapshot = reading.join().unwrap();
+
+        assert!(started, "upsert handshake did not reach the gate");
+        assert_eq!(timely_snapshot.unwrap(), completed_snapshot);
+        assert_eq!(completed_snapshot.revision, 0);
+        assert_eq!(
+            completed_snapshot.connections[0].state,
+            AgentConnectionState::Disabled
+        );
+        assert_eq!(update.unwrap().generation, 2);
+    }
+
+    #[test]
+    fn slow_reconnect_handshake_does_not_block_snapshot_or_change_revision() {
+        let gate = Arc::new(HandshakeGate::default());
+        let manager = Arc::new(manager_with_connector(gated_connector(gate.clone()), None));
+        manager
+            .bootstrap(AgentConnectionsConfig {
+                revision: 4,
+                connections: vec![config(false)],
             })
             .unwrap();
-        let manager = AgentConnectionManager::new(
-            AgentConnectionRegistry::new(),
-            connectors,
-            ServiceConfig::default().host_secret_store(),
-            Some(ConfiguredPluginStore::open(&product)),
+
+        gate.block();
+        let reconnecting = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.reconnect(4, &AgentConnectionId::new("primary").unwrap()))
+        };
+        let started = gate.wait_until_started();
+        let (snapshot_tx, snapshot_rx) = mpsc::sync_channel(1);
+        let reading = {
+            let manager = manager.clone();
+            thread::spawn(move || snapshot_tx.send(manager.snapshot()).unwrap())
+        };
+        let timely_snapshot = snapshot_rx.recv_timeout(Duration::from_secs(2));
+        gate.release();
+        let reconnect = reconnecting.join().unwrap();
+        reading.join().unwrap();
+
+        assert!(started, "reconnect handshake did not reach the gate");
+        let snapshot = timely_snapshot.unwrap();
+        assert_eq!(snapshot.revision, 4);
+        assert_eq!(snapshot.connections[0].generation, 1);
+        assert_eq!(snapshot.connections[0].state, AgentConnectionState::Healthy);
+        assert_eq!(reconnect.unwrap().generation, 2);
+        assert_eq!(manager.snapshot().revision, 4);
+    }
+
+    #[test]
+    fn concurrent_upserts_commit_once_and_discard_the_stale_candidate() {
+        let gate = Arc::new(HandshakeGate::default());
+        let (_root, product, manager) =
+            stored_manager(gated_connector(gate.clone()), disabled_config());
+
+        gate.block();
+        let stale_update = {
+            let manager = manager.clone();
+            thread::spawn(move || {
+                let mut candidate = config(false);
+                candidate.config = json!({ "writer": "stale" });
+                manager.upsert(0, candidate)
+            })
+        };
+        let started = gate.wait_until_started();
+        let mut winner = disabled_config();
+        winner.config = json!({ "writer": "winner" });
+        let winner_status = manager.upsert(0, winner).unwrap();
+        gate.release();
+        let stale_result = stale_update.join().unwrap();
+
+        assert!(started, "stale upsert handshake did not reach the gate");
+        assert!(matches!(
+            stale_result,
+            Err(AgentConnectionError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            })
+        ));
+        assert_eq!(winner_status.state, AgentConnectionState::Disabled);
+        let snapshot = manager.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.connections[0], winner_status);
+        let persisted: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&product).unwrap()).unwrap();
+        assert_eq!(
+            persisted["plugins"]["configured"][0]["config"]["connections"][0]["config"]["writer"]
+                .as_str(),
+            Some("winner")
         );
-        let mut declared = config(false);
-        declared.enabled = false;
+    }
+
+    #[test]
+    fn stale_reconnect_candidate_cannot_replace_a_newer_config_revision() {
+        let gate = Arc::new(HandshakeGate::default());
+        let (_root, _product, manager) =
+            stored_manager(gated_connector(gate.clone()), config(false));
+
+        gate.block();
+        let stale_reconnect = {
+            let manager = manager.clone();
+            thread::spawn(move || manager.reconnect(0, &AgentConnectionId::new("primary").unwrap()))
+        };
+        let started = gate.wait_until_started();
+        let winner_status = manager.upsert(0, disabled_config()).unwrap();
+        gate.release();
+        let stale_result = stale_reconnect.join().unwrap();
+
+        assert!(started, "stale reconnect handshake did not reach the gate");
+        assert!(matches!(
+            stale_result,
+            Err(AgentConnectionError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            })
+        ));
+        assert_eq!(winner_status.state, AgentConnectionState::Disabled);
+        let snapshot = manager.snapshot();
+        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.connections[0], winner_status);
+    }
+
+    #[test]
+    fn failed_handshake_leaves_config_store_and_registry_unchanged() {
+        let fail_handshakes = Arc::new(AtomicBool::new(false));
+        let connector = FakeConnector {
+            fail_requests: Arc::new(AtomicBool::new(false)),
+            fail_handshakes: fail_handshakes.clone(),
+            handshake_gate: None,
+        };
+        let (_root, product, manager) = stored_manager(connector, config(false));
+        let before_snapshot = manager.snapshot();
+        let before_file = std::fs::read_to_string(&product).unwrap();
+
+        fail_handshakes.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            manager.upsert(0, config(false)),
+            Err(AgentConnectionError::Handshake(_))
+        ));
+        assert!(matches!(
+            manager.reconnect(0, &AgentConnectionId::new("primary").unwrap()),
+            Err(AgentConnectionError::Handshake(_))
+        ));
+
+        assert_eq!(manager.snapshot(), before_snapshot);
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), before_file);
+    }
+
+    #[test]
+    fn persistence_failure_does_not_publish_the_prepared_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let missing_product = root.path().join("missing.toml");
+        let manager = manager_with_connector(
+            FakeConnector::new(Arc::new(AtomicBool::new(false))),
+            Some(ConfiguredPluginStore::open(&missing_product)),
+        );
         manager
             .bootstrap(AgentConnectionsConfig {
                 revision: 0,
-                connections: vec![declared],
+                connections: vec![disabled_config()],
             })
             .unwrap();
+        let before = manager.snapshot();
+
+        assert!(matches!(
+            manager.upsert(0, config(false)),
+            Err(AgentConnectionError::Persistence(_))
+        ));
+        assert_eq!(manager.snapshot(), before);
+        assert!(!missing_product.exists());
+    }
+
+    #[test]
+    fn successful_management_update_is_revision_fenced_persisted_and_atomic() {
+        let (_root, product, manager) = stored_manager(
+            FakeConnector::new(Arc::new(AtomicBool::new(false))),
+            disabled_config(),
+        );
 
         let status = manager.upsert(0, config(false)).unwrap();
         assert_eq!(status.generation, 2);
@@ -1079,11 +1375,7 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     async fn configured_manifest_provides_each_declared_connection_capability() {
         let fail = Arc::new(AtomicBool::new(false));
         let mut connectors = AgentConnectorCatalog::new();
-        connectors
-            .register(FakeConnector {
-                fail_requests: fail,
-            })
-            .unwrap();
+        connectors.register(FakeConnector::new(fail)).unwrap();
         let registry = AgentConnectionRegistry::new();
         let root = tempfile::tempdir().unwrap();
         let mut service = ServiceConfig::default();
