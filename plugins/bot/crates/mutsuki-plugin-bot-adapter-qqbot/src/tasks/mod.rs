@@ -229,6 +229,7 @@ impl Runner for QqOpenApiRunner {
             );
 
             let mut result = RunnerResult::completed(task.task_id.clone());
+            result.output = Some(response.clone());
             result.events.push(result_event(task, response));
             Ok(result)
         })

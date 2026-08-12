@@ -4,10 +4,11 @@ use mutsuki_agent_contracts::{
 };
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_conversation::ConversationService;
+use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
 use mutsuki_bot_protocol::{
-    AgentSessionScope, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotEventKind, BotEventSubscription, BotHandlerDescriptor,
-    BotPropagationPolicy, BotSpeechReplyPolicy, ConversationPolicy, DirectMessagePolicy,
+    AgentSessionScope, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind,
+    BotEventSubscription, BotHandlerDescriptor, BotPropagationPolicy, BotSpeechReplyPolicy,
+    ConversationPolicy, DirectMessagePolicy,
 };
 use mutsuki_bot_state_db::{BOT_CONVERSATION_POLICY_SERVICE_ID, BotStateDbRepository};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
@@ -35,7 +36,7 @@ use serde_json::Value;
 
 use crate::{
     BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliPollingCredentials, BilibiliPollingEventSource,
-    QqBotPluginBundle,
+    BotReplyDeliveryRecoveryEventSource, QqBotPluginBundle,
 };
 use mutsuki_plugin_bot_bilibili::{
     BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
@@ -129,6 +130,7 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
 }
 
 pub const BOT_AGENT_PIPELINE_RUNNER_ID: &str = "mutsuki.bot.agent.pipeline";
+const BOT_AGENT_REPLY_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.agent.reply-delivery.runner";
 
 struct ConfigSelectedAgentBackend {
     connections: AgentConnectionRegistry,
@@ -237,18 +239,32 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
         handlers.push(command_handler());
         handlers.push(agent_fallback_handler());
 
-        let mut manifest = merge_manifests(
+        let manifest = merge_manifests(
             bot_agent_bridge_manifest(),
             handler_pipeline_manifest_for(BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_PIPELINE_RUNNER_ID),
+        );
+        let mut manifest = merge_manifests(
+            manifest,
+            bot_reply_delivery_manifest_for(
+                BOT_AGENT_BRIDGE_PLUGIN_ID,
+                BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
+            ),
         );
         manifest.requires.extend([
             connection_id.capability(),
             format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
-            format!("task_protocol:{BOT_MESSAGE_SEND_PROTOCOL_ID}"),
         ]);
-        let builder =
-            register_bot_agent_services(builder, manifest, config_handle.clone(), repository);
+        let builder = register_bot_agent_services(
+            builder,
+            manifest,
+            config_handle.clone(),
+            repository.clone(),
+        );
         Ok(builder
+            .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::for_plugin(
+                Duration::from_millis(250),
+                BOT_AGENT_BRIDGE_PLUGIN_ID,
+            )))
             .register_dynamic_runner_limit(BOT_AGENT_BRIDGE_RUNNER_ID, {
                 let config = config_handle.clone();
                 move || {
@@ -266,6 +282,14 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             })
             .register_runtime_client_runner(move |client| {
                 agent_bridge_runner(client, bridge.clone())
+            })
+            .register_runtime_client_runner(move |client| {
+                reply_delivery_runner_for(
+                    client,
+                    repository.clone(),
+                    BOT_AGENT_BRIDGE_PLUGIN_ID,
+                    BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
+                )
             }))
     }
 }

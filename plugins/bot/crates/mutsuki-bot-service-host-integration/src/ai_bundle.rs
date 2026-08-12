@@ -1,12 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use mutsuki_agent_contracts::MediaService;
 use mutsuki_bot_conversation::{ConversationRepository, ConversationService};
 use mutsuki_bot_delivery::{
-    ActiveDeliveryService, DeliveryPolicyResolver, DeliveryRepository, QqDeliveryGateway,
+    ActiveDeliveryService, DeliveryPolicyResolver, QqDeliveryGateway, ReplyDeliveryRepository,
     ScheduledAgentDeliveryBridge, ScheduledDeliveryPolicyProvider, ScheduledDeliveryTargetResolver,
-    bot_delivery_manifest, bot_scheduled_delivery_manifest, delivery_runner,
-    scheduled_delivery_runner,
+    bot_delivery_manifest, bot_reply_delivery_manifest, bot_scheduled_delivery_manifest,
+    delivery_runner, reply_delivery_runner, scheduled_delivery_runner,
 };
 use mutsuki_bot_interaction::{
     BOT_INTERACTION_RUNNER_ID, InteractionConditionMatcher, InteractionRepository,
@@ -15,12 +16,13 @@ use mutsuki_bot_interaction::{
 use mutsuki_bot_protocol::{
     BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID,
     BOT_INTERACTION_SESSION_PROTOCOL_ID, BotHandlerDescriptor, BotPropagationPolicy,
-    ConversationPolicy, QqStreamingStrategy,
+    ConversationPolicy, DeliveryPolicy, QqStreamingStrategy,
 };
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID, BotAgentBridge,
-    BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle, agent_bridge_runner,
-    bot_agent_bridge_manifest, bot_agent_command_descriptors,
+    BotAgentConfig, BotAgentConfigError, BotAgentConfigHandle,
+    agent_bridge_runner_with_delivery_policy, bot_agent_bridge_manifest,
+    bot_agent_command_descriptors,
 };
 use mutsuki_plugin_bot_command::{BOT_COMMAND_RUNNER_ID, BotCommandRunner, bot_command_manifest};
 use mutsuki_plugin_bot_event_router::{
@@ -31,13 +33,15 @@ use mutsuki_plugin_bot_media::{bot_media_bridge_manifest, media_bridge_runner};
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 
+use crate::BotReplyDeliveryRecoveryEventSource;
+
 /// Explicit product assembly for the QQ AI pipeline.
 ///
 /// Every stateful or external capability is injected. Constructing this bundle cannot silently
 /// fall back to process-local state, a fake Agent client, or an embedded media codec.
 pub struct QqAiBotPluginBundle {
     conversations: Arc<dyn ConversationRepository>,
-    deliveries: Arc<dyn DeliveryRepository>,
+    deliveries: Arc<dyn ReplyDeliveryRepository>,
     interactions: Arc<dyn InteractionRepository>,
     default_policy: ConversationPolicy,
     agent: Box<dyn AgentBridgeClient>,
@@ -53,6 +57,8 @@ pub struct QqAiBotPluginBundle {
         Arc<dyn ScheduledDeliveryTargetResolver>,
         Arc<dyn ScheduledDeliveryPolicyProvider>,
     )>,
+    reply_delivery_policy: DeliveryPolicy,
+    reply_delivery_recovery_interval: Duration,
     qq_management: Option<Arc<mutsuki_plugin_bot_qq_web::LocalQqManagementProvider>>,
 }
 
@@ -60,7 +66,7 @@ impl QqAiBotPluginBundle {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         conversations: Arc<dyn ConversationRepository>,
-        deliveries: Arc<dyn DeliveryRepository>,
+        deliveries: Arc<dyn ReplyDeliveryRepository>,
         interactions: Arc<dyn InteractionRepository>,
         default_policy: ConversationPolicy,
         agent: Box<dyn AgentBridgeClient>,
@@ -89,6 +95,14 @@ impl QqAiBotPluginBundle {
                 .expect("explicitly injected Agent config is valid"),
             command_prefixes: vec!["/".into()],
             scheduled_delivery: None,
+            reply_delivery_policy: DeliveryPolicy {
+                max_attempts: 3,
+                initial_backoff_ms: 1_000,
+                max_backoff_ms: 60_000,
+                not_before_unix_ms: None,
+                expires_at_unix_ms: None,
+            },
+            reply_delivery_recovery_interval: Duration::from_millis(250),
             qq_management: None,
         }
     }
@@ -139,6 +153,18 @@ impl QqAiBotPluginBundle {
         self
     }
 
+    #[must_use]
+    pub fn with_reply_delivery_policy(mut self, policy: DeliveryPolicy) -> Self {
+        self.reply_delivery_policy = policy;
+        self
+    }
+
+    #[must_use]
+    pub fn with_reply_delivery_recovery_interval(mut self, interval: Duration) -> Self {
+        self.reply_delivery_recovery_interval = interval;
+        self
+    }
+
     /// Seeds handler/command projections into the QQ console management owner when present.
     #[must_use]
     pub fn with_qq_management(
@@ -151,6 +177,9 @@ impl QqAiBotPluginBundle {
 
     pub fn install(self, builder: ServiceRuntimeBuilder) -> ServiceRuntimeBuilder {
         let agent_config = self.agent_config;
+        let reply_delivery_policy = self.reply_delivery_policy;
+        let reply_delivery_recovery_interval = self.reply_delivery_recovery_interval;
+        let reply_repository = self.deliveries.clone();
         let conversations = ConversationService::new(self.conversations, self.default_policy);
         let agent =
             BotAgentBridge::new_with_config(conversations, self.agent, agent_config.clone());
@@ -287,6 +316,10 @@ impl QqAiBotPluginBundle {
             })
             .register_builtin_plugin(bot_media_bridge_manifest())
             .register_builtin_plugin(bot_delivery_manifest())
+            .register_builtin_plugin(bot_reply_delivery_manifest())
+            .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::new(
+                reply_delivery_recovery_interval,
+            )))
             .register_builtin_plugin(bot_interaction_manifest())
             .register_runtime_client_runner(move |client| {
                 handler_pipeline_runner(client, handlers.clone())
@@ -299,12 +332,19 @@ impl QqAiBotPluginBundle {
                 ))
             })
             .register_runtime_client_runner(move |client| {
-                agent_bridge_runner(client, agent.clone())
+                agent_bridge_runner_with_delivery_policy(
+                    client,
+                    agent.clone(),
+                    reply_delivery_policy.clone(),
+                )
             })
             .register_runtime_client_runner(move |client| {
                 media_bridge_runner(client, media.clone())
             })
             .register_runtime_client_runner(move |client| delivery_runner(client, delivery.clone()))
+            .register_runtime_client_runner(move |client| {
+                reply_delivery_runner(client, reply_repository.clone())
+            })
             .register_runtime_client_runner(move |client| {
                 interaction_runner(client, interaction.clone())
             })

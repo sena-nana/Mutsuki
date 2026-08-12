@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use mutsuki_agent_client::{AgentClient, AgentClientBackend};
 use mutsuki_agent_contracts::{
@@ -13,11 +14,13 @@ use mutsuki_bot_conversation::{
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_HANDLE_PROTOCOL_ID,
     BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID, BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotAgentBridgeRequest, BotCommandArgumentDescriptor,
-    BotCommandArgumentKind, BotCommandDescriptor, BotCommandEvent, BotEvent, BotMediaKind,
-    BotMediaSynthesizeRequest, BotMediaSynthesizeResult, BotMediaTranscribeRequest,
-    BotMediaTranscribeResult, BotMessage, BotSpeechReplyPolicy, BotTarget, MessageSegment,
-    QqStreamingStrategy, ResolvedConversationPolicy, bot_command_binding_id,
+    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAgentBridgeRequest, BotCommandArgumentDescriptor,
+    BotCommandArgumentKind, BotCommandDescriptor, BotCommandEvent, BotDeliveryContent, BotEvent,
+    BotMediaKind, BotMediaSynthesizeRequest, BotMediaSynthesizeResult, BotMediaTranscribeRequest,
+    BotMediaTranscribeResult, BotMessage, BotReplyDeliveryCommand, BotReplyDeliveryPart,
+    BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget,
+    DeliveryPolicy, MessageSegment, QqStreamingStrategy, ResolvedConversationPolicy,
+    bot_command_binding_id,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
@@ -30,6 +33,7 @@ use mutsuki_runtime_sdk::{
     ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure,
     RuntimeResult, TaskAwaitRunnerAdapter,
 };
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 mod config;
@@ -73,7 +77,11 @@ pub fn bot_agent_bridge_manifest() -> PluginManifest {
             .build(),
         );
     }
-    builder.build().manifest
+    let mut manifest = builder.build().manifest;
+    manifest
+        .requires
+        .push(format!("task_protocol:{BOT_REPLY_DELIVERY_PROTOCOL_ID}"));
+    manifest
 }
 
 #[must_use]
@@ -128,8 +136,18 @@ fn simple_agent_command(name: &str, summary: &str) -> BotCommandDescriptor {
 
 #[must_use]
 pub fn agent_bridge_runner(client: RuntimeClientRef, bridge: BotAgentBridge) -> Box<dyn Runner> {
+    agent_bridge_runner_with_delivery_policy(client, bridge, default_reply_delivery_policy())
+}
+
+#[must_use]
+pub fn agent_bridge_runner_with_delivery_policy(
+    client: RuntimeClientRef,
+    bridge: BotAgentBridge,
+    delivery_policy: DeliveryPolicy,
+) -> Box<dyn Runner> {
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let bridge = bridge.clone();
+        let delivery_policy = delivery_policy.clone();
         let config = bridge.config.snapshot();
         let permit = bridge.concurrency.try_acquire(config.max_concurrency);
         Box::pin(async move {
@@ -143,13 +161,23 @@ pub fn agent_bridge_runner(client: RuntimeClientRef, bridge: BotAgentBridge) -> 
                     ),
                 ));
             };
-            run_bridge_task(ctx, task, bridge).await
+            run_bridge_task(ctx, task, bridge, delivery_policy).await
         })
     });
     Box::new(
         TaskAwaitRunnerAdapter::new(agent_bridge_descriptor(), client, factory)
             .with_self_call_policy(false),
     )
+}
+
+fn default_reply_delivery_policy() -> DeliveryPolicy {
+    DeliveryPolicy {
+        max_attempts: 3,
+        initial_backoff_ms: 1_000,
+        max_backoff_ms: 60_000,
+        not_before_unix_ms: None,
+        expires_at_unix_ms: None,
+    }
 }
 
 fn agent_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
@@ -183,22 +211,59 @@ async fn run_bridge_task(
     ctx: AsyncRunnerContext,
     task: Task,
     bridge: BotAgentBridge,
+    delivery_policy: DeliveryPolicy,
 ) -> RuntimeResult<RunnerResult> {
     let request = decode_bridge_request(&task)?;
-    let result = execute_bridge_request(&ctx, &task, &bridge, request).await?;
-    let (outgoing, media_errors) = speech_reply_messages(&ctx, &task, &result).await;
-    let (delivered, delivery_errors) = deliver_messages(&ctx, &task, outgoing).await?;
+    let execution = execute_bridge_request(&ctx, &task, &bridge, request).await?;
+    let result = &execution.result;
+    let (reply, media_errors) = if let Some(existing) = execution.existing_reply {
+        (Some(existing), Vec::new())
+    } else {
+        let (outgoing, media_errors) = speech_reply_messages(&ctx, &task, result).await;
+        if outgoing.is_empty() {
+            (None, media_errors)
+        } else {
+            let request =
+                reply_delivery_request(result, &execution.source_event, outgoing, delivery_policy);
+            let outcome = ctx
+                .call_raw(
+                    BOT_REPLY_DELIVERY_PROTOCOL_ID,
+                    serde_json::to_value(BotReplyDeliveryCommand::Submit {
+                        request: Box::new(request),
+                        now_unix_ms: unix_ms(),
+                    })
+                    .map_err(|error| bridge_failure(&task, "delivery.encode", error))?,
+                )
+                .await;
+            (
+                Some(decode_reply_delivery_outcome(&task, outcome)?),
+                media_errors,
+            )
+        }
+    };
+    if execution.complete_event {
+        bridge
+            .complete_event(&execution.source_event)
+            .await
+            .map_err(|error| bridge_failure(&task, "event.complete", error))?;
+    }
     let mut completed = RunnerResult::completed(task.task_id);
     completed.output = Some(serde_json::json!({
         "session_id": result.binding.session_id,
         "session_version": result.binding.session_version,
         "last_event_sequence": result.binding.last_event_sequence,
         "turn_id": result.turn_id,
-        "delivered_messages": delivered,
-        "delivery_errors": delivery_errors,
+        "reply_delivery": reply,
         "media_errors": media_errors,
     }));
     Ok(completed)
+}
+
+struct BridgeExecution {
+    result: BotAgentBridgeResult,
+    source_event: BotEvent,
+    complete_event: bool,
+    existing_reply: Option<BotReplyDeliveryReceipt>,
 }
 
 fn decode_bridge_request(task: &Task) -> RuntimeResult<BotAgentBridgeRequest> {
@@ -220,7 +285,7 @@ async fn execute_bridge_request(
     task: &Task,
     bridge: &BotAgentBridge,
     request: BotAgentBridgeRequest,
-) -> RuntimeResult<BotAgentBridgeResult> {
+) -> RuntimeResult<BridgeExecution> {
     match request {
         BotAgentBridgeRequest::Submit { event } => {
             submit_claimed_event(ctx, task, bridge, event).await
@@ -247,11 +312,17 @@ async fn execute_bridge_request(
                 .cancel(&resolved, &binding, actor_id, &turn_id)
                 .await
                 .map_err(|error| bridge_failure(task, "action", error))?;
-            Ok(BotAgentBridgeResult {
+            let result = BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id,
                 outgoing: command_confirmation(&event.target, "已取消当前 Agent 回复"),
+            };
+            Ok(BridgeExecution {
+                result,
+                source_event: event,
+                complete_event: false,
+                existing_reply: None,
             })
         }
         BotAgentBridgeRequest::Reset { event } => {
@@ -265,11 +336,17 @@ async fn execute_bridge_request(
                 .reset_session_binding(&resolved, actor_id)
                 .await
                 .map_err(|error| bridge_failure(task, "action", error))?;
-            Ok(BotAgentBridgeResult {
+            let result = BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id: String::new(),
                 outgoing: command_confirmation(&event.target, "已开启新的 Agent 会话"),
+            };
+            Ok(BridgeExecution {
+                result,
+                source_event: event,
+                complete_event: false,
+                existing_reply: None,
             })
         }
         BotAgentBridgeRequest::Fork { event } => {
@@ -281,11 +358,17 @@ async fn execute_bridge_request(
                 .fork(&event)
                 .await
                 .map_err(|error| bridge_failure(task, "action", error))?;
-            Ok(BotAgentBridgeResult {
+            let result = BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id: String::new(),
                 outgoing: command_confirmation(&event.target, "已分叉 Agent 会话，历史记录已保留"),
+            };
+            Ok(BridgeExecution {
+                result,
+                source_event: event,
+                complete_event: false,
+                existing_reply: None,
             })
         }
         BotAgentBridgeRequest::Status { event } => {
@@ -298,11 +381,17 @@ async fn execute_bridge_request(
                 .await
                 .map_err(|error| bridge_failure(task, "action", error))?;
             let outgoing = status_confirmation(&event.target, &binding);
-            Ok(BotAgentBridgeResult {
+            let result = BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id: String::new(),
                 outgoing,
+            };
+            Ok(BridgeExecution {
+                result,
+                source_event: event,
+                complete_event: false,
+                existing_reply: None,
             })
         }
     }
@@ -313,48 +402,160 @@ async fn submit_claimed_event(
     task: &Task,
     bridge: &BotAgentBridge,
     event: BotEvent,
-) -> RuntimeResult<BotAgentBridgeResult> {
-    if let Some(completed) = bridge
-        .claim_event_before_media(&event)
+) -> RuntimeResult<BridgeExecution> {
+    let (claim, claimed) = bridge
+        .claim_event_state(&event)
         .await
-        .map_err(|error| bridge_failure(task, "claim", error))?
-    {
-        return Ok(completed);
-    }
-    let event = transcribe_event_audio(ctx, task, bridge, event).await?;
-    bridge
-        .submit_event_with_trace(&event, trace_context(task).as_ref())
-        .await
-        .map_err(|error| bridge_failure(task, "action", error))
-}
-
-async fn deliver_messages(
-    ctx: &AsyncRunnerContext,
-    task: &Task,
-    outgoing: Vec<BotMessage>,
-) -> RuntimeResult<(u64, Vec<String>)> {
-    let mut delivered = 0_u64;
-    let mut delivery_errors = Vec::new();
-    for message in outgoing {
-        match ctx
-            .call_raw(
-                BOT_MESSAGE_SEND_PROTOCOL_ID,
-                serde_json::to_value(message)
-                    .map_err(|error| bridge_failure(task, "message.encode", error))?,
-            )
-            .await
-        {
-            Ok(TaskOutcome::Completed { .. }) => delivered += 1,
-            Ok(TaskOutcome::Failed { error, .. }) => delivery_errors.push(error.code),
-            Ok(TaskOutcome::Cancelled { .. }) => delivery_errors.push("delivery.cancelled".into()),
-            Ok(TaskOutcome::Expired { .. }) => delivery_errors.push("delivery.expired".into()),
-            Ok(TaskOutcome::DeadLetter { .. }) => {
-                delivery_errors.push("delivery.dead_letter".into());
+        .map_err(|error| bridge_failure(task, "claim", error))?;
+    if claim != AgentEventClaim::New {
+        let reply_id = stable_reply_id(
+            &claimed.resolved.conversation.origin_key(),
+            &event.event_id,
+            &claimed.turn_id,
+        );
+        match inspect_reply_delivery(ctx, task, reply_id).await? {
+            Some(receipt) => {
+                return Ok(BridgeExecution {
+                    result: claimed,
+                    source_event: event,
+                    complete_event: claim == AgentEventClaim::ResumePending,
+                    existing_reply: Some(receipt),
+                });
             }
-            Err(error) => delivery_errors.push(error.error().code.clone()),
+            None if claim == AgentEventClaim::Completed => {
+                return Ok(BridgeExecution {
+                    result: claimed,
+                    source_event: event,
+                    complete_event: false,
+                    existing_reply: None,
+                });
+            }
+            None => {}
         }
     }
-    Ok((delivered, delivery_errors))
+    let event = transcribe_event_audio(ctx, task, bridge, event).await?;
+    let result = bridge
+        .submit_event_with_trace_deferred(&event, trace_context(task).as_ref())
+        .await
+        .map_err(|error| bridge_failure(task, "action", error))?;
+    Ok(BridgeExecution {
+        result,
+        source_event: event,
+        complete_event: true,
+        existing_reply: None,
+    })
+}
+
+async fn inspect_reply_delivery(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    reply_id: String,
+) -> RuntimeResult<Option<BotReplyDeliveryReceipt>> {
+    let outcome = ctx
+        .call_raw(
+            BOT_REPLY_DELIVERY_PROTOCOL_ID,
+            serde_json::to_value(BotReplyDeliveryCommand::Inspect { reply_id })
+                .map_err(|error| bridge_failure(task, "delivery.inspect.encode", error))?,
+        )
+        .await;
+    match outcome {
+        Ok(TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        }) => serde_json::from_value(output)
+            .map(Some)
+            .map_err(|error| bridge_failure(task, "delivery.inspect.decode", error)),
+        Ok(TaskOutcome::Failed { error, .. }) if error.code == "delivery.not_found" => Ok(None),
+        Ok(TaskOutcome::Failed { error, .. }) => {
+            Err(bridge_failure(task, "delivery.inspect", error.code))
+        }
+        Ok(outcome) => Err(bridge_failure(
+            task,
+            "delivery.inspect",
+            format!("unexpected delivery outcome {outcome:?}"),
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+fn decode_reply_delivery_outcome(
+    task: &Task,
+    outcome: RuntimeResult<TaskOutcome>,
+) -> RuntimeResult<BotReplyDeliveryReceipt> {
+    match outcome? {
+        TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } => serde_json::from_value(output)
+            .map_err(|error| bridge_failure(task, "delivery.decode", error)),
+        TaskOutcome::Failed { error, .. } => {
+            Err(bridge_failure(task, "delivery.submit", error.code))
+        }
+        outcome => Err(bridge_failure(
+            task,
+            "delivery.submit",
+            format!("unexpected delivery outcome {outcome:?}"),
+        )),
+    }
+}
+
+fn reply_delivery_request(
+    result: &BotAgentBridgeResult,
+    event: &BotEvent,
+    outgoing: Vec<BotMessage>,
+    policy: DeliveryPolicy,
+) -> BotReplyDeliveryRequest {
+    let turn_id = if result.turn_id.trim().is_empty() {
+        format!("bot-action:{}", event.event_id)
+    } else {
+        result.turn_id.clone()
+    };
+    let reply_id = stable_reply_id(
+        &result.resolved.conversation.origin_key(),
+        &event.event_id,
+        &turn_id,
+    );
+    let parts = outgoing
+        .into_iter()
+        .enumerate()
+        .map(|(index, message)| BotReplyDeliveryPart {
+            part_id: format!("{reply_id}:part:{index}"),
+            content: BotDeliveryContent {
+                segments: message.segments,
+                summary: None,
+                reply_to: message.reply_to,
+            },
+        })
+        .collect();
+    BotReplyDeliveryRequest {
+        idempotency_key: reply_id.clone(),
+        reply_id,
+        conversation: result.resolved.conversation.clone(),
+        parts,
+        policy,
+        source_event_id: event.event_id.clone(),
+        source_turn_id: turn_id,
+    }
+}
+
+fn stable_reply_id(origin_key: &str, event_id: &str, turn_id: &str) -> String {
+    let mut digest = Sha256::new();
+    for value in [origin_key, event_id, turn_id] {
+        digest.update(value.as_bytes());
+        digest.update([0]);
+    }
+    let mut id = String::from("agent-reply:");
+    for byte in digest.finalize() {
+        write!(&mut id, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    id
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn bridge_request_from_command(
@@ -800,6 +1001,16 @@ impl BotAgentBridge {
         event: &BotEvent,
         trace: Option<&BotAgentTraceContext>,
     ) -> Result<BotAgentBridgeResult, BotAgentError> {
+        let result = self.submit_event_with_trace_deferred(event, trace).await?;
+        self.complete_event(event).await?;
+        Ok(result)
+    }
+
+    async fn submit_event_with_trace_deferred(
+        &self,
+        event: &BotEvent,
+        trace: Option<&BotAgentTraceContext>,
+    ) -> Result<BotAgentBridgeResult, BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
         let (resolved, config) = self.resolve_admitted_with_config(event).await?;
         let profile_id = resolved
@@ -870,9 +1081,6 @@ impl BotAgentBridge {
                 page.next_sequence,
             )
             .await?;
-        self.conversations
-            .complete_agent_event(&resolved, actor_id, &event.event_id)
-            .await?;
         Ok(BotAgentBridgeResult {
             resolved,
             binding,
@@ -894,6 +1102,14 @@ impl BotAgentBridge {
         &self,
         event: &BotEvent,
     ) -> Result<Option<BotAgentBridgeResult>, BotAgentError> {
+        let (claim, result) = self.claim_event_state(event).await?;
+        Ok((claim == AgentEventClaim::Completed).then_some(result))
+    }
+
+    async fn claim_event_state(
+        &self,
+        event: &BotEvent,
+    ) -> Result<(AgentEventClaim, BotAgentBridgeResult), BotAgentError> {
         let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
         let (resolved, _) = self.resolve_admitted_with_config(event).await?;
         let binding = self
@@ -905,14 +1121,24 @@ impl BotAgentBridge {
             .conversations
             .begin_agent_event(&resolved, actor_id, &event.event_id, &turn_id)
             .await?;
-        Ok(
-            (claim == AgentEventClaim::Completed).then_some(BotAgentBridgeResult {
+        Ok((
+            claim,
+            BotAgentBridgeResult {
                 resolved,
                 binding,
                 turn_id,
                 outgoing: Vec::new(),
-            }),
-        )
+            },
+        ))
+    }
+
+    async fn complete_event(&self, event: &BotEvent) -> Result<(), BotAgentError> {
+        let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
+        let resolved = self.resolve_admitted(event).await?;
+        self.conversations
+            .complete_agent_event(&resolved, actor_id, &event.event_id)
+            .await?;
+        Ok(())
     }
 
     /// Resolves the effective conversation policy for an event.

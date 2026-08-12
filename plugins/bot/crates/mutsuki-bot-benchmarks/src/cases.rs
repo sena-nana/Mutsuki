@@ -268,6 +268,7 @@ pub fn delivery_idempotency_sample(delivery_count: usize) -> Sample {
                 content: BotDeliveryContent {
                     segments: vec![MessageSegment::text("benchmark")],
                     summary: None,
+                    reply_to: None,
                 },
                 policy: DeliveryPolicy {
                     max_attempts: 3,
