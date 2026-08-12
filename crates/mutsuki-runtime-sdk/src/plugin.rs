@@ -4,8 +4,8 @@ use std::sync::Arc;
 use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, HandlerBinding, HostExtensionDescriptor,
     HostExtensionKind, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor,
-    PluginDeploymentKind, PluginManifest, PluginProvides, ProtocolClass, ProtocolDescriptor,
-    ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
+    PluginDeploymentKind, PluginExtensionDescriptor, PluginManifest, PluginProvides, ProtocolClass,
+    ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
 
@@ -122,6 +122,12 @@ impl PluginBuilder {
             resource_providers: Vec::new(),
             async_resource_providers: Vec::new(),
         }
+    }
+
+    /// Publishes versioned, domain-owned metadata without teaching Core its meaning.
+    pub fn extension(mut self, extension: PluginExtensionDescriptor) -> Self {
+        self.provides.extensions.push(extension);
+        self
     }
 
     pub fn version(mut self, version: impl Into<String>) -> Self {

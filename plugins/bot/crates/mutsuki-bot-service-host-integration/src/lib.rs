@@ -13,7 +13,7 @@ pub use configured::*;
 pub use console_bridge::{
     AgentConnectionConsoleBridge, AgentConnectionRegistryConsoleBridge,
     BILIBILI_MANAGEMENT_SERVICE_ID, BilibiliConsoleBridge, BotAgentConfigConsoleBridge,
-    BotConversationPolicyConsoleBridge, QQ_MANAGEMENT_SERVICE_ID, QqConsoleBridge,
+    BotFlowConsoleBridge, QQ_MANAGEMENT_SERVICE_ID, QqConsoleBridge,
 };
 pub use delivery_recovery::{
     BOT_REPLY_DELIVERY_RECOVERY_SOURCE_ID, BotReplyDeliveryRecoveryEventSource,

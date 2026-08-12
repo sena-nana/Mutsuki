@@ -9,13 +9,13 @@ use mutsuki_bot_delivery::{
     DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryRepository, ReplyDeliveryRepository,
     reply_part_request,
 };
+use mutsuki_bot_flow::{BotFlowError, BotFlowRepository};
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
-    ConversationPolicyRule, ConversationPolicyRuleAuditEntry, ConversationPolicyRuleDelete,
-    ConversationPolicyRuleUpsert, ConversationPolicyRuleWriteResult, DeliveryStatus,
-    InteractionStatus,
+    BotFlowDraft, BotFlowDraftSaveRequest, BotFlowPublishRequest, BotFlowPublishedSnapshot,
+    BotFlowStateSnapshot, BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
+    DeliveryStatus, InteractionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -23,7 +23,6 @@ use tokio::sync::{mpsc, oneshot};
 
 const DEFAULT_QUEUE_CAPACITY: usize = 256;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
-pub const BOT_CONVERSATION_POLICY_SERVICE_ID: &str = "mutsuki.bot.conversation.policy";
 
 #[derive(Clone)]
 pub struct BotStateDbRepository {
@@ -178,52 +177,6 @@ impl BotStateDbRepository {
         self.inner.metrics.snapshot()
     }
 
-    /// Atomically inserts or replaces a typed conversation policy rule.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the actor is unavailable or `SQLite` rejects the write.
-    pub async fn upsert_policy_rule(
-        &self,
-        rule: ConversationPolicyRule,
-    ) -> Result<(), BotStateDbError> {
-        self.call(|reply| DbJob::UpsertPolicyRule { rule, reply })
-            .await
-    }
-
-    /// Applies a persistent rule upsert under the global policy revision fence.
-    pub async fn upsert_policy_rule_fenced(
-        &self,
-        request: ConversationPolicyRuleUpsert,
-    ) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
-        self.call(|reply| DbJob::UpsertPolicyRuleFenced { request, reply })
-            .await
-    }
-
-    /// Applies a persistent rule deletion under the global policy revision fence.
-    pub async fn delete_policy_rule_fenced(
-        &self,
-        request: ConversationPolicyRuleDelete,
-    ) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
-        self.call(|reply| DbJob::DeletePolicyRuleFenced { request, reply })
-            .await
-    }
-
-    /// Loads the durable rule revision, rules, and audit trail after restart.
-    pub async fn policy_management_snapshot(
-        &self,
-    ) -> Result<
-        (
-            u64,
-            Vec<ConversationPolicyRule>,
-            Vec<ConversationPolicyRuleAuditEntry>,
-        ),
-        BotStateDbError,
-    > {
-        self.call(|reply| DbJob::PolicyManagementSnapshot { reply })
-            .await
-    }
-
     async fn call<T>(
         &self,
         make_job: impl FnOnce(oneshot::Sender<Result<T, BotStateDbError>>) -> DbJob,
@@ -259,27 +212,26 @@ impl BotStateDbRepository {
 }
 
 enum DbJob {
-    UpsertPolicyRule {
-        rule: ConversationPolicyRule,
-        reply: DbReply<()>,
+    FlowSnapshot {
+        reply: SyncDbReply<BotFlowStateSnapshot>,
     },
-    UpsertPolicyRuleFenced {
-        request: ConversationPolicyRuleUpsert,
-        reply: DbReply<ConversationPolicyRuleWriteResult>,
+    FlowPublishedRevision {
+        revision: u64,
+        reply: SyncDbReply<Option<BotFlowPublishedSnapshot>>,
     },
-    DeletePolicyRuleFenced {
-        request: ConversationPolicyRuleDelete,
-        reply: DbReply<ConversationPolicyRuleWriteResult>,
+    SaveFlowDraft {
+        request: BotFlowDraftSaveRequest,
+        now_ms: i64,
+        reply: SyncDbReply<BotFlowDraft>,
     },
-    PolicyManagementSnapshot {
-        reply: DbReply<(
-            u64,
-            Vec<ConversationPolicyRule>,
-            Vec<ConversationPolicyRuleAuditEntry>,
-        )>,
+    DiscardFlowDraft {
+        expected_revision: u64,
+        reply: SyncDbReply<()>,
     },
-    PolicyRulesSync {
-        reply: SyncDbReply<Vec<ConversationPolicyRule>>,
+    PublishFlowDraft {
+        request: BotFlowPublishRequest,
+        now_ms: i64,
+        reply: SyncDbReply<BotFlowStateSnapshot>,
     },
     SessionBindingSync {
         binding_key: String,
@@ -379,8 +331,9 @@ impl DbJob {
     fn transactional(&self) -> bool {
         matches!(
             self,
-            Self::UpsertPolicyRuleFenced { .. }
-                | Self::DeletePolicyRuleFenced { .. }
+            Self::SaveFlowDraft { .. }
+                | Self::DiscardFlowDraft { .. }
+                | Self::PublishFlowDraft { .. }
                 | Self::CompareAndSetSessionBindingSync { .. }
                 | Self::BeginAgentEventSync { .. }
                 | Self::ReserveDelivery { .. }
@@ -396,29 +349,38 @@ impl DbJob {
 
     fn execute(self, connection: &mut Connection, metrics: &ActorMetrics) {
         match self {
-            Self::UpsertPolicyRule { rule, reply } => {
-                send_reply(reply, upsert_policy_rule(connection, &rule), metrics);
+            Self::FlowSnapshot { reply } => {
+                send_sync_reply(reply, flow_snapshot(connection), metrics);
             }
-            Self::UpsertPolicyRuleFenced { request, reply } => {
-                send_reply(
+            Self::FlowPublishedRevision { revision, reply } => {
+                send_sync_reply(
                     reply,
-                    upsert_policy_rule_fenced(connection, request),
+                    flow_published_revision(connection, revision),
                     metrics,
                 );
             }
-            Self::DeletePolicyRuleFenced { request, reply } => {
-                send_reply(
-                    reply,
-                    delete_policy_rule_fenced(connection, request),
-                    metrics,
-                );
-            }
-            Self::PolicyManagementSnapshot { reply } => {
-                send_reply(reply, policy_management_snapshot(connection), metrics);
-            }
-            Self::PolicyRulesSync { reply } => {
-                send_sync_reply(reply, policy_rules(connection), metrics);
-            }
+            Self::SaveFlowDraft {
+                request,
+                now_ms,
+                reply,
+            } => send_sync_reply(reply, save_flow_draft(connection, request, now_ms), metrics),
+            Self::DiscardFlowDraft {
+                expected_revision,
+                reply,
+            } => send_sync_reply(
+                reply,
+                discard_flow_draft(connection, expected_revision),
+                metrics,
+            ),
+            Self::PublishFlowDraft {
+                request,
+                now_ms,
+                reply,
+            } => send_sync_reply(
+                reply,
+                publish_flow_draft(connection, request, now_ms),
+                metrics,
+            ),
             Self::SessionBindingSync { binding_key, reply } => {
                 send_sync_reply(reply, session_binding(connection, &binding_key), metrics);
             }
@@ -660,11 +622,37 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              version INTEGER NOT NULL,
              body TEXT NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS bot_flow_meta(
+             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+             published_revision INTEGER NOT NULL,
+             next_draft_revision INTEGER NOT NULL,
+             active_draft_revision INTEGER
+         );
+         INSERT OR IGNORE INTO bot_flow_meta(
+             singleton, published_revision, next_draft_revision, active_draft_revision
+         ) VALUES (1, 0, 1, NULL);
+         CREATE TABLE IF NOT EXISTS bot_flow_draft(
+             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+             revision INTEGER NOT NULL UNIQUE,
+             base_published_revision INTEGER NOT NULL,
+             body TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_flow_version(
+             revision INTEGER PRIMARY KEY,
+             body TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_flow_audit(
+             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+             action TEXT NOT NULL,
+             revision INTEGER NOT NULL,
+             created_at_ms INTEGER NOT NULL,
+             body TEXT NOT NULL
+         );
          CREATE INDEX IF NOT EXISTS bot_delivery_attempt_due
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=4;
+         PRAGMA user_version=5;
          COMMIT;",
     )?;
 
@@ -702,155 +690,247 @@ fn immediate(connection: &mut Connection) -> Result<Transaction<'_>, BotStateDbE
     Ok(connection.transaction_with_behavior(TransactionBehavior::Immediate)?)
 }
 
-fn upsert_policy_rule(
-    connection: &Connection,
-    rule: &ConversationPolicyRule,
-) -> Result<(), BotStateDbError> {
-    connection.execute(
-        "INSERT INTO bot_conversation_policy(rule_id, body) VALUES (?1, ?2)
-         ON CONFLICT(rule_id) DO UPDATE SET body=excluded.body",
-        params![rule.rule_id, encode(rule)?],
-    )?;
-    Ok(())
-}
-
-fn upsert_policy_rule_fenced(
-    connection: &mut Connection,
-    request: ConversationPolicyRuleUpsert,
-) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
-    validate_policy_write(&request.actor_id, &request.rule.rule_id)?;
-    let transaction = immediate(connection)?;
-    let current = policy_revision(&transaction)?;
-    if current != request.expected_revision {
-        return Err(BotStateDbError::RevisionConflict {
-            expected: request.expected_revision,
-            actual: current,
-        });
-    }
-    let next = current.saturating_add(1);
-    let mut rule = request.rule;
-    rule.revision = next;
-    transaction.execute(
-        "INSERT INTO bot_conversation_policy(rule_id, body) VALUES (?1, ?2)
-         ON CONFLICT(rule_id) DO UPDATE SET body=excluded.body",
-        params![rule.rule_id, encode(&rule)?],
-    )?;
-    let result = record_policy_write(
-        &transaction,
-        &request.actor_id,
-        "upsert",
-        &rule.rule_id,
-        next,
-    )?;
-    transaction.commit()?;
-    Ok(result)
-}
-
-fn delete_policy_rule_fenced(
-    connection: &mut Connection,
-    request: ConversationPolicyRuleDelete,
-) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
-    validate_policy_write(&request.actor_id, &request.rule_id)?;
-    let transaction = immediate(connection)?;
-    let current = policy_revision(&transaction)?;
-    if current != request.expected_revision {
-        return Err(BotStateDbError::RevisionConflict {
-            expected: request.expected_revision,
-            actual: current,
-        });
-    }
-    let changed = transaction.execute(
-        "DELETE FROM bot_conversation_policy WHERE rule_id=?1",
-        params![request.rule_id],
-    )?;
-    if changed != 1 {
-        return Err(BotStateDbError::PolicyRuleNotFound(request.rule_id));
-    }
-    let next = current.saturating_add(1);
-    let result = record_policy_write(
-        &transaction,
-        &request.actor_id,
-        "delete",
-        &request.rule_id,
-        next,
-    )?;
-    transaction.commit()?;
-    Ok(result)
-}
-
-fn record_policy_write(
-    transaction: &Transaction<'_>,
-    actor_id: &str,
-    action: &str,
-    rule_id: &str,
-    revision: u64,
-) -> Result<ConversationPolicyRuleWriteResult, BotStateDbError> {
-    let audit_id = format!("conversation-policy-audit-{revision}");
-    let audit = ConversationPolicyRuleAuditEntry {
-        audit_id: audit_id.clone(),
-        actor_id: actor_id.into(),
-        action: action.into(),
-        rule_id: rule_id.into(),
-        revision,
-    };
-    transaction.execute(
-        "UPDATE bot_conversation_policy_meta SET revision=?1 WHERE singleton=1",
-        params![sqlite_integer(revision)?],
-    )?;
-    transaction.execute(
-        "INSERT INTO bot_conversation_policy_audit(revision, audit_id, body) VALUES (?1, ?2, ?3)",
-        params![sqlite_integer(revision)?, audit_id, encode(&audit)?],
-    )?;
-    Ok(ConversationPolicyRuleWriteResult { revision, audit_id })
-}
-
-fn policy_revision(connection: &Connection) -> Result<u64, BotStateDbError> {
-    let revision = connection.query_row(
-        "SELECT revision FROM bot_conversation_policy_meta WHERE singleton=1",
+fn flow_snapshot(connection: &Connection) -> Result<BotFlowStateSnapshot, BotStateDbError> {
+    let (published_revision, active_draft_revision) = connection.query_row(
+        "SELECT published_revision, active_draft_revision FROM bot_flow_meta WHERE singleton=1",
         [],
-        |row| row.get::<_, i64>(0),
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
     )?;
-    u64::try_from(revision)
-        .map_err(|_| BotStateDbError::Invariant("negative policy revision".into()))
+    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
+    let active_draft_revision = active_draft_revision
+        .map(|revision| sqlite_unsigned(revision, "draft revision"))
+        .transpose()?;
+    let published = if published_revision == 0 {
+        BotFlowPublishedSnapshot {
+            revision: 0,
+            flows: Vec::new(),
+            published_at_ms: 0,
+        }
+    } else {
+        flow_published_revision(connection, published_revision)?.ok_or_else(|| {
+            BotStateDbError::Invariant(format!(
+                "active Bot flow revision {published_revision} is missing"
+            ))
+        })?
+    };
+    let draft = match active_draft_revision {
+        Some(revision) => {
+            let body = connection
+                .query_row(
+                    "SELECT body FROM bot_flow_draft WHERE singleton=1 AND revision=?1",
+                    params![sqlite_integer(revision)?],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            Some(decode(&body.ok_or_else(|| {
+                BotStateDbError::Invariant(format!("active Bot flow draft {revision} is missing"))
+            })?)?)
+        }
+        None => None,
+    };
+    Ok(BotFlowStateSnapshot { draft, published })
 }
 
-fn policy_management_snapshot(
+fn flow_published_revision(
     connection: &Connection,
-) -> Result<
-    (
-        u64,
-        Vec<ConversationPolicyRule>,
-        Vec<ConversationPolicyRuleAuditEntry>,
-    ),
-    BotStateDbError,
-> {
-    let revision = policy_revision(connection)?;
-    let rules = policy_rules(connection)?;
-    let mut statement =
-        connection.prepare("SELECT body FROM bot_conversation_policy_audit ORDER BY revision")?;
-    let audits = statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .map(|body| decode(&body?))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((revision, rules, audits))
+    revision: u64,
+) -> Result<Option<BotFlowPublishedSnapshot>, BotStateDbError> {
+    if revision == 0 {
+        return Ok(Some(BotFlowPublishedSnapshot {
+            revision: 0,
+            flows: Vec::new(),
+            published_at_ms: 0,
+        }));
+    }
+    connection
+        .query_row(
+            "SELECT body FROM bot_flow_version WHERE revision=?1",
+            params![sqlite_integer(revision)?],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|body| decode(&body))
+        .transpose()
 }
 
-fn validate_policy_write(actor_id: &str, rule_id: &str) -> Result<(), BotStateDbError> {
-    if actor_id.trim().is_empty() || rule_id.trim().is_empty() {
-        return Err(BotStateDbError::InvalidPolicyWrite(
-            "actor_id and rule_id are required".into(),
-        ));
+fn save_flow_draft(
+    connection: &mut Connection,
+    request: BotFlowDraftSaveRequest,
+    now_ms: i64,
+) -> Result<BotFlowDraft, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let (published_revision, next_draft_revision, active_draft_revision) = transaction.query_row(
+        "SELECT published_revision, next_draft_revision, active_draft_revision
+         FROM bot_flow_meta WHERE singleton=1",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        },
+    )?;
+    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
+    let next_draft_revision = sqlite_unsigned(next_draft_revision, "next draft revision")?;
+    let active_draft_revision = active_draft_revision
+        .map(|revision| sqlite_unsigned(revision, "draft revision"))
+        .transpose()?;
+    let expected = request.expected_draft_revision.unwrap_or(0);
+    let actual = active_draft_revision.unwrap_or(0);
+    if expected != actual {
+        return Err(BotStateDbError::FlowRevisionConflict { expected, actual });
     }
+    if request.base_published_revision != published_revision {
+        return Err(BotStateDbError::FlowRevisionConflict {
+            expected: request.base_published_revision,
+            actual: published_revision,
+        });
+    }
+    let draft = BotFlowDraft {
+        revision: next_draft_revision,
+        base_published_revision: published_revision,
+        flows: request.flows,
+        updated_at_ms: now_ms,
+    };
+    let body = encode(&draft)?;
+    transaction.execute(
+        "INSERT INTO bot_flow_draft(singleton, revision, base_published_revision, body)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(singleton) DO UPDATE SET
+             revision=excluded.revision,
+             base_published_revision=excluded.base_published_revision,
+             body=excluded.body",
+        params![
+            sqlite_integer(draft.revision)?,
+            sqlite_integer(draft.base_published_revision)?,
+            body
+        ],
+    )?;
+    transaction.execute(
+        "UPDATE bot_flow_meta SET next_draft_revision=?1, active_draft_revision=?2
+         WHERE singleton=1",
+        params![
+            sqlite_integer(next_draft_revision + 1)?,
+            sqlite_integer(draft.revision)?
+        ],
+    )?;
+    transaction.execute(
+        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
+         VALUES ('draft.save', ?1, ?2, ?3)",
+        params![sqlite_integer(draft.revision)?, now_ms, encode(&draft)?],
+    )?;
+    transaction.commit()?;
+    Ok(draft)
+}
+
+fn discard_flow_draft(
+    connection: &mut Connection,
+    expected_revision: u64,
+) -> Result<(), BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let actual = transaction
+        .query_row(
+            "SELECT active_draft_revision FROM bot_flow_meta WHERE singleton=1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )?
+        .map(|revision| sqlite_unsigned(revision, "draft revision"))
+        .transpose()?
+        .unwrap_or(0);
+    if expected_revision != actual {
+        return Err(BotStateDbError::FlowRevisionConflict {
+            expected: expected_revision,
+            actual,
+        });
+    }
+    transaction.execute("DELETE FROM bot_flow_draft WHERE singleton=1", [])?;
+    transaction.execute(
+        "UPDATE bot_flow_meta SET active_draft_revision=NULL WHERE singleton=1",
+        [],
+    )?;
+    transaction.execute(
+        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
+         VALUES ('draft.discard', ?1, 0, '{}')",
+        params![sqlite_integer(actual)?],
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
-fn policy_rules(connection: &Connection) -> Result<Vec<ConversationPolicyRule>, BotStateDbError> {
-    let mut statement =
-        connection.prepare("SELECT body FROM bot_conversation_policy ORDER BY rule_id")?;
-    statement
-        .query_map([], |row| row.get::<_, String>(0))?
-        .map(|body| decode(&body?))
-        .collect()
+fn publish_flow_draft(
+    connection: &mut Connection,
+    request: BotFlowPublishRequest,
+    now_ms: i64,
+) -> Result<BotFlowStateSnapshot, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let (published_revision, active_draft_revision) = transaction.query_row(
+        "SELECT published_revision, active_draft_revision FROM bot_flow_meta WHERE singleton=1",
+        [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+    )?;
+    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
+    let active_draft_revision = active_draft_revision
+        .map(|revision| sqlite_unsigned(revision, "draft revision"))
+        .transpose()?;
+    if published_revision != request.expected_published_revision {
+        return Err(BotStateDbError::FlowRevisionConflict {
+            expected: request.expected_published_revision,
+            actual: published_revision,
+        });
+    }
+    let actual_draft = active_draft_revision.unwrap_or(0);
+    if actual_draft != request.expected_draft_revision {
+        return Err(BotStateDbError::FlowRevisionConflict {
+            expected: request.expected_draft_revision,
+            actual: actual_draft,
+        });
+    }
+    let draft_body = transaction
+        .query_row(
+            "SELECT body FROM bot_flow_draft WHERE singleton=1 AND revision=?1",
+            params![sqlite_integer(actual_draft)?],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| BotStateDbError::Invariant("active Bot flow draft is missing".into()))?;
+    let draft: BotFlowDraft = decode(&draft_body)?;
+    if draft.base_published_revision != published_revision {
+        return Err(BotStateDbError::FlowRevisionConflict {
+            expected: draft.base_published_revision,
+            actual: published_revision,
+        });
+    }
+    let published = BotFlowPublishedSnapshot {
+        revision: published_revision + 1,
+        flows: draft.flows,
+        published_at_ms: now_ms,
+    };
+    let body = encode(&published)?;
+    transaction.execute(
+        "INSERT INTO bot_flow_version(revision, body) VALUES (?1, ?2)",
+        params![sqlite_integer(published.revision)?, body],
+    )?;
+    transaction.execute("DELETE FROM bot_flow_draft WHERE singleton=1", [])?;
+    transaction.execute(
+        "UPDATE bot_flow_meta SET published_revision=?1, active_draft_revision=NULL
+         WHERE singleton=1",
+        params![sqlite_integer(published.revision)?],
+    )?;
+    transaction.execute(
+        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
+         VALUES ('publish', ?1, ?2, ?3)",
+        params![
+            sqlite_integer(published.revision)?,
+            now_ms,
+            encode(&published)?
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(BotFlowStateSnapshot {
+        draft: None,
+        published,
+    })
 }
 
 fn session_binding(
@@ -1051,6 +1131,7 @@ fn reserve_reply_delivery(
         if existing != *request {
             return Ok(ReplyDeliveryReservation::Conflict);
         }
+        complete_reply_source_event(&transaction, request)?;
         let receipt = reply_delivery_receipt(&transaction, &existing)?;
         transaction.commit()?;
         return Ok(ReplyDeliveryReservation::Existing(receipt));
@@ -1079,8 +1160,23 @@ fn reserve_reply_delivery(
             ],
         )?;
     }
+    complete_reply_source_event(&transaction, request)?;
     transaction.commit()?;
     Ok(ReplyDeliveryReservation::Reserved)
+}
+
+fn complete_reply_source_event(
+    transaction: &Transaction<'_>,
+    request: &BotReplyDeliveryRequest,
+) -> Result<(), BotStateDbError> {
+    if let Some(binding_key) = request.source_binding_key.as_deref() {
+        transaction.execute(
+            "UPDATE bot_agent_event SET status='completed'
+             WHERE binding_key=?1 AND event_id=?2 AND status='pending'",
+            params![binding_key, request.source_event_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn reply_delivery_receipt_by_id(
@@ -1503,6 +1599,11 @@ fn sqlite_integer(value: u64) -> Result<i64, BotStateDbError> {
         .map_err(|_| BotStateDbError::Invariant(format!("integer {value} exceeds SQLite range")))
 }
 
+fn sqlite_unsigned(value: i64, name: &str) -> Result<u64, BotStateDbError> {
+    u64::try_from(value)
+        .map_err(|_| BotStateDbError::Invariant(format!("negative {name}: {value}")))
+}
+
 fn delivery_status_name(status: DeliveryStatus) -> &'static str {
     match status {
         DeliveryStatus::Pending => "pending",
@@ -1528,11 +1629,6 @@ fn interaction_status_name(status: InteractionStatus) -> &'static str {
 
 #[async_trait]
 impl ConversationRepository for BotStateDbRepository {
-    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
-        self.call_sync(|reply| DbJob::PolicyRulesSync { reply })
-            .map_err(conversation_error)
-    }
-
     async fn session_binding(
         &self,
         binding_key: &str,
@@ -1787,6 +1883,64 @@ fn state_db_error_message(error: BotStateDbError) -> String {
     message
 }
 
+impl BotFlowRepository for BotStateDbRepository {
+    fn snapshot(&self) -> Result<BotFlowStateSnapshot, BotFlowError> {
+        self.call_sync(|reply| DbJob::FlowSnapshot { reply })
+            .map_err(flow_error)
+    }
+
+    fn published_revision(
+        &self,
+        revision: u64,
+    ) -> Result<Option<BotFlowPublishedSnapshot>, BotFlowError> {
+        self.call_sync(|reply| DbJob::FlowPublishedRevision { revision, reply })
+            .map_err(flow_error)
+    }
+
+    fn save_draft(
+        &self,
+        request: BotFlowDraftSaveRequest,
+        now_ms: i64,
+    ) -> Result<BotFlowDraft, BotFlowError> {
+        self.call_sync(|reply| DbJob::SaveFlowDraft {
+            request,
+            now_ms,
+            reply,
+        })
+        .map_err(flow_error)
+    }
+
+    fn discard_draft(&self, expected_revision: u64) -> Result<(), BotFlowError> {
+        self.call_sync(|reply| DbJob::DiscardFlowDraft {
+            expected_revision,
+            reply,
+        })
+        .map_err(flow_error)
+    }
+
+    fn publish(
+        &self,
+        request: BotFlowPublishRequest,
+        now_ms: i64,
+    ) -> Result<BotFlowStateSnapshot, BotFlowError> {
+        self.call_sync(|reply| DbJob::PublishFlowDraft {
+            request,
+            now_ms,
+            reply,
+        })
+        .map_err(flow_error)
+    }
+}
+
+fn flow_error(error: BotStateDbError) -> BotFlowError {
+    match error {
+        BotStateDbError::FlowRevisionConflict { expected, actual } => {
+            BotFlowError::RevisionConflict { expected, actual }
+        }
+        other => BotFlowError::Repository(state_db_error_message(other)),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum BotStateDbError {
     #[error(transparent)]
@@ -1803,12 +1957,8 @@ pub enum BotStateDbError {
     QueueFull,
     #[error("invalid database actor configuration: {0}")]
     InvalidConfiguration(String),
-    #[error("expected conversation policy revision {expected}, current revision is {actual}")]
-    RevisionConflict { expected: u64, actual: u64 },
-    #[error("conversation policy rule `{0}` was not found")]
-    PolicyRuleNotFound(String),
-    #[error("invalid conversation policy write: {0}")]
-    InvalidPolicyWrite(String),
+    #[error("expected Bot flow revision {expected}, current revision is {actual}")]
+    FlowRevisionConflict { expected: u64, actual: u64 },
 }
 
 #[cfg(test)]
@@ -1817,64 +1967,67 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use mutsuki_bot_protocol::{
-        AgentSessionScope, BotConversationKind, BotDeliveryContent, BotInteractionSession,
-        BotPropagationPolicy, BotReplyDeliveryPart, ConversationPolicyMatch,
-        ConversationPolicyPatch, DeliveryPolicy, InteractionScope, InteractionWaitSpec,
-        MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BotConversationKind, BotDeliveryContent, BotInteractionSession, BotReplyDeliveryPart,
+        DeliveryPolicy, InteractionScope, InteractionWaitSpec, MessageSegment,
+        QQ_CONVERSATION_REF_VERSION, QqConversationRef,
     };
     use tokio::task::JoinSet;
 
     use super::*;
 
-    #[tokio::test]
-    async fn policy_rule_writes_are_revision_fenced_audited_and_recovered() {
+    #[test]
+    fn flow_draft_publish_uses_cas_and_recovers_immutable_revision() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("policy.db");
+        let path = root.path().join("flow.db");
         let repository = BotStateDbRepository::open(&path).unwrap();
-        let upsert = repository
-            .upsert_policy_rule_fenced(ConversationPolicyRuleUpsert {
-                actor_id: "admin".into(),
-                expected_revision: 0,
-                rule: policy_rule(),
-            })
-            .await
-            .unwrap();
-        assert_eq!(upsert.revision, 1);
+        let draft = BotFlowRepository::save_draft(
+            &repository,
+            BotFlowDraftSaveRequest {
+                expected_draft_revision: None,
+                base_published_revision: 0,
+                flows: Vec::new(),
+            },
+            10,
+        )
+        .unwrap();
+        assert_eq!(draft.revision, 1);
         assert!(matches!(
-            repository
-                .upsert_policy_rule_fenced(ConversationPolicyRuleUpsert {
-                    actor_id: "stale".into(),
-                    expected_revision: 0,
-                    rule: policy_rule(),
-                })
-                .await,
-            Err(BotStateDbError::RevisionConflict {
+            BotFlowRepository::save_draft(
+                &repository,
+                BotFlowDraftSaveRequest {
+                    expected_draft_revision: None,
+                    base_published_revision: 0,
+                    flows: Vec::new(),
+                },
+                11,
+            ),
+            Err(BotFlowError::RevisionConflict {
                 expected: 0,
                 actual: 1
             })
         ));
+        let snapshot = BotFlowRepository::publish(
+            &repository,
+            BotFlowPublishRequest {
+                expected_draft_revision: 1,
+                expected_published_revision: 0,
+            },
+            20,
+        )
+        .unwrap();
+        assert_eq!(snapshot.published.revision, 1);
         drop(repository);
 
-        let reopened = BotStateDbRepository::open(&path).unwrap();
-        let (revision, rules, audits) = reopened.policy_management_snapshot().await.unwrap();
-        assert_eq!(revision, 1);
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].revision, 1);
-        assert_eq!(audits[0].actor_id, "admin");
-        let deleted = reopened
-            .delete_policy_rule_fenced(ConversationPolicyRuleDelete {
-                actor_id: "admin".into(),
-                expected_revision: 1,
-                rule_id: rules[0].rule_id.clone(),
-            })
-            .await
-            .unwrap();
-        assert_eq!(deleted.revision, 2);
-        let (revision, rules, audits) = reopened.policy_management_snapshot().await.unwrap();
-        assert_eq!(revision, 2);
-        assert!(rules.is_empty());
-        assert_eq!(audits.len(), 2);
-        assert_eq!(audits[1].action, "delete");
+        let reopened = BotStateDbRepository::open(path).unwrap();
+        let snapshot = BotFlowRepository::snapshot(&reopened).unwrap();
+        assert_eq!(snapshot.published.revision, 1);
+        assert!(snapshot.draft.is_none());
+        assert_eq!(
+            BotFlowRepository::published_revision(&reopened, 1)
+                .unwrap()
+                .unwrap(),
+            snapshot.published
+        );
     }
 
     #[tokio::test]
@@ -2009,7 +2162,6 @@ mod tests {
         let path = root.path().join("bot-state.db");
         let repository = BotStateDbRepository::open(&path).unwrap();
         let conversation = conversation();
-        repository.upsert_policy_rule(policy_rule()).await.unwrap();
         repository
             .compare_and_set_session_binding(
                 &conversation.origin_key(),
@@ -2042,7 +2194,6 @@ mod tests {
 
         let reopened = BotStateDbRepository::open(&path).unwrap();
         assert_eq!(reopened.journal_mode(), "wal");
-        assert_eq!(reopened.policy_rules().await.unwrap().len(), 1);
         assert_eq!(
             reopened
                 .session_binding(&conversation.origin_key())
@@ -2191,7 +2342,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("state.db");
         let repository = BotStateDbRepository::open(&path).unwrap();
-        repository.upsert_policy_rule(policy_rule()).await.unwrap();
+        let conversation = conversation();
 
         let lock_path = path.clone();
         let holder = std::thread::spawn(move || {
@@ -2213,9 +2364,15 @@ mod tests {
             }
         };
 
-        let mut rule = policy_rule();
-        rule.revision = 3;
-        let (write_result, _) = tokio::join!(repository.upsert_policy_rule(rule), ticker);
+        let binding_key = conversation.origin_key();
+        let (write_result, _) = tokio::join!(
+            repository.compare_and_set_session_binding(
+                &binding_key,
+                None,
+                binding(&conversation, 1)
+            ),
+            ticker
+        );
         write_result.unwrap();
         holder.join().unwrap();
         assert!(
@@ -2341,22 +2498,6 @@ mod tests {
         }
     }
 
-    fn policy_rule() -> ConversationPolicyRule {
-        ConversationPolicyRule {
-            rule_id: "group-rule".into(),
-            revision: 2,
-            matcher: ConversationPolicyMatch {
-                group_id: Some("group".into()),
-                ..ConversationPolicyMatch::default()
-            },
-            patch: ConversationPolicyPatch {
-                agent_enabled: Some(true),
-                session_scope: Some(AgentSessionScope::SharedConversation),
-                ..ConversationPolicyPatch::default()
-            },
-        }
-    }
-
     fn binding(conversation: &QqConversationRef, generation: u64) -> AgentSessionBinding {
         AgentSessionBinding {
             origin_key: conversation.origin_key(),
@@ -2425,6 +2566,7 @@ mod tests {
             },
             source_event_id: "event".into(),
             source_turn_id: "turn".into(),
+            source_binding_key: None,
         }
     }
 
@@ -2466,7 +2608,6 @@ mod tests {
                 command: Some("verify".into()),
                 predicate_service_id: None,
                 timeout_at_unix_ms: 1_000,
-                propagation: BotPropagationPolicy::ConsumeOnSuccess,
                 retry_prompt: None,
             },
             status: InteractionStatus::Waiting,

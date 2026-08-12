@@ -12,6 +12,7 @@ mutsuki-runtime-sdk.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-bot-conversation.workspace = true
 mutsuki-bot-delivery.workspace = true
+mutsuki-bot-flow.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-state-db.workspace = true
 mutsuki-agent-contracts.workspace = true

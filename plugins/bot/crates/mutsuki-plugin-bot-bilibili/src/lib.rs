@@ -8,8 +8,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
 use mutsuki_bot_protocol::{
-    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap,
-    BotMessage, BotTarget, MessageSegment, bot_command_binding_id,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
+    BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_protocol_browser::{
     BrowserSnapshot, BrowserSnapshotRequest, BrowserWaitMode, SNAPSHOT, SNAPSHOT_SCHEMA,
@@ -25,9 +27,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, HandlerBindingBuilder, PluginBuilder, ProtocolDescriptorBuilder,
-    ResourceRegistryGateway, RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter,
-    TaskHandleFuture,
+    AsyncRunnerContext, PluginBuilder, ProtocolDescriptorBuilder, ResourceRegistryGateway,
+    RunnerDescriptorBuilder, RuntimeClientRef, TaskAwaitRunnerAdapter, TaskHandleFuture,
 };
 use reqwest::blocking::Client;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -200,16 +201,11 @@ pub struct BilibiliSubscription {
     pub owner_user_id: Option<String>,
 }
 
-fn default_management_command() -> String {
-    "bili".into()
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BilibiliManagementConfig {
     pub enabled: bool,
     pub allow_self_binding: bool,
-    pub command: String,
     pub admin_user_ids: Vec<String>,
     pub self_binding_notifications: Vec<BilibiliPollKind>,
     pub self_binding_outbound_binding: String,
@@ -220,7 +216,6 @@ impl Default for BilibiliManagementConfig {
         Self {
             enabled: false,
             allow_self_binding: false,
-            command: default_management_command(),
             admin_user_ids: Vec::new(),
             self_binding_notifications: vec![
                 BilibiliPollKind::Live,
@@ -397,16 +392,15 @@ impl BilibiliConfig {
             return Err("subscription_id values must be unique".into());
         }
         if self.management.enabled
-            && (self.management.command.trim().is_empty()
-                || self
-                    .management
-                    .self_binding_outbound_binding
-                    .trim()
-                    .is_empty()
+            && (self
+                .management
+                .self_binding_outbound_binding
+                .trim()
+                .is_empty()
                 || (self.management.allow_self_binding
                     && self.management.self_binding_notifications.is_empty()))
         {
-            return Err("enabled management requires a command and self-binding defaults".into());
+            return Err("enabled management requires self-binding defaults".into());
         }
         if let Some(risk_control) = &self.risk_control {
             risk_control.validate()?;
@@ -1089,11 +1083,7 @@ impl BilibiliRunner {
             return Ok(RunnerResult::completed(task.task_id.clone()));
         };
         let config = management.config().snapshot();
-        if !config.management.enabled
-            || !command
-                .name
-                .eq_ignore_ascii_case(&config.management.command)
-        {
+        if !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id.clone()));
         }
         let actor_id = command
@@ -1139,8 +1129,8 @@ impl BilibiliRunner {
                     task,
                     &command,
                     format!(
-                        "已为 {} ({}) 创建验证。请临时把 {} 加入 Bilibili 个性签名，然后发送 /{} verify。",
-                        challenge.name, challenge.uid, challenge.code, config.management.command
+                        "已为 {} ({}) 创建验证。请临时把 {} 加入 Bilibili 个性签名，然后通过验证节点继续。",
+                        challenge.name, challenge.uid, challenge.code
                     ),
                     None,
                 ))
@@ -1371,12 +1361,23 @@ impl BilibiliRunner {
 
 async fn run_task_async(
     ctx: AsyncRunnerContext,
-    task: Task,
+    mut task: Task,
     state: Arc<Mutex<BilibiliRunner>>,
     risk_control: Option<BilibiliRiskControlConfig>,
 ) -> RuntimeResult<RunnerResult> {
     if task.protocol_id == MANAGEMENT_COMMAND {
-        return run_management_task(ctx, task, state).await;
+        let invocation = serde_json::from_value::<BotNodeInvocation>(task.payload.to_value()).ok();
+        if let Some(invocation) = &invocation {
+            task.payload = mutsuki_runtime_contracts::TaskPayload::from_local(
+                invocation.input.payload.value.clone(),
+            );
+        }
+        let result = run_management_task(ctx, task, state).await?;
+        return if let Some(invocation) = invocation {
+            wrap_management_node_result(result, invocation)
+        } else {
+            Ok(result)
+        };
     }
     if task.protocol_id == LINK_RESOLVE {
         let prepared = {
@@ -1460,6 +1461,55 @@ async fn run_task_async(
     }
 }
 
+fn wrap_management_node_result(
+    mut result: RunnerResult,
+    invocation: BotNodeInvocation,
+) -> RuntimeResult<RunnerResult> {
+    let outputs = result
+        .tasks
+        .drain(..)
+        .map(|task| {
+            if task.protocol_id != BOT_MESSAGE_SEND_PROTOCOL_ID {
+                return Err(RuntimeFailure::new(RuntimeError::new(
+                    "bot.bilibili.node.unexpected_task",
+                    PLUGIN_ID,
+                    task.protocol_id,
+                )));
+            }
+            let message: BotMessage =
+                serde_json::from_value(task.payload.to_value()).map_err(|error| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        "bot.bilibili.node.output_invalid",
+                        PLUGIN_ID,
+                        error.to_string(),
+                    ))
+                })?;
+            Ok(BotNodeOutput {
+                port_id: "message".into(),
+                event: BotFlowEventEnvelope {
+                    event_id: format!("{}:message", invocation.input.event_id),
+                    protocol_id: BOT_MESSAGE_SEND_PROTOCOL_ID.into(),
+                    payload: BotFlowPayload {
+                        event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                        value: serde_json::to_value(message).expect("BotMessage serializes"),
+                    },
+                    context: invocation.input.context.clone(),
+                    trace_id: invocation.input.trace_id.clone(),
+                    correlation_id: invocation.input.correlation_id.clone(),
+                },
+            })
+        })
+        .collect::<RuntimeResult<Vec<_>>>()?;
+    result.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs,
+            metadata: Default::default(),
+        })
+        .expect("BotNodeResult serializes"),
+    );
+    Ok(result)
+}
+
 async fn run_management_task(
     ctx: AsyncRunnerContext,
     task: Task,
@@ -1480,11 +1530,7 @@ async fn run_management_task(
             return Ok(RunnerResult::completed(task.task_id));
         };
         let config = management.config().snapshot();
-        if !config.management.enabled
-            || !command
-                .name
-                .eq_ignore_ascii_case(&config.management.command)
-        {
+        if !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id));
         }
         let actor_id = command
@@ -1772,45 +1818,25 @@ async fn run_chromium_risk_control_fallback(
 }
 
 pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
-    manifest_with_management(None)
-}
-
-pub fn manifest_with_management(
-    command: Option<&str>,
-) -> mutsuki_runtime_contracts::PluginManifest {
-    manifest_with_management_and_risk_control(command, false)
-}
-
-pub fn manifest_with_management_and_risk_control(
-    command: Option<&str>,
-    risk_control_enabled: bool,
-) -> mutsuki_runtime_contracts::PluginManifest {
-    manifest_for_backend(
-        BilibiliBackendKind::WebCookie,
-        command,
-        risk_control_enabled,
-    )
+    manifest_for_backend(BilibiliBackendKind::WebCookie, false, false)
 }
 
 pub fn manifest_for_config(config: &BilibiliConfig) -> mutsuki_runtime_contracts::PluginManifest {
     manifest_for_backend(
         config.backend.kind(),
-        config
-            .management
-            .enabled
-            .then_some(config.management.command.as_str()),
+        config.management.enabled,
         config.risk_control.is_some(),
     )
 }
 
 fn manifest_for_backend(
     backend_kind: BilibiliBackendKind,
-    command: Option<&str>,
+    management_enabled: bool,
     risk_control_enabled: bool,
 ) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestRunner {
-            descriptor: runner_descriptor(command.is_some(), backend_kind),
+            descriptor: runner_descriptor(management_enabled, backend_kind),
         }))
         .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "orchestration")
         .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "orchestration");
@@ -1819,19 +1845,43 @@ fn manifest_for_backend(
             .protocol_handler(protocol(POLL_DYNAMIC), RUNNER_ID, "orchestration")
             .protocol_handler(protocol(LINK_RESOLVE), RUNNER_ID, "orchestration");
     }
-    if let Some(command) = command {
+    if management_enabled {
         builder = builder
             .protocol_handler(protocol(MANAGEMENT_COMMAND), RUNNER_ID, "orchestration")
-            .handler_binding(
-                HandlerBindingBuilder::new(
-                    bot_command_binding_id(command),
-                    PLUGIN_ID,
-                    BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                    MANAGEMENT_COMMAND,
-                )
-                .target_runner_hint(RUNNER_ID)
-                .pool_id("orchestration")
-                .build(),
+            .extension(
+                BotNodeCatalogFragment {
+                    nodes: vec![BotNodeDescriptor {
+                        node_type_id: "mutsuki.bot.bilibili.management".into(),
+                        version: 1,
+                        title: "Bilibili 管理".into(),
+                        category: "Bilibili".into(),
+                        role: BotNodeRole::Processor,
+                        binding: Some(BotNodeBinding {
+                            binding_id: format!("binding:{MANAGEMENT_COMMAND}"),
+                            protocol_id: MANAGEMENT_COMMAND.into(),
+                            runner_hint: Some(RUNNER_ID.into()),
+                        }),
+                        ports: vec![
+                            BotNodePortDescriptor {
+                                port_id: "command".into(),
+                                title: "管理请求".into(),
+                                direction: BotNodePortDirection::Input,
+                                event_type: BotFlowTypeRef::new("mutsuki.bot.command.event", 1),
+                                required: true,
+                            },
+                            BotNodePortDescriptor {
+                                port_id: "message".into(),
+                                title: "回复消息".into(),
+                                direction: BotNodePortDirection::Output,
+                                event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                                required: false,
+                            },
+                        ],
+                        config_schema: json!({"type": "object", "additionalProperties": false}),
+                    }],
+                }
+                .into_plugin_extension()
+                .expect("Bilibili node catalog serializes"),
             );
     }
     let mut manifest = builder.build().manifest;
@@ -1851,7 +1901,7 @@ fn manifest_for_backend(
     manifest
         .requires
         .push(format!("task_protocol:{CARD_RENDER}"));
-    if command.is_some() {
+    if management_enabled {
         manifest.requires.push(format!("task_protocol:{QR_RENDER}"));
     }
     manifest
@@ -2841,7 +2891,7 @@ mod tests {
     }
 
     #[test]
-    fn management_manifest_exposes_only_the_configured_command_binding() {
+    fn management_manifest_exposes_a_behavior_node_without_a_command_name() {
         let base = manifest();
         assert!(
             base.requires
@@ -2852,19 +2902,10 @@ mod tests {
                 .requires
                 .contains(&format!("task_protocol:{QR_RENDER}"))
         );
-        assert!(
-            !base.provides.runners[0]
-                .accepted_protocol_ids
-                .contains(&BOT_COMMAND_HANDLE_PROTOCOL_ID.to_string())
-        );
-        assert!(
-            base.provides
-                .handler_bindings
-                .iter()
-                .all(|binding| { binding.protocol_id != BOT_COMMAND_HANDLE_PROTOCOL_ID })
-        );
+        assert!(base.provides.extensions.is_empty());
 
-        let managed = manifest_with_management(Some("bili"));
+        let mut config = managed_config();
+        let managed = manifest_for_config(&config);
         assert!(
             managed
                 .requires
@@ -2875,12 +2916,18 @@ mod tests {
                 .accepted_protocol_ids
                 .contains(&MANAGEMENT_COMMAND.to_string())
         );
-        assert!(managed.provides.handler_bindings.iter().any(|binding| {
-            binding.binding_id == bot_command_binding_id("bili")
-                && binding.protocol_id == BOT_COMMAND_HANDLE_PROTOCOL_ID
-                && binding.target_protocol_id == MANAGEMENT_COMMAND
-                && binding.target_runner_hint.as_deref() == Some(RUNNER_ID)
-        }));
+        let extension = managed.provides.extensions.first().unwrap();
+        let nodes = BotNodeCatalogFragment::from_plugin_extension(extension)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            nodes.nodes[0].node_type_id,
+            "mutsuki.bot.bilibili.management"
+        );
+        assert_eq!(
+            nodes.nodes[0].binding.as_ref().unwrap().protocol_id,
+            MANAGEMENT_COMMAND
+        );
         assert!(
             managed.provides.runners[0]
                 .accepted_protocol_ids
@@ -2891,7 +2938,12 @@ mod tests {
                 )
         );
 
-        let risk_control = manifest_with_management_and_risk_control(None, true);
+        config.risk_control = Some(BilibiliRiskControlConfig {
+            backend: BilibiliRiskControlBackend::Chromium,
+            timeout_ms: 1_000,
+            max_response_bytes: 1024,
+        });
+        let risk_control = manifest_for_config(&config);
         assert!(
             risk_control
                 .requires
@@ -3352,7 +3404,6 @@ mod tests {
             management: BilibiliManagementConfig {
                 enabled: true,
                 allow_self_binding: true,
-                command: "bili".into(),
                 admin_user_ids: vec!["admin".into()],
                 self_binding_notifications: vec![BilibiliPollKind::Dynamic],
                 self_binding_outbound_binding: "qq-main".into(),

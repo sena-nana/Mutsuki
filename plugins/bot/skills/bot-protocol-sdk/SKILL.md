@@ -10,5 +10,8 @@ description: Change generic mutsuki.bot protocol DTOs, protocol identifiers, mes
 - Submit operations through RuntimeClient/TaskSubmitter and return `TaskHandle` semantics.
 - Preserve trace, correlation, target binding, cancel policy and registry generation.
 - Version breaking wire changes and update manifests, adapters and round-trip tests together.
+- Keep Bot Flow node/event/document DTOs in the Bot protocol owner. Plugin node catalogs are
+  carried through the domain-neutral `PluginProvides.extensions` contract; Core and Std workflow
+  must not interpret Bot graph semantics.
 
 Do not expose platform SDK clients, sockets or Host objects through the Bot API.

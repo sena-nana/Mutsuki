@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use mutsuki_bot_protocol::{BOT_EVENT_INGEST_PROTOCOL_ID, BotMediaKind, MessageSegment};
+use mutsuki_bot_protocol::{BOT_FLOW_INGRESS_PROTOCOL_ID, BotMediaKind, MessageSegment};
 use mutsuki_runtime_contracts::{
     CompletionBatch, EntryCompletion, ExecutionClass, InvocationMode, RunnerBatchCapability,
     RunnerConcurrency, RunnerMode, RunnerResult, RunnerSideEffect, RuntimeError, Task, WorkBatch,
@@ -13,7 +13,7 @@ use reqwest::{Client, Url};
 use serde_json::Value;
 
 use crate::adapter::qq_gateway_frame_to_bot_event;
-use crate::tasks::{QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_RUNNER_ID};
+use crate::tasks::{QQBOT_ADAPTER_PLUGIN_ID, QQBOT_GATEWAY_RUNNER_ID, flow_envelope};
 use crate::{GatewayFrame, QQBOT_GATEWAY_FRAME_PROTOCOL_ID, QqBotConfig};
 
 pub struct QqGatewayMediaHandler {
@@ -200,9 +200,13 @@ async fn map_task_with_media(
         }
     }
     let mut ingest = Task::new(
-        format!("mutsuki.bot.event.ingest:{}", task.task_id),
-        BOT_EVENT_INGEST_PROTOCOL_ID,
-        mutsuki_runtime_contracts::TaskPayload::from_local(event),
+        format!("mutsuki.bot.flow.ingress:{}", task.task_id),
+        BOT_FLOW_INGRESS_PROTOCOL_ID,
+        mutsuki_runtime_contracts::TaskPayload::from_local(flow_envelope(
+            event,
+            task.trace_id.clone(),
+            task.correlation_id.clone(),
+        )?),
     );
     ingest.registry_generation = ctx.registry_generation;
     ingest.trace_id = task.trace_id.clone();
@@ -456,7 +460,7 @@ fn failure(route: &str, error: impl std::fmt::Display) -> RuntimeError {
 mod tests {
     use std::sync::Mutex;
 
-    use mutsuki_bot_protocol::{BotEvent, BotTarget};
+    use mutsuki_bot_protocol::{BotEvent, BotFlowEventEnvelope, BotTarget};
     use mutsuki_runtime_contracts::{
         BatchEntry, BatchPayload, CommandPlan, DispatchLane, ExportPlan, OrderingRequirement,
         PlanReceipt, ReadPlan, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
@@ -535,12 +539,12 @@ mod tests {
                     .unwrap()
                     .result
                     .unwrap();
-                let event: BotEvent = result.tasks[0]
+                let envelope = result.tasks[0]
                     .payload
-                    .decode_shared::<BotEvent>()
-                    .unwrap()
-                    .as_ref()
-                    .clone();
+                    .decode_shared::<BotFlowEventEnvelope>()
+                    .unwrap();
+                let event: BotEvent =
+                    serde_json::from_value(envelope.payload.value.clone()).unwrap();
                 assert_eq!(event.target, expected_target.clone());
                 let segment = event.message.unwrap().segments.pop().unwrap();
                 let resource = match (kind, segment) {

@@ -8,6 +8,7 @@ license.workspace = true
 async-trait.workspace = true
 mutsuki-bot-conversation.workspace = true
 mutsuki-bot-delivery.workspace = true
+mutsuki-bot-flow.workspace = true
 mutsuki-bot-interaction.workspace = true
 mutsuki-bot-protocol.workspace = true
 rusqlite.workspace = true

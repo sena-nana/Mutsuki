@@ -6,10 +6,7 @@ license.workspace = true
 description = "Web Console management surfaces for Agent connections and persistent Bot Agent rules."
 
 [dependencies]
-futures-executor = "0.3"
 mutsuki-agent-service-host-integration.workspace = true
-mutsuki-bot-protocol.workspace = true
-mutsuki-bot-state-db.workspace = true
 mutsuki-web-extension.workspace = true
 mutsuki-web-protocol.workspace = true
 serde.workspace = true

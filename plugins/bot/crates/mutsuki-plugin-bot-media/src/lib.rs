@@ -5,11 +5,16 @@ use mutsuki_agent_contracts::{
     SpeechSynthesisRequest, SpeechSynthesisResult, TranscriptionRequest, TranscriptionResult,
 };
 use mutsuki_bot_protocol::{
-    BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID, BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, BotMediaKind,
-    BotMediaSynthesizeRequest, BotMediaSynthesizeResult, BotMediaTranscribeRequest,
-    BotMediaTranscribeResult, BotMediaUploadRequest, BotSpeechReplyPolicy,
+    BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID, BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotMediaKind, BotMediaSynthesizeRequest,
+    BotMediaSynthesizeResult, BotMediaTranscribeRequest, BotMediaTranscribeResult,
+    BotMediaUploadRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodeOutput, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult,
+    BotNodeRole, BotSpeechReplyPolicy,
 };
-use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task, TaskOutcome};
+use mutsuki_runtime_contracts::{
+    ExecutionClass, PluginManifest, RunnerResult, Task, TaskOutcome, TaskPayload,
+};
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
     AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
@@ -34,8 +39,72 @@ pub fn bot_media_bridge_manifest() -> PluginManifest {
             BOT_MEDIA_BRIDGE_RUNNER_ID,
             "bot-media-synthesize",
         )
+        .extension(
+            media_node_catalog()
+                .into_plugin_extension()
+                .expect("media node catalog serializes"),
+        )
         .build()
         .manifest
+}
+
+fn media_node_catalog() -> BotNodeCatalogFragment {
+    BotNodeCatalogFragment {
+        nodes: vec![
+            media_node(
+                "mutsuki.bot.media.transcribe",
+                "语音转写",
+                BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID,
+                "mutsuki.bot.media.transcribe.request",
+                "mutsuki.bot.media.transcribe.result",
+            ),
+            media_node(
+                "mutsuki.bot.media.synthesize",
+                "语音合成",
+                BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
+                "mutsuki.bot.media.synthesize.request",
+                "mutsuki.bot.media.synthesize.result",
+            ),
+        ],
+    }
+}
+
+fn media_node(
+    node_type_id: &str,
+    title: &str,
+    protocol_id: &str,
+    input_type: &str,
+    output_type: &str,
+) -> BotNodeDescriptor {
+    BotNodeDescriptor {
+        node_type_id: node_type_id.into(),
+        version: 1,
+        title: title.into(),
+        category: "媒体".into(),
+        role: BotNodeRole::Processor,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{protocol_id}"),
+            protocol_id: protocol_id.into(),
+            runner_hint: Some(BOT_MEDIA_BRIDGE_RUNNER_ID.into()),
+        }),
+        ports: vec![
+            BotNodePortDescriptor {
+                port_id: "input".into(),
+                title: "输入".into(),
+                direction: BotNodePortDirection::Input,
+                event_type: BotFlowTypeRef::new(input_type, 1),
+                required: true,
+            },
+            BotNodePortDescriptor {
+                port_id: "result".into(),
+                title: "结果".into(),
+                direction: BotNodePortDirection::Output,
+                event_type: BotFlowTypeRef::new(output_type, 1),
+                required: false,
+            },
+        ],
+        config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+    }
 }
 
 pub fn media_bridge_runner(
@@ -62,14 +131,47 @@ fn media_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
 
 async fn run_task(
     ctx: AsyncRunnerContext,
-    task: Task,
+    mut task: Task,
     media: Arc<dyn MediaService>,
 ) -> RuntimeResult<RunnerResult> {
-    match task.protocol_id.as_str() {
+    let node_invocation = serde_json::from_value::<BotNodeInvocation>(task.payload.to_value()).ok();
+    if let Some(invocation) = &node_invocation {
+        task.payload = TaskPayload::from_local(invocation.input.payload.value.clone());
+    }
+    let output_type = match task.protocol_id.as_str() {
+        BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID => "mutsuki.bot.media.transcribe.result",
+        BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID => "mutsuki.bot.media.synthesize.result",
+        _ => return Err(failure(&task, "protocol.unsupported")),
+    };
+    let mut result = match task.protocol_id.as_str() {
         BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID => transcribe(ctx, task).await,
         BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID => synthesize(ctx, task, media).await,
         _ => Err(failure(&task, "protocol.unsupported")),
+    }?;
+    if let Some(invocation) = node_invocation {
+        let value = result.output.take().unwrap_or(serde_json::Value::Null);
+        result.output = Some(
+            serde_json::to_value(BotNodeResult {
+                outputs: vec![BotNodeOutput {
+                    port_id: "result".into(),
+                    event: BotFlowEventEnvelope {
+                        event_id: invocation.input.event_id.clone(),
+                        protocol_id: invocation.input.protocol_id.clone(),
+                        payload: BotFlowPayload {
+                            event_type: BotFlowTypeRef::new(output_type, 1),
+                            value,
+                        },
+                        context: invocation.input.context,
+                        trace_id: invocation.input.trace_id,
+                        correlation_id: invocation.input.correlation_id,
+                    },
+                }],
+                metadata: Default::default(),
+            })
+            .map_err(|_| failure_raw("node.output"))?,
+        );
     }
+    Ok(result)
 }
 
 async fn transcribe(ctx: AsyncRunnerContext, task: Task) -> RuntimeResult<RunnerResult> {

@@ -1,7 +1,15 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{BotConversationKind, BotSpeechReplyPolicy, BotTarget};
+use crate::{BotSpeechReplyPolicy, BotTarget};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BotConversationKind {
+    Private,
+    Group,
+    Channel,
+}
 
 pub const QQ_CONVERSATION_REF_VERSION: u16 = 1;
 
@@ -213,31 +221,9 @@ pub enum AgentSessionScope {
     ActorInConversation,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DirectMessagePolicy {
-    #[default]
-    Allow,
-    Deny,
-    Allowlisted,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationPolicy {
     pub revision: u64,
-    pub enabled: bool,
-    pub agent_enabled: bool,
-    #[serde(default)]
-    pub direct_message_policy: DirectMessagePolicy,
-    pub must_mention: bool,
-    #[serde(default)]
-    pub wake_words: Vec<String>,
-    #[serde(default)]
-    pub allowlist: Vec<String>,
-    #[serde(default)]
-    pub denylist: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_profile_id: Option<String>,
     pub session_scope: AgentSessionScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_profile_binding_id: Option<String>,
@@ -258,100 +244,6 @@ pub struct ConversationPolicy {
 pub struct ResolvedConversationPolicy {
     pub conversation: QqConversationRef,
     pub policy: ConversationPolicy,
-    pub matched_rule_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub matched_rule_sources: Vec<ConversationPolicyRuleSource>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConversationPolicyLayer {
-    Product,
-    Account,
-    Group,
-    Guild,
-    Channel,
-    Conversation,
-    ActorInConversation,
-}
-
-/// Console presets for mapping product intent onto the existing conversation policy fields.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConversationAgentTriggerPreset {
-    #[default]
-    Disabled,
-    AllUnconsumedMessages,
-    MentionOrWakeWord,
-}
-
-impl ConversationAgentTriggerPreset {
-    /// Applies only the Agent admission fields, preserving unrelated policy settings.
-    pub fn apply(self, patch: &mut ConversationPolicyPatch, wake_words: Vec<String>) {
-        match self {
-            Self::Disabled => {
-                patch.agent_enabled = Some(false);
-            }
-            Self::AllUnconsumedMessages => {
-                patch.agent_enabled = Some(true);
-                patch.must_mention = Some(false);
-                patch.wake_words = Some(Vec::new());
-            }
-            Self::MentionOrWakeWord => {
-                patch.agent_enabled = Some(true);
-                patch.must_mention = Some(true);
-                patch.wake_words = Some(wake_words);
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRuleSource {
-    pub rule_id: String,
-    pub layer: ConversationPolicyLayer,
-    pub revision: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyPatch {
-    pub enabled: Option<bool>,
-    pub agent_enabled: Option<bool>,
-    pub direct_message_policy: Option<DirectMessagePolicy>,
-    pub must_mention: Option<bool>,
-    pub wake_words: Option<Vec<String>>,
-    pub allowlist: Option<Vec<String>>,
-    pub denylist: Option<Vec<String>>,
-    pub rate_limit_profile_id: Option<Option<String>>,
-    pub session_scope: Option<AgentSessionScope>,
-    pub business_profile_binding_id: Option<Option<String>>,
-    pub agent_runtime_profile_id: Option<Option<String>>,
-    pub stt_enabled: Option<bool>,
-    pub tts_enabled: Option<bool>,
-    pub speech_reply_policy: Option<BotSpeechReplyPolicy>,
-    pub stt_selector_id: Option<Option<String>>,
-    pub tts_selector_id: Option<Option<String>>,
-    pub active_delivery_enabled: Option<bool>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyMatch {
-    pub account_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<BotConversationKind>,
-    pub group_id: Option<String>,
-    pub guild_id: Option<String>,
-    pub channel_id: Option<String>,
-    pub origin_key: Option<String>,
-    pub actor_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRule {
-    pub rule_id: String,
-    pub revision: u64,
-    pub matcher: ConversationPolicyMatch,
-    pub patch: ConversationPolicyPatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,59 +278,4 @@ pub enum BotAgentBridgeRequest {
     Regenerate {
         event: crate::BotEvent,
     },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRuleUpsert {
-    pub actor_id: String,
-    pub expected_revision: u64,
-    pub rule: ConversationPolicyRule,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRuleDelete {
-    pub actor_id: String,
-    pub expected_revision: u64,
-    pub rule_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRuleWriteResult {
-    pub revision: u64,
-    pub audit_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConversationPolicyRuleAuditEntry {
-    pub audit_id: String,
-    pub actor_id: String,
-    pub action: String,
-    pub rule_id: String,
-    pub revision: u64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn trigger_presets_map_to_existing_policy_fields() {
-        let mut disabled = ConversationPolicyPatch::default();
-        ConversationAgentTriggerPreset::Disabled.apply(&mut disabled, vec!["wake".into()]);
-        assert_eq!(disabled.agent_enabled, Some(false));
-
-        let mut all = ConversationPolicyPatch::default();
-        ConversationAgentTriggerPreset::AllUnconsumedMessages
-            .apply(&mut all, vec!["ignored".into()]);
-        assert_eq!(all.agent_enabled, Some(true));
-        assert_eq!(all.must_mention, Some(false));
-        assert_eq!(all.wake_words, Some(Vec::new()));
-
-        let mut triggered = ConversationPolicyPatch::default();
-        ConversationAgentTriggerPreset::MentionOrWakeWord
-            .apply(&mut triggered, vec!["mutsuki".into()]);
-        assert_eq!(triggered.agent_enabled, Some(true));
-        assert_eq!(triggered.must_mention, Some(true));
-        assert_eq!(triggered.wake_words, Some(vec!["mutsuki".into()]));
-    }
 }

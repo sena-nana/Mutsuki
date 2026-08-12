@@ -98,6 +98,8 @@ test("100 concurrent requests complete and the pending limit is enforced", async
   const socket = await connect(h);
   socket.onSend = (message) => {
     if (message.type === "rpc") {
+      assert.ok(message.id instanceof Uint8Array);
+      assert.equal(message.id.length, 16);
       queueMicrotask(() => socket.message({ type: "rpc_result", id: message.id, result: message.params }));
     }
   };
@@ -162,7 +164,7 @@ test("stale generations cannot complete new requests and subscriptions are resto
   second.open("session-2");
   await waitFor(() => h.client.state === "open");
   const restored = second.sent.find((message) => message.type === "subscribe");
-  assert.equal(restored.subscription_id, firstSubscribe.subscription_id);
+  assert.deepEqual(restored.subscription_id, firstSubscribe.subscription_id);
 
   let requestId;
   second.onSend = (message) => {

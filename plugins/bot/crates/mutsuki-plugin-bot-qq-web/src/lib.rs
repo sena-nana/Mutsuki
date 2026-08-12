@@ -4,14 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_bot_protocol::{
-    AgentSessionBinding, BotCommandDescriptor, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotHandlerDescriptor, BotInteractionSession, ConversationPolicy, QqBotCapabilityMatrix,
-    QqConversationRef, QqStreamingStrategy,
+    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, QqBotCapabilityMatrix,
+    QqConversationRef,
 };
 
 pub use management::{
     LocalQqManagementProvider, QqBotManagementService, QqManagementProvider,
-    account_view_from_config, agent_session_view, delivery_view, handler_view,
+    account_view_from_config, delivery_view,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -35,36 +34,8 @@ pub const CAPABILITY_BOT_SECRET_STATUS: &str = "bot.secret.status";
 pub struct QqBotManagementSnapshot {
     pub revision: u64,
     pub accounts: Vec<QqAccountView>,
-    pub conversations: Vec<QqConversationView>,
-    pub handlers: Vec<QqHandlerView>,
-    pub commands: Vec<BotCommandDescriptor>,
-    pub agent_sessions: Vec<QqAgentSessionView>,
     pub deliveries: Vec<QqDeliveryView>,
     pub interactions: Vec<BotInteractionSession>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqAgentSessionView {
-    pub binding: AgentSessionBinding,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_turn_id: Option<String>,
-    pub streaming: QqStreamingStrategy,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivery_status: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QqHandlerView {
-    pub descriptor: BotHandlerDescriptor,
-    pub enabled: bool,
-    pub rate_limit_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error_code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_invocation_trace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,13 +63,6 @@ pub enum QqGatewayConnectionState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqConversationView {
-    pub conversation: QqConversationRef,
-    pub policy: ConversationPolicy,
-    pub matched_rule_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QqDeliveryView {
     pub receipt: BotDeliveryReceipt,
     pub attempts: Vec<BotDeliveryAttempt>,
@@ -122,28 +86,6 @@ pub enum QqManagementAction {
         conversation: QqConversationRef,
         text: String,
     },
-    ConversationUpdate {
-        conversation: QqConversationRef,
-        policy: ConversationPolicy,
-    },
-    HandlerSetEnabled {
-        handler_id: String,
-        generation: u64,
-        enabled: bool,
-    },
-    AgentCancel {
-        origin_key: String,
-        turn_id: String,
-    },
-    AgentReset {
-        origin_key: String,
-    },
-    AgentFork {
-        origin_key: String,
-    },
-    AgentRegenerate {
-        origin_key: String,
-    },
     DeliveryRetry {
         delivery_id: String,
     },
@@ -164,14 +106,8 @@ impl QqManagementAction {
             Self::AccountSetEnabled { .. }
             | Self::AccountHealthCheck { .. }
             | Self::AccountReconnect { .. }
-            | Self::AccountSendTest { .. }
-            | Self::ConversationUpdate { .. }
-            | Self::HandlerSetEnabled { .. } => CAPABILITY_BOT_CONFIG_WRITE,
-            Self::AgentCancel { .. }
-            | Self::AgentReset { .. }
-            | Self::AgentFork { .. }
-            | Self::AgentRegenerate { .. }
-            | Self::InteractionCancel { .. } => CAPABILITY_BOT_SESSION_WRITE,
+            | Self::AccountSendTest { .. } => CAPABILITY_BOT_CONFIG_WRITE,
+            Self::InteractionCancel { .. } => CAPABILITY_BOT_SESSION_WRITE,
             Self::DeliveryRetry { .. }
             | Self::DeliveryCancel { .. }
             | Self::DeliveryPreview { .. } => CAPABILITY_BOT_DELIVERY_WRITE,

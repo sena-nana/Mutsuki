@@ -440,6 +440,11 @@ fn local_task_payload_preserves_row_wire_shape_without_local_roundtrip() {
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
         capabilities: Vec::new(),
+        extensions: vec![PluginExtensionDescriptor {
+            extension_id: "mutsuki.bot.flow.nodes".into(),
+            version: 1,
+            payload: serde_json::json!({"nodes": []}),
+        }],
         runners: Vec::new(),
         protocols: vec![ProtocolDescriptor {
             protocol_id: "im.message.received.v1".into(),

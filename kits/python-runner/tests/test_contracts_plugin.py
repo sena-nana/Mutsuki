@@ -26,6 +26,7 @@ from mutsuki_runner_kit.contracts.plugin import (
     PermissionAuditEntry,
     PermissionGrant,
     PluginArtifact,
+    PluginExtensionDescriptor,
     PluginManifest,
     PluginProvides,
     ProtocolClass,
@@ -108,6 +109,13 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             "mutsuki.task.v1": ProtocolClass.CORE,
         },
         handler_bindings=(binding,),
+        extensions=(
+            PluginExtensionDescriptor(
+                extension_id="mutsuki.bot.flow.nodes",
+                version=1,
+                payload={"nodes": []},
+            ),
+        ),
         resource_schemas=("bytes.v1",),
         resource_providers=("python.resource",),
         resource_types=(
@@ -348,6 +356,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
 
     assert_json_roundtrip(ProtocolDescriptor, protocol)
     assert_json_roundtrip(HandlerBinding, binding)
+    assert_json_roundtrip(PluginExtensionDescriptor, provides.extensions[0])
     assert_json_roundtrip(HostExtensionDescriptor, provides.host_extensions[0])
     assert_json_roundtrip(PluginBackendDescriptor, provides.plugin_backends[0])
     assert_json_roundtrip(

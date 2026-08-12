@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{BotEventKind, BotMessage, BotPropagationPolicy, QqConversationRef};
+use crate::{BotEventKind, BotMessage, QqConversationRef};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +18,6 @@ pub struct InteractionWaitSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate_service_id: Option<String>,
     pub timeout_at_unix_ms: u64,
-    pub propagation: BotPropagationPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_prompt: Option<BotMessage>,
 }
@@ -54,7 +53,6 @@ pub struct InteractionMatch {
     pub session_id: String,
     pub event_id: String,
     pub next_version: u64,
-    pub propagation: BotPropagationPolicy,
     pub accepted: bool,
     pub status: InteractionStatus,
     pub state_ref_id: String,

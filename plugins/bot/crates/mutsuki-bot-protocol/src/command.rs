@@ -35,6 +35,7 @@ pub enum BotCommandArgumentKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BotCommandArgumentDescriptor {
     pub name: String,
     pub kind: BotCommandArgumentKind,
@@ -99,12 +100,4 @@ pub struct BotCommandParseFailure {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub help: Option<BotCommandHelpEntry>,
-}
-
-/// Stable target binding used by the generic command parser and command-owner manifests.
-pub fn bot_command_binding_id(name: &str) -> String {
-    format!(
-        "binding:mutsuki.bot.command/{}@1",
-        name.trim().to_ascii_lowercase()
-    )
 }

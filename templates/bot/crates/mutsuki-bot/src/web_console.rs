@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use mutsuki_bot_service_host_integration::{
     AgentConnectionConsoleBridge, AgentConnectionRegistryConsoleBridge, BilibiliConsoleBridge,
-    BotAgentConfigConsoleBridge, BotConversationPolicyConsoleBridge, QqConsoleBridge,
+    BotAgentConfigConsoleBridge, BotFlowConsoleBridge, QqConsoleBridge,
 };
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, ConsoleAssetDirs, ControlPluginReloadLifecycle, ProductConfigOptions,
@@ -78,7 +78,7 @@ impl WebConsoleGuard {
             QqConsoleBridge::get(runtime),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
-                policies: BotConversationPolicyConsoleBridge::get(runtime),
+                flow: BotFlowConsoleBridge::get(runtime),
             },
         )?;
         let mut host = host;

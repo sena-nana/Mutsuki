@@ -1,16 +1,17 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_HELP_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID,
-    BotCommandDescriptor, BotCommandEvent, BotCommandHelpRequest, BotEvent,
-    BotHandlerExecutionResult, BotHandlerOutcome, bot_command_binding_id,
+    BOT_COMMAND_HANDLE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotCommandDescriptor,
+    BotCommandEvent, BotEvent, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef,
+    BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
 };
 use mutsuki_runtime_contracts::{
     ArtifactType, CompletionBatch, ERR_RUNTIME_HOST_FAILED, ExecutionClass, InvocationMode,
     OrderingRequirement, PluginArtifact, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
     RunnerControlCapability, RunnerDescriptor, RunnerMode, RunnerOrderingCapability,
     RunnerPayloadCapability, RunnerPurity, RunnerResourceCapability, RunnerResult,
-    RunnerSideEffect, RuntimeError, ScalarValue, Task, TaskPayload, WorkBatch,
+    RunnerSideEffect, RuntimeError, ScalarValue, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -23,62 +24,132 @@ use crate::{CommandParseError, CommandParser, message_text, validate_command_des
 
 pub const BOT_COMMAND_PLUGIN_ID: &str = "mutsuki.bot.command";
 pub const BOT_COMMAND_RUNNER_ID: &str = "mutsuki.bot.command.parse";
+pub const BOT_COMMAND_MATCH_NODE_TYPE_ID: &str = "mutsuki.bot.command.match";
+pub const BOT_COMMAND_EVENT_TYPE_ID: &str = "mutsuki.bot.command.event";
+pub const BOT_EVENT_TYPE_ID: &str = "mutsuki.bot.event";
 
-#[derive(Clone, Debug, Deserialize, Serialize, mutsuki_bot_config::MutsukiConfig)]
-#[config(
-    provider_id = "mutsuki.bot.command",
-    title = "Bot Command",
-    schema_version = 1,
-    value_version = 1
-)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct BotCommandConfig {
-    #[config(
-        title = "指令前缀",
-        description = "触发命令解析的前缀列表",
-        restart = "plugin_reload"
-    )]
+struct BotCommandPluginConfig {}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotCommandMatchConfig {
     pub prefixes: Vec<String>,
-    #[config(
-        title = "指令定义",
-        description = "命令组、别名与类型参数描述",
-        restart = "plugin_reload"
-    )]
+    pub path: Vec<String>,
     #[serde(default)]
-    pub commands: Vec<BotCommandDescriptor>,
+    pub aliases: Vec<Vec<String>>,
+    #[serde(default)]
+    pub arguments: Vec<mutsuki_bot_protocol::BotCommandArgumentDescriptor>,
+    #[serde(default)]
+    pub case_sensitive: bool,
 }
 
-impl BotCommandConfig {
-    pub fn validate(&self) -> Result<(), String> {
+impl BotCommandMatchConfig {
+    fn parser(&self) -> Result<CommandParser, String> {
         if self.prefixes.is_empty() || self.prefixes.iter().any(|prefix| prefix.is_empty()) {
             return Err("prefixes must contain non-empty values".into());
         }
-        validate_command_descriptors(&self.commands)
+        let descriptor = BotCommandDescriptor {
+            path: self.path.clone(),
+            aliases: self.aliases.clone(),
+            arguments: self.arguments.clone(),
+            summary: None,
+        };
+        validate_command_descriptors(std::slice::from_ref(&descriptor))?;
+        Ok(CommandParser::new(self.prefixes.clone())
+            .commands(vec![descriptor])
+            .case_sensitive(self.case_sensitive))
     }
 }
 
 pub fn bot_command_manifest(plugin_generation: u64) -> PluginManifest {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
-        .runner_descriptor(command_descriptor(plugin_generation))
+        .runner_descriptor(command_node_descriptor(plugin_generation))
         .protocol_handler(
             ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
             BOT_COMMAND_RUNNER_ID,
             "bot-command-parse",
         )
-        .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_COMMAND_HELP_PROTOCOL_ID).build(),
-            BOT_COMMAND_RUNNER_ID,
-            "bot-command-help",
+        .extension(
+            command_node_catalog()
+                .into_plugin_extension()
+                .expect("command node catalog serializes"),
         )
         .build()
         .manifest
 }
 
+fn command_node_catalog() -> BotNodeCatalogFragment {
+    BotNodeCatalogFragment {
+        nodes: vec![BotNodeDescriptor {
+            node_type_id: BOT_COMMAND_MATCH_NODE_TYPE_ID.into(),
+            version: 1,
+            title: "命令匹配".into(),
+            category: "匹配".into(),
+            role: BotNodeRole::Match,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
+                protocol_id: BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
+                runner_hint: Some(BOT_COMMAND_RUNNER_ID.into()),
+            }),
+            ports: vec![
+                BotNodePortDescriptor {
+                    port_id: "event".into(),
+                    title: "消息事件".into(),
+                    direction: BotNodePortDirection::Input,
+                    event_type: BotFlowTypeRef::new(BOT_EVENT_TYPE_ID, 1),
+                    required: true,
+                },
+                BotNodePortDescriptor {
+                    port_id: "matched".into(),
+                    title: "已匹配".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new(BOT_COMMAND_EVENT_TYPE_ID, 1),
+                    required: false,
+                },
+                BotNodePortDescriptor {
+                    port_id: "unmatched".into(),
+                    title: "未匹配".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new(BOT_EVENT_TYPE_ID, 1),
+                    required: false,
+                },
+            ],
+            config_schema: json!({
+                "type": "object",
+                "required": ["prefixes", "path"],
+                "additionalProperties": false,
+                "properties": {
+                    "prefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "title": "命令前缀"},
+                    "path": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "title": "命令路径"},
+                    "aliases": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "title": "别名"},
+                    "arguments": {
+                        "type": "array",
+                        "title": "类型化参数",
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "kind"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "name": {"type": "string", "minLength": 1},
+                                "kind": {"type": "string", "enum": ["string", "integer", "number", "boolean"]},
+                                "optional": {"type": "boolean", "default": false},
+                                "variadic": {"type": "boolean", "default": false},
+                                "default": {}
+                            }
+                        }
+                    },
+                    "case_sensitive": {"type": "boolean", "default": false, "title": "区分大小写"}
+                }
+            }),
+        }],
+    }
+}
+
 pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
     command_plugin(
         1,
-        vec!["/".into()],
-        Vec::new(),
         PluginArtifact {
             artifact_type: ArtifactType::Abi,
             path: path.into(),
@@ -89,193 +160,126 @@ pub fn bot_command_abi_manifest(path: &str, sha256: &str) -> PluginManifest {
     .manifest
 }
 
-fn command_plugin(
-    plugin_generation: u64,
-    prefixes: Vec<String>,
-    commands: Vec<BotCommandDescriptor>,
-    artifact: PluginArtifact,
-) -> LoadedPlugin {
+fn command_plugin(plugin_generation: u64, artifact: PluginArtifact) -> LoadedPlugin {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
-        .runner(Box::new(BotCommandRunner::with_commands(
-            plugin_generation,
-            prefixes,
-            commands,
-        )))
+        .runner(Box::new(BotCommandNodeRunner::new(plugin_generation)))
         .protocol_handler(
             ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
             BOT_COMMAND_RUNNER_ID,
             "bot-command-parse",
         )
-        .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_COMMAND_HELP_PROTOCOL_ID).build(),
-            BOT_COMMAND_RUNNER_ID,
-            "bot-command-help",
+        .extension(
+            command_node_catalog()
+                .into_plugin_extension()
+                .expect("command node catalog serializes"),
         )
         .artifact(artifact)
         .build()
 }
 
-fn create_abi_plugin(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
-    create_configured_abi_plugin(config)
-}
-
-fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
-    let config: BotCommandConfig = serde_json::from_value(config)
-        .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
-    config
-        .validate()
-        .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
-    Ok(command_plugin(
-        1,
-        config.prefixes,
-        config.commands,
-        PluginArtifact {
-            artifact_type: ArtifactType::Abi,
-            path: "plugin".into(),
-            sha256: "sha256:plugin".into(),
-            companion_artifacts: Vec::new(),
-        },
-    ))
-}
-
-pub struct BotCommandRunner {
+pub struct BotCommandNodeRunner {
     descriptor: RunnerDescriptor,
-    parser: CommandParser,
 }
 
-impl BotCommandRunner {
-    pub fn new(plugin_generation: u64, prefixes: Vec<String>) -> Self {
-        Self::with_commands(plugin_generation, prefixes, Vec::new())
-    }
-
-    pub fn with_commands(
-        plugin_generation: u64,
-        prefixes: Vec<String>,
-        commands: Vec<BotCommandDescriptor>,
-    ) -> Self {
+impl BotCommandNodeRunner {
+    pub fn new(plugin_generation: u64) -> Self {
         Self {
-            descriptor: command_descriptor(plugin_generation),
-            parser: CommandParser::new(prefixes).commands(commands),
+            descriptor: command_node_descriptor(plugin_generation),
         }
     }
 }
 
-impl Runner for BotCommandRunner {
+impl Runner for BotCommandNodeRunner {
     fn descriptor(&self) -> &RunnerDescriptor {
         &self.descriptor
     }
 
     fn run_batch(
         &mut self,
-        ctx: RunnerContext,
+        _ctx: RunnerContext,
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            if task.protocol_id == BOT_COMMAND_HELP_PROTOCOL_ID {
-                let request: BotCommandHelpRequest =
-                    serde_json::from_value(task.payload.to_value())
-                        .map_err(|error| failure("mutsuki.bot.command.help.decode", error))?;
-                let mut result = RunnerResult::completed(task.task_id.clone());
-                result.output = Some(
-                    serde_json::to_value(self.parser.help(&request.path))
-                        .map_err(|error| failure("mutsuki.bot.command.help.encode", error))?,
-                );
-                return Ok(result);
-            }
-            let event = task
+            let invocation = task
                 .payload
-                .decode_shared::<BotEvent>()
-                .map_err(|error| failure("mutsuki.bot.command.decode", error))?;
-            let Some(text) = message_text(event.as_ref()) else {
-                return Ok(handler_result(&task.task_id, BotHandlerOutcome::Continue));
-            };
-            let command = match self.parser.parse(&text) {
-                Ok(command) => command,
-                Err(CommandParseError::MissingPrefix) => {
-                    return Ok(handler_result(&task.task_id, BotHandlerOutcome::Continue));
-                }
-                Err(error) => {
-                    let attempted_path = text
-                        .trim_start_matches(|ch: char| !ch.is_alphanumeric())
-                        .split_whitespace()
-                        .take(2)
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>();
+                .decode_shared::<BotNodeInvocation>()
+                .map_err(|error| failure("mutsuki.bot.command.node.decode", error))?;
+            let config: BotCommandMatchConfig =
+                serde_json::from_value(invocation.config.clone())
+                    .map_err(|error| failure("mutsuki.bot.command.node.config", error))?;
+            let parser = config
+                .parser()
+                .map_err(|error| failure("mutsuki.bot.command.node.config", error))?;
+            let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+                .map_err(|error| failure("mutsuki.bot.command.node.event", error))?;
+            let output = match message_text(&event).map(|text| (text.clone(), parser.parse(&text)))
+            {
+                None
+                | Some((
+                    _,
+                    Err(CommandParseError::MissingPrefix | CommandParseError::UnknownCommand(_)),
+                )) => BotNodeOutput {
+                    port_id: "unmatched".into(),
+                    event: invocation.input.clone(),
+                },
+                Some((_, Err(error))) => {
                     return Err(parse_failure(
-                        "mutsuki.bot.command.parse",
-                        self.parser.parse_failure(&error, &attempted_path),
+                        "mutsuki.bot.command.node.parse",
+                        parser.parse_failure(&error, &[]),
                     ));
                 }
+                Some((_, Ok(command))) => {
+                    let command_event = BotCommandEvent {
+                        source: event,
+                        name: command.name,
+                        args: command.args,
+                        command_path: command.command_path,
+                        typed_args: command.typed_args,
+                        raw_text: command.raw_text,
+                    };
+                    BotNodeOutput {
+                        port_id: "matched".into(),
+                        event: BotFlowEventEnvelope {
+                            event_id: invocation.input.event_id.clone(),
+                            protocol_id: BOT_COMMAND_HANDLE_PROTOCOL_ID.into(),
+                            payload: BotFlowPayload {
+                                event_type: BotFlowTypeRef::new(BOT_COMMAND_EVENT_TYPE_ID, 1),
+                                value: serde_json::to_value(command_event).map_err(|error| {
+                                    failure("mutsuki.bot.command.node.output", error)
+                                })?,
+                            },
+                            context: invocation.input.context.clone(),
+                            trace_id: invocation.input.trace_id.clone(),
+                            correlation_id: invocation.input.correlation_id.clone(),
+                        },
+                    }
+                }
             };
-            let command_event = BotCommandEvent {
-                source: (*event).clone(),
-                name: command.name,
-                args: command.args,
-                command_path: command.command_path,
-                typed_args: command.typed_args,
-                raw_text: command.raw_text,
-            };
-            tracing::info!(
-                account_id = %command_event.source.bot.account_id,
-                event_id = %command_event.source.event_id,
-                task_id = %task.task_id,
-                runner_id = BOT_COMMAND_RUNNER_ID,
-                command = %command_event.name,
-                correlation_id = task.correlation_id.as_deref().unwrap_or(""),
-                "Bot command parsed"
-            );
-            let binding_id = bot_command_binding_id(&command_event.name);
-            let mut child = Task::new(
-                format!("mutsuki.bot.command.handle:{}", task.task_id),
-                BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                TaskPayload::from_local(command_event),
-            );
-            child.registry_generation = ctx.registry_generation;
-            child.trace_id = task.trace_id.clone();
-            child.correlation_id = task.correlation_id.clone();
-            child.target_binding_id = Some(binding_id);
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.output = Some(
-                serde_json::to_value(BotHandlerExecutionResult {
-                    outcome: BotHandlerOutcome::Stop,
+                serde_json::to_value(BotNodeResult {
+                    outputs: vec![output],
+                    metadata: BTreeMap::new(),
                 })
-                .map_err(|error| failure("mutsuki.bot.command.outcome", error))?,
+                .map_err(|error| failure("mutsuki.bot.command.node.result", error))?,
             );
-            result.tasks.push(child);
             Ok(result)
         })
     }
 }
 
-fn handler_result(task_id: &str, outcome: BotHandlerOutcome) -> RunnerResult {
-    let mut result = RunnerResult::completed(task_id);
-    result.output = Some(
-        serde_json::to_value(BotHandlerExecutionResult { outcome })
-            .expect("handler outcome serializes"),
-    );
-    result
-}
-
-pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
+fn command_node_descriptor(plugin_generation: u64) -> RunnerDescriptor {
     RunnerDescriptor {
         runner_id: BOT_COMMAND_RUNNER_ID.into(),
         plugin_id: BOT_COMMAND_PLUGIN_ID.into(),
         plugin_generation,
-        accepted_protocol_ids: vec![
-            BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
-            BOT_COMMAND_HELP_PROTOCOL_ID.into(),
-        ],
+        accepted_protocol_ids: vec![BOT_COMMAND_PARSE_PROTOCOL_ID.into()],
         purity: RunnerPurity::Pure,
         execution_class: ExecutionClass::Orchestration,
         invocation_mode: InvocationMode::SyncExclusive,
         concurrency: RunnerConcurrency::Exclusive,
-        input_schema: json!({
-            "type": "object",
-            "required": ["event_id", "message"]
-        }),
-        output_schema: json!({
-            "tasks": [BOT_COMMAND_HANDLE_PROTOCOL_ID]
-        }),
+        input_schema: json!({"type": "object", "required": ["node_id", "config", "input"]}),
+        output_schema: json!({"type": "object", "required": ["outputs"]}),
         batch: RunnerBatchCapability {
             mode: RunnerMode::NativeBatch,
             preferred_batch_size: 32,
@@ -297,13 +301,36 @@ pub fn command_descriptor(plugin_generation: u64) -> RunnerDescriptor {
         control: RunnerControlCapability::default(),
         metadata: BTreeMap::from([(
             "description".into(),
-            ScalarValue::String("Bot command parser".into()),
+            ScalarValue::String("Bot Flow command match node".into()),
         )]),
         contract_surfaces: vec![
             format!("runner:{BOT_COMMAND_RUNNER_ID}"),
             format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
         ],
     }
+}
+
+fn create_abi_plugin(_host: AbiHostClient, config: Value) -> RuntimeResult<LoadedPlugin> {
+    create_configured_abi_plugin(config)
+}
+
+fn create_configured_abi_plugin(config: Value) -> RuntimeResult<LoadedPlugin> {
+    let config = if config.is_null() {
+        Value::Object(Default::default())
+    } else {
+        config
+    };
+    let _config: BotCommandPluginConfig = serde_json::from_value(config)
+        .map_err(|error| RuntimeFailure::new(failure("mutsuki.bot.command.config", error)))?;
+    Ok(command_plugin(
+        1,
+        PluginArtifact {
+            artifact_type: ArtifactType::Abi,
+            path: "plugin".into(),
+            sha256: "sha256:plugin".into(),
+            companion_artifacts: Vec::new(),
+        },
+    ))
 }
 
 fn failure(route: impl Into<String>, error: impl std::fmt::Display) -> RuntimeError {
@@ -349,80 +376,62 @@ mod tests {
     use super::*;
     use mutsuki_bot_protocol::{
         BotAccountRef, BotCommandArgumentDescriptor, BotCommandArgumentKind,
-        BotCommandArgumentValue, BotCommandDescriptor, BotEventKind, BotMessage, BotPlatform,
-        BotTarget,
+        BotCommandArgumentValue, BotEventKind, BotFlowContext, BotMessage, BotPlatform, BotTarget,
     };
     use mutsuki_runtime_contracts::{
-        BatchEntry, BatchPayload, DispatchLane, OrderingRequirement, WorkResourcePlan,
+        BatchEntry, BatchPayload, DispatchLane, Task, TaskPayload, WorkResourcePlan,
     };
 
     #[test]
-    fn command_runner_batches_parse_tasks_and_isolates_decode_failure() {
-        let mut runner = BotCommandRunner::new(1, vec!["/".into()]);
-        let valid_a = command_task("task-a", "event-a", "/echo one");
-        let invalid = Task::new("task-invalid", BOT_COMMAND_PARSE_PROTOCOL_ID, json!({}));
-        let valid_b = command_task("task-b", "event-b", "/ping two");
-
-        let completion = runner
-            .run_batch(test_context(11, 3), batch(vec![valid_a, invalid, valid_b]))
-            .unwrap();
-
-        assert_eq!(completion.results.len(), 3);
-        assert!(completion.results[1].result.is_none());
-        assert!(completion.results[1].error.is_some());
-        let first = &completion.results[0].result.as_ref().unwrap().tasks[0];
-        let third = &completion.results[2].result.as_ref().unwrap().tasks[0];
-        assert_eq!(first.registry_generation, 11);
-        assert_eq!(third.registry_generation, 11);
-        let first_command: BotCommandEvent = first.payload.decode().unwrap();
-        let third_command: BotCommandEvent = third.payload.decode().unwrap();
-        assert_eq!(first_command.name, "echo");
-        assert_eq!(first_command.args, ["one"]);
-        assert_eq!(third_command.name, "ping");
-        assert_eq!(third_command.args, ["two"]);
-        assert_eq!(
-            first.target_binding_id.as_deref(),
-            Some("binding:mutsuki.bot.command/echo@1")
+    fn command_node_emits_explicit_matched_and_unmatched_ports() {
+        let matched = run_node(
+            "/echo one",
+            json!({
+                "prefixes": ["/"],
+                "path": ["echo"],
+                "aliases": [],
+                "arguments": [
+                    BotCommandArgumentDescriptor {
+                        name: "values".into(),
+                        kind: BotCommandArgumentKind::String,
+                        optional: true,
+                        variadic: true,
+                        default: None,
+                    }
+                ]
+            }),
         );
-        assert_eq!(
-            third.target_binding_id.as_deref(),
-            Some("binding:mutsuki.bot.command/ping@1")
+        assert_eq!(matched.outputs[0].port_id, "matched");
+        let command: BotCommandEvent =
+            serde_json::from_value(matched.outputs[0].event.payload.value.clone()).unwrap();
+        assert_eq!(command.command_path, ["echo"]);
+        assert_eq!(command.args, ["one"]);
+
+        let unmatched = run_node(
+            "hello",
+            json!({
+                "prefixes": ["/"], "path": ["echo"], "aliases": [], "arguments": []
+            }),
         );
+        assert_eq!(unmatched.outputs[0].port_id, "unmatched");
     }
 
     #[test]
-    fn command_runner_emits_canonical_typed_group_command_events() {
-        let mut runner = BotCommandRunner::with_commands(
-            1,
-            vec!["/".into()],
-            vec![BotCommandDescriptor {
-                path: vec!["admin".into(), "ban".into()],
-                aliases: vec![vec!["a".into(), "b".into()]],
-                arguments: vec![
-                    BotCommandArgumentDescriptor {
-                        name: "user".into(),
-                        kind: BotCommandArgumentKind::String,
-                        optional: false,
-                        variadic: false,
-                        default: None,
-                    },
-                    BotCommandArgumentDescriptor {
-                        name: "days".into(),
-                        kind: BotCommandArgumentKind::Integer,
-                        optional: false,
-                        variadic: false,
-                        default: None,
-                    },
-                ],
-                summary: None,
-            }],
+    fn command_node_uses_graph_owned_alias_and_typed_arguments() {
+        let result = run_node(
+            "/a b Alice 7",
+            json!({
+                "prefixes": ["/"],
+                "path": ["admin", "ban"],
+                "aliases": [["a", "b"]],
+                "arguments": [
+                    BotCommandArgumentDescriptor { name: "user".into(), kind: BotCommandArgumentKind::String, optional: false, variadic: false, default: None },
+                    BotCommandArgumentDescriptor { name: "days".into(), kind: BotCommandArgumentKind::Integer, optional: false, variadic: false, default: None }
+                ]
+            }),
         );
-        let task = command_task("task-typed", "event-typed", "/a b Alice 7");
-        let completion = runner
-            .run_batch(test_context(11, 1), batch(vec![task]))
-            .unwrap();
-        let child = &completion.results[0].result.as_ref().unwrap().tasks[0];
-        let command: BotCommandEvent = child.payload.decode().unwrap();
+        let command: BotCommandEvent =
+            serde_json::from_value(result.outputs[0].event.payload.value.clone()).unwrap();
 
         assert_eq!(command.name, "admin.ban");
         assert_eq!(command.command_path, ["admin", "ban"]);
@@ -430,10 +439,6 @@ mod tests {
         assert_eq!(
             command.typed_args["days"],
             BotCommandArgumentValue::Integer(7)
-        );
-        assert_eq!(
-            child.target_binding_id.as_deref(),
-            Some("binding:mutsuki.bot.command/admin.ban@1")
         );
     }
 
@@ -444,27 +449,67 @@ mod tests {
         assert_eq!(builtin.business_surface(), abi.business_surface());
     }
 
-    fn command_task(task_id: &str, event_id: &str, text: &str) -> Task {
+    fn run_node(text: &str, config: Value) -> BotNodeResult {
+        let task = command_task("task", "event", text, config);
+        let mut runner = BotCommandNodeRunner::new(1);
+        let completion = runner
+            .run_batch(test_context(11, 1), batch(vec![task]))
+            .unwrap();
+        let output = completion.results[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .output
+            .clone()
+            .unwrap();
+        serde_json::from_value(output).unwrap()
+    }
+
+    fn command_task(task_id: &str, event_id: &str, text: &str, config: Value) -> Task {
         let target = BotTarget::User {
             user_id: "user".into(),
+        };
+        let event = BotEvent {
+            event_id: event_id.into(),
+            platform: BotPlatform::QqBot,
+            bot: BotAccountRef {
+                account_id: "main".into(),
+                platform: BotPlatform::QqBot,
+            },
+            kind: BotEventKind::MessageCreated,
+            time_ms: 1,
+            target: target.clone(),
+            actor: None,
+            message: Some(BotMessage::text(target, text)),
+            raw: None,
+            ext: Default::default(),
         };
         Task::new(
             task_id,
             BOT_COMMAND_PARSE_PROTOCOL_ID,
-            TaskPayload::from_local(BotEvent {
-                event_id: event_id.into(),
-                platform: BotPlatform::QqBot,
-                bot: BotAccountRef {
-                    account_id: "main".into(),
-                    platform: BotPlatform::QqBot,
+            TaskPayload::from_local(BotNodeInvocation {
+                flow_id: "flow".into(),
+                graph_revision: 1,
+                execution_id: "execution".into(),
+                node_id: "command".into(),
+                input_port_id: "event".into(),
+                config,
+                input: BotFlowEventEnvelope {
+                    event_id: event_id.into(),
+                    protocol_id: "mutsuki.bot.event/ingest@1".into(),
+                    payload: BotFlowPayload {
+                        event_type: BotFlowTypeRef::new(BOT_EVENT_TYPE_ID, 1),
+                        value: serde_json::to_value(event).unwrap(),
+                    },
+                    context: BotFlowContext {
+                        bot: None,
+                        target: None,
+                        actor: None,
+                        ext: Default::default(),
+                    },
+                    trace_id: None,
+                    correlation_id: None,
                 },
-                kind: BotEventKind::MessageCreated,
-                time_ms: 1,
-                target: target.clone(),
-                actor: None,
-                message: Some(BotMessage::text(target, text)),
-                raw: None,
-                ext: Default::default(),
             }),
         )
     }
@@ -496,7 +541,7 @@ mod tests {
                 deadline_tick: None,
                 priority: 0,
                 lane: DispatchLane::Normal,
-                ordering: OrderingRequirement::PreserveSubmitOrder,
+                ordering: mutsuki_runtime_contracts::OrderingRequirement::PreserveSubmitOrder,
             })
             .collect()
     }

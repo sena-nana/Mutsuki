@@ -1,0 +1,46 @@
+{
+  "base_published_revision": 0,
+  "flows": [
+    {
+      "flow_id": "example.qq.echo",
+      "name": "QQ Echo",
+      "enabled": true,
+      "nodes": [
+        {
+          "node_id": "source",
+          "node_type_id": "mutsuki.bot.qq.source",
+          "node_type_version": 1,
+          "config": {},
+          "source": {
+            "protocol_id": "mutsuki.bot.event/ingest@1",
+            "event_type": { "type_id": "mutsuki.bot.event", "version": 1 }
+          },
+          "position": { "x": 40, "y": 100 }
+        },
+        {
+          "node_id": "command",
+          "node_type_id": "mutsuki.bot.command.match",
+          "node_type_version": 1,
+          "config": {
+            "prefixes": ["/", "!"],
+            "path": ["echo"],
+            "aliases": [],
+            "arguments": [],
+            "case_sensitive": false
+          },
+          "position": { "x": 320, "y": 100 }
+        }
+      ],
+      "edges": [
+        {
+          "edge_id": "source-command",
+          "from_node_id": "source",
+          "from_port_id": "event",
+          "to_node_id": "command",
+          "to_port_id": "event",
+          "kind": "event"
+        }
+      ]
+    }
+  ]
+}

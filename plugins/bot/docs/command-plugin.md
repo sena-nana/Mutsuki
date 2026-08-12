@@ -1,20 +1,19 @@
-# Command Plugin
+# Command Match Node
 
-The command plugin parses commands from standard message events.
+The Command plugin contributes the `mutsuki.bot.command.match@1` Match node. It does not own a
+global prefix or command directory and does not generate business bindings from command names.
 
-It is platform-neutral and must not inspect QQBot raw payloads. It emits command events or handler tasks that business plugins can consume.
+Each node instance stores its own prefixes, command path, aliases, typed argument descriptors and
+case-sensitivity in the published graph. It consumes `mutsuki.bot.event@1` and emits exactly one of:
 
-The parser runner consumes row-layout `WorkBatch` values and parses every entry independently. A malformed event or invalid command fails only its own `EntryCompletion`; other commands in the batch continue. Emitted handler tasks inherit the active `registry_generation`.
+- `matched`: a typed `mutsuki.bot.command.event@1` envelope;
+- `unmatched`: the unchanged input event.
 
-Configured descriptors support command groups, aliases, typed arguments, optional/default and
-variadic values, quoted/escaped tokens, structured parse failures and discoverable help. The
-emitted `BotCommandEvent` keeps both the canonical `command_path` and `typed_args`; the Bot SDK's
-`CommandContext` preserves those fields for business handlers.
+The Web editor derives the property panel from the node configuration schema. Business plugins
+declare behavior nodes accepting the command event; the graph edge determines which behavior is
+called. Invalid typed arguments fail that node branch with a structured parse error, while a missing
+prefix or another command path uses the explicit `unmatched` output.
 
-Provided task protocols:
-
-- `mutsuki.bot.command/parse@1`
-
-Emitted task protocols:
-
-- `mutsuki.bot.command/handle@1`
+Builtin and ABI v2 deployments publish the same node catalog and binding business surface. Legacy
+`prefixes`/`commands` plugin configuration is rejected because the configured factory accepts only
+an empty owner config.

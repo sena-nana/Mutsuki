@@ -47,10 +47,6 @@ impl QqBotManagementApi for Api {
                 rate_limit_status: "ready".into(),
                 capability: capability(),
             }],
-            conversations: Vec::new(),
-            handlers: Vec::new(),
-            commands: Vec::new(),
-            agent_sessions: Vec::new(),
             deliveries: Vec::new(),
             interactions: Vec::new(),
         })

@@ -99,7 +99,6 @@ disabled_dir = "plugins/disabled"
 id = "mutsuki.bot.command"
 
 [plugins.configured.config]
-prefixes = ["/"]
 
 [observe]
 console = false

@@ -3758,10 +3758,12 @@ dependencies = [
  "libc",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
+ "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-link-parser",
  "mutsuki-bot-protocol",
  "mutsuki-bot-service-host-integration",
+ "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
@@ -3828,6 +3830,17 @@ dependencies = [
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
  "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mutsuki-bot-flow"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-protocol",
+ "mutsuki-runtime-contracts",
+ "mutsuki-runtime-sdk",
  "serde_json",
  "thiserror 2.0.19",
 ]
@@ -3906,6 +3919,7 @@ dependencies = [
  "mutsuki-bot-config",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
+ "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
  "mutsuki-bot-state-db",
@@ -3943,6 +3957,7 @@ dependencies = [
  "async-trait",
  "mutsuki-bot-conversation",
  "mutsuki-bot-delivery",
+ "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
  "mutsuki-bot-protocol",
  "rusqlite",
@@ -3972,8 +3987,8 @@ dependencies = [
  "futures-util",
  "mutsuki-agent-service-host-integration",
  "mutsuki-bot-config",
+ "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
- "mutsuki-bot-state-db",
  "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-agent-web",
  "mutsuki-plugin-bot-bilibili",
@@ -3981,6 +3996,7 @@ dependencies = [
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-config-web",
  "mutsuki-plugin-bot-control-web",
+ "mutsuki-plugin-bot-flow-web",
  "mutsuki-plugin-bot-overview-web",
  "mutsuki-plugin-bot-qq-web",
  "mutsuki-plugin-bot-upgrade-web",
@@ -4398,10 +4414,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-agent-web"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
  "mutsuki-agent-service-host-integration",
- "mutsuki-bot-protocol",
- "mutsuki-bot-state-db",
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
  "serde",
@@ -4528,6 +4541,7 @@ dependencies = [
 name = "mutsuki-plugin-bot-event-router"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -4536,6 +4550,19 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tracing",
+]
+
+[[package]]
+name = "mutsuki-plugin-bot-flow-web"
+version = "0.1.0"
+dependencies = [
+ "mutsuki-bot-flow",
+ "mutsuki-bot-protocol",
+ "mutsuki-web-extension",
+ "mutsuki-web-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -6220,12 +6247,12 @@ name = "qqbot-echo"
 version = "0.1.0"
 dependencies = [
  "bot-echo",
+ "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-event-router",
  "mutsuki-runtime-contracts",
- "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "serde_json",
 ]
@@ -7280,9 +7307,11 @@ version = "0.1.0"
 dependencies = [
  "bot-echo",
  "futures-util",
+ "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-bot-sdk",
  "mutsuki-bot-service-host-integration",
+ "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
  "mutsuki-plugin-bot-adapter-qqbot",
  "mutsuki-plugin-bot-command",

@@ -9,12 +9,11 @@ use mutsuki_bot_config::{
     ConfigApplyMode, ConfigContext, ConfigDescriptor, ConfigError, ConfigLifecycle,
     ConfigMutability, ConfigNode, ConfigPersistSink, ConfigProviderId, ConfigProviderRegistry,
     ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
-    MutsukiConfigSchema, PreparedConfigPersist, RestartPolicy,
+    PreparedConfigPersist, RestartPolicy,
 };
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_CONFIG_PROVIDER_ID, BotAgentConfig, BotAgentConfigHandle, bot_agent_config_schema,
 };
-use mutsuki_plugin_bot_command::{BOT_COMMAND_PLUGIN_ID, BotCommandConfig};
 use mutsuki_service_config::{ConfiguredPluginStore, PreparedConfiguredPluginChange};
 
 #[derive(Debug, thiserror::Error)]
@@ -75,25 +74,6 @@ pub fn product_config_service_with_options(
     registry
         .register(product_provider)
         .map_err(|error| ProductConfigError::Register(error.to_string()))?;
-
-    if let Some(command_defaults) = command_defaults_from_product(&product) {
-        let command_provider = Arc::new(
-            MemoryConfigProvider::new(
-                BotCommandConfig::schema(),
-                command_defaults,
-                ConfigApplyMode::HotReload,
-            )
-            .with_persist(Arc::new(ConfiguredPluginPersist {
-                store: store.clone(),
-                plugin_id: BOT_COMMAND_PLUGIN_ID.into(),
-                bot_agent_config: None,
-                agent_connections: None,
-            })),
-        );
-        registry
-            .register(command_provider)
-            .map_err(|error| ProductConfigError::Register(error.to_string()))?;
-    }
 
     if let Some(handle) = bot_agent_config {
         if let Some(defaults) = bot_agent_defaults_from_product(&product, &handle)? {
@@ -202,17 +182,6 @@ impl ConfigPersistSink for ConfiguredPluginPersist {
         _secrets: &HashMap<String, String>,
     ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
         let json = value.to_json();
-        if self.plugin_id == BOT_COMMAND_PLUGIN_ID {
-            let decoded: BotCommandConfig =
-                serde_json::from_value(json.clone()).map_err(|error| {
-                    ConfigError::PersistenceFailed {
-                        reason: format!("command config decode failed: {error}"),
-                    }
-                })?;
-            decoded
-                .validate()
-                .map_err(|reason| ConfigError::ApplyRejected { reason })?;
-        }
         let decoded_bot_agent =
             if self.plugin_id == BOT_AGENT_CONFIG_PROVIDER_ID {
                 let decoded: BotAgentConfig =
@@ -367,18 +336,6 @@ fn configured_plugin_selection<'a>(
                         .unwrap_or(true)
             })
         })
-}
-
-fn command_defaults_from_product(product: &toml::Value) -> Option<ConfigValue> {
-    if let Some(selection) = configured_plugin_selection(product, BOT_COMMAND_PLUGIN_ID) {
-        let config = selection
-            .get("config")
-            .cloned()
-            .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
-        let json = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
-        return Some(ConfigValue::from_json(&json));
-    }
-    None
 }
 
 fn product_descriptor() -> ConfigDescriptor {
@@ -660,48 +617,6 @@ auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
             .unwrap();
         assert_eq!(again.source, ConfigSource::Persisted);
         assert_eq!(again.revision, ConfigRevision(1));
-    }
-
-    #[tokio::test]
-    async fn command_provider_registers_when_configured() {
-        let root = tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        std::fs::write(
-            &path,
-            r#"
-[service]
-profile = "bot"
-instance_id = "demo"
-
-[[plugins.configured]]
-id = "mutsuki.bot.command"
-config = { prefixes = ["/", "!"] }
-"#,
-        )
-        .unwrap();
-        let service = product_config_service(&path).unwrap();
-        let caps = vec!["*".into()];
-        let providers = service.list_providers(&caps).unwrap();
-        assert!(providers.iter().any(|id| id.0 == "mutsuki.bot.command"));
-        let schema = service.get_schema("mutsuki.bot.command", &caps).unwrap();
-        assert_eq!(schema.provider_id.0, "mutsuki.bot.command");
-        let snap = service
-            .read(
-                "mutsuki.bot.command",
-                ConfigContext::plugin_instance("default"),
-                &caps,
-            )
-            .await
-            .unwrap();
-        match snap.value {
-            ConfigValue::Object(map) => match map.get("prefixes") {
-                Some(ConfigValue::Array(items)) => {
-                    assert_eq!(items.len(), 2);
-                }
-                other => panic!("unexpected prefixes: {other:?}"),
-            },
-            other => panic!("{other:?}"),
-        }
     }
 
     #[tokio::test]

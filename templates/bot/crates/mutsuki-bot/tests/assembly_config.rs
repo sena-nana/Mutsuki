@@ -143,7 +143,6 @@ font_files = ["{font}"]
 id = "mutsuki.bot.command"
 
 [plugins.configured.config]
-prefixes = ["/"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.bilibili"
@@ -157,7 +156,7 @@ retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
 subscriptions = []
 link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
 media_provider_id = "mutsuki.std.resource.memory"
-management = {{ enabled = true, allow_self_binding = true, command = "bili", admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
+management = {{ enabled = true, allow_self_binding = true, admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
 "#,
             ),
         ),
@@ -202,7 +201,6 @@ id = "mutsuki.std.resource.memory"
 id = "mutsuki.bot.command"
 
 [plugins.configured.config]
-prefixes = ["/"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.bilibili"
@@ -216,7 +214,7 @@ retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
 subscriptions = []
 link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
 media_provider_id = "mutsuki.std.resource.memory"
-management = {{ enabled = true, allow_self_binding = true, command = "bili", admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
+management = {{ enabled = true, allow_self_binding = true, admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
 "#,
             ),
         ),
@@ -507,7 +505,7 @@ subscriptions = []
 link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
 media_provider_id = "mutsuki.std.resource.memory"
 risk_control = {{ backend = "chromium", timeout_ms = 10000, max_response_bytes = 2097152 }}
-management = {{ enabled = true, allow_self_binding = true, command = "bili", admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
+management = {{ enabled = true, allow_self_binding = true, admin_user_ids = ["admin"], self_binding_notifications = ["dynamic"], self_binding_outbound_binding = "qq-main" }}
 "#,
             ),
         ),
@@ -865,7 +863,7 @@ video_interval_ms = 60000
 retry = {{ max_attempts = 3, initial_backoff_ms = 100, max_backoff_ms = 1000 }}
 link_resolver = {{ enabled = false, cooldown_ms = 1000, account_to_binding = {{}} }}
 media_provider_id = "mutsuki.std.resource.memory"
-management = {{ enabled = false, allow_self_binding = false, command = "bili", admin_user_ids = [], self_binding_notifications = ["live", "video"], self_binding_outbound_binding = "" }}
+management = {{ enabled = false, allow_self_binding = false, admin_user_ids = [], self_binding_notifications = ["live", "video"], self_binding_outbound_binding = "" }}
 {subscriptions}
 "#,
     )

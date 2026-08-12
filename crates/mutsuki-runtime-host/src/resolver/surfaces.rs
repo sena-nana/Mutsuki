@@ -1,6 +1,7 @@
 use mutsuki_runtime_contracts::{
     ContractSurface, ContractSurfaceKind, PluginManifest, RuntimeCapabilityGraph,
 };
+use serde_json::Value;
 
 pub(super) fn surfaces_for(
     manifests: &[PluginManifest],
@@ -11,12 +12,66 @@ pub(super) fn surfaces_for(
         push_runner_surfaces(&mut surfaces, manifest);
         push_protocol_surfaces(&mut surfaces, manifest);
         push_handler_binding_surfaces(&mut surfaces, manifest);
+        push_plugin_extension_surfaces(&mut surfaces, manifest);
         push_named_capability_surfaces(&mut surfaces, manifest);
         push_resource_provider_surfaces(&mut surfaces, manifest, capability_graph);
         push_resource_type_surfaces(&mut surfaces, manifest);
         push_system_extension_surfaces(&mut surfaces, manifest, capability_graph);
     }
     surfaces
+}
+
+fn push_plugin_extension_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
+    for extension in &manifest.provides.extensions {
+        push_surface(
+            surfaces,
+            &manifest.plugin_id,
+            ContractSurfaceKind::PluginExtension,
+            format!(
+                "plugin_extension:{}:{}@{}",
+                manifest.plugin_id, extension.extension_id, extension.version
+            ),
+            format!(
+                "plugin_extension:{}@{}:{}",
+                extension.extension_id,
+                extension.version,
+                canonical_json(&extension.payload)
+            ),
+        );
+    }
+}
+
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => serde_json::to_string(value).expect("JSON string is serializable"),
+        Value::Array(values) => format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            format!(
+                "{{{}}}",
+                entries
+                    .into_iter()
+                    .map(|(key, value)| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("JSON object key is serializable"),
+                        canonical_json(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+    }
 }
 
 fn push_resource_provider_surfaces(
@@ -307,4 +362,26 @@ fn push_surface(
         fingerprint,
         deprecated: false,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Map, Value};
+
+    use super::canonical_json;
+
+    #[test]
+    fn extension_payload_fingerprint_is_independent_of_object_key_order() {
+        let mut left = Map::new();
+        left.insert("node_type".into(), Value::String("source.qq".into()));
+        left.insert("version".into(), Value::from(1));
+        let mut right = Map::new();
+        right.insert("version".into(), Value::from(1));
+        right.insert("node_type".into(), Value::String("source.qq".into()));
+
+        assert_eq!(
+            canonical_json(&Value::Object(left)),
+            canonical_json(&Value::Object(right))
+        );
+    }
 }

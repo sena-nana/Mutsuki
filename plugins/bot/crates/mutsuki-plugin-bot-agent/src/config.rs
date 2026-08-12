@@ -5,7 +5,7 @@ use mutsuki_agent_client::{AgentConnectionId, AgentConnectionIdError};
 use mutsuki_bot_config::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
-use mutsuki_bot_protocol::QqStreamingStrategy;
+use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, QqStreamingStrategy};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -58,6 +58,48 @@ pub struct BotAgentConfig {
     )]
     pub default_profile_id: String,
     #[config(
+        title = "会话作用域",
+        description = "选择同一对话共享 Agent 会话，或按对话中的用户隔离",
+        default = "shared_conversation",
+        restart = "plugin_reload"
+    )]
+    pub session_scope: String,
+    #[config(
+        title = "语音转写",
+        description = "在 Agent 执行前转写输入音频",
+        default = false,
+        restart = "plugin_reload"
+    )]
+    pub stt_enabled: bool,
+    #[config(
+        title = "语音回复",
+        description = "在 Agent 执行后合成回复音频",
+        default = false,
+        restart = "plugin_reload"
+    )]
+    pub tts_enabled: bool,
+    #[config(
+        title = "语音回复策略",
+        description = "仅文本、文本与语音或仅语音",
+        default = "text_only",
+        restart = "plugin_reload"
+    )]
+    pub speech_reply_policy: String,
+    #[config(
+        title = "STT Provider",
+        description = "可选的语音转写 provider selector",
+        default = "",
+        restart = "plugin_reload"
+    )]
+    pub stt_selector_id: String,
+    #[config(
+        title = "TTS Provider",
+        description = "可选的语音合成 provider selector",
+        default = "",
+        restart = "plugin_reload"
+    )]
+    pub tts_selector_id: String,
+    #[config(
         title = "回复方式",
         description = "选择发送完整回复，或按长度切分后连续发送",
         default = "final_only",
@@ -102,6 +144,12 @@ impl Default for BotAgentConfig {
             enabled: false,
             connection_id: String::new(),
             default_profile_id: String::new(),
+            session_scope: "shared_conversation".into(),
+            stt_enabled: false,
+            tts_enabled: false,
+            speech_reply_policy: "text_only".into(),
+            stt_selector_id: String::new(),
+            tts_selector_id: String::new(),
             streaming: "final_only".into(),
             max_concurrency: 1,
             timeout_ms: 120_000,
@@ -127,6 +175,8 @@ impl BotAgentConfig {
         {
             return Err(BotAgentConfigError::InvalidProfileId);
         }
+        self.session_scope()?;
+        self.speech_reply_policy()?;
         self.streaming_strategy()?;
         if !(1..=BOT_AGENT_MAX_CONCURRENCY).contains(&self.max_concurrency) {
             return Err(BotAgentConfigError::InvalidConcurrency(
@@ -168,6 +218,23 @@ impl BotAgentConfig {
             other => Err(BotAgentConfigError::InvalidStreaming(other.into())),
         }
     }
+
+    pub fn session_scope(&self) -> Result<AgentSessionScope, BotAgentConfigError> {
+        match self.session_scope.trim() {
+            "shared_conversation" => Ok(AgentSessionScope::SharedConversation),
+            "actor_in_conversation" => Ok(AgentSessionScope::ActorInConversation),
+            other => Err(BotAgentConfigError::InvalidSessionScope(other.into())),
+        }
+    }
+
+    pub fn speech_reply_policy(&self) -> Result<BotSpeechReplyPolicy, BotAgentConfigError> {
+        match self.speech_reply_policy.trim() {
+            "text_only" => Ok(BotSpeechReplyPolicy::TextOnly),
+            "text_and_voice" => Ok(BotSpeechReplyPolicy::TextAndVoice),
+            "voice_only" => Ok(BotSpeechReplyPolicy::VoiceOnly),
+            other => Err(BotAgentConfigError::InvalidSpeechReplyPolicy(other.into())),
+        }
+    }
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -176,6 +243,10 @@ pub enum BotAgentConfigError {
     InvalidConnectionId(#[from] AgentConnectionIdError),
     #[error("default_profile_id must be at most 256 characters and contain no control characters")]
     InvalidProfileId,
+    #[error("unsupported session scope `{0}`")]
+    InvalidSessionScope(String),
+    #[error("unsupported speech reply policy `{0}`")]
+    InvalidSpeechReplyPolicy(String),
     #[error("unsupported streaming mode `{0}`")]
     InvalidStreaming(String),
     #[error("max_concurrency must be between 1 and {0}")]

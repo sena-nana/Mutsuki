@@ -5,16 +5,17 @@ Protocol IDs use `namespace.domain/op@major`.
 Standard Bot protocols:
 
 - `mutsuki.bot.event/ingest@1`
-- `mutsuki.bot.event/handle@1`
+- `mutsuki.bot.flow/ingress@1`
+- `mutsuki.bot.flow.node/execute@1`
 - `mutsuki.bot.message/send@1`
 - `mutsuki.bot.message/recall@1`
 - `mutsuki.bot.media/upload@1`
 - `mutsuki.bot.command/parse@1`
-- `mutsuki.bot.command/handle@1`
-- `mutsuki.bot.session/get@1`
-- `mutsuki.bot.session/set@1`
-- `mutsuki.bot.permission/check@1`
 - `mutsuki.bot.delivery/reply@1`
+
+`PluginProvides.extensions` carries versioned domain-neutral extension payloads. Bot plugins use
+`mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
+`BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.
 
 `mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Submit` reserves one stable
 reply id plus its ordered message parts before any platform send; `Inspect`, `RetryPart` and

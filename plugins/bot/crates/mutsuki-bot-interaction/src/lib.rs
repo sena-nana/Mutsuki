@@ -3,12 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use mutsuki_bot_conversation::qq_conversation_from_event;
 use mutsuki_bot_protocol::{
-    BOT_INTERACTION_SESSION_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotEvent,
-    BotHandlerExecutionResult, BotHandlerOutcome, BotInteractionCommand, BotInteractionSession,
-    BotPropagationPolicy, InteractionMatch, InteractionScope, InteractionStatus,
-    InteractionWaitSpec,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_INTERACTION_SESSION_PROTOCOL_ID, BotEvent, BotFlowEventEnvelope,
+    BotFlowPayload, BotFlowTypeRef, BotInteractionCommand, BotInteractionSession, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole, InteractionMatch,
+    InteractionScope, InteractionStatus, InteractionWaitSpec,
 };
-use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task, TaskPayload};
+use mutsuki_runtime_contracts::{ExecutionClass, PluginManifest, RunnerResult, Task};
 use mutsuki_runtime_core::{Runner, RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef,
@@ -145,7 +146,6 @@ impl InteractionService {
                 session_id: session.session_id.clone(),
                 event_id: event.event_id.clone(),
                 next_version: session.version,
-                propagation: session.wait.propagation,
                 accepted,
                 status: session.status,
                 state_ref_id: session.state_ref_id.clone(),
@@ -270,8 +270,61 @@ pub fn bot_interaction_manifest() -> PluginManifest {
             BOT_INTERACTION_RUNNER_ID,
             "bot-interaction",
         )
+        .extension(
+            interaction_node_catalog()
+                .into_plugin_extension()
+                .expect("interaction node catalog serializes"),
+        )
         .build()
         .manifest
+}
+
+fn interaction_node_catalog() -> BotNodeCatalogFragment {
+    BotNodeCatalogFragment {
+        nodes: vec![BotNodeDescriptor {
+            node_type_id: "mutsuki.bot.interaction.match".into(),
+            version: 1,
+            title: "交互会话匹配".into(),
+            category: "交互".into(),
+            role: BotNodeRole::Match,
+            binding: Some(BotNodeBinding {
+                binding_id: format!("binding:{BOT_INTERACTION_SESSION_PROTOCOL_ID}"),
+                protocol_id: BOT_INTERACTION_SESSION_PROTOCOL_ID.into(),
+                runner_hint: Some(BOT_INTERACTION_RUNNER_ID.into()),
+            }),
+            ports: vec![
+                BotNodePortDescriptor {
+                    port_id: "event".into(),
+                    title: "事件".into(),
+                    direction: BotNodePortDirection::Input,
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                    required: true,
+                },
+                BotNodePortDescriptor {
+                    port_id: "matched".into(),
+                    title: "已匹配".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.interaction.match", 1),
+                    required: false,
+                },
+                BotNodePortDescriptor {
+                    port_id: "unmatched".into(),
+                    title: "未匹配".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                    required: false,
+                },
+                BotNodePortDescriptor {
+                    port_id: "retry".into(),
+                    title: "重试提示".into(),
+                    direction: BotNodePortDirection::Output,
+                    event_type: BotFlowTypeRef::new("mutsuki.bot.message.send", 1),
+                    required: false,
+                },
+            ],
+            config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+        }],
+    }
 }
 
 #[must_use]
@@ -304,37 +357,8 @@ async fn interaction_result(
     task: &Task,
 ) -> RuntimeResult<RunnerResult> {
     let payload = task.payload.to_value();
-    if let Ok(event) = serde_json::from_value::<BotEvent>(payload.clone()) {
-        let matched = service
-            .match_event(&event, event.time_ms.max(0).cast_unsigned())
-            .await
-            .map_err(|error| runtime_error(task, error))?;
-        let outcome = matched
-            .as_ref()
-            .map_or(BotHandlerOutcome::Continue, |matched| {
-                match matched.propagation {
-                    BotPropagationPolicy::Continue => BotHandlerOutcome::Continue,
-                    BotPropagationPolicy::StopOnSuccess => BotHandlerOutcome::Stop,
-                    BotPropagationPolicy::ConsumeOnSuccess => BotHandlerOutcome::Consume,
-                }
-            });
-        let mut result = RunnerResult::completed(task.task_id.clone());
-        result.output = Some(
-            serde_json::to_value(BotHandlerExecutionResult { outcome })
-                .map_err(|error| runtime_error(task, error))?,
-        );
-        if let Some(prompt) = matched.and_then(|matched| matched.retry_prompt) {
-            let mut send = Task::new(
-                format!("bot.interaction.retry:{}", task.task_id),
-                BOT_MESSAGE_SEND_PROTOCOL_ID,
-                TaskPayload::from_local(prompt),
-            );
-            send.trace_id.clone_from(&task.trace_id);
-            send.correlation_id.clone_from(&task.correlation_id);
-            send.registry_generation = task.registry_generation;
-            result.tasks.push(send);
-        }
-        return Ok(result);
+    if let Ok(invocation) = serde_json::from_value::<BotNodeInvocation>(payload.clone()) {
+        return interaction_node_result(service, task, invocation).await;
     }
     let command: BotInteractionCommand =
         serde_json::from_value(payload).map_err(|error| runtime_error(task, error))?;
@@ -387,6 +411,73 @@ async fn interaction_result(
     let mut result = RunnerResult::completed(task.task_id.clone());
     result.output = Some(output);
     Ok(result)
+}
+
+async fn interaction_node_result(
+    service: &InteractionService,
+    task: &Task,
+    invocation: BotNodeInvocation,
+) -> RuntimeResult<RunnerResult> {
+    let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        .map_err(|error| runtime_error(task, error))?;
+    let matched = service
+        .match_event(&event, event.time_ms.max(0).cast_unsigned())
+        .await
+        .map_err(|error| runtime_error(task, error))?;
+    let mut outputs = Vec::new();
+    if let Some(matched) = matched {
+        let retry_prompt = matched.retry_prompt.clone();
+        outputs.push(BotNodeOutput {
+            port_id: "matched".into(),
+            event: flow_output(
+                &invocation.input,
+                "mutsuki.bot.interaction.match",
+                serde_json::to_value(matched).map_err(|error| runtime_error(task, error))?,
+            ),
+        });
+        if let Some(prompt) = retry_prompt {
+            outputs.push(BotNodeOutput {
+                port_id: "retry".into(),
+                event: flow_output(
+                    &invocation.input,
+                    "mutsuki.bot.message.send",
+                    serde_json::to_value(prompt).map_err(|error| runtime_error(task, error))?,
+                ),
+            });
+        }
+    } else {
+        outputs.push(BotNodeOutput {
+            port_id: "unmatched".into(),
+            event: invocation.input,
+        });
+    }
+    let mut result = RunnerResult::completed(task.task_id.clone());
+    result.output = Some(
+        serde_json::to_value(BotNodeResult {
+            outputs,
+            metadata: Default::default(),
+        })
+        .map_err(|error| runtime_error(task, error))?,
+    );
+    Ok(result)
+}
+
+fn flow_output(
+    source: &BotFlowEventEnvelope,
+    event_type: &str,
+    value: serde_json::Value,
+) -> BotFlowEventEnvelope {
+    BotFlowEventEnvelope {
+        event_id: source.event_id.clone(),
+        protocol_id: source.protocol_id.clone(),
+        payload: BotFlowPayload {
+            event_type: BotFlowTypeRef::new(event_type, 1),
+            value,
+        },
+        context: source.context.clone(),
+        trace_id: source.trace_id.clone(),
+        correlation_id: source.correlation_id.clone(),
+    }
 }
 
 fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {
@@ -451,8 +542,8 @@ mod tests {
     use std::sync::Mutex;
 
     use mutsuki_bot_protocol::{
-        BotAccountRef, BotConversationKind, BotEventKind, BotPlatform, BotPropagationPolicy,
-        BotTarget, BotUser, InteractionWaitSpec, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
+        BotAccountRef, BotConversationKind, BotEventKind, BotPlatform, BotTarget, BotUser,
+        InteractionWaitSpec, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
     };
 
     use super::*;
@@ -645,7 +736,6 @@ mod tests {
                         command: None,
                         predicate_service_id: None,
                         timeout_at_unix_ms: 2_000,
-                        propagation: BotPropagationPolicy::ConsumeOnSuccess,
                         retry_prompt: None,
                     },
                     1,
@@ -655,37 +745,6 @@ mod tests {
             assert_eq!(transitioned.status, InteractionStatus::Waiting);
             assert_eq!(transitioned.state_ref_id, "confirm-profile");
             assert_eq!(transitioned.version, accepted.next_version + 1);
-        });
-    }
-
-    #[test]
-    fn rejected_handler_attempt_emits_configured_retry_prompt() {
-        futures::executor::block_on(async {
-            let repository = Arc::new(Repository::default());
-            let service = InteractionService::new(repository.clone(), Arc::new(MatchCode));
-            let mut waiting = session("prompt", "actor", 1_000);
-            waiting.retries_remaining = 2;
-            waiting.wait.predicate_service_id = Some("verify-code".into());
-            waiting.wait.retry_prompt = Some(mutsuki_bot_protocol::BotMessage::text(
-                BotTarget::Group {
-                    group_id: "group".into(),
-                },
-                "验证码无效，请重试",
-            ));
-            service.create(waiting).await.unwrap();
-
-            let task = Task::new(
-                "interaction-event",
-                BOT_INTERACTION_SESSION_PROTOCOL_ID,
-                TaskPayload::from_local(event("actor")),
-            );
-            let result = interaction_result(&service, &task).await.unwrap();
-
-            assert_eq!(result.tasks.len(), 1);
-            assert_eq!(result.tasks[0].protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
-            let prompt: mutsuki_bot_protocol::BotMessage =
-                serde_json::from_value(result.tasks[0].payload.to_value()).unwrap();
-            assert_eq!(prompt.plain_text(), "验证码无效，请重试");
         });
     }
 
@@ -719,7 +778,6 @@ mod tests {
                 command: None,
                 predicate_service_id: None,
                 timeout_at_unix_ms: timeout,
-                propagation: BotPropagationPolicy::ConsumeOnSuccess,
                 retry_prompt: None,
             },
             status: InteractionStatus::Waiting,

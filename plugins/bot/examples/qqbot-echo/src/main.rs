@@ -1,5 +1,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let report = qqbot_echo::run_default_smoke()?;
-    println!("{}", serde_json::to_string_pretty(&report.to_json())?);
+    let validation = qqbot_echo::validate_example_flow()?;
+    if !validation.valid {
+        return Err(format!("example flow is invalid: {:?}", validation.issues).into());
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&qqbot_echo::example_draft_json())?
+    );
     Ok(())
 }

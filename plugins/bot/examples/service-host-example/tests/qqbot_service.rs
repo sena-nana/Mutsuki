@@ -1,11 +1,14 @@
 use std::time::Duration;
 
 use bot_echo::{echo_manifest, echo_runner};
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_protocol::{BotFlowDraftSaveRequest, BotFlowPublishRequest};
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::FakeQqServer;
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID;
-use mutsuki_plugin_bot_event_router::BOT_EVENT_ROUTER_PLUGIN_ID;
+use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
 use mutsuki_service_config::{
     ConfigOverrides, ConfiguredPluginSelection, IpcTransport, ServiceConfig,
 };
@@ -53,6 +56,7 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
         ..Default::default()
     })
     .unwrap();
+    publish_example_flow(&service);
     let control_config = service.clone();
 
     let runtime = ServiceRuntimeBuilder::new(service)
@@ -75,7 +79,7 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
     let plugin_json = serde_json::to_string(&plugins).unwrap();
     for id in [
         QQBOT_ADAPTER_PLUGIN_ID,
-        BOT_EVENT_ROUTER_PLUGIN_ID,
+        BOT_FLOW_ROUTER_PLUGIN_ID,
         BOT_COMMAND_PLUGIN_ID,
         "example.bot.echo",
     ] {
@@ -158,14 +162,16 @@ dynamic_dirs = []
 disabled_dir = "disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.event"
+id = "mutsuki.bot.router.flow"
 [plugins.configured.config]
-subscriptions = [{{ subscription_id = "qq-command", handler_protocol_id = "mutsuki.bot.command/parse@1", platform = "qqbot", event_kind = "message_created" }}]
 
 [[plugins.configured]]
 id = "mutsuki.bot.command"
 [plugins.configured.config]
-prefixes = ["/"]
+
+[[plugins.configured]]
+id = "example.bot.echo"
+[plugins.configured.config]
 
 [[plugins.configured]]
 id = "mutsuki.bot.adapter.qqbot"
@@ -184,9 +190,6 @@ reconnect_initial_delay_ms = 10
 reconnect_max_delay_ms = 20
 reconnect_jitter_ms = 0
 
-[[plugins.configured]]
-id = "example.bot.echo"
-
 [security]
 secret_file = "local.secret.toml"
 
@@ -204,6 +207,43 @@ panic_file = "panic.log"
         qq.token_url,
         qq.openapi_base_url,
     )
+}
+
+fn publish_example_flow(service: &ServiceConfig) {
+    let state_dir = service.service.data_dir.join("bot");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let repository =
+        std::sync::Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
+    let catalog = BotNodeCatalog::from_manifests(&qqbot_echo::qqbot_echo_manifests()).unwrap();
+    let registry = BotFlowRegistry::open(repository, catalog).unwrap();
+    let draft = registry
+        .save_draft(
+            BotFlowDraftSaveRequest {
+                expected_draft_revision: None,
+                base_published_revision: 0,
+                flows: vec![qqbot_echo::qqbot_echo_flow(), qqbot_ping_flow()],
+            },
+            1,
+        )
+        .unwrap();
+    registry
+        .publish(
+            BotFlowPublishRequest {
+                expected_draft_revision: draft.revision,
+                expected_published_revision: 0,
+            },
+            2,
+        )
+        .unwrap();
+}
+
+fn qqbot_ping_flow() -> mutsuki_bot_protocol::BotFlowDocument {
+    let mut flow = qqbot_echo::qqbot_echo_flow();
+    flow.flow_id = "example.qq.ping".into();
+    flow.name = "QQ /ping".into();
+    flow.nodes[1].config["path"] = json!(["ping"]);
+    flow.nodes[2].node_type_id = "example.bot.ping".into();
+    flow
 }
 
 fn configured_qq(secret_key: &str, overrides: Value) -> ConfiguredPluginSelection {

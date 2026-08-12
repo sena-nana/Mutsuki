@@ -4,15 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self'" />
+        content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'" />
   <title>Mutsuki Console</title>
   <link rel="stylesheet" href="./mutsuki-ui.css" />
 </head>
 <body>
   <div id="app"></div>
-  <script type="importmap">
-    {"imports":{"@mutsuki/web-sdk":"./shared/web-sdk.js"}}
-  </script>
   <script type="module" src="./console-bootstrap.js"></script>
 </body>
 </html>

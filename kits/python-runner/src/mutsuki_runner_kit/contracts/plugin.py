@@ -171,6 +171,25 @@ class HandlerBinding:
 
 
 @dataclass(frozen=True)
+class PluginExtensionDescriptor:
+    extension_id: str
+    version: int
+    payload: JsonDict
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "PluginExtensionDescriptor")
+        payload = as_json_value(field_value(raw, "payload"))
+        if not isinstance(payload, dict):
+            raise TypeError("payload expects mapping")
+        return cls(
+            extension_id=as_str(field_value(raw, "extension_id"), "extension_id"),
+            version=as_int(field_value(raw, "version"), "version"),
+            payload=payload,
+        )
+
+
+@dataclass(frozen=True)
 class PluginProvides:
     runners: tuple[RunnerDescriptor, ...]
     protocols: tuple[ProtocolDescriptor, ...]
@@ -189,6 +208,14 @@ class PluginProvides:
     bridges: tuple[BridgeDescriptor, ...]
     scheduler_policies: tuple[SchedulerPolicyDescriptor, ...]
     workflows: tuple[WorkflowDescriptor, ...]
+    capabilities: tuple[str, ...] = field(
+        default_factory=tuple,
+        metadata={"skip_serializing_if_empty": True},
+    )
+    extensions: tuple[PluginExtensionDescriptor, ...] = field(
+        default_factory=tuple,
+        metadata={"skip_serializing_if_empty": True},
+    )
     protocol_classes: dict[str, ProtocolClass] = field(
         default_factory=dict,
         metadata={"skip_serializing_if_empty": True},
@@ -220,6 +247,10 @@ class PluginProvides:
                 raw, "scheduler_policies", SchedulerPolicyDescriptor
             ),
             workflows=tuple_from_json(raw, "workflows", WorkflowDescriptor),
+            capabilities=as_str_tuple(raw.get("capabilities", ()), "capabilities"),
+            extensions=tuple_from_json(
+                raw, "extensions", PluginExtensionDescriptor
+            ) if "extensions" in raw else (),
             protocol_classes={
                 str(protocol_id): ProtocolClass(as_str(value, "protocol_classes"))
                 for protocol_id, value in protocol_classes.items()

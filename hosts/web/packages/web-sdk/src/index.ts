@@ -301,10 +301,17 @@ export class WebBridgeClient implements RpcClient, EventClient {
 
   private dispatch(generation: number, message: Record<string, unknown>): BridgeHelloAck | null {
     if (message.type === "hello_ack") {
-      return message as unknown as BridgeHelloAck;
+      const ack = message as unknown as BridgeHelloAck;
+      return {
+        ...ack,
+        session: {
+          ...ack.session,
+          session_id: uuidKey(ack.session.session_id),
+        },
+      };
     }
     if (message.type === "rpc_result") {
-      const id = String(message.id);
+      const id = uuidKey(message.id);
       const pending = this.pending.get(id);
       if (!pending || pending.generation !== generation) return null;
       this.pending.delete(id);
@@ -320,7 +327,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
       return null;
     }
     if (message.type === "event") {
-      const subscriptionId = String(message.subscription_id);
+      const subscriptionId = uuidKey(message.subscription_id);
       const sub = this.subscriptions.get(subscriptionId);
       sub?.handler((message.payload ?? null) as JsonValue);
     }
@@ -535,7 +542,7 @@ export class WebBridgeClient implements RpcClient, EventClient {
 
   private nextId(): string {
     this.idSequence += 1;
-    return globalThis.crypto?.randomUUID?.() ?? `mutsuki-${this.generation}-${this.idSequence}`;
+    return globalThis.crypto?.randomUUID?.() ?? fallbackUuid();
   }
 }
 
@@ -544,7 +551,41 @@ function positive(value: number | undefined, fallback: number): number {
 }
 
 function encodeWireMessage(payload: WireRecord): Uint8Array {
-  return encodeMsgpack(payload);
+  let wire = payload;
+  if (payload.type === "rpc") {
+    wire = { ...payload, id: uuidBytes(payload.id) };
+  } else if (payload.type === "subscribe" || payload.type === "unsubscribe") {
+    wire = { ...payload, subscription_id: uuidBytes(payload.subscription_id) };
+  }
+  return encodeMsgpack(wire);
+}
+
+function uuidBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array && value.length === 16) return value;
+  const compact = uuidKey(value).replaceAll("-", "");
+  if (!/^[0-9a-f]{32}$/i.test(compact)) {
+    throw new WebBridgeError("protocol_error", "wire UUID is invalid");
+  }
+  return Uint8Array.from(compact.match(/.{2}/g) ?? [], (byte) => Number.parseInt(byte, 16));
+}
+
+function uuidKey(value: unknown): string {
+  if (!(value instanceof Uint8Array)) return String(value);
+  if (value.length !== 16) {
+    throw new WebBridgeError("protocol_error", "wire UUID must contain 16 bytes");
+  }
+  const hex = Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function fallbackUuid(): string {
+  const bytes = new Uint8Array(16);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return uuidKey(bytes);
 }
 
 async function decodeWireMessage(data: unknown): Promise<WireRecord> {

@@ -1,4 +1,4 @@
-//! Authenticated Web Console bridge for owner-managed Agent connections and Bot Agent rules.
+//! Authenticated Web Console bridge for owner-managed Agent connections.
 
 #![forbid(unsafe_code)]
 
@@ -8,8 +8,6 @@ use std::sync::Arc;
 use mutsuki_agent_service_host_integration::{
     AgentConnectionConfig, AgentConnectionId, AgentConnectionManager,
 };
-use mutsuki_bot_protocol::{ConversationPolicyRuleDelete, ConversationPolicyRuleUpsert};
-use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
@@ -23,25 +21,17 @@ pub const PLUGIN_ID: &str = "bot-agent";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_CONNECTION_READ: &str = "agent.connection.read";
 pub const CAPABILITY_CONNECTION_WRITE: &str = "agent.connection.write";
-pub const CAPABILITY_POLICY_READ: &str = "bot.agent.policy.read";
-pub const CAPABILITY_POLICY_WRITE: &str = "bot.agent.policy.write";
 
-/// A single frontend bundle can expose either owner surface independently.
 pub struct BotAgentWebExtension {
     connections: Option<Arc<AgentConnectionManager>>,
-    policies: Option<Arc<BotStateDbRepository>>,
     assets_root: Option<PathBuf>,
 }
 
 impl BotAgentWebExtension {
     #[must_use]
-    pub fn new(
-        connections: Option<Arc<AgentConnectionManager>>,
-        policies: Option<Arc<BotStateDbRepository>>,
-    ) -> Self {
+    pub fn new(connections: Option<Arc<AgentConnectionManager>>) -> Self {
         Self {
             connections,
-            policies,
             assets_root: None,
         }
     }
@@ -114,38 +104,6 @@ impl WebExtension for BotAgentWebExtension {
             });
         }
 
-        if let Some(repository) = &self.policies {
-            let repository = repository.clone();
-            registry.register("policies.snapshot", move |params| {
-                require_capability(&params, CAPABILITY_POLICY_READ)?;
-                let (revision, rules, audits) =
-                    futures_executor::block_on(repository.policy_management_snapshot())
-                        .map_err(state_db_error)?;
-                Ok(json!({"revision": revision, "rules": rules, "audits": audits}))
-            });
-
-            let repository = self.policies.as_ref().expect("checked").clone();
-            registry.register("policies.upsert", move |params| {
-                require_capability(&params, CAPABILITY_POLICY_WRITE)?;
-                let request = decode::<ConversationPolicyRuleUpsert>(&params, "request")?;
-                serde_json::to_value(
-                    futures_executor::block_on(repository.upsert_policy_rule_fenced(request))
-                        .map_err(state_db_error)?,
-                )
-                .map_err(encode_error)
-            });
-
-            let repository = self.policies.as_ref().expect("checked").clone();
-            registry.register("policies.delete", move |params| {
-                require_capability(&params, CAPABILITY_POLICY_WRITE)?;
-                let request = decode::<ConversationPolicyRuleDelete>(&params, "request")?;
-                serde_json::to_value(
-                    futures_executor::block_on(repository.delete_policy_rule_fenced(request))
-                        .map_err(state_db_error)?,
-                )
-                .map_err(encode_error)
-            });
-        }
         Ok(())
     }
 
@@ -208,20 +166,6 @@ fn agent_error(
     )
 }
 
-fn state_db_error(error: mutsuki_bot_state_db::BotStateDbError) -> ExtensionError {
-    let code = match error {
-        mutsuki_bot_state_db::BotStateDbError::RevisionConflict { .. } => {
-            "bot.agent.policy.revision_conflict"
-        }
-        mutsuki_bot_state_db::BotStateDbError::PolicyRuleNotFound(_) => {
-            "bot.agent.policy.not_found"
-        }
-        mutsuki_bot_state_db::BotStateDbError::InvalidPolicyWrite(_) => "bot.agent.policy.invalid",
-        _ => "bot.agent.policy.storage_failed",
-    };
-    ExtensionError::Registration(json!({"code": code, "message": error.to_string()}).to_string())
-}
-
 fn encode_error(error: serde_json::Error) -> ExtensionError {
     ExtensionError::Registration(format!("response encoding failed: {error}"))
 }
@@ -235,8 +179,6 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         capabilities: vec![
             CAPABILITY_CONNECTION_READ.into(),
             CAPABILITY_CONNECTION_WRITE.into(),
-            CAPABILITY_POLICY_READ.into(),
-            CAPABILITY_POLICY_WRITE.into(),
         ],
         permissions: vec!["pages".into(), "navigation".into()],
         assets,

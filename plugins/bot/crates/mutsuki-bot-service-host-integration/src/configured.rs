@@ -5,31 +5,28 @@ use mutsuki_agent_contracts::{
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_conversation::ConversationService;
 use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
-use mutsuki_bot_protocol::{
-    AgentSessionScope, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_PARSE_PROTOCOL_ID, BotEventKind,
-    BotEventSubscription, BotHandlerDescriptor, BotPropagationPolicy, BotSpeechReplyPolicy,
-    ConversationPolicy, DirectMessagePolicy,
-};
-use mutsuki_bot_state_db::{BOT_CONVERSATION_POLICY_SERVICE_ID, BotStateDbRepository};
+use mutsuki_bot_flow::BotFlowRegistry;
+use mutsuki_bot_protocol::ConversationPolicy;
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID,
     BotAgentBridge, BotAgentConfig, BotAgentConfigHandle, agent_bridge_runner,
-    bot_agent_bridge_manifest, bot_agent_command_descriptors,
+    bot_agent_bridge_manifest,
 };
 use mutsuki_plugin_bot_command::{
-    BOT_COMMAND_PLUGIN_ID, BOT_COMMAND_RUNNER_ID, BotCommandConfig, BotCommandRunner,
-    bot_command_manifest,
+    BOT_COMMAND_PLUGIN_ID, BotCommandNodeRunner, bot_command_manifest,
 };
 use mutsuki_plugin_bot_event_router::{
-    BOT_EVENT_ROUTER_PLUGIN_ID, BotEventRouterRunner, bot_event_router_manifest,
-    handler_pipeline_manifest_for, handler_pipeline_runner_for,
+    BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
+    flow_ingress_runner, flow_node_runner, flow_router_manifest,
 };
-use mutsuki_runtime_contracts::PluginManifest;
+use mutsuki_runtime_contracts::{PluginManifest, RuntimeLoadPlan};
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
 use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
 use mutsuki_service_runtime::{
-    ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
+    ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,
+    ServiceRuntimeResult,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -54,15 +51,47 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EventRouterConfig {
-    subscriptions: Vec<BotEventSubscription>,
+struct FlowRouterConfig {}
+
+pub struct BotFlowRouterConfiguredPlugin;
+
+struct LegacyBotEventRouterConfiguredPlugin;
+
+impl ConfiguredPluginFactory for LegacyBotEventRouterConfiguredPlugin {
+    fn plugin_id(&self) -> &str {
+        "mutsuki.bot.router.event"
+    }
+
+    fn prepare(
+        &self,
+        _config: &Value,
+        _builder: ServiceRuntimeBuilder,
+    ) -> Result<ServiceRuntimeBuilder, String> {
+        Err("legacy Bot event subscriptions are unsupported; configure mutsuki.bot.router.flow and publish a graph".into())
+    }
 }
 
-pub struct BotEventRouterConfiguredPlugin;
+struct BotFlowLoadPlanHook {
+    registry: Arc<BotFlowRegistry>,
+}
 
-impl ConfiguredPluginFactory for BotEventRouterConfiguredPlugin {
+impl LoadPlanLifecycleHook for BotFlowLoadPlanHook {
+    fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String> {
+        self.registry
+            .validate_load_plan(plan)
+            .map_err(|error| error.to_string())
+    }
+
+    fn activate(&self, plan: &RuntimeLoadPlan) {
+        self.registry
+            .activate_load_plan(plan)
+            .expect("validated Bot Flow LoadPlan must activate");
+    }
+}
+
+impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
     fn plugin_id(&self) -> &str {
-        BOT_EVENT_ROUTER_PLUGIN_ID
+        BOT_FLOW_ROUTER_PLUGIN_ID
     }
 
     fn prepare(
@@ -70,17 +99,51 @@ impl ConfiguredPluginFactory for BotEventRouterConfiguredPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: EventRouterConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        if config.subscriptions.is_empty() {
-            return Err("subscriptions must not be empty".into());
-        }
-        let subscriptions = config.subscriptions;
+        let config = if config.is_null() {
+            Value::Object(Default::default())
+        } else {
+            config.clone()
+        };
+        let _config: FlowRouterConfig =
+            serde_json::from_value(config).map_err(|error| error.to_string())?;
+        let state_dir = builder.data_dir().join("bot");
+        std::fs::create_dir_all(&state_dir)
+            .map_err(|error| format!("failed to create Bot flow state directory: {error}"))?;
+        let repository = Arc::new(
+            BotStateDbRepository::open(state_dir.join("state.sqlite3"))
+                .map_err(|error| error.to_string())?,
+        );
+        let registry =
+            Arc::new(BotFlowRegistry::restore(repository).map_err(|error| error.to_string())?);
+        let manifest = flow_router_manifest();
+        let loaded_manifest = manifest.clone();
+        let ingress_registry = registry.clone();
+        let node_registry = registry.clone();
+        let service_registry = registry.clone();
         Ok(builder
-            .register_builtin_plugin(bot_event_router_manifest(1))
-            .register_builtin_runner(move || {
-                Box::new(BotEventRouterRunner::new(1, subscriptions.clone()))
-            }))
+            .register_builtin_loaded_plugin_factory(manifest, move || {
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService {
+                        service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
+                        capability: Some("bot.flow".into()),
+                        service: service_registry.clone(),
+                    }],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                })
+            })
+            .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
+            .register_builtin_runner(move || Box::new(BotFlowMatchRunner::default()))
+            .register_runtime_client_runner(move |client| {
+                flow_node_runner(client, node_registry.clone())
+            })
+            .register_load_plan_hook(
+                BOT_FLOW_REGISTRY_SERVICE_ID,
+                Arc::new(BotFlowLoadPlanHook { registry }),
+            ))
     }
 }
 
@@ -96,40 +159,19 @@ impl ConfiguredPluginFactory for BotCommandConfiguredPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: BotCommandConfig =
-            serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
-        config.validate()?;
-        let prefixes = config.prefixes;
-        let mut commands = config.commands;
-        if builder
-            .configured_plugin_selection(BOT_AGENT_BRIDGE_PLUGIN_ID)
-            .and_then(|selection| {
-                serde_json::from_value::<BotAgentConfig>(selection.config.clone()).ok()
-            })
-            .is_some_and(|config| config.enabled)
-        {
-            for command in bot_agent_command_descriptors() {
-                if !commands
-                    .iter()
-                    .any(|existing| existing.path == command.path)
-                {
-                    commands.push(command);
-                }
-            }
-        }
+        let config = if config.is_null() {
+            Value::Object(Default::default())
+        } else {
+            config.clone()
+        };
+        let _config: FlowRouterConfig =
+            serde_json::from_value(config).map_err(|error| error.to_string())?;
         Ok(builder
             .register_builtin_plugin(bot_command_manifest(1))
-            .register_builtin_runner(move || {
-                Box::new(BotCommandRunner::with_commands(
-                    1,
-                    prefixes.clone(),
-                    commands.clone(),
-                ))
-            }))
+            .register_builtin_runner(move || Box::new(BotCommandNodeRunner::new(1))))
     }
 }
 
-pub const BOT_AGENT_PIPELINE_RUNNER_ID: &str = "mutsuki.bot.agent.pipeline";
 const BOT_AGENT_REPLY_DELIVERY_RUNNER_ID: &str = "mutsuki.bot.agent.reply-delivery.runner";
 
 struct ConfigSelectedAgentBackend {
@@ -164,23 +206,12 @@ impl AgentClientBackend for ConfigSelectedAgentBackend {
 
 pub struct BotAgentConfiguredPlugin {
     connections: AgentConnectionRegistry,
-    handlers: Vec<BotHandlerDescriptor>,
 }
 
 impl BotAgentConfiguredPlugin {
     #[must_use]
     pub fn new(connections: AgentConnectionRegistry) -> Self {
-        Self {
-            connections,
-            handlers: Vec::new(),
-        }
-    }
-
-    /// Adds product-owned handlers that must run before the Agent fallback.
-    #[must_use]
-    pub fn with_handlers(mut self, handlers: Vec<BotHandlerDescriptor>) -> Self {
-        self.handlers = handlers;
-        self
+        Self { connections }
     }
 }
 
@@ -199,6 +230,15 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
         config.validate().map_err(|error| error.to_string())?;
         let config_handle =
             BotAgentConfigHandle::new(config.clone()).map_err(|error| error.to_string())?;
+        if !config.enabled {
+            return Ok(register_bot_agent_services(
+                builder,
+                PluginBuilder::new(BOT_AGENT_BRIDGE_PLUGIN_ID)
+                    .build()
+                    .manifest,
+                config_handle,
+            ));
+        }
         let state_dir = builder.data_dir().join("bot");
         std::fs::create_dir_all(&state_dir).map_err(|error| {
             format!(
@@ -210,18 +250,6 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             BotStateDbRepository::open(state_dir.join("state.sqlite3"))
                 .map_err(|error| error.to_string())?,
         );
-
-        if !config.enabled {
-            return Ok(register_bot_agent_services(
-                builder,
-                PluginBuilder::new(BOT_AGENT_BRIDGE_PLUGIN_ID)
-                    .build()
-                    .manifest,
-                config_handle,
-                repository,
-            ));
-        }
-
         let connection_id = config
             .selected_connection_id()
             .map_err(|error| error.to_string())?
@@ -231,35 +259,22 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
             config: config_handle.clone(),
         };
         let client = AgentClient::new(backend);
-        let conversations = ConversationService::new(repository.clone(), disabled_product_policy());
+        let conversations = ConversationService::new(
+            repository.clone(),
+            execution_product_policy(&config).map_err(|error| error.to_string())?,
+        );
         let bridge =
             BotAgentBridge::new_with_config(conversations, Box::new(client), config_handle.clone());
 
-        let mut handlers = self.handlers.clone();
-        handlers.push(command_handler());
-        handlers.push(agent_fallback_handler());
-
-        let manifest = merge_manifests(
-            bot_agent_bridge_manifest(),
-            handler_pipeline_manifest_for(BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_PIPELINE_RUNNER_ID),
-        );
         let mut manifest = merge_manifests(
-            manifest,
+            bot_agent_bridge_manifest(),
             bot_reply_delivery_manifest_for(
                 BOT_AGENT_BRIDGE_PLUGIN_ID,
                 BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
             ),
         );
-        manifest.requires.extend([
-            connection_id.capability(),
-            format!("task_protocol:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
-        ]);
-        let builder = register_bot_agent_services(
-            builder,
-            manifest,
-            config_handle.clone(),
-            repository.clone(),
-        );
+        manifest.requires.push(connection_id.capability());
+        let builder = register_bot_agent_services(builder, manifest, config_handle.clone());
         Ok(builder
             .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::for_plugin(
                 Duration::from_millis(250),
@@ -271,14 +286,6 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
                     let settings = config.snapshot();
                     (Some(settings.max_concurrency), Some(settings.timeout_ms))
                 }
-            })
-            .register_runtime_client_runner(move |client| {
-                handler_pipeline_runner_for(
-                    client,
-                    handlers.clone(),
-                    BOT_AGENT_BRIDGE_PLUGIN_ID,
-                    BOT_AGENT_PIPELINE_RUNNER_ID,
-                )
             })
             .register_runtime_client_runner(move |client| {
                 agent_bridge_runner(client, bridge.clone())
@@ -298,7 +305,6 @@ fn register_bot_agent_services(
     builder: ServiceRuntimeBuilder,
     manifest: PluginManifest,
     config: BotAgentConfigHandle,
-    repository: Arc<BotStateDbRepository>,
 ) -> ServiceRuntimeBuilder {
     let loaded_manifest = manifest.clone();
     let config = Arc::new(config);
@@ -307,18 +313,11 @@ fn register_bot_agent_services(
             manifest: loaded_manifest.clone(),
             runners: Vec::new(),
             async_handlers: Vec::new(),
-            host_services: vec![
-                RuntimeBootstrapperService {
-                    service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
-                    capability: Some("bot.agent.config".into()),
-                    service: config.clone(),
-                },
-                RuntimeBootstrapperService {
-                    service_id: BOT_CONVERSATION_POLICY_SERVICE_ID.into(),
-                    capability: Some("bot.agent.policy".into()),
-                    service: repository.clone(),
-                },
-            ],
+            host_services: vec![RuntimeBootstrapperService {
+                service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
+                capability: Some("bot.agent.config".into()),
+                service: config.clone(),
+            }],
             resource_providers: Vec::new(),
             async_resource_providers: Vec::new(),
         })
@@ -338,76 +337,28 @@ fn merge_manifests(mut left: PluginManifest, right: PluginManifest) -> PluginMan
     left.provides
         .handler_bindings
         .extend(right.provides.handler_bindings);
+    left.provides.extensions.extend(right.provides.extensions);
     left
 }
 
-fn command_handler() -> BotHandlerDescriptor {
-    BotHandlerDescriptor {
-        handler_id: "mutsuki.bot.agent.command-parser".into(),
-        binding_id: format!("binding:{BOT_COMMAND_PARSE_PROTOCOL_ID}"),
-        generation: 1,
-        handler_protocol_id: BOT_COMMAND_PARSE_PROTOCOL_ID.into(),
-        runner_hint: Some(BOT_COMMAND_RUNNER_ID.into()),
-        event_kinds: vec![BotEventKind::MessageCreated],
-        conversation_kinds: Vec::new(),
-        filter: None,
-        permissions: Vec::new(),
-        priority: 100,
-        propagation: BotPropagationPolicy::Continue,
-        rate_limit: None,
-        timeout_ms: None,
-        side_effects: Vec::new(),
-        max_concurrency: None,
-        before_hook_protocol_ids: Vec::new(),
-        after_hook_protocol_ids: Vec::new(),
-        error_hook_protocol_ids: Vec::new(),
-    }
-}
-
-fn agent_fallback_handler() -> BotHandlerDescriptor {
-    BotHandlerDescriptor {
-        handler_id: "mutsuki.bot.agent.message".into(),
-        binding_id: format!("binding:{BOT_AGENT_BRIDGE_PROTOCOL_ID}"),
-        generation: 1,
-        handler_protocol_id: BOT_AGENT_BRIDGE_PROTOCOL_ID.into(),
-        runner_hint: Some(BOT_AGENT_BRIDGE_RUNNER_ID.into()),
-        event_kinds: vec![BotEventKind::MessageCreated],
-        conversation_kinds: Vec::new(),
-        filter: None,
-        permissions: Vec::new(),
-        priority: i32::MIN,
-        propagation: BotPropagationPolicy::StopOnSuccess,
-        rate_limit: None,
-        timeout_ms: None,
-        side_effects: vec!["agent".into(), "bot_delivery".into()],
-        max_concurrency: None,
-        before_hook_protocol_ids: Vec::new(),
-        after_hook_protocol_ids: Vec::new(),
-        error_hook_protocol_ids: Vec::new(),
-    }
-}
-
-fn disabled_product_policy() -> ConversationPolicy {
-    ConversationPolicy {
+fn execution_product_policy(config: &BotAgentConfig) -> Result<ConversationPolicy, String> {
+    Ok(ConversationPolicy {
         revision: 0,
-        enabled: true,
-        agent_enabled: false,
-        direct_message_policy: DirectMessagePolicy::Allow,
-        must_mention: false,
-        wake_words: Vec::new(),
-        allowlist: Vec::new(),
-        denylist: Vec::new(),
-        rate_limit_profile_id: None,
-        session_scope: AgentSessionScope::SharedConversation,
+        session_scope: config.session_scope().map_err(|error| error.to_string())?,
         business_profile_binding_id: None,
-        agent_runtime_profile_id: None,
-        stt_enabled: false,
-        tts_enabled: false,
-        speech_reply_policy: BotSpeechReplyPolicy::TextOnly,
-        stt_selector_id: None,
-        tts_selector_id: None,
+        agent_runtime_profile_id: (!config.default_profile_id.trim().is_empty())
+            .then(|| config.default_profile_id.clone()),
+        stt_enabled: config.stt_enabled,
+        tts_enabled: config.tts_enabled,
+        speech_reply_policy: config
+            .speech_reply_policy()
+            .map_err(|error| error.to_string())?,
+        stt_selector_id: (!config.stt_selector_id.trim().is_empty())
+            .then(|| config.stt_selector_id.clone()),
+        tts_selector_id: (!config.tts_selector_id.trim().is_empty())
+            .then(|| config.tts_selector_id.clone()),
         active_delivery_enabled: false,
-    }
+    })
 }
 
 pub struct QqBotConfiguredPlugin;
@@ -738,7 +689,8 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
 /// QQ factory of its own.
 pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
-    catalog.register(BotEventRouterConfiguredPlugin)?;
+    catalog.register(LegacyBotEventRouterConfiguredPlugin)?;
+    catalog.register(BotFlowRouterConfiguredPlugin)?;
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(QqBotConfiguredPlugin)?;
     catalog.register(BilibiliConfiguredPlugin)?;
@@ -747,20 +699,13 @@ pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginC
     Ok(catalog)
 }
 
-/// Production Bot catalog with the configurable Agent fallback wired to a shared Agent owner
+/// Production Bot catalog with configurable Agent nodes wired to a shared Agent owner
 /// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
 pub fn configured_bot_plugin_catalog_with_agent(
     connections: AgentConnectionRegistry,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_bot_plugin_catalog_with_agent_handlers(connections, Vec::new())
-}
-
-pub fn configured_bot_plugin_catalog_with_agent_handlers(
-    connections: AgentConnectionRegistry,
-    handlers: Vec<BotHandlerDescriptor>,
-) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = configured_bot_plugin_catalog()?;
-    catalog.register(BotAgentConfiguredPlugin::new(connections).with_handlers(handlers))?;
+    catalog.register(BotAgentConfiguredPlugin::new(connections))?;
     Ok(catalog)
 }
 
@@ -802,6 +747,22 @@ mod tests {
     }
 
     #[test]
+    fn graph_only_plugins_accept_omitted_empty_config() {
+        let root = tempfile::tempdir().unwrap();
+        let mut service = ServiceConfig::default();
+        service.service.data_dir = root.path().join("data");
+
+        BotFlowRouterConfiguredPlugin
+            .prepare(&Value::Null, ServiceRuntimeBuilder::new(service.clone()))
+            .expect("Flow Router should accept a graph-only selection without a config table");
+        BotCommandConfiguredPlugin
+            .prepare(&Value::Null, ServiceRuntimeBuilder::new(service))
+            .expect(
+                "Command node plugin should accept a graph-only selection without a config table",
+            );
+    }
+
+    #[test]
     fn configured_bilibili_management_requires_host_persistence_boundaries() {
         let config = json!({
             "backend": {"type": "web_cookie", "cookie_secret_key": "BILIBILI_COOKIE"},
@@ -815,7 +776,6 @@ mod tests {
             "management": {
                 "enabled": true,
                 "allow_self_binding": true,
-                "command": "bili",
                 "admin_user_ids": ["admin"],
                 "self_binding_notifications": ["dynamic"],
                 "self_binding_outbound_binding": "qq-main"
@@ -851,7 +811,6 @@ mod tests {
             "management": {
                 "enabled": false,
                 "allow_self_binding": false,
-                "command": "bili",
                 "admin_user_ids": [],
                 "self_binding_notifications": ["live", "video"],
                 "self_binding_outbound_binding": ""
@@ -865,5 +824,38 @@ mod tests {
             .err()
             .expect("Open Platform unexpectedly accepted a non-rotatable secret store");
         assert!(error.contains("OAuth refresh"));
+    }
+
+    #[test]
+    fn legacy_orchestration_configuration_is_rejected_at_the_owner_boundary() {
+        let builder = ServiceRuntimeBuilder::new(ServiceConfig::default());
+        let error = LegacyBotEventRouterConfiguredPlugin
+            .prepare(&json!({"subscriptions": []}), builder)
+            .err()
+            .expect("legacy event router must be rejected");
+        assert!(error.contains("publish a graph"));
+
+        let error = BotCommandConfiguredPlugin
+            .prepare(
+                &json!({"prefixes": ["/"], "commands": []}),
+                ServiceRuntimeBuilder::new(ServiceConfig::default()),
+            )
+            .err()
+            .expect("legacy command config must be rejected");
+        assert!(error.contains("unknown field"));
+
+        assert!(
+            serde_json::from_value::<mutsuki_plugin_bot_bilibili::BilibiliManagementConfig>(
+                json!({
+                    "enabled": false,
+                    "allow_self_binding": false,
+                    "command": "bili",
+                    "admin_user_ids": [],
+                    "self_binding_notifications": [],
+                    "self_binding_outbound_binding": ""
+                }),
+            )
+            .is_err()
+        );
     }
 }

@@ -1,25 +1,28 @@
-# Configurable Bot Agent migration
+# Bot Agent Flow migration
 
-The production Bot Agent path is now selected as `mutsuki.plugin.bot.agent`; the former
-`QqAiBotPluginBundle` remains an explicit injected integration API for tests and specialized
-products, not the template default.
+Bot orchestration is now a breaking replacement. The Web Console publishes a versioned Bot Flow;
+the published graph is the only source of matching, branching and invocation order.
 
 Required migration:
 
 1. Register one shared `AgentConnectionRegistry` in the Agent connection and Bot configured
    catalogs.
-2. Select `mutsuki.agent.connections`, `mutsuki.bot.command`, the platform adapter, and
-   `mutsuki.plugin.bot.agent` explicitly.
-3. Add the required `BotAgentConfig.connection_id`. Endpoint and authentication fields move to
-   the connector-owned opaque connection config; only Host secret key references are persisted.
-4. Persist conversation admission through `ConversationPolicyRuleUpsert/Delete`. The default
-   Product policy has `agent_enabled=false`; enabling the plugin is not itself an admission rule.
+2. Select the platform adapter, `mutsuki.bot.flow`, `mutsuki.bot.command`,
+   `mutsuki.plugin.bot.agent`, and reliable delivery explicitly.
+3. Add the required `BotAgentConfig.connection_id`. Endpoint and authentication fields remain in
+   connector-owned opaque connection config; only Host secret key references are persisted.
+4. Recreate admission and routing in the Flow editor. Mention, wake word, account, role,
+   permission and rate-limit conditions belong to Match nodes. Command prefix, path, aliases and
+   typed arguments belong to Command Match node configuration.
+5. Publish the graph after validation. Old `subscriptions`, Handler priority/propagation/hooks,
+   command tables and conversation policy rules are rejected or ignored; no automatic import is
+   attempted.
 
-Message propagation is deterministic: higher-priority handlers run first; Stop or Consume ends
-the pipeline. Continue, an unknown command, or a localized handler failure reaches the final Agent
-fallback, where policy and connection health are checked. No implicit Provider or alternate
-connection is selected on failure.
+Agent owns only execution configuration such as session scope, runtime profile, STT/TTS,
+concurrency and timeout. Its submit/cancel/reset/fork/status/regenerate nodes emit typed reply
+events; reliable Delivery sinks own outbound delivery. Existing session generation fencing,
+idempotency and connection handshake guarantees remain unchanged.
 
-Config Web mounts connection and policy pages only when their actual Host services are registered.
-Connection candidates are handshaken before generation replacement; rule writes use expected
-revision, durable audit entries, and SQLite recovery.
+Draft save and publish use revision CAS. Publish persists an immutable version before atomically
+switching the active snapshot; in-flight tasks keep their original graph revision. Connection
+management stays available as a separate Web page, while trigger-rule pages are removed.
