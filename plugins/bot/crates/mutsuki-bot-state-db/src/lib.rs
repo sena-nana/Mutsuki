@@ -5,13 +5,17 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use mutsuki_bot_conversation::{AgentEventClaim, ConversationError, ConversationRepository};
-use mutsuki_bot_delivery::{DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryRepository};
+use mutsuki_bot_delivery::{
+    DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryRepository, ReplyDeliveryRepository,
+    reply_part_request,
+};
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotInteractionSession, ConversationPolicyRule, ConversationPolicyRuleAuditEntry,
-    ConversationPolicyRuleDelete, ConversationPolicyRuleUpsert, ConversationPolicyRuleWriteResult,
-    DeliveryStatus, InteractionStatus,
+    BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
+    ConversationPolicyRule, ConversationPolicyRuleAuditEntry, ConversationPolicyRuleDelete,
+    ConversationPolicyRuleUpsert, ConversationPolicyRuleWriteResult, DeliveryStatus,
+    InteractionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -300,39 +304,55 @@ enum DbJob {
     },
     ReserveDelivery {
         request: BotActiveDeliveryRequest,
-        reply: DbReply<DeliveryReservation>,
+        reply: SyncDbReply<DeliveryReservation>,
     },
     DeliveryRequest {
         delivery_id: String,
-        reply: DbReply<Option<BotActiveDeliveryRequest>>,
+        reply: SyncDbReply<Option<BotActiveDeliveryRequest>>,
     },
     DeliveryReceipt {
         delivery_id: String,
-        reply: DbReply<Option<BotDeliveryReceipt>>,
+        reply: SyncDbReply<Option<BotDeliveryReceipt>>,
     },
     DeliveryAttempts {
         delivery_id: String,
-        reply: DbReply<Vec<BotDeliveryAttempt>>,
+        reply: SyncDbReply<Vec<BotDeliveryAttempt>>,
     },
     SaveDeliveryOutcome {
         attempt: BotDeliveryAttempt,
         receipt: BotDeliveryReceipt,
-        reply: DbReply<()>,
+        reply: SyncDbReply<()>,
     },
     SaveDeliveryReceipt {
         receipt: BotDeliveryReceipt,
-        reply: DbReply<()>,
+        reply: SyncDbReply<()>,
     },
     ClaimDueDeliveries {
         now_unix_ms: u64,
-        reply: DbReply<Vec<String>>,
+        reply: SyncDbReply<Vec<String>>,
     },
     BeginSendDelivery {
         delivery_id: String,
         attempt: BotDeliveryAttempt,
         now_unix_ms: u64,
         lease_ms: u64,
-        reply: DbReply<BotDeliveryReceipt>,
+        reply: SyncDbReply<BotDeliveryReceipt>,
+    },
+    ReserveReplyDelivery {
+        request: BotReplyDeliveryRequest,
+        reply: SyncDbReply<ReplyDeliveryReservation>,
+    },
+    ReplyDeliveryReceipt {
+        reply_id: String,
+        reply: SyncDbReply<Option<BotReplyDeliveryReceipt>>,
+    },
+    ClaimDueReplyParts {
+        now_unix_ms: u64,
+        reply: SyncDbReply<Vec<String>>,
+    },
+    IsReplyPart {
+        delivery_id: String,
+        reply: SyncDbReply<bool>,
     },
     CreateInteraction {
         session: BotInteractionSession,
@@ -367,6 +387,8 @@ impl DbJob {
                 | Self::SaveDeliveryOutcome { .. }
                 | Self::ClaimDueDeliveries { .. }
                 | Self::BeginSendDelivery { .. }
+                | Self::ReserveReplyDelivery { .. }
+                | Self::ClaimDueReplyParts { .. }
                 | Self::CreateInteraction { .. }
                 | Self::CompareAndSetInteraction { .. }
         )
@@ -435,30 +457,30 @@ impl DbJob {
                 metrics,
             ),
             Self::ReserveDelivery { request, reply } => {
-                send_reply(reply, reserve_delivery(connection, &request), metrics);
+                send_sync_reply(reply, reserve_delivery(connection, &request), metrics);
             }
             Self::DeliveryRequest { delivery_id, reply } => {
-                send_reply(reply, delivery_request(connection, &delivery_id), metrics);
+                send_sync_reply(reply, delivery_request(connection, &delivery_id), metrics);
             }
             Self::DeliveryReceipt { delivery_id, reply } => {
-                send_reply(reply, delivery_receipt(connection, &delivery_id), metrics);
+                send_sync_reply(reply, delivery_receipt(connection, &delivery_id), metrics);
             }
             Self::DeliveryAttempts { delivery_id, reply } => {
-                send_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
+                send_sync_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
             }
             Self::SaveDeliveryOutcome {
                 attempt,
                 receipt,
                 reply,
-            } => send_reply(
+            } => send_sync_reply(
                 reply,
                 save_delivery_outcome(connection, &attempt, &receipt),
                 metrics,
             ),
             Self::SaveDeliveryReceipt { receipt, reply } => {
-                send_reply(reply, save_delivery_receipt(connection, &receipt), metrics);
+                send_sync_reply(reply, save_delivery_receipt(connection, &receipt), metrics);
             }
-            Self::ClaimDueDeliveries { now_unix_ms, reply } => send_reply(
+            Self::ClaimDueDeliveries { now_unix_ms, reply } => send_sync_reply(
                 reply,
                 claim_due_deliveries(connection, now_unix_ms),
                 metrics,
@@ -469,11 +491,29 @@ impl DbJob {
                 now_unix_ms,
                 lease_ms,
                 reply,
-            } => send_reply(
+            } => send_sync_reply(
                 reply,
                 begin_send_delivery(connection, &delivery_id, attempt, now_unix_ms, lease_ms),
                 metrics,
             ),
+            Self::ReserveReplyDelivery { request, reply } => {
+                send_sync_reply(reply, reserve_reply_delivery(connection, &request), metrics)
+            }
+            Self::ReplyDeliveryReceipt { reply_id, reply } => {
+                send_sync_reply(
+                    reply,
+                    reply_delivery_receipt_by_id(connection, &reply_id),
+                    metrics,
+                );
+            }
+            Self::ClaimDueReplyParts { now_unix_ms, reply } => send_sync_reply(
+                reply,
+                claim_due_reply_parts(connection, now_unix_ms),
+                metrics,
+            ),
+            Self::IsReplyPart { delivery_id, reply } => {
+                send_sync_reply(reply, is_reply_part(connection, &delivery_id), metrics);
+            }
             Self::CreateInteraction { session, reply } => {
                 send_reply(reply, create_interaction(connection, &session), metrics);
             }
@@ -600,6 +640,19 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              body TEXT NOT NULL,
              FOREIGN KEY(delivery_id) REFERENCES bot_delivery_request(delivery_id)
          );
+         CREATE TABLE IF NOT EXISTS bot_reply_delivery(
+             reply_id TEXT PRIMARY KEY,
+             idempotency_key TEXT NOT NULL UNIQUE,
+             body TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS bot_reply_delivery_part(
+             reply_id TEXT NOT NULL,
+             delivery_id TEXT NOT NULL UNIQUE,
+             part_index INTEGER NOT NULL,
+             PRIMARY KEY(reply_id, part_index),
+             FOREIGN KEY(reply_id) REFERENCES bot_reply_delivery(reply_id),
+             FOREIGN KEY(delivery_id) REFERENCES bot_delivery_request(delivery_id)
+         );
          CREATE TABLE IF NOT EXISTS bot_interaction(
              session_id TEXT PRIMARY KEY,
              origin_key TEXT NOT NULL,
@@ -611,7 +664,7 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=3;
+         PRAGMA user_version=4;
          COMMIT;",
     )?;
 
@@ -911,6 +964,15 @@ fn reserve_delivery(
     request: &BotActiveDeliveryRequest,
 ) -> Result<DeliveryReservation, BotStateDbError> {
     let transaction = immediate(connection)?;
+    let reservation = reserve_delivery_in_transaction(&transaction, request)?;
+    transaction.commit()?;
+    Ok(reservation)
+}
+
+fn reserve_delivery_in_transaction(
+    transaction: &Transaction<'_>,
+    request: &BotActiveDeliveryRequest,
+) -> Result<DeliveryReservation, BotStateDbError> {
     let changed = transaction.execute(
         "INSERT OR IGNORE INTO bot_delivery_request(delivery_id, idempotency_key, body)
          VALUES (?1, ?2, ?3)",
@@ -922,7 +984,6 @@ fn reserve_delivery(
     )?;
     if changed == 1 {
         upsert_delivery_receipt(&transaction, &pending_receipt(request))?;
-        transaction.commit()?;
         return Ok(DeliveryReservation::Reserved);
     }
     if let Some(body) = transaction
@@ -934,7 +995,6 @@ fn reserve_delivery(
         .optional()?
     {
         let receipt = decode(&body)?;
-        transaction.commit()?;
         return Ok(DeliveryReservation::Existing(receipt));
     }
     if let Some(body) = transaction
@@ -948,7 +1008,6 @@ fn reserve_delivery(
         let owner: BotActiveDeliveryRequest = decode(&body)?;
         let receipt = pending_receipt(&owner);
         upsert_delivery_receipt(&transaction, &receipt)?;
-        transaction.commit()?;
         return Ok(DeliveryReservation::Existing(receipt));
     }
     let delivery_exists = transaction
@@ -959,13 +1018,102 @@ fn reserve_delivery(
         )
         .optional()?
         .is_some();
-    transaction.commit()?;
     Ok(if delivery_exists {
         DeliveryReservation::Conflict
     } else {
         return Err(BotStateDbError::Invariant(
             "delivery reservation disappeared after conflict".into(),
         ));
+    })
+}
+
+#[derive(Debug)]
+enum ReplyDeliveryReservation {
+    Reserved,
+    Existing(BotReplyDeliveryReceipt),
+    Conflict,
+}
+
+fn reserve_reply_delivery(
+    connection: &mut Connection,
+    request: &BotReplyDeliveryRequest,
+) -> Result<ReplyDeliveryReservation, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    if let Some(body) = transaction
+        .query_row(
+            "SELECT body FROM bot_reply_delivery WHERE reply_id=?1 OR idempotency_key=?2",
+            params![request.reply_id, request.idempotency_key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        let existing: BotReplyDeliveryRequest = decode(&body)?;
+        if existing != *request {
+            return Ok(ReplyDeliveryReservation::Conflict);
+        }
+        let receipt = reply_delivery_receipt(&transaction, &existing)?;
+        transaction.commit()?;
+        return Ok(ReplyDeliveryReservation::Existing(receipt));
+    }
+    transaction.execute(
+        "INSERT INTO bot_reply_delivery(reply_id, idempotency_key, body) VALUES (?1, ?2, ?3)",
+        params![request.reply_id, request.idempotency_key, encode(request)?],
+    )?;
+    for (index, part) in request.parts.iter().enumerate() {
+        let delivery = reply_part_request(request, part);
+        if !matches!(
+            reserve_delivery_in_transaction(&transaction, &delivery)?,
+            DeliveryReservation::Reserved
+        ) {
+            return Ok(ReplyDeliveryReservation::Conflict);
+        }
+        transaction.execute(
+            "INSERT INTO bot_reply_delivery_part(reply_id, delivery_id, part_index)
+             VALUES (?1, ?2, ?3)",
+            params![
+                request.reply_id,
+                part.part_id,
+                i64::try_from(index).map_err(|_| {
+                    BotStateDbError::Invariant("reply part index exceeds SQLite integer".into())
+                })?
+            ],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(ReplyDeliveryReservation::Reserved)
+}
+
+fn reply_delivery_receipt_by_id(
+    connection: &Connection,
+    reply_id: &str,
+) -> Result<Option<BotReplyDeliveryReceipt>, BotStateDbError> {
+    let request = optional_body::<BotReplyDeliveryRequest>(
+        connection,
+        "SELECT body FROM bot_reply_delivery WHERE reply_id=?1",
+        reply_id,
+    )?;
+    request
+        .map(|request| reply_delivery_receipt(connection, &request))
+        .transpose()
+}
+
+fn reply_delivery_receipt(
+    connection: &Connection,
+    request: &BotReplyDeliveryRequest,
+) -> Result<BotReplyDeliveryReceipt, BotStateDbError> {
+    let part_receipts = request
+        .parts
+        .iter()
+        .map(|part| {
+            delivery_receipt(connection, &part.part_id)?.ok_or_else(|| {
+                BotStateDbError::Invariant(format!("reply part receipt missing: {}", part.part_id))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BotReplyDeliveryReceipt {
+        reply_id: request.reply_id.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+        part_receipts,
     })
 }
 
@@ -1087,14 +1235,51 @@ fn claim_due_deliveries(
     connection: &mut Connection,
     now_unix_ms: u64,
 ) -> Result<Vec<String>, BotStateDbError> {
+    claim_due_deliveries_by_kind(connection, now_unix_ms, false)
+}
+
+fn claim_due_reply_parts(
+    connection: &mut Connection,
+    now_unix_ms: u64,
+) -> Result<Vec<String>, BotStateDbError> {
+    claim_due_deliveries_by_kind(connection, now_unix_ms, true)
+}
+
+fn claim_due_deliveries_by_kind(
+    connection: &mut Connection,
+    now_unix_ms: u64,
+    reply_parts: bool,
+) -> Result<Vec<String>, BotStateDbError> {
     let transaction = immediate(connection)?;
     let now = sqlite_integer(now_unix_ms)?;
     let candidates = {
-        let mut statement = transaction.prepare(
-            "SELECT delivery_id, status, body FROM bot_delivery_receipt
-             WHERE status IN ('pending', 'retry_scheduled', 'sending')
-             ORDER BY delivery_id",
-        )?;
+        let query = if reply_parts {
+            "SELECT r.delivery_id, r.status, r.body
+             FROM bot_delivery_receipt r
+             JOIN bot_reply_delivery_part p ON p.delivery_id=r.delivery_id
+             WHERE r.status IN ('pending', 'retry_scheduled', 'sending')
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM bot_reply_delivery_part earlier
+                   JOIN bot_delivery_receipt earlier_receipt
+                     ON earlier_receipt.delivery_id=earlier.delivery_id
+                   WHERE earlier.reply_id=p.reply_id
+                     AND earlier.part_index<p.part_index
+                     AND earlier_receipt.status IN (
+                         'pending', 'retry_scheduled', 'sending', 'reconcile_required'
+                     )
+               )
+             ORDER BY p.reply_id, p.part_index"
+        } else {
+            "SELECT r.delivery_id, r.status, r.body
+             FROM bot_delivery_receipt r
+             WHERE r.status IN ('pending', 'retry_scheduled', 'sending')
+               AND NOT EXISTS (
+                   SELECT 1 FROM bot_reply_delivery_part p WHERE p.delivery_id=r.delivery_id
+               )
+             ORDER BY r.delivery_id"
+        };
+        let mut statement = transaction.prepare(query)?;
         statement
             .query_map([], |row| {
                 Ok((
@@ -1133,6 +1318,9 @@ fn claim_due_deliveries(
                 )?;
                 if changed == 1 {
                     claimed.push(delivery_id);
+                    if reply_parts {
+                        break;
+                    }
                 }
             }
             "retry_scheduled" => {
@@ -1162,6 +1350,9 @@ fn claim_due_deliveries(
                 )?;
                 if changed == 1 {
                     claimed.push(delivery_id);
+                    if reply_parts {
+                        break;
+                    }
                 }
             }
             _ => {}
@@ -1169,6 +1360,17 @@ fn claim_due_deliveries(
     }
     transaction.commit()?;
     Ok(claimed)
+}
+
+fn is_reply_part(connection: &Connection, delivery_id: &str) -> Result<bool, BotStateDbError> {
+    Ok(connection
+        .query_row(
+            "SELECT 1 FROM bot_reply_delivery_part WHERE delivery_id=?1",
+            params![delivery_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 fn begin_send_delivery(
@@ -1406,8 +1608,7 @@ impl DeliveryRepository for BotStateDbRepository {
     ) -> Result<Option<BotDeliveryReceipt>, DeliveryError> {
         let request = request.clone();
         match self
-            .call(|reply| DbJob::ReserveDelivery { request, reply })
-            .await
+            .call_sync(|reply| DbJob::ReserveDelivery { request, reply })
             .map_err(delivery_error)?
         {
             DeliveryReservation::Reserved => Ok(None),
@@ -1418,24 +1619,21 @@ impl DeliveryRepository for BotStateDbRepository {
 
     async fn request(&self, delivery_id: &str) -> Result<BotActiveDeliveryRequest, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call(|reply| DbJob::DeliveryRequest { delivery_id, reply })
-            .await
+        self.call_sync(|reply| DbJob::DeliveryRequest { delivery_id, reply })
             .map_err(delivery_error)?
             .ok_or(DeliveryError::NotFound)
     }
 
     async fn receipt(&self, delivery_id: &str) -> Result<BotDeliveryReceipt, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call(|reply| DbJob::DeliveryReceipt { delivery_id, reply })
-            .await
+        self.call_sync(|reply| DbJob::DeliveryReceipt { delivery_id, reply })
             .map_err(delivery_error)?
             .ok_or(DeliveryError::NotFound)
     }
 
     async fn attempts(&self, delivery_id: &str) -> Result<Vec<BotDeliveryAttempt>, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call(|reply| DbJob::DeliveryAttempts { delivery_id, reply })
-            .await
+        self.call_sync(|reply| DbJob::DeliveryAttempts { delivery_id, reply })
             .map_err(delivery_error)
     }
 
@@ -1444,24 +1642,21 @@ impl DeliveryRepository for BotStateDbRepository {
         attempt: BotDeliveryAttempt,
         receipt: BotDeliveryReceipt,
     ) -> Result<(), DeliveryError> {
-        self.call(|reply| DbJob::SaveDeliveryOutcome {
+        self.call_sync(|reply| DbJob::SaveDeliveryOutcome {
             attempt,
             receipt,
             reply,
         })
-        .await
         .map_err(delivery_error)
     }
 
     async fn save_receipt(&self, receipt: BotDeliveryReceipt) -> Result<(), DeliveryError> {
-        self.call(|reply| DbJob::SaveDeliveryReceipt { receipt, reply })
-            .await
+        self.call_sync(|reply| DbJob::SaveDeliveryReceipt { receipt, reply })
             .map_err(delivery_error)
     }
 
     async fn claim_due_delivery_ids(&self, now_unix_ms: u64) -> Result<Vec<String>, DeliveryError> {
-        self.call(|reply| DbJob::ClaimDueDeliveries { now_unix_ms, reply })
-            .await
+        self.call_sync(|reply| DbJob::ClaimDueDeliveries { now_unix_ms, reply })
             .map_err(delivery_error)
     }
 
@@ -1473,15 +1668,57 @@ impl DeliveryRepository for BotStateDbRepository {
         lease_ms: u64,
     ) -> Result<BotDeliveryReceipt, DeliveryError> {
         let delivery_id = delivery_id.to_owned();
-        self.call(|reply| DbJob::BeginSendDelivery {
+        self.call_sync(|reply| DbJob::BeginSendDelivery {
             delivery_id,
             attempt,
             now_unix_ms,
             lease_ms,
             reply,
         })
-        .await
         .map_err(delivery_error)
+    }
+}
+
+#[async_trait]
+impl ReplyDeliveryRepository for BotStateDbRepository {
+    async fn reserve_reply(
+        &self,
+        request: &BotReplyDeliveryRequest,
+    ) -> Result<Option<BotReplyDeliveryReceipt>, DeliveryError> {
+        let request = request.clone();
+        match self
+            .call_sync(|reply| DbJob::ReserveReplyDelivery { request, reply })
+            .map_err(delivery_error)?
+        {
+            ReplyDeliveryReservation::Reserved => Ok(None),
+            ReplyDeliveryReservation::Existing(receipt) => Ok(Some(receipt)),
+            ReplyDeliveryReservation::Conflict => Err(DeliveryError::Conflict),
+        }
+    }
+
+    async fn reply_receipt(
+        &self,
+        reply_id: &str,
+    ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
+        let reply_id = reply_id.to_owned();
+        self.call_sync(|reply| DbJob::ReplyDeliveryReceipt { reply_id, reply })
+            .map_err(delivery_error)?
+            .ok_or(DeliveryError::NotFound)
+    }
+
+    async fn claim_due_reply_part_id(
+        &self,
+        now_unix_ms: u64,
+    ) -> Result<Option<String>, DeliveryError> {
+        self.call_sync(|reply| DbJob::ClaimDueReplyParts { now_unix_ms, reply })
+            .map(|ids| ids.into_iter().next())
+            .map_err(delivery_error)
+    }
+
+    async fn is_reply_part(&self, delivery_id: &str) -> Result<bool, DeliveryError> {
+        let delivery_id = delivery_id.to_owned();
+        self.call_sync(|reply| DbJob::IsReplyPart { delivery_id, reply })
+            .map_err(delivery_error)
     }
 }
 
@@ -1581,9 +1818,9 @@ mod tests {
 
     use mutsuki_bot_protocol::{
         AgentSessionScope, BotConversationKind, BotDeliveryContent, BotInteractionSession,
-        BotPropagationPolicy, ConversationPolicyMatch, ConversationPolicyPatch, DeliveryPolicy,
-        InteractionScope, InteractionWaitSpec, MessageSegment, QQ_CONVERSATION_REF_VERSION,
-        QqConversationRef,
+        BotPropagationPolicy, BotReplyDeliveryPart, ConversationPolicyMatch,
+        ConversationPolicyPatch, DeliveryPolicy, InteractionScope, InteractionWaitSpec,
+        MessageSegment, QQ_CONVERSATION_REF_VERSION, QqConversationRef,
     };
     use tokio::task::JoinSet;
 
@@ -1688,6 +1925,82 @@ mod tests {
             }
         }
         assert_eq!(winners, 1);
+    }
+
+    #[tokio::test]
+    async fn reply_bundle_reservation_is_atomic_idempotent_and_claims_one_part_at_a_time() {
+        let root = tempfile::tempdir().unwrap();
+        let repository = BotStateDbRepository::open(root.path().join("state.db")).unwrap();
+        let conversation = conversation();
+        let request = reply_delivery(&conversation, "reply", &["reply:part:2", "reply:part:10"]);
+
+        assert!(repository.reserve_reply(&request).await.unwrap().is_none());
+        let duplicate = repository.reserve_reply(&request).await.unwrap().unwrap();
+        assert_eq!(duplicate.part_receipts.len(), 2);
+        assert!(
+            duplicate
+                .part_receipts
+                .iter()
+                .all(|receipt| receipt.status == DeliveryStatus::Pending)
+        );
+        assert!(
+            repository
+                .claim_due_delivery_ids(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        assert_eq!(
+            repository.claim_due_reply_part_id(10).await.unwrap(),
+            Some("reply:part:2".into())
+        );
+        assert_eq!(
+            repository.receipt("reply:part:2").await.unwrap().status,
+            DeliveryStatus::Sending
+        );
+        assert_eq!(
+            repository.receipt("reply:part:10").await.unwrap().status,
+            DeliveryStatus::Pending
+        );
+        assert!(
+            repository
+                .claim_due_reply_part_id(10)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let mut first_succeeded = repository.receipt("reply:part:2").await.unwrap();
+        first_succeeded.status = DeliveryStatus::Succeeded;
+        first_succeeded.lease_expires_at_unix_ms = None;
+        repository.save_receipt(first_succeeded).await.unwrap();
+        assert_eq!(
+            repository.claim_due_reply_part_id(10).await.unwrap(),
+            Some("reply:part:10".into())
+        );
+
+        let occupied = delivery(&conversation, "occupied", "occupied-key");
+        assert!(repository.reserve(&occupied).await.unwrap().is_none());
+        let conflicting = reply_delivery(
+            &conversation,
+            "conflicting-reply",
+            &["new-part", "occupied"],
+        );
+        assert_eq!(
+            repository.reserve_reply(&conflicting).await.unwrap_err(),
+            DeliveryError::Conflict
+        );
+        assert_eq!(
+            repository
+                .reply_receipt("conflicting-reply")
+                .await
+                .unwrap_err(),
+            DeliveryError::NotFound
+        );
+        assert_eq!(
+            repository.request("new-part").await.unwrap_err(),
+            DeliveryError::NotFound
+        );
     }
 
     #[tokio::test]
@@ -2069,6 +2382,7 @@ mod tests {
                     text: "hello".into(),
                 }],
                 summary: None,
+                reply_to: None,
             },
             policy: DeliveryPolicy {
                 max_attempts: 3,
@@ -2079,6 +2393,38 @@ mod tests {
             },
             dry_run: false,
             source_execution_id: Some("execution".into()),
+        }
+    }
+
+    fn reply_delivery(
+        conversation: &QqConversationRef,
+        reply_id: &str,
+        part_ids: &[&str],
+    ) -> BotReplyDeliveryRequest {
+        BotReplyDeliveryRequest {
+            reply_id: reply_id.into(),
+            idempotency_key: format!("{reply_id}:key"),
+            conversation: conversation.clone(),
+            parts: part_ids
+                .iter()
+                .map(|part_id| BotReplyDeliveryPart {
+                    part_id: (*part_id).into(),
+                    content: BotDeliveryContent {
+                        segments: vec![MessageSegment::text(format!("reply {part_id}"))],
+                        summary: None,
+                        reply_to: None,
+                    },
+                })
+                .collect(),
+            policy: DeliveryPolicy {
+                max_attempts: 3,
+                initial_backoff_ms: 10,
+                max_backoff_ms: 100,
+                not_before_unix_ms: None,
+                expires_at_unix_ms: None,
+            },
+            source_event_id: "event".into(),
+            source_turn_id: "turn".into(),
         }
     }
 

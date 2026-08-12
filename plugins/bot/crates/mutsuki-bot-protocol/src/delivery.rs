@@ -7,6 +7,8 @@ pub struct BotDeliveryContent {
     pub segments: Vec<MessageSegment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +101,30 @@ pub struct BotDeliveryReceipt {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BotReplyDeliveryPart {
+    pub part_id: String,
+    pub content: BotDeliveryContent,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BotReplyDeliveryRequest {
+    pub reply_id: String,
+    pub idempotency_key: String,
+    pub conversation: QqConversationRef,
+    pub parts: Vec<BotReplyDeliveryPart>,
+    pub policy: DeliveryPolicy,
+    pub source_event_id: String,
+    pub source_turn_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BotReplyDeliveryReceipt {
+    pub reply_id: String,
+    pub idempotency_key: String,
+    pub part_receipts: Vec<BotDeliveryReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum BotActiveDeliveryCommand {
     Submit {
@@ -119,6 +145,28 @@ pub enum BotActiveDeliveryCommand {
         now_unix_ms: u64,
     },
     Cancel {
+        delivery_id: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum BotReplyDeliveryCommand {
+    Submit {
+        request: Box<BotReplyDeliveryRequest>,
+        now_unix_ms: u64,
+    },
+    ResumeDue {
+        now_unix_ms: u64,
+    },
+    Inspect {
+        reply_id: String,
+    },
+    RetryPart {
+        delivery_id: String,
+        now_unix_ms: u64,
+    },
+    CancelPart {
         delivery_id: String,
     },
 }

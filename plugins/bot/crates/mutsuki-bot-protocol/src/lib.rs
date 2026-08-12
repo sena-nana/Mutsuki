@@ -49,6 +49,7 @@ pub const BOT_SESSION_SET_PROTOCOL_ID: &str = "mutsuki.bot.session/set@1";
 pub const BOT_PERMISSION_CHECK_PROTOCOL_ID: &str = "mutsuki.bot.permission/check@1";
 pub const BOT_RATE_LIMIT_CHECK_PROTOCOL_ID: &str = "mutsuki.bot.rate_limit/check@1";
 pub const BOT_ACTIVE_DELIVERY_PROTOCOL_ID: &str = "mutsuki.bot.delivery/submit@1";
+pub const BOT_REPLY_DELIVERY_PROTOCOL_ID: &str = "mutsuki.bot.delivery/reply@1";
 pub const BOT_INTERACTION_SESSION_PROTOCOL_ID: &str = "mutsuki.bot.interaction/handle@1";
 pub const BOT_AGENT_BRIDGE_PROTOCOL_ID: &str = "mutsuki.bot.agent/handle@1";
 

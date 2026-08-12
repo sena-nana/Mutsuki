@@ -13,6 +13,24 @@ QQBot Gateway
   -> QQBot OpenAPI
 ```
 
+Bot Agent replies take a durable route rather than calling the send protocol directly:
+
+```text
+Bot Agent final turn
+  -> mutsuki.bot.delivery/reply@1
+  -> atomically reserve reply bundle + ordered Pending part receipts
+  -> CAS claim one part
+  -> mutsuki.bot.message/send@1
+  -> persist attempt + platform receipt
+```
+
+Stable reply and part ids make replay an inspection of the existing bundle. A transient failure
+only schedules the unconfirmed part; already succeeded parts remain terminal. Cancellation or a
+Runtime timeout after the send boundary becomes `ReconcileRequired`, because automatic resend
+could duplicate an externally accepted message. `BotReplyDeliveryRecoveryEventSource` asks the
+same delivery plugin to resume due parts after ServiceHost startup, so recovery does not invoke the
+Agent turn, media synthesis, or tools again.
+
 Core still sees only tasks, runner descriptors, results, events, resource refs, and effect requests. It does not know Bot, QQBot, commands, sessions, or permissions.
 
 `QqBotPluginBundle` lives in `mutsuki-bot-service-host-integration`, the explicit bridge between
@@ -32,6 +50,9 @@ reconnect and last-error snapshot through the standard health control surface.
 - `mutsuki-bot-sdk`: author helpers over Bot protocol tasks.
 - `mutsuki-plugin-bot-event-router`: event subscription and dispatch.
 - `mutsuki-plugin-bot-command`: generic command parsing.
+- `mutsuki-plugin-bot-agent`: Agent turn/session bridge and durable reply request producer.
+- `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
+- `mutsuki-bot-state-db`: durable Bot conversation, delivery and interaction repository.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
 - `mutsuki-bot-service-host-integration`: EventSource, health and ServiceRuntime assembly only.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.

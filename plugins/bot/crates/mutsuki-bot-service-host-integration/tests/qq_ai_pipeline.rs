@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_agent_contracts::{
@@ -14,10 +14,11 @@ use mutsuki_agent_contracts::{
 use mutsuki_bot_config::{ConfigAction, ConfigApplyRequest, ConfigContext, ConfigValue};
 use mutsuki_bot_conversation::{AgentEventClaim, ConversationError, ConversationRepository};
 use mutsuki_bot_delivery::{
-    BOT_DELIVERY_PLUGIN_ID, BOT_SCHEDULED_DELIVERY_PLUGIN_ID, BOT_SCHEDULED_DELIVERY_PROTOCOL_ID,
-    DeliveryError, DeliveryPolicyResolver, DeliveryRepository, QqDeliveryFailure,
-    QqDeliveryGateway, QqDeliverySuccess, SCHEDULE_TARGET_KIND_BOT_CONVERSATION_BINDING,
-    ScheduledDeliveryPolicyProvider, ScheduledDeliveryRequest, ScheduledDeliveryTargetResolver,
+    BOT_DELIVERY_PLUGIN_ID, BOT_REPLY_DELIVERY_PLUGIN_ID, BOT_SCHEDULED_DELIVERY_PLUGIN_ID,
+    BOT_SCHEDULED_DELIVERY_PROTOCOL_ID, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
+    QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess, ReplyDeliveryRepository,
+    SCHEDULE_TARGET_KIND_BOT_CONVERSATION_BINDING, ScheduledDeliveryPolicyProvider,
+    ScheduledDeliveryRequest, ScheduledDeliveryTargetResolver, reply_part_request,
 };
 use mutsuki_bot_interaction::{
     BOT_INTERACTION_PLUGIN_ID, InteractionConditionMatcher, InteractionError, InteractionRepository,
@@ -27,11 +28,13 @@ use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotAccountRef, BotActiveDeliveryRequest, BotDeliveryAttempt,
     BotDeliveryContent, BotDeliveryReceipt, BotEvent, BotEventKind, BotInteractionCommand,
     BotInteractionSession, BotMessage, BotPermissionCheckRequest, BotPermissionCheckResult,
-    BotPlatform, BotPropagationPolicy, BotSpeechReplyPolicy, BotTarget, BotUser,
-    ConversationPolicy, ConversationPolicyRule, DeliveryStatus, DirectMessagePolicy,
-    InteractionScope, InteractionStatus, InteractionWaitSpec, MessageSegment, QqConversationRef,
+    BotPlatform, BotPropagationPolicy, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
+    BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy, ConversationPolicyRule,
+    DeliveryStatus, DirectMessagePolicy, InteractionScope, InteractionStatus, InteractionWaitSpec,
+    MessageSegment, QqConversationRef,
 };
 use mutsuki_bot_service_host_integration::QqAiBotPluginBundle;
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_web_console::{
     ControlPluginReloadLifecycle, ProductConfigOptions, product_config_service_with_options,
 };
@@ -46,8 +49,8 @@ use mutsuki_plugin_bot_event_router::{
 use mutsuki_plugin_bot_media::BOT_MEDIA_BRIDGE_PLUGIN_ID;
 use mutsuki_runtime_contracts::{
     CancelPolicy, CompletionBatch, ExecutionClass, ResourceAccess, ResourceId, ResourceLifetime,
-    ResourceRef, ResourceSealState, ResourceSemantic, RunnerResult, Task, TaskHandle, TaskOutcome,
-    TaskStatus, WorkBatch,
+    ResourceRef, ResourceSealState, ResourceSemantic, RunnerResult, ScalarValue, Task, TaskHandle,
+    TaskOutcome, TaskStatus, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_sdk::{
@@ -64,6 +67,8 @@ struct State {
     delivery_keys: Mutex<BTreeMap<String, String>>,
     delivery_attempts: Mutex<Vec<BotDeliveryAttempt>>,
     delivery_receipts: Mutex<BTreeMap<String, BotDeliveryReceipt>>,
+    reply_deliveries: Mutex<BTreeMap<String, BotReplyDeliveryRequest>>,
+    reply_parts: Mutex<BTreeSet<String>>,
     interactions: Mutex<BTreeMap<String, BotInteractionSession>>,
 }
 
@@ -255,6 +260,86 @@ impl DeliveryRepository for State {
         receipt.generation = receipt.generation.saturating_add(1);
         receipt.lease_expires_at_unix_ms = Some(now_unix_ms.saturating_add(lease_ms));
         Ok(receipt.clone())
+    }
+}
+
+#[async_trait]
+impl ReplyDeliveryRepository for State {
+    async fn reserve_reply(
+        &self,
+        request: &BotReplyDeliveryRequest,
+    ) -> Result<Option<BotReplyDeliveryReceipt>, DeliveryError> {
+        if let Some(existing) = self
+            .reply_deliveries
+            .lock()
+            .unwrap()
+            .get(&request.reply_id)
+            .cloned()
+        {
+            if existing != *request {
+                return Err(DeliveryError::Conflict);
+            }
+            return Ok(Some(BotReplyDeliveryReceipt {
+                reply_id: existing.reply_id,
+                idempotency_key: existing.idempotency_key,
+                part_receipts: existing
+                    .parts
+                    .iter()
+                    .map(|part| self.delivery_receipts.lock().unwrap()[&part.part_id].clone())
+                    .collect(),
+            }));
+        }
+        for part in &request.parts {
+            if self
+                .reserve(&reply_part_request(request, part))
+                .await?
+                .is_some()
+            {
+                return Err(DeliveryError::Conflict);
+            }
+            self.reply_parts
+                .lock()
+                .unwrap()
+                .insert(part.part_id.clone());
+        }
+        self.reply_deliveries
+            .lock()
+            .unwrap()
+            .insert(request.reply_id.clone(), request.clone());
+        Ok(None)
+    }
+
+    async fn reply_receipt(
+        &self,
+        reply_id: &str,
+    ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
+        let request = self
+            .reply_deliveries
+            .lock()
+            .unwrap()
+            .get(reply_id)
+            .cloned()
+            .ok_or(DeliveryError::NotFound)?;
+        Ok(BotReplyDeliveryReceipt {
+            reply_id: request.reply_id,
+            idempotency_key: request.idempotency_key,
+            part_receipts: request
+                .parts
+                .iter()
+                .map(|part| self.delivery_receipts.lock().unwrap()[&part.part_id].clone())
+                .collect(),
+        })
+    }
+
+    async fn claim_due_reply_part_id(
+        &self,
+        _now_unix_ms: u64,
+    ) -> Result<Option<String>, DeliveryError> {
+        Ok(None)
+    }
+
+    async fn is_reply_part(&self, delivery_id: &str) -> Result<bool, DeliveryError> {
+        Ok(self.reply_parts.lock().unwrap().contains(delivery_id))
     }
 }
 
@@ -570,6 +655,72 @@ impl Runner for MessageSendRunner {
     }
 }
 
+#[derive(Clone)]
+enum ControlledSend {
+    Success(String),
+    Transient,
+    Permanent,
+    DelaySuccess { message_id: String, delay: Duration },
+}
+
+struct ControlledMessageSendRunner {
+    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+    plans: Arc<Mutex<VecDeque<ControlledSend>>>,
+    attempts: Arc<Mutex<Vec<BotMessage>>>,
+    successes: Arc<Mutex<Vec<String>>>,
+}
+
+impl Runner for ControlledMessageSendRunner {
+    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        map_work_batch_entries(&batch, |task| {
+            let message: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
+            self.attempts.lock().unwrap().push(message);
+            match self.plans.lock().unwrap().pop_front().unwrap() {
+                ControlledSend::Success(message_id) => {
+                    self.successes.lock().unwrap().push(message_id.clone());
+                    let mut result = RunnerResult::completed(task.task_id.clone());
+                    result.output = Some(serde_json::json!({"id": message_id}));
+                    Ok(result)
+                }
+                ControlledSend::Transient => {
+                    let mut error = mutsuki_runtime_contracts::RuntimeError::new(
+                        "qq.rate_limited",
+                        "test.issue166.qq.send",
+                        task.task_id.clone(),
+                    );
+                    error
+                        .evidence
+                        .insert("retryable".into(), ScalarValue::Bool(true));
+                    error
+                        .evidence
+                        .insert("retry_after_ms".into(), ScalarValue::Int(0));
+                    Err(error)
+                }
+                ControlledSend::Permanent => Err(mutsuki_runtime_contracts::RuntimeError::new(
+                    "qq.rejected",
+                    "test.issue166.qq.send",
+                    task.task_id.clone(),
+                )),
+                ControlledSend::DelaySuccess { message_id, delay } => {
+                    std::thread::sleep(delay);
+                    self.successes.lock().unwrap().push(message_id.clone());
+                    let mut result = RunnerResult::completed(task.task_id.clone());
+                    result.output = Some(serde_json::json!({"id": message_id}));
+                    Ok(result)
+                }
+            }
+        })
+    }
+}
+
 struct AgentMediaRunner {
     descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
     transcriptions: Arc<AtomicUsize>,
@@ -638,6 +789,7 @@ async fn service_runtime_routes_qq_event_through_agent_and_suppresses_replay() {
         BOT_AGENT_BRIDGE_PLUGIN_ID,
         BOT_MEDIA_BRIDGE_PLUGIN_ID,
         BOT_DELIVERY_PLUGIN_ID,
+        BOT_REPLY_DELIVERY_PLUGIN_ID,
         BOT_SCHEDULED_DELIVERY_PLUGIN_ID,
         BOT_INTERACTION_PLUGIN_ID,
         "test.qq.send",
@@ -1097,13 +1249,12 @@ config = { enabled = true, connection_id = "injected", default_profile_id = "", 
     else {
         panic!("Agent bridge child must retain a completed output");
     };
-    assert!(
-        output["delivery_errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|error| error == "test.qq.send.failed")
-    );
+    let reply: BotReplyDeliveryReceipt =
+        serde_json::from_value(output["reply_delivery"].clone()).unwrap();
+    assert!(reply.part_receipts.iter().all(|receipt| {
+        receipt.status == DeliveryStatus::PermanentlyFailed
+            && receipt.error_code.as_deref() == Some("test.qq.send.failed")
+    }));
     wait_for_count(&agent_submits, 6).await;
     assert_eq!(qq_sends.load(Ordering::SeqCst), qq_sends_before_failure);
     assert_eq!(
@@ -1142,6 +1293,617 @@ config = { enabled = true, connection_id = "injected", default_profile_id = "", 
     }
     assert_eq!(scheduled_sends.load(Ordering::SeqCst), 1);
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn issue166_reply_parts_resume_after_restart_without_rerunning_agent() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("logs")).unwrap();
+    let repository =
+        Arc::new(BotStateDbRepository::open(root.path().join("issue166-state.sqlite3")).unwrap());
+    let plans = Arc::new(Mutex::new(VecDeque::from([
+        ControlledSend::Success("qq-text".into()),
+        ControlledSend::Transient,
+        ControlledSend::Success("qq-audio".into()),
+    ])));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let successes = Arc::new(Mutex::new(Vec::new()));
+    let agent_submits = Arc::new(AtomicUsize::new(0));
+    let syntheses = Arc::new(AtomicUsize::new(0));
+
+    let runtime = start_issue166_runtime(
+        root.path(),
+        repository.clone(),
+        plans.clone(),
+        attempts.clone(),
+        successes.clone(),
+        agent_submits.clone(),
+        syntheses.clone(),
+        Duration::from_secs(60),
+        None,
+        None,
+        BotSpeechReplyPolicy::TextAndVoice,
+    )
+    .await;
+    let incoming = event();
+    let first = runtime
+        .submit_task(Task::new(
+            "issue166-first",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(&incoming).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        wait_outcome(&runtime, &first).await,
+        TaskOutcome::Completed { .. }
+    ));
+    let first_reply = reply_receipt_for_task(&runtime, "issue166-first");
+    assert_eq!(first_reply.part_receipts.len(), 2);
+    assert_eq!(
+        first_reply.part_receipts[0].status,
+        DeliveryStatus::Succeeded
+    );
+    assert_eq!(
+        first_reply.part_receipts[1].status,
+        DeliveryStatus::RetryScheduled
+    );
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 1);
+    assert_eq!(syntheses.load(Ordering::SeqCst), 1);
+    assert_eq!(successes.lock().unwrap().as_slice(), ["qq-text"]);
+    runtime.shutdown().await;
+
+    let restarted = start_issue166_runtime(
+        root.path(),
+        repository.clone(),
+        plans.clone(),
+        attempts.clone(),
+        successes.clone(),
+        agent_submits.clone(),
+        syntheses.clone(),
+        Duration::from_millis(10),
+        None,
+        None,
+        BotSpeechReplyPolicy::TextAndVoice,
+    )
+    .await;
+    wait_for_len(&successes, 2).await;
+    wait_for_delivery_status(
+        repository.as_ref(),
+        &first_reply.part_receipts[1].delivery_id,
+        DeliveryStatus::Succeeded,
+        2,
+    )
+    .await;
+    assert_eq!(
+        successes.lock().unwrap().as_slice(),
+        ["qq-text", "qq-audio"]
+    );
+    assert_eq!(attempts.lock().unwrap().len(), 3);
+    assert_eq!(
+        repository
+            .receipt(&first_reply.part_receipts[0].delivery_id)
+            .await
+            .unwrap()
+            .attempt_count,
+        1
+    );
+    assert_eq!(
+        repository
+            .receipt(&first_reply.part_receipts[1].delivery_id)
+            .await
+            .unwrap()
+            .attempt_count,
+        2
+    );
+
+    let replay = restarted
+        .submit_task(Task::new(
+            "issue166-replay",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(&incoming).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        wait_outcome(&restarted, &replay).await,
+        TaskOutcome::Completed { .. }
+    ));
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 1);
+    assert_eq!(syntheses.load(Ordering::SeqCst), 1);
+    assert_eq!(attempts.lock().unwrap().len(), 3);
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn issue166_restart_after_agent_completion_before_first_send() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("logs")).unwrap();
+    let repository = Arc::new(
+        BotStateDbRepository::open(root.path().join("issue166-before-send.sqlite3")).unwrap(),
+    );
+    let not_before = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+    .saturating_add(250);
+    let plans = Arc::new(Mutex::new(VecDeque::from([ControlledSend::Success(
+        "qq-after-restart".into(),
+    )])));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let successes = Arc::new(Mutex::new(Vec::new()));
+    let agent_submits = Arc::new(AtomicUsize::new(0));
+    let syntheses = Arc::new(AtomicUsize::new(0));
+
+    let runtime = start_issue166_runtime(
+        root.path(),
+        repository.clone(),
+        plans.clone(),
+        attempts.clone(),
+        successes.clone(),
+        agent_submits.clone(),
+        syntheses.clone(),
+        Duration::from_secs(60),
+        Some(not_before),
+        None,
+        BotSpeechReplyPolicy::TextOnly,
+    )
+    .await;
+    let incoming = event();
+    let first = runtime
+        .submit_task(Task::new(
+            "issue166-before-send",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(&incoming).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        wait_outcome(&runtime, &first).await,
+        TaskOutcome::Completed { .. }
+    ));
+    let deferred = reply_receipt_for_task(&runtime, "issue166-before-send");
+    assert_eq!(
+        deferred.part_receipts[0].status,
+        DeliveryStatus::RetryScheduled
+    );
+    assert_eq!(deferred.part_receipts[0].attempt_count, 0);
+    assert!(attempts.lock().unwrap().is_empty());
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 1);
+    assert_eq!(syntheses.load(Ordering::SeqCst), 0);
+    runtime.shutdown().await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let restarted = start_issue166_runtime(
+        root.path(),
+        repository,
+        plans,
+        attempts.clone(),
+        successes.clone(),
+        agent_submits.clone(),
+        syntheses.clone(),
+        Duration::from_secs(60),
+        Some(not_before),
+        None,
+        BotSpeechReplyPolicy::TextOnly,
+    )
+    .await;
+    wait_for_len(&successes, 1).await;
+    assert_eq!(attempts.lock().unwrap().len(), 1);
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 1);
+    assert_eq!(syntheses.load(Ordering::SeqCst), 0);
+
+    let replay = restarted
+        .submit_task(Task::new(
+            "issue166-before-send-replay",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(incoming).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        wait_outcome(&restarted, &replay).await,
+        TaskOutcome::Completed { .. }
+    ));
+    assert_eq!(attempts.lock().unwrap().len(), 1);
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 1);
+    assert_eq!(syntheses.load(Ordering::SeqCst), 0);
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn issue166_runtime_records_permanent_and_cancel_per_part() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("logs")).unwrap();
+    let repository = Arc::new(
+        BotStateDbRepository::open(root.path().join("issue166-failures.sqlite3")).unwrap(),
+    );
+    let plans = Arc::new(Mutex::new(VecDeque::from([
+        ControlledSend::Permanent,
+        ControlledSend::DelaySuccess {
+            message_id: "cancel-unknown".into(),
+            delay: Duration::from_millis(200),
+        },
+    ])));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let successes = Arc::new(Mutex::new(Vec::new()));
+    let agent_submits = Arc::new(AtomicUsize::new(0));
+    let syntheses = Arc::new(AtomicUsize::new(0));
+    let runtime = start_issue166_runtime(
+        root.path(),
+        repository,
+        plans,
+        attempts.clone(),
+        successes,
+        agent_submits.clone(),
+        syntheses,
+        Duration::from_secs(60),
+        None,
+        None,
+        BotSpeechReplyPolicy::TextOnly,
+    )
+    .await;
+
+    let mut permanent_event = event();
+    permanent_event.event_id = "issue166-permanent-event".into();
+    let permanent = runtime
+        .submit_task(Task::new(
+            "issue166-permanent",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(permanent_event).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        wait_outcome(&runtime, &permanent).await,
+        TaskOutcome::Completed { .. }
+    ));
+    let permanent_receipt = reply_receipt_for_task(&runtime, "issue166-permanent");
+    assert!(permanent_receipt.part_receipts.iter().all(|receipt| {
+        receipt.status == DeliveryStatus::PermanentlyFailed
+            && receipt.error_code.as_deref() == Some("qq.rejected")
+    }));
+
+    let mut cancel_event = event();
+    cancel_event.event_id = "issue166-cancel-event".into();
+    let cancel = runtime
+        .submit_task(Task::new(
+            "issue166-cancel",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(cancel_event).unwrap(),
+        ))
+        .unwrap();
+    wait_for_attempts(&attempts, 2).await;
+    let send = wait_for_running_send(&runtime, "issue166-cancel").await;
+    runtime.cancel_task(&send).unwrap();
+    assert!(matches!(
+        wait_outcome(&runtime, &cancel).await,
+        TaskOutcome::Completed { .. }
+    ));
+    let cancel_receipt = reply_receipt_for_task(&runtime, "issue166-cancel");
+    assert_eq!(
+        cancel_receipt.part_receipts[0].status,
+        DeliveryStatus::ReconcileRequired
+    );
+    assert_eq!(
+        cancel_receipt.part_receipts[0].error_code.as_deref(),
+        Some("delivery.cancelled")
+    );
+
+    assert_eq!(agent_submits.load(Ordering::SeqCst), 2);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn issue166_runtime_timeout_requires_reconcile() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("logs")).unwrap();
+    let repository =
+        Arc::new(BotStateDbRepository::open(root.path().join("issue166-timeout.sqlite3")).unwrap());
+    let plans = Arc::new(Mutex::new(VecDeque::from([ControlledSend::DelaySuccess {
+        message_id: "timeout-unknown".into(),
+        delay: Duration::from_millis(200),
+    }])));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let runtime = start_issue166_runtime(
+        root.path(),
+        repository,
+        plans,
+        attempts.clone(),
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(AtomicUsize::new(0)),
+        Arc::new(AtomicUsize::new(0)),
+        Duration::from_secs(60),
+        None,
+        Some(75),
+        BotSpeechReplyPolicy::TextOnly,
+    )
+    .await;
+
+    let mut timeout_event = event();
+    timeout_event.event_id = "issue166-timeout-event".into();
+    let timeout = runtime
+        .submit_task(Task::new(
+            "issue166-timeout",
+            BOT_EVENT_INGEST_PROTOCOL_ID,
+            serde_json::to_value(timeout_event).unwrap(),
+        ))
+        .unwrap();
+    wait_for_attempts(&attempts, 1).await;
+    assert!(matches!(
+        wait_outcome(&runtime, &timeout).await,
+        TaskOutcome::Completed { .. }
+    ));
+    let timeout_receipt = reply_receipt_for_task(&runtime, "issue166-timeout");
+    assert_eq!(
+        timeout_receipt.part_receipts[0].status,
+        DeliveryStatus::ReconcileRequired
+    );
+    runtime.shutdown().await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_issue166_runtime(
+    root: &std::path::Path,
+    repository: Arc<BotStateDbRepository>,
+    plans: Arc<Mutex<VecDeque<ControlledSend>>>,
+    attempts: Arc<Mutex<Vec<BotMessage>>>,
+    successes: Arc<Mutex<Vec<String>>>,
+    agent_submits: Arc<AtomicUsize>,
+    syntheses: Arc<AtomicUsize>,
+    recovery_interval: Duration,
+    reply_not_before_unix_ms: Option<u64>,
+    send_timeout_ms: Option<u64>,
+    speech_reply_policy: BotSpeechReplyPolicy,
+) -> ServiceRuntime {
+    let mut config = ServiceConfig::default();
+    config.ipc.enabled = false;
+    config.ipc.token = Some("issue-166-control-token".into());
+    config.observe.console = false;
+    config.service.home_dir = root.into();
+    config.service.data_dir = root.join("data");
+    config.service.log_dir = root.join("logs");
+    config.service.run_dir = root.join("run");
+    config.plugins.dynamic_dirs.clear();
+    config.plugins.disabled_dir = root.join("disabled");
+    config.plugins.configured = [
+        BOT_HANDLER_PIPELINE_PLUGIN_ID,
+        BOT_HANDLER_GUARD_PLUGIN_ID,
+        BOT_COMMAND_PLUGIN_ID,
+        BOT_AGENT_BRIDGE_PLUGIN_ID,
+        BOT_MEDIA_BRIDGE_PLUGIN_ID,
+        BOT_DELIVERY_PLUGIN_ID,
+        BOT_REPLY_DELIVERY_PLUGIN_ID,
+        BOT_INTERACTION_PLUGIN_ID,
+        "test.issue166.qq.send",
+        "test.issue166.agent.media",
+    ]
+    .into_iter()
+    .map(|id| ConfiguredPluginSelection {
+        id: id.into(),
+        enabled: true,
+        config: serde_json::Value::Null,
+    })
+    .collect();
+
+    let send_descriptor =
+        RunnerDescriptorBuilder::new("test.issue166.qq.send.runner", "test.issue166.qq.send")
+            .accepted_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
+            .execution_class(ExecutionClass::Blocking)
+            .build();
+    let send_manifest = PluginBuilder::new("test.issue166.qq.send")
+        .runner_descriptor(send_descriptor.clone())
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_MESSAGE_SEND_PROTOCOL_ID).build(),
+            "test.issue166.qq.send.runner",
+            "issue166-qq-send",
+        )
+        .build()
+        .manifest;
+    let media_descriptor = RunnerDescriptorBuilder::new(
+        "test.issue166.agent.media.runner",
+        "test.issue166.agent.media",
+    )
+    .accepted_protocol(AGENT_TRANSCRIBE_PROTOCOL)
+    .accepted_protocol(AGENT_SPEECH_SYNTHESIZE_PROTOCOL)
+    .execution_class(ExecutionClass::Io)
+    .build();
+    let media_manifest = PluginBuilder::new("test.issue166.agent.media")
+        .runner_descriptor(media_descriptor.clone())
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(AGENT_TRANSCRIBE_PROTOCOL).build(),
+            "test.issue166.agent.media.runner",
+            "issue166-transcribe",
+        )
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(AGENT_SPEECH_SYNTHESIZE_PROTOCOL).build(),
+            "test.issue166.agent.media.runner",
+            "issue166-synthesize",
+        )
+        .build()
+        .manifest;
+
+    let policy = ConversationPolicy {
+        revision: 1,
+        enabled: true,
+        agent_enabled: true,
+        direct_message_policy: DirectMessagePolicy::Allow,
+        must_mention: false,
+        wake_words: Vec::new(),
+        allowlist: Vec::new(),
+        denylist: Vec::new(),
+        rate_limit_profile_id: None,
+        session_scope: AgentSessionScope::SharedConversation,
+        business_profile_binding_id: None,
+        agent_runtime_profile_id: Some("profile".into()),
+        stt_enabled: true,
+        tts_enabled: true,
+        speech_reply_policy,
+        stt_selector_id: None,
+        tts_selector_id: None,
+        active_delivery_enabled: true,
+    };
+    let agent = Agent {
+        sessions: BTreeSet::new(),
+        versions: BTreeMap::new(),
+        submits: agent_submits,
+        inputs: Arc::new(Mutex::new(Vec::new())),
+        event_after_sequences: Arc::new(Mutex::new(Vec::new())),
+    };
+    let media_transcriptions = Arc::new(AtomicUsize::new(0));
+    let scheduled_sends = Arc::new(AtomicUsize::new(0));
+    let mut builder = ServiceRuntimeBuilder::new(config)
+        .register_builtin_plugin(send_manifest)
+        .register_builtin_plugin(media_manifest)
+        .register_builtin_runner({
+            let descriptor = send_descriptor.clone();
+            move || {
+                Box::new(ControlledMessageSendRunner {
+                    descriptor: descriptor.clone(),
+                    plans: plans.clone(),
+                    attempts: attempts.clone(),
+                    successes: successes.clone(),
+                })
+            }
+        })
+        .register_builtin_runner({
+            let descriptor = media_descriptor.clone();
+            move || {
+                Box::new(AgentMediaRunner {
+                    descriptor: descriptor.clone(),
+                    transcriptions: media_transcriptions.clone(),
+                    syntheses: syntheses.clone(),
+                })
+            }
+        });
+    if let Some(timeout_ms) = send_timeout_ms {
+        builder =
+            builder.configure_runner_limits("test.issue166.qq.send.runner", None, Some(timeout_ms));
+    }
+    QqAiBotPluginBundle::new(
+        repository.clone(),
+        repository,
+        Arc::new(State::default()),
+        policy,
+        Box::new(agent),
+        Arc::new(Media),
+        Arc::new(DeliveryGateway {
+            sends: scheduled_sends,
+        }),
+        Arc::new(Allow),
+        Arc::new(Allow),
+        Arc::new(Allow),
+    )
+    .with_reply_delivery_policy(mutsuki_bot_protocol::DeliveryPolicy {
+        max_attempts: 3,
+        initial_backoff_ms: 1,
+        max_backoff_ms: 10,
+        not_before_unix_ms: reply_not_before_unix_ms,
+        expires_at_unix_ms: None,
+    })
+    .with_reply_delivery_recovery_interval(recovery_interval)
+    .install(builder)
+    .start()
+    .await
+    .unwrap()
+}
+
+fn reply_receipt_for_task(runtime: &ServiceRuntime, task_prefix: &str) -> BotReplyDeliveryReceipt {
+    let snapshot = runtime
+        .task_snapshots()
+        .unwrap()
+        .into_iter()
+        .find(|snapshot| {
+            snapshot.task_id.starts_with(task_prefix)
+                && snapshot.protocol_id == mutsuki_bot_protocol::BOT_AGENT_BRIDGE_PROTOCOL_ID
+        })
+        .expect("Agent bridge task exists");
+    let outcome = runtime
+        .task_outcome(&TaskHandle {
+            task_id: snapshot.task_id,
+            protocol_id: snapshot.protocol_id,
+            target_binding_id: snapshot.target_binding_id,
+            cancel_policy: CancelPolicy::Cascade,
+            trace_id: snapshot.trace_id,
+            correlation_id: snapshot.correlation_id,
+        })
+        .unwrap()
+        .unwrap();
+    let TaskOutcome::Completed {
+        output: Some(output),
+        ..
+    } = &outcome
+    else {
+        panic!("Agent bridge task must complete with output: {outcome:?}")
+    };
+    serde_json::from_value(output["reply_delivery"].clone()).unwrap()
+}
+
+async fn wait_for_len(values: &Mutex<Vec<String>>, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while values.lock().unwrap().len() < expected {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("vector reaches expected length");
+}
+
+async fn wait_for_attempts(attempts: &Mutex<Vec<BotMessage>>, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while attempts.lock().unwrap().len() < expected {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("send attempts reach expected length");
+}
+
+async fn wait_for_delivery_status(
+    repository: &BotStateDbRepository,
+    delivery_id: &str,
+    status: DeliveryStatus,
+    attempt_count: u32,
+) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let receipt = repository.receipt(delivery_id).await.unwrap();
+            if receipt.status == status && receipt.attempt_count == attempt_count {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("delivery receipt reaches expected status");
+}
+
+async fn wait_for_running_send(runtime: &ServiceRuntime, prefix: &str) -> TaskHandle {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(snapshot) = runtime
+                .task_snapshots()
+                .unwrap()
+                .into_iter()
+                .find(|snapshot| {
+                    snapshot.task_id.starts_with(prefix)
+                        && snapshot.protocol_id == BOT_MESSAGE_SEND_PROTOCOL_ID
+                        && snapshot.status == TaskStatus::Running
+                })
+            {
+                return TaskHandle {
+                    task_id: snapshot.task_id,
+                    protocol_id: snapshot.protocol_id,
+                    target_binding_id: snapshot.target_binding_id,
+                    cancel_policy: CancelPolicy::Cascade,
+                    trace_id: snapshot.trace_id,
+                    correlation_id: snapshot.correlation_id,
+                };
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("send task reaches running state")
 }
 
 async fn wait_outcome(runtime: &ServiceRuntime, handle: &TaskHandle) -> TaskOutcome {
