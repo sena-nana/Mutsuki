@@ -8,15 +8,15 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use mutsuki_agent_contracts::{
-    AgentDelegationRequest, AgentError, AgentKitPluginDescriptor, AgentPluginStateKind,
-    AgentResult, AgentRuntimeProfile, AgentServiceDescriptor, AgentToolDescriptor,
-    AgentToolExecuteRequest, AgentWorkspaceRef, BrowserNavigateRequest, CodeFileChange,
-    CodeIndexBatch, CodeIndexServiceRequest, CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef,
-    ComputerUseServiceRequest, DelegationBudget, DelegationMode, DelegationScope, ExecutionLimits,
-    FsPatchRequest, GitDiffRequest, GitDiffScope, GitRepositoryRef, GitServiceRequest,
-    GitServiceResponse, GitWorktreeRef, LspServiceRequest, LspWorkspaceId, ProcessExecRequest,
-    SubAgentDescriptor, SubAgentOutcomeKind, ToolSideEffect, ToolTargetPayloadMode,
-    WorkspacePathRequest,
+    AGENT_RUN_PROTOCOL, AgentDelegationRequest, AgentError, AgentKitPluginDescriptor,
+    AgentPluginStateKind, AgentResult, AgentRuntimeProfile, AgentServiceDescriptor,
+    AgentToolDescriptor, AgentToolExecuteRequest, AgentToolExecution, AgentWorkspaceRef,
+    BrowserNavigateRequest, CodeFileChange, CodeIndexBatch, CodeIndexServiceRequest,
+    CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef, ComputerUseServiceRequest, DelegationBudget,
+    DelegationMode, DelegationScope, ExecutionLimits, FsPatchRequest, GitDiffRequest, GitDiffScope,
+    GitRepositoryRef, GitServiceRequest, GitServiceResponse, GitWorktreeRef, InteractionKind,
+    LspServiceRequest, LspWorkspaceId, ProcessExecRequest, SubAgentDescriptor, SubAgentOutcomeKind,
+    ToolSideEffect, ToolTargetPayloadMode, WorkspacePathRequest,
 };
 use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ToolProvider};
 use mutsuki_agent_plugin_code_index::{CodeIndexLspSignals, SharedCodeIndexService};
@@ -219,6 +219,42 @@ impl NativeCodingAgentBundle {
     /// the schema advertised by their server catalog.
     pub fn model_tools(&self) -> Vec<AgentToolDescriptor> {
         let mut tools = vec![
+            interaction_tool(
+                "ask_user_question",
+                "Ask the user for information required to continue the current turn",
+                InteractionKind::Clarification,
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "question": {"type": "string"},
+                        "questions": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                        "options": {"type": "array", "items": {}}
+                    },
+                    "anyOf": [
+                        {"required": ["prompt"]},
+                        {"required": ["question"]},
+                        {"required": ["questions"]}
+                    ],
+                    "additionalProperties": true
+                }),
+            ),
+            interaction_tool(
+                "confirm_plan",
+                "Request approval or revision feedback for the current implementation plan",
+                InteractionKind::PlanConfirm,
+                json!({
+                    "type": "object",
+                    "required": ["plan"],
+                    "properties": {
+                        "plan": {"type": "string"},
+                        "question": {"type": "string"},
+                        "title": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                }),
+            ),
             model_tool(
                 "git.status",
                 "Read the current Git branch and working tree status",
@@ -407,8 +443,10 @@ impl NativeCodingAgentBundle {
         self.model_tools()
             .into_iter()
             .map(|mut descriptor| {
-                descriptor.target_protocol_id = NATIVE_CODING_TOOL_PROTOCOL.into();
-                descriptor.target_payload_mode = ToolTargetPayloadMode::ExecutionRequest;
+                if matches!(&descriptor.execution, AgentToolExecution::Routed) {
+                    descriptor.target_protocol_id = NATIVE_CODING_TOOL_PROTOCOL.into();
+                    descriptor.target_payload_mode = ToolTargetPayloadMode::ExecutionRequest;
+                }
                 descriptor
             })
             .collect()
@@ -798,6 +836,18 @@ fn model_tool(
     descriptor
 }
 
+fn interaction_tool(
+    name: &str,
+    description: &str,
+    interaction_kind: InteractionKind,
+    input_schema: Value,
+) -> AgentToolDescriptor {
+    let mut descriptor = AgentToolDescriptor::new(name, AGENT_RUN_PROTOCOL, description);
+    descriptor.input_schema = input_schema;
+    descriptor.execution = AgentToolExecution::Interaction { interaction_kind };
+    descriptor
+}
+
 fn agent_value(value: impl serde::Serialize) -> AgentResult<Value> {
     serde_json::to_value(value).map_err(|error| AgentError::invalid_input(error.to_string()))
 }
@@ -1103,6 +1153,7 @@ pub fn run_review_golden_path(bundle: &NativeCodingAgentBundle) -> AgentResult<V
             inherit_knowledge: false,
         },
         DelegationBudget {
+            max_context_tokens: None,
             max_total_tokens: Some(8_000),
             max_cost_microunits: Some(1_000),
             deadline_unix_ms: None,
@@ -1388,6 +1439,27 @@ mod tests {
                 .find(|tool| tool.name == "computer.fs.write")
                 .unwrap()
                 .requires_approval
+        );
+        let routed = bundle.routed_model_tools();
+        let ask = routed
+            .iter()
+            .find(|tool| tool.name == "ask_user_question")
+            .expect("clarification interaction is model-visible");
+        assert_eq!(ask.target_protocol_id, AGENT_RUN_PROTOCOL);
+        assert!(matches!(
+            &ask.execution,
+            AgentToolExecution::Interaction {
+                interaction_kind: InteractionKind::Clarification
+            }
+        ));
+        let status = routed
+            .iter()
+            .find(|tool| tool.name == "git.status")
+            .expect("routed coding tool remains model-visible");
+        assert_eq!(status.target_protocol_id, NATIVE_CODING_TOOL_PROTOCOL);
+        assert_eq!(
+            status.target_payload_mode,
+            ToolTargetPayloadMode::ExecutionRequest
         );
 
         let context = NativeCodingToolContext {

@@ -7,11 +7,14 @@ use mutsuki_agent_contracts::{
     AgentToolDescriptor,
 };
 
+use crate::TranscriptContextWindow;
+
 #[derive(Clone, Default)]
 pub struct ContextBuilder {
     tools: Arc<Mutex<Vec<AgentToolDescriptor>>>,
     memories: Arc<Mutex<Vec<AgentMemoryRecord>>>,
     system_prompt: Arc<Mutex<Option<String>>>,
+    transcript_window: TranscriptContextWindow,
 }
 
 impl ContextBuilder {
@@ -52,9 +55,12 @@ impl ContextBuilder {
             .lock()
             .expect("context builder mutex poisoned")
             .clone();
+        let prepared = self
+            .transcript_window
+            .prepare(&request.messages, request.max_context_tokens);
         Ok(AgentContext {
             profile_id: request.profile_id,
-            messages: request.messages,
+            messages: prepared.messages,
             tools,
             memories,
             rendered_prompt,

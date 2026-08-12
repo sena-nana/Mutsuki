@@ -8,6 +8,7 @@ license.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-plugin-api.workspace = true
 mutsuki-agent-runtime.workspace = true
+mutsuki-agent-sdk.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

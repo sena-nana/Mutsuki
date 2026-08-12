@@ -163,17 +163,35 @@ pub enum InteractionKind {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InteractionRequest {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub turn_id: String,
+    #[serde(default)]
+    pub version: u64,
     pub interaction_id: String,
     pub kind: InteractionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_tool: Option<String>,
+    #[serde(default)]
+    pub permission_mode: crate::AgentPermissionMode,
     pub prompt: String,
     #[serde(default)]
     pub options: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<ResourceRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InteractionResolution {
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub turn_id: String,
+    #[serde(default)]
+    pub version: u64,
     pub interaction_id: String,
     pub accepted: bool,
     #[serde(default)]
@@ -260,3 +278,37 @@ impl AgentEventMeta {
 
 /// Re-export for coding event consumers that need artifact descriptors.
 pub type CodingArtifactRef = ArtifactRef;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interaction_request_keeps_runtime_owned_context_and_decodes_legacy_payloads() {
+        let legacy: InteractionRequest = serde_json::from_value(serde_json::json!({
+            "interaction_id": "ask-1",
+            "kind": "clarification",
+            "prompt": "Choose",
+            "options": {}
+        }))
+        .unwrap();
+        assert_eq!(legacy.source_tool, None);
+        assert_eq!(legacy.permission_mode, crate::AgentPermissionMode::Ask);
+        assert_eq!(legacy.context, None);
+
+        let request = InteractionRequest {
+            source_tool: Some("update_project_architecture".into()),
+            permission_mode: crate::AgentPermissionMode::Full,
+            context: Some(serde_json::json!({"productProjectId": "project-1"})),
+            ..legacy
+        };
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded["source_tool"], "update_project_architecture");
+        assert_eq!(encoded["permission_mode"], "full");
+        assert_eq!(encoded["context"]["productProjectId"], "project-1");
+        assert_eq!(
+            serde_json::from_value::<InteractionRequest>(encoded).unwrap(),
+            request
+        );
+    }
+}

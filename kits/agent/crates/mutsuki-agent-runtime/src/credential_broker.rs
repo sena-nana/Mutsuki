@@ -72,9 +72,12 @@ struct StoredCredential {
 
 #[derive(Clone)]
 struct IssuedHandle {
-    handle: CredentialAccessHandle,
-    secret_material: String,
+    credential: CredentialRef,
+    secret_id: String,
+    expires_at_unix_ms: u64,
 }
+
+const MAX_ACTIVE_CREDENTIAL_HANDLES: usize = 256;
 
 #[derive(Clone)]
 pub struct CredentialBrokerService {
@@ -83,11 +86,16 @@ pub struct CredentialBrokerService {
 
 struct CredentialBrokerInner {
     secrets: Arc<dyn SecretStore>,
-    credentials: Mutex<BTreeMap<String, StoredCredential>>,
-    handles: Mutex<BTreeMap<String, IssuedHandle>>,
+    state: Mutex<CredentialBrokerState>,
     providers: BTreeMap<String, CredentialProviderDescriptor>,
     next_id: AtomicU64,
     clock_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+}
+
+#[derive(Default)]
+struct CredentialBrokerState {
+    credentials: BTreeMap<String, StoredCredential>,
+    handles: BTreeMap<String, IssuedHandle>,
 }
 
 impl Default for CredentialBrokerService {
@@ -112,8 +120,7 @@ impl CredentialBrokerService {
         Self {
             inner: Arc::new(CredentialBrokerInner {
                 secrets,
-                credentials: Mutex::new(BTreeMap::new()),
-                handles: Mutex::new(BTreeMap::new()),
+                state: Mutex::new(CredentialBrokerState::default()),
                 providers,
                 next_id: AtomicU64::new(1),
                 clock_ms,
@@ -123,6 +130,110 @@ impl CredentialBrokerService {
 
     pub fn providers(&self) -> Vec<CredentialProviderDescriptor> {
         self.inner.providers.values().cloned().collect()
+    }
+
+    /// Restore public credential metadata and its Host-owned secret identifier.
+    ///
+    /// The descriptor is deliberately secret-free. Active credentials must already
+    /// have material in the injected [`SecretStore`]; revoked descriptors may be
+    /// restored after their material has been deleted so products retain lifecycle
+    /// history without making the credential usable again.
+    pub fn restore_descriptor(
+        &self,
+        descriptor: CredentialDescriptor,
+        secret_id: impl Into<String>,
+    ) -> AgentResult<()> {
+        let secret_id = secret_id.into();
+        validate_restored_descriptor(&self.inner.providers, &descriptor, &secret_id)?;
+        if descriptor.status != CredentialStatus::Revoked
+            && self.inner.secrets.get(&secret_id)?.is_none()
+        {
+            return Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "credential secret material is unavailable during restore",
+            ));
+        }
+
+        let credential_id = descriptor.credential.credential_id.clone();
+        let mut state = self.inner.state.lock().expect("credential broker mutex");
+        if let Some(existing) = state.credentials.get(&credential_id) {
+            if existing.descriptor == descriptor && existing.secret_id == secret_id {
+                return Ok(());
+            }
+            return Err(AgentError::invalid_input(format!(
+                "credential `{credential_id}` restore conflicts with existing metadata"
+            )));
+        }
+        if let Some(sequence) = restored_credential_sequence(&credential_id)? {
+            self.inner.next_id.fetch_max(sequence, Ordering::Relaxed);
+        }
+        state.credentials.insert(
+            credential_id,
+            StoredCredential {
+                descriptor,
+                secret_id,
+            },
+        );
+        Ok(())
+    }
+
+    /// Return the opaque Host secret identifier for persistence metadata.
+    /// Secret material never crosses this API.
+    pub fn descriptor_secret_id(&self, credential: &CredentialRef) -> AgentResult<String> {
+        let state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
+            .get(&credential.credential_id)
+            .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+        ensure_credential_revision(
+            &stored.descriptor,
+            credential,
+            "resolving secret identifier",
+        )?;
+        Ok(stored.secret_id.clone())
+    }
+
+    /// Return secret-free current metadata for Host-side persistence recovery.
+    pub fn descriptor_by_id(&self, credential_id: &str) -> AgentResult<CredentialDescriptor> {
+        self.inner
+            .state
+            .lock()
+            .expect("credential broker mutex")
+            .credentials
+            .get(credential_id)
+            .map(|stored| stored.descriptor.clone())
+            .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))
+    }
+
+    /// Remove a freshly-created credential when a Host persistence transaction
+    /// cannot commit. The secret is deleted before the descriptor is forgotten.
+    pub fn discard_for_rollback(&self, credential: &CredentialRef) -> AgentResult<()> {
+        let stored = {
+            let mut state = self.inner.state.lock().expect("credential broker mutex");
+            let stored = state
+                .credentials
+                .get(&credential.credential_id)
+                .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+            ensure_credential_revision(&stored.descriptor, credential, "rollback")?;
+            state
+                .handles
+                .retain(|_, issued| issued.credential.credential_id != credential.credential_id);
+            state
+                .credentials
+                .remove(&credential.credential_id)
+                .expect("credential exists after revision validation")
+        };
+        if let Err(error) = self.inner.secrets.delete(&stored.secret_id) {
+            self.inner
+                .state
+                .lock()
+                .expect("credential broker mutex")
+                .credentials
+                .entry(credential.credential_id.clone())
+                .or_insert(stored);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn login(&self, request: CredentialLoginRequest) -> AgentResult<CredentialLoginResult> {
@@ -192,8 +303,9 @@ impl CredentialBrokerService {
         request: CredentialRefreshRequest,
     ) -> AgentResult<CredentialRefreshResult> {
         let now = (self.inner.clock_ms)();
-        let mut credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
+        let mut state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
             .get_mut(&request.credential.credential_id)
             .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
         if stored.descriptor.credential.revision != request.credential.revision
@@ -259,35 +371,53 @@ impl CredentialBrokerService {
 
     pub fn revoke(&self, request: CredentialRevokeRequest) -> AgentResult<CredentialRevokeResult> {
         let now = (self.inner.clock_ms)();
-        let mut credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
-            .get_mut(&request.credential.credential_id)
-            .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
-        stored.descriptor.status = CredentialStatus::Revoked;
-        let independent_revoke_uri = stored.descriptor.independent_revoke_uri.clone();
-        stored.descriptor.revocation = Some(CredentialRevocationInfo {
-            revoked_at_unix_ms: now,
-            reason: request.reason.clone(),
-            independent_revoke_uri,
-        });
-        self.inner.secrets.delete(&stored.secret_id)?;
+        let (descriptor, secret_id) = {
+            let mut state = self.inner.state.lock().expect("credential broker mutex");
+            let (descriptor, secret_id) = {
+                let stored = state
+                    .credentials
+                    .get_mut(&request.credential.credential_id)
+                    .ok_or_else(|| {
+                        AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found")
+                    })?;
+                ensure_credential_revision(&stored.descriptor, &request.credential, "revoke")?;
+                stored.descriptor.credential.revision = stored
+                    .descriptor
+                    .credential
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| AgentError::invalid_input("credential revision exhausted"))?;
+                stored.descriptor.status = CredentialStatus::Revoked;
+                let independent_revoke_uri = stored.descriptor.independent_revoke_uri.clone();
+                stored.descriptor.revocation = Some(CredentialRevocationInfo {
+                    revoked_at_unix_ms: now,
+                    reason: request.reason.clone(),
+                    independent_revoke_uri,
+                });
+                (stored.descriptor.clone(), stored.secret_id.clone())
+            };
+            state.handles.retain(|_, issued| {
+                issued.credential.credential_id != request.credential.credential_id
+            });
+            (descriptor, secret_id)
+        };
+        self.inner.secrets.delete(&secret_id)?;
         let event = CredentialLifecycleEvent::Revoke {
-            credential: stored.descriptor.credential.clone(),
+            credential: descriptor.credential.clone(),
             status: CredentialStatus::Revoked,
             reason: request.reason,
         };
-        Ok(CredentialRevokeResult {
-            descriptor: stored.descriptor.clone(),
-            event,
-        })
+        Ok(CredentialRevokeResult { descriptor, event })
     }
 
     pub fn status(&self, request: CredentialStatusRequest) -> AgentResult<CredentialStatusResult> {
         let now = (self.inner.clock_ms)();
-        let mut credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
+        let mut state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
             .get_mut(&request.credential.credential_id)
             .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+        ensure_credential_revision(&stored.descriptor, &request.credential, "status")?;
         if stored.descriptor.status == CredentialStatus::Active {
             stored.descriptor.status = evaluate_expiry(stored.descriptor.expires_at_unix_ms, now);
         }
@@ -306,31 +436,60 @@ impl CredentialBrokerService {
         &self,
         request: CredentialIssueHandleRequest,
     ) -> AgentResult<CredentialIssueHandleResult> {
-        let now = (self.inner.clock_ms)();
-        let credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
-            .get(&request.credential.credential_id)
-            .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
-        ensure_usable(&stored.descriptor, now)?;
-        let material =
-            self.inner.secrets.get(&stored.secret_id)?.ok_or_else(|| {
-                AgentError::new(CREDENTIAL_UNAVAILABLE, "secret material missing")
-            })?;
+        let checked_at = (self.inner.clock_ms)();
+        let secret_id = {
+            let state = self.inner.state.lock().expect("credential broker mutex");
+            let stored = state
+                .credentials
+                .get(&request.credential.credential_id)
+                .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+            ensure_credential_revision(&stored.descriptor, &request.credential, "issuing handle")?;
+            ensure_usable(&stored.descriptor, checked_at)?;
+            stored.secret_id.clone()
+        };
+        if self.inner.secrets.get(&secret_id)?.is_none() {
+            return Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "secret material missing",
+            ));
+        }
+        let issued_at = (self.inner.clock_ms)();
         let handle_id = format!(
             "handle-{}",
             self.inner.next_id.fetch_add(1, Ordering::Relaxed)
         );
         let handle = CredentialAccessHandle {
             handle_id: handle_id.clone(),
-            credential: stored.descriptor.credential.clone(),
-            issued_at_unix_ms: now,
-            expires_at_unix_ms: now.saturating_add(request.ttl_ms.max(1)),
+            credential: request.credential.clone(),
+            issued_at_unix_ms: issued_at,
+            expires_at_unix_ms: issued_at.saturating_add(request.ttl_ms.max(1)),
         };
-        self.inner.handles.lock().expect("handle mutex").insert(
+        let mut state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
+            .get(&request.credential.credential_id)
+            .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+        ensure_credential_revision(&stored.descriptor, &request.credential, "issuing handle")?;
+        ensure_usable(&stored.descriptor, issued_at)?;
+        if stored.secret_id != secret_id {
+            return Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "credential secret mapping changed",
+            ));
+        }
+        purge_expired_handles(&mut state.handles, issued_at);
+        if state.handles.len() >= MAX_ACTIVE_CREDENTIAL_HANDLES {
+            return Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "credential access handle capacity reached; retry after active handles expire",
+            ));
+        }
+        state.handles.insert(
             handle_id,
             IssuedHandle {
-                handle: handle.clone(),
-                secret_material: material,
+                credential: request.credential,
+                secret_id,
+                expires_at_unix_ms: handle.expires_at_unix_ms,
             },
         );
         Ok(CredentialIssueHandleResult { handle })
@@ -339,24 +498,56 @@ impl CredentialBrokerService {
     /// Resolve a short-lived handle into request auth material for Model Adapters.
     pub fn resolve_handle_secret(&self, handle_id: &str) -> AgentResult<String> {
         let now = (self.inner.clock_ms)();
-        let mut handles = self.inner.handles.lock().expect("handle mutex");
-        let issued = handles
-            .get(handle_id)
-            .ok_or_else(|| AgentError::new(CREDENTIAL_HANDLE_EXPIRED, "handle not found"))?;
-        if issued.handle.expires_at_unix_ms <= now {
-            handles.remove(handle_id);
+        let (credential, secret_id, expires_at_unix_ms) = {
+            let mut state = self.inner.state.lock().expect("credential broker mutex");
+            purge_expired_handles(&mut state.handles, now);
+            let issued = state
+                .handles
+                .remove(handle_id)
+                .ok_or_else(|| AgentError::new(CREDENTIAL_HANDLE_EXPIRED, "handle not found"))?;
+            let stored = state
+                .credentials
+                .get(&issued.credential.credential_id)
+                .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
+            ensure_credential_revision(&stored.descriptor, &issued.credential, "resolving handle")?;
+            ensure_usable(&stored.descriptor, now)?;
+            if stored.secret_id != issued.secret_id {
+                return Err(AgentError::new(
+                    CREDENTIAL_UNAVAILABLE,
+                    "credential secret mapping changed",
+                ));
+            }
+            (
+                issued.credential,
+                issued.secret_id,
+                issued.expires_at_unix_ms,
+            )
+        };
+        let material =
+            self.inner.secrets.get(&secret_id)?.ok_or_else(|| {
+                AgentError::new(CREDENTIAL_UNAVAILABLE, "secret material missing")
+            })?;
+        let resolved_at = (self.inner.clock_ms)();
+        if expires_at_unix_ms <= resolved_at {
             return Err(AgentError::new(
                 CREDENTIAL_HANDLE_EXPIRED,
                 "credential access handle expired",
             ));
         }
-        // Ensure underlying credential is still usable.
-        let credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
-            .get(&issued.handle.credential.credential_id)
+        let state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
+            .get(&credential.credential_id)
             .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
-        ensure_usable(&stored.descriptor, now)?;
-        Ok(issued.secret_material.clone())
+        ensure_credential_revision(&stored.descriptor, &credential, "resolving handle")?;
+        ensure_usable(&stored.descriptor, resolved_at)?;
+        if stored.secret_id != secret_id {
+            return Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "credential secret mapping changed",
+            ));
+        }
+        Ok(material)
     }
 
     /// Resolve by CredentialRef for adapters that still use the legacy broker surface.
@@ -373,8 +564,9 @@ impl CredentialBrokerService {
         credential_id: &str,
         status: CredentialStatus,
     ) -> AgentResult<CredentialDescriptor> {
-        let mut credentials = self.inner.credentials.lock().expect("credential mutex");
-        let stored = credentials
+        let mut state = self.inner.state.lock().expect("credential broker mutex");
+        let stored = state
+            .credentials
             .get_mut(credential_id)
             .ok_or_else(|| AgentError::new(CREDENTIAL_UNAVAILABLE, "credential not found"))?;
         stored.descriptor.status = status;
@@ -433,9 +625,10 @@ impl CredentialBrokerService {
             metadata,
         };
         self.inner
-            .credentials
+            .state
             .lock()
-            .expect("credential mutex")
+            .expect("credential broker mutex")
+            .credentials
             .insert(
                 credential_id,
                 StoredCredential {
@@ -445,6 +638,72 @@ impl CredentialBrokerService {
             );
         Ok(descriptor)
     }
+}
+
+fn ensure_credential_revision(
+    descriptor: &CredentialDescriptor,
+    credential: &CredentialRef,
+    operation: &str,
+) -> AgentResult<()> {
+    if descriptor.credential.revision == credential.revision {
+        return Ok(());
+    }
+    Err(AgentError::invalid_input(format!(
+        "credential revision mismatch while {operation}: expected {}, received {}",
+        descriptor.credential.revision, credential.revision
+    )))
+}
+
+fn purge_expired_handles(handles: &mut BTreeMap<String, IssuedHandle>, now: u64) {
+    handles.retain(|_, issued| issued.expires_at_unix_ms > now);
+}
+
+fn validate_restored_descriptor(
+    providers: &BTreeMap<String, CredentialProviderDescriptor>,
+    descriptor: &CredentialDescriptor,
+    secret_id: &str,
+) -> AgentResult<()> {
+    let credential_id = descriptor.credential.credential_id.trim();
+    if credential_id.is_empty() || descriptor.credential.revision == 0 {
+        return Err(AgentError::invalid_input(
+            "restored credential id and revision must be non-empty",
+        ));
+    }
+    if secret_id.trim().is_empty() {
+        return Err(AgentError::invalid_input(
+            "restored credential secret identifier must be non-empty",
+        ));
+    }
+    let provider = providers.get(&descriptor.provider_id).ok_or_else(|| {
+        AgentError::invalid_input(format!(
+            "unknown credential provider `{}` during restore",
+            descriptor.provider_id
+        ))
+    })?;
+    if !provider.supported_kinds.contains(&descriptor.kind) {
+        return Err(AgentError::invalid_input(format!(
+            "provider `{}` does not support restored kind `{:?}`",
+            descriptor.provider_id, descriptor.kind
+        )));
+    }
+    Ok(())
+}
+
+fn restored_credential_sequence(credential_id: &str) -> AgentResult<Option<u64>> {
+    let Some(value) = credential_id.strip_prefix("cred-") else {
+        return Ok(None);
+    };
+    let sequence = value.parse::<u64>().map_err(|_| {
+        AgentError::invalid_input(format!(
+            "restored credential id `{credential_id}` has an invalid sequence"
+        ))
+    })?;
+    let next = sequence.checked_add(1).ok_or_else(|| {
+        AgentError::invalid_input(format!(
+            "restored credential id `{credential_id}` exhausts the sequence"
+        ))
+    })?;
+    Ok(Some(next))
 }
 
 struct ClassifiedMaterial {
@@ -711,6 +970,70 @@ mod tests {
     use super::*;
     use mutsuki_agent_contracts::CredentialMaterialOrigin;
     use serde_json::json;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Barrier, mpsc};
+    use std::thread;
+    use std::time::Duration;
+
+    struct BlockingGetSecretStore {
+        inner: InMemorySecretStore,
+        block_next_get: AtomicBool,
+        get_entered: Mutex<Option<mpsc::Sender<()>>>,
+        release_get: Barrier,
+    }
+
+    impl BlockingGetSecretStore {
+        fn new(get_entered: mpsc::Sender<()>) -> Self {
+            Self {
+                inner: InMemorySecretStore::default(),
+                block_next_get: AtomicBool::new(true),
+                get_entered: Mutex::new(Some(get_entered)),
+                release_get: Barrier::new(2),
+            }
+        }
+    }
+
+    impl SecretStore for BlockingGetSecretStore {
+        fn put(&self, secret_id: &str, material: &str) -> AgentResult<()> {
+            self.inner.put(secret_id, material)
+        }
+
+        fn get(&self, secret_id: &str) -> AgentResult<Option<String>> {
+            if self.block_next_get.swap(false, Ordering::SeqCst) {
+                if let Some(sender) = self.get_entered.lock().expect("get-entered mutex").take() {
+                    let _ = sender.send(());
+                }
+                self.release_get.wait();
+            }
+            self.inner.get(secret_id)
+        }
+
+        fn delete(&self, secret_id: &str) -> AgentResult<()> {
+            self.inner.delete(secret_id)
+        }
+    }
+
+    #[derive(Default)]
+    struct DeleteFailingSecretStore {
+        inner: InMemorySecretStore,
+    }
+
+    impl SecretStore for DeleteFailingSecretStore {
+        fn put(&self, secret_id: &str, material: &str) -> AgentResult<()> {
+            self.inner.put(secret_id, material)
+        }
+
+        fn get(&self, secret_id: &str) -> AgentResult<Option<String>> {
+            self.inner.get(secret_id)
+        }
+
+        fn delete(&self, _secret_id: &str) -> AgentResult<()> {
+            Err(AgentError::new(
+                CREDENTIAL_UNAVAILABLE,
+                "secret store delete failed",
+            ))
+        }
+    }
 
     fn openai_key() -> &'static str {
         "sk-test-openai-api-key-0123456789abcdef"
@@ -757,7 +1080,7 @@ mod tests {
         assert_eq!(revoked.descriptor.status, CredentialStatus::Revoked);
         assert_eq!(
             broker
-                .resolve_secret(&login.descriptor.credential)
+                .resolve_secret(&revoked.descriptor.credential)
                 .unwrap_err()
                 .code,
             CREDENTIAL_REVOKED
@@ -933,6 +1256,401 @@ mod tests {
                 .resolve_secret(&healthy.descriptor.credential)
                 .unwrap(),
             openai_key()
+        );
+    }
+
+    #[test]
+    fn secret_store_get_does_not_hold_broker_state_lock() {
+        let (get_entered_tx, get_entered_rx) = mpsc::channel();
+        let secrets = Arc::new(BlockingGetSecretStore::new(get_entered_tx));
+        let broker = CredentialBrokerService::new(secrets.clone());
+        let login = broker
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+
+        let issue_broker = broker.clone();
+        let issue_credential = login.descriptor.credential.clone();
+        let issue_thread = thread::spawn(move || {
+            issue_broker.issue_handle(CredentialIssueHandleRequest {
+                credential: issue_credential,
+                ttl_ms: 1_000,
+            })
+        });
+        get_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("issue_handle should reach SecretStore::get");
+
+        let status_broker = broker.clone();
+        let status_credential = login.descriptor.credential;
+        let (status_tx, status_rx) = mpsc::channel();
+        let status_thread = thread::spawn(move || {
+            let result = status_broker.status(CredentialStatusRequest {
+                credential: status_credential,
+            });
+            let _ = status_tx.send(result);
+        });
+        let status_before_secret_release = status_rx.recv_timeout(Duration::from_secs(1));
+
+        secrets.release_get.wait();
+        let issue_result = issue_thread.join().expect("issue thread should not panic");
+        status_thread
+            .join()
+            .expect("status thread should not panic");
+
+        assert!(
+            status_before_secret_release
+                .expect("status must not wait for SecretStore::get")
+                .is_ok()
+        );
+        assert!(issue_result.is_ok());
+    }
+
+    #[test]
+    fn handles_are_secret_free_one_shot_and_globally_cleaned() {
+        let clock = Arc::new(AtomicU64::new(1_000));
+        let clock_fn = {
+            let clock = Arc::clone(&clock);
+            Arc::new(move || clock.load(Ordering::Relaxed)) as Arc<dyn Fn() -> u64 + Send + Sync>
+        };
+        let broker =
+            CredentialBrokerService::with_clock(Arc::new(InMemorySecretStore::default()), clock_fn);
+        let login = broker
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        let issue = |ttl_ms| {
+            broker
+                .issue_handle(CredentialIssueHandleRequest {
+                    credential: login.descriptor.credential.clone(),
+                    ttl_ms,
+                })
+                .unwrap()
+                .handle
+        };
+
+        let one_shot = issue(100);
+        {
+            let state = broker.inner.state.lock().expect("credential broker mutex");
+            let issued = state.handles.get(&one_shot.handle_id).unwrap();
+            assert_eq!(issued.credential, login.descriptor.credential);
+            assert_ne!(issued.secret_id, openai_key());
+            assert!(!issued.secret_id.contains(openai_key()));
+        }
+        assert_eq!(
+            broker.resolve_handle_secret(&one_shot.handle_id).unwrap(),
+            openai_key()
+        );
+        assert_eq!(
+            broker
+                .resolve_handle_secret(&one_shot.handle_id)
+                .unwrap_err()
+                .code,
+            CREDENTIAL_HANDLE_EXPIRED
+        );
+
+        let expired_one = issue(10);
+        let _expired_two = issue(10);
+        clock.store(2_000, Ordering::Relaxed);
+        assert_eq!(
+            broker
+                .resolve_handle_secret(&expired_one.handle_id)
+                .unwrap_err()
+                .code,
+            CREDENTIAL_HANDLE_EXPIRED
+        );
+        assert!(
+            broker
+                .inner
+                .state
+                .lock()
+                .expect("credential broker mutex")
+                .handles
+                .is_empty()
+        );
+
+        clock.store(3_000, Ordering::Relaxed);
+        for _ in 0..MAX_ACTIVE_CREDENTIAL_HANDLES {
+            let _ = issue(10_000);
+        }
+        assert_eq!(
+            broker
+                .issue_handle(CredentialIssueHandleRequest {
+                    credential: login.descriptor.credential.clone(),
+                    ttl_ms: 10_000,
+                })
+                .unwrap_err()
+                .code,
+            CREDENTIAL_UNAVAILABLE
+        );
+        clock.store(20_000, Ordering::Relaxed);
+        assert!(
+            broker
+                .issue_handle(CredentialIssueHandleRequest {
+                    credential: login.descriptor.credential.clone(),
+                    ttl_ms: 10_000,
+                })
+                .is_ok()
+        );
+
+        let descriptor = broker
+            .descriptor_by_id(&login.descriptor.credential.credential_id)
+            .unwrap();
+        assert_eq!(descriptor, login.descriptor);
+        assert!(
+            !serde_json::to_string(&descriptor)
+                .unwrap()
+                .contains(openai_key())
+        );
+    }
+
+    #[test]
+    fn revoke_rejects_stale_revisions_and_survives_secret_delete_failure() {
+        let secrets = Arc::new(DeleteFailingSecretStore::default());
+        let broker = CredentialBrokerService::new(secrets.clone());
+        let login = broker
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        let handle = broker
+            .issue_handle(CredentialIssueHandleRequest {
+                credential: login.descriptor.credential.clone(),
+                ttl_ms: 1_000,
+            })
+            .unwrap();
+
+        assert_eq!(
+            broker
+                .revoke(CredentialRevokeRequest {
+                    credential: login.descriptor.credential.clone(),
+                    reason: Some("compromised".into()),
+                })
+                .unwrap_err()
+                .code,
+            CREDENTIAL_UNAVAILABLE
+        );
+        let revoked = broker
+            .descriptor_by_id(&login.descriptor.credential.credential_id)
+            .unwrap();
+        assert_eq!(revoked.status, CredentialStatus::Revoked);
+        assert_eq!(
+            revoked.credential.revision,
+            login.descriptor.credential.revision + 1
+        );
+        assert!(revoked.revocation.is_some());
+        assert_eq!(
+            broker
+                .resolve_handle_secret(&handle.handle.handle_id)
+                .unwrap_err()
+                .code,
+            CREDENTIAL_HANDLE_EXPIRED
+        );
+
+        for error in [
+            broker
+                .status(CredentialStatusRequest {
+                    credential: login.descriptor.credential.clone(),
+                })
+                .unwrap_err(),
+            broker
+                .issue_handle(CredentialIssueHandleRequest {
+                    credential: login.descriptor.credential.clone(),
+                    ttl_ms: 1_000,
+                })
+                .unwrap_err(),
+            broker
+                .revoke(CredentialRevokeRequest {
+                    credential: login.descriptor.credential.clone(),
+                    reason: None,
+                })
+                .unwrap_err(),
+        ] {
+            assert_eq!(error.code, "agent.invalid_input");
+        }
+
+        assert_eq!(
+            broker
+                .status(CredentialStatusRequest {
+                    credential: revoked.credential.clone(),
+                })
+                .unwrap()
+                .descriptor
+                .status,
+            CredentialStatus::Revoked
+        );
+        assert_eq!(
+            broker
+                .issue_handle(CredentialIssueHandleRequest {
+                    credential: revoked.credential,
+                    ttl_ms: 1_000,
+                })
+                .unwrap_err()
+                .code,
+            CREDENTIAL_REVOKED
+        );
+    }
+
+    #[test]
+    fn restored_descriptor_recovers_secret_mapping_and_advances_ids() {
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let original = CredentialBrokerService::new(secrets.clone());
+        let first = original
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: Some("restored".into()),
+                source: Some("keyring".into()),
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        let secret_id = original
+            .descriptor_secret_id(&first.descriptor.credential)
+            .unwrap();
+
+        let restored = CredentialBrokerService::new(secrets);
+        restored
+            .restore_descriptor(first.descriptor.clone(), secret_id)
+            .unwrap();
+        assert_eq!(
+            restored
+                .resolve_secret(&first.descriptor.credential)
+                .unwrap(),
+            openai_key()
+        );
+        let second = restored
+            .login(CredentialLoginRequest {
+                provider_id: ANTHROPIC_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: anthropic_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        assert_eq!(first.descriptor.credential.credential_id, "cred-1");
+        let second_sequence = second
+            .descriptor
+            .credential
+            .credential_id
+            .strip_prefix("cred-")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        assert!(second_sequence > 1);
+        assert!(
+            !serde_json::to_string(&first.descriptor)
+                .unwrap()
+                .contains(openai_key())
+        );
+    }
+
+    #[test]
+    fn revoked_descriptor_restores_without_deleted_secret() {
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let original = CredentialBrokerService::new(secrets.clone());
+        let login = original
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        let secret_id = original
+            .descriptor_secret_id(&login.descriptor.credential)
+            .unwrap();
+        let revoked = original
+            .revoke(CredentialRevokeRequest {
+                credential: login.descriptor.credential,
+                reason: Some("removed".into()),
+            })
+            .unwrap();
+        assert!(secrets.get(&secret_id).unwrap().is_none());
+
+        let restored = CredentialBrokerService::new(secrets);
+        restored
+            .restore_descriptor(revoked.descriptor.clone(), secret_id)
+            .unwrap();
+        let status = restored
+            .status(CredentialStatusRequest {
+                credential: revoked.descriptor.credential,
+            })
+            .unwrap();
+        assert_eq!(status.descriptor.status, CredentialStatus::Revoked);
+    }
+
+    #[test]
+    fn rollback_discards_descriptor_and_secret_together() {
+        let secrets = Arc::new(InMemorySecretStore::default());
+        let broker = CredentialBrokerService::new(secrets.clone());
+        let login = broker
+            .login(CredentialLoginRequest {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: openai_key().into(),
+                account_label: None,
+                source: None,
+                capability: CredentialCapability::default(),
+                refresh_policy: CredentialRefreshPolicy::default(),
+                expires_at_unix_ms: None,
+                metadata: Value::Null,
+            })
+            .unwrap();
+        let secret_id = broker
+            .descriptor_secret_id(&login.descriptor.credential)
+            .unwrap();
+
+        broker
+            .discard_for_rollback(&login.descriptor.credential)
+            .unwrap();
+        assert!(secrets.get(&secret_id).unwrap().is_none());
+        assert_eq!(
+            broker
+                .status(CredentialStatusRequest {
+                    credential: login.descriptor.credential,
+                })
+                .unwrap_err()
+                .code,
+            CREDENTIAL_UNAVAILABLE
         );
     }
 }

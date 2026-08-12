@@ -12,9 +12,10 @@ use crate::{
 };
 
 pub const AGENT_WIRE_VERSION: u16 = 1;
-pub const AGENT_WIRE_SUPPORTED_FEATURES: [&str; 4] = [
+pub const AGENT_WIRE_SUPPORTED_FEATURES: [&str; 5] = [
     "approval-binding",
     "event-resume",
+    "interaction-binding",
     "monotonic-events",
     "resource-ref",
 ];
@@ -66,6 +67,9 @@ pub enum AgentWireRequest {
     },
     RejectAction {
         decision: PermissionDecision,
+    },
+    ResolveInteraction {
+        resolution: InteractionResolution,
     },
     SubscribeSessionEvents {
         session_id: String,
@@ -165,6 +169,12 @@ pub enum AgentEvent {
     TurnState {
         turn_id: String,
         status: String,
+    },
+    UserMessage {
+        turn_id: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<Value>,
     },
     StepState {
         turn_id: String,

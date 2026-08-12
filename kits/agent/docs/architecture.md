@@ -11,6 +11,7 @@ Runtime -------- Adapter -------- Plugin
  session          protocol         tool/context/hook
  turn             provider         policy/command/service
  approval         stream
+ interaction
  budget
                  |
  Mutsuki Task / Runner / Resource / Capability / Plugin lifecycle
@@ -20,10 +21,12 @@ Runtime -------- Adapter -------- Plugin
 
 ## Runtime
 
-`mutsuki-agent-runtime` 拥有 session coordinator、turn 状态、approval、budget、checkpoint
-语义和 `AgentRuntimeProfile` validation。昂贵或可取消的步骤由 orchestration runner 通过
-`TaskAwaitRunnerAdapter` 提交回 Core；Runtime 不拥有 scheduler、worker、ResultRouter
-或通用重试器。
+`mutsuki-agent-runtime` 拥有 session coordinator、turn 状态、approval、interaction、
+budget、checkpoint 语义和 `AgentRuntimeProfile` validation。AgentLoop 将类型化 interaction
+tool call 持久为等待点，并以版本绑定的 resolution 继续原 session/turn；产品 Host 不得用
+新 user message 或隐藏直调模拟恢复。昂贵或可取消的步骤由 orchestration runner 通过
+`TaskAwaitRunnerAdapter` 提交回 Core；Runtime 不拥有 scheduler、worker、ResultRouter 或
+通用重试器。
 
 ## Adapter
 
@@ -40,6 +43,8 @@ Runtime -------- Adapter -------- Plugin
 ## 状态与基础设施
 
 - 消息、快照、流和大型工具结果使用 `ResourceRef` / `ResourceCellRef`。
+- AgentLoop 的 pending interaction、累计 budget/usage 和 resolution receipt 以 durable
+  session transcript 为唯一事实源；通用 coordinator checkpoint 不复制第二份交互状态。
 - durable checkpoint 经 `mutsuki-protocol-db` service，不内置数据库。
 - remote task/sub-agent 映射到 DistributedHost placement，不复制选主与 scheduler。
 - client wire 运行在 MutsukiLink control stream，不建立 Agent 专属网络 server。

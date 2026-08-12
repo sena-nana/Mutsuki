@@ -371,6 +371,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
         let pending = waiting.pending_approvals[0].clone();
         let mut resume = AgentRunRequest::new("test.profile", Vec::new());
         resume.session_id = Some(snapshot.session_id.clone());
+        resume.turn_id = Some(pending.turn_id.clone());
         resume.permission_decisions = vec![PermissionDecision {
             session_id: pending.session_id,
             turn_id: pending.turn_id,
@@ -438,6 +439,7 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
     let executions_before_budget = tool_executions.load(Ordering::SeqCst);
     let mut budget = AgentRunRequest::new("test.profile", vec![AgentMessage::user("budget")]);
     budget.budget = AgentRunBudget {
+        max_context_tokens: None,
         max_total_tokens: Some(5),
         max_cost_microunits: None,
     };
