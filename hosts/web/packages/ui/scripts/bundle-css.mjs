@@ -41,10 +41,10 @@ const entries = [
 const bundled = entries
   .map((file) => {
     const body = inline(file).trim();
-    return body ? `/* —— ${path.basename(file)} —— */\n${body}\n` : "";
+    return body ? `/* —— ${path.basename(file)} —— */\n${body}` : "";
   })
   .filter(Boolean)
-  .join("\n");
+  .join("\n\n");
 
 writeFileSync(path.join(outDir, "mutsuki-ui.css"), `${bundled}\n`);
 console.log(`wrote dist/mutsuki-ui.css (${bundled.length} bytes pre-newline)`);

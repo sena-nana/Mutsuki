@@ -151,9 +151,19 @@ function createShell(rpc, options = {}) {
   const includeAgentConnections = options.includeAgentConnections === true;
   const includeBotFlow = options.includeBotFlow === true;
   const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
+  const setupOnly = includeConfig && !includeBilibili && !includeQq && !includeAgentConnections && !includeBotFlow;
+  const pageAvailable = (page) => {
+    if (page === "overview") return !setupOnly;
+    if (page === "config") return includeConfig;
+    if (page === "bilibili") return includeBilibili;
+    if (page === "qq-bot") return includeQq;
+    if (page === "agent-connections") return includeAgentConnections;
+    if (page === "bot-flow") return includeBotFlow;
+    return false;
+  };
   const route = parseRoute();
   const state = {
-    page: route.page,
+    page: pageAvailable(route.page) ? route.page : (includeConfig ? "config" : "overview"),
     tab: route.tab,
     error: "",
     busy: false,
@@ -168,7 +178,8 @@ function createShell(rpc, options = {}) {
   app.dataset.liliaSurfaceLevel = "base";
 
   function go(page, tab) {
-    const next = navigate(page, tab);
+    const destination = pageAvailable(page) ? page : (includeConfig ? "config" : "overview");
+    const next = navigate(destination, tab);
     state.page = next.page;
     state.tab = next.tab;
     renderNav();
@@ -179,12 +190,7 @@ function createShell(rpc, options = {}) {
     const nav = app.querySelector(".nav");
     nav.innerHTML = "";
     for (const page of PAGES) {
-      if (page.optional === true && page.id === "upgrade" && !includeUpgrade) continue;
-      if (page.optional === true && page.id === "config" && !includeConfig) continue;
-      if (page.optional === true && page.id === "bilibili" && !includeBilibili) continue;
-      if (page.optional === true && page.id === "qq-bot" && !includeQq) continue;
-      if (page.optional === true && page.id === "agent-connections" && !includeAgentConnections) continue;
-      if (page.optional === true && page.id === "bot-flow" && !includeBotFlow) continue;
+      if (!pageAvailable(page.id)) continue;
       const btn = document.createElement("button");
       btn.type = "button";
       const active = state.page === page.id;
@@ -210,13 +216,21 @@ function createShell(rpc, options = {}) {
     const subtitle = app.querySelector("#page-subtitle");
     const pageMeta = PAGES.find((p) => p.id === state.page) || PAGES[0];
     title.textContent = pageMeta.label;
-    subtitle.textContent = pageSubtitle(state.page, state.tab);
+    subtitle.textContent = pageSubtitle(state.page, state.tab, { setupOnly });
     content.className = "page-body";
     content.innerHTML = "";
     state.error = "";
     state.busy = true;
     try {
-      if (state.page === "overview") await renderOverview(content, rpc, { go });
+      if (state.page === "overview") {
+        await renderOverview(content, rpc, {
+          go,
+          includeConfig,
+          includeQq,
+          includeAgentConnections,
+          includeBotFlow,
+        });
+      }
       else if (state.page === "runtime") await renderRuntime(content, rpc, app, state, go);
       else if (state.page === "upgrade") await renderUpgrade(content, rpc, app, state, go);
       else if (state.page === "plugins") await renderPlugins(content, rpc, app);
@@ -263,7 +277,7 @@ function createShell(rpc, options = {}) {
   app.querySelector("#refresh").onclick = renderPage;
   window.addEventListener("popstate", () => {
     const route = parseRoute();
-    state.page = route.page;
+    state.page = pageAvailable(route.page) ? route.page : (includeConfig ? "config" : "overview");
     state.tab = route.tab;
     renderNav();
     renderPage();
@@ -272,7 +286,7 @@ function createShell(rpc, options = {}) {
   return app;
 }
 
-function pageSubtitle(page, tab) {
+function pageSubtitle(page, tab, options = {}) {
   switch (page) {
     case "upgrade":
       return "对照 release set 检查 Mutsuki 模块 Git pin，生成 fetch / build / ABI / pin 升级计划";
@@ -289,7 +303,7 @@ function pageSubtitle(page, tab) {
     case "database":
       return "产品内置 SQLite 只读浏览（经 task_submit_batch / mutsuki.db.*）";
     case "config":
-      return "管理 QQ 账号、模型和回复策略";
+      return options.setupOnly ? "启用本机 Bot 工作区" : "管理 QQ 账号、模型和回复策略";
     case "qq-bot":
       return "QQ 账号、会话规则、命令、Agent 与主动投递";
     case "agent-connections":
@@ -310,12 +324,16 @@ async function renderOverview(content, rpc, ctx = {}) {
   const go = ctx.go || (() => {});
   const d = await rpc.read("overview", "summary");
   const h = d.health || {};
+  const workspaceAvailable = ctx.includeQq || ctx.includeAgentConnections || ctx.includeBotFlow;
 
-  appendMetricGrid(content, [
+  const metrics = [
     { label: "运行时间", value: formatDuration(d.uptime_ms) },
-    { label: "Bot 服务", value: healthLabel(h.service) },
-    { label: "消息处理", value: healthLabel(h.core) },
-  ]);
+    { label: workspaceAvailable ? "Bot 服务" : "管理后台", value: healthLabel(h.service) },
+  ];
+  if (workspaceAvailable) {
+    metrics.push({ label: "消息处理", value: healthLabel(h.core) });
+  }
+  appendMetricGrid(content, metrics);
 
   const grid = document.createElement("div");
   grid.className = "overview-grid";
@@ -323,10 +341,15 @@ async function renderOverview(content, rpc, ctx = {}) {
 
   const entry = document.createElement("section");
   entry.className = "card";
-  entry.innerHTML = `<h2>开始使用</h2><p class="muted">先完成账号和模型配置，再发布消息处理流程。</p>`;
+  entry.innerHTML = `<h2>开始使用</h2><p class="muted">配置可用的账号和助手，再发布消息处理流程。</p>`;
   const actions = document.createElement("div");
   actions.className = "toolbar nested";
-  for (const [label, page] of [["配置 QQ 与 Agent", "config"], ["编排回复流程", "bot-flow"], ["查看 QQ 状态", "qq-bot"], ["查看 Agent 会话", "agent-connections"]]) {
+  const availableActions = [];
+  if (ctx.includeConfig) availableActions.push(["配置账号与助手", "config"]);
+  if (ctx.includeBotFlow) availableActions.push(["编排回复流程", "bot-flow"]);
+  if (ctx.includeQq) availableActions.push(["查看 QQ 状态", "qq-bot"]);
+  if (ctx.includeAgentConnections) availableActions.push(["查看 Agent 会话", "agent-connections"]);
+  for (const [label, page] of availableActions) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ghost";

@@ -235,6 +235,7 @@ pub struct PreparedHostSecretTransaction {
     journal: StandaloneSecretJournal,
     change: Option<PreparedSecretChange>,
     activated: bool,
+    committed: bool,
     finished: bool,
 }
 
@@ -243,6 +244,8 @@ struct StandaloneSecretJournal {
     version: u32,
     phase: ConfigJournalPhase,
     secret: SecretChangeJournal,
+    #[serde(default)]
+    commit_marker: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for HostSecretStore {
@@ -301,16 +304,18 @@ impl HostSecretStore {
             return Ok(PreparedHostSecretTransaction {
                 journal_path: PathBuf::new(),
                 journal: StandaloneSecretJournal {
-                    version: 1,
+                    version: 2,
                     phase: ConfigJournalPhase::Prepared,
                     secret: SecretChangeJournal {
                         path: PathBuf::new(),
                         previous: String::new(),
                         candidate: String::new(),
                     },
+                    commit_marker: None,
                 },
                 change: None,
                 activated: false,
+                committed: false,
                 finished: false,
             });
         };
@@ -322,9 +327,10 @@ impl HostSecretStore {
             });
         }
         let journal = StandaloneSecretJournal {
-            version: 1,
+            version: 2,
             phase: ConfigJournalPhase::Prepared,
             secret: change.journal.clone(),
+            commit_marker: None,
         };
         write_secret_journal(&journal_path, &journal)?;
         Ok(PreparedHostSecretTransaction {
@@ -332,6 +338,7 @@ impl HostSecretStore {
             journal,
             change: Some(change),
             activated: false,
+            committed: false,
             finished: false,
         })
     }
@@ -403,6 +410,32 @@ impl HostSecretStore {
 }
 
 impl PreparedHostSecretTransaction {
+    /// Opts this secret transaction into a shared commit decision used by ConfigService.
+    /// The returned marker must also be recorded by the configuration repository.
+    pub fn enable_coordinated_commit(&mut self) -> ConfigResult<Option<PathBuf>> {
+        if self.change.is_none() {
+            return Ok(None);
+        }
+        if let Some(marker) = &self.journal.commit_marker {
+            return Ok(Some(marker.clone()));
+        }
+        let marker = self.journal_path.with_extension("commit");
+        if marker.exists() {
+            return Err(ConfigError::ConfigJournal {
+                path: marker,
+                detail: "unfinished coordinated transaction requires recovery".into(),
+            });
+        }
+        self.journal.commit_marker = Some(marker.clone());
+        write_secret_journal(&self.journal_path, &self.journal)?;
+        Ok(Some(marker))
+    }
+
+    #[must_use]
+    pub fn commit_marker(&self) -> Option<&Path> {
+        self.journal.commit_marker.as_deref()
+    }
+
     pub fn activate(&mut self) -> ConfigResult<()> {
         let Some(change) = &mut self.change else {
             self.activated = true;
@@ -434,6 +467,23 @@ impl PreparedHostSecretTransaction {
         if let Some(change) = &mut self.change {
             self.journal.phase = ConfigJournalPhase::Committed;
             write_secret_journal(&self.journal_path, &self.journal)?;
+            if let Some(marker) = &self.journal.commit_marker {
+                atomic_write(marker, b"committed\n", true)?;
+                self.committed = true;
+                return Ok(());
+            }
+            remove_journal(&self.journal_path)?;
+            change.reservation.release();
+        }
+        self.committed = true;
+        self.finished = true;
+        Ok(())
+    }
+
+    /// Releases the secret-side recovery journal after the shared marker is durable.
+    /// The repository removes the marker only after its pending record is gone.
+    pub fn finish(&mut self) -> ConfigResult<()> {
+        if let Some(change) = &mut self.change {
             remove_journal(&self.journal_path)?;
             change.reservation.release();
         }
@@ -443,6 +493,17 @@ impl PreparedHostSecretTransaction {
 
     pub fn rollback(&mut self) -> ConfigResult<()> {
         if let Some(change) = &mut self.change {
+            if self
+                .journal
+                .commit_marker
+                .as_deref()
+                .is_some_and(Path::exists)
+            {
+                remove_journal(&self.journal_path)?;
+                change.reservation.release();
+                self.finished = true;
+                return Ok(());
+            }
             if self.activated {
                 atomic_write(
                     &change.journal.path,
@@ -468,7 +529,11 @@ impl PreparedHostSecretTransaction {
 impl Drop for PreparedHostSecretTransaction {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.rollback();
+            if self.committed {
+                let _ = self.finish();
+            } else {
+                let _ = self.rollback();
+            }
         }
     }
 }
@@ -1099,18 +1164,31 @@ fn recover_secret_journal(secret_path: &Path) -> ConfigResult<()> {
             path: journal_path.clone(),
             detail: source.to_string(),
         })?;
-    if journal.version != 1 || journal.secret.path != secret_path {
+    if !matches!(journal.version, 1 | 2) || journal.secret.path != secret_path {
         return Err(ConfigError::ConfigJournal {
             path: journal_path,
             detail: "invalid secret transaction journal".into(),
         });
     }
-    let recovered = match journal.phase {
-        ConfigJournalPhase::Prepared | ConfigJournalPhase::Committing => journal.secret.previous,
-        ConfigJournalPhase::Committed => journal.secret.candidate,
+    let recovered = match journal.commit_marker.as_deref() {
+        Some(marker) if marker.exists() => journal.secret.candidate,
+        Some(_) => journal.secret.previous,
+        None => match journal.phase {
+            ConfigJournalPhase::Prepared | ConfigJournalPhase::Committing => {
+                journal.secret.previous
+            }
+            ConfigJournalPhase::Committed => journal.secret.candidate,
+        },
     };
     atomic_write(secret_path, recovered.as_bytes(), true)?;
     remove_journal(&journal_path)
+}
+
+/// Recovers a coordinated Host secret transaction before its paired config repository opens.
+/// Applications using a separate repository must call this first so the shared marker remains
+/// available to both recovery participants.
+pub fn recover_host_secret_transaction(secret_path: &Path) -> ConfigResult<()> {
+    recover_secret_journal(secret_path)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1522,6 +1600,37 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn coordinated_secret_transaction_recovers_committed_candidate() {
+        let _env = ENV_LOCK.lock().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let config_path = write_product_config(root.path(), "local.secret.toml");
+        let secret_path = root.path().join("local.secret.toml");
+        fs::write(&secret_path, "[secrets]\nOPENAI_API_KEY = \"OLD\"\n").unwrap();
+        let config = ServiceConfig::load(ConfigOverrides {
+            config_file: Some(config_path.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let mut prepared = config
+            .host_secret_store()
+            .prepare_mutations(BTreeMap::from([(
+                "OPENAI_API_KEY".into(),
+                Some("NEW".into()),
+            )]))
+            .unwrap();
+        let marker = prepared.enable_coordinated_commit().unwrap().unwrap();
+        prepared.activate().unwrap();
+        prepared.commit().unwrap();
+        std::mem::forget(prepared);
+
+        recover_host_secret_transaction(&secret_path).unwrap();
+        assert!(fs::read_to_string(&secret_path).unwrap().contains("NEW"));
+        assert!(marker.exists());
+        fs::remove_file(marker).unwrap();
     }
 
     #[test]

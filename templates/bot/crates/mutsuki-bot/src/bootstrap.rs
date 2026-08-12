@@ -3,21 +3,25 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
-use mutsuki_bot_web_console::{
-    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, WebConsoleConfig,
-    merge_required_product_selections, product_config_service_with_options, product_seed_defaults,
-    register_configured_product_providers, restore_configured_product_selections,
-};
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigKey,
-    ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigService,
-    ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
+    ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
+    ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope,
+    ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
+    RestartPolicy, capability,
 };
 use mutsuki_plugin_config_sqlite::{
     PLUGIN_ID as SQLITE_REPOSITORY_PLUGIN_ID, SqliteConfigRepository,
 };
-use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
+use mutsuki_service_config::{
+    ConfiguredPluginSelection, ServiceConfig, recover_host_secret_transaction,
+};
 use serde::Deserialize;
+
+use crate::{
+    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, merge_required_product_selections,
+    product_config_service_with_options, product_seed_defaults,
+    register_configured_product_providers, restore_configured_product_selections,
+};
 
 pub const SERVICE_CONFIG_PROVIDER_ID: &str = "mutsuki.service.runtime";
 
@@ -65,9 +69,19 @@ pub struct ConfigRepositoryBootstrap {
 pub struct BootstrappedProduct {
     pub service: ServiceConfig,
     pub config: Arc<ConfigService>,
-    pub console: WebConsoleConfig,
+    pub console: LocalConsoleConfig,
     pub root: PathBuf,
     pub agent_connections: AgentConnectionRegistry,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LocalConsoleConfig {
+    pub enabled: bool,
+    pub listen: String,
+    pub auth_token_key: Option<String>,
+    pub extensions: Vec<String>,
+    pub release_set: Option<String>,
 }
 
 pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduct, String> {
@@ -93,6 +107,10 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    if let Some(secret_file) = bootstrap.security.secret_file.as_deref() {
+        recover_host_secret_transaction(&resolve(&root, secret_file))
+            .map_err(|error| error.to_string())?;
+    }
     let repository_path = bootstrap
         .config_repository
         .options
@@ -121,6 +139,7 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         )
         .await
         .map_err(|error| error.to_string())?;
+    migrate_product_config(&config).await?;
 
     let seed = service_seed(&bootstrap, &root);
     config
@@ -192,6 +211,50 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
     })
 }
 
+async fn migrate_product_config(config: &Arc<ConfigService>) -> Result<(), String> {
+    let context = ConfigContext::global();
+    let snapshot = config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            context.clone(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let ConfigValue::Object(mut value) = snapshot.value else {
+        return Err("stored product config must be an object".into());
+    };
+    if value.contains_key("workspace_enabled") {
+        return Ok(());
+    }
+    let enabled = value
+        .get("runtime_plugins")
+        .and_then(ConfigValue::as_object)
+        .is_some_and(|plugins| {
+            plugins.values().any(|plugin| {
+                plugin
+                    .as_object()
+                    .and_then(|object| object.get("enabled"))
+                    .is_some_and(|enabled| matches!(enabled, ConfigValue::Bool(true)))
+            })
+        });
+    value.insert("workspace_enabled".into(), ConfigValue::Bool(enabled));
+    config
+        .apply(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: ConfigValue::Object(value),
+                expected_revision: snapshot.revision,
+                dry_run: false,
+            },
+            context,
+            &[capability::APPLY.into(), capability::VALUE_WRITE.into()],
+        )
+        .await
+        .map(drop)
+        .map_err(|error| error.to_string())
+}
+
 fn service_seed(bootstrap: &BotBootstrap, root: &Path) -> ServiceConfig {
     let mut service = ServiceConfig::default();
     service.service.profile = "bot".into();
@@ -229,7 +292,7 @@ fn apply_bootstrap_boundaries(service: &mut ServiceConfig, bootstrap: &BotBootst
 fn decode_runtime_plugins(
     product: &serde_json::Value,
 ) -> Result<Vec<ConfiguredPluginSelection>, String> {
-    product
+    let mut selections = product
         .get("runtime_plugins")
         .and_then(serde_json::Value::as_object)
         .into_iter()
@@ -247,18 +310,45 @@ fn decode_runtime_plugins(
                     .unwrap_or_else(|| serde_json::json!({})),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+    if product
+        .get("workspace_enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        set_selection_enabled(
+            &mut selections,
+            mutsuki_agent_service_host_integration::AGENT_CONNECTIONS_PLUGIN_ID,
+        );
+        set_selection_enabled(
+            &mut selections,
+            mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID,
+        );
+    }
+    Ok(selections)
 }
 
-fn decode_console(product: &serde_json::Value) -> Result<WebConsoleConfig, String> {
-    let extensions = product
-        .get("extensions")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+fn set_selection_enabled(selections: &mut Vec<ConfiguredPluginSelection>, id: &str) {
+    if let Some(selection) = selections.iter_mut().find(|selection| selection.id == id) {
+        selection.enabled = true;
+    } else {
+        selections.push(ConfiguredPluginSelection {
+            id: id.into(),
+            enabled: true,
+            config: serde_json::json!({}),
+        });
+    }
+}
+
+fn decode_console(product: &serde_json::Value) -> Result<LocalConsoleConfig, String> {
+    let mut extensions = vec!["config".to_string()];
+    if product
+        .get("workspace_enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        extensions.extend(["qq".into(), "agent".into(), "bot-flow-editor".into()]);
+    }
     serde_json::from_value(serde_json::json!({
         "enabled": product.get("console_enabled").and_then(serde_json::Value::as_bool).unwrap_or(true),
         "listen": product.get("console_listen").and_then(serde_json::Value::as_str).unwrap_or("127.0.0.1:0"),
@@ -271,7 +361,7 @@ fn decode_console(product: &serde_json::Value) -> Result<WebConsoleConfig, Strin
 
 fn ensure_local_auth_secret(
     service: &ServiceConfig,
-    console: &WebConsoleConfig,
+    console: &LocalConsoleConfig,
     bootstrap_path: &Path,
 ) -> Result<(), String> {
     if !console.enabled {
@@ -405,8 +495,30 @@ fn resolve(root: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mutsuki_agent_service_host_integration::AGENT_CONNECTIONS_PLUGIN_ID;
+    use crate::TargetedPluginReloadLifecycle;
+    use mutsuki_agent_service_host_integration::{
+        AGENT_CONNECTION_MANAGEMENT_SERVICE_ID, AGENT_CONNECTIONS_PLUGIN_ID,
+        AgentConnectionManager, LOCAL_AGENT_API_KEY, LOCAL_AGENT_API_KEY_FIELD,
+        LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID, LocalAgentConfig,
+        local_agent_config_value,
+    };
+    use mutsuki_bot_flow::BotFlowRegistry;
+    use mutsuki_config_service::{ConfigApplyRequest, SecretState, SecretValue};
     use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
+    use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
+
+    fn enable_runtime_test_services(product: &mut BootstrappedProduct) {
+        for id in [AGENT_CONNECTIONS_PLUGIN_ID, "mutsuki.bot.router.flow"] {
+            product
+                .service
+                .plugins
+                .configured
+                .iter_mut()
+                .find(|selection| selection.id == id)
+                .expect("test runtime selection")
+                .enabled = true;
+        }
+    }
 
     #[tokio::test]
     async fn local_bootstrap_declares_product_components_and_private_console_secret() {
@@ -438,6 +550,7 @@ path = "home/config.sqlite3"
             AGENT_CONNECTIONS_PLUGIN_ID,
             "mutsuki.bot.router.flow",
             QQBOT_ADAPTER_PLUGIN_ID,
+            LOCAL_AGENT_PLUGIN_ID,
             "mutsuki.plugin.bot.agent",
         ] {
             assert!(
@@ -471,5 +584,238 @@ path = "home/config.sqlite3"
                 0o600
             );
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn owner_config_apply_persists_secret_and_preserves_unrelated_services() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap_path = root.path().join("local.toml");
+        std::fs::write(
+            &bootstrap_path,
+            r#"
+[host]
+instance_id = "test-bot"
+home_dir = "home"
+data_dir = "home/data"
+
+[security]
+secret_file = "local.secret.toml"
+
+[config_repository]
+repository_plugin_id = "mutsuki.config.repository.sqlite"
+document_namespace = "test-bot"
+
+[config_repository.options]
+path = "home/config.sqlite3"
+"#,
+        )
+        .unwrap();
+
+        let mut product = load_bootstrapped_product(&bootstrap_path).await.unwrap();
+        enable_runtime_test_services(&mut product);
+        let runtime = crate::assemble_service_with_connections(
+            product.service.clone(),
+            product.config.clone(),
+            product.agent_connections.clone(),
+        )
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
+        product
+            .config
+            .set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
+                runtime.handle(),
+            )));
+        let flow_before = runtime
+            .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+            .unwrap();
+        let connections_before = runtime
+            .host_service::<AgentConnectionManager>(AGENT_CONNECTION_MANAGEMENT_SERVICE_ID)
+            .unwrap();
+
+        let snapshot = product
+            .config
+            .read(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap();
+        let mut local = LocalAgentConfig::default();
+        local.endpoint = "http://127.0.0.1:43111/v1".into();
+        local.model = "fixture-model".into();
+        let mut candidate = local_agent_config_value(false, &local);
+        candidate.as_object_mut().unwrap().insert(
+            LOCAL_AGENT_API_KEY_FIELD.into(),
+            ConfigValue::Secret(SecretState::Set {
+                value: SecretValue::new("fixture-api-key"),
+            }),
+        );
+        let applied = product
+            .config
+            .apply(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigApplyRequest {
+                    candidate,
+                    expected_revision: snapshot.revision,
+                    dry_run: false,
+                },
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap();
+        assert!(applied.applied);
+        assert_eq!(
+            product
+                .service
+                .host_secret_store()
+                .resolve(LOCAL_AGENT_API_KEY)
+                .as_deref(),
+            Some("fixture-api-key")
+        );
+        let stored = product
+            .config
+            .read(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap();
+        assert!(!format!("{stored:?}").contains("fixture-api-key"));
+        let flow_after = runtime
+            .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+            .unwrap();
+        let connections_after = runtime
+            .host_service::<AgentConnectionManager>(AGENT_CONNECTION_MANAGEMENT_SERVICE_ID)
+            .unwrap();
+        assert!(Arc::ptr_eq(&flow_before, &flow_after));
+        assert!(Arc::ptr_eq(&connections_before, &connections_after));
+        runtime.shutdown().await;
+        drop(product);
+
+        let restored = load_bootstrapped_product(&bootstrap_path).await.unwrap();
+        let local = restored
+            .service
+            .plugins
+            .configured
+            .iter()
+            .find(|selection| selection.id == LOCAL_AGENT_PLUGIN_ID)
+            .unwrap();
+        assert_eq!(local.config["endpoint"], "http://127.0.0.1:43111/v1");
+        assert_eq!(
+            restored.service.secret(LOCAL_AGENT_API_KEY).as_deref(),
+            Some("fixture-api-key")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_agent_preflight_restores_secret_document_and_runtime_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let bootstrap_path = root.path().join("local.toml");
+        std::fs::write(
+            &bootstrap_path,
+            r#"
+[host]
+instance_id = "test-bot"
+home_dir = "home"
+data_dir = "home/data"
+
+[security]
+secret_file = "local.secret.toml"
+
+[config_repository]
+repository_plugin_id = "mutsuki.config.repository.sqlite"
+document_namespace = "test-bot"
+
+[config_repository.options]
+path = "home/config.sqlite3"
+"#,
+        )
+        .unwrap();
+        let mut product = load_bootstrapped_product(&bootstrap_path).await.unwrap();
+        enable_runtime_test_services(&mut product);
+        let runtime = crate::assemble_service_with_connections(
+            product.service.clone(),
+            product.config.clone(),
+            product.agent_connections.clone(),
+        )
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
+        product
+            .config
+            .set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
+                runtime.handle(),
+            )));
+        let flow_before = runtime
+            .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+            .unwrap();
+        let snapshot = product
+            .config
+            .read(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap();
+        let mut local = LocalAgentConfig::default();
+        local.endpoint = "http://127.0.0.1:9/v1".into();
+        local.model = "unreachable-model".into();
+        let mut candidate = local_agent_config_value(true, &local);
+        candidate.as_object_mut().unwrap().insert(
+            LOCAL_AGENT_API_KEY_FIELD.into(),
+            ConfigValue::Secret(SecretState::Set {
+                value: SecretValue::new("must-roll-back"),
+            }),
+        );
+        let error = product
+            .config
+            .apply(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigApplyRequest {
+                    candidate,
+                    expected_revision: snapshot.revision,
+                    dry_run: false,
+                },
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap_err();
+        assert!(!error.to_string().contains("must-roll-back"));
+        assert!(
+            product
+                .service
+                .host_secret_store()
+                .resolve(LOCAL_AGENT_API_KEY)
+                .is_none()
+        );
+        assert!(
+            !std::fs::read_to_string(root.path().join("local.secret.toml"))
+                .unwrap()
+                .contains("must-roll-back")
+        );
+        let after = product
+            .config
+            .read(
+                LOCAL_AGENT_CONFIG_PROVIDER_ID,
+                ConfigContext::global(),
+                &["*".into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.revision, snapshot.revision);
+        assert_eq!(after.value.to_json()["enabled"], false);
+        let flow_after = runtime
+            .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
+            .unwrap();
+        assert!(Arc::ptr_eq(&flow_before, &flow_after));
+        runtime.shutdown().await;
     }
 }

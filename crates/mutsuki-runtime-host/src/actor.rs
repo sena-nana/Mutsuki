@@ -1021,6 +1021,14 @@ fn reload_runtime(
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
 ) -> RuntimeResult<ReloadDecision> {
+    let affected_runner_ids = prepared.affected_plugins.as_ref().map(|affected_plugins| {
+        core.registry_snapshot()
+            .runners
+            .into_iter()
+            .filter(|runner| affected_plugins.contains(&runner.plugin_id))
+            .map(|runner| runner.runner_id)
+            .collect::<std::collections::BTreeSet<_>>()
+    });
     drain_for_reload(
         core,
         config,
@@ -1031,12 +1039,14 @@ fn reload_runtime(
         running_batches_by_task,
         draining_invocations,
         drain_timeout,
+        affected_runner_ids.as_ref(),
     )?;
     let PreparedRuntimeReload {
         plan,
         runners,
         async_handlers,
         runner_limits,
+        affected_plugins,
         ..
     } = prepared;
     let previous_runner_limits = config.runner_limits.clone();
@@ -1048,7 +1058,15 @@ fn reload_runtime(
         .into_iter()
         .map(|runner| Box::new(DisposeOnDropRunner::new(runner)) as Box<dyn Runner>)
         .collect();
-    let result = core.reload_with_async_handlers(plan, runners, async_handlers);
+    let result = match affected_plugins {
+        Some(affected_plugins) => core.reload_targeted_with_async_handlers(
+            plan,
+            runners,
+            async_handlers,
+            affected_plugins,
+        ),
+        None => core.reload_with_async_handlers(plan, runners, async_handlers),
+    };
     if result.is_err() {
         config.runner_limits = previous_runner_limits;
     }
@@ -1066,6 +1084,7 @@ fn drain_for_reload(
     running_batches_by_task: &mut BTreeMap<String, RunningBatch>,
     draining_invocations: &mut BTreeMap<String, DrainingInvocation>,
     drain_timeout: Duration,
+    affected_runner_ids: Option<&std::collections::BTreeSet<String>>,
 ) -> RuntimeResult<()> {
     let started_at = Instant::now();
     loop {
@@ -1078,7 +1097,13 @@ fn drain_for_reload(
             running_batches_by_task,
             draining_invocations,
         );
-        if running_batches_by_task.is_empty() {
+        let running_count = running_batches_by_task
+            .values()
+            .filter(|batch| {
+                affected_runner_ids.is_none_or(|runner_ids| runner_ids.contains(&batch.runner_id))
+            })
+            .count();
+        if running_count == 0 {
             return Ok(());
         }
         let elapsed = started_at.elapsed();
@@ -1087,7 +1112,7 @@ fn drain_for_reload(
                 "host.reload.drain_timeout",
                 format!(
                     "timed out waiting for {} running batch entry/entries to drain",
-                    running_batches_by_task.len()
+                    running_count
                 ),
             ));
         }

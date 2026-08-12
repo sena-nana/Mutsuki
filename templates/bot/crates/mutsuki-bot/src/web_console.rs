@@ -2,17 +2,23 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use mutsuki_agent_service_host_integration::LOCAL_AGENT_CONFIG_PROVIDER_ID;
 use mutsuki_bot_service_host_integration::{
-    AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotFlowConsoleBridge, QqConsoleBridge,
+    AgentConnectionConsoleBridge, BilibiliConsoleBridge, BotFlowConsoleBridge,
+    LocalAgentConsoleBridge, QqConsoleBridge,
 };
 use mutsuki_bot_web_console::{
     BotAgentConsoleServices, ConsoleAssetDirs, SecretKeyResolver, SecretMonitor, WebConsoleConfig,
     WebConsolePaths, WebConsoleSecrets, attach_revision_changed_bridge,
     build_console_host_with_agent,
 };
+use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
+use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_runtime::ServiceRuntime;
 use mutsuki_web_host::{MutsukiWebHost, WebHost, WebHostResult};
+
+use crate::{LocalConsoleConfig, PRODUCT_CONFIG_PROVIDER_ID};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebConsoleError {
@@ -30,7 +36,7 @@ pub struct WebConsoleGuard {
 
 impl WebConsoleGuard {
     pub async fn start(
-        config: WebConsoleConfig,
+        config: LocalConsoleConfig,
         product_root: &Path,
         service: &ServiceConfig,
         runtime: &ServiceRuntime,
@@ -39,6 +45,26 @@ impl WebConsoleGuard {
         if !config.enabled {
             return Ok(None);
         }
+        let workspace_enabled = config
+            .extensions
+            .iter()
+            .any(|extension| matches!(extension.as_str(), "qq" | "agent" | "bot-flow-editor"));
+        let mut config_provider_ids = vec![PRODUCT_CONFIG_PROVIDER_ID.into()];
+        if workspace_enabled {
+            config_provider_ids.extend([
+                QQBOT_ADAPTER_PLUGIN_ID.into(),
+                LOCAL_AGENT_CONFIG_PROVIDER_ID.into(),
+                BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
+            ]);
+        }
+        let config = WebConsoleConfig {
+            enabled: config.enabled,
+            listen: config.listen,
+            auth_token_key: config.auth_token_key,
+            extensions: config.extensions,
+            config_provider_ids,
+            release_set: config.release_set,
+        };
         let secrets = resolve_secrets(service, &config)?;
         let secret_monitor = build_secret_monitor(service, &config);
         let (host, assets) = build_console_host_with_agent(
@@ -53,6 +79,7 @@ impl WebConsoleGuard {
             QqConsoleBridge::get(runtime),
             BotAgentConsoleServices {
                 connections: AgentConnectionConsoleBridge::get(runtime),
+                sessions: LocalAgentConsoleBridge::get(runtime),
                 flow: BotFlowConsoleBridge::get(runtime),
             },
         )?;

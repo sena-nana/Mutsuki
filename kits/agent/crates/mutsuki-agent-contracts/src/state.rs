@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{AgentRunBudget, AgentToolCall, PermissionRequest, ResourceRef};
+use crate::{
+    AgentRunBudget, AgentToolCall, AgentUsage, InteractionRequest, PermissionRequest, ResourceRef,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionVersion(pub u64);
@@ -140,11 +142,17 @@ pub struct AgentSessionState {
     pub version: SessionVersion,
     pub status: AgentSessionStatus,
     pub budget: AgentBudget,
+    #[serde(default)]
+    pub usage: AgentUsage,
+    #[serde(default)]
+    pub cost_microunits: u64,
     pub snapshot: ResourceRef,
     #[serde(default)]
     pub turns: Vec<AgentTurnState>,
     #[serde(default)]
     pub pending_approvals: Vec<PendingApproval>,
+    #[serde(default)]
+    pub pending_interactions: Vec<InteractionRequest>,
     #[serde(default)]
     pub completed_attempts: BTreeSet<String>,
     #[serde(default)]

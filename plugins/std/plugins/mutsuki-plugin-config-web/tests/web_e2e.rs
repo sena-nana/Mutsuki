@@ -28,6 +28,10 @@ struct DemoConfig {
 }
 
 async fn start() -> MutsukiWebHost {
+    start_with_visible_providers(None).await
+}
+
+async fn start_with_visible_providers(visible: Option<Vec<String>>) -> MutsukiWebHost {
     let registry = Arc::new(ConfigProviderRegistry::default());
     let defaults = ConfigValue::Object(
         [
@@ -59,7 +63,10 @@ async fn start() -> MutsukiWebHost {
         "<!doctype html><title>Mutsuki Console</title><div id=app></div>",
     )
     .unwrap();
-    let extension = ConfigWebExtension::new(service).with_frontend_assets(&assets);
+    let mut extension = ConfigWebExtension::new(service).with_frontend_assets(&assets);
+    if let Some(visible) = visible {
+        extension = extension.with_visible_providers(visible);
+    }
     let mut host = MutsukiWebHost::builder()
         .application(MinimalWebApplication::new(
             WebApplicationDescriptor {
@@ -94,6 +101,17 @@ async fn ws_rpc(
     method: &str,
     params: serde_json::Value,
 ) -> serde_json::Value {
+    ws_rpc_result(addr, namespace, method, params)
+        .await
+        .expect("config RPC succeeds")
+}
+
+async fn ws_rpc_result(
+    addr: &str,
+    namespace: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     // Use the same binary MessagePack WebSocket frames as the browser SDK.
     use tokio_tungstenite::{connect_async, tungstenite::Message};
     let url = format!("ws://{addr}/ws");
@@ -139,10 +157,10 @@ async fn ws_rpc(
     };
     let msg = WireMessage::decode(bytes.as_ref()).unwrap();
     match msg {
-        WireMessage::RpcResult(result) => {
-            assert!(result.error.is_none(), "{:?}", result.error);
-            result.result.unwrap_or(serde_json::Value::Null)
-        }
+        WireMessage::RpcResult(result) => match result.error {
+            Some(error) => Err(error.message),
+            None => Ok(result.result.unwrap_or(serde_json::Value::Null)),
+        },
         other => panic!("unexpected {other:?}"),
     }
 }
@@ -221,6 +239,23 @@ async fn config_rpc_list_schema_read_validate_apply() {
     assert_eq!(token["type"], "secret");
     assert_eq!(token["value"]["state"], "configured");
     assert!(!snap2.to_string().contains("s3cr3t"));
+
+    host.stop().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+}
+
+#[tokio::test]
+async fn product_visibility_policy_filters_discovery_and_direct_access() {
+    let mut host = start_with_visible_providers(Some(vec!["another.provider".into()])).await;
+    let addr = host.listen_addr().unwrap().to_string();
+
+    let providers = ws_rpc(&addr, "config", "providers.list", json!({})).await;
+    assert_eq!(providers, json!([]));
+    assert!(
+        ws_rpc_result(&addr, "config", "schema.get", json!({"provider_id":"demo"}),)
+            .await
+            .is_err()
+    );
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;

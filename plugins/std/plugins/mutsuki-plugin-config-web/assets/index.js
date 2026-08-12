@@ -3,12 +3,6 @@
  */
 
 const rendererRegistry = new Map();
-const INTERNAL_PROVIDERS = new Set([
-  "mutsuki.product",
-  "mutsuki.service.runtime",
-  "mutsuki.bot.flow",
-]);
-
 export function registerConfigRenderer(format, renderer) {
   if (!format || typeof renderer !== "function") {
     throw new Error("registerConfigRenderer requires format and render(fn)");
@@ -440,6 +434,8 @@ export function mountConfigPanel(host, rpc) {
     draft: {},
     message: "",
     conflict: null,
+    applyInFlight: false,
+    pendingRevision: null,
   };
 
   const root = document.createElement("div");
@@ -449,7 +445,7 @@ export function mountConfigPanel(host, rpc) {
 
   async function refreshProviders() {
     const list = await rpc.call("config", "providers.list", {});
-    const ids = normalizeProviders(list).filter((id) => !INTERNAL_PROVIDERS.has(id));
+    const ids = normalizeProviders(list);
     state.providers = await Promise.all(ids.map(async (id) => {
       const schema = await rpc.call("config", "schema.get", { provider_id: id });
       return {
@@ -546,6 +542,8 @@ export function mountConfigPanel(host, rpc) {
     applyBtn.className = "primary";
     applyBtn.textContent = "应用";
     applyBtn.onclick = async () => {
+      state.applyInFlight = true;
+      state.pendingRevision = null;
       try {
         const context = defaultContext(state.schema);
         const result = await rpc.call("config", "apply", {
@@ -558,11 +556,26 @@ export function mountConfigPanel(host, rpc) {
           },
         });
         state.conflict = null;
-        state.message = "配置已生效";
+        const pendingActions = Array.isArray(result?.pending_actions) ? result.pending_actions : [];
+        const restartRequired = pendingActions.includes("application_restart_scheduled") ||
+          pendingActions.includes("host_restart_scheduled");
+        state.message = restartRequired ? "配置已保存，请重启应用后继续设置。" : "配置已生效";
         const selected = state.providers.find((provider) => provider.id === state.selected);
         await openProvider(selected || { id: state.selected, schema: state.schema });
+        state.applyInFlight = false;
+        const pendingRevision = state.pendingRevision;
+        state.pendingRevision = null;
+        const currentRevision = state.snapshot?.revision;
+        if (pendingRevision != null && currentRevision != null && Number(pendingRevision) !== Number(currentRevision)) {
+          state.conflict = { current: pendingRevision, expected: currentRevision };
+          state.message = "检测到配置已在其他页面更新";
+          render();
+          return;
+        }
         renderMessage();
       } catch (error) {
+        state.applyInFlight = false;
+        state.pendingRevision = null;
         const text = String(error?.message || error);
         try {
           const parsed = JSON.parse(text);
@@ -607,6 +620,10 @@ export function mountConfigPanel(host, rpc) {
       if (provider && provider !== state.selected) return;
       const remote = payload?.revision?.value ?? payload?.revision;
       const local = state.snapshot?.revision;
+      if (state.applyInFlight) {
+        state.pendingRevision = remote;
+        return;
+      }
       if (remote != null && local != null && Number(remote) !== Number(local)) {
         state.conflict = { current: remote, expected: local };
         state.message = "检测到配置已在其他页面更新";

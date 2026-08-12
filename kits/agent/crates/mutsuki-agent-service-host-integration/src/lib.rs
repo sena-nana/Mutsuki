@@ -6,6 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+mod local_runtime;
+
+pub use local_runtime::*;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -40,6 +44,7 @@ pub const AGENT_CONNECTIONS_PLUGIN_ID: &str = "mutsuki.agent.connections";
 pub const AGENT_CONNECTION_REGISTRY_SERVICE_ID: &str = "mutsuki.agent.connection.registry";
 pub const AGENT_CONNECTION_MANAGEMENT_SERVICE_ID: &str = "mutsuki.agent.connection.management";
 pub const LOCAL_LINK_CONNECTOR_ID: &str = "mutsuki.agent.connector.link.local";
+pub const IN_PROCESS_CONNECTOR_ID: &str = "mutsuki.agent.connector.in-process";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -316,6 +321,34 @@ impl AgentConnectionRegistry {
             },
         );
         status_of(connections.get(&id).expect("connection was inserted"))
+    }
+
+    fn install_internal(
+        &self,
+        connection_id: AgentConnectionId,
+        backend: Box<dyn AgentClientBackend + Send>,
+        negotiation: AgentWireNegotiation,
+    ) -> AgentConnectionStatus {
+        self.commit(PreparedConnection {
+            config: AgentConnectionConfig {
+                connection_id,
+                connector_id: IN_PROCESS_CONNECTOR_ID.into(),
+                enabled: true,
+                config: Value::Null,
+            },
+            negotiation,
+            backend,
+        })
+    }
+
+    fn remove_internal(&self, connection_id: &AgentConnectionId) {
+        let mut connections = self.connections.write();
+        if connections
+            .get(connection_id)
+            .is_some_and(|connection| connection.config.connector_id == IN_PROCESS_CONNECTOR_ID)
+        {
+            connections.remove(connection_id);
+        }
     }
 
     fn mark_unavailable(&self, id: &AgentConnectionId, generation: u64, error: &AgentWireError) {

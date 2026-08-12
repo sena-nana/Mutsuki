@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_web_console::ControlPluginReloadLifecycle;
+use mutsuki_bot::ControlPluginReloadLifecycle;
 use mutsuki_config_service::{ConfigAction, ConfigLifecycle, ConfigValue, RestartPolicy};
 use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 

@@ -242,6 +242,8 @@ impl ConfigService {
                 schema_version: entry.cached_schema.schema_version,
                 value_version: entry.cached_schema.value_version,
             })?;
+        let commit_marker = activation.commit_marker().map(std::path::Path::to_path_buf);
+        write.set_commit_marker(commit_marker.as_deref())?;
         if let Err(error) = activation.activate() {
             return Err(transaction_error(
                 error,
@@ -293,6 +295,8 @@ impl ConfigService {
                 [activation.rollback(), lifecycle_rollback, write.rollback()],
             ));
         }
+        activation.finish()?;
+        write.finish()?;
 
         let mut actions = vec![ConfigAction::Persisted];
         let mut pending = pending_actions;

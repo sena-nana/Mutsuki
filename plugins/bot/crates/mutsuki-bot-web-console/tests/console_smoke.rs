@@ -252,6 +252,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
         extensions: vec!["upgrade".into()],
+        config_provider_ids: Vec::new(),
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
     };
     let secrets = WebConsoleSecrets {
@@ -337,16 +338,16 @@ async fn embedded_console_mounts_qq_management_extension() {
         QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
     };
     use mutsuki_plugin_bot_qq_web::{
-        LocalQqManagementProvider, QqBotManagementApi, QqBotManagementService,
+        LocalQqManagementProvider, QqAccountViewInput, QqBotManagementApi, QqBotManagementService,
         account_view_from_config,
     };
 
     let local = LocalQqManagementProvider::new();
-    local.upsert_account(account_view_from_config(
-        "main",
-        "QQBOT_CLIENT_SECRET",
-        true,
-        QqBotCapabilityMatrix {
+    local.upsert_account(account_view_from_config(QqAccountViewInput {
+        account_id: "main".into(),
+        credential_reference: "QQBOT_CLIENT_SECRET".into(),
+        credential_present: true,
+        capability: QqBotCapabilityMatrix {
             account_id: "main".into(),
             conversation_kinds: vec![BotConversationKind::Private],
             outbound_conversation_kinds: vec![BotConversationKind::Private],
@@ -369,13 +370,13 @@ async fn embedded_console_mounts_qq_management_extension() {
             required_intents: vec!["group_and_c2c_event".into()],
             required_permissions: vec![QqPermissionRequirement::ReadC2cMessages],
         },
-        1,
-        [0, 1],
-        true,
-        true,
-        Some(1),
-        None,
-    ));
+        intents: 1,
+        shard: [0, 1],
+        connected: true,
+        identified: true,
+        last_heartbeat_unix_ms: Some(1),
+        last_error: None,
+    }));
     let api: Arc<dyn QqBotManagementApi> = Arc::new(QqBotManagementService::local(local));
     let config = WebConsoleConfig {
         enabled: true,

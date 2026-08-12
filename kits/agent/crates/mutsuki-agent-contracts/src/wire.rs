@@ -50,6 +50,9 @@ pub enum AgentWireRequest {
     GetSession {
         session_id: String,
     },
+    GetSessionState {
+        session_id: String,
+    },
     SubmitTurn {
         session_id: String,
         expected_version: SessionVersion,

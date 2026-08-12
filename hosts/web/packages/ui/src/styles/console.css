@@ -6,6 +6,10 @@
   min-height: 0;
 }
 
+.mutsuki-console [hidden] {
+  display: none !important;
+}
+
 /* Theme workspace only sets display:grid; product owns the two-column template. */
 .mutsuki-console.lilia-workspace {
   display: grid;

@@ -200,6 +200,10 @@ struct FailingCommitWrite {
 }
 
 impl PreparedConfigWrite for FailingCommitWrite {
+    fn set_commit_marker(&mut self, marker: Option<&std::path::Path>) -> Result<(), ConfigError> {
+        self.inner.set_commit_marker(marker)
+    }
+
     fn commit(&mut self) -> Result<ConfigDocumentSnapshot, ConfigError> {
         Err(ConfigError::PersistenceFailed {
             reason: "injected commit failure".into(),
@@ -208,6 +212,10 @@ impl PreparedConfigWrite for FailingCommitWrite {
 
     fn rollback(&mut self) -> Result<(), ConfigError> {
         self.inner.rollback()
+    }
+
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        self.inner.finish()
     }
 }
 

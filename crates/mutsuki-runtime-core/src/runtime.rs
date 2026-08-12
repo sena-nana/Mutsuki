@@ -61,6 +61,7 @@ pub struct RuntimeStatistics {
 struct DrainingGeneration {
     registry_generation: u64,
     runner_ids: Vec<String>,
+    plugin_ids: std::collections::BTreeSet<String>,
     registry: RunnerRegistry,
 }
 

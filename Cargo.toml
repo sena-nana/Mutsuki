@@ -175,6 +175,7 @@ mutsuki-config-derive = { path = "plugins/std/crates/mutsuki-config-derive" }
 mutsuki-bot-conversation = { path = "plugins/bot/crates/mutsuki-bot-conversation" }
 mutsuki-bot-delivery = { path = "plugins/bot/crates/mutsuki-bot-delivery" }
 mutsuki-bot-flow = { path = "plugins/bot/crates/mutsuki-bot-flow" }
+mutsuki-bot-management = { path = "plugins/bot/crates/mutsuki-bot-management" }
 mutsuki-bot-link-parser = { path = "plugins/bot/crates/mutsuki-bot-link-parser" }
 mutsuki-bot-interaction = { path = "plugins/bot/crates/mutsuki-bot-interaction" }
 mutsuki-bot-state-db = { path = "plugins/bot/crates/mutsuki-bot-state-db" }

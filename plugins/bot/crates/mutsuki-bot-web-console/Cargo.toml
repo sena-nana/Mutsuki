@@ -8,7 +8,6 @@ description = "Embedded Bot admin console assembly: WebHost + control/overview/c
 [dependencies]
 mutsuki-config-service = { workspace = true }
 mutsuki-bot-flow = { workspace = true }
-mutsuki-agent-service-host-integration = { workspace = true }
 mutsuki-plugin-bot-command = { workspace = true }
 mutsuki-plugin-config-web = { workspace = true }
 mutsuki-plugin-bot-control-web = { workspace = true }
@@ -17,14 +16,9 @@ mutsuki-plugin-bot-overview-web = { workspace = true }
 mutsuki-plugin-bot-bilibili = { workspace = true }
 mutsuki-plugin-bot-bilibili-web = { workspace = true }
 mutsuki-plugin-bot-qq-web = { workspace = true }
-mutsuki-plugin-bot-agent = { workspace = true }
 mutsuki-plugin-bot-agent-web = { workspace = true }
-mutsuki-plugin-bot-adapter-qqbot = { workspace = true }
 mutsuki-plugin-bot-flow-web = { workspace = true }
-mutsuki-plugin-bot-event-router = { workspace = true }
-mutsuki-service-config = { workspace = true }
 mutsuki-service-control = { workspace = true }
-mutsuki-service-runtime = { workspace = true }
 mutsuki-web-host = { workspace = true }
 mutsuki-web-extension = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
@@ -33,8 +27,6 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
-toml = { workspace = true }
-futures-executor = "0.3"
 
 [dev-dependencies]
 futures-util = { workspace = true }

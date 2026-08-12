@@ -7,46 +7,138 @@ function esc(value) {
 }
 
 function errorText(error) {
-  if (error && typeof error === "object" && error.message) return error.message;
-  return String(error);
+  const raw = error && typeof error === "object" && error.message
+    ? error.message
+    : String(error ?? "");
+  const start = raw.indexOf("{");
+  if (start >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(start));
+      if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message;
+    } catch (_) {}
+  }
+  return raw.startsWith("extension ") || raw.includes("rpc ")
+    ? "操作失败，请稍后重试"
+    : raw || "操作失败，请稍后重试";
 }
 
 export async function mountAgentConnectionsPanel(el, rpc) {
-  el.innerHTML = `<div class="card"><h2>Agent 连接</h2><p class="muted">连接配置由 Agent owner 解释；Bot 仅引用 connection_id。</p><div id="agent-connection-list"></div></div>
-    <div class="card"><h3>测试并应用</h3><div class="field"><label>连接配置 JSON</label><textarea id="agent-connection-json" rows="12">{\n  "connection_id": "primary",\n  "connector_id": "mutsuki.agent.connector.link.local",\n  "enabled": true,\n  "config": {}\n}</textarea></div><div class="toolbar nested"><button id="agent-test">测试连接</button><button id="agent-save">验证并切换</button></div><div id="agent-connection-result" class="muted"></div></div>`;
+  el.innerHTML = `<div class="card"><div class="toolbar nested"><h2>Agent 状态</h2><button id="agent-provider-test" class="ghost" hidden>测试模型</button><span id="agent-provider-test-result" class="muted"></span></div><div id="agent-connection-list"></div></div>
+    <div class="card"><div class="toolbar nested"><h3>会话</h3><button id="agent-session-refresh" class="ghost" hidden>刷新</button></div><div id="agent-session-list"></div><div id="agent-session-detail"></div></div>`;
   let revision = 0;
+  let sessions = [];
+  let nextSessionId = null;
   const list = el.querySelector("#agent-connection-list");
-  const result = el.querySelector("#agent-connection-result");
+  const sessionList = el.querySelector("#agent-session-list");
+  const detail = el.querySelector("#agent-session-detail");
 
   async function refresh() {
     const body = await rpc.call("bot-agent", "connections.snapshot", {});
     const snapshot = body.snapshot || body;
     revision = snapshot.revision || 0;
     const items = snapshot.connections || [];
-    list.innerHTML = items.length ? items.map((item) => `<div class="tree-item row-item"><div><strong>${esc(item.connection_id)}</strong><div class="muted">${esc(item.connector_id)} · generation ${esc(item.generation)}</div></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${esc(item.state)}</span><button class="ghost" data-reconnect="${esc(item.connection_id)}">重连</button></div></div>`).join("") : `<div class="muted">尚未配置连接</div>`;
+    list.innerHTML = items.length ? items.map((item) => `<div class="tree-item row-item"><div><strong>${item.connection_id === "local" ? "本机 Agent" : esc(item.connection_id)}</strong></div><div class="row-actions"><span class="pill ${item.state === "healthy" ? "ok" : "warn"}">${item.state === "healthy" ? "运行中" : "不可用"}</span>${item.connection_id === "local" ? "" : `<button class="ghost" data-reconnect="${esc(item.connection_id)}">重连</button>`}</div></div>`).join("") : `<div class="muted">Agent 尚未启用</div>`;
     list.querySelectorAll("[data-reconnect]").forEach((button) => {
       button.onclick = async () => {
         try {
           await rpc.call("bot-agent", "connections.reconnect", { expected_revision: revision, connection_id: button.dataset.reconnect });
           await refresh();
-        } catch (error) { result.textContent = errorText(error); }
+        } catch (error) { list.innerHTML = `<div class="muted">${esc(errorText(error))}</div>`; }
       };
     });
   }
 
-  function config() { return JSON.parse(el.querySelector("#agent-connection-json").value); }
-  el.querySelector("#agent-test").onclick = async () => {
-    try { result.textContent = JSON.stringify(await rpc.call("bot-agent", "connections.test", { config: config() }), null, 2); }
-    catch (error) { result.textContent = errorText(error); }
-  };
-  el.querySelector("#agent-save").onclick = async () => {
+  async function showSession(sessionId) {
     try {
-      await rpc.call("bot-agent", "connections.upsert", { expected_revision: revision, config: config() });
-      result.textContent = "连接验证成功，已原子切换。";
-      await refresh();
-    } catch (error) { result.textContent = errorText(error); }
+      const [sessionBody, stateBody, eventBody] = await Promise.all([
+        rpc.call("bot-agent", "sessions.get", { session_id: sessionId }),
+        rpc.call("bot-agent", "sessions.state", { session_id: sessionId }),
+        rpc.call("bot-agent", "sessions.events", { session_id: sessionId, after_sequence: 0, limit: 100 }),
+      ]);
+      const session = sessionBody.session || sessionBody;
+      const state = stateBody.session_state || stateBody;
+      const events = eventBody.events || eventBody;
+      const messages = (session.messages || []).map((message) => `<div class="tree-item"><strong>${message.role === "user" ? "用户" : message.role === "assistant" ? "助手" : esc(message.role)}</strong><div>${esc(message.content)}</div></div>`).join("");
+      const eventLabels = { session_state: "会话", turn_state: "处理", user_message: "用户消息", step_state: "步骤", model_delta: "回复生成", reasoning_delta: "思考", tool_call: "工具调用", tool_result: "工具结果", tool_call_started: "工具开始", tool_call_completed: "工具完成", approval_request: "等待批准", interaction_request: "等待回答", usage: "用量", warning: "提醒", error: "错误" };
+      const eventRows = (events || []).map((entry) => {
+        const event = entry.event || {};
+        const detailText = event.content || event.text || event.summary || event.name || event.status || event.message || "";
+        return `<div class="tree-item row-item"><span>${esc(eventLabels[event.type] || "进度")}</span><span class="muted">${esc(detailText)}</span></div>`;
+      }).join("");
+      const approvals = (state.pending_approvals || []).map((item) => `<div class="tree-item row-item"><div>${esc(item.request.summary || item.request.tool)}</div><div class="row-actions"><button data-approve="${esc(item.request.action_id)}">批准</button><button class="ghost" data-reject="${esc(item.request.action_id)}">拒绝</button></div></div>`).join("");
+      const interactions = (state.pending_interactions || []).map((item) => `<div class="tree-item"><div>${esc(item.prompt)}</div><div class="toolbar nested"><input data-answer="${esc(item.interaction_id)}" placeholder="输入回答"><button data-interact="${esc(item.interaction_id)}">回答</button></div></div>`).join("");
+      const activeTurn = (state.turns || []).find((turn) => ["collecting_context", "generating", "running_tools"].includes(turn.status));
+      detail.innerHTML = `<div class="subsection"><h3>${esc(session.title || session.session_id)}</h3><div class="muted">${esc(session.turn_count)} 轮 · ${esc(state.usage?.total_tokens || 0)} tokens</div><h4>消息</h4>${messages || `<div class="muted">暂无消息</div>`}${approvals}${interactions}<h4>运行记录</h4>${eventRows || `<div class="muted">暂无运行记录</div>`}<div class="toolbar nested">${activeTurn ? `<button id="agent-cancel-turn">停止当前回复</button>` : `<button class="ghost" id="agent-close-session">关闭会话</button>`}</div></div>`;
+      detail.querySelectorAll("[data-approve]").forEach((button) => button.onclick = async () => {
+        const item = state.pending_approvals.find((entry) => entry.request.action_id === button.dataset.approve);
+        await rpc.call("bot-agent", "sessions.approve", { decision: { session_id: item.request.session_id, turn_id: item.request.turn_id, action_id: item.request.action_id, version: item.request.version, decision: "approved" } });
+        await showSession(sessionId);
+      });
+      detail.querySelectorAll("[data-reject]").forEach((button) => button.onclick = async () => {
+        const item = state.pending_approvals.find((entry) => entry.request.action_id === button.dataset.reject);
+        await rpc.call("bot-agent", "sessions.reject", { decision: { session_id: item.request.session_id, turn_id: item.request.turn_id, action_id: item.request.action_id, version: item.request.version, decision: "rejected" } });
+        await showSession(sessionId);
+      });
+      detail.querySelectorAll("[data-interact]").forEach((button) => button.onclick = async () => {
+        const item = state.pending_interactions.find((entry) => entry.interaction_id === button.dataset.interact);
+        const answer = detail.querySelector(`[data-answer="${CSS.escape(item.interaction_id)}"]`).value;
+        await rpc.call("bot-agent", "sessions.interact", { resolution: { session_id: item.session_id, turn_id: item.turn_id, version: item.version, interaction_id: item.interaction_id, accepted: true, response: { answer } } });
+        await showSession(sessionId);
+      });
+      const cancelButton = detail.querySelector("#agent-cancel-turn");
+      if (cancelButton) cancelButton.onclick = async () => {
+        await rpc.call("bot-agent", "sessions.cancel_turn", { session_id: sessionId, turn_id: activeTurn.turn_id, expected_version: state.version?.[0] ?? state.version });
+        await showSession(sessionId);
+      };
+      const closeButton = detail.querySelector("#agent-close-session");
+      if (closeButton) closeButton.onclick = async () => {
+          await rpc.call("bot-agent", "sessions.close", { session_id: sessionId, expected_version: state.version?.[0] ?? state.version });
+          detail.innerHTML = "";
+          await refreshSessions();
+        };
+    } catch (error) { detail.innerHTML = `<div class="muted">${esc(errorText(error))}</div>`; }
+  }
+
+  function renderSessions() {
+    sessionList.innerHTML = sessions.length ? sessions.map((item) => `<button class="tree-item row-item ghost" data-session="${esc(item.session_id)}"><span>${esc(item.title || item.session_id)}</span><span class="muted">${esc(item.turn_count)} 轮 · ${esc(item.total_tokens)} tokens</span></button>`).join("") : `<div class="muted">暂无会话</div>`;
+    if (nextSessionId) sessionList.insertAdjacentHTML("beforeend", `<div class="toolbar nested"><button id="agent-session-more" class="ghost">加载更多</button></div>`);
+    sessionList.querySelectorAll("[data-session]").forEach((button) => button.onclick = () => showSession(button.dataset.session));
+    const more = sessionList.querySelector("#agent-session-more");
+    if (more) more.onclick = () => refreshSessions(nextSessionId);
+  }
+
+  async function refreshSessions(afterSessionId = null) {
+    try {
+      const body = await rpc.call("bot-agent", "sessions.list", { limit: 50, ...(afterSessionId ? { after_session_id: afterSessionId } : {}) });
+      const page = body.local_agent_session_page || body;
+      const items = page.items || [];
+      sessions = afterSessionId ? sessions.concat(items) : items;
+      nextSessionId = page.next_session_id || null;
+      el.querySelector("#agent-provider-test").hidden = false;
+      el.querySelector("#agent-session-refresh").hidden = false;
+      renderSessions();
+    } catch (error) {
+      el.querySelector("#agent-provider-test").hidden = true;
+      el.querySelector("#agent-session-refresh").hidden = true;
+      sessionList.innerHTML = `<div class="muted">Agent 尚未启用</div>`;
+    }
+  }
+  el.querySelector("#agent-provider-test").onclick = async (event) => {
+    const button = event.currentTarget;
+    const result = el.querySelector("#agent-provider-test-result");
+    button.disabled = true;
+    result.textContent = "正在测试…";
+    try {
+      await rpc.call("bot-agent", "provider.test", {});
+      result.textContent = "模型可用";
+    } catch (error) {
+      result.textContent = errorText(error);
+    } finally {
+      button.disabled = false;
+    }
   };
-  await refresh();
+  el.querySelector("#agent-session-refresh").onclick = () => refreshSessions();
+  await Promise.all([refresh(), refreshSessions()]);
 }
 
 export default { id: "bot-agent" };

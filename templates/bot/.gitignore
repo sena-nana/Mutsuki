@@ -5,6 +5,7 @@
 /config/local.secret.toml
 /.mutsuki-qqbot/
 /config/.mutsuki-qqbot/
+/config/.mutsuki-local/
 /.env
 *.secret.toml
 __pycache__/

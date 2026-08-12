@@ -1,0 +1,16 @@
+[package]
+name = "mutsuki-bot-management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless Bot operations management contracts and services."
+
+[dependencies]
+async-trait.workspace = true
+mutsuki-bot-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

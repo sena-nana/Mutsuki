@@ -45,15 +45,27 @@ impl Drop for Disposable {
 
 #[derive(Clone, Debug, Default)]
 pub struct RpcCallContext {
+    principal_id: Arc<str>,
     capabilities: Arc<[String]>,
 }
 
 impl RpcCallContext {
     #[must_use]
     pub fn new(capabilities: &[String]) -> Self {
+        Self::authenticated("internal", capabilities)
+    }
+
+    #[must_use]
+    pub fn authenticated(principal_id: &str, capabilities: &[String]) -> Self {
         Self {
+            principal_id: Arc::from(principal_id),
             capabilities: capabilities.to_vec().into(),
         }
+    }
+
+    #[must_use]
+    pub fn principal_id(&self) -> &str {
+        &self.principal_id
     }
 
     #[must_use]

@@ -301,6 +301,51 @@ impl RunnerRegistry {
         self.async_handlers.get(runner_id).cloned()
     }
 
+    pub(crate) fn partition_by_plugins(
+        mut self,
+        plugin_ids: &std::collections::BTreeSet<String>,
+    ) -> (Self, Self) {
+        let mut retained = Self::default();
+        let mut selected = Self::default();
+        let descriptors = std::mem::take(&mut self.descriptors);
+        for (runner_id, descriptor) in descriptors {
+            let target = if plugin_ids.contains(&descriptor.plugin_id) {
+                &mut selected
+            } else {
+                &mut retained
+            };
+            if let Some(runners) = self.runners.remove(&runner_id) {
+                target.runners.insert(runner_id.clone(), runners);
+            }
+            if let Some(handler) = self.async_handlers.remove(&runner_id) {
+                target.async_handlers.insert(runner_id.clone(), handler);
+            }
+            if let Some(heartbeat) = self.heartbeats.remove(&runner_id) {
+                target.heartbeats.insert(runner_id.clone(), heartbeat);
+            }
+            if let Some(capability) = self.capabilities.remove(&runner_id) {
+                target.capabilities.insert(runner_id.clone(), capability);
+            }
+            target.descriptors.insert(runner_id, descriptor);
+        }
+        retained.rebuild_descriptor_snapshot();
+        selected.rebuild_descriptor_snapshot();
+        (retained, selected)
+    }
+
+    pub(crate) fn absorb(&mut self, mut other: Self) {
+        self.runners.extend(std::mem::take(&mut other.runners));
+        self.async_handlers
+            .extend(std::mem::take(&mut other.async_handlers));
+        self.descriptors
+            .extend(std::mem::take(&mut other.descriptors));
+        self.heartbeats
+            .extend(std::mem::take(&mut other.heartbeats));
+        self.capabilities
+            .extend(std::mem::take(&mut other.capabilities));
+        self.rebuild_descriptor_snapshot();
+    }
+
     fn rebuild_descriptor_snapshot(&mut self) {
         let mut descriptors = self.descriptors.values().cloned().collect::<Vec<_>>();
         descriptors.sort_by(|left, right| left.runner_id.cmp(&right.runner_id));

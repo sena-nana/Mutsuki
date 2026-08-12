@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 use mutsuki_agent_contracts::{
     AGENT_WIRE_SUPPORTED_FEATURES, AGENT_WIRE_VERSION, AgentEventEnvelope, AgentEventPage,
-    AgentSession, AgentSessionCreateRequest, AgentWireError, AgentWireHello, AgentWireNegotiation,
-    AgentWireRequest, AgentWireRequestEnvelope, AgentWireResponse, AgentWireResponseEnvelope,
-    InteractionResolution, PermissionDecision, ResourceRef, SessionSnapshotRef, SessionVersion,
+    AgentSession, AgentSessionCreateRequest, AgentSessionState, AgentWireError, AgentWireHello,
+    AgentWireNegotiation, AgentWireRequest, AgentWireRequestEnvelope, AgentWireResponse,
+    AgentWireResponseEnvelope, InteractionResolution, PermissionDecision, ResourceRef,
+    SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_link_core::{
     Connection, ProtocolId, RequestReplay, TransportError, TransportErrorKind,
@@ -220,6 +221,19 @@ impl<B: AgentClientBackend> AgentClient<B> {
         })? {
             AgentWireResponse::Session(session) => Ok(session),
             _ => Err(unexpected("GetSession")),
+        }
+    }
+
+    pub fn get_session_state(
+        &mut self,
+        session_id: &str,
+    ) -> Result<AgentSessionState, AgentWireError> {
+        self.ensure_negotiated()?;
+        match self.dispatch(AgentWireRequest::GetSessionState {
+            session_id: session_id.into(),
+        })? {
+            AgentWireResponse::SessionState(state) => Ok(state),
+            _ => Err(unexpected("GetSessionState")),
         }
     }
 
@@ -759,6 +773,7 @@ fn validate_envelope(request: &AgentWireRequestEnvelope) -> Result<(), AgentWire
         AgentWireRequest::Negotiate | AgentWireRequest::ListRuntimeCapabilities => Ok(()),
         AgentWireRequest::StartSession { request } => non_empty(&request.profile_id, "profile_id"),
         AgentWireRequest::GetSession { session_id }
+        | AgentWireRequest::GetSessionState { session_id }
         | AgentWireRequest::CloseSession { session_id, .. } => non_empty(session_id, "session_id"),
         AgentWireRequest::SubmitTurn {
             session_id,
@@ -1055,6 +1070,7 @@ fn replay_policy(request: &AgentWireRequest) -> RequestReplay {
     match request {
         AgentWireRequest::Negotiate
         | AgentWireRequest::GetSession { .. }
+        | AgentWireRequest::GetSessionState { .. }
         | AgentWireRequest::SubscribeSessionEvents { .. }
         | AgentWireRequest::ResumeSession { .. }
         | AgentWireRequest::ListSessions { .. }
@@ -1106,8 +1122,8 @@ fn protocol_error(
 #[cfg(test)]
 mod tests {
     use mutsuki_agent_contracts::{
-        AgentEvent, AgentMessage, AgentSessionCreateRequest, PermissionDecisionKind,
-        ResourceCellRef,
+        AgentBudget, AgentEvent, AgentMessage, AgentSessionCreateRequest, AgentSessionStatus,
+        InteractionKind, InteractionRequest, PermissionDecisionKind, ResourceCellRef,
     };
     use mutsuki_link_core::{ConnectContext, TransportBudget};
     use mutsuki_link_core::{EndpointId, MemoryTransportConfig, memory_transport_pair};
@@ -1133,6 +1149,9 @@ mod tests {
                 AgentWireRequest::GetSession { session_id } => AgentWireResponse::Session(
                     AgentSession::new(session_id, "profile", resource(), cell()),
                 ),
+                AgentWireRequest::GetSessionState { session_id } => {
+                    AgentWireResponse::SessionState(session_state(&session_id))
+                }
                 AgentWireRequest::SubmitTurn {
                     session_id,
                     expected_version,
@@ -1292,6 +1311,36 @@ mod tests {
         }
     }
 
+    fn session_state(session_id: &str) -> AgentSessionState {
+        AgentSessionState {
+            session_id: session_id.into(),
+            profile_id: "profile".into(),
+            version: SessionVersion(4),
+            status: AgentSessionStatus::WaitingApproval,
+            budget: AgentBudget::default(),
+            usage: Default::default(),
+            cost_microunits: 0,
+            snapshot: resource(),
+            turns: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_interactions: vec![InteractionRequest {
+                session_id: session_id.into(),
+                turn_id: "turn".into(),
+                version: 4,
+                interaction_id: "ask-1".into(),
+                kind: InteractionKind::Clarification,
+                source_tool: None,
+                permission_mode: Default::default(),
+                prompt: "Choose a response".into(),
+                options: serde_json::json!(["A", "B"]),
+                context: None,
+                details: None,
+            }],
+            completed_attempts: BTreeSet::new(),
+            committed_side_effects: BTreeSet::new(),
+        }
+    }
+
     fn decision(kind: PermissionDecisionKind) -> PermissionDecision {
         PermissionDecision {
             session_id: "session".into(),
@@ -1354,6 +1403,9 @@ mod tests {
             "session"
         );
         assert_eq!(client.get_session("session").unwrap().profile_id, "profile");
+        let state = client.get_session_state("session").unwrap();
+        assert_eq!(state.pending_interactions.len(), 1);
+        assert_eq!(state.pending_interactions[0].interaction_id, "ask-1");
         assert_eq!(
             client
                 .submit_turn(

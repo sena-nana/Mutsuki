@@ -29,7 +29,7 @@ pub struct RuntimeBootstrapper {
     manifests: Vec<PluginManifest>,
     runners: Vec<RegisteredRunner>,
     async_handlers: Vec<RegisteredAsyncHandler>,
-    host_services: Vec<RuntimeBootstrapperService>,
+    host_services: Vec<RegisteredHostService>,
     shared_services: Option<Arc<HostServiceRegistry>>,
     resource_providers: Vec<RegisteredResourceProvider>,
     async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
@@ -44,6 +44,7 @@ pub struct PreparedRuntimeReload {
     pub(crate) profile_id: String,
     pub(crate) registry_generation: u64,
     pub(crate) runner_limits: Option<BTreeMap<String, RunnerLimits>>,
+    pub(crate) affected_plugins: Option<BTreeSet<String>>,
 }
 
 struct RegisteredRunner {
@@ -54,6 +55,11 @@ struct RegisteredRunner {
 struct RegisteredAsyncHandler {
     deployment_kind: PluginDeploymentKind,
     handler: Arc<dyn AsyncBatchHandler>,
+}
+
+struct RegisteredHostService {
+    owner_plugin_id: String,
+    service: RuntimeBootstrapperService,
 }
 
 struct RegisteredResourceProvider {
@@ -90,6 +96,7 @@ impl RuntimeBootstrapper {
             resource_providers,
             async_resource_providers,
         } = plugin;
+        let owner_plugin_id = manifest.plugin_id.clone();
         let deployment_kind =
             PluginDeploymentKind::default_for_artifact(&manifest.artifact.artifact_type);
         self.register_manifest(manifest);
@@ -99,7 +106,14 @@ impl RuntimeBootstrapper {
         for handler in async_handlers {
             self.register_external_async_handler(deployment_kind.clone(), handler);
         }
-        self.host_services.extend(host_services);
+        self.host_services.extend(
+            host_services
+                .into_iter()
+                .map(|service| RegisteredHostService {
+                    owner_plugin_id: owner_plugin_id.clone(),
+                    service,
+                }),
+        );
         for resource_provider in resource_providers {
             self.resource_providers.push(RegisteredResourceProvider {
                 provider_id: resource_provider.provider_id,
@@ -239,6 +253,19 @@ impl RuntimeBootstrapper {
         self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits))
     }
 
+    pub fn prepare_targeted_reload_with_runner_limits(
+        self,
+        profile: RuntimeProfile,
+        registry_generation: u64,
+        runner_limits: BTreeMap<String, RunnerLimits>,
+        affected_plugins: BTreeSet<String>,
+    ) -> RuntimeResult<PreparedRuntimeReload> {
+        let mut prepared =
+            self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits))?;
+        prepared.affected_plugins = Some(affected_plugins);
+        Ok(prepared)
+    }
+
     fn prepare_reload_with_limits(
         self,
         profile: RuntimeProfile,
@@ -278,6 +305,7 @@ impl RuntimeBootstrapper {
             profile_id: prepared.profile_id,
             registry_generation: prepared.registry_generation,
             runner_limits,
+            affected_plugins: None,
         })
     }
 
@@ -381,16 +409,18 @@ struct PreparedRuntime {
 }
 
 fn build_host_service_registry(
-    host_services: Vec<RuntimeBootstrapperService>,
+    host_services: Vec<RegisteredHostService>,
 ) -> RuntimeResult<Arc<HostServiceRegistry>> {
     let registry = Arc::new(HostServiceRegistry::new());
-    for service in host_services {
+    for registered in host_services {
+        let owner_plugin_id = registered.owner_plugin_id;
+        let service = registered.service;
         let RuntimeBootstrapperService {
             service_id,
             service,
             ..
         } = service;
-        registry.register_erased(service_id, service)?;
+        registry.register_erased_owned(service_id, owner_plugin_id, service)?;
     }
     registry.freeze();
     Ok(registry)

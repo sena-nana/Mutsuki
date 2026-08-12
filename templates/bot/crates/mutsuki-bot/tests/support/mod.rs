@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use futures_util::{SinkExt, StreamExt};
+use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
 use mutsuki_bot::load_bootstrapped_product;
 use mutsuki_bot_testkit::FakeQqServer;
-use mutsuki_bot_web_console::PRODUCT_CONFIG_PROVIDER_ID;
 use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue};
 use mutsuki_service_control::{HealthReport, TaskSnapshot};
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};

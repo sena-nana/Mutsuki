@@ -1,17 +1,7 @@
-mod management;
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_bot_protocol::{
-    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, QqBotCapabilityMatrix,
-    QqConversationRef,
-};
-
-pub use management::{
-    LocalQqManagementProvider, QqBotManagementService, QqManagementAuditEntry,
-    QqManagementProvider, QqManagementStateStore, account_view_from_config, delivery_view,
-};
+pub use mutsuki_bot_management::*;
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
@@ -19,7 +9,6 @@ use mutsuki_web_protocol::{
     AssetEntry, EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION,
     WebFrontendAssets,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const PLUGIN_ID: &str = "qq-bot";
@@ -29,175 +18,6 @@ pub const CAPABILITY_BOT_CONFIG_WRITE: &str = "bot.config.write";
 pub const CAPABILITY_BOT_DELIVERY_WRITE: &str = "bot.delivery.write";
 pub const CAPABILITY_BOT_SESSION_WRITE: &str = "bot.session.write";
 pub const CAPABILITY_BOT_SECRET_STATUS: &str = "bot.secret.status";
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QqBotManagementSnapshot {
-    pub revision: u64,
-    pub accounts: Vec<QqAccountView>,
-    pub deliveries: Vec<QqDeliveryView>,
-    pub interactions: Vec<BotInteractionSession>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqAccountView {
-    pub account_id: String,
-    pub enabled: bool,
-    pub health: String,
-    pub connection_state: QqGatewayConnectionState,
-    pub last_heartbeat_unix_ms: Option<u64>,
-    pub intents: u64,
-    pub shard: [u64; 2],
-    pub credential_reference: String,
-    pub credential_status: String,
-    pub rate_limit_status: String,
-    pub capability: QqBotCapabilityMatrix,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QqGatewayConnectionState {
-    Disconnected,
-    Connected,
-    Identified,
-    Resumable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QqDeliveryView {
-    pub receipt: BotDeliveryReceipt,
-    pub attempts: Vec<BotDeliveryAttempt>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QqManagementPage<T> {
-    pub items: Vec<T>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-pub enum QqManagementAction {
-    AccountSetEnabled {
-        account_id: String,
-        enabled: bool,
-    },
-    AccountHealthCheck {
-        account_id: String,
-    },
-    AccountReconnect {
-        account_id: String,
-    },
-    AccountSendTest {
-        account_id: String,
-        conversation: QqConversationRef,
-        text: String,
-    },
-    DeliveryRetry {
-        delivery_id: String,
-    },
-    DeliveryCancel {
-        delivery_id: String,
-    },
-    DeliveryPreview {
-        delivery_id: String,
-    },
-    InteractionCancel {
-        session_id: String,
-    },
-}
-
-impl QqManagementAction {
-    fn required_capability(&self) -> &'static str {
-        match self {
-            Self::AccountSetEnabled { .. }
-            | Self::AccountHealthCheck { .. }
-            | Self::AccountReconnect { .. }
-            | Self::AccountSendTest { .. } => CAPABILITY_BOT_CONFIG_WRITE,
-            Self::InteractionCancel { .. } => CAPABILITY_BOT_SESSION_WRITE,
-            Self::DeliveryRetry { .. }
-            | Self::DeliveryCancel { .. }
-            | Self::DeliveryPreview { .. } => CAPABILITY_BOT_DELIVERY_WRITE,
-        }
-    }
-
-    fn requires_confirmation(&self) -> bool {
-        !matches!(self, Self::DeliveryPreview { .. })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QqManagementWriteRequest {
-    pub actor_id: String,
-    pub expected_revision: u64,
-    pub action: QqManagementAction,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct QqManagementWriteResult {
-    pub revision: u64,
-    pub audit_id: String,
-    pub result: Value,
-}
-
-pub trait QqBotManagementApi: Send + Sync {
-    /// Reads the filtered management snapshot, optionally including secret presence metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed management error when the snapshot owner is unavailable or rejects access.
-    fn snapshot(
-        &self,
-        query: &str,
-        include_secret_status: bool,
-    ) -> Result<QqBotManagementSnapshot, QqManagementError>;
-    /// Applies one revision-fenced management operation.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed management error for stale revisions, policy denial, or owner failure.
-    fn write(
-        &self,
-        request: QqManagementWriteRequest,
-    ) -> Result<QqManagementWriteResult, QqManagementError>;
-
-    fn delivery_page(
-        &self,
-        query: &str,
-        after: Option<&str>,
-        limit: u32,
-    ) -> Result<QqManagementPage<QqDeliveryView>, QqManagementError> {
-        let snapshot = self.snapshot(query, false)?;
-        Ok(page_by_id(snapshot.deliveries, after, limit, |item| {
-            item.receipt.delivery_id.clone()
-        }))
-    }
-
-    fn interaction_page(
-        &self,
-        query: &str,
-        after: Option<&str>,
-        limit: u32,
-    ) -> Result<QqManagementPage<BotInteractionSession>, QqManagementError> {
-        let snapshot = self.snapshot(query, false)?;
-        Ok(page_by_id(snapshot.interactions, after, limit, |item| {
-            item.session_id.clone()
-        }))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QqManagementError {
-    pub code: String,
-    pub message: String,
-}
-
-impl std::fmt::Display for QqManagementError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for QqManagementError {}
 
 pub struct QqBotWebExtension {
     api: Arc<dyn QqBotManagementApi>,
@@ -238,80 +58,101 @@ impl WebExtension for QqBotWebExtension {
 
     fn register_rpc(&self, registry: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let api = self.api.clone();
-        registry.register_contextual("snapshot", move |context, params| {
-            context.require(CAPABILITY_BOT_READ)?;
-            let include_secret_status = context
-                .capabilities()
-                .iter()
-                .any(|capability| capability == "*" || capability == CAPABILITY_BOT_SECRET_STATUS);
-            let query = params.get("query").and_then(Value::as_str).unwrap_or("");
-            let mut snapshot = api
-                .snapshot(query, include_secret_status)
-                .map_err(domain_error)?;
-            if !include_secret_status {
-                for account in &mut snapshot.accounts {
-                    account.credential_reference.clear();
-                    account.credential_status = "restricted".into();
+        registry.register_async_contextual("snapshot", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                let include_secret_status = context.capabilities().iter().any(|capability| {
+                    capability == "*" || capability == CAPABILITY_BOT_SECRET_STATUS
+                });
+                let query = params.get("query").and_then(Value::as_str).unwrap_or("");
+                let mut snapshot = api
+                    .snapshot(query, include_secret_status)
+                    .await
+                    .map_err(domain_error)?;
+                if !include_secret_status {
+                    for account in &mut snapshot.accounts {
+                        account.credential_reference.clear();
+                        account.credential_status = "restricted".into();
+                    }
                 }
+                serde_json::to_value(snapshot).map_err(|error| {
+                    ExtensionError::Registration(format!("snapshot encode failed: {error}"))
+                })
             }
-            serde_json::to_value(snapshot).map_err(|error| {
-                ExtensionError::Registration(format!("snapshot encode failed: {error}"))
-            })
         });
 
         let api = self.api.clone();
-        registry.register_contextual("write", move |context, params| {
-            let mut request: QqManagementWriteRequest = serde_json::from_value(
-                params
-                    .get("request")
-                    .cloned()
-                    .ok_or_else(|| ExtensionError::Registration("missing request".into()))?,
-            )
-            .map_err(|error| ExtensionError::Registration(error.to_string()))?;
-            request.actor_id = "local-web-console".into();
-            let confirmed = params
-                .get("confirmed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if request.action.requires_confirmation() && !confirmed {
-                return Err(ExtensionError::Registration(
-                    "dangerous action requires confirmation".into(),
-                ));
+        registry.register_async_contextual("write", move |context, params| {
+            let api = api.clone();
+            async move {
+                let mut request: QqManagementWriteRequest = serde_json::from_value(
+                    params
+                        .get("request")
+                        .cloned()
+                        .ok_or_else(|| ExtensionError::Registration("missing request".into()))?,
+                )
+                .map_err(|error| ExtensionError::Registration(error.to_string()))?;
+                if request.operation_id.trim().is_empty() {
+                    request.operation_id = uuid::Uuid::new_v4().to_string();
+                }
+                let confirmed = params
+                    .get("confirmed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if requires_confirmation(&request.action) && !confirmed {
+                    return Err(ExtensionError::Registration(
+                        "dangerous action requires confirmation".into(),
+                    ));
+                }
+                context.require(required_capability(&request.action))?;
+                serde_json::to_value(
+                    api.write(context.principal_id(), request)
+                        .await
+                        .map_err(domain_error)?,
+                )
+                .map_err(|error| {
+                    ExtensionError::Registration(format!("write result encode failed: {error}"))
+                })
             }
-            context.require(request.action.required_capability())?;
-            serde_json::to_value(api.write(request).map_err(domain_error)?).map_err(|error| {
-                ExtensionError::Registration(format!("write result encode failed: {error}"))
-            })
         });
 
         let api = self.api.clone();
-        registry.register_contextual("deliveries.list", move |context, params| {
-            context.require(CAPABILITY_BOT_READ)?;
-            let page = api
-                .delivery_page(
-                    params.get("query").and_then(Value::as_str).unwrap_or(""),
-                    params.get("after").and_then(Value::as_str),
-                    page_limit(&params),
-                )
-                .map_err(domain_error)?;
-            serde_json::to_value(page).map_err(|error| {
-                ExtensionError::Registration(format!("delivery page encode failed: {error}"))
-            })
+        registry.register_async_contextual("deliveries.list", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                let page = api
+                    .delivery_page(
+                        params.get("query").and_then(Value::as_str).unwrap_or(""),
+                        params.get("after").and_then(Value::as_str),
+                        page_limit(&params),
+                    )
+                    .await
+                    .map_err(domain_error)?;
+                serde_json::to_value(page).map_err(|error| {
+                    ExtensionError::Registration(format!("delivery page encode failed: {error}"))
+                })
+            }
         });
 
         let api = self.api.clone();
-        registry.register_contextual("interactions.list", move |context, params| {
-            context.require(CAPABILITY_BOT_READ)?;
-            let page = api
-                .interaction_page(
-                    params.get("query").and_then(Value::as_str).unwrap_or(""),
-                    params.get("after").and_then(Value::as_str),
-                    page_limit(&params),
-                )
-                .map_err(domain_error)?;
-            serde_json::to_value(page).map_err(|error| {
-                ExtensionError::Registration(format!("interaction page encode failed: {error}"))
-            })
+        registry.register_async_contextual("interactions.list", move |context, params| {
+            let api = api.clone();
+            async move {
+                context.require(CAPABILITY_BOT_READ)?;
+                let page = api
+                    .interaction_page(
+                        params.get("query").and_then(Value::as_str).unwrap_or(""),
+                        params.get("after").and_then(Value::as_str),
+                        page_limit(&params),
+                    )
+                    .await
+                    .map_err(domain_error)?;
+                serde_json::to_value(page).map_err(|error| {
+                    ExtensionError::Registration(format!("interaction page encode failed: {error}"))
+                })
+            }
         });
         Ok(())
     }
@@ -392,21 +233,19 @@ fn page_limit(params: &Value) -> u32 {
         .clamp(1, 100)
 }
 
-fn page_by_id<T>(
-    mut items: Vec<T>,
-    after: Option<&str>,
-    limit: u32,
-    id: impl Fn(&T) -> String,
-) -> QqManagementPage<T> {
-    items.sort_by_key(|item| id(item));
-    let after = after.unwrap_or_default();
-    let mut items = items
-        .into_iter()
-        .filter(|item| id(item).as_str() > after)
-        .take(limit.saturating_add(1) as usize)
-        .collect::<Vec<_>>();
-    let has_more = items.len() > limit as usize;
-    items.truncate(limit as usize);
-    let next_cursor = has_more.then(|| items.last().map(&id)).flatten();
-    QqManagementPage { items, next_cursor }
+fn required_capability(action: &QqManagementAction) -> &'static str {
+    match action {
+        QqManagementAction::AccountSetEnabled { .. }
+        | QqManagementAction::AccountHealthCheck { .. }
+        | QqManagementAction::AccountReconnect { .. }
+        | QqManagementAction::AccountSendTest { .. } => CAPABILITY_BOT_CONFIG_WRITE,
+        QqManagementAction::InteractionCancel { .. } => CAPABILITY_BOT_SESSION_WRITE,
+        QqManagementAction::DeliveryRetry { .. }
+        | QqManagementAction::DeliveryCancel { .. }
+        | QqManagementAction::DeliveryPreview { .. } => CAPABILITY_BOT_DELIVERY_WRITE,
+    }
+}
+
+fn requires_confirmation(action: &QqManagementAction) -> bool {
+    !matches!(action, QqManagementAction::DeliveryPreview { .. })
 }

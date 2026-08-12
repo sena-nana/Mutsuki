@@ -18,6 +18,12 @@ struct ActiveValue {
     secrets: HashMap<String, String>,
 }
 
+type NormalizedCandidate = (
+    ConfigValue,
+    HashMap<String, String>,
+    BTreeMap<String, ConfigSecretMutation>,
+);
+
 struct MemoryActivation {
     active: Arc<Mutex<HashMap<String, ActiveValue>>>,
     key: String,
@@ -25,6 +31,7 @@ struct MemoryActivation {
     after: ActiveValue,
     persistence: Option<Box<dyn ConfigPersistTransaction>>,
     activated: bool,
+    committed: bool,
     finished: bool,
 }
 
@@ -40,10 +47,25 @@ impl ConfigActivation for MemoryActivation {
         Ok(())
     }
 
+    fn commit_marker(&self) -> Option<&std::path::Path> {
+        self.persistence
+            .as_ref()
+            .and_then(|transaction| transaction.commit_marker())
+    }
+
     fn commit(&mut self) -> Result<(), ConfigError> {
         if let Some(persistence) = &mut self.persistence {
             persistence.commit()?;
         }
+        self.committed = true;
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        if let Some(persistence) = &mut self.persistence {
+            persistence.finish()?;
+        }
+        self.persistence = None;
         self.finished = true;
         Ok(())
     }
@@ -68,7 +90,11 @@ impl ConfigActivation for MemoryActivation {
 impl Drop for MemoryActivation {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.rollback();
+            if self.committed {
+                let _ = self.finish();
+            } else {
+                let _ = self.rollback();
+            }
         }
     }
 }
@@ -132,14 +158,7 @@ impl MemoryConfigProvider {
         &self,
         candidate: &ConfigValue,
         previous_secrets: &HashMap<String, String>,
-    ) -> Result<
-        (
-            ConfigValue,
-            HashMap<String, String>,
-            BTreeMap<String, ConfigSecretMutation>,
-        ),
-        ConfigError,
-    > {
+    ) -> Result<NormalizedCandidate, ConfigError> {
         let Some(map) = candidate.as_object() else {
             return Err(ConfigError::ApplyRejected {
                 reason: "candidate must be object".into(),
@@ -260,6 +279,7 @@ impl ConfigProvider for MemoryConfigProvider {
                 after: ActiveValue { secrets },
                 persistence,
                 activated: false,
+                committed: false,
                 finished: false,
             }),
         ))

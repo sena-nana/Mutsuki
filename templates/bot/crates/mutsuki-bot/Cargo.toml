@@ -7,6 +7,11 @@ license.workspace = true
 [[bin]]
 name = "mutsuki-bot"
 path = "src/main.rs"
+required-features = ["web-console"]
+
+[features]
+default = ["web-console"]
+web-console = ["dep:mutsuki-bot-web-console", "dep:mutsuki-web-host"]
 
 [dependencies]
 mutsuki-distributed-contracts.workspace = true
@@ -15,13 +20,15 @@ mutsuki-service-config.workspace = true
 mutsuki-service-runtime.workspace = true
 mutsuki-agent-service-host-integration.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
-mutsuki-bot-web-console.workspace = true
+mutsuki-bot-web-console = { workspace = true, optional = true }
 mutsuki-config-service.workspace = true
+mutsuki-plugin-bot-adapter-qqbot.workspace = true
+mutsuki-plugin-bot-agent.workspace = true
+mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-plugin-config-sqlite.workspace = true
-mutsuki-plugin-config-web.workspace = true
 mutsuki-std-service-host-integration.workspace = true
-mutsuki-web-host.workspace = true
-mutsuki-web-protocol.workspace = true
+mutsuki-service-control.workspace = true
+mutsuki-web-host = { workspace = true, optional = true }
 thiserror = "2.0"
 serde.workspace = true
 serde_json.workspace = true
@@ -30,16 +37,18 @@ toml.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+mutsuki-bot-web-console.workspace = true
 mutsuki-agent-bundle.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-agent-sdk.workspace = true
 mutsuki-plugin-agent-model-gateway.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
-mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
+mutsuki-web-protocol.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-command.workspace = true
+mutsuki-plugin-bot-control-web.workspace = true
 mutsuki-bot-flow.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-bot-testkit.workspace = true
