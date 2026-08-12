@@ -63,10 +63,10 @@ pub use observability::{
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, CompanionArtifact, ContractSurface,
     ContractSurfaceKind, HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant,
-    PluginArtifact, PluginBusinessSurface, PluginDeploymentKind, PluginManifest, PluginProvides,
-    ProtocolClass, ProtocolDescriptor, RuntimeCapabilityGraph, RuntimeLoadPlan, RuntimeLock,
-    RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility, SurfaceOccupancy,
-    SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
+    PluginArtifact, PluginBusinessSurface, PluginDeploymentKind, PluginExtensionDescriptor,
+    PluginManifest, PluginProvides, ProtocolClass, ProtocolDescriptor, RuntimeCapabilityGraph,
+    RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility,
+    SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
 };
 pub use portability::{
     ContentId, ExecutionMobility, PORTABLE_TASK_ENVELOPE_SCHEMA_ID,

@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
     CancelPolicy, CommandPlan, DispatchLane, ExecutionClass, ExportPlan, PlanReceipt,
-    PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeProfile, RuntimeProfileMode,
-    SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task, TaskBatch, TaskHandle, TaskOutcome,
-    TaskStatus, WritePlan,
+    PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeLoadPlan, RuntimeProfile,
+    RuntimeProfileMode, SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task, TaskBatch,
+    TaskHandle, TaskOutcome, TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
@@ -76,6 +76,15 @@ type AsyncHandlerFactory =
 type LoadedPluginFactory = Arc<dyn Fn() -> Result<LoadedPlugin, String> + Send + Sync>;
 type HealthProbe = Arc<dyn Fn() -> Value + Send + Sync>;
 
+/// Domain-neutral final LoadPlan lifecycle gate.
+///
+/// Owner packages may validate immutable domain state against the fully resolved plan and update
+/// an already-validated snapshot after activation. ServiceHost never interprets owner data.
+pub trait LoadPlanLifecycleHook: Send + Sync {
+    fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String>;
+    fn activate(&self, plan: &RuntimeLoadPlan);
+}
+
 #[derive(Clone, Debug)]
 struct RunnerLimitOverride {
     runner_id: String,
@@ -95,6 +104,7 @@ struct PreparedComponent {
     event_sources: Mutex<Vec<Box<dyn HostEventSource>>>,
     runner_limits: BTreeMap<String, RunnerLimits>,
     runner_limit_factories: Vec<RunnerLimitFactory>,
+    load_plan_hooks: Vec<Arc<dyn LoadPlanLifecycleHook>>,
 }
 
 /// Prepared ServiceHost assembly records. A component's manifest, executable factories,
@@ -176,6 +186,13 @@ impl PreparedComponentRegistry {
         self.records
             .values()
             .flat_map(|component| component.runner_limit_factories.iter().cloned())
+            .collect()
+    }
+
+    fn load_plan_hooks(&self) -> Vec<Arc<dyn LoadPlanLifecycleHook>> {
+        self.records
+            .values()
+            .flat_map(|component| component.load_plan_hooks.iter().cloned())
             .collect()
     }
 
@@ -427,6 +444,8 @@ pub enum ServiceRuntimeError {
     RuntimeUnavailable,
     #[error("event source registration failed: {0}")]
     EventSource(String),
+    #[error("final LoadPlan validation failed: {0}")]
+    LoadPlanHook(String),
     #[error("native runner factory failed: {0}")]
     NativeRunnerFactory(String),
     #[error("configured plugin id must not be empty")]
@@ -788,6 +807,19 @@ impl ServiceRuntimeBuilder {
         self
     }
 
+    /// Registers a final resolved-plan validation/activation observer.
+    pub fn register_load_plan_hook(
+        mut self,
+        component_id: impl Into<String>,
+        hook: Arc<dyn LoadPlanLifecycleHook>,
+    ) -> Self {
+        self.components
+            .record(component_id)
+            .load_plan_hooks
+            .push(hook);
+        self
+    }
+
     /// Narrows Host-owned execution limits for a logical runner.
     ///
     /// Repeated registrations keep the strictest non-empty value, which lets multiple public
@@ -860,6 +892,7 @@ impl ServiceRuntimeBuilder {
         let loaded_plugin_factories = components.loaded_plugin_factories();
         let configured_runner_limits = components.runner_limits();
         let runner_limit_factories = components.runner_limit_factories();
+        let load_plan_hooks = components.load_plan_hooks();
         let event_sources = components.take_event_sources();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
@@ -870,7 +903,7 @@ impl ServiceRuntimeBuilder {
         let event_source_supervisor = EventSourceSupervisor::default();
         let deployment_state = load_deployment_state(&config)?;
         let catalog = load_catalog_with_state(&config, &builtin_registry, &deployment_state)?;
-        let host_runtime = boot_core(
+        let (host_runtime, runtime_lock) = boot_core(
             &config,
             &catalog,
             &native_runner_factories,
@@ -878,8 +911,12 @@ impl ServiceRuntimeBuilder {
             &loaded_plugin_factories,
             runtime_client.clone(),
             &runner_limits,
+            &load_plan_hooks,
         )
         .await?;
+        for hook in &load_plan_hooks {
+            hook.activate(&runtime_lock);
+        }
         let task_submitter = host_runtime.host_context().task_submitter_ref();
         let resource_gateway = host_runtime.host_context().resource_gateway_ref();
         let resource_registry = host_runtime.host_context().resource_registry_ref();
@@ -1544,6 +1581,7 @@ impl ServiceRuntimeInner {
         let loaded_plugin_factories = self.components.loaded_plugin_factories();
         let configured_runner_limits = self.components.runner_limits();
         let runner_limit_factories = self.components.runner_limit_factories();
+        let load_plan_hooks = self.components.load_plan_hooks();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         let (prepared, runtime_lock) = match runtime_bootstrapper(
@@ -1577,6 +1615,11 @@ impl ServiceRuntimeInner {
             Ok(reload) => reload,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
+        for hook in &load_plan_hooks {
+            if let Err(error) = hook.validate(&runtime_lock) {
+                return ControlResponse::err(ControlError::Failed(error));
+            }
+        }
         let drain_timeout = reload_drain_timeout(&self.config, &new_catalog);
         let plugin_count = new_catalog.records.len();
         let sidecars = sidecar_specs(&self.config, &new_catalog);
@@ -1603,6 +1646,10 @@ impl ServiceRuntimeInner {
                 }
             }
         };
+
+        for hook in &load_plan_hooks {
+            hook.activate(&runtime_lock);
+        }
 
         *self.catalog.lock().expect("catalog mutex") = new_catalog;
         let runner_errors = reconcile_supervised_sidecars(
@@ -2227,7 +2274,8 @@ async fn boot_core(
     loaded_plugin_factories: &BTreeMap<String, LoadedPluginFactory>,
     runtime_client: Arc<DeferredRuntimeClient>,
     runner_limits: &BTreeMap<String, RunnerLimits>,
-) -> ServiceRuntimeResult<HostRuntime> {
+    load_plan_hooks: &[Arc<dyn LoadPlanLifecycleHook>],
+) -> ServiceRuntimeResult<(HostRuntime, RuntimeLoadPlan)> {
     let (bootstrapper, profile) = runtime_bootstrapper(
         config,
         catalog,
@@ -2310,9 +2358,13 @@ async fn boot_core(
             .collect::<Vec<_>>(),
         &profile,
     )?;
+    for hook in load_plan_hooks {
+        hook.validate(&lock)
+            .map_err(ServiceRuntimeError::LoadPlanHook)?;
+    }
     let runtime = bootstrapper.into_host_runtime_with_config(profile, host_config)?;
     write_runtime_lock(config, &lock)?;
-    Ok(runtime)
+    Ok((runtime, lock))
 }
 
 fn map_execution_domain(
@@ -4581,7 +4633,7 @@ mod tests {
             components.register_manifest(record.manifest);
         }
         let runtime_client = Arc::new(DeferredRuntimeClient::default());
-        let host_runtime = boot_core(
+        let (host_runtime, _) = boot_core(
             &config,
             &catalog,
             &[],
@@ -4589,6 +4641,7 @@ mod tests {
             &BTreeMap::new(),
             runtime_client.clone(),
             &BTreeMap::new(),
+            &[],
         )
         .await
         .expect("core");

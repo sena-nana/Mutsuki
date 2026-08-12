@@ -5,10 +5,10 @@ MutsukiBotPlugins sits above Mutsuki Core. It contributes ordinary plugins and p
 ```text
 QQBot Gateway
   -> mutsuki-plugin-bot-adapter-qqbot
-  -> mutsuki.bot.event/ingest@1
-  -> mutsuki-plugin-bot-event-router
-  -> business bot plugin
-  -> mutsuki.bot.message/send@1
+  -> mutsuki.bot.flow/ingress@1
+  -> immutable published Bot Flow revision
+  -> Match / Processor nodes through exact bindings
+  -> Delivery / QQ Sink node
   -> mutsuki-plugin-bot-adapter-qqbot
   -> QQBot OpenAPI
 ```
@@ -48,11 +48,12 @@ reconnect and last-error snapshot through the standard health control surface.
 
 - `mutsuki-bot-protocol`: pure Bot data contracts.
 - `mutsuki-bot-sdk`: author helpers over Bot protocol tasks.
-- `mutsuki-plugin-bot-event-router`: event subscription and dispatch.
-- `mutsuki-plugin-bot-command`: generic command parsing.
+- `mutsuki-bot-flow`: Bot-owned catalog validation, graph versions and atomic publication.
+- `mutsuki-plugin-bot-event-router`: revision-pinned DAG execution and graph-owned match nodes.
+- `mutsuki-plugin-bot-command`: graph-configured command Match node.
 - `mutsuki-plugin-bot-agent`: Agent turn/session bridge and durable reply request producer.
 - `mutsuki-bot-delivery`: attempt, receipt, retry, CAS claim and reply-part delivery behavior.
-- `mutsuki-bot-state-db`: durable Bot conversation, delivery and interaction repository.
+- `mutsuki-bot-state-db`: durable graph, session, delivery and interaction repository.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform translation and OpenAPI side effects.
 - `mutsuki-bot-service-host-integration`: EventSource, health and ServiceRuntime assembly only.
 - `examples/bot-echo`: platform-neutral example business plugin over `mutsuki.bot.*` only.

@@ -30,8 +30,10 @@ release_set = "releases/mutsuki-0.1-alpha-3.toml"
 
 # Native owner factories are selected with [[plugins.configured]].
 # External plugin artifacts are discovered from ServiceHost plugin directories.
-# This template intentionally selects no platform, router, command, Agent,
+# This template intentionally selects no platform, Flow Router, behavior node, Agent,
 # Provider or business implementation.
+# Bot routing is not represented in TOML. After selecting plugins, use the authenticated
+# Web Console Bot Flow page to save, validate and publish the first graph revision.
 #
 # Single image render backend (Takumi): compose / card / QR → PNG.
 # Font paths must be absolute files; missing fonts fail loud (no system fonts).
@@ -48,4 +50,3 @@ release_set = "releases/mutsuki-0.1-alpha-3.toml"
 #
 # Protocols: mutsuki.image.compose | mutsuki.image.card.render | mutsuki.image.qr.render
 # Output schema: mutsuki.image.raster.png.v1
-

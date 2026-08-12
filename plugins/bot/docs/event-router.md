@@ -1,22 +1,25 @@
-# Event Router
+# Bot Flow Router
 
-The event router owns `mutsuki.bot.event/ingest@1`.
+`mutsuki.bot.router.flow` executes immutable Bot DAG revisions published by the Web Console. The
+graph stored by the Bot owner is the only routing source of truth; plugin manifests contribute only
+`mutsuki.bot.flow.nodes@1` catalogs containing node types, typed ports, configuration schemas and
+exact `HandlerBinding` targets.
 
-It receives a standard `BotEvent`, evaluates subscriptions, and emits targeted tasks for business handlers. Core does not perform fan-out.
+Ingress compares an event with every enabled Source selector in the active snapshot. Every matched
+flow gets an independent execution identity. Source output edges, node output edges and error edges
+are explicit; multiple edges fan out, and multiple incoming edges invoke the target separately.
+Version 1 rejects cycles and does not infer join, priority, propagation or hooks.
 
-The runner consumes row-layout `WorkBatch` values and can route multiple events in one batch. Event decode or dispatch failure is recorded only on the corresponding `EntryCompletion`; other entries continue. Emitted handler tasks inherit the active `registry_generation`.
+Processor/Match/Sink execution uses ordinary Task calls through `TaskAwaitRunnerAdapter`. A node is
+invoked only through the binding stored in its catalog descriptor. Failures terminate the current
+branch unless the node has an error edge, in which case the router emits a typed structured error
+event on that edge. Other branches and flows continue independently.
 
-The Handler pipeline evaluates descriptors in descending priority with a stable handler-id tie
-break. It composes built-in filters and asynchronous custom predicates, then applies permission
-and token-bucket checks before invoking a handler. Duplicate claims and per-handler concurrency
-are ledger-backed; handler, hook, timeout and cancellation failures are recorded for that entry
-and do not prevent lower-priority handlers from running. Propagation is explicit through
-`continue`, `stop` and `consume` outcomes.
+Every node Task pins `graph_revision`, registry generation, trace and correlation. Publishing a new
+revision atomically changes new ingress only; an in-flight node reloads its immutable pinned graph
+version from the Bot repository.
 
-Provided task protocols:
-
-- `mutsuki.bot.event/ingest@1`
-
-Emitted task protocols:
-
-- `mutsuki.bot.event/handle@1`
+Publishing is revision-fenced: validate against the current LoadPlan catalog, durably persist the
+new version and audit record, then atomically activate it. Cold boot and plugin reload run the same
+catalog validation through a domain-neutral ServiceHost LoadPlan hook. A missing node, port or
+binding prevents activation and leaves the previous graph active.

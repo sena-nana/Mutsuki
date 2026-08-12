@@ -21,7 +21,7 @@ retry = { max_attempts = 3, initial_backoff_ms = 1000, max_backoff_ms = 30000 }
 link_resolver = { enabled = false, cooldown_ms = 1000, account_to_binding = {} }
 media_provider_id = "mutsuki.std.resource.memory"
 subscriptions = []
-management = { enabled = false, allow_self_binding = false, command = "bili", admin_user_ids = [], self_binding_notifications = ["live", "video"], self_binding_outbound_binding = "" }
+management = { enabled = false, allow_self_binding = false, admin_user_ids = [], self_binding_notifications = ["live", "video"], self_binding_outbound_binding = "" }
 ```
 
 每条 subscription 的 `uid` 必须等于 `authorized_uid`，通知类型只能包含 `live` 和

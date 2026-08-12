@@ -33,11 +33,57 @@ pub(super) fn resolve_enabled_plugins(
         )?;
         resolved.deployments.insert(plugin_id.clone(), deployment);
         let mut manifest = manifest.clone();
+        validate_plugin_extensions(&manifest)?;
         normalize_protocol_classes(&mut manifest)?;
         resolved.manifests.push(manifest);
     }
     reject_cross_plugin_protocol_class_conflicts(&resolved.manifests)?;
     Ok(resolved)
+}
+
+fn validate_plugin_extensions(manifest: &PluginManifest) -> RuntimeResult<()> {
+    let mut identities = BTreeSet::new();
+    for extension in &manifest.provides.extensions {
+        let extension_id = extension.extension_id.trim();
+        let valid_id = !extension_id.is_empty()
+            && extension_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'));
+        let valid_payload = extension.payload.is_object();
+        if !valid_id || extension.version == 0 || !valid_payload {
+            return Err(plugin_extension_error(
+                manifest,
+                extension_id,
+                extension.version,
+                "invalid_descriptor",
+            ));
+        }
+        if !identities.insert((extension_id, extension.version)) {
+            return Err(plugin_extension_error(
+                manifest,
+                extension_id,
+                extension.version,
+                "duplicate_descriptor",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn plugin_extension_error(
+    manifest: &PluginManifest,
+    extension_id: &str,
+    version: u32,
+    reason: &str,
+) -> mutsuki_runtime_core::RuntimeFailure {
+    mutsuki_runtime_core::RuntimeFailure::new(mutsuki_runtime_contracts::RuntimeError::new(
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+        "host.load_plan.plugin_extension",
+        format!(
+            "plugin.{}.extension.{extension_id}@{version}.{reason}",
+            manifest.plugin_id
+        ),
+    ))
 }
 
 fn reject_cross_plugin_protocol_class_conflicts(manifests: &[PluginManifest]) -> RuntimeResult<()> {

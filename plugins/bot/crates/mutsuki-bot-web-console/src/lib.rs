@@ -23,7 +23,7 @@ pub use watch_bridge::attach_revision_changed_bridge;
 
 use mutsuki_agent_service_host_integration::AgentConnectionManager;
 use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
-use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_plugin_bot_agent_web::{
     BotAgentWebExtension, materialize_frontend_assets as materialize_bot_agent_assets,
 };
@@ -35,6 +35,9 @@ use mutsuki_plugin_bot_config_web::{
     ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
 };
 use mutsuki_plugin_bot_control_web::{ControlRpcCaller, ControlWebExtension};
+use mutsuki_plugin_bot_flow_web::{
+    BotFlowWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
+};
 use mutsuki_plugin_bot_overview_web::{
     OverviewWebExtension, materialize_frontend_assets as materialize_overview_assets,
 };
@@ -132,11 +135,11 @@ pub fn build_console_host(
     )
 }
 
-/// Owner services that make the Agent connection and Bot Agent rule pages real.
+/// Owner services that make Agent connection management and Bot flow authoring real.
 #[derive(Default)]
 pub struct BotAgentConsoleServices {
     pub connections: Option<Arc<AgentConnectionManager>>,
-    pub policies: Option<Arc<BotStateDbRepository>>,
+    pub flow: Option<Arc<BotFlowRegistry>>,
 }
 
 /// Builds the console and exposes each Agent page only when its owner service is registered.
@@ -165,7 +168,7 @@ pub fn build_console_host_with_agent(
         bilibili.is_some(),
         qq.is_some(),
         bot_agent.connections.is_some(),
-        bot_agent.policies.is_some(),
+        bot_agent.flow.is_some(),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -201,10 +204,15 @@ pub fn build_console_host_with_agent(
         builder = builder
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
     }
-    if bot_agent.connections.is_some() || bot_agent.policies.is_some() {
+    if bot_agent.connections.is_some() {
         builder = builder.extension(
-            BotAgentWebExtension::new(bot_agent.connections, bot_agent.policies)
+            BotAgentWebExtension::new(bot_agent.connections)
                 .with_frontend_assets(&asset_dirs.bot_agent_assets),
+        );
+    }
+    if let Some(flow) = bot_agent.flow {
+        builder = builder.extension(
+            BotFlowWebExtension::new(flow).with_frontend_assets(&asset_dirs.bot_flow_assets),
         );
     }
     Ok((builder.build()?, asset_dirs))
@@ -245,12 +253,14 @@ pub struct ConsoleAssetDirs {
     pub _bilibili_dir: Option<tempfile::TempDir>,
     pub _qq_dir: Option<tempfile::TempDir>,
     pub _bot_agent_dir: Option<tempfile::TempDir>,
+    pub _bot_flow_dir: Option<tempfile::TempDir>,
     pub _shell_dir: tempfile::TempDir,
     pub overview_assets: PathBuf,
     pub config_assets: PathBuf,
     pub bilibili_assets: PathBuf,
     pub qq_assets: PathBuf,
     pub bot_agent_assets: PathBuf,
+    pub bot_flow_assets: PathBuf,
     pub shell_root: PathBuf,
 }
 
@@ -261,7 +271,7 @@ impl ConsoleAssetDirs {
         include_bilibili: bool,
         include_qq: bool,
         include_agent_connections: bool,
-        include_bot_agent_rules: bool,
+        include_bot_flow: bool,
     ) -> WebHostResult<Self> {
         let overview_dir = tempfile::tempdir()
             .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
@@ -305,18 +315,29 @@ impl ConsoleAssetDirs {
             (None, PathBuf::new())
         };
 
-        let (bot_agent_dir, bot_agent_assets) =
-            if include_agent_connections || include_bot_agent_rules {
-                let dir = tempfile::tempdir()
-                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-                let assets = materialize_bot_agent_assets(dir.path())
-                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-                copy_dir(&assets, &overview_assets.join("bot-agent"))
-                    .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
-                (Some(dir), assets)
-            } else {
-                (None, PathBuf::new())
-            };
+        let (bot_agent_dir, bot_agent_assets) = if include_agent_connections {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_bot_agent_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("bot-agent"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
+
+        let (bot_flow_dir, bot_flow_assets) = if include_bot_flow {
+            let dir = tempfile::tempdir()
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            let assets = materialize_bot_flow_assets(dir.path())
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            copy_dir(&assets, &overview_assets.join("bot-flow"))
+                .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
+            (Some(dir), assets)
+        } else {
+            (None, PathBuf::new())
+        };
 
         materialize_console_shell(
             &overview_assets,
@@ -325,7 +346,7 @@ impl ConsoleAssetDirs {
             include_bilibili,
             include_qq,
             include_agent_connections,
-            include_bot_agent_rules,
+            include_bot_flow,
         )
         .map_err(|err| mutsuki_web_host::WebHostError::Io(err.to_string()))?;
 
@@ -337,12 +358,14 @@ impl ConsoleAssetDirs {
             bilibili_assets,
             qq_assets,
             bot_agent_assets,
+            bot_flow_assets,
             shell_root: shell_dir.path().to_path_buf(),
             _overview_dir: overview_dir,
             _config_dir: config_dir,
             _bilibili_dir: bilibili_dir,
             _qq_dir: qq_dir,
             _bot_agent_dir: bot_agent_dir,
+            _bot_flow_dir: bot_flow_dir,
             _shell_dir: shell_dir,
         })
     }
@@ -364,7 +387,7 @@ pub(crate) fn materialize_console_shell(
     include_bilibili: bool,
     include_qq: bool,
     include_agent_connections: bool,
-    include_bot_agent_rules: bool,
+    include_bot_flow: bool,
 ) -> std::io::Result<()> {
     let index_template = if include_config {
         include_str!("../assets/console-shell-config.html")
@@ -417,7 +440,7 @@ pub(crate) fn materialize_console_shell(
             "includeBilibili": include_bilibili,
             "includeQq": include_qq,
             "includeAgentConnections": include_agent_connections,
-            "includeBotAgentRules": include_bot_agent_rules,
+            "includeBotFlow": include_bot_flow,
         }))?,
     )?;
     Ok(())
@@ -438,21 +461,23 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod agent_console_tests {
+mod owner_console_tests {
     use super::*;
 
     #[test]
-    fn agent_pages_are_materialized_only_for_registered_owner_services() {
+    fn owner_pages_are_materialized_only_for_registered_services() {
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, true, true).unwrap();
         assert!(dirs.overview_assets.join("bot-agent/index.js").is_file());
+        assert!(dirs.overview_assets.join("bot-flow/index.js").is_file());
         let options: serde_json::Value = serde_json::from_slice(
             &std::fs::read(dirs.overview_assets.join("console-options.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(options["includeAgentConnections"], true);
-        assert_eq!(options["includeBotAgentRules"], true);
+        assert_eq!(options["includeBotFlow"], true);
 
         let dirs = ConsoleAssetDirs::materialize(false, false, false, false, false, false).unwrap();
         assert!(!dirs.overview_assets.join("bot-agent").exists());
+        assert!(!dirs.overview_assets.join("bot-flow").exists());
     }
 }

@@ -3,16 +3,15 @@
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BotCommandDescriptor, BotDeliveryAttempt, BotDeliveryReceipt, BotHandlerDescriptor,
-    BotInteractionSession, ConversationPolicy, DeliveryStatus, InteractionStatus,
-    QqBotCapabilityMatrix, QqStreamingStrategy,
+    BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, DeliveryStatus,
+    InteractionStatus, QqBotCapabilityMatrix,
 };
 use serde_json::{Value, json};
 
 use crate::{
-    QqAccountView, QqAgentSessionView, QqBotManagementApi, QqBotManagementSnapshot,
-    QqConversationView, QqDeliveryView, QqGatewayConnectionState, QqHandlerView,
-    QqManagementAction, QqManagementError, QqManagementWriteRequest, QqManagementWriteResult,
+    QqAccountView, QqBotManagementApi, QqBotManagementSnapshot, QqDeliveryView,
+    QqGatewayConnectionState, QqManagementAction, QqManagementError, QqManagementWriteRequest,
+    QqManagementWriteResult,
 };
 
 /// Live snapshot/action backend injected into [`QqBotManagementService`].
@@ -144,10 +143,6 @@ pub struct LocalQqManagementProvider {
 #[derive(Clone, Default)]
 struct LocalState {
     accounts: Vec<QqAccountView>,
-    conversations: Vec<QqConversationView>,
-    handlers: Vec<QqHandlerView>,
-    commands: Vec<BotCommandDescriptor>,
-    agent_sessions: Vec<QqAgentSessionView>,
     deliveries: Vec<QqDeliveryView>,
     interactions: Vec<BotInteractionSession>,
 }
@@ -168,46 +163,6 @@ impl LocalQqManagementProvider {
             *existing = account;
         } else {
             state.accounts.push(account);
-        }
-    }
-
-    pub fn replace_handlers(&self, handlers: Vec<QqHandlerView>) {
-        self.state
-            .lock()
-            .expect("qq local management mutex")
-            .handlers = handlers;
-    }
-
-    pub fn replace_commands(&self, commands: Vec<BotCommandDescriptor>) {
-        self.state
-            .lock()
-            .expect("qq local management mutex")
-            .commands = commands;
-    }
-
-    pub fn upsert_conversation(&self, conversation: QqConversationView) {
-        let mut state = self.state.lock().expect("qq local management mutex");
-        if let Some(existing) = state
-            .conversations
-            .iter_mut()
-            .find(|item| item.conversation == conversation.conversation)
-        {
-            *existing = conversation;
-        } else {
-            state.conversations.push(conversation);
-        }
-    }
-
-    pub fn upsert_agent_session(&self, session: QqAgentSessionView) {
-        let mut state = self.state.lock().expect("qq local management mutex");
-        if let Some(existing) = state
-            .agent_sessions
-            .iter_mut()
-            .find(|item| item.binding.origin_key == session.binding.origin_key)
-        {
-            *existing = session;
-        } else {
-            state.agent_sessions.push(session);
         }
     }
 
@@ -264,22 +219,6 @@ impl QqManagementProvider for LocalQqManagementProvider {
                 account
             })
             .collect();
-        let conversations = state
-            .conversations
-            .into_iter()
-            .filter(|item| {
-                query.is_empty()
-                    || item
-                        .conversation
-                        .origin_key()
-                        .to_ascii_lowercase()
-                        .contains(&query)
-                    || item
-                        .matched_rule_ids
-                        .iter()
-                        .any(|rule| rule.to_ascii_lowercase().contains(&query))
-            })
-            .collect();
         let deliveries = state
             .deliveries
             .into_iter()
@@ -295,10 +234,6 @@ impl QqManagementProvider for LocalQqManagementProvider {
         Ok(QqBotManagementSnapshot {
             revision: 0,
             accounts,
-            conversations,
-            handlers: state.handlers,
-            commands: state.commands,
-            agent_sessions: state.agent_sessions,
             deliveries,
             interactions: state.interactions,
         })
@@ -359,115 +294,6 @@ impl QqManagementProvider for LocalQqManagementProvider {
                     "sent": true,
                     "preview": text,
                 }))
-            }
-            QqManagementAction::ConversationUpdate {
-                conversation,
-                policy,
-            } => {
-                let next_policy = ConversationPolicy {
-                    revision: policy.revision.saturating_add(1),
-                    ..policy.clone()
-                };
-                if let Some(existing) = state
-                    .conversations
-                    .iter_mut()
-                    .find(|item| &item.conversation == conversation)
-                {
-                    existing.policy = next_policy.clone();
-                    if !existing.matched_rule_ids.iter().any(|id| id == "console") {
-                        existing.matched_rule_ids.push("console".into());
-                    }
-                } else {
-                    state.conversations.push(QqConversationView {
-                        conversation: conversation.clone(),
-                        policy: next_policy.clone(),
-                        matched_rule_ids: vec!["console".into()],
-                    });
-                }
-                Ok(json!({
-                    "conversation": conversation,
-                    "policy": next_policy,
-                    "matched_rule_ids": ["console"],
-                }))
-            }
-            QqManagementAction::HandlerSetEnabled {
-                handler_id,
-                generation,
-                enabled,
-            } => {
-                let handler = state
-                    .handlers
-                    .iter_mut()
-                    .find(|item| item.descriptor.handler_id == *handler_id)
-                    .ok_or_else(|| QqManagementError {
-                        code: "not_found".into(),
-                        message: format!("handler `{handler_id}` was not found"),
-                    })?;
-                if handler.descriptor.generation != *generation {
-                    return Err(QqManagementError {
-                        code: "generation.conflict".into(),
-                        message: format!(
-                            "handler `{handler_id}` generation mismatch: expected {}, got {}",
-                            handler.descriptor.generation, generation
-                        ),
-                    });
-                }
-                handler.enabled = *enabled;
-                Ok(json!({
-                    "handler_id": handler_id,
-                    "generation": generation,
-                    "enabled": enabled,
-                }))
-            }
-            QqManagementAction::AgentCancel {
-                origin_key,
-                turn_id,
-            } => {
-                let session = agent_mut(&mut state, origin_key)?;
-                if session.current_turn_id.as_deref() != Some(turn_id.as_str()) {
-                    return Err(QqManagementError {
-                        code: "not_found".into(),
-                        message: format!("turn `{turn_id}` is not active for `{origin_key}`"),
-                    });
-                }
-                session.current_turn_id = None;
-                session.status = "cancelled".into();
-                Ok(json!({ "origin_key": origin_key, "turn_id": turn_id, "cancelled": true }))
-            }
-            QqManagementAction::AgentReset { origin_key } => {
-                let session = agent_mut(&mut state, origin_key)?;
-                session.binding.session_version = session.binding.session_version.saturating_add(1);
-                session.binding.generation = session.binding.generation.saturating_add(1);
-                session.current_turn_id = None;
-                session.status = "reset".into();
-                Ok(json!({
-                    "origin_key": origin_key,
-                    "session_id": session.binding.session_id,
-                    "session_version": session.binding.session_version,
-                }))
-            }
-            QqManagementAction::AgentFork { origin_key } => {
-                let session = agent_mut(&mut state, origin_key)?;
-                let forked_id = format!(
-                    "{}:fork:{}",
-                    session.binding.session_id, session.binding.generation
-                );
-                session.binding.session_id = forked_id.clone();
-                session.binding.session_version = 1;
-                session.binding.generation = session.binding.generation.saturating_add(1);
-                session.status = "forked".into();
-                session.current_turn_id = None;
-                Ok(json!({ "origin_key": origin_key, "session_id": forked_id }))
-            }
-            QqManagementAction::AgentRegenerate { origin_key } => {
-                let session = agent_mut(&mut state, origin_key)?;
-                let turn_id = format!(
-                    "regen-{}",
-                    session.binding.session_version.saturating_add(1)
-                );
-                session.current_turn_id = Some(turn_id.clone());
-                session.status = "regenerating".into();
-                Ok(json!({ "origin_key": origin_key, "turn_id": turn_id }))
             }
             QqManagementAction::DeliveryRetry { delivery_id } => {
                 let delivery = delivery_mut(&mut state, delivery_id)?;
@@ -593,32 +419,6 @@ pub fn account_view_from_config(
 }
 
 #[must_use]
-pub fn handler_view(descriptor: BotHandlerDescriptor, enabled: bool) -> QqHandlerView {
-    QqHandlerView {
-        descriptor,
-        enabled,
-        rate_limit_status: "ready".into(),
-        last_error_code: None,
-        last_invocation_trace_id: None,
-    }
-}
-
-#[must_use]
-pub fn agent_session_view(
-    binding: mutsuki_bot_protocol::AgentSessionBinding,
-    streaming: QqStreamingStrategy,
-) -> QqAgentSessionView {
-    QqAgentSessionView {
-        binding,
-        status: "idle".into(),
-        current_turn_id: None,
-        streaming,
-        approval_status: None,
-        delivery_status: None,
-    }
-}
-
-#[must_use]
 pub fn delivery_view(
     receipt: BotDeliveryReceipt,
     attempts: Vec<BotDeliveryAttempt>,
@@ -637,20 +437,6 @@ fn account_mut<'a>(
         .ok_or_else(|| QqManagementError {
             code: "not_found".into(),
             message: format!("account `{account_id}` was not found"),
-        })
-}
-
-fn agent_mut<'a>(
-    state: &'a mut LocalState,
-    origin_key: &str,
-) -> Result<&'a mut QqAgentSessionView, QqManagementError> {
-    state
-        .agent_sessions
-        .iter_mut()
-        .find(|item| item.binding.origin_key == origin_key)
-        .ok_or_else(|| QqManagementError {
-            code: "not_found".into(),
-            message: format!("agent session `{origin_key}` was not found"),
         })
 }
 
@@ -674,12 +460,6 @@ fn action_name(action: &QqManagementAction) -> &'static str {
         QqManagementAction::AccountHealthCheck { .. } => "account_health_check",
         QqManagementAction::AccountReconnect { .. } => "account_reconnect",
         QqManagementAction::AccountSendTest { .. } => "account_send_test",
-        QqManagementAction::ConversationUpdate { .. } => "conversation_update",
-        QqManagementAction::HandlerSetEnabled { .. } => "handler_set_enabled",
-        QqManagementAction::AgentCancel { .. } => "agent_cancel",
-        QqManagementAction::AgentReset { .. } => "agent_reset",
-        QqManagementAction::AgentFork { .. } => "agent_fork",
-        QqManagementAction::AgentRegenerate { .. } => "agent_regenerate",
         QqManagementAction::DeliveryRetry { .. } => "delivery_retry",
         QqManagementAction::DeliveryCancel { .. } => "delivery_cancel",
         QqManagementAction::DeliveryPreview { .. } => "delivery_preview",
@@ -691,9 +471,8 @@ fn action_name(action: &QqManagementAction) -> &'static str {
 mod tests {
     use super::*;
     use mutsuki_bot_protocol::{
-        AgentSessionBinding, AgentSessionScope, BotConversationKind, BotPropagationPolicy,
-        DirectMessagePolicy, InteractionScope, InteractionWaitSpec, QqMessageSegmentKind,
-        QqPermissionRequirement, QqRateLimitPolicy, QqUploadConstraints,
+        BotConversationKind, InteractionScope, InteractionWaitSpec, QqMessageSegmentKind,
+        QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
     };
 
     fn capability(account_id: &str) -> QqBotCapabilityMatrix {
@@ -735,29 +514,6 @@ mod tests {
         }
     }
 
-    fn policy() -> ConversationPolicy {
-        ConversationPolicy {
-            revision: 1,
-            enabled: true,
-            agent_enabled: true,
-            direct_message_policy: DirectMessagePolicy::Allow,
-            must_mention: false,
-            wake_words: Vec::new(),
-            allowlist: Vec::new(),
-            denylist: Vec::new(),
-            rate_limit_profile_id: None,
-            session_scope: AgentSessionScope::SharedConversation,
-            business_profile_binding_id: None,
-            agent_runtime_profile_id: None,
-            stt_enabled: false,
-            tts_enabled: false,
-            speech_reply_policy: Default::default(),
-            stt_selector_id: None,
-            tts_selector_id: None,
-            active_delivery_enabled: true,
-        }
-    }
-
     fn service() -> (QqBotManagementService, Arc<LocalQqManagementProvider>) {
         let local = Arc::new(LocalQqManagementProvider::new());
         local.upsert_account(account_view_from_config(
@@ -771,22 +527,6 @@ mod tests {
             true,
             Some(10),
             None,
-        ));
-        local.upsert_conversation(QqConversationView {
-            conversation: conversation(),
-            policy: policy(),
-            matched_rule_ids: vec!["product".into()],
-        });
-        local.upsert_agent_session(agent_session_view(
-            AgentSessionBinding {
-                origin_key: conversation().origin_key(),
-                session_id: "sess-1".into(),
-                session_version: 3,
-                last_event_sequence: 1,
-                policy_revision: 1,
-                generation: 2,
-            },
-            QqStreamingStrategy::FinalOnly,
         ));
         local.upsert_delivery(delivery_view(
             BotDeliveryReceipt {
@@ -814,7 +554,6 @@ mod tests {
                 command: None,
                 predicate_service_id: None,
                 timeout_at_unix_ms: 1,
-                propagation: BotPropagationPolicy::Continue,
                 retry_prompt: None,
             },
             status: InteractionStatus::Waiting,
@@ -860,26 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn conversation_delivery_agent_and_interaction_writes() {
+    fn delivery_and_interaction_writes_remain_operational() {
         let (api, _) = service();
-        let mut policy = policy();
-        policy.agent_enabled = false;
-        let updated = api
-            .write(QqManagementWriteRequest {
-                actor_id: "op".into(),
-                expected_revision: 0,
-                action: QqManagementAction::ConversationUpdate {
-                    conversation: conversation(),
-                    policy,
-                },
-            })
-            .unwrap();
-        assert_eq!(updated.revision, 1);
-        assert_eq!(updated.result["matched_rule_ids"][0], "console");
-
         api.write(QqManagementWriteRequest {
             actor_id: "op".into(),
-            expected_revision: 1,
+            expected_revision: 0,
             action: QqManagementAction::DeliveryRetry {
                 delivery_id: "d1".into(),
             },
@@ -887,25 +611,15 @@ mod tests {
         .unwrap();
         api.write(QqManagementWriteRequest {
             actor_id: "op".into(),
-            expected_revision: 2,
-            action: QqManagementAction::AgentReset {
-                origin_key: conversation().origin_key(),
-            },
-        })
-        .unwrap();
-        api.write(QqManagementWriteRequest {
-            actor_id: "op".into(),
-            expected_revision: 3,
+            expected_revision: 1,
             action: QqManagementAction::InteractionCancel {
                 session_id: "i1".into(),
             },
         })
         .unwrap();
         let snap = api.snapshot("", true).unwrap();
-        assert_eq!(snap.revision, 4);
-        assert!(!snap.conversations[0].policy.agent_enabled);
+        assert_eq!(snap.revision, 2);
         assert_eq!(snap.deliveries[0].receipt.status, DeliveryStatus::Pending);
-        assert_eq!(snap.agent_sessions[0].status, "reset");
         assert_eq!(snap.interactions[0].status, InteractionStatus::Cancelled);
     }
 }

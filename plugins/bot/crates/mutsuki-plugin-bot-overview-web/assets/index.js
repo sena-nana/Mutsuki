@@ -21,7 +21,7 @@ const PAGES = [
   { id: "database", label: "数据库" },
   { id: "qq-bot", label: "QQ 管理", optional: true },
   { id: "agent-connections", label: "Agent 连接", optional: true },
-  { id: "bot-agent-rules", label: "Bot Agent 规则", optional: true },
+  { id: "bot-flow", label: "流程编排", optional: true },
   { id: "bilibili", label: "B站推送", optional: true },
   { id: "config", label: "配置", optional: true },
   { id: "upgrade", label: "自动升级", optional: true },
@@ -157,7 +157,7 @@ function createShell(rpc, options = {}) {
   const includeBilibili = options.includeBilibili === true;
   const includeQq = options.includeQq === true;
   const includeAgentConnections = options.includeAgentConnections === true;
-  const includeBotAgentRules = options.includeBotAgentRules === true;
+  const includeBotFlow = options.includeBotFlow === true;
   const builtinDatabases = Array.isArray(options.builtinDatabases) ? options.builtinDatabases : [];
   const route = parseRoute();
   const state = {
@@ -192,7 +192,7 @@ function createShell(rpc, options = {}) {
       if (page.optional === true && page.id === "bilibili" && !includeBilibili) continue;
       if (page.optional === true && page.id === "qq-bot" && !includeQq) continue;
       if (page.optional === true && page.id === "agent-connections" && !includeAgentConnections) continue;
-      if (page.optional === true && page.id === "bot-agent-rules" && !includeBotAgentRules) continue;
+      if (page.optional === true && page.id === "bot-flow" && !includeBotFlow) continue;
       const btn = document.createElement("button");
       btn.type = "button";
       const active = state.page === page.id;
@@ -234,7 +234,7 @@ function createShell(rpc, options = {}) {
       else if (state.page === "config") await renderConfig(content, rpc);
       else if (state.page === "qq-bot") await renderQqBot(content, rpc);
       else if (state.page === "agent-connections") await renderAgentConnections(content, rpc);
-      else if (state.page === "bot-agent-rules") await renderBotAgentRules(content, rpc);
+      else if (state.page === "bot-flow") await renderBotFlow(content, rpc);
       else if (state.page === "bilibili") await renderBilibili(content, rpc);
       else if (state.page === "ops") await renderOps(content, rpc, app, state, go);
       else await renderOverview(content, rpc, { go });
@@ -302,8 +302,8 @@ function pageSubtitle(page, tab) {
       return "QQ 账号、会话规则、命令、Agent 与主动投递";
     case "agent-connections":
       return "Agent owner 管理的连接状态、测试、重连与原子切换";
-    case "bot-agent-rules":
-      return "未消费消息的 Agent 触发、范围、profile 与语音策略";
+    case "bot-flow":
+      return "用已安装插件提供的节点连接真实 Bot 事件处理路径";
     case "bilibili":
       return "B 站推送登陆态、扫码登录与订阅管理";
     case "ops":
@@ -707,16 +707,16 @@ async function renderAgentConnections(content, rpc) {
   }
 }
 
-async function renderBotAgentRules(content, rpc) {
+async function renderBotFlow(content, rpc) {
   try {
-    const mod = await import("./bot-agent/index.js");
-    if (typeof mod.mountBotAgentRulesPanel !== "function") {
-      content.appendChild(emptyBlock("Bot Agent policy owner 未提供管理页面。"));
+    const mod = await import("./bot-flow/index.js");
+    if (typeof mod.mountBotFlowEditor !== "function") {
+      content.appendChild(emptyBlock("Bot Flow owner 未提供流程编辑器。"));
       return;
     }
-    await mod.mountBotAgentRulesPanel(content, rpc);
+    await mod.mountBotFlowEditor(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>Bot Agent 规则页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>流程编排页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
   }
 }
 
@@ -1543,14 +1543,14 @@ export function mountConsole(el, rpc, options = {}) {
   const includeAgentConnections =
     options.includeAgentConnections === true ||
     globalThis.__MUTSUKI_CONSOLE__?.includeAgentConnections === true;
-  const includeBotAgentRules =
-    options.includeBotAgentRules === true ||
-    globalThis.__MUTSUKI_CONSOLE__?.includeBotAgentRules === true;
+  const includeBotFlow =
+    options.includeBotFlow === true ||
+    globalThis.__MUTSUKI_CONSOLE__?.includeBotFlow === true;
   const builtinDatabases =
     options.builtinDatabases ||
     globalThis.__MUTSUKI_CONSOLE__?.builtinDatabases ||
     [];
-  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, includeBilibili, includeQq, includeAgentConnections, includeBotAgentRules, builtinDatabases }));
+  el.appendChild(createShell(rpc, { includeConfig, includeUpgrade, includeBilibili, includeQq, includeAgentConnections, includeBotFlow, builtinDatabases }));
 }
 
 export default {

@@ -45,19 +45,19 @@ fn main() {
     let idle_window_ms = if mode == "smoke" { 250 } else { 1_000 };
     let mut cases = vec![
         repeated_case(
-            "bot.event-single",
+            "bot.flow-chain-single",
             json!({"events": 1, "adapters": 1}),
             regular_samples,
             || pipeline_sample(1, 1),
         ),
         repeated_case(
-            "bot.event-burst-100",
+            "bot.flow-chain-100",
             json!({"events": 100, "window": "fixed"}),
             regular_samples,
             || pipeline_sample(100, 1),
         ),
         repeated_case(
-            "bot.event-burst-10k",
+            "bot.flow-chain-10k",
             json!({"events": 10_000, "window": "fixed"}),
             long_samples,
             || pipeline_sample(10_000, 1),
@@ -87,14 +87,14 @@ fn main() {
             || command_sample(false),
         ),
         repeated_case(
-            "bot.handler-filter-10k",
-            json!({"events": 10_000, "handlers": 64}),
+            "bot.flow-fanout-64x10k",
+            json!({"events": 10_000, "branches": 64}),
             regular_samples,
             || handler_filter_sample(10_000, 64),
         ),
         repeated_case(
             "bot.conversation-session-1k",
-            json!({"events": 1_000, "policy_rules": 4}),
+            json!({"events": 1_000, "session_scope": "shared_conversation"}),
             regular_samples,
             || conversation_sample(1_000),
         ),
@@ -117,7 +117,7 @@ fn main() {
             link_parse_sample,
         ),
         repeated_case(
-            "bot.handler-wait-resume",
+            "bot.flow-node-wait-resume",
             json!({"extra_empty_poll": 1}),
             regular_samples,
             wait_resume_sample,

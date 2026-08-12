@@ -2,7 +2,7 @@
 import {
   WebBridgeClient,
   createRegistry
-} from "@mutsuki/web-sdk";
+} from "./web-sdk.js";
 function createShellState() {
   return {
     extensions: [],

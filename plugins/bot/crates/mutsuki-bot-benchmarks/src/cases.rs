@@ -10,6 +10,7 @@ use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
     QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
 };
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog, InMemoryBotFlowRepository};
 use mutsuki_bot_interaction::{
     InteractionConditionMatcher, InteractionError, InteractionRepository, InteractionService,
 };
@@ -18,13 +19,17 @@ use mutsuki_bot_protocol::*;
 use mutsuki_bot_testkit::{
     BENCHMARK_FIXED_SEED, benchmark_card_payload, benchmark_event, benchmark_gateway_frame,
 };
+use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
 use mutsuki_plugin_bot_adapter_qqbot::{
     GatewayAction, HttpMethod, QqBotConfig, QqGatewayPump, QqHttpClient, QqHttpRequest,
     QqHttpResponse, QqOpenApiError, QqOpenApiTransport, StaticQqCredentials,
 };
-use mutsuki_plugin_bot_command::BotCommandRunner;
+use mutsuki_plugin_bot_command::{
+    BOT_COMMAND_MATCH_NODE_TYPE_ID, BOT_COMMAND_RUNNER_ID, BotCommandNodeRunner,
+    bot_command_manifest,
+};
 use mutsuki_plugin_bot_event_router::{
-    BOT_EVENT_ROUTER_RUNNER_ID, BotEventRouterRunner, handler_matches,
+    BOT_FLOW_INGRESS_RUNNER_ID, BotFlowIngressRunner, flow_router_manifest,
 };
 use mutsuki_runtime_contracts::{
     BatchEntry, BatchPayload, CompletionBatch, DispatchLane, OrderingRequirement, RunnerContext,
@@ -45,15 +50,10 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
         .collect::<Vec<_>>();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
-    let mut router = BotEventRouterRunner::new(
-        1,
-        vec![BotEventSubscription::new(
-            "benchmark-command",
-            BOT_COMMAND_PARSE_PROTOCOL_ID,
-        )],
-    );
-    let mut command = BotCommandRunner::new(1, vec!["/".into()]);
-    let mut command_tasks = Vec::with_capacity(event_count);
+    let mut command = BotCommandNodeRunner::new(1);
+    let mut echo = bot_echo::echo_runner(1);
+    let mut command_hits = 0_usize;
+    let mut message_outputs = 0_usize;
     let mut adapters = BTreeMap::<String, u64>::new();
     for chunk in events.chunks(64) {
         for event in chunk {
@@ -63,37 +63,78 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
             .iter()
             .map(|event| {
                 Task::new(
-                    format!("ingest:{}", event.event_id),
-                    BOT_EVENT_INGEST_PROTOCOL_ID,
-                    TaskPayload::from_local(event.clone()),
+                    format!("command:{}", event.event_id),
+                    BOT_COMMAND_PARSE_PROTOCOL_ID,
+                    TaskPayload::from_local(command_invocation(event.clone())),
                 )
             })
             .collect::<Vec<_>>();
-        let completion = router
-            .run_batch(
-                context("router", tasks.len()),
-                batch(BOT_EVENT_ROUTER_RUNNER_ID, &tasks),
-            )
-            .unwrap();
-        command_tasks.extend(successful_tasks(completion));
-    }
-    let mut handler_tasks = Vec::new();
-    for chunk in command_tasks.chunks(64) {
         let completion = command
             .run_batch(
-                context("command", chunk.len()),
-                batch(mutsuki_plugin_bot_command::BOT_COMMAND_RUNNER_ID, chunk),
+                context("command", tasks.len()),
+                batch(BOT_COMMAND_RUNNER_ID, &tasks),
             )
             .unwrap();
-        handler_tasks.extend(successful_tasks(completion));
+        let echo_tasks = completion
+            .results
+            .into_iter()
+            .map(|entry| {
+                entry.result.unwrap_or_else(|| {
+                    panic!("command node failed during benchmark: {:?}", entry.error)
+                })
+            })
+            .filter_map(|result| result.output)
+            .map(|value| serde_json::from_value::<BotNodeResult>(value).unwrap())
+            .filter_map(|result| {
+                let output = result.outputs.into_iter().next().unwrap();
+                (output.port_id == "matched").then_some(output.event)
+            })
+            .enumerate()
+            .map(|(ordinal, event)| {
+                command_hits += 1;
+                Task::new(
+                    format!("echo:{ordinal}:{}", event.event_id),
+                    bot_echo::ECHO_PROTOCOL_ID,
+                    TaskPayload::from_local(BotNodeInvocation {
+                        flow_id: "benchmark.chain".into(),
+                        graph_revision: 1,
+                        execution_id: format!("benchmark:{}", event.event_id),
+                        node_id: "echo".into(),
+                        input_port_id: "command".into(),
+                        config: json!({}),
+                        input: event,
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        if !echo_tasks.is_empty() {
+            let completion = echo
+                .run_batch(
+                    context("echo", echo_tasks.len()),
+                    batch(bot_echo::ECHO_RUNNER_ID, &echo_tasks),
+                )
+                .unwrap();
+            message_outputs += completion
+                .results
+                .into_iter()
+                .map(|entry| {
+                    entry.result.unwrap_or_else(|| {
+                        panic!("echo node failed during benchmark: {:?}", entry.error)
+                    })
+                })
+                .filter_map(|result| result.output)
+                .map(|value| serde_json::from_value::<BotNodeResult>(value).unwrap())
+                .map(|result| result.outputs.len())
+                .sum::<usize>();
+        }
     }
     let elapsed_ns = started.elapsed().as_nanos();
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
     let minimum = adapters.values().copied().min().unwrap_or(0);
     let maximum = adapters.values().copied().max().unwrap_or(1);
     let fairness = minimum as f64 / maximum.max(1) as f64;
-    assert_eq!(command_tasks.len(), event_count);
-    assert_eq!(handler_tasks.len(), event_count.div_ceil(2));
+    assert_eq!(command_hits, event_count.div_ceil(2));
+    assert_eq!(message_outputs, command_hits);
     Sample {
         elapsed_ns,
         cpu_time_ns: 0,
@@ -109,10 +150,10 @@ pub fn pipeline_sample(event_count: usize, adapter_count: usize) -> Sample {
         retained_units: 0,
         output: json!({
             "events": event_count,
-            "commands": handler_tasks.len(),
+            "workload": "flow_three_node_chain",
+            "commands": command_hits,
             "adapter_counts": adapters,
-            "first_handler": handler_tasks.first().map(|task| &task.task_id),
-            "last_handler": handler_tasks.last().map(|task| &task.task_id)
+            "message_outputs": message_outputs
         }),
         allocations,
         allocated_bytes,
@@ -124,25 +165,23 @@ pub fn command_sample(hit: bool) -> Sample {
     let task = Task::new(
         "command-case",
         BOT_COMMAND_PARSE_PROTOCOL_ID,
-        TaskPayload::from_local(event),
+        TaskPayload::from_local(command_invocation(event)),
     );
-    let mut runner = BotCommandRunner::new(1, vec!["/".into()]);
+    let mut runner = BotCommandNodeRunner::new(1);
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
     let result = single_result(
         runner
             .run_batch(
                 context("command-case", 1),
-                batch(
-                    mutsuki_plugin_bot_command::BOT_COMMAND_RUNNER_ID,
-                    std::slice::from_ref(&task),
-                ),
+                batch(BOT_COMMAND_RUNNER_ID, std::slice::from_ref(&task)),
             )
             .unwrap(),
     )
     .unwrap();
     let elapsed_ns = started.elapsed().as_nanos();
-    assert_eq!(!result.tasks.is_empty(), hit);
+    let node_result: BotNodeResult = serde_json::from_value(result.output.unwrap()).unwrap();
+    assert_eq!(node_result.outputs[0].port_id == "matched", hit);
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
     Sample {
         elapsed_ns,
@@ -159,7 +198,7 @@ pub fn command_sample(hit: bool) -> Sample {
         retained_units: 0,
         output: json!({
             "hit": hit,
-            "handler_task": result.tasks.first().map(|task| serde_json::to_value(task).unwrap())
+            "output_port": node_result.outputs[0].port_id
         }),
         allocations,
         allocated_bytes,
@@ -167,50 +206,158 @@ pub fn command_sample(hit: bool) -> Sample {
 }
 
 pub fn handler_filter_sample(event_count: usize, handler_count: usize) -> Sample {
-    let event = benchmark_event(7, 1, true);
-    let handlers = (0..handler_count)
-        .map(|index| BotHandlerDescriptor {
-            handler_id: format!("handler-{index}"),
-            binding_id: format!("binding-{index}"),
-            generation: 1,
-            handler_protocol_id: "mutsuki.bot.benchmark/handle@1".into(),
-            runner_hint: None,
-            event_kinds: vec![BotEventKind::MessageCreated],
-            conversation_kinds: vec![BotConversationKind::Group],
-            filter: Some(BotFilterExpr::All {
-                filters: vec![BotFilterExpr::MustMentionBot],
-            }),
-            permissions: Vec::new(),
-            priority: index as i32,
-            propagation: BotPropagationPolicy::Continue,
-            rate_limit: None,
-            timeout_ms: None,
-            side_effects: Vec::new(),
-            max_concurrency: None,
-            before_hook_protocol_ids: Vec::new(),
-            after_hook_protocol_ids: Vec::new(),
-            error_hook_protocol_ids: Vec::new(),
+    let registry = benchmark_fanout_registry(handler_count);
+    let mut runner = BotFlowIngressRunner::new(registry);
+    let tasks = (0..event_count)
+        .map(|index| {
+            let event = benchmark_event(index, 1, true);
+            Task::new(
+                format!("fanout:{index}"),
+                BOT_FLOW_INGRESS_PROTOCOL_ID,
+                TaskPayload::from_local(flow_envelope(event)),
+            )
         })
         .collect::<Vec<_>>();
     let allocation_start = allocation_snapshot();
     let started = Instant::now();
-    let mut matches = 0_u64;
-    for _ in 0..event_count {
-        matches += handlers
-            .iter()
-            .filter(|handler| handler_matches(handler, &event))
-            .count() as u64;
+    let mut matches = 0_usize;
+    for chunk in tasks.chunks(64) {
+        let completion = runner
+            .run_batch(
+                context("flow-fanout", chunk.len()),
+                batch(BOT_FLOW_INGRESS_RUNNER_ID, chunk),
+            )
+            .unwrap();
+        matches += completion
+            .results
+            .into_iter()
+            .filter_map(|entry| entry.result)
+            .map(|result| result.tasks.len())
+            .sum::<usize>();
     }
     let elapsed_ns = started.elapsed().as_nanos();
-    assert_eq!(matches, (event_count * handler_count) as u64);
+    assert_eq!(matches, event_count * handler_count);
     let (allocations, allocated_bytes) = allocation_delta(allocation_start);
     compact_sample(
         elapsed_ns,
         event_count as u64,
-        json!({"matches": matches}),
+        json!({"workload": "flow_explicit_fanout", "branches": matches}),
         allocations,
         allocated_bytes,
     )
+}
+
+fn command_invocation(event: BotEvent) -> BotNodeInvocation {
+    let event_id = event.event_id.clone();
+    BotNodeInvocation {
+        flow_id: "benchmark.chain".into(),
+        graph_revision: 1,
+        execution_id: format!("benchmark:{event_id}"),
+        node_id: "command".into(),
+        input_port_id: "event".into(),
+        config: json!({
+            "prefixes": ["/"],
+            "path": ["echo"],
+            "aliases": [],
+            "arguments": [{
+                "name": "text",
+                "kind": "string",
+                "optional": false,
+                "variadic": true
+            }],
+            "case_sensitive": false
+        }),
+        input: flow_envelope(event),
+    }
+}
+
+fn flow_envelope(event: BotEvent) -> BotFlowEventEnvelope {
+    BotFlowEventEnvelope {
+        event_id: event.event_id.clone(),
+        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+        payload: BotFlowPayload {
+            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+            value: serde_json::to_value(&event).unwrap(),
+        },
+        context: BotFlowContext {
+            bot: Some(event.bot.clone()),
+            target: Some(event.target.clone()),
+            actor: event.actor.clone(),
+            ext: event.ext.clone(),
+        },
+        trace_id: None,
+        correlation_id: None,
+    }
+}
+
+fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
+    let manifests = vec![
+        qqbot_adapter_manifest(1, false),
+        flow_router_manifest(),
+        bot_command_manifest(1),
+    ];
+    let catalog = BotNodeCatalog::from_manifests(&manifests).unwrap();
+    let repository = Arc::new(InMemoryBotFlowRepository::default());
+    let registry = Arc::new(BotFlowRegistry::open(repository, catalog).unwrap());
+    let mut nodes = vec![BotFlowNode {
+        node_id: "source".into(),
+        node_type_id: "mutsuki.bot.qq.source".into(),
+        node_type_version: 1,
+        config: json!({}),
+        source: Some(BotFlowSourceSelector {
+            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+        }),
+        position: BotFlowNodePosition::default(),
+    }];
+    let mut edges = Vec::with_capacity(branch_count);
+    for index in 0..branch_count {
+        let node_id = format!("command-{index}");
+        nodes.push(BotFlowNode {
+            node_id: node_id.clone(),
+            node_type_id: BOT_COMMAND_MATCH_NODE_TYPE_ID.into(),
+            node_type_version: 1,
+            config: json!({
+                "prefixes": ["/"], "path": ["echo"], "aliases": [], "arguments": []
+            }),
+            source: None,
+            position: BotFlowNodePosition::default(),
+        });
+        edges.push(BotFlowEdge {
+            edge_id: format!("branch-{index}"),
+            from_node_id: "source".into(),
+            from_port_id: "event".into(),
+            to_node_id: node_id,
+            to_port_id: "event".into(),
+            kind: BotFlowEdgeKind::Event,
+        });
+    }
+    let draft = registry
+        .save_draft(
+            BotFlowDraftSaveRequest {
+                expected_draft_revision: None,
+                base_published_revision: 0,
+                flows: vec![BotFlowDocument {
+                    flow_id: "benchmark.fanout".into(),
+                    name: "explicit fan-out".into(),
+                    enabled: true,
+                    nodes,
+                    edges,
+                }],
+            },
+            1,
+        )
+        .unwrap();
+    registry
+        .publish(
+            BotFlowPublishRequest {
+                expected_draft_revision: draft.revision,
+                expected_published_revision: 0,
+            },
+            2,
+        )
+        .unwrap();
+    registry
 }
 
 pub fn conversation_sample(event_count: usize) -> Sample {
@@ -223,10 +370,7 @@ pub fn conversation_sample(event_count: usize) -> Sample {
     let session_id = futures::executor::block_on(async {
         let mut session_id = String::new();
         for _ in 0..event_count {
-            let resolved = service
-                .resolve_policy(conversation.clone(), Some("user-7"))
-                .await
-                .unwrap();
+            let resolved = service.resolve_execution(conversation.clone()).unwrap();
             session_id = service
                 .get_or_create_session_binding(&resolved, Some("user-7"))
                 .await
@@ -318,7 +462,6 @@ pub fn interaction_transition_sample(session_count: usize) -> Sample {
                         command: None,
                         predicate_service_id: None,
                         timeout_at_unix_ms: u64::MAX,
-                        propagation: BotPropagationPolicy::ConsumeOnSuccess,
                         retry_prompt: None,
                     },
                     status: InteractionStatus::Waiting,
@@ -386,10 +529,6 @@ struct BenchmarkConversationRepository {
 
 #[async_trait]
 impl ConversationRepository for BenchmarkConversationRepository {
-    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
-        Ok(Vec::new())
-    }
-
     async fn session_binding(
         &self,
         _: &str,
@@ -676,14 +815,6 @@ impl InteractionConditionMatcher for BenchmarkInteractionMatcher {
 fn benchmark_policy() -> ConversationPolicy {
     ConversationPolicy {
         revision: 1,
-        enabled: true,
-        agent_enabled: true,
-        direct_message_policy: Default::default(),
-        must_mention: false,
-        wake_words: Vec::new(),
-        allowlist: Vec::new(),
-        denylist: Vec::new(),
-        rate_limit_profile_id: None,
         session_scope: AgentSessionScope::SharedConversation,
         business_profile_binding_id: None,
         agent_runtime_profile_id: Some("benchmark".into()),
@@ -985,17 +1116,6 @@ impl RuntimeClient for OutcomeClient {
     fn task_outcome(&self, handle: &TaskHandle) -> RuntimeResult<Option<TaskOutcome>> {
         Ok(self.outcomes.lock().unwrap().get(&handle.task_id).cloned())
     }
-}
-
-fn successful_tasks(completion: CompletionBatch) -> Vec<Task> {
-    completion
-        .results
-        .into_iter()
-        .flat_map(|entry| {
-            assert!(entry.error.is_none());
-            entry.result.unwrap().tasks
-        })
-        .collect()
 }
 
 fn single_result(completion: CompletionBatch) -> Result<RunnerResult, RuntimeError> {

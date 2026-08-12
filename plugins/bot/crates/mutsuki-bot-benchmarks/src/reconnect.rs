@@ -1,8 +1,18 @@
 use std::time::{Duration, Instant};
 
 use bot_echo::{echo_manifest, echo_runner};
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_protocol::{
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotFlowDocument,
+    BotFlowDraftSaveRequest, BotFlowEdge, BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition,
+    BotFlowPublishRequest, BotFlowSourceSelector, BotFlowTypeRef,
+};
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::FakeQqServer;
+use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
+use mutsuki_plugin_bot_command::{BOT_COMMAND_MATCH_NODE_TYPE_ID, bot_command_manifest};
+use mutsuki_plugin_bot_event_router::flow_router_manifest;
 use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
@@ -97,6 +107,7 @@ async fn run_connection_workload(idle_window: Option<Duration>) -> ConnectionRun
         ..Default::default()
     })
     .unwrap();
+    publish_echo_flows(&service);
     let runtime = ServiceRuntimeBuilder::new(service)
         .with_configured_plugin_catalog(configured_bot_plugin_catalog().unwrap())
         .register_builtin_plugin(echo_manifest(1))
@@ -168,14 +179,12 @@ dynamic_dirs = []
 disabled_dir = "disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.event"
+id = "mutsuki.bot.router.flow"
 [plugins.configured.config]
-subscriptions = [{{ subscription_id = "qq-command", handler_protocol_id = "mutsuki.bot.command/parse@1", platform = "qqbot", event_kind = "message_created" }}]
 
 [[plugins.configured]]
 id = "mutsuki.bot.command"
 [plugins.configured.config]
-prefixes = ["/"]
 
 [[plugins.configured]]
 id = "mutsuki.bot.adapter.qqbot"
@@ -213,4 +222,129 @@ panic_file = "panic.log"
         qq.token_url,
         qq.openapi_base_url,
     )
+}
+
+fn publish_echo_flows(service: &ServiceConfig) {
+    let state_dir = service.service.data_dir.join("bot");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let repository =
+        std::sync::Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
+    let catalog = BotNodeCatalog::from_manifests(&[
+        qqbot_adapter_manifest(1, false),
+        flow_router_manifest(),
+        bot_command_manifest(1),
+        echo_manifest(1),
+    ])
+    .unwrap();
+    let registry = BotFlowRegistry::open(repository, catalog).unwrap();
+    let draft = registry
+        .save_draft(
+            BotFlowDraftSaveRequest {
+                expected_draft_revision: None,
+                base_published_revision: 0,
+                flows: vec![command_flow("echo"), command_flow("ping")],
+            },
+            1,
+        )
+        .unwrap();
+    registry
+        .publish(
+            BotFlowPublishRequest {
+                expected_draft_revision: draft.revision,
+                expected_published_revision: 0,
+            },
+            2,
+        )
+        .unwrap();
+}
+
+fn command_flow(command: &str) -> BotFlowDocument {
+    let behavior = if command == "ping" {
+        "example.bot.ping"
+    } else {
+        "example.bot.echo"
+    };
+    let arguments = if command == "echo" {
+        json!([{
+            "name": "text",
+            "kind": "string",
+            "optional": false,
+            "variadic": true
+        }])
+    } else {
+        json!([])
+    };
+    BotFlowDocument {
+        flow_id: format!("benchmark.qq.{command}"),
+        name: command.into(),
+        enabled: true,
+        nodes: vec![
+            flow_node(
+                "source",
+                "mutsuki.bot.qq.source",
+                json!({}),
+                Some(BotFlowSourceSelector {
+                    protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                    event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+                }),
+            ),
+            flow_node(
+                "command",
+                BOT_COMMAND_MATCH_NODE_TYPE_ID,
+                json!({
+                    "prefixes": ["/"],
+                    "path": [command],
+                    "aliases": [],
+                    "arguments": arguments
+                }),
+                None,
+            ),
+            flow_node("behavior", behavior, json!({}), None),
+            flow_node("send", "mutsuki.bot.qq.send", json!({}), None),
+        ],
+        edges: vec![
+            flow_edge("source-command", "source", "event", "command", "event"),
+            flow_edge(
+                "command-behavior",
+                "command",
+                "matched",
+                "behavior",
+                "command",
+            ),
+            flow_edge("behavior-send", "behavior", "message", "send", "input"),
+        ],
+    }
+}
+
+fn flow_node(
+    node_id: &str,
+    node_type_id: &str,
+    config: serde_json::Value,
+    source: Option<BotFlowSourceSelector>,
+) -> BotFlowNode {
+    BotFlowNode {
+        node_id: node_id.into(),
+        node_type_id: node_type_id.into(),
+        node_type_version: 1,
+        config,
+        source,
+        position: BotFlowNodePosition::default(),
+    }
+}
+
+fn flow_edge(
+    edge_id: &str,
+    from_node_id: &str,
+    from_port_id: &str,
+    to_node_id: &str,
+    to_port_id: &str,
+) -> BotFlowEdge {
+    BotFlowEdge {
+        edge_id: edge_id.into(),
+        from_node_id: from_node_id.into(),
+        from_port_id: from_port_id.into(),
+        to_node_id: to_node_id.into(),
+        to_port_id: to_port_id.into(),
+        kind: BotFlowEdgeKind::Event,
+    }
 }

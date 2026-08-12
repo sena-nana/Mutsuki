@@ -8,19 +8,22 @@ use mutsuki_agent_contracts::{
     AgentSessionCreateRequest, AgentWireError, SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_bot_conversation::{
-    AgentEventClaim, ConversationAdmissionError, ConversationError, ConversationService,
-    qq_conversation_from_event,
+    AgentEventClaim, ConversationError, ConversationService, qq_conversation_from_event,
+    session_binding_key,
 };
 use mutsuki_bot_protocol::{
-    AgentSessionBinding, BOT_AGENT_BRIDGE_PROTOCOL_ID, BOT_COMMAND_HANDLE_PROTOCOL_ID,
-    BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID, BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID,
-    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAgentBridgeRequest, BotCommandArgumentDescriptor,
-    BotCommandArgumentKind, BotCommandDescriptor, BotCommandEvent, BotDeliveryContent, BotEvent,
-    BotMediaKind, BotMediaSynthesizeRequest, BotMediaSynthesizeResult, BotMediaTranscribeRequest,
-    BotMediaTranscribeResult, BotMessage, BotReplyDeliveryCommand, BotReplyDeliveryPart,
-    BotReplyDeliveryReceipt, BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget,
-    DeliveryPolicy, MessageSegment, QqStreamingStrategy, ResolvedConversationPolicy,
-    bot_command_binding_id,
+    AgentSessionBinding, BOT_AGENT_CANCEL_PROTOCOL_ID, BOT_AGENT_FORK_PROTOCOL_ID,
+    BOT_AGENT_REGENERATE_PROTOCOL_ID, BOT_AGENT_RESET_PROTOCOL_ID, BOT_AGENT_STATUS_PROTOCOL_ID,
+    BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
+    BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAgentBridgeRequest,
+    BotCommandEvent, BotDeliveryContent, BotEvent, BotFlowEventEnvelope, BotFlowPayload,
+    BotFlowTypeRef, BotMediaKind, BotMediaSynthesizeRequest, BotMediaSynthesizeResult,
+    BotMediaTranscribeRequest, BotMediaTranscribeResult, BotMessage, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodeOutput,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
+    BotReplyDeliveryCommand, BotReplyDeliveryPart, BotReplyDeliveryReceipt,
+    BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, DeliveryPolicy, MessageSegment,
+    QqStreamingStrategy, ResolvedConversationPolicy,
 };
 use mutsuki_runtime_contracts::{
     ExecutionClass, InvocationMode, PluginManifest, RunnerBatchCapability, RunnerConcurrency,
@@ -29,9 +32,9 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::Runner;
 use mutsuki_runtime_sdk::{
-    AsyncRunnerContext, BoxedTaskAwaitRunner, HandlerBindingBuilder, PluginBuilder,
-    ProtocolDescriptorBuilder, RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure,
-    RuntimeResult, TaskAwaitRunnerAdapter,
+    AsyncRunnerContext, BoxedTaskAwaitRunner, PluginBuilder, ProtocolDescriptorBuilder,
+    RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
+    TaskAwaitRunnerAdapter,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -46,91 +49,114 @@ pub use config::{
 
 pub const BOT_AGENT_BRIDGE_PLUGIN_ID: &str = "mutsuki.plugin.bot.agent";
 pub const BOT_AGENT_BRIDGE_RUNNER_ID: &str = "mutsuki.bot.agent.bridge";
+pub const BOT_AGENT_DELIVERY_EVENT_TYPE: &str = "mutsuki.bot.delivery.reply";
+pub const BOT_AGENT_NODE_SUBMIT: &str = "mutsuki.bot.agent.submit";
+pub const BOT_AGENT_NODE_CANCEL: &str = "mutsuki.bot.agent.cancel";
+pub const BOT_AGENT_NODE_RESET: &str = "mutsuki.bot.agent.reset";
+pub const BOT_AGENT_NODE_FORK: &str = "mutsuki.bot.agent.fork";
+pub const BOT_AGENT_NODE_STATUS: &str = "mutsuki.bot.agent.status";
+pub const BOT_AGENT_NODE_REGENERATE: &str = "mutsuki.bot.agent.regenerate";
 
 #[must_use]
 pub fn bot_agent_bridge_manifest() -> PluginManifest {
-    let mut builder = PluginBuilder::new(BOT_AGENT_BRIDGE_PLUGIN_ID)
-        .runner_descriptor(agent_bridge_descriptor())
-        .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_AGENT_BRIDGE_PROTOCOL_ID).build(),
-            BOT_AGENT_BRIDGE_RUNNER_ID,
-            "bot-agent",
-        );
-    for command in [
-        "ask",
-        "chat",
-        "cancel",
-        "reset",
-        "fork",
-        "status",
-        "regenerate",
+    let mut builder =
+        PluginBuilder::new(BOT_AGENT_BRIDGE_PLUGIN_ID).runner_descriptor(agent_bridge_descriptor());
+    for (protocol_id, binding_name) in [
+        (BOT_AGENT_SUBMIT_PROTOCOL_ID, "bot-agent-submit"),
+        (BOT_AGENT_CANCEL_PROTOCOL_ID, "bot-agent-cancel"),
+        (BOT_AGENT_RESET_PROTOCOL_ID, "bot-agent-reset"),
+        (BOT_AGENT_FORK_PROTOCOL_ID, "bot-agent-fork"),
+        (BOT_AGENT_STATUS_PROTOCOL_ID, "bot-agent-status"),
+        (BOT_AGENT_REGENERATE_PROTOCOL_ID, "bot-agent-regenerate"),
     ] {
-        builder = builder.handler_binding(
-            HandlerBindingBuilder::new(
-                bot_command_binding_id(command),
-                BOT_AGENT_BRIDGE_PLUGIN_ID,
-                BOT_COMMAND_HANDLE_PROTOCOL_ID,
-                BOT_COMMAND_HANDLE_PROTOCOL_ID,
-            )
-            .target_runner_hint(BOT_AGENT_BRIDGE_RUNNER_ID)
-            .pool_id("bot-agent-command")
-            .build(),
+        builder = builder.protocol_handler(
+            ProtocolDescriptorBuilder::new(protocol_id).build(),
+            BOT_AGENT_BRIDGE_RUNNER_ID,
+            binding_name,
         );
     }
-    let mut manifest = builder.build().manifest;
-    manifest
-        .requires
-        .push(format!("task_protocol:{BOT_REPLY_DELIVERY_PROTOCOL_ID}"));
-    manifest
+    builder
+        .extension(
+            agent_node_catalog()
+                .into_plugin_extension()
+                .expect("Agent node catalog serializes"),
+        )
+        .build()
+        .manifest
 }
 
-#[must_use]
-pub fn bot_agent_command_descriptors() -> Vec<BotCommandDescriptor> {
-    let prompt = BotCommandArgumentDescriptor {
-        name: "prompt".into(),
-        kind: BotCommandArgumentKind::String,
-        optional: false,
-        variadic: true,
-        default: None,
-    };
-    vec![
-        BotCommandDescriptor {
-            path: vec!["ask".into()],
-            aliases: vec![vec!["ai".into()]],
-            arguments: vec![prompt.clone()],
-            summary: Some("向当前 QQ Agent 会话提问".into()),
-        },
-        BotCommandDescriptor {
-            path: vec!["chat".into()],
-            aliases: Vec::new(),
-            arguments: vec![prompt],
-            summary: Some("向当前 QQ Agent 会话发送消息".into()),
-        },
-        BotCommandDescriptor {
-            path: vec!["cancel".into()],
-            aliases: Vec::new(),
-            arguments: vec![BotCommandArgumentDescriptor {
-                name: "turn_id".into(),
-                kind: BotCommandArgumentKind::String,
-                optional: false,
-                variadic: false,
-                default: None,
-            }],
-            summary: Some("取消指定 Agent turn".into()),
-        },
-        simple_agent_command("reset", "重置当前 QQ Agent 会话"),
-        simple_agent_command("fork", "分叉当前 QQ Agent 会话并保留历史"),
-        simple_agent_command("status", "查看当前 QQ Agent 会话状态"),
-        simple_agent_command("regenerate", "重新生成上一轮 Agent 回复"),
-    ]
-}
-
-fn simple_agent_command(name: &str, summary: &str) -> BotCommandDescriptor {
-    BotCommandDescriptor {
-        path: vec![name.into()],
-        aliases: Vec::new(),
-        arguments: Vec::new(),
-        summary: Some(summary.into()),
+fn agent_node_catalog() -> BotNodeCatalogFragment {
+    let definitions = [
+        (
+            BOT_AGENT_NODE_SUBMIT,
+            "提交 Agent",
+            BOT_AGENT_SUBMIT_PROTOCOL_ID,
+            BOT_FLOW_BOT_EVENT_TYPE,
+        ),
+        (
+            BOT_AGENT_NODE_CANCEL,
+            "取消回复",
+            BOT_AGENT_CANCEL_PROTOCOL_ID,
+            "mutsuki.bot.command.event",
+        ),
+        (
+            BOT_AGENT_NODE_RESET,
+            "重置会话",
+            BOT_AGENT_RESET_PROTOCOL_ID,
+            "mutsuki.bot.command.event",
+        ),
+        (
+            BOT_AGENT_NODE_FORK,
+            "分叉会话",
+            BOT_AGENT_FORK_PROTOCOL_ID,
+            "mutsuki.bot.command.event",
+        ),
+        (
+            BOT_AGENT_NODE_STATUS,
+            "会话状态",
+            BOT_AGENT_STATUS_PROTOCOL_ID,
+            "mutsuki.bot.command.event",
+        ),
+        (
+            BOT_AGENT_NODE_REGENERATE,
+            "重新生成",
+            BOT_AGENT_REGENERATE_PROTOCOL_ID,
+            "mutsuki.bot.command.event",
+        ),
+    ];
+    BotNodeCatalogFragment {
+        nodes: definitions
+            .into_iter()
+            .map(|(node_type_id, title, protocol_id, input_type)| BotNodeDescriptor {
+                node_type_id: node_type_id.into(),
+                version: 1,
+                title: title.into(),
+                category: "Agent".into(),
+                role: BotNodeRole::Processor,
+                binding: Some(BotNodeBinding {
+                    binding_id: format!("binding:{protocol_id}"),
+                    protocol_id: protocol_id.into(),
+                    runner_hint: Some(BOT_AGENT_BRIDGE_RUNNER_ID.into()),
+                }),
+                ports: vec![
+                    BotNodePortDescriptor {
+                        port_id: "input".into(),
+                        title: "输入".into(),
+                        direction: BotNodePortDirection::Input,
+                        event_type: BotFlowTypeRef::new(input_type, 1),
+                        required: true,
+                    },
+                    BotNodePortDescriptor {
+                        port_id: "reply".into(),
+                        title: "回复".into(),
+                        direction: BotNodePortDirection::Output,
+                        event_type: BotFlowTypeRef::new(BOT_AGENT_DELIVERY_EVENT_TYPE, 1),
+                        required: false,
+                    },
+                ],
+                config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+            })
+            .collect(),
     }
 }
 
@@ -182,8 +208,12 @@ fn default_reply_delivery_policy() -> DeliveryPolicy {
 
 fn agent_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
     RunnerDescriptorBuilder::new(BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_BRIDGE_PLUGIN_ID)
-        .accepted_protocol(BOT_AGENT_BRIDGE_PROTOCOL_ID)
-        .accepted_protocol(BOT_COMMAND_HANDLE_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_SUBMIT_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_CANCEL_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_RESET_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_FORK_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_STATUS_PROTOCOL_ID)
+        .accepted_protocol(BOT_AGENT_REGENERATE_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
         .invocation_mode(InvocationMode::AsyncReentrant)
         .concurrency(RunnerConcurrency::Reentrant {
@@ -213,6 +243,16 @@ async fn run_bridge_task(
     bridge: BotAgentBridge,
     delivery_policy: DeliveryPolicy,
 ) -> RuntimeResult<RunnerResult> {
+    if let Ok(invocation) = task.payload.decode_shared::<BotNodeInvocation>() {
+        return run_bridge_node_task(
+            ctx,
+            task,
+            bridge,
+            delivery_policy,
+            invocation.as_ref().clone(),
+        )
+        .await;
+    }
     let request = decode_bridge_request(&task)?;
     let execution = execute_bridge_request(&ctx, &task, &bridge, request).await?;
     let result = &execution.result;
@@ -224,7 +264,8 @@ async fn run_bridge_task(
             (None, media_errors)
         } else {
             let request =
-                reply_delivery_request(result, &execution.source_event, outgoing, delivery_policy);
+                reply_delivery_request(result, &execution.source_event, outgoing, delivery_policy)
+                    .map_err(|error| bridge_failure(&task, "delivery.binding", error))?;
             let outcome = ctx
                 .call_raw(
                     BOT_REPLY_DELIVERY_PROTOCOL_ID,
@@ -257,6 +298,119 @@ async fn run_bridge_task(
         "media_errors": media_errors,
     }));
     Ok(completed)
+}
+
+async fn run_bridge_node_task(
+    ctx: AsyncRunnerContext,
+    task: Task,
+    bridge: BotAgentBridge,
+    delivery_policy: DeliveryPolicy,
+    invocation: BotNodeInvocation,
+) -> RuntimeResult<RunnerResult> {
+    let request = flow_bridge_request(&task, &invocation)?;
+    let execution = execute_bridge_request(&ctx, &task, &bridge, request).await?;
+    if execution.existing_reply.is_some() {
+        let mut completed = RunnerResult::completed(task.task_id.clone());
+        completed.output = Some(
+            serde_json::to_value(BotNodeResult {
+                outputs: Vec::new(),
+                metadata: std::collections::BTreeMap::from([(
+                    "delivery_already_reserved".into(),
+                    serde_json::Value::Bool(true),
+                )]),
+            })
+            .map_err(|error| bridge_failure(&task, "node.output", error))?,
+        );
+        return Ok(completed);
+    }
+    let (outgoing, media_errors) = speech_reply_messages(&ctx, &task, &execution.result).await;
+    let outputs = if outgoing.is_empty() {
+        if execution.complete_event {
+            bridge
+                .complete_event(&execution.source_event)
+                .await
+                .map_err(|error| bridge_failure(&task, "event.complete", error))?;
+        }
+        Vec::new()
+    } else {
+        let request = reply_delivery_request(
+            &execution.result,
+            &execution.source_event,
+            outgoing,
+            delivery_policy,
+        )
+        .map_err(|error| bridge_failure(&task, "delivery.binding", error))?;
+        vec![BotNodeOutput {
+            port_id: "reply".into(),
+            event: BotFlowEventEnvelope {
+                event_id: request.reply_id.clone(),
+                protocol_id: BOT_REPLY_DELIVERY_PROTOCOL_ID.into(),
+                payload: BotFlowPayload {
+                    event_type: BotFlowTypeRef::new(BOT_AGENT_DELIVERY_EVENT_TYPE, 1),
+                    value: serde_json::to_value(request)
+                        .map_err(|error| bridge_failure(&task, "delivery.encode", error))?,
+                },
+                context: invocation.input.context.clone(),
+                trace_id: invocation.input.trace_id.clone(),
+                correlation_id: invocation.input.correlation_id.clone(),
+            },
+        }]
+    };
+    let mut metadata = std::collections::BTreeMap::new();
+    metadata.insert(
+        "session_id".into(),
+        serde_json::Value::String(execution.result.binding.session_id.clone()),
+    );
+    metadata.insert(
+        "turn_id".into(),
+        serde_json::Value::String(execution.result.turn_id.clone()),
+    );
+    metadata.insert(
+        "media_errors".into(),
+        serde_json::to_value(media_errors)
+            .map_err(|error| bridge_failure(&task, "node.metadata", error))?,
+    );
+    let mut completed = RunnerResult::completed(task.task_id.clone());
+    completed.output = Some(
+        serde_json::to_value(BotNodeResult { outputs, metadata })
+            .map_err(|error| bridge_failure(&task, "node.output", error))?,
+    );
+    Ok(completed)
+}
+
+fn flow_bridge_request(
+    task: &Task,
+    invocation: &BotNodeInvocation,
+) -> RuntimeResult<BotAgentBridgeRequest> {
+    if task.protocol_id == BOT_AGENT_SUBMIT_PROTOCOL_ID {
+        let event: BotEvent = serde_json::from_value(invocation.input.payload.value.clone())
+            .map_err(|error| bridge_failure(task, "node.event", error))?;
+        return Ok(BotAgentBridgeRequest::Submit { event });
+    }
+    let command: BotCommandEvent = serde_json::from_value(invocation.input.payload.value.clone())
+        .map_err(|error| bridge_failure(task, "node.command", error))?;
+    let event = command.source;
+    match task.protocol_id.as_str() {
+        BOT_AGENT_CANCEL_PROTOCOL_ID => {
+            let turn_id = command
+                .typed_args
+                .get("turn_id")
+                .and_then(|value| match value {
+                    mutsuki_bot_protocol::BotCommandArgumentValue::String(value) => {
+                        Some(value.clone())
+                    }
+                    _ => None,
+                })
+                .or_else(|| command.args.first().cloned())
+                .ok_or_else(|| bridge_failure(task, "node.cancel", "turn_id is required"))?;
+            Ok(BotAgentBridgeRequest::Cancel { event, turn_id })
+        }
+        BOT_AGENT_RESET_PROTOCOL_ID => Ok(BotAgentBridgeRequest::Reset { event }),
+        BOT_AGENT_FORK_PROTOCOL_ID => Ok(BotAgentBridgeRequest::Fork { event }),
+        BOT_AGENT_STATUS_PROTOCOL_ID => Ok(BotAgentBridgeRequest::Status { event }),
+        BOT_AGENT_REGENERATE_PROTOCOL_ID => Ok(BotAgentBridgeRequest::Regenerate { event }),
+        protocol => Err(bridge_failure(task, "node.protocol", protocol)),
+    }
 }
 
 struct BridgeExecution {
@@ -504,7 +658,7 @@ fn reply_delivery_request(
     event: &BotEvent,
     outgoing: Vec<BotMessage>,
     policy: DeliveryPolicy,
-) -> BotReplyDeliveryRequest {
+) -> Result<BotReplyDeliveryRequest, ConversationError> {
     let turn_id = if result.turn_id.trim().is_empty() {
         format!("bot-action:{}", event.event_id)
     } else {
@@ -527,7 +681,13 @@ fn reply_delivery_request(
             },
         })
         .collect();
-    BotReplyDeliveryRequest {
+    let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
+    let source_binding_key = session_binding_key(
+        &result.resolved.conversation,
+        result.resolved.policy.session_scope,
+        actor_id,
+    )?;
+    Ok(BotReplyDeliveryRequest {
         idempotency_key: reply_id.clone(),
         reply_id,
         conversation: result.resolved.conversation.clone(),
@@ -535,7 +695,8 @@ fn reply_delivery_request(
         policy,
         source_event_id: event.event_id.clone(),
         source_turn_id: turn_id,
-    }
+        source_binding_key: Some(source_binding_key),
+    })
 }
 
 fn stable_reply_id(origin_key: &str, event_id: &str, turn_id: &str) -> String {
@@ -1150,11 +1311,9 @@ impl BotAgentBridge {
         &self,
         event: &BotEvent,
     ) -> Result<ResolvedConversationPolicy, BotAgentError> {
-        let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
         Ok(self
             .conversations
-            .resolve_policy(qq_conversation_from_event(event)?, actor_id)
-            .await?)
+            .resolve_execution(qq_conversation_from_event(event)?)?)
     }
 
     async fn advance_or_reuse_session_version(
@@ -1225,10 +1384,6 @@ impl BotAgentBridge {
             && !config.default_profile_id.trim().is_empty()
         {
             resolved.policy.agent_runtime_profile_id = Some(config.default_profile_id.clone());
-        }
-        self.conversations.admit_event(&resolved, event)?;
-        if !resolved.policy.agent_enabled {
-            return Err(BotAgentError::AgentDisabled);
         }
         Ok((resolved, config))
     }
@@ -1561,8 +1716,6 @@ fn streaming_name(strategy: &QqStreamingStrategy) -> &'static str {
 pub enum BotAgentError {
     #[error(transparent)]
     Conversation(#[from] ConversationError),
-    #[error(transparent)]
-    Admission(#[from] ConversationAdmissionError),
     #[error("Agent client failed: {code}: {message}")]
     AgentClient { code: String, message: String },
     #[error("Agent is disabled for this conversation")]
@@ -1603,7 +1756,7 @@ mod tests {
     use mutsuki_bot_conversation::ConversationRepository;
     use mutsuki_bot_protocol::{
         AgentSessionScope, BotAccountRef, BotEventKind, BotPlatform, BotTarget, BotUser,
-        ConversationPolicy, ConversationPolicyRule, DirectMessagePolicy,
+        ConversationPolicy,
     };
     use mutsuki_runtime_contracts::{
         ResourceAccess, ResourceId, ResourceLifetime, ResourceSealState, ResourceSemantic,
@@ -1623,10 +1776,6 @@ mod tests {
 
     #[async_trait]
     impl ConversationRepository for Repository {
-        async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
-            Ok(Vec::new())
-        }
-
         async fn session_binding(
             &self,
             key: &str,
@@ -1931,31 +2080,6 @@ mod tests {
             assert_eq!(second.binding.last_event_sequence, 2);
             assert_eq!(second.outgoing[0].plain_text(), "reply-2");
         }
-    }
-
-    #[test]
-    fn denied_event_does_not_create_or_advance_an_agent_session() {
-        let repository = Arc::new(Repository::default());
-        let mut denied_policy = policy();
-        denied_policy.direct_message_policy = DirectMessagePolicy::Deny;
-        let bridge = BotAgentBridge::new(
-            ConversationService::new(repository.clone(), denied_policy),
-            Box::new(FakeAgentClient::default()),
-            &QqStreamingStrategy::FinalOnly,
-        );
-        let result = block_on(bridge.submit_event(&event(
-            "denied",
-            BotTarget::User {
-                user_id: "actor".into(),
-            },
-        )));
-        assert!(matches!(
-            result,
-            Err(BotAgentError::Admission(
-                ConversationAdmissionError::DirectMessageDenied
-            ))
-        ));
-        assert!(repository.bindings.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2345,14 +2469,6 @@ mod tests {
     fn policy() -> ConversationPolicy {
         ConversationPolicy {
             revision: 1,
-            enabled: true,
-            agent_enabled: true,
-            direct_message_policy: DirectMessagePolicy::Allow,
-            must_mention: false,
-            wake_words: Vec::new(),
-            allowlist: Vec::new(),
-            denylist: Vec::new(),
-            rate_limit_profile_id: None,
             session_scope: AgentSessionScope::SharedConversation,
             business_profile_binding_id: None,
             agent_runtime_profile_id: Some("profile".into()),

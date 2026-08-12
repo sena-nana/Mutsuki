@@ -30,8 +30,8 @@ Web backend。OAuth credential bundle 和 app secret 使用两个 Host secret ke
 顺序发送 image/text。米画师 runner 使用 `TaskAwaitRunnerAdapter` 调用
 `mutsuki.browser.snapshot`，不拥有 Chromium 生命周期。
 
-账号与订阅管理通过通用 `mutsuki.bot.command/handle@1` 路径进入同一个 batch-first
-Bilibili runner。启用 management 后提供：Host 管理员扫码登录与凭据轮换、签名验证码
+账号与订阅管理以 Bilibili Processor 节点进入同一个 batch-first runner；命令路径由图中的
+Command Match 节点配置。启用 management 后提供：Host 管理员扫码登录与凭据轮换、签名验证码
 自助绑定、订阅列表/暂停/恢复/删除，以及不推进 cursor 的最新动态预览。二维码在 runner
 内生成 PNG `ResourceRef`，Cookie 不进入消息、Task payload、manifest、日志或 trace。
 
@@ -67,15 +67,16 @@ WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用
 产品组合以 BotTemplate release-set 的 `web_host` 条目为 pin 追踪；可单独 bump WebHost revision 再
 `release_set.py sync`。`web_host` 不是独立产品部署能力，仅作为 Embedded Console 的库依赖。
 
-- `mutsuki-bot-protocol`: common `BotEvent`, `BotMessage`, `MessageSegment`, `BotTarget`, account, permission, and error contracts.
+- `mutsuki-bot-protocol`: common event/message and typed Bot Flow contracts.
+- `mutsuki-bot-flow`: Bot-owned graph catalog validation, immutable versions and revision CAS.
 - `mutsuki-bot-sdk`: author-facing helpers that lower to Mutsuki task protocols.
-- `mutsuki-plugin-bot-event-router`: standard `mutsuki.bot.event/ingest@1` router plugin.
-- `mutsuki-plugin-bot-command`: generic message command parser plugin.
+- `mutsuki-plugin-bot-event-router`: `mutsuki.bot.flow/ingress@1` DAG executor and match nodes.
+- `mutsuki-plugin-bot-command`: graph-configured command Match node.
 - `mutsuki-plugin-bot-agent`: explicit QQ-to-AgentKit bridge with durable conversation/session
   handling and production configured factory `mutsuki.plugin.bot.agent`. Its config stores only
   `connection_id`; AgentKit supplies the selected `agent_connection:<id>`.
-- `mutsuki-plugin-bot-agent-web`: authenticated Agent connection and persistent conversation-rule
-  pages, mounted only when the corresponding owner Host services exist.
+- `mutsuki-plugin-bot-agent-web`: authenticated Agent connection management only; event matching
+  is edited in the Flow page.
 - `mutsuki-plugin-bot-adapter-qqbot`: QQBot platform adapter for gateway events and message/media OpenAPI tasks.
 - `mutsuki-bot-service-host-integration`: configured native factories and QQ EventSource bundle.
 - `mutsuki-bot-testkit`: reusable fake QQ HTTP/WebSocket boundary for downstream product E2E.
@@ -86,18 +87,17 @@ WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用
 The substantive native plugin crates generate current `PluginManifest` values from their runner
 descriptors through the Mutsuki SDK `PluginBuilder`:
 
-- `mutsuki-plugin-bot-event-router`: provides `mutsuki.bot.event/ingest@1`.
-- `mutsuki-plugin-bot-command`: provides `mutsuki.bot.command/parse@1`.
-- `mutsuki-plugin-bot-agent`: provides the public Bot Agent bridge and command handling; its
+- `mutsuki-plugin-bot-event-router`: provides Flow ingress/execution plus event/rate-limit nodes.
+- `mutsuki-plugin-bot-command`: provides a typed command Match node.
+- `mutsuki-plugin-bot-agent`: provides submit/cancel/reset/fork/status/regenerate nodes; its
   AgentClient and product state are injected by an explicit product bundle.
 - `mutsuki-plugin-bot-adapter-qqbot`: provides standard Bot message/media tasks and QQBot-specific account, gateway status, and raw call tasks.
 
 The generated manifest is the only host-loadable source of truth. This repository does not keep
 the legacy `[plugin]` / `[[provides]]` authoring format alongside it.
 
-`mutsuki-plugin-bot-command` also builds as a Core ABI v2 `cdylib`. Its builtin configured factory
-and ABI `plugin.initialize` path both parse `BotCommandConfig` and instantiate the same
-`BotCommandRunner`; their deployment-neutral business surfaces are tested for equality.
+`mutsuki-plugin-bot-command` also builds as a Core ABI v2 `cdylib`. Builtin and ABI deployments
+publish an equivalent `mutsuki.bot.flow.nodes@1` catalog and exact callable binding.
 
 `mutsuki-bot-protocol` and `mutsuki-bot-sdk` are library crates and are not host-loadable plugins.
 
@@ -131,10 +131,10 @@ See `docs/qqbot-adapter.md` and `examples/service-host-example` for configured S
 assembly, fake-server E2E and real-account smoke boundaries. `configured_bot_plugin_catalog()`
 exports owner-defined config factories without moving QQ fields into ServiceHost.
 Products that opt into Agent use `configured_bot_plugin_catalog_with_agent()` with the same shared
-`AgentConnectionRegistry` passed to AgentKit's configured catalog. The Bot Agent-owned pipeline
-runs command/business handlers first and the Agent bridge at `i32::MIN`; Stop/Consume prevents the
-fallback, while ordinary and unknown-command messages continue to policy admission. The default
-Product rule disables Agent, so selecting the plugin alone never creates conversations.
+`AgentConnectionRegistry` passed to AgentKit's configured catalog. The published Bot Flow is the
+only place that decides whether a QQ event reaches Command, Agent or another behavior. The Agent
+bridge owns connection/profile, session scope, media settings, concurrency, timeout and durable
+session/delivery fencing; selecting the plugin alone does not route an event.
 Issue #141's criterion-by-criterion functional and performance evidence is recorded in
 `docs/issue141-acceptance.md`.
 
@@ -149,7 +149,8 @@ Business bot plugins should depend on `mutsuki.bot.*` protocols. They should not
 ## Performance model
 
 `mutsuki-bot-benchmarks` and `scripts/run-performance-model.py` implement the versioned Bot owner
-workload. The current v2 suite adds Issue #140 handler filtering, conversation/session binding,
+workload. The current v2 suite measures command hit/miss, three-node Flow chains, explicit fan-out,
+conversation/session binding,
 active-delivery idempotency, and interaction state transitions to the existing deterministic
 fixtures and loopback HTTP/WebSocket cases.
 

@@ -99,7 +99,6 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
     assert!(html.contains("console-bootstrap.js?v="));
-    assert!(html.contains("@mutsuki/web-sdk"));
 
     let bootstrap = http_get_body(&addr, "/console-bootstrap.js").await;
     assert!(bootstrap.contains("index.js?v="));

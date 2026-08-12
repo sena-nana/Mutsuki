@@ -5,8 +5,8 @@ The Bilibili configured plugin can opt into chat management through its owner-de
 
 ```text
 Chat:
-  BotEvent -> command parser -> mutsuki.bot.command/handle@1
-    -> BilibiliRunner -> BilibiliManagementService -> Host secret / configured-plugin store
+  Bot Flow: Source -> Command Match -> Bilibili management Processor
+    -> BilibiliManagementService -> Host secret / configured-plugin store
 
 Web Console:
   overview /bilibili page -> bilibili.* RPC (runtime.read|write)
@@ -15,7 +15,8 @@ Web Console:
 
 The management contract contains only product fields:
 
-- `enabled` and `command` select the chat command surface.
+- `enabled` publishes the management behavior node; its command path exists only in a Command
+  Match node in the published graph.
 - `admin_user_ids` authorizes QR login and administrator subscription changes **in chat**.
 - `allow_self_binding` enables signature-challenge ownership verification.
 - `self_binding_notifications` and `self_binding_outbound_binding` define the subscription created

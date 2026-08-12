@@ -115,6 +115,9 @@ pub struct BotReplyDeliveryRequest {
     pub policy: DeliveryPolicy,
     pub source_event_id: String,
     pub source_turn_id: String,
+    /// Durable Agent event owner completed atomically with reply reservation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_binding_key: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

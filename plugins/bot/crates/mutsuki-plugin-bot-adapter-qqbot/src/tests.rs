@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use mutsuki_bot_protocol::{
-    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
-    BotConversationKind, BotEventKind, BotMediaKind, BotMessage, BotMessageRecallRequest,
-    BotTarget, MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotConversationKind, BotEvent, BotEventKind,
+    BotFlowEventEnvelope, BotMediaKind, BotMessage, BotMessageRecallRequest, BotTarget,
+    MessageSegment, QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_GATEWAY_STATUS_PROTOCOL_ID,
     QQBOT_OPENAPI_PERMANENT_ERROR, QQBOT_OPENAPI_RATE_LIMITED_ERROR, QQBOT_RAW_CALL_PROTOCOL_ID,
     QqMessageSegmentKind, QqPermissionRequirement,
 };
@@ -28,6 +29,15 @@ use crate::tasks::{
 use crate::{
     QqBotClients, QqHttpClient, QqHttpRequest, QqHttpResponse, QqIdSource, StaticQqCredentials,
 };
+
+fn decode_ingress_event(task: &Task) -> BotEvent {
+    let envelope = task
+        .payload
+        .decode_shared::<BotFlowEventEnvelope>()
+        .unwrap();
+    assert_eq!(envelope.payload.event_type.type_id, BOT_FLOW_BOT_EVENT_TYPE);
+    serde_json::from_value(envelope.payload.value.clone()).unwrap()
+}
 
 #[test]
 fn gateway_pump_creates_internal_frame_tasks_and_deduplicates() {
@@ -74,8 +84,7 @@ fn gateway_runner_maps_qqbot_message_to_standard_bot_event() {
     let result = run_one(&mut runner, task).unwrap();
 
     assert_eq!(result.tasks.len(), 1);
-    let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
+    let event = decode_ingress_event(&result.tasks[0]);
     assert_eq!(event.kind, BotEventKind::MessageCreated);
     let message = event.message.unwrap();
     assert_eq!(message.plain_text(), "ping");
@@ -105,8 +114,7 @@ fn gateway_runner_maps_channel_mentions_and_quote_context() {
     let task = pump.handle_raw_frame(raw, 1).unwrap().unwrap();
 
     let result = run_one(&mut runner, task).unwrap();
-    let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
+    let event = decode_ingress_event(&result.tasks[0]);
     assert_eq!(
         event.target,
         BotTarget::GuildChannel {
@@ -163,10 +171,7 @@ fn gateway_pump_and_runner_map_available_message_update_and_delete_events() {
             .unwrap()
             .unwrap();
         let result = run_one(&mut runner, task).unwrap();
-        let event = result.tasks[0]
-            .payload
-            .decode_shared::<mutsuki_bot_protocol::BotEvent>()
-            .unwrap();
+        let event = decode_ingress_event(&result.tasks[0]);
         assert_eq!(event.kind, expected_kind);
         assert_eq!(event.ext["qqbot.sequence"], Value::from(sequence));
     }
@@ -297,15 +302,7 @@ fn gateway_runner_uses_official_group_member_openid_and_c2c_id_fallbacks() {
     let events = completion
         .results
         .iter()
-        .map(|entry| {
-            serde_json::from_value::<mutsuki_bot_protocol::BotEvent>(
-                entry.result.as_ref().unwrap().tasks[0]
-                    .payload
-                    .clone()
-                    .into(),
-            )
-            .unwrap()
-        })
+        .map(|entry| decode_ingress_event(&entry.result.as_ref().unwrap().tasks[0]))
         .collect::<Vec<_>>();
 
     assert_eq!(events[0].actor.as_ref().unwrap().user_id, "MEMBER_OPENID");
@@ -362,15 +359,7 @@ fn gateway_runner_maps_lifecycle_seconds_and_reaction_identity_fields() {
     let events = completion
         .results
         .iter()
-        .map(|entry| {
-            serde_json::from_value::<mutsuki_bot_protocol::BotEvent>(
-                entry.result.as_ref().unwrap().tasks[0]
-                    .payload
-                    .clone()
-                    .into(),
-            )
-            .unwrap()
-        })
+        .map(|entry| decode_ingress_event(&entry.result.as_ref().unwrap().tasks[0]))
         .collect::<Vec<_>>();
 
     assert_eq!(events[0].time_ms, 1_781_680_853_000);
@@ -409,8 +398,7 @@ fn gateway_runner_strips_only_the_bot_mention_from_group_at_content() {
     );
 
     let result = run_one(&mut runner, task).unwrap();
-    let event: mutsuki_bot_protocol::BotEvent =
-        serde_json::from_value(result.tasks[0].payload.clone().into()).unwrap();
+    let event = decode_ingress_event(&result.tasks[0]);
 
     assert_eq!(
         event.message.unwrap().plain_text(),

@@ -18,7 +18,7 @@ description: Assemble Mutsuki BotTemplate from external configuration through pl
 
 ## 装配
 
-1. 将配置解析为 capability、plugin、deployment、binding、subscription 和 Host 资源需求。
+1. 将配置解析为 capability、plugin、deployment、binding 和 Host 资源需求；Bot 匹配与顺序只来自 Web 后台发布的 Flow。
 2. 只聚合上游公开 factory catalog；模板不得注册自有业务 manifest 或 Runner。
 3. 启动前生成并校验 RuntimeProfile/RuntimeLoadPlan；registry freeze 后不得越权注册。
 4. 通过 `ServiceRuntimeBuilder` 或当前等价 API 启动真实 `ServiceRuntime`，不创建 BotHost。

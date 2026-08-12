@@ -3,7 +3,9 @@ use mutsuki_agent_contracts::{ScheduleExecutionStatus, ScheduledRunResult};
 use mutsuki_bot_protocol::{
     BOT_ACTIVE_DELIVERY_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BOT_REPLY_DELIVERY_PROTOCOL_ID,
     BotActiveDeliveryCommand, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryContent,
-    BotDeliveryPartReceipt, BotDeliveryReceipt, BotMessage, BotReplyDeliveryCommand,
+    BotDeliveryPartReceipt, BotDeliveryReceipt, BotFlowTypeRef, BotMessage, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, BotReplyDeliveryCommand,
     BotReplyDeliveryPart, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryPartStatus,
     DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
@@ -1078,6 +1080,32 @@ pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> Plug
             runner_id,
             "bot-reply-delivery",
         )
+        .extension(
+            BotNodeCatalogFragment {
+                nodes: vec![BotNodeDescriptor {
+                    node_type_id: "mutsuki.bot.delivery.reply".into(),
+                    version: 1,
+                    title: "可靠回复投递".into(),
+                    category: "投递".into(),
+                    role: BotNodeRole::Sink,
+                    binding: Some(BotNodeBinding {
+                        binding_id: format!("binding:{BOT_REPLY_DELIVERY_PROTOCOL_ID}"),
+                        protocol_id: BOT_REPLY_DELIVERY_PROTOCOL_ID.into(),
+                        runner_hint: Some(runner_id.into()),
+                    }),
+                    ports: vec![BotNodePortDescriptor {
+                        port_id: "reply".into(),
+                        title: "回复".into(),
+                        direction: BotNodePortDirection::Input,
+                        event_type: BotFlowTypeRef::new("mutsuki.bot.delivery.reply", 1),
+                        required: true,
+                    }],
+                    config_schema: serde_json::json!({"type": "object", "additionalProperties": false}),
+                }],
+            }
+            .into_plugin_extension()
+            .expect("delivery node catalog serializes"),
+        )
         .build()
         .manifest
 }
@@ -1204,8 +1232,27 @@ async fn reply_delivery_result(
     ctx: &AsyncRunnerContext,
     task: &Task,
 ) -> RuntimeResult<RunnerResult> {
-    let command: BotReplyDeliveryCommand = serde_json::from_value(task.payload.to_value())
-        .map_err(|error| runtime_error(task, error))?;
+    let (command, node_invocation) =
+        match serde_json::from_value::<BotNodeInvocation>(task.payload.to_value()) {
+            Ok(invocation) => {
+                let request = serde_json::from_value::<BotReplyDeliveryRequest>(
+                    invocation.input.payload.value.clone(),
+                )
+                .map_err(|error| runtime_error(task, error))?;
+                (
+                    BotReplyDeliveryCommand::Submit {
+                        request: Box::new(request),
+                        now_unix_ms: unix_ms(),
+                    },
+                    true,
+                )
+            }
+            Err(_) => (
+                serde_json::from_value(task.payload.to_value())
+                    .map_err(|error| runtime_error(task, error))?,
+                false,
+            ),
+        };
     let output = match command {
         BotReplyDeliveryCommand::Submit {
             request,
@@ -1246,8 +1293,23 @@ async fn reply_delivery_result(
     }
     .map_err(|error| runtime_error(task, error))?;
     let mut result = RunnerResult::completed(task.task_id.clone());
-    result.output = Some(output);
+    result.output = Some(if node_invocation {
+        serde_json::to_value(BotNodeResult {
+            outputs: Vec::new(),
+            metadata: std::collections::BTreeMap::from([("receipt".into(), output)]),
+        })
+        .map_err(|error| runtime_error(task, error))?
+    } else {
+        output
+    });
     Ok(result)
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn runtime_error(task: &Task, error: impl std::fmt::Display) -> RuntimeFailure {

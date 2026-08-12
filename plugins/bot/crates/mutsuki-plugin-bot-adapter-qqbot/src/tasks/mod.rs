@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
 use mutsuki_bot_protocol::{
-    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID,
-    BOT_MESSAGE_SEND_PROTOCOL_ID, BotMediaUploadRequest, BotMessage, BotMessageRecallRequest,
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID,
+    BOT_MEDIA_UPLOAD_PROTOCOL_ID, BOT_MESSAGE_RECALL_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BotFlowContext, BotFlowEventEnvelope, BotFlowPayload, BotFlowTypeRef, BotMediaUploadRequest,
+    BotMessage, BotMessageRecallRequest, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
+    BotNodeInvocation, BotNodePortDescriptor, BotNodePortDirection, BotNodeResult, BotNodeRole,
     QQBOT_ACCOUNT_GET_PROTOCOL_ID, QQBOT_CAPABILITY_GET_PROTOCOL_ID,
     QQBOT_GATEWAY_STATUS_PROTOCOL_ID, QQBOT_RAW_CALL_PROTOCOL_ID, QqBotAccountGetRequest,
     QqBotCapabilityGetRequest, QqBotGatewayStatusRequest,
@@ -15,7 +18,7 @@ use mutsuki_runtime_contracts::{
     WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
-use mutsuki_runtime_sdk::{PluginBuilder, map_work_batch_entries};
+use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, map_work_batch_entries};
 use serde_json::{Value, json};
 
 use crate::adapter::{
@@ -42,13 +45,105 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
     } else {
         gateway_descriptor(plugin_generation)
     };
-    PluginBuilder::new(QQBOT_ADAPTER_PLUGIN_ID)
+    let mut builder = PluginBuilder::new(QQBOT_ADAPTER_PLUGIN_ID)
         .metadata("platform", ScalarValue::String("qqbot".into()))
         .metadata("adapter", ScalarValue::Bool(true))
         .runner_descriptor(gateway)
         .runner_descriptor(openapi_descriptor(plugin_generation, media_enabled))
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_MESSAGE_SEND_PROTOCOL_ID).build(),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-message-send",
+        )
+        .protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_MESSAGE_RECALL_PROTOCOL_ID).build(),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-message-recall",
+        );
+    if media_enabled {
+        builder = builder.protocol_handler(
+            ProtocolDescriptorBuilder::new(BOT_MEDIA_UPLOAD_PROTOCOL_ID).build(),
+            QQBOT_OPENAPI_RUNNER_ID,
+            "qqbot-media-upload",
+        );
+    }
+    builder
+        .extension(
+            qqbot_node_catalog(media_enabled)
+                .into_plugin_extension()
+                .expect("QQBot node catalog serializes"),
+        )
         .build()
         .manifest
+}
+
+fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {
+    let event_type = BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1);
+    let mut nodes = vec![BotNodeDescriptor {
+        node_type_id: "mutsuki.bot.qq.source".into(),
+        version: 1,
+        title: "QQ 事件".into(),
+        category: "QQ".into(),
+        role: BotNodeRole::Source,
+        binding: None,
+        ports: vec![BotNodePortDescriptor {
+            port_id: "event".into(),
+            title: "事件".into(),
+            direction: BotNodePortDirection::Output,
+            event_type,
+            required: false,
+        }],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    }];
+    nodes.push(sink_node(
+        "mutsuki.bot.qq.send",
+        "发送消息",
+        BOT_MESSAGE_SEND_PROTOCOL_ID,
+        "mutsuki.bot.message.send",
+    ));
+    nodes.push(sink_node(
+        "mutsuki.bot.qq.recall",
+        "撤回消息",
+        BOT_MESSAGE_RECALL_PROTOCOL_ID,
+        "mutsuki.bot.message.recall",
+    ));
+    if media_enabled {
+        nodes.push(sink_node(
+            "mutsuki.bot.qq.media.upload",
+            "上传媒体",
+            BOT_MEDIA_UPLOAD_PROTOCOL_ID,
+            "mutsuki.bot.media.upload",
+        ));
+    }
+    BotNodeCatalogFragment { nodes }
+}
+
+fn sink_node(
+    node_type_id: &str,
+    title: &str,
+    protocol_id: &str,
+    event_type: &str,
+) -> BotNodeDescriptor {
+    BotNodeDescriptor {
+        node_type_id: node_type_id.into(),
+        version: 1,
+        title: title.into(),
+        category: "QQ".into(),
+        role: BotNodeRole::Sink,
+        binding: Some(BotNodeBinding {
+            binding_id: format!("binding:{protocol_id}"),
+            protocol_id: protocol_id.into(),
+            runner_hint: Some(QQBOT_OPENAPI_RUNNER_ID.into()),
+        }),
+        ports: vec![BotNodePortDescriptor {
+            port_id: "input".into(),
+            title: "输入".into(),
+            direction: BotNodePortDirection::Input,
+            event_type: BotFlowTypeRef::new(event_type, 1),
+            required: true,
+        }],
+        config_schema: json!({"type": "object", "additionalProperties": false}),
+    }
 }
 
 pub fn qqbot_runners(
@@ -100,9 +195,13 @@ impl Runner for QqGatewayMapRunner {
                 "QQBot Gateway event mapped"
             );
             let mut ingest = Task::new(
-                format!("mutsuki.bot.event.ingest:{}", task.task_id),
-                BOT_EVENT_INGEST_PROTOCOL_ID,
-                mutsuki_runtime_contracts::TaskPayload::from_local(event),
+                format!("mutsuki.bot.flow.ingress:{}", task.task_id),
+                BOT_FLOW_INGRESS_PROTOCOL_ID,
+                mutsuki_runtime_contracts::TaskPayload::from_local(flow_envelope(
+                    event,
+                    task.trace_id.clone(),
+                    task.correlation_id.clone(),
+                )?),
             );
             ingest.registry_generation = ctx.registry_generation;
             ingest.trace_id = task.trace_id.clone();
@@ -160,15 +259,15 @@ impl Runner for QqOpenApiRunner {
     ) -> RuntimeResult<CompletionBatch> {
         let account_id = self.service.account_id().to_owned();
         map_work_batch_entries(&batch, |task| {
+            let (payload, node_invocation) = node_payload(task)?;
             let response = match task.protocol_id.as_str() {
                 BOT_MESSAGE_SEND_PROTOCOL_ID => {
-                    let message: BotMessage =
-                        serde_json::from_value(task.payload.clone().into())
-                            .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
+                    let message: BotMessage = serde_json::from_value(payload.clone())
+                        .map_err(|error| failure("mutsuki.bot.message.send.decode", error))?;
                     self.service.send_bot_message(message)
                 }
                 BOT_MEDIA_UPLOAD_PROTOCOL_ID => {
-                    let request: BotMediaUploadRequest = parse_payload(task.payload.clone().into())
+                    let request: BotMediaUploadRequest = parse_payload(payload.clone())
                         .map_err(|error| failure("mutsuki.bot.media.upload.payload", error))?;
                     self.service.upload_media(
                         bot_media_upload_to_qq_upload(request).map_err(|error| {
@@ -177,10 +276,8 @@ impl Runner for QqOpenApiRunner {
                     )
                 }
                 BOT_MESSAGE_RECALL_PROTOCOL_ID => {
-                    let request: BotMessageRecallRequest =
-                        parse_payload(task.payload.clone().into()).map_err(|error| {
-                            failure("mutsuki.bot.message.recall.payload", error)
-                        })?;
+                    let request: BotMessageRecallRequest = parse_payload(payload.clone())
+                        .map_err(|error| failure("mutsuki.bot.message.recall.payload", error))?;
                     self.service.recall_message(
                         bot_recall_to_qq_recall(request).map_err(|error| {
                             failure("mutsuki.bot.message.recall.map.qqbot", error)
@@ -229,11 +326,52 @@ impl Runner for QqOpenApiRunner {
             );
 
             let mut result = RunnerResult::completed(task.task_id.clone());
-            result.output = Some(response.clone());
+            result.output = Some(if node_invocation {
+                serde_json::to_value(BotNodeResult {
+                    outputs: Vec::new(),
+                    metadata: BTreeMap::from([("receipt".into(), response.clone())]),
+                })
+                .map_err(|error| failure("mutsuki.bot.qqbot.node.result", error))?
+            } else {
+                response.clone()
+            });
             result.events.push(result_event(task, response));
             Ok(result)
         })
     }
+}
+
+fn node_payload(task: &Task) -> Result<(Value, bool), RuntimeError> {
+    let value = task.payload.to_value();
+    match serde_json::from_value::<BotNodeInvocation>(value.clone()) {
+        Ok(invocation) => Ok((invocation.input.payload.value, true)),
+        Err(_) => Ok((value, false)),
+    }
+}
+
+pub(crate) fn flow_envelope(
+    event: mutsuki_bot_protocol::BotEvent,
+    trace_id: Option<String>,
+    correlation_id: Option<String>,
+) -> Result<BotFlowEventEnvelope, RuntimeError> {
+    let context = BotFlowContext {
+        bot: Some(event.bot.clone()),
+        target: Some(event.target.clone()),
+        actor: event.actor.clone(),
+        ext: event.ext.clone(),
+    };
+    Ok(BotFlowEventEnvelope {
+        event_id: event.event_id.clone(),
+        protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+        payload: BotFlowPayload {
+            event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+            value: serde_json::to_value(event)
+                .map_err(|error| failure("mutsuki.bot.qqbot.flow.event", error))?,
+        },
+        context,
+        trace_id,
+        correlation_id,
+    })
 }
 
 pub fn gateway_descriptor(plugin_generation: u64) -> RunnerDescriptor {

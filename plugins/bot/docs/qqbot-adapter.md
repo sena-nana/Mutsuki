@@ -32,11 +32,14 @@ it is not a cross-platform compatibility promise.
 
 ## Configuration
 
-Select the three native plugins under `[[plugins.configured]]`:
+Select the native plugins under `[[plugins.configured]]`:
 
-- `mutsuki.bot.router.event`: owner config contains non-empty `subscriptions`.
-- `mutsuki.bot.command`: owner config contains non-empty `prefixes`.
+- `mutsuki.bot.router.flow`: empty owner config; graph state is stored in the Bot repository.
+- `mutsuki.bot.command`: optional empty owner config contributing the Command Match node.
 - `mutsuki.bot.adapter.qqbot`: owner config is `QqBotConfig`.
+
+After startup, publish a graph that connects the QQ Source to Match/Processor/Sink nodes. There is
+no TOML subscription list, global command prefix or adapter-owned Handler switch.
 
 QQ fields are decoded strictly; unknown fields fail startup. Required fields are `account_id` and
 `app_id`. `client_secret_key` identifies a Host secret and defaults to
@@ -52,7 +55,7 @@ their local configuration outside Git or generate it in a temporary directory du
 
 ## Runtime and health
 
-`configured_bot_plugin_catalog()` returns factories for the router, command parser and text-only
+`configured_bot_plugin_catalog()` returns factories for the Flow router, command node and text-only
 QQ adapter. Register it on `ServiceRuntimeBuilder`; configured plugins are installed before
 RuntimeProfile/LoadPlan freeze. Unknown catalog IDs, raw credential fields, missing Host secrets and
 invalid QQ URLs fail before the service becomes healthy.

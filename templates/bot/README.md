@@ -109,9 +109,10 @@ Runner 复制到本模板。
 ## 可配置 Bot Agent
 
 模板聚合 AgentKit connection catalog 与 Bot catalog，但仍不默认启用任何连接或 Agent。
-生产配置必须显式选择连接 owner、命令插件与 `mutsuki.plugin.bot.agent`。Bot Agent 配置只
-保存 `connection_id`；Local Link address、endpoint、认证和 Secret key 引用留在 Agent
-connection owner 的 opaque config 中。示意配置（需替换真实 Link 参数）：
+生产配置必须显式选择连接 owner、Flow Router、所需节点插件与
+`mutsuki.plugin.bot.agent`。Bot Agent 配置只保存执行设置；Local Link address、endpoint、
+认证和 Secret key 引用留在 Agent connection owner 的 opaque config 中。命令文字、匹配、
+权限和调用顺序只能在 Web Console 发布的图内配置。示意配置（需替换真实 Link 参数）：
 
 ```toml
 [[plugins.configured]]
@@ -127,18 +128,19 @@ enabled = true
 config = { address = "replace-locally", local_endpoint_id = "00000000000000000000000000000001", remote_endpoint_id = "00000000000000000000000000000002" }
 
 [[plugins.configured]]
+id = "mutsuki.bot.router.flow"
+
+[[plugins.configured]]
 id = "mutsuki.bot.command"
-config = { prefixes = ["/"], commands = [] }
 
 [[plugins.configured]]
 id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, connection_id = "primary", default_profile_id = "", streaming = "final_only", max_concurrency = 1, timeout_ms = 120000, max_message_bytes = 1800 }
+config = { enabled = true, connection_id = "primary", default_profile_id = "", session_scope = "shared_conversation", stt_enabled = false, tts_enabled = false, speech_reply_policy = "text_only", stt_selector_id = "", tts_selector_id = "", streaming = "final_only", max_concurrency = 1, timeout_ms = 120000, max_message_bytes = 1800 }
 ```
 
-启动后只有持久化 Product/Account/Group/Guild/Channel/Conversation/Actor 规则允许的未消费消息
-才会进入 Agent。Web Console 仅在真实 owner 服务注册后显示“Agent 连接”和“Bot Agent 规则”；
-规则页提供停用、所有未消费消息、提及或唤醒词三个预设，并使用 revision-fenced SQLite
-upsert/delete。连接页先测试和握手，再原子替换 generation；失败保留旧连接。
+首次启动没有发布图，因此不会调用任何 Bot 行为节点。Web Console 的“Bot Flow”页面读取当前
+插件节点目录，保存/校验草稿并用 revision CAS 发布；“Agent 连接”页面仍先测试和握手，再
+原子替换 generation，失败保留旧连接。
 
 ## Bilibili 本地装配
 

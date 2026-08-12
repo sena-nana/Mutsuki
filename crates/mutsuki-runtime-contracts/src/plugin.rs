@@ -99,6 +99,17 @@ pub struct LifecyclePolicy {
     pub supports_snapshot: bool,
 }
 
+/// Versioned, owner-defined business metadata published by a plugin.
+///
+/// Core and generic Hosts carry and compare this descriptor, but never interpret `payload`.
+/// Domain owners use `extension_id` and `version` to decode it into their typed contract.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginExtensionDescriptor {
+    pub extension_id: String,
+    pub version: u32,
+    pub payload: serde_json::Value,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PluginProvides {
     /// Owner-defined load-plan capabilities that do not imply a runner, protocol, resource,
@@ -108,6 +119,8 @@ pub struct PluginProvides {
     /// They are validated and activated by the Host resolver, but remain opaque to Core.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<PluginExtensionDescriptor>,
     pub runners: Vec<RunnerDescriptor>,
     pub protocols: Vec<ProtocolDescriptor>,
     /// Runtime semantic class for each task protocol.
@@ -279,6 +292,7 @@ pub enum ContractSurfaceKind {
     Timer,
     Protocol,
     HandlerBinding,
+    PluginExtension,
     StateSchema,
     Lifecycle,
     Permission,

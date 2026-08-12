@@ -1,9 +1,19 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mutsuki_bot_protocol::{BotEvent, BotEventKind, BotTarget, MessageSegment};
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_protocol::{
+    BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotEvent, BotEventKind, BotFlowDocument,
+    BotFlowDraftSaveRequest, BotFlowEdge, BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition,
+    BotFlowPublishRequest, BotFlowSourceSelector, BotFlowTypeRef, BotNodeBinding,
+    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
+};
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
+use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
+use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
+use mutsuki_plugin_bot_event_router::flow_router_manifest;
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, WorkBatch,
 };
@@ -37,15 +47,24 @@ impl Runner for CaptureRunner {
         batch: WorkBatch,
     ) -> RuntimeResult<CompletionBatch> {
         map_work_batch_entries(&batch, |task| {
-            let event = task
+            let invocation = task
                 .payload
-                .decode_shared::<BotEvent>()
-                .expect("capture task carries a BotEvent")
+                .decode_shared::<BotNodeInvocation>()
+                .expect("capture task carries a node invocation")
                 .as_ref()
                 .clone();
+            let event: BotEvent = serde_json::from_value(invocation.input.payload.value).unwrap();
             self.events.lock().unwrap().push(event);
             self.notify.notify_waiters();
-            Ok(RunnerResult::completed(task.task_id.clone()))
+            let mut result = RunnerResult::completed(task.task_id.clone());
+            result.output = Some(
+                serde_json::to_value(BotNodeResult {
+                    outputs: Vec::new(),
+                    metadata: Default::default(),
+                })
+                .unwrap(),
+            );
+            Ok(result)
         })
     }
 }
@@ -142,8 +161,35 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
             CAPTURE_RUNNER_ID,
             "capture",
         )
+        .extension(
+            BotNodeCatalogFragment {
+                nodes: vec![BotNodeDescriptor {
+                    node_type_id: CAPTURE_PLUGIN_ID.into(),
+                    version: 1,
+                    title: "Capture".into(),
+                    category: "Test".into(),
+                    role: BotNodeRole::Sink,
+                    binding: Some(BotNodeBinding {
+                        binding_id: format!("binding:{CAPTURE_PROTOCOL_ID}"),
+                        protocol_id: CAPTURE_PROTOCOL_ID.into(),
+                        runner_hint: Some(CAPTURE_RUNNER_ID.into()),
+                    }),
+                    ports: vec![BotNodePortDescriptor {
+                        port_id: "event".into(),
+                        title: "Event".into(),
+                        direction: BotNodePortDirection::Input,
+                        event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                        required: true,
+                    }],
+                    config_schema: json!({"type": "object", "additionalProperties": false}),
+                }],
+            }
+            .into_plugin_extension()
+            .unwrap(),
+        )
         .build()
         .manifest;
+    publish_capture_flow(&config, &manifest);
     let runner_descriptor = descriptor.clone();
     let runner_events = events.clone();
     let runner_notify = notify.clone();
@@ -161,7 +207,7 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
         .await
         .unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let capture_result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let ready = {
                 let captured = events.lock().unwrap();
@@ -180,8 +226,18 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
             notify.notified().await;
         }
     })
-    .await
-    .expect("private, group, channel and delete events should reach the business runner");
+    .await;
+    assert!(
+        capture_result.is_ok(),
+        "private, group, channel and delete events should reach the business runner; captured={:?}; tasks={:#?}",
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| event.event_id.as_str())
+            .collect::<Vec<_>>(),
+        runtime.task_snapshots()
+    );
 
     let captured = events.lock().unwrap().clone();
     assert!(
@@ -279,9 +335,8 @@ dynamic_dirs = []
 disabled_dir = "disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.event"
+id = "mutsuki.bot.router.flow"
 [plugins.configured.config]
-subscriptions = [{{ subscription_id = "issue141-capture", handler_protocol_id = "{CAPTURE_PROTOCOL_ID}", platform = "qqbot" }}]
 
 [[plugins.configured]]
 id = "mutsuki.bot.adapter.qqbot"
@@ -319,4 +374,72 @@ panic_file = "panic.log"
         qq.token_url,
         qq.openapi_base_url,
     )
+}
+
+fn publish_capture_flow(
+    config: &ServiceConfig,
+    capture_manifest: &mutsuki_runtime_contracts::PluginManifest,
+) {
+    let state_dir = config.service.data_dir.join("bot");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    let repository = Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
+    let catalog = BotNodeCatalog::from_manifests(&[
+        qqbot_adapter_manifest(1, false),
+        flow_router_manifest(),
+        capture_manifest.clone(),
+    ])
+    .unwrap();
+    let registry = BotFlowRegistry::open(repository, catalog).unwrap();
+    let draft = registry
+        .save_draft(
+            BotFlowDraftSaveRequest {
+                expected_draft_revision: None,
+                base_published_revision: 0,
+                flows: vec![BotFlowDocument {
+                    flow_id: "issue141.capture".into(),
+                    name: "capture all QQ events".into(),
+                    enabled: true,
+                    nodes: vec![
+                        BotFlowNode {
+                            node_id: "source".into(),
+                            node_type_id: "mutsuki.bot.qq.source".into(),
+                            node_type_version: 1,
+                            config: json!({}),
+                            source: Some(BotFlowSourceSelector {
+                                protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+                                event_type: Some(BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1)),
+                            }),
+                            position: BotFlowNodePosition::default(),
+                        },
+                        BotFlowNode {
+                            node_id: "capture".into(),
+                            node_type_id: CAPTURE_PLUGIN_ID.into(),
+                            node_type_version: 1,
+                            config: json!({}),
+                            source: None,
+                            position: BotFlowNodePosition::default(),
+                        },
+                    ],
+                    edges: vec![BotFlowEdge {
+                        edge_id: "capture".into(),
+                        from_node_id: "source".into(),
+                        from_port_id: "event".into(),
+                        to_node_id: "capture".into(),
+                        to_port_id: "event".into(),
+                        kind: BotFlowEdgeKind::Event,
+                    }],
+                }],
+            },
+            1,
+        )
+        .unwrap();
+    registry
+        .publish(
+            BotFlowPublishRequest {
+                expected_draft_revision: draft.revision,
+                expected_published_revision: 0,
+            },
+            2,
+        )
+        .unwrap();
 }

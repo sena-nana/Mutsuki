@@ -3,17 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use mutsuki_bot_protocol::{
     AgentSessionBinding, AgentSessionScope, BotConversationKind, BotEvent, BotTarget,
-    ConversationPolicy, ConversationPolicyLayer, ConversationPolicyPatch, ConversationPolicyRule,
-    ConversationPolicyRuleSource, DirectMessagePolicy, MessageSegment, QQ_CONVERSATION_REF_VERSION,
-    QqConversationRef, ResolvedConversationPolicy,
+    ConversationPolicy, QQ_CONVERSATION_REF_VERSION, QqConversationRef, ResolvedConversationPolicy,
 };
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[async_trait]
 pub trait ConversationRepository: Send + Sync {
-    async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError>;
-
     async fn session_binding(
         &self,
         binding_key: &str,
@@ -64,112 +60,19 @@ impl ConversationService {
         }
     }
 
-    /// Resolves the effective policy from product defaults and matching repository rules.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the conversation reference is invalid or policy storage fails.
-    pub async fn resolve_policy(
+    /// Resolves the Bot-owned execution settings without reading legacy trigger rules.
+    /// Matching, permission and wake-up decisions are owned by the published Flow graph.
+    pub fn resolve_execution(
         &self,
         conversation: QqConversationRef,
-        actor_id: Option<&str>,
     ) -> Result<ResolvedConversationPolicy, ConversationError> {
         conversation
             .validate()
             .map_err(|error| ConversationError::InvalidConversationRef(error.to_string()))?;
-        let origin_key = conversation.origin_key();
-        let mut rules = self
-            .repository
-            .policy_rules()
-            .await?
-            .into_iter()
-            .filter(|rule| rule_matches(rule, &conversation, &origin_key, actor_id))
-            .collect::<Vec<_>>();
-        rules.sort_by(|left, right| {
-            rule_layer(left)
-                .cmp(&rule_layer(right))
-                .then_with(|| rule_specificity(left).cmp(&rule_specificity(right)))
-                .then_with(|| left.revision.cmp(&right.revision))
-                .then_with(|| left.rule_id.cmp(&right.rule_id))
-        });
-        let mut policy = self.product_default.clone();
-        let mut matched_rule_ids = Vec::with_capacity(rules.len());
-        let mut matched_rule_sources = Vec::with_capacity(rules.len());
-        for rule in rules {
-            let layer = rule_layer(&rule);
-            matched_rule_sources.push(ConversationPolicyRuleSource {
-                rule_id: rule.rule_id.clone(),
-                layer,
-                revision: rule.revision,
-            });
-            apply_patch(&mut policy, rule.revision, &rule.patch);
-            matched_rule_ids.push(rule.rule_id);
-        }
         Ok(ResolvedConversationPolicy {
             conversation,
-            policy,
-            matched_rule_ids,
-            matched_rule_sources,
+            policy: self.product_default.clone(),
         })
-    }
-
-    /// Applies the resolved admission policy to one incoming event.
-    ///
-    /// # Errors
-    ///
-    /// Returns the stable denial reason when the event is disabled, denied, or lacks a trigger.
-    pub fn admit_event(
-        &self,
-        resolved: &ResolvedConversationPolicy,
-        event: &BotEvent,
-    ) -> Result<(), ConversationAdmissionError> {
-        let policy = &resolved.policy;
-        let actor_id = event.actor.as_ref().map(|actor| actor.user_id.as_str());
-        if !policy.enabled {
-            return Err(ConversationAdmissionError::ConversationDisabled);
-        }
-        if actor_id.is_some_and(|actor| policy.denylist.iter().any(|entry| entry == actor)) {
-            return Err(ConversationAdmissionError::ActorDenied);
-        }
-        if !policy.allowlist.is_empty()
-            && !actor_id.is_some_and(|actor| policy.allowlist.iter().any(|entry| entry == actor))
-        {
-            return Err(ConversationAdmissionError::ActorNotAllowed);
-        }
-        if resolved.conversation.kind == BotConversationKind::Private {
-            return match policy.direct_message_policy {
-                DirectMessagePolicy::Allow => Ok(()),
-                DirectMessagePolicy::Deny => Err(ConversationAdmissionError::DirectMessageDenied),
-                DirectMessagePolicy::Allowlisted
-                    if actor_id.is_some_and(|actor| {
-                        policy.allowlist.iter().any(|entry| entry == actor)
-                    }) =>
-                {
-                    Ok(())
-                }
-                DirectMessagePolicy::Allowlisted => {
-                    Err(ConversationAdmissionError::DirectMessageNotAllowlisted)
-                }
-            };
-        }
-        if policy.must_mention || !policy.wake_words.is_empty() {
-            let message = event
-                .message
-                .as_ref()
-                .ok_or(ConversationAdmissionError::TriggerMissing)?;
-            let mentioned = message.segments.iter().any(|segment| {
-                matches!(segment, MessageSegment::MentionUser { user_id } if user_id == &event.bot.account_id)
-            });
-            let text = message.plain_text();
-            let woke = policy
-                .wake_words
-                .iter()
-                .any(|wake_word| !wake_word.is_empty() && text.contains(wake_word));
-            if !mentioned && !woke {
-                return Err(ConversationAdmissionError::TriggerMissing);
-            }
-        }
-        Ok(())
     }
 
     /// Loads or atomically creates the session binding for the resolved scope.
@@ -592,120 +495,6 @@ fn stable_session_id(binding_key: &str) -> String {
     format!("bot-{}", hex::encode(&digest[..16]))
 }
 
-fn rule_matches(
-    rule: &ConversationPolicyRule,
-    conversation: &QqConversationRef,
-    origin_key: &str,
-    actor_id: Option<&str>,
-) -> bool {
-    let matcher = &rule.matcher;
-    matcher
-        .account_id
-        .as_ref()
-        .is_none_or(|value| value == &conversation.account_id)
-        && matcher
-            .kind
-            .as_ref()
-            .is_none_or(|value| value == &conversation.kind)
-        && matcher
-            .group_id
-            .as_ref()
-            .is_none_or(|value| Some(value) == conversation.group_id.as_ref())
-        && matcher
-            .guild_id
-            .as_ref()
-            .is_none_or(|value| Some(value) == conversation.guild_id.as_ref())
-        && matcher
-            .channel_id
-            .as_ref()
-            .is_none_or(|value| Some(value) == conversation.channel_id.as_ref())
-        && matcher
-            .origin_key
-            .as_ref()
-            .is_none_or(|value| value == origin_key)
-        && matcher
-            .actor_id
-            .as_deref()
-            .is_none_or(|value| Some(value) == actor_id)
-}
-
-fn rule_layer(rule: &ConversationPolicyRule) -> ConversationPolicyLayer {
-    let matcher = &rule.matcher;
-    if matcher.actor_id.is_some() {
-        ConversationPolicyLayer::ActorInConversation
-    } else if matcher.origin_key.is_some() {
-        ConversationPolicyLayer::Conversation
-    } else if matcher.channel_id.is_some() {
-        ConversationPolicyLayer::Channel
-    } else if matcher.group_id.is_some() {
-        ConversationPolicyLayer::Group
-    } else if matcher.guild_id.is_some() {
-        ConversationPolicyLayer::Guild
-    } else if matcher.account_id.is_some() {
-        ConversationPolicyLayer::Account
-    } else {
-        ConversationPolicyLayer::Product
-    }
-}
-
-fn rule_specificity(rule: &ConversationPolicyRule) -> usize {
-    let matcher = &rule.matcher;
-    [
-        matcher.account_id.is_some(),
-        matcher.kind.is_some(),
-        matcher.group_id.is_some(),
-        matcher.guild_id.is_some(),
-        matcher.channel_id.is_some(),
-        matcher.origin_key.is_some(),
-        matcher.actor_id.is_some(),
-    ]
-    .into_iter()
-    .filter(|matches| *matches)
-    .count()
-}
-
-fn apply_patch(policy: &mut ConversationPolicy, revision: u64, patch: &ConversationPolicyPatch) {
-    policy.revision = policy.revision.max(revision);
-    set(&mut policy.enabled, patch.enabled);
-    set(&mut policy.agent_enabled, patch.agent_enabled);
-    set(
-        &mut policy.direct_message_policy,
-        patch.direct_message_policy,
-    );
-    set(&mut policy.must_mention, patch.must_mention);
-    set(&mut policy.wake_words, patch.wake_words.clone());
-    set(&mut policy.allowlist, patch.allowlist.clone());
-    set(&mut policy.denylist, patch.denylist.clone());
-    set(
-        &mut policy.rate_limit_profile_id,
-        patch.rate_limit_profile_id.clone(),
-    );
-    set(&mut policy.session_scope, patch.session_scope);
-    set(
-        &mut policy.business_profile_binding_id,
-        patch.business_profile_binding_id.clone(),
-    );
-    set(
-        &mut policy.agent_runtime_profile_id,
-        patch.agent_runtime_profile_id.clone(),
-    );
-    set(&mut policy.stt_enabled, patch.stt_enabled);
-    set(&mut policy.tts_enabled, patch.tts_enabled);
-    set(&mut policy.speech_reply_policy, patch.speech_reply_policy);
-    set(&mut policy.stt_selector_id, patch.stt_selector_id.clone());
-    set(&mut policy.tts_selector_id, patch.tts_selector_id.clone());
-    set(
-        &mut policy.active_delivery_enabled,
-        patch.active_delivery_enabled,
-    );
-}
-
-fn set<T>(target: &mut T, value: Option<T>) {
-    if let Some(value) = value {
-        *target = value;
-    }
-}
-
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ConversationError {
     #[error("conversation repository failed: {0}")]
@@ -728,31 +517,12 @@ pub enum ConversationError {
     InvalidConversationRef(String),
 }
 
-#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
-pub enum ConversationAdmissionError {
-    #[error("conversation is disabled")]
-    ConversationDisabled,
-    #[error("actor is denied by conversation policy")]
-    ActorDenied,
-    #[error("actor is not allowed by conversation policy")]
-    ActorNotAllowed,
-    #[error("direct messages are disabled by conversation policy")]
-    DirectMessageDenied,
-    #[error("direct-message actor is not allowlisted")]
-    DirectMessageNotAllowlisted,
-    #[error("message does not mention the bot or contain a configured wake word")]
-    TriggerMissing,
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use mutsuki_bot_protocol::{
-        BotAccountRef, BotConversationKind, BotEventKind, BotMessage, BotPlatform, BotUser,
-        ConversationPolicyMatch, QQ_CONVERSATION_REF_VERSION,
-    };
+    use mutsuki_bot_protocol::{BotConversationKind, QQ_CONVERSATION_REF_VERSION};
 
     use super::*;
 
@@ -762,17 +532,12 @@ mod tests {
 
     #[derive(Default)]
     struct MemoryRepository {
-        rules: Vec<ConversationPolicyRule>,
         bindings: Mutex<BTreeMap<String, AgentSessionBinding>>,
         events: Mutex<BTreeMap<(String, String), bool>>,
     }
 
     #[async_trait]
     impl ConversationRepository for MemoryRepository {
-        async fn policy_rules(&self) -> Result<Vec<ConversationPolicyRule>, ConversationError> {
-            Ok(self.rules.clone())
-        }
-
         async fn session_binding(
             &self,
             binding_key: &str,
@@ -827,116 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn policy_precedence_is_deterministic_and_reports_sources() {
-        let repository = Arc::new(MemoryRepository {
-            rules: vec![
-                rule(
-                    "product",
-                    ConversationPolicyMatch::default(),
-                    ConversationPolicyPatch {
-                        agent_enabled: Some(false),
-                        ..Default::default()
-                    },
-                ),
-                rule(
-                    "account",
-                    ConversationPolicyMatch {
-                        account_id: Some("main".into()),
-                        ..Default::default()
-                    },
-                    ConversationPolicyPatch {
-                        must_mention: Some(true),
-                        ..Default::default()
-                    },
-                ),
-                rule(
-                    "group",
-                    ConversationPolicyMatch {
-                        account_id: Some("main".into()),
-                        group_id: Some("group".into()),
-                        ..Default::default()
-                    },
-                    ConversationPolicyPatch {
-                        agent_enabled: Some(true),
-                        must_mention: Some(false),
-                        ..Default::default()
-                    },
-                ),
-            ],
-            ..Default::default()
-        });
-        let service = ConversationService::new(repository, default_policy());
-        let resolved =
-            block_on(service.resolve_policy(group_conversation(), Some("actor"))).unwrap();
-        assert!(resolved.policy.agent_enabled);
-        assert!(!resolved.policy.must_mention);
-        assert_eq!(resolved.matched_rule_ids, ["product", "account", "group"]);
-        assert_eq!(
-            resolved
-                .matched_rule_sources
-                .iter()
-                .map(|source| source.layer)
-                .collect::<Vec<_>>(),
-            [
-                mutsuki_bot_protocol::ConversationPolicyLayer::Product,
-                mutsuki_bot_protocol::ConversationPolicyLayer::Account,
-                mutsuki_bot_protocol::ConversationPolicyLayer::Group,
-            ]
-        );
-    }
-
-    #[test]
-    fn policy_hierarchy_wins_over_rule_id_order() {
-        let conversation = group_conversation();
-        let repository = Arc::new(MemoryRepository {
-            rules: vec![
-                rule(
-                    "z-account",
-                    ConversationPolicyMatch {
-                        account_id: Some("main".into()),
-                        ..Default::default()
-                    },
-                    ConversationPolicyPatch {
-                        must_mention: Some(true),
-                        ..Default::default()
-                    },
-                ),
-                rule(
-                    "a-conversation",
-                    ConversationPolicyMatch {
-                        origin_key: Some(conversation.origin_key()),
-                        ..Default::default()
-                    },
-                    ConversationPolicyPatch {
-                        must_mention: Some(false),
-                        ..Default::default()
-                    },
-                ),
-                rule(
-                    "0-actor",
-                    ConversationPolicyMatch {
-                        actor_id: Some("actor".into()),
-                        ..Default::default()
-                    },
-                    ConversationPolicyPatch {
-                        must_mention: Some(true),
-                        ..Default::default()
-                    },
-                ),
-            ],
-            ..Default::default()
-        });
-        let service = ConversationService::new(repository, default_policy());
-        let resolved = block_on(service.resolve_policy(conversation, Some("actor"))).unwrap();
-
-        assert!(resolved.policy.must_mention);
-        assert_eq!(
-            resolved.matched_rule_ids,
-            ["z-account", "a-conversation", "0-actor"]
-        );
-    }
-
-    #[test]
     fn conversation_refs_round_trip_private_group_and_channel_targets() {
         let refs = [
             QqConversationRef {
@@ -982,8 +637,7 @@ mod tests {
         let repository = Arc::new(MemoryRepository::default());
         let shared = ConversationService::new(repository.clone(), default_policy());
         let conversation = group_conversation();
-        let resolved =
-            block_on(shared.resolve_policy(conversation.clone(), Some("actor-a"))).unwrap();
+        let resolved = shared.resolve_execution(conversation.clone()).unwrap();
         let first =
             block_on(shared.get_or_create_session_binding(&resolved, Some("actor-a"))).unwrap();
         let restarted = ConversationService::new(repository.clone(), default_policy());
@@ -1000,7 +654,7 @@ mod tests {
         let mut actor_policy = default_policy();
         actor_policy.session_scope = AgentSessionScope::ActorInConversation;
         let actors = ConversationService::new(Arc::new(MemoryRepository::default()), actor_policy);
-        let resolved = block_on(actors.resolve_policy(conversation, None)).unwrap();
+        let resolved = actors.resolve_execution(conversation).unwrap();
         let actor_a =
             block_on(actors.get_or_create_session_binding(&resolved, Some("actor-a"))).unwrap();
         let actor_b =
@@ -1013,16 +667,18 @@ mod tests {
         let repository = Arc::new(MemoryRepository::default());
         let first_service = ConversationService::new(repository.clone(), default_policy());
         let conversation = group_conversation();
-        let first_resolved =
-            block_on(first_service.resolve_policy(conversation.clone(), None)).unwrap();
+        let first_resolved = first_service
+            .resolve_execution(conversation.clone())
+            .unwrap();
         let first =
             block_on(first_service.get_or_create_session_binding(&first_resolved, None)).unwrap();
 
         let mut changed_policy = default_policy();
         changed_policy.revision = 2;
         let changed_service = ConversationService::new(repository.clone(), changed_policy);
-        let changed_resolved =
-            block_on(changed_service.resolve_policy(conversation.clone(), None)).unwrap();
+        let changed_resolved = changed_service
+            .resolve_execution(conversation.clone())
+            .unwrap();
         let refreshed =
             block_on(changed_service.get_or_create_session_binding(&changed_resolved, None))
                 .unwrap();
@@ -1035,88 +691,6 @@ mod tests {
         assert_ne!(expired.session_id, refreshed.session_id);
         assert_eq!(expired.session_version, 0);
         assert!(expired.generation > refreshed.generation);
-    }
-
-    #[test]
-    fn admission_enforces_actor_direct_message_and_group_trigger_policy() {
-        let service = ConversationService::new(
-            Arc::new(MemoryRepository::default()),
-            ConversationPolicy {
-                allowlist: vec!["allowed".into()],
-                denylist: vec!["denied".into()],
-                direct_message_policy: DirectMessagePolicy::Allowlisted,
-                must_mention: true,
-                wake_words: vec!["mutsuki".into()],
-                ..default_policy()
-            },
-        );
-
-        let direct_denied = bot_event(
-            BotTarget::User {
-                user_id: "denied".into(),
-            },
-            "denied",
-            vec![MessageSegment::text("hello")],
-        );
-        let resolved = block_on(service.resolve_policy(
-            qq_conversation_from_event(&direct_denied).unwrap(),
-            Some("denied"),
-        ))
-        .unwrap();
-        assert_eq!(
-            service.admit_event(&resolved, &direct_denied),
-            Err(ConversationAdmissionError::ActorDenied)
-        );
-
-        let group_unaddressed = bot_event(
-            BotTarget::Group {
-                group_id: "group".into(),
-            },
-            "allowed",
-            vec![MessageSegment::text("hello")],
-        );
-        let resolved = block_on(service.resolve_policy(
-            qq_conversation_from_event(&group_unaddressed).unwrap(),
-            Some("allowed"),
-        ))
-        .unwrap();
-        assert_eq!(
-            service.admit_event(&resolved, &group_unaddressed),
-            Err(ConversationAdmissionError::TriggerMissing)
-        );
-
-        let group_woken = bot_event(
-            BotTarget::Group {
-                group_id: "group".into(),
-            },
-            "allowed",
-            vec![MessageSegment::text("mutsuki help")],
-        );
-        assert_eq!(service.admit_event(&resolved, &group_woken), Ok(()));
-
-        let group_mentioned = bot_event(
-            BotTarget::Group {
-                group_id: "group".into(),
-            },
-            "allowed",
-            vec![MessageSegment::MentionUser {
-                user_id: "main".into(),
-            }],
-        );
-        assert_eq!(service.admit_event(&resolved, &group_mentioned), Ok(()));
-    }
-
-    fn rule(
-        rule_id: &str,
-        matcher: ConversationPolicyMatch,
-        patch: ConversationPolicyPatch,
-    ) -> ConversationPolicyRule {
-        ConversationPolicyRule {
-            rule_id: rule_id.into(),
-            revision: 2,
-            matcher,
-            patch,
-        }
     }
 
     fn group_conversation() -> QqConversationRef {
@@ -1132,47 +706,9 @@ mod tests {
         }
     }
 
-    fn bot_event(target: BotTarget, actor_id: &str, segments: Vec<MessageSegment>) -> BotEvent {
-        BotEvent {
-            event_id: "event".into(),
-            platform: BotPlatform::QqBot,
-            bot: BotAccountRef {
-                account_id: "main".into(),
-                platform: BotPlatform::QqBot,
-            },
-            kind: BotEventKind::MessageCreated,
-            time_ms: 1,
-            target: target.clone(),
-            actor: Some(BotUser {
-                user_id: actor_id.into(),
-                display_name: None,
-                avatar_url: None,
-            }),
-            message: Some(BotMessage {
-                message_id: Some("message".into()),
-                target,
-                sender: None,
-                segments,
-                reply_to: None,
-                time_ms: Some(1),
-                ext: BTreeMap::default(),
-            }),
-            raw: None,
-            ext: BTreeMap::default(),
-        }
-    }
-
     fn default_policy() -> ConversationPolicy {
         ConversationPolicy {
             revision: 1,
-            enabled: true,
-            agent_enabled: false,
-            direct_message_policy: DirectMessagePolicy::Allow,
-            must_mention: false,
-            wake_words: Vec::new(),
-            allowlist: Vec::new(),
-            denylist: Vec::new(),
-            rate_limit_profile_id: None,
             session_scope: AgentSessionScope::SharedConversation,
             business_profile_binding_id: None,
             agent_runtime_profile_id: Some("default".into()),
