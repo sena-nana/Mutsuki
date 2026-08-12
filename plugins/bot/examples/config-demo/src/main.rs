@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_config::{
+use mutsuki_config_service::{
     ConfigApplyMode, ConfigProviderRegistry, ConfigService, ConfigValue, MemoryConfigProvider,
     MutsukiConfig, MutsukiConfigSchema,
 };
-use mutsuki_plugin_bot_config_web::{ConfigWebExtension, materialize_frontend_assets};
+use mutsuki_plugin_config_web::{ConfigWebExtension, materialize_frontend_assets};
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
 use mutsuki_web_protocol::{DeploymentMode, WebApplicationDescriptor, WebShellAssets};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         [
             (
                 "token".into(),
-                ConfigValue::Secret(mutsuki_bot_config::SecretState::Absent),
+                ConfigValue::Secret(mutsuki_config_service::SecretState::Absent),
             ),
             ("command_prefix".into(), ConfigValue::String("/".into())),
             ("auto_reconnect".into(), ConfigValue::Bool(true)),
@@ -56,7 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ConfigApplyMode::HotReload,
     ));
     registry.register(provider)?;
-    let service = Arc::new(ConfigService::new(registry));
+    let service = Arc::new(ConfigService::new(
+        registry,
+        Arc::new(mutsuki_config_service::InMemoryConfigRepository::default()),
+    )?);
 
     let assets_dir = tempfile::tempdir()?;
     let shell_dir = tempfile::tempdir()?;

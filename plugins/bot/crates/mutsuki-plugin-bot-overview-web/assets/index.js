@@ -14,18 +14,10 @@ const PAGE_ALIASES = {
 
 const PAGES = [
   { id: "overview", label: "概览" },
-  { id: "runtime", label: "运行时" },
-  { id: "plugins", label: "插件" },
-  { id: "tasks", label: "任务" },
-  { id: "resources", label: "资源" },
-  { id: "database", label: "数据库" },
   { id: "qq-bot", label: "QQ 管理", optional: true },
-  { id: "agent-connections", label: "Agent 连接", optional: true },
+  { id: "agent-connections", label: "Agent", optional: true },
   { id: "bot-flow", label: "流程编排", optional: true },
-  { id: "bilibili", label: "B站推送", optional: true },
   { id: "config", label: "配置", optional: true },
-  { id: "upgrade", label: "自动升级", optional: true },
-  { id: "ops", label: "运维" },
 ];
 
 const RUNTIME_TABS = [
@@ -297,19 +289,19 @@ function pageSubtitle(page, tab) {
     case "database":
       return "产品内置 SQLite 只读浏览（经 task_submit_batch / mutsuki.db.*）";
     case "config":
-      return "由 ConfigDescriptor 自动生成表单";
+      return "管理 QQ 账号、模型和回复策略";
     case "qq-bot":
       return "QQ 账号、会话规则、命令、Agent 与主动投递";
     case "agent-connections":
-      return "Agent owner 管理的连接状态、测试、重连与原子切换";
+      return "查看助手状态、会话与用量";
     case "bot-flow":
-      return "用已安装插件提供的节点连接真实 Bot 事件处理路径";
+      return "编排 QQ 消息、Agent 与回复步骤并发布";
     case "bilibili":
       return "B 站推送登陆态、扫码登录与订阅管理";
     case "ops":
       return tab === "logs" ? "运行时日志尾部" : "Core drain 与 Service 关闭（强确认 + runtime.write）";
     default:
-      return "系统状态 · 主机指标 · 可下钻统计";
+      return "QQ Bot 与智能助手状态";
   }
 }
 
@@ -318,76 +310,32 @@ async function renderOverview(content, rpc, ctx = {}) {
   const go = ctx.go || (() => {});
   const d = await rpc.read("overview", "summary");
   const h = d.health || {};
-  const c = d.counts || {};
-  const tasks = c.tasks || {};
-  const host = d.host || {};
-  const active =
-    (tasks.ready || 0) + (tasks.running || 0) + (tasks.waiting || 0) + (tasks.blocked || 0);
 
   appendMetricGrid(content, [
     { label: "运行时间", value: formatDuration(d.uptime_ms) },
-    { label: "任务", value: String(active), onClick: () => go("tasks") },
-    { label: "已提交", value: String(tasks.submitted_total ?? "—"), onClick: () => go("tasks") },
-    { label: "插件", value: String(c.plugins ?? 0), onClick: () => go("plugins") },
-    { label: "运行器", value: String(c.runners ?? 0), onClick: () => go("runtime", "runners") },
-    { label: "事件源", value: String(c.event_sources ?? 0), onClick: () => go("runtime", "events") },
+    { label: "Bot 服务", value: healthLabel(h.service) },
+    { label: "消息处理", value: healthLabel(h.core) },
   ]);
 
   const grid = document.createElement("div");
   grid.className = "overview-grid";
   content.appendChild(grid);
 
-  appendKvCard(grid, "系统状态", [
-    ["服务", h.service, true],
-    ["核心", h.core, true],
-    ["插件", h.plugins, true],
-    ["运行器", h.runners, true],
-    ["事件源", h.event_sources, true],
-  ]);
-
-  const hostRows = [
-    ["进程 PID", host.pid != null ? String(host.pid) : "—"],
-    ["主机运行时间", formatDuration(host.uptime_ms ?? d.uptime_ms)],
-    ["内存 RSS", formatBytes(host.rss_bytes)],
-    ["CPU 时间", host.cpu_time_ms != null ? formatDuration(host.cpu_time_ms) : "—"],
-  ];
-  const hostCard = appendKvCard(grid, "主机资源", hostRows.map(([k, v]) => [k, v, false]));
-  if (host.unavailable || host.available === false) {
-    const note = document.createElement("div");
-    note.className = "muted capability-gap";
-    note.textContent =
-      host.reason ||
-      "完整主机指标（RSS / CPU）需 ServiceHost host_metrics 控制面；当前仅展示已有 uptime。";
-    hostCard.appendChild(note);
+  const entry = document.createElement("section");
+  entry.className = "card";
+  entry.innerHTML = `<h2>开始使用</h2><p class="muted">先完成账号和模型配置，再发布消息处理流程。</p>`;
+  const actions = document.createElement("div");
+  actions.className = "toolbar nested";
+  for (const [label, page] of [["配置 QQ 与 Agent", "config"], ["编排回复流程", "bot-flow"], ["查看 QQ 状态", "qq-bot"], ["查看 Agent 会话", "agent-connections"]]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = label;
+    button.onclick = () => go(page);
+    actions.appendChild(button);
   }
-
-  appendSection(grid, "健康组件", renderComponents(d.components || {}));
-
-  const ops = document.createElement("section");
-  ops.className = "card";
-  ops.innerHTML = `<h2>运维入口</h2><p class="muted">生命周期与日志已降级到侧栏「运维」。</p>`;
-  const opsBar = document.createElement("div");
-  opsBar.className = "toolbar nested";
-  const lifeBtn = document.createElement("button");
-  lifeBtn.type = "button";
-  lifeBtn.className = "ghost";
-  lifeBtn.textContent = "生命周期";
-  lifeBtn.onclick = () => go("ops", "lifecycle");
-  const logBtn = document.createElement("button");
-  logBtn.type = "button";
-  logBtn.className = "ghost";
-  logBtn.textContent = "日志";
-  logBtn.onclick = () => go("ops", "logs");
-  const topoBtn = document.createElement("button");
-  topoBtn.type = "button";
-  topoBtn.className = "ghost";
-  topoBtn.textContent = "查看拓扑";
-  topoBtn.onclick = () => go("runtime", "topology");
-  opsBar.append(lifeBtn, logBtn, topoBtn);
-  ops.appendChild(opsBar);
-  grid.appendChild(ops);
-
-  await renderSecretStatusSection(grid, rpc);
+  entry.appendChild(actions);
+  grid.appendChild(entry);
 }
 
 function appendMetricGrid(content, metrics) {
@@ -653,14 +601,12 @@ async function renderConfig(content, rpc) {
   try {
     const mod = await import("./config/index.js");
     if (typeof mod.mountConfigPanel !== "function") {
-      content.appendChild(
-        emptyBlock("配置扩展未提供 mountConfigPanel；请确认 include_config 与资源物化。"),
-      );
+      content.appendChild(emptyBlock("配置页面暂时不可用，请刷新后重试。"));
       return;
     }
     mod.mountConfigPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>配置页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
@@ -683,14 +629,12 @@ async function renderQqBot(content, rpc) {
   try {
     const mod = await import("./qq-bot/index.js");
     if (typeof mod.mountQqBotPanel !== "function") {
-      content.appendChild(
-        emptyBlock("QQ 管理扩展未提供 mountQqBotPanel；请确认 qq-bot 插件已装配。"),
-      );
+      content.appendChild(emptyBlock("QQ 管理页面暂时不可用，请刷新后重试。"));
       return;
     }
     mod.mountQqBotPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>QQ 管理页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>QQ 管理页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
@@ -698,12 +642,12 @@ async function renderAgentConnections(content, rpc) {
   try {
     const mod = await import("./bot-agent/index.js");
     if (typeof mod.mountAgentConnectionsPanel !== "function") {
-      content.appendChild(emptyBlock("Agent connection owner 未提供管理页面。"));
+      content.appendChild(emptyBlock("Agent 管理页面暂时不可用，请刷新后重试。"));
       return;
     }
     await mod.mountAgentConnectionsPanel(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>Agent 连接页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>Agent 管理页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 
@@ -711,12 +655,12 @@ async function renderBotFlow(content, rpc) {
   try {
     const mod = await import("./bot-flow/index.js");
     if (typeof mod.mountBotFlowEditor !== "function") {
-      content.appendChild(emptyBlock("Bot Flow owner 未提供流程编辑器。"));
+      content.appendChild(emptyBlock("流程编排页面暂时不可用，请刷新后重试。"));
       return;
     }
     await mod.mountBotFlowEditor(content, rpc);
   } catch (err) {
-    content.innerHTML = `<div class="error-banner"><strong>流程编排页不可用</strong><div class="muted">${escapeHtml(formatRpcError(err))}</div></div>`;
+    content.innerHTML = `<div class="error-banner"><strong>流程编排页不可用</strong><div class="muted">请刷新后重试。</div></div>`;
   }
 }
 

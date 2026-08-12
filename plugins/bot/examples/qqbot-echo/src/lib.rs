@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 pub use bot_echo::{ECHO_PLUGIN_ID, ECHO_RUNNER_ID, echo_manifest, echo_runner};
 
 /// The example is a graph draft, not plugin-owned routing configuration. Import or recreate this
-/// document in the Bot Flow console and publish it before QQ events can invoke the nodes.
+/// document in the Bot Flow editor and apply it before QQ events can invoke the nodes.
 #[must_use]
 pub fn qqbot_echo_flow() -> BotFlowDocument {
     BotFlowDocument {
@@ -72,9 +72,8 @@ pub fn validate_example_flow() -> Result<BotFlowValidationResult, BotFlowError> 
 }
 
 #[must_use]
-pub fn example_draft_json() -> Value {
+pub fn example_flow_config_json() -> Value {
     json!({
-        "base_published_revision": 0,
         "flows": [qqbot_echo_flow()]
     })
 }

@@ -1,4 +1,4 @@
-const ALL = ["*"];
+const DRAFT_KEY = "mutsuki.bot-flow-editor.draft";
 
 function esc(value) {
   return String(value ?? "")
@@ -20,7 +20,7 @@ function newId(prefix) {
 export async function mountBotFlowEditor(el, rpc) {
   el.innerHTML = `<div class="flow-editor">
     <aside class="card flow-palette"><div class="toolbar nested"><h2>流程节点</h2><button id="flow-new">新建流程</button></div><div id="flow-catalog"></div></aside>
-    <main class="card flow-canvas"><div class="toolbar nested"><select id="flow-select"></select><span id="flow-state" class="pill"></span><button id="flow-validate" class="ghost">检查</button><button id="flow-save">保存草稿</button><button id="flow-publish">发布</button></div><div id="flow-issues"></div><div id="flow-nodes" class="flow-node-list"></div></main>
+    <main class="card flow-canvas"><div class="toolbar nested"><select id="flow-select"></select><span id="flow-state" class="pill"></span><button id="flow-validate" class="ghost">检查</button><button id="flow-apply">应用</button></div><div id="flow-issues"></div><div id="flow-nodes" class="flow-node-list"></div></main>
     <aside class="card flow-properties"><h2>属性</h2><div id="flow-properties"><p class="muted">选择节点后编辑属性。</p></div></aside>
   </div>`;
   const catalogHost = el.querySelector("#flow-catalog");
@@ -40,7 +40,11 @@ export async function mountBotFlowEditor(el, rpc) {
 
   function activeFlow() { return flows.find((flow) => flow.flow_id === flowSelect.value) || flows[0]; }
   function descriptor(node) { return catalog.find((item) => item.node_type_id === node.node_type_id && item.version === node.node_type_version); }
-  function dirty() { stateHost.textContent = "草稿未保存"; stateHost.className = "pill warn"; }
+  function dirty() {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ baseRevision: snapshot.revision, flows }));
+    stateHost.textContent = "本地草稿";
+    stateHost.className = "pill warn";
+  }
 
   function renderCatalog() {
     const groups = new Map();
@@ -186,7 +190,7 @@ export async function mountBotFlowEditor(el, rpc) {
   }
 
   async function validate() {
-    const result = await rpc.call("bot-flow", "draft.validate", { capabilities: ALL, flows });
+    const result = await rpc.call("bot-flow-editor", "validate", { flows });
     snapshot.validation = result;
     issuesHost.innerHTML = result.issues.length ? `<div class="error-banner">${result.issues.map((issue) => `<button class="ghost" data-issue-node="${esc(issue.node_id || "")}">${esc(issue.message)}</button>`).join("")}</div>` : `<div class="success-banner">流程校验通过</div>`;
     issuesHost.querySelectorAll("[data-issue-node]").forEach((button) => button.onclick = () => { const flow = activeFlow(); selectedNode = flow?.nodes.find((node) => node.node_id === button.dataset.issueNode) || null; render(); });
@@ -195,12 +199,18 @@ export async function mountBotFlowEditor(el, rpc) {
 
   async function refresh() {
     [catalog, snapshot] = await Promise.all([
-      rpc.call("bot-flow", "catalog.read", { capabilities: ALL }),
-      rpc.call("bot-flow", "snapshot.read", { capabilities: ALL }),
+      rpc.call("bot-flow-editor", "catalog.read", {}),
+      rpc.call("bot-flow-editor", "snapshot.read", {}),
     ]);
-    flows = structuredClone(snapshot.draft?.flows || snapshot.published.flows || []);
-    stateHost.textContent = snapshot.draft ? `草稿 r${snapshot.draft.revision}` : `已发布 r${snapshot.published.revision}`;
-    stateHost.className = "pill ok";
+    const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+    flows = structuredClone(saved?.flows || snapshot.flows || []);
+    if (saved) {
+      stateHost.textContent = saved.baseRevision === snapshot.revision ? "本地草稿" : "本地草稿需要重新加载";
+      stateHost.className = "pill warn";
+    } else {
+      stateHost.textContent = "已发布";
+      stateHost.className = "pill ok";
+    }
     renderCatalog(); render();
   }
 
@@ -247,9 +257,20 @@ export async function mountBotFlowEditor(el, rpc) {
     addNode(item.node_type_id, item.version, { x: Math.max(0, event.clientX - bounds.left - 95), y: Math.max(0, event.clientY - bounds.top - 30) });
   };
   el.querySelector("#flow-validate").onclick = () => validate().catch((error) => { issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`; });
-  el.querySelector("#flow-save").onclick = async () => { try { const draft = await rpc.call("bot-flow", "draft.save", { capabilities: ALL, request: { expected_draft_revision: snapshot.draft?.revision ?? null, base_published_revision: snapshot.published.revision, flows } }); snapshot.draft = draft; stateHost.textContent = `草稿 r${draft.revision}`; stateHost.className = "pill ok"; } catch (error) { issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`; } };
-  el.querySelector("#flow-publish").onclick = async () => { try { if (!snapshot.draft) throw new Error("请先保存草稿"); const result = await validate(); if (!result.valid) return; await rpc.call("bot-flow", "publish", { capabilities: ALL, request: { expected_draft_revision: snapshot.draft.revision, expected_published_revision: snapshot.published.revision } }); await refresh(); } catch (error) { issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`; } };
+  el.querySelector("#flow-apply").onclick = async () => {
+    try {
+      const result = await validate();
+      if (!result.valid) return;
+      await rpc.call("bot-flow-editor", "apply", { expected_revision: snapshot.revision, flows });
+      localStorage.removeItem(DRAFT_KEY);
+      await refresh();
+    } catch (error) {
+      // Keep the local candidate on CAS conflict so the user can refresh deliberately.
+      dirty();
+      issuesHost.innerHTML = `<div class="error-banner">${esc(errorText(error))}</div>`;
+    }
+  };
   await refresh();
 }
 
-export default { id: "bot-flow" };
+export default { id: "bot-flow-editor" };

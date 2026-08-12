@@ -170,8 +170,8 @@ mutsuki-plugin-agent-model-gateway = { path = "kits/agent/crates/mutsuki-plugin-
 mutsuki-plugin-agent-proactive = { path = "kits/agent/crates/mutsuki-plugin-agent-proactive" }
 mutsuki-plugin-agent-skills = { path = "kits/agent/crates/mutsuki-plugin-agent-skills" }
 
-mutsuki-bot-config = { path = "plugins/bot/crates/mutsuki-bot-config" }
-mutsuki-bot-config-derive = { path = "plugins/bot/crates/mutsuki-bot-config-derive" }
+mutsuki-config-service = { path = "plugins/std/crates/mutsuki-config-service" }
+mutsuki-config-derive = { path = "plugins/std/crates/mutsuki-config-derive" }
 mutsuki-bot-conversation = { path = "plugins/bot/crates/mutsuki-bot-conversation" }
 mutsuki-bot-delivery = { path = "plugins/bot/crates/mutsuki-bot-delivery" }
 mutsuki-bot-flow = { path = "plugins/bot/crates/mutsuki-bot-flow" }
@@ -190,7 +190,7 @@ mutsuki-plugin-bot-bilibili = { path = "plugins/bot/crates/mutsuki-plugin-bot-bi
 mutsuki-plugin-bot-bilibili-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-web" }
 mutsuki-plugin-bot-bilibili-workshop = { path = "plugins/bot/crates/mutsuki-plugin-bot-bilibili-workshop" }
 mutsuki-plugin-bot-command = { path = "plugins/bot/crates/mutsuki-plugin-bot-command" }
-mutsuki-plugin-bot-config-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-config-web" }
+mutsuki-plugin-config-web = { path = "plugins/std/plugins/mutsuki-plugin-config-web" }
 mutsuki-plugin-bot-control-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-control-web" }
 mutsuki-plugin-bot-event-router = { path = "plugins/bot/crates/mutsuki-plugin-bot-event-router" }
 mutsuki-plugin-bot-flow-web = { path = "plugins/bot/crates/mutsuki-plugin-bot-flow-web" }
@@ -202,9 +202,11 @@ mutsuki-plugin-bot-upgrade-web = { path = "plugins/bot/crates/mutsuki-plugin-bot
 mutsuki-plugin-catalog = { path = "plugins/bot/crates/mutsuki-plugin-catalog" }
 
 mutsuki-protocol-browser = { path = "plugins/std/protocols/mutsuki-protocol-browser" }
+mutsuki-protocol-config = { path = "plugins/std/protocols/mutsuki-protocol-config" }
 mutsuki-protocol-http = { path = "plugins/std/protocols/mutsuki-protocol-http" }
 mutsuki-protocol-image = { path = "plugins/std/protocols/mutsuki-protocol-image" }
 mutsuki-plugin-image-render = { path = "plugins/std/plugins/mutsuki-plugin-image-render-takumi" }
+mutsuki-plugin-config-sqlite = { path = "plugins/std/plugins/mutsuki-plugin-config-sqlite" }
 mutsuki-std-effect = { path = "plugins/std/crates/mutsuki-std-effect" }
 mutsuki-std-plugins = { path = "plugins/std/crates/mutsuki-std-plugins" }
 mutsuki-std-service-host-integration = { path = "plugins/std/crates/mutsuki-std-service-host-integration" }

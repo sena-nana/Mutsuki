@@ -33,6 +33,7 @@ class ContractSurfaceKind(StrEnum):
     TIMER = "timer"
     PROTOCOL = "protocol"
     HANDLER_BINDING = "handler_binding"
+    PLUGIN_EXTENSION = "plugin_extension"
     STATE_SCHEMA = "state_schema"
     LIFECYCLE = "lifecycle"
     PERMISSION = "permission"

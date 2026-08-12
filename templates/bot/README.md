@@ -1,16 +1,64 @@
 # MutsukiBotTemplate
 
-配置驱动、实现中立的 Mutsuki Bot 产品装配器。`mutsuki-bot` 只加载 ServiceHost 配置、
-注册 owner 提供的插件 factory catalog 并启动 Runtime；它不实现命令、回复、Agent 流程或
-任何具体业务 Bot。
+配置驱动、实现中立的 Mutsuki Bot 产品装配器。模板只选择 bootstrap provider、聚合 owner
+catalog 并启动 ServiceRuntime；它不实现命令、回复、Agent 流程或业务 Bot。
 
-唯一规范源位于
-[`Mutsuki/templates/bot`](https://github.com/sena-nana/Mutsuki/tree/main/templates/bot)，
-直接使用主仓根 Workspace 的 package。`sena-nana/MutsukiBotTemplate` 由 release 自动生成，
-供用户通过 GitHub “Use this template” 创建产品；禁止在生成仓手工维护实现或依赖版本。
+唯一规范源位于主仓 `templates/bot`。独立的 `sena-nana/MutsukiBotTemplate` 由 release 自动
+导出并固定统一 tag/commit，禁止在生成仓手工维护实现或依赖版本。
 
-维护者从主仓根执行导出脚本，使所有 Mutsuki package 固定到同一个 release tag 或 commit，
-并生成独立 `Cargo.lock`：
+## 启动
+
+`config/bootstrap.toml` 是最小 bootstrap，只包含 Host identity/directories、secret、插件发现
+以及配置仓库选择。模板显式选择 SQLite；框架和 ConfigService 不假设存储位置。
+
+```powershell
+Copy-Item config/bootstrap.toml config/local.bootstrap.toml
+Copy-Item config/secret.template.toml config/local.secret.toml
+cargo run -p mutsuki-bot -- config/local.bootstrap.toml
+```
+
+路径优先级为 CLI、`MUTSUKI_BOOTSTRAP`、`config/bootstrap.toml`。旧完整产品 TOML 会因未知
+字段被拒绝，不自动导入旧配置或旧 Flow 数据。
+
+空仓库只以 revision CAS 写入一次版本化种子：
+
+- 不启用任何 Runtime 插件；
+- 预声明但不启用 Agent connection、Flow Router、QQ 与 Bot Agent bridge；
+- 启用仅监听 `127.0.0.1:8787` 的鉴权 Console，且只选择通用配置页面。
+
+已有 document 永不被种子覆盖。产品插件选择、WebExtension 选择以及各 owner 配置均保存到
+配置仓库，而不是写回 bootstrap。Secret 明文只进入 Host secret store，配置文档保存引用或
+脱敏状态。首次启动会在 Git 忽略的 `config/local.secret.toml` 创建随机 Console Token，并在
+Unix 平台限制为当前用户可读写；QQ 与模型密钥只能在 Web 中写入，之后不会回显。
+
+## Bot Flow
+
+Bot Flow 是 provider id 为 `mutsuki.bot.flow` 的普通配置文档。插件仅声明
+`mutsuki.bot.flow.nodes@1` 节点、类型化端口、schema 和精确 binding；匹配、顺序、命令与分支
+全部来自 active Flow snapshot。
+
+`bot-flow-editor` 是独立、显式选择的 WebExtension；默认种子不选择它，也不会生成 Flow：
+
+- Router 与编辑器仍保持独立 owner 边界；
+- 浏览器本地保存未提交草稿并绑定读取 revision；
+- RPC 只有 `catalog.read`、`snapshot.read`、`validate`、`apply`；
+- apply 通过 ConfigService 一次 CAS，冲突保留候选且不自动合并。
+
+Flow v1 支持无环分支、显式扇出和 error edge，不支持循环或隐式 join。在途 task 持有旧的
+不可变 graph revision，配置更新不会改变已开始的执行。
+
+## 装配边界
+
+模板只聚合 Std、Agent 和 Bot owner 的 configured factory catalog。零插件配置可启动为空闲
+Runtime；显式选择但缺失 factory、capability、binding、secret 或不兼容 Flow 节点时必须失败。
+Core 和通用 Host 只理解领域中立 `PluginExtensionDescriptor`、LoadPlan 与 ConfigService 事务，
+不解码 Bot Flow。
+
+QQ、Agent、Bilibili、Media、Interaction、Delivery 与业务插件的配置和运行规则属于各 owner。
+BotTemplate 不提供生产 fallback。真实 QQ 账号 smoke 仍需本地凭据并单独运行；确定性验收使用
+fake HTTP/WebSocket 边界。
+
+## 导出与验证
 
 ```powershell
 python templates/bot/scripts/export_template.py `
@@ -18,262 +66,5 @@ python templates/bot/scripts/export_template.py `
   --tag v0.2.0
 ```
 
-导出结果不依赖兄弟仓库、根 Workspace 或已归档的旧框架仓库。
-
-## Run
-
-创建本地配置和 Secret 文件：
-
-```powershell
-Copy-Item config/template.toml config/local.toml
-Copy-Item config/secret.template.toml config/local.secret.toml
-cargo run -p mutsuki-bot
-```
-
-配置路径优先级为命令行参数、`MUTSUKI_CONFIG`、`config/local.toml`：
-
-```powershell
-cargo run -p mutsuki-bot -- path/to/product.toml
-```
-
-嵌入式 Web Console：在 `config/local.toml` 设置 `[web.console] enabled = true`，并在
-`local.secret.toml` 配置 `WEB_CONSOLE_AUTH_TOKEN`。可选 `include_config = true`（产品配置页）与
-`release_set`（自动升级 dry-run）。不提供独立 Console 进程；见
-[docs/standalone-console.md](docs/standalone-console.md)。
-
-## 可选 DistributedHost
-
-提交的产品配置显式使用 `[distribution] mode = "disabled"`。此模式不会启动或监管
-DistributedHost，不打开分布式网络，不产生分布式遥测或副本任务；本地 ServiceRuntime 的行为
-与未接入分布式时一致。
-
-需要分布式时，由部署系统单独安装和监管 `mutsuki-distributed-host`，产品配置只引用一个相对
-部署文件：
-
-```toml
-[distribution]
-mode = "clustered"
-deployment = "../deploy/distribution/controller-worker.toml"
-acceptance = "fast"
-fallback = "reject"
-```
-
-仓库提供单机、单控制端+Worker、3 投票节点+Worker 三种机器中立拓扑以及任务策略 catalog。
-模板在启动本地 Runtime 前验证固定 release/revision、Secret key 引用、拓扑、认证加密通道、
-CPU/内存/显存/网络/并发/checkpoint 预算以及策略文件，并使用 Host secret 边界连接已运行的
-sidecar，认证校验 capability schema/protocol、revision、maturity、feature proof 和 health。
-模板不会启动、重启或监管 sidecar，也不会链接 scheduler/recovery 实现。仅 Fast 可显式选择
-`local_degraded`，该状态会进入 ServiceHost health；Durable/Critical 必须拒绝本地回退，不能
-伪装成可靠接收。当前 HA/Durable/Critical/checkpoint/trust 未达到 deployable maturity 时会
-返回 `ExperimentalUnavailable`。控制通道与直接数据通道独立，大型数据不经过 Leader。
-
-部署、健康状态、故障演练和诊断见
-[docs/distributed-deployment.md](docs/distributed-deployment.md)；跨阶段总验收矩阵见
-[docs/distributed-acceptance.md](docs/distributed-acceptance.md)。
-
-提交的 `config/template.toml` 是零插件的中立产品。零插件 Runtime 可以启动和停止，但没有
-平台连接或业务行为。最终产品从已经链接或安装的 owner 插件中选择能力：
-
-```toml
-[[plugins.configured]]
-id = "owner.plugin.id"
-
-[plugins.configured.config]
-# 仅由插件 owner 定义和解析
-```
-
-图像渲染由单一 StdPlugins 后端 `mutsuki.std.image.render`（Takumi）提供：HTML compose、
-标准卡片与 QR 均输出 `mutsuki.image.raster.png.v1`。先启用内存资源 provider，再显式选择
-渲染插件并配置绝对路径字体文件（不读系统字体；缺字体 fail loud）：
-
-```toml
-[[plugins.configured]]
-id = "mutsuki.std.resource.memory"
-
-[[plugins.configured]]
-id = "mutsuki.std.image.render"
-
-[plugins.configured.config]
-output_provider_id = "mutsuki.std.resource.memory"
-font_files = ["/absolute/path/to/NotoSansSC.ttf"]
-```
-
-协议：`mutsuki.image.compose` / `mutsuki.image.card.render` / `mutsuki.image.qr.render`。
-
-同一份配置同时适用于 builtin 与 ABI。Native factory 由对应依赖仓库链接进 catalog；外部
-artifact 由 ServiceHost 插件目录形成库存，但不会因文件存在而自动启用。Host 在只有一种部署
-时直接选择，同时存在 builtin/ABI 时默认 builtin；管理工具可把部署偏好写入 Host 状态而无需
-修改业务配置。新增业务能力应在 BotPlugins、AgentKit 或独立业务仓库实现并发布，禁止把业务
-Runner 复制到本模板。
-
-## 可配置 Bot Agent
-
-模板聚合 AgentKit connection catalog 与 Bot catalog，但仍不默认启用任何连接或 Agent。
-生产配置必须显式选择连接 owner、Flow Router、所需节点插件与
-`mutsuki.plugin.bot.agent`。Bot Agent 配置只保存执行设置；Local Link address、endpoint、
-认证和 Secret key 引用留在 Agent connection owner 的 opaque config 中。命令文字、匹配、
-权限和调用顺序只能在 Web Console 发布的图内配置。示意配置（需替换真实 Link 参数）：
-
-```toml
-[[plugins.configured]]
-id = "mutsuki.agent.connections"
-
-[plugins.configured.config]
-revision = 0
-
-[[plugins.configured.config.connections]]
-connection_id = "primary"
-connector_id = "mutsuki.agent.connector.link.local"
-enabled = true
-config = { address = "replace-locally", local_endpoint_id = "00000000000000000000000000000001", remote_endpoint_id = "00000000000000000000000000000002" }
-
-[[plugins.configured]]
-id = "mutsuki.bot.router.flow"
-
-[[plugins.configured]]
-id = "mutsuki.bot.command"
-
-[[plugins.configured]]
-id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, connection_id = "primary", default_profile_id = "", session_scope = "shared_conversation", stt_enabled = false, tts_enabled = false, speech_reply_policy = "text_only", stt_selector_id = "", tts_selector_id = "", streaming = "final_only", max_concurrency = 1, timeout_ms = 120000, max_message_bytes = 1800 }
-```
-
-首次启动没有发布图，因此不会调用任何 Bot 行为节点。Web Console 的“Bot Flow”页面读取当前
-插件节点目录，保存/校验草稿并用 revision CAS 发布；“Agent 连接”页面仍先测试和握手，再
-原子替换 generation，失败保留旧连接。
-
-## Bilibili 本地装配
-
-模板链接 StdPlugins 与 BotPlugins 的 owner catalog，但提交的 `config/template.toml` 仍保持
-零插件。Bilibili 本地配置必须用 `backend.type` 显式选择 `web_cookie` 或
-`open_platform`，不会在两者之间静默 fallback。Web backend 的 Cookie 值只写入本地 secret
-文件：
-
-```toml
-[secrets]
-BILIBILI_COOKIE = "SESSDATA=replace-locally"
-```
-
-官方开放平台 backend 只复用授权账号的直播与已发布稿件轮询协议；动态、链接解析、Cookie
-扫码/管理和 Chromium 352 路径都不会被声明或替代。产品配置保存 `client_id`、授权 UID 与
-两个 Host secret key 引用，app secret 和可原子刷新的 OAuth bundle 只写入本地 secret 文件：
-
-```toml
-[secrets]
-BILIBILI_OPEN_APP_SECRET = "replace-locally"
-BILIBILI_OPEN_OAUTH = '''{"access_token":"replace-locally","refresh_token":"replace-locally","expires_at":1893456000,"scopes":["LIVE_ROOM_DATA","ARC_BASE"]}'''
-```
-
-完整配置、scope 和错误模型见
-[BotPlugins 官方开放平台 backend](https://github.com/sena-nana/Mutsuki/blob/main/plugins/bot/docs/bilibili-open-platform.md)。
-
-要启用图片资源，产品还需显式选择 `mutsuki.std.resource.memory`（或另一个兼容 owner
-Provider），并让 QQ、业务插件与图片 renderer 的 Provider 选择一致。Bilibili 的链接、动态、
-投稿和预览只向 renderer 提交内容与品牌色，由 renderer 生成固定 1200×630 PNG；扫码登录也
-通过统一 QR 协议生成 PNG。米画师保留 Chromium 执行页面 JavaScript 和提取 DOM，再把
-结构化内容交给同一套卡片协议；Skia 不拥有网络或浏览器能力。一个本地装配示例如下（路径
-必须替换为本机绝对路径，默认模板仍保持零插件）：
-
-```toml
-[[plugins.configured]]
-id = "mutsuki.std.resource.memory"
-
-[[plugins.configured]]
-id = "mutsuki.std.io.browser.chromium"
-
-[plugins.configured.config]
-executable = "/absolute/path/to/chromium"
-domain_allowlist = ["mihuashi.com"]
-timeout_ms = 10000
-max_dom_bytes = 2097152
-
-[[plugins.configured]]
-id = "mutsuki.std.io.http_client"
-
-[plugins.configured.config]
-response_provider_id = "mutsuki.std.resource.memory"
-domain_allowlist = ["mihuashi.com"]
-max_response_bytes = 8388608
-connect_timeout_ms = 5000
-header_timeout_ms = 10000
-idle_timeout_ms = 10000
-total_timeout_ms = 30000
-max_redirects = 5
-
-[[plugins.configured]]
-id = "mutsuki.std.image.render"
-
-[plugins.configured.config]
-output_provider_id = "mutsuki.std.resource.memory"
-font_files = ["/absolute/path/to/NotoSansSC-Regular.ttf"]
-
-[[plugins.configured]]
-id = "mutsuki.bot.mihuashi"
-
-[plugins.configured.config]
-media_provider_id = "mutsuki.std.resource.memory"
-```
-
-HTTP 插件逐跳固定已验证 DNS 地址、复验 HTTPS 与域名 allowlist，并将响应 body 写入显式选择的
-Resource Provider；米画师只读取返回的 `ResourceRef`，不再拥有下载 transport。renderer 只读取
-配置列出的字体文件，不使用系统字体 fallback。标准卡片请求 `Noto Sans SC`
-或 `Noto Sans CJK SC`；部署字体必须提供其中一个 family 及业务文本所需字形。Bilibili 或米画师
-缺少卡片 renderer、Bilibili 管理模式缺少 QR renderer、或缺少字体/输出 Provider/Browser
-Snapshot 协议时，启动或任务边界会结构化失败，不会退回业务插件本地绘制、旧截图或原图。
-单一渲染后端为 Takumi（`mutsuki.std.image.render`）：compose / card / QR 均输出 PNG
-ResourceRef。插件协议只公开 CPU Raster PNG，不接受 PDF/SVG 输入，也不输出 WebP。
-
-Cookie 扫码登录、聊天管理/自助
-绑定、暂停/预览和 Bilibili 352 浏览器路径属于显式 `web_cookie` backend；官方 backend
-拒绝这些 Web-only 配置。
-
-外置 ABI 包使用 Core SDK 的版本化 binary byte transport，并按
-`<dynamic_dir>/<plugin>/plugin.toml + DLL/SO/dylib` 安装。`artifact.path` 必须留在插件目录，
-`artifact.sha256` 必须匹配文件；ServiceHost 在 LoadPlan 冻结前完成校验、ABI v2
-`plugin.initialize` 和
-Runner/ResourceProvider 注册。ABI 动态库是可信进程内代码，需要隔离时应选择 Process/Python
-部署。
-
-主配置只保存 Secret key 引用，实际值放在被 Git 忽略的 `config/local.secret.toml`，或使用
-`MUTSUKI_SECRET_<KEY>` 环境变量覆盖。默认 Runtime home 是 `~/.mutsuki`，其下包含
-`data`、`logs`、`plugins` 和 `run`。
-
-## QQ Gateway smoke
-
-QQ 只是可选平台插件和验收场景。自动测试使用 BotPlugins fake 验证配置装配、Gateway、
-health、Resume 和 graceful shutdown，不包含命令或回复：
-
-```powershell
-cargo test -p mutsuki-bot --test qqbot_config_e2e
-```
-
-macOS/Linux 还会启动真实 `mutsuki-bot` 产品进程，通过 Unix socket 验证 health、控制面
-shutdown、Gateway Identify/Resume、WebSocket clean close 和 socket 清理：
-
-```powershell
-cargo test -p mutsuki-bot --test unix_product_smoke
-```
-
-真实账号 smoke 会启动真实 `mutsuki-bot` 产品进程，验证 QQ 鉴权、Gateway
-`connected + identified`、service/core/event_sources health 和控制面 graceful shutdown。
-Windows 使用默认 named-pipe IPC，并在启动前和退出后检查 endpoint；测试继续保持 ignored，
-只读取被 Git 忽略的本地配置和 Secret，且审计本次进程输出、service log 和 panic log 不含凭据：
-
-```powershell
-$env:MUTSUKI_QQBOT_SMOKE_CONFIG = "config/local.toml"
-cargo test -p mutsuki-bot --test qqbot_real_smoke --locked -- --ignored
-```
-
-## Verification
-
-```powershell
-cargo metadata --locked --format-version 1
-cargo fmt --check
-cargo check --workspace --all-targets --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --all-targets --locked
-python -m unittest discover -s templates/bot/scripts -p "test_*.py"
-```
-
-package 职责见 [docs/repository-boundaries.md](docs/repository-boundaries.md)，统一发布与兼容性见
-[根发布规范](https://github.com/sena-nana/Mutsuki/blob/main/docs/release-train.md)。
+导出后必须在无兄弟仓库目录中运行 locked metadata、fmt/check/test 和模板 smoke，确认生成树
+不依赖主仓 path 或本地账号数据。

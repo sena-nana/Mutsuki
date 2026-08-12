@@ -13,30 +13,30 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
-pub use lifecycle::ControlPluginReloadLifecycle;
+pub use lifecycle::{ControlPluginReloadLifecycle, TargetedPluginReloadLifecycle};
 pub use product_config::{
-    ProductConfigError, ProductConfigOptions, product_config_service,
-    product_config_service_with_options,
+    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigError, ProductConfigOptions,
+    configured_plugin_selection_from_value, merge_required_product_selections,
+    product_config_service, product_config_service_with_options, product_descriptor,
+    product_runtime_selections, product_seed_defaults, register_configured_product_providers,
+    restore_configured_product_selections,
 };
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use watch_bridge::attach_revision_changed_bridge;
 
-use mutsuki_agent_service_host_integration::AgentConnectionManager;
-use mutsuki_bot_config::{ConfigProviderRegistry, ConfigService};
 use mutsuki_bot_flow::BotFlowRegistry;
+use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
-    BotAgentWebExtension, materialize_frontend_assets as materialize_bot_agent_assets,
+    AgentConnectionManagementResolver, BotAgentWebExtension,
+    materialize_frontend_assets as materialize_bot_agent_assets,
 };
 use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
 use mutsuki_plugin_bot_bilibili_web::{
     BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
 };
-use mutsuki_plugin_bot_config_web::{
-    ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
-};
 use mutsuki_plugin_bot_control_web::{ControlRpcCaller, ControlWebExtension};
 use mutsuki_plugin_bot_flow_web::{
-    BotFlowWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
+    BotFlowEditorWebExtension, materialize_frontend_assets as materialize_bot_flow_assets,
 };
 use mutsuki_plugin_bot_overview_web::{
     OverviewWebExtension, materialize_frontend_assets as materialize_overview_assets,
@@ -45,6 +45,9 @@ use mutsuki_plugin_bot_qq_web::{
     QqBotManagementApi, QqBotWebExtension, materialize_frontend_assets as materialize_qq_assets,
 };
 use mutsuki_plugin_bot_upgrade_web::UpgradeWebExtension;
+use mutsuki_plugin_config_web::{
+    ConfigWebExtension, materialize_frontend_assets as materialize_config_assets,
+};
 use mutsuki_service_control::ControlHandler;
 use mutsuki_web_extension::content_hash;
 use mutsuki_web_host::{
@@ -65,8 +68,9 @@ pub struct WebConsoleConfig {
     pub listen: String,
     /// Host secret key reference for the Web auth token (no literal secrets in product config).
     pub auth_token_key: Option<String>,
+    /// Explicit WebExtension selection. Runtime plugins never imply pages.
     #[serde(default)]
-    pub include_config: bool,
+    pub extensions: Vec<String>,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
 }
@@ -79,6 +83,11 @@ impl WebConsoleConfig {
     pub fn disabled() -> Self {
         Self::default()
     }
+
+    #[must_use]
+    pub fn has_extension(&self, id: &str) -> bool {
+        self.extensions.iter().any(|candidate| candidate == id)
+    }
 }
 
 /// Resolved console auth token from Host secret store.
@@ -89,7 +98,10 @@ pub struct WebConsoleSecrets {
 /// Empty ConfigService for products that enable `include_config` before registering providers.
 pub fn empty_config_service() -> Arc<ConfigService> {
     let registry = Arc::new(ConfigProviderRegistry::default());
-    Arc::new(ConfigService::new(registry))
+    Arc::new(
+        ConfigService::new(registry, Arc::new(InMemoryConfigRepository::default()))
+            .expect("memory ConfigRepository recovers"),
+    )
 }
 
 /// Resolved filesystem paths for optional console features.
@@ -138,7 +150,7 @@ pub fn build_console_host(
 /// Owner services that make Agent connection management and Bot flow authoring real.
 #[derive(Default)]
 pub struct BotAgentConsoleServices {
-    pub connections: Option<Arc<AgentConnectionManager>>,
+    pub connections: Option<AgentConnectionManagementResolver>,
     pub flow: Option<Arc<BotFlowRegistry>>,
 }
 
@@ -163,12 +175,12 @@ pub fn build_console_host_with_agent(
     }
 
     let asset_dirs = ConsoleAssetDirs::materialize(
-        config.include_config && config_service.is_some(),
-        paths.release_set.is_some(),
-        bilibili.is_some(),
-        qq.is_some(),
-        bot_agent.connections.is_some(),
-        bot_agent.flow.is_some(),
+        config.has_extension("config"),
+        config.has_extension("upgrade"),
+        config.has_extension("bilibili"),
+        config.has_extension("qq"),
+        config.has_extension("agent"),
+        config.has_extension("bot-flow-editor"),
     )?;
     let caller = ControlRpcCaller::new(control, control_token);
     let mut builder = base_builder(config, secrets, &asset_dirs);
@@ -179,14 +191,19 @@ pub fn build_console_host_with_agent(
     if let Some(monitor) = secret_monitor {
         builder = builder.extension(SecretStatusWebExtension::new(monitor));
     }
-    if let Some(release_set_path) = &paths.release_set {
+    if config.has_extension("upgrade") {
+        let release_set_path = paths.release_set.as_ref().ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "upgrade WebExtension requires a release set".into(),
+            )
+        })?;
         builder = builder.extension(
             UpgradeWebExtension::new(release_set_path)
                 .map_err(|err| mutsuki_web_host::WebHostError::InvalidConfig(err.to_string()))?,
         );
     }
-    if config.include_config {
-        let service = config_service.ok_or_else(|| {
+    if config.has_extension("config") {
+        let service = config_service.clone().ok_or_else(|| {
             mutsuki_web_host::WebHostError::InvalidConfig(
                 "web.console.include_config requires ConfigService".into(),
             )
@@ -195,24 +212,51 @@ pub fn build_console_host_with_agent(
             ConfigWebExtension::new(service).with_frontend_assets(&asset_dirs.config_assets),
         );
     }
-    if let Some(service) = bilibili {
+    if config.has_extension("bilibili") {
+        let service = bilibili.ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "bilibili WebExtension requires its management service".into(),
+            )
+        })?;
         builder = builder.extension(
             BilibiliWebExtension::new(service).with_frontend_assets(&asset_dirs.bilibili_assets),
         );
     }
-    if let Some(api) = qq {
+    if config.has_extension("qq") {
+        let api = qq.ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "qq WebExtension requires its management service".into(),
+            )
+        })?;
         builder = builder
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
     }
-    if bot_agent.connections.is_some() {
+    if config.has_extension("agent") {
+        if bot_agent.connections.is_none() {
+            return Err(mutsuki_web_host::WebHostError::InvalidConfig(
+                "agent WebExtension requires an Agent management service".into(),
+            ));
+        }
         builder = builder.extension(
-            BotAgentWebExtension::new(bot_agent.connections)
+            BotAgentWebExtension::new(None)
+                .with_connection_resolver(bot_agent.connections)
                 .with_frontend_assets(&asset_dirs.bot_agent_assets),
         );
     }
-    if let Some(flow) = bot_agent.flow {
+    if config.has_extension("bot-flow-editor") {
+        let flow = bot_agent.flow.ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "bot-flow-editor requires the Flow provider and catalog service".into(),
+            )
+        })?;
+        let service = config_service.ok_or_else(|| {
+            mutsuki_web_host::WebHostError::InvalidConfig(
+                "bot-flow-editor requires ConfigService".into(),
+            )
+        })?;
         builder = builder.extension(
-            BotFlowWebExtension::new(flow).with_frontend_assets(&asset_dirs.bot_flow_assets),
+            BotFlowEditorWebExtension::new(service, flow)
+                .with_frontend_assets(&asset_dirs.bot_flow_assets),
         );
     }
     Ok((builder.build()?, asset_dirs))

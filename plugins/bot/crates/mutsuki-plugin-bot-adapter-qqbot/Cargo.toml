@@ -11,6 +11,7 @@ mutsuki-runtime-sdk.workspace = true
 md5.workspace = true
 sha2.workspace = true
 mutsuki-bot-protocol.workspace = true
+mutsuki-config-service.workspace = true
 fastrand.workspace = true
 futures-util.workspace = true
 hex.workspace = true

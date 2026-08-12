@@ -230,7 +230,7 @@ impl WebBridge {
             match self.inner.extensions.read().call_rpc(
                 &request.namespace,
                 &request.method,
-                inject_session_capabilities(request.params.clone(), &session.capabilities),
+                request.params.clone(),
                 &session.capabilities,
             ) {
                 Ok(result) => RpcResponse {
@@ -265,9 +265,10 @@ impl WebBridge {
         );
         let response = match rpc {
             Ok(rpc) => rpc
-                .call_async(
+                .call_async_with_context(
                     &request.method,
-                    inject_session_capabilities(request.params.clone(), &session.capabilities),
+                    request.params.clone(),
+                    mutsuki_web_extension::RpcCallContext::new(&session.capabilities),
                 )
                 .await
                 .map(|result| RpcResponse {
@@ -428,62 +429,6 @@ fn rpc_error(id: Uuid, code: &str, message: String) -> RpcResponse {
     }
 }
 
-/// Derive effective RPC capabilities: session ∩ client request (never escalate).
-fn inject_session_capabilities(
-    params: mutsuki_web_protocol::JsonValue,
-    session_capabilities: &[String],
-) -> mutsuki_web_protocol::JsonValue {
-    let client_caps = match &params {
-        serde_json::Value::Object(map) => map
-            .get("capabilities")
-            .and_then(|v| v.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    let effective = effective_capabilities(session_capabilities, &client_caps);
-    let caps = serde_json::Value::Array(
-        effective
-            .into_iter()
-            .map(serde_json::Value::String)
-            .collect(),
-    );
-    match params {
-        serde_json::Value::Object(mut map) => {
-            map.insert("capabilities".into(), caps);
-            serde_json::Value::Object(map)
-        }
-        serde_json::Value::Null => serde_json::json!({ "capabilities": caps }),
-        other => serde_json::json!({
-            "capabilities": caps,
-            "value": other,
-        }),
-    }
-}
-
-fn effective_capabilities(session: &[String], client: &[String]) -> Vec<String> {
-    let session_unrestricted = session.iter().any(|cap| cap == "*");
-    if client.is_empty() {
-        return session.to_vec();
-    }
-    if client.iter().any(|cap| cap == "*") {
-        return session.to_vec();
-    }
-    if session_unrestricted {
-        return client.to_vec();
-    }
-    client
-        .iter()
-        .filter(|cap| session.iter().any(|owned| owned == *cap))
-        .cloned()
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,25 +502,6 @@ mod tests {
             }
             _ => panic!("expected hello ack"),
         }
-    }
-
-    #[test]
-    fn rpc_capabilities_are_intersected_with_session() {
-        assert_eq!(
-            effective_capabilities(
-                &["runtime.read".into(), "runtime.write".into()],
-                &["runtime.read".into()]
-            ),
-            vec!["runtime.read".to_string()]
-        );
-        assert_eq!(
-            effective_capabilities(&["runtime.read".into()], &["runtime.write".into()]),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            effective_capabilities(&["runtime.read".into()], &["*".into()]),
-            vec!["runtime.read".to_string()]
-        );
     }
 
     #[test]

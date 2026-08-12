@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
 use mutsuki_web_protocol::{EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION};
-use serde_json::{Value as JsonValue, json};
+use serde_json::json;
 
 use mutsuki_plugin_bot_control_web::CAPABILITY_RUNTIME_READ;
 
@@ -83,8 +83,8 @@ impl WebExtension for SecretStatusWebExtension {
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let monitor = self.monitor.clone();
-        ctx.register("status", move |params| {
-            require_runtime_read(&params)?;
+        ctx.register_contextual("status", move |context, _params| {
+            context.require(CAPABILITY_RUNTIME_READ)?;
             Ok(monitor.snapshot())
         });
         Ok(())
@@ -95,23 +95,5 @@ impl WebExtension for SecretStatusWebExtension {
         _ctx: &mut mutsuki_web_extension::EventRegistry,
     ) -> Result<(), ExtensionError> {
         Ok(())
-    }
-}
-
-fn require_runtime_read(params: &JsonValue) -> Result<(), ExtensionError> {
-    let caps = params
-        .get("capabilities")
-        .and_then(|v| v.as_array())
-        .map(|items| items.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    if caps
-        .iter()
-        .any(|cap| *cap == "*" || *cap == CAPABILITY_RUNTIME_READ)
-    {
-        Ok(())
-    } else {
-        Err(ExtensionError::CapabilityDenied(
-            CAPABILITY_RUNTIME_READ.into(),
-        ))
     }
 }

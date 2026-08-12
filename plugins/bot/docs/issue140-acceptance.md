@@ -16,7 +16,7 @@ continuations, repositories, media bridge, Agent bridge, and delivery logic rema
 | #148 | QQ domain WebExtension for live provider injection, typed actions, permissions, revision, audit and secret redaction | `mutsuki-plugin-bot-qq-web` | WebHost WebSocket RPC E2E and frontend syntax check |
 
 The full ServiceRuntime E2E is
-`crates/mutsuki-bot-service-host-integration/tests/qq_ai_pipeline.rs`. It publishes and restores an
+`crates/mutsuki-bot-service-host-integration/tests/qq_ai_pipeline.rs`. It applies and restores an
 immutable Flow revision and invokes every node through its exact public Handler binding.
 
 Performance acceptance is versioned in `benchmarks/workloads-v2.json`; the reference invocation

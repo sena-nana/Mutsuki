@@ -1,39 +1,114 @@
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+use futures_util::{SinkExt, StreamExt};
+use mutsuki_bot::load_bootstrapped_product;
 use mutsuki_bot_testkit::FakeQqServer;
-use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::{
-    ControlCommand, ControlResponse, ControlResult, HealthReport, TaskSnapshot,
-};
+use mutsuki_bot_web_console::PRODUCT_CONFIG_PROVIDER_ID;
+use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue};
+use mutsuki_service_control::{HealthReport, TaskSnapshot};
+use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
+use uuid::Uuid;
 
-pub struct IpcConfig {
-    pub transport: &'static str,
-    pub name: &'static str,
-    pub tcp_debug_addr: Option<SocketAddr>,
+pub struct ProductFixture {
+    pub bootstrap_path: PathBuf,
+    pub console_address: String,
+    pub console_token: String,
 }
 
-pub async fn fake_qq_product(
-    root: &Path,
-    ipc: IpcConfig,
-) -> (FakeQqServer, ServiceConfig, PathBuf) {
+pub async fn fake_qq_product(root: &Path) -> (FakeQqServer, ProductFixture) {
     let fake = FakeQqServer::start().await;
-    let secret_key = format!("TEMPLATE_QQ_SECRET_{}", fake.websocket_addr().port());
-    let qq = fake.config("template", "TEST_APP_ID", &secret_key);
+    let secret_key = "QQBOT_CLIENT_SECRET";
+    let qq = fake.config("template", "TEST_APP_ID", secret_key);
     std::fs::write(
         root.join("product.secret.toml"),
         format!("[secrets]\n{secret_key} = \"TEST_CLIENT_SECRET\"\n"),
     )
     .expect("write local smoke secret");
-    let config_path = root.join("product.toml");
-    std::fs::write(&config_path, product_toml(root, &ipc, &qq))
-        .expect("write product smoke config");
-    let service = ServiceConfig::load(ConfigOverrides {
-        config_file: Some(config_path.clone()),
-        ..Default::default()
-    })
-    .expect("load product smoke config");
-    (fake, service, config_path)
+    let bootstrap_path = root.join("bootstrap.toml");
+    std::fs::write(
+        &bootstrap_path,
+        format!(
+            r#"[host]
+instance_id = "template-qqbot-fake"
+home_dir = "{}"
+data_dir = "data"
+
+[security]
+secret_file = "product.secret.toml"
+
+[config_repository]
+repository_plugin_id = "mutsuki.config.repository.sqlite"
+document_namespace = "template-qqbot-fake"
+
+[config_repository.options]
+path = "config.sqlite3"
+"#,
+            root.to_string_lossy().replace('\\', "/"),
+        ),
+    )
+    .expect("write product bootstrap");
+
+    let first = load_bootstrapped_product(&bootstrap_path)
+        .await
+        .expect("load product bootstrap");
+    let snapshot = first
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &["*".into()],
+        )
+        .await
+        .expect("read product config");
+    let mut product = snapshot.value.to_json();
+    product["console_listen"] = serde_json::Value::String(free_loopback_address());
+    product["runtime_plugins"]["mutsuki.bot.adapter.qqbot"] = serde_json::json!({
+        "enabled": true,
+        "config": qq,
+    });
+    first
+        .config
+        .apply(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: ConfigValue::from_json(&product),
+                expected_revision: snapshot.revision,
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &["*".into()],
+        )
+        .await
+        .expect("persist fake QQ product config");
+    drop(first);
+
+    let product = load_bootstrapped_product(&bootstrap_path)
+        .await
+        .expect("restore fake QQ product config");
+    let console_token = product
+        .service
+        .host_secret_store()
+        .resolve(
+            product
+                .console
+                .auth_token_key
+                .as_deref()
+                .expect("console auth token key"),
+        )
+        .expect("console auth token");
+    (
+        fake,
+        ProductFixture {
+            bootstrap_path,
+            console_address: product.console.listen,
+            console_token,
+        },
+    )
+}
+
+fn free_loopback_address() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve console port");
+    listener.local_addr().expect("console address").to_string()
 }
 
 pub fn gateway_ready(health: &HealthReport) -> bool {
@@ -64,100 +139,64 @@ pub fn assert_gateway_only_task_surface(tasks: &[TaskSnapshot]) {
     assert!(!encoded.contains("TEST_ACCESS_TOKEN"));
 }
 
-async fn try_control(
-    config: &ServiceConfig,
-    command: ControlCommand,
-) -> Result<ControlResult, String> {
-    let client = mutsuki_service_ipc::ControlClient::new(config.into());
-    let response = client
-        .request(command)
+pub async fn try_health(fixture: &ProductFixture) -> Result<HealthReport, String> {
+    serde_json::from_value(rpc(fixture, "health").await?).map_err(|error| error.to_string())
+}
+
+pub async fn task_list(fixture: &ProductFixture) -> Vec<TaskSnapshot> {
+    serde_json::from_value(rpc(fixture, "task_list").await.unwrap()).unwrap()
+}
+
+pub async fn shutdown(fixture: &ProductFixture) -> Result<(), String> {
+    rpc(fixture, "service_shutdown").await.map(drop)
+}
+
+async fn rpc(fixture: &ProductFixture, method: &str) -> Result<serde_json::Value, String> {
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    let (mut socket, _) = connect_async(format!("ws://{}/ws", fixture.console_address))
         .await
         .map_err(|error| error.to_string())?;
-    match response {
-        ControlResponse::Ok(result) => Ok(result),
-        ControlResponse::Error(error) => {
-            Err(format!("control failed: {}: {}", error.code, error.message))
-        }
+    socket
+        .send(Message::Binary(
+            WireMessage::Hello {
+                protocol_version: WEB_PROTOCOL_VERSION.into(),
+                capabilities: Vec::new(),
+                auth_token: Some(fixture.console_token.clone()),
+            }
+            .encode()
+            .map_err(|error| error.to_string())?
+            .into(),
+        ))
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = socket.next().await.ok_or("missing hello ack")?;
+    socket
+        .send(Message::Binary(
+            WireMessage::Rpc(RpcRequest {
+                id: Uuid::new_v4(),
+                namespace: "control".into(),
+                method: method.into(),
+                params: serde_json::json!({}),
+            })
+            .encode()
+            .map_err(|error| error.to_string())?
+            .into(),
+        ))
+        .await
+        .map_err(|error| error.to_string())?;
+    let message = socket
+        .next()
+        .await
+        .ok_or("missing RPC response")?
+        .map_err(|error| error.to_string())?;
+    let Message::Binary(bytes) = message else {
+        return Err("unexpected WebSocket response".into());
+    };
+    match WireMessage::decode(bytes.as_ref()).map_err(|error| error.to_string())? {
+        WireMessage::RpcResult(result) => result.error.map_or_else(
+            || Ok(result.result.unwrap_or_default()),
+            |error| Err(error.message),
+        ),
+        _ => Err("unexpected Web RPC response".into()),
     }
-}
-
-pub async fn try_health(config: &ServiceConfig) -> Result<HealthReport, String> {
-    match try_control(config, ControlCommand::HealthCheck).await? {
-        ControlResult::HealthCheck(health) => Ok(health),
-        result => Err(format!("unexpected control result: {:?}", result.method())),
-    }
-}
-
-pub async fn task_list(config: &ServiceConfig) -> Vec<TaskSnapshot> {
-    match try_control(config, ControlCommand::TaskList).await.unwrap() {
-        ControlResult::TaskList(tasks) => tasks,
-        result => panic!("unexpected control result: {:?}", result.method()),
-    }
-}
-
-fn product_toml(
-    root: &Path,
-    ipc: &IpcConfig,
-    qq: &mutsuki_plugin_bot_adapter_qqbot::QqBotConfig,
-) -> String {
-    let tcp_debug_addr = ipc
-        .tcp_debug_addr
-        .map(|address| format!("tcp_debug_addr = \"{address}\"\n"))
-        .unwrap_or_default();
-    format!(
-        r#"[service]
-profile = "qqbot-fake"
-instance_id = "template-qqbot-fake"
-home_dir = "{}"
-data_dir = "data"
-log_dir = "logs"
-plugin_dir = "plugins"
-run_dir = "run"
-
-[ipc]
-enabled = true
-transport = "{}"
-name = "{}"
-{}token = "test-token"
-
-[plugins]
-dynamic_dirs = []
-disabled_dir = "disabled"
-
-[[plugins.configured]]
-id = "mutsuki.bot.adapter.qqbot"
-[plugins.configured.config]
-account_id = "{}"
-app_id = "{}"
-client_secret_key = "{}"
-token_url = "{}"
-openapi_base_url = "{}"
-allow_insecure_transport = true
-gateway_hello_timeout_ms = 1000
-gateway_ack_timeout_ms = 500
-retry_base_delay_ms = 0
-retry_max_delay_ms = 0
-reconnect_initial_delay_ms = 10
-reconnect_max_delay_ms = 20
-reconnect_jitter_ms = 0
-
-[security]
-secret_file = "product.secret.toml"
-
-[observe]
-console = false
-json = false
-log_file = "service.log"
-panic_file = "panic.log"
-"#,
-        root.to_string_lossy().replace('\\', "/"),
-        ipc.transport,
-        ipc.name,
-        tcp_debug_addr,
-        qq.account_id,
-        qq.app_id,
-        qq.client_secret_key,
-        qq.token_url,
-        qq.openapi_base_url,
-    )
 }

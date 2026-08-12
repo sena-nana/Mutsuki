@@ -4,14 +4,14 @@ mod process;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use mutsuki_bot::repository_local_config_path;
+use futures_util::{SinkExt, StreamExt};
+use mutsuki_bot::load_bootstrapped_product;
 use mutsuki_plugin_bot_adapter_qqbot::QqBotConfig;
-#[cfg(windows)]
-use mutsuki_service_config::IpcTransport;
-use mutsuki_service_config::{ConfigOverrides, ServiceConfig};
-use mutsuki_service_control::{ControlCommand, ControlResponse, ControlResult, HealthReport};
-use mutsuki_service_ipc::ControlClient;
+use mutsuki_service_config::ServiceConfig;
+use mutsuki_service_control::HealthReport;
+use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
 use tempfile::Builder;
+use uuid::Uuid;
 
 use process::ProductProcess;
 
@@ -21,21 +21,33 @@ const QQBOT_HEALTH_PREFIX: &str = "mutsuki.bot.qqbot.gateway:";
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires ignored local QQBot config and secret files"]
 async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
-    let config_path = std::env::var_os("MUTSUKI_QQBOT_SMOKE_CONFIG")
-        .or_else(|| std::env::var_os("MUTSUKI_CONFIG"))
+    let config_path = std::env::var_os("MUTSUKI_QQBOT_SMOKE_BOOTSTRAP")
+        .or_else(|| std::env::var_os("MUTSUKI_BOOTSTRAP"))
         .map(PathBuf::from)
-        .unwrap_or_else(repository_local_config_path);
-    let service = ServiceConfig::load(ConfigOverrides {
-        config_file: Some(config_path.clone()),
-        ..Default::default()
-    })
-    .unwrap_or_else(|_| panic!("failed to load local QQBot smoke config"));
-    assert!(service.ipc.enabled, "real smoke requires IPC");
-    #[cfg(windows)]
-    assert_eq!(service.ipc.transport, IpcTransport::NamedPipe);
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/bootstrap.toml")
+        });
+    let product = load_bootstrapped_product(&config_path)
+        .await
+        .unwrap_or_else(|_| panic!("failed to load local QQBot smoke bootstrap"));
+    let service = product.service;
+    let console = product.console;
+    assert!(
+        console.enabled,
+        "real smoke requires the authenticated console"
+    );
+    let auth_token = service
+        .host_secret_store()
+        .resolve(
+            console
+                .auth_token_key
+                .as_deref()
+                .expect("console token key"),
+        )
+        .expect("resolve console token");
 
-    let credentials = credentials(&service);
-    assert_endpoint_closed(&service, "before startup").await;
+    let credentials = credentials(&service, &auth_token);
+    assert_endpoint_closed(&console.listen, "before startup").await;
     let service_log = FileTail::snapshot(service.service.log_dir.join(&service.observe.log_file));
     let panic_log = FileTail::snapshot(service.service.log_dir.join(&service.observe.panic_file));
     let output_dir = Builder::new()
@@ -47,7 +59,7 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
     let health_result = tokio::time::timeout(Duration::from_secs(45), async {
         loop {
             process.assert_running();
-            if let Some(health) = health(&service).await
+            if let Some(health) = health(&console.listen, &auth_token).await
                 && product_ready(&health)
             {
                 break health;
@@ -59,7 +71,7 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
     let health = match health_result {
         Ok(health) => health,
         Err(_) => {
-            let summary = health(&service)
+            let summary = health(&console.listen, &auth_token)
                 .await
                 .map(|health| health_summary(&health))
                 .unwrap_or_else(|| "health unavailable".into());
@@ -71,26 +83,24 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
     };
     assert!(product_ready(&health), "{}", health_summary(&health));
 
-    let response = ControlClient::new((&service).into())
-        .request(ControlCommand::ServiceShutdown)
+    rpc(&console.listen, &auth_token, "service_shutdown")
         .await
         .expect("request ServiceShutdown");
-    assert!(matches!(
-        response,
-        ControlResponse::Ok(ControlResult::ServiceShutdown)
-    ));
     let status = process.wait_for_exit(Duration::from_secs(30)).await;
     assert!(status.success(), "product exited with {status}");
-    assert_endpoint_closed(&service, "after shutdown").await;
+    assert_endpoint_closed(&console.listen, "after shutdown").await;
 
     assert_clean("child output", &process.output_bytes(), &credentials);
     assert_clean("service log", &service_log.new_bytes(), &credentials);
     assert_clean("panic log", &panic_log.new_bytes(), &credentials);
 }
 
-fn credentials(service: &ServiceConfig) -> Vec<Vec<u8>> {
+fn credentials(service: &ServiceConfig, console_token: &str) -> Vec<Vec<u8>> {
     let store = service.host_secret_store();
-    let mut values = vec![service.control_token().as_bytes().to_vec()];
+    let mut values = vec![
+        service.control_token().as_bytes().to_vec(),
+        console_token.as_bytes().to_vec(),
+    ];
     for selection in service
         .plugins
         .configured
@@ -114,22 +124,65 @@ fn credentials(service: &ServiceConfig) -> Vec<Vec<u8>> {
     values
 }
 
-async fn health(service: &ServiceConfig) -> Option<HealthReport> {
-    match ControlClient::new(service.into())
-        .request(ControlCommand::HealthCheck)
-        .await
-        .ok()?
-    {
-        ControlResponse::Ok(ControlResult::HealthCheck(health)) => Some(health),
-        _ => None,
-    }
+async fn health(address: &str, token: &str) -> Option<HealthReport> {
+    serde_json::from_value(rpc(address, token, "health").await.ok()?).ok()
 }
 
-async fn assert_endpoint_closed(service: &ServiceConfig, phase: &str) {
+async fn assert_endpoint_closed(address: &str, phase: &str) {
     assert!(
-        ControlClient::new(service.into()).connect().await.is_err(),
-        "IPC endpoint is reachable {phase}"
+        tokio::net::TcpStream::connect(address).await.is_err(),
+        "console endpoint is reachable {phase}"
     );
+}
+
+async fn rpc(address: &str, token: &str, method: &str) -> Result<serde_json::Value, String> {
+    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    let (mut socket, _) = connect_async(format!("ws://{address}/ws"))
+        .await
+        .map_err(|error| error.to_string())?;
+    socket
+        .send(Message::Binary(
+            WireMessage::Hello {
+                protocol_version: WEB_PROTOCOL_VERSION.into(),
+                capabilities: Vec::new(),
+                auth_token: Some(token.into()),
+            }
+            .encode()
+            .map_err(|error| error.to_string())?
+            .into(),
+        ))
+        .await
+        .map_err(|error| error.to_string())?;
+    let _ = socket.next().await.ok_or("missing hello ack")?;
+    socket
+        .send(Message::Binary(
+            WireMessage::Rpc(RpcRequest {
+                id: Uuid::new_v4(),
+                namespace: "control".into(),
+                method: method.into(),
+                params: serde_json::json!({}),
+            })
+            .encode()
+            .map_err(|error| error.to_string())?
+            .into(),
+        ))
+        .await
+        .map_err(|error| error.to_string())?;
+    let message = socket
+        .next()
+        .await
+        .ok_or("missing RPC response")?
+        .map_err(|error| error.to_string())?;
+    let Message::Binary(bytes) = message else {
+        return Err("unexpected WebSocket response".into());
+    };
+    match WireMessage::decode(bytes.as_ref()).map_err(|error| error.to_string())? {
+        WireMessage::RpcResult(result) => result.error.map_or_else(
+            || Ok(result.result.unwrap_or_default()),
+            |error| Err(error.message),
+        ),
+        _ => Err("unexpected Web RPC response".into()),
+    }
 }
 
 fn product_ready(health: &HealthReport) -> bool {

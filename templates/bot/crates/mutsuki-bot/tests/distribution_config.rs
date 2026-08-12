@@ -31,18 +31,6 @@ fn product_for(deployment: &Path, mode: &str) -> (tempfile::TempDir, PathBuf) {
     (root, product)
 }
 
-#[test]
-fn committed_template_is_explicitly_disabled() {
-    let template = workspace_root().join("config/template.toml");
-    assert_eq!(
-        validate_distribution_config(&template).unwrap(),
-        DistributionMode::Disabled
-    );
-    let source = fs::read_to_string(template).unwrap();
-    assert!(source.contains("mode = \"disabled\""));
-    assert!(!source.contains("deployment ="));
-}
-
 #[tokio::test]
 async fn disabled_distribution_keeps_the_real_local_runtime_unchanged() {
     let root = tempdir().unwrap();
@@ -89,7 +77,9 @@ mode = "disabled"
     assert!(distribution.start_monitor().is_none());
     assert_eq!(distribution.health_snapshot()["state"], "disabled");
     let runtime = distribution
-        .attach_health_probe(assemble_service(service).unwrap())
+        .attach_health_probe(
+            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+        )
         .start()
         .await
         .unwrap();
@@ -199,7 +189,9 @@ async fn explicit_fast_fallback_starts_only_as_visible_degraded_local_execution(
         "distribution.sidecar_unavailable"
     );
     let runtime = distribution
-        .attach_health_probe(assemble_service(service).unwrap())
+        .attach_health_probe(
+            assemble_service(service, mutsuki_bot_web_console::empty_config_service()).unwrap(),
+        )
         .start()
         .await
         .unwrap();

@@ -179,7 +179,7 @@ pub(crate) struct EventSourceSupervisor {
 struct ManagedSource {
     status: SourceStatus,
     commands: mpsc::Sender<SourceCommand>,
-    task: tokio::task::JoinHandle<()>,
+    task: tokio::task::JoinHandle<Box<dyn HostEventSource>>,
 }
 
 #[derive(Clone)]
@@ -330,6 +330,43 @@ impl EventSourceSupervisor {
         }
     }
 
+    pub(crate) async fn stop_plugins(
+        &self,
+        plugin_ids: &std::collections::BTreeSet<String>,
+        graceful: Duration,
+    ) -> Result<Vec<Box<dyn HostEventSource>>, String> {
+        let managed = {
+            let mut sources = self.sources.lock().expect("event source supervisor mutex");
+            let source_ids = sources
+                .iter()
+                .filter(|(_, source)| plugin_ids.contains(&source.status.snapshot().plugin_id))
+                .map(|(source_id, _)| source_id.clone())
+                .collect::<Vec<_>>();
+            source_ids
+                .into_iter()
+                .filter_map(|source_id| sources.remove(&source_id))
+                .collect::<Vec<_>>()
+        };
+        for source in &managed {
+            let _ = source.commands.send(SourceCommand::Shutdown).await;
+        }
+        let mut stopped = Vec::with_capacity(managed.len());
+        for source in managed {
+            let mut task = source.task;
+            match tokio::time::timeout(graceful + Duration::from_millis(100), &mut task).await {
+                Ok(Ok(source)) => stopped.push(source),
+                Ok(Err(error)) => {
+                    return Err(format!("event source lifecycle task failed: {error}"));
+                }
+                Err(_) => {
+                    task.abort();
+                    return Err("event source lifecycle task did not stop in time".into());
+                }
+            }
+        }
+        Ok(stopped)
+    }
+
     pub(crate) fn abort(&self) {
         for source in self.take_sources() {
             let _ = source.commands.try_send(SourceCommand::Shutdown);
@@ -351,7 +388,7 @@ async fn run_source_actor(
     status: SourceStatus,
     mut commands: mpsc::Receiver<SourceCommand>,
     graceful: Duration,
-) {
+) -> Box<dyn HostEventSource> {
     loop {
         status.set("starting");
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -373,7 +410,7 @@ async fn run_source_actor(
                 status.fail(panic_message(payload));
                 if !wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await
                 {
-                    return;
+                    return source;
                 }
                 continue;
             }
@@ -396,7 +433,7 @@ async fn run_source_actor(
                     if handle_command(command, &mut source, &status, &shutdown_tx, graceful).await {
                         break;
                     } else {
-                        return;
+                        return source;
                     }
                 }
                 _ = health_tick.tick() => status.update_health(safe_health(source.as_ref())),
@@ -405,7 +442,7 @@ async fn run_source_actor(
         if status.snapshot().state == "failed"
             && !wait_command(&mut commands, &mut source, &status, &shutdown_tx, graceful).await
         {
-            return;
+            return source;
         }
     }
 }

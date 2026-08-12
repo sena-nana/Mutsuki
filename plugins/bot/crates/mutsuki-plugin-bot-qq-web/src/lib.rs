@@ -9,8 +9,8 @@ use mutsuki_bot_protocol::{
 };
 
 pub use management::{
-    LocalQqManagementProvider, QqBotManagementService, QqManagementProvider,
-    account_view_from_config, delivery_view,
+    LocalQqManagementProvider, QqBotManagementService, QqManagementAuditEntry,
+    QqManagementProvider, QqManagementStateStore, account_view_from_config, delivery_view,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -66,6 +66,12 @@ pub enum QqGatewayConnectionState {
 pub struct QqDeliveryView {
     pub receipt: BotDeliveryReceipt,
     pub attempts: Vec<BotDeliveryAttempt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QqManagementPage<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -153,6 +159,30 @@ pub trait QqBotManagementApi: Send + Sync {
         &self,
         request: QqManagementWriteRequest,
     ) -> Result<QqManagementWriteResult, QqManagementError>;
+
+    fn delivery_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<QqManagementPage<QqDeliveryView>, QqManagementError> {
+        let snapshot = self.snapshot(query, false)?;
+        Ok(page_by_id(snapshot.deliveries, after, limit, |item| {
+            item.receipt.delivery_id.clone()
+        }))
+    }
+
+    fn interaction_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<QqManagementPage<BotInteractionSession>, QqManagementError> {
+        let snapshot = self.snapshot(query, false)?;
+        Ok(page_by_id(snapshot.interactions, after, limit, |item| {
+            item.session_id.clone()
+        }))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,9 +238,12 @@ impl WebExtension for QqBotWebExtension {
 
     fn register_rpc(&self, registry: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let api = self.api.clone();
-        registry.register("snapshot", move |params| {
-            require_capability(&params, CAPABILITY_BOT_READ)?;
-            let include_secret_status = has_capability(&params, CAPABILITY_BOT_SECRET_STATUS);
+        registry.register_contextual("snapshot", move |context, params| {
+            context.require(CAPABILITY_BOT_READ)?;
+            let include_secret_status = context
+                .capabilities()
+                .iter()
+                .any(|capability| capability == "*" || capability == CAPABILITY_BOT_SECRET_STATUS);
             let query = params.get("query").and_then(Value::as_str).unwrap_or("");
             let mut snapshot = api
                 .snapshot(query, include_secret_status)
@@ -227,17 +260,15 @@ impl WebExtension for QqBotWebExtension {
         });
 
         let api = self.api.clone();
-        registry.register("write", move |params| {
-            let request: QqManagementWriteRequest = serde_json::from_value(
+        registry.register_contextual("write", move |context, params| {
+            let mut request: QqManagementWriteRequest = serde_json::from_value(
                 params
                     .get("request")
                     .cloned()
                     .ok_or_else(|| ExtensionError::Registration("missing request".into()))?,
             )
             .map_err(|error| ExtensionError::Registration(error.to_string()))?;
-            if request.actor_id.trim().is_empty() {
-                return Err(ExtensionError::Registration("actor_id is required".into()));
-            }
+            request.actor_id = "local-web-console".into();
             let confirmed = params
                 .get("confirmed")
                 .and_then(Value::as_bool)
@@ -247,9 +278,39 @@ impl WebExtension for QqBotWebExtension {
                     "dangerous action requires confirmation".into(),
                 ));
             }
-            require_capability(&params, request.action.required_capability())?;
+            context.require(request.action.required_capability())?;
             serde_json::to_value(api.write(request).map_err(domain_error)?).map_err(|error| {
                 ExtensionError::Registration(format!("write result encode failed: {error}"))
+            })
+        });
+
+        let api = self.api.clone();
+        registry.register_contextual("deliveries.list", move |context, params| {
+            context.require(CAPABILITY_BOT_READ)?;
+            let page = api
+                .delivery_page(
+                    params.get("query").and_then(Value::as_str).unwrap_or(""),
+                    params.get("after").and_then(Value::as_str),
+                    page_limit(&params),
+                )
+                .map_err(domain_error)?;
+            serde_json::to_value(page).map_err(|error| {
+                ExtensionError::Registration(format!("delivery page encode failed: {error}"))
+            })
+        });
+
+        let api = self.api.clone();
+        registry.register_contextual("interactions.list", move |context, params| {
+            context.require(CAPABILITY_BOT_READ)?;
+            let page = api
+                .interaction_page(
+                    params.get("query").and_then(Value::as_str).unwrap_or(""),
+                    params.get("after").and_then(Value::as_str),
+                    page_limit(&params),
+                )
+                .map_err(domain_error)?;
+            serde_json::to_value(page).map_err(|error| {
+                ExtensionError::Registration(format!("interaction page encode failed: {error}"))
             })
         });
         Ok(())
@@ -318,22 +379,34 @@ fn load_manifest(root: &Path) -> Result<ExtensionManifest, ExtensionError> {
     }]))
 }
 
-fn has_capability(params: &Value, required: &str) -> bool {
-    params
-        .get("capabilities")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .any(|capability| capability == "*" || capability == required)
-}
-
-fn require_capability(params: &Value, required: &str) -> Result<(), ExtensionError> {
-    has_capability(params, required)
-        .then_some(())
-        .ok_or_else(|| ExtensionError::CapabilityDenied(required.into()))
-}
-
 fn domain_error(QqManagementError { code, message }: QqManagementError) -> ExtensionError {
     ExtensionError::Registration(json!({"code": code, "message": message}).to_string())
+}
+
+fn page_limit(params: &Value) -> u32 {
+    params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|limit| u32::try_from(limit).ok())
+        .unwrap_or(50)
+        .clamp(1, 100)
+}
+
+fn page_by_id<T>(
+    mut items: Vec<T>,
+    after: Option<&str>,
+    limit: u32,
+    id: impl Fn(&T) -> String,
+) -> QqManagementPage<T> {
+    items.sort_by_key(|item| id(item));
+    let after = after.unwrap_or_default();
+    let mut items = items
+        .into_iter()
+        .filter(|item| id(item).as_str() > after)
+        .take(limit.saturating_add(1) as usize)
+        .collect::<Vec<_>>();
+    let has_more = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    let next_cursor = has_more.then(|| items.last().map(&id)).flatten();
+    QqManagementPage { items, next_cursor }
 }

@@ -42,12 +42,36 @@ impl QqGatewayHealthHandle {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct QqGatewayControlHandle {
+    reconnect: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+}
+
+impl QqGatewayControlHandle {
+    /// Requests a reconnect from the live QQ Gateway EventSource.
+    pub fn reconnect(&self) -> Result<(), String> {
+        let sender = self
+            .reconnect
+            .lock()
+            .expect("QQBot reconnect mutex")
+            .clone()
+            .ok_or_else(|| "QQ Gateway 当前未运行".to_string())?;
+        match sender.try_send(()) {
+            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err("QQ Gateway 生命周期任务已停止".into())
+            }
+        }
+    }
+}
+
 pub struct QqGatewayEventSource {
     descriptor: HostEventSourceDescriptor,
     config: QqBotConfig,
     credentials: SharedQqCredentials,
     auth: QqAuthManager,
     health: QqGatewayHealthHandle,
+    control: QqGatewayControlHandle,
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
     stopped: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     abort: Arc<Mutex<Option<tokio::task::AbortHandle>>>,
@@ -73,6 +97,7 @@ impl QqGatewayEventSource {
                     ..QqGatewayHealthSnapshot::default()
                 })),
             },
+            control: QqGatewayControlHandle::default(),
             stop: Arc::new(Mutex::new(None)),
             stopped: Arc::new(Mutex::new(None)),
             abort: Arc::new(Mutex::new(None)),
@@ -81,6 +106,10 @@ impl QqGatewayEventSource {
 
     pub fn health_handle(&self) -> QqGatewayHealthHandle {
         self.health.clone()
+    }
+
+    pub fn control_handle(&self) -> QqGatewayControlHandle {
+        self.control.clone()
     }
 }
 
@@ -94,6 +123,7 @@ impl HostEventSource for QqGatewayEventSource {
         let credentials = self.credentials.clone();
         let auth = self.auth.clone();
         let health = self.health.clone();
+        let control = self.control.clone();
         let (stop_tx, stop_rx) = watch::channel(false);
         *self.stop.lock().expect("QQBot stop mutex") = Some(stop_tx);
         if let Err(error) = config.validate() {
@@ -114,6 +144,8 @@ impl HostEventSource for QqGatewayEventSource {
             Ok(http) => http,
             Err(error) => return Box::pin(async move { Err(source_error(error)) }),
         };
+        let (reconnect_tx, reconnect_rx) = mpsc::channel(1);
+        *control.reconnect.lock().expect("QQBot reconnect mutex") = Some(reconnect_tx);
         credentials.set_client_secret(secret);
         let cleanup_credentials = credentials.clone();
         let cleanup_auth = auth.clone();
@@ -133,13 +165,16 @@ impl HostEventSource for QqGatewayEventSource {
                     credentials: cleanup_credentials,
                     auth: cleanup_auth,
                 };
-                run_gateway(config, api, health, ctx, stop_rx).await
+                run_gateway(config, api, health, ctx, stop_rx, reconnect_rx).await
             }
         });
         *self.abort.lock().expect("QQBot abort mutex") = Some(task.abort_handle());
         Box::pin(async move {
-            task.await
-                .map_err(|error| source_error(format!("QQBot Gateway task failed: {error}")))?
+            let outcome = task
+                .await
+                .map_err(|error| source_error(format!("QQBot Gateway task failed: {error}")))?;
+            *control.reconnect.lock().expect("QQBot reconnect mutex") = None;
+            outcome
         })
     }
 
@@ -147,6 +182,7 @@ impl HostEventSource for QqGatewayEventSource {
         let sender = self.stop.lock().expect("QQBot stop mutex").take();
         let stopped = self.stopped.lock().expect("QQBot stopped mutex").take();
         let abort = self.abort.lock().expect("QQBot abort mutex").take();
+        let control = self.control.clone();
         Box::pin(async move {
             let mut abort = AbortHandleOnDrop(abort);
             if let Some(sender) = sender {
@@ -156,6 +192,7 @@ impl HostEventSource for QqGatewayEventSource {
                 let _ = stopped.await;
             }
             abort.0 = None;
+            *control.reconnect.lock().expect("QQBot reconnect mutex") = None;
             Ok(())
         })
     }
@@ -186,6 +223,7 @@ async fn run_gateway(
     health: QqGatewayHealthHandle,
     ctx: HostEventSourceContext,
     mut local_stop: watch::Receiver<bool>,
+    mut reconnect: mpsc::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut host_stop = ctx.shutdown.clone();
     let mut pump = QqGatewayPump::with_account(&config.account_id, config.gateway_dedup_window);
@@ -205,6 +243,7 @@ async fn run_gateway(
                 reconnect_attempt: &mut reconnect_attempt,
                 host_stop: &mut host_stop,
                 local_stop: &mut local_stop,
+                reconnect: &mut reconnect,
             },
         )
         .await
@@ -229,6 +268,7 @@ async fn run_gateway(
                         mark_stopped(&health);
                         return Ok(());
                     }
+                    _ = reconnect.recv() => {}
                 }
             }
             Err(GatewayFailure::RateLimited(reason)) => {
@@ -249,6 +289,7 @@ async fn run_gateway(
                         mark_stopped(&health);
                         return Ok(());
                     }
+                    _ = reconnect.recv() => {}
                 }
             }
             Err(GatewayFailure::Fatal(reason)) => {
@@ -265,6 +306,7 @@ struct GatewayConnectionContext<'a> {
     reconnect_attempt: &'a mut u32,
     host_stop: &'a mut mutsuki_service_runtime::HostShutdownToken,
     local_stop: &'a mut watch::Receiver<bool>,
+    reconnect: &'a mut mpsc::Receiver<()>,
 }
 
 async fn run_connection(
@@ -279,6 +321,7 @@ async fn run_connection(
         reconnect_attempt,
         host_stop,
         local_stop,
+        reconnect,
     } = lifecycle;
     let (gateway_url, access_token) = gateway_credentials(config, api.clone()).await?;
     let selected_url = pump.resume_url().unwrap_or(&gateway_url);
@@ -292,6 +335,7 @@ async fn run_connection(
         }
         _ = host_stop.cancelled() => return Ok(ConnectionEnd::Shutdown),
         _ = local_stop.changed() => return Ok(ConnectionEnd::Shutdown),
+        _ = reconnect.recv() => return Ok(ConnectionEnd::Reconnect("operator requested reconnect".into())),
     };
     mark_connected(health);
 
@@ -310,6 +354,10 @@ async fn run_connection(
         _ = local_stop.changed() => {
             let _ = websocket.close(None).await;
             return Ok(ConnectionEnd::Shutdown);
+        }
+        _ = reconnect.recv() => {
+            let _ = websocket.close(None).await;
+            return Ok(ConnectionEnd::Reconnect("operator requested reconnect".into()));
         }
     };
     let hello = message_json(hello)?;
@@ -367,6 +415,7 @@ async fn run_connection(
         tokio::select! {
             _ = host_stop.cancelled() => break ConnectionEnd::Shutdown,
             _ = local_stop.changed() => break ConnectionEnd::Shutdown,
+            _ = reconnect.recv() => break ConnectionEnd::Reconnect("operator requested reconnect".into()),
             _ = ack_deadline => {
                 if awaiting_ack_since.is_some() {
                     break ConnectionEnd::Reconnect("heartbeat ACK timed out".into());

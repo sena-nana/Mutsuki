@@ -48,9 +48,7 @@ impl ProductProcess {
     }
 
     pub fn summary(&self) -> String {
-        let bytes = std::fs::metadata(&self.output_path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
+        let bytes = self.output_bytes().len();
         format!("captured_bytes={bytes}")
     }
 }

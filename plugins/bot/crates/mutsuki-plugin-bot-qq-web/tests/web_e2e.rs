@@ -74,7 +74,7 @@ impl QqBotManagementApi for Api {
 }
 
 #[tokio::test]
-async fn qq_management_rpc_enforces_capability_confirmation_revision_and_secret_redaction() {
+async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixed_actor() {
     let api = Arc::new(Api::default());
     let assets_dir = tempfile::tempdir().unwrap();
     let shell_dir = tempfile::tempdir().unwrap();
@@ -110,24 +110,15 @@ async fn qq_management_rpc_enforces_capability_confirmation_revision_and_secret_
     host.start().await.unwrap();
     let address = host.listen_addr().unwrap().to_string();
 
-    assert!(
-        rpc(
-            &address,
-            "snapshot",
-            json!({"capabilities": ["runtime.read"]}),
-        )
-        .await
-        .is_err()
+    let authenticated = rpc(&address, "snapshot", json!({})).await.unwrap();
+    assert_eq!(
+        authenticated["accounts"][0]["credential_reference"],
+        "secret://QQBOT_CLIENT_SECRET"
     );
-    let redacted = rpc(
-        &address,
-        "snapshot",
-        json!({"capabilities": [CAPABILITY_BOT_READ]}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(redacted["accounts"][0]["credential_reference"], "");
-    assert_eq!(redacted["accounts"][0]["credential_status"], "restricted");
+    assert_eq!(
+        authenticated["accounts"][0]["credential_status"],
+        "configured"
+    );
 
     let request = json!({
         "actor_id": "operator",
@@ -139,7 +130,6 @@ async fn qq_management_rpc_enforces_capability_confirmation_revision_and_secret_
             &address,
             "write",
             json!({
-                "capabilities": [CAPABILITY_BOT_CONFIG_WRITE],
                 "confirmed": false,
                 "request": request
             }),
@@ -151,7 +141,6 @@ async fn qq_management_rpc_enforces_capability_confirmation_revision_and_secret_
         &address,
         "write",
         json!({
-            "capabilities": [CAPABILITY_BOT_CONFIG_WRITE],
             "confirmed": true,
             "request": request
         }),
@@ -160,7 +149,9 @@ async fn qq_management_rpc_enforces_capability_confirmation_revision_and_secret_
     .unwrap();
     assert_eq!(written["revision"], 1);
     assert_eq!(written["audit_id"], "audit-1");
-    assert_eq!(api.writes.lock().unwrap().len(), 1);
+    let writes = api.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].actor_id, "local-web-console");
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;

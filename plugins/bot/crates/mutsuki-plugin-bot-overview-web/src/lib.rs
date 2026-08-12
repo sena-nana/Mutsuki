@@ -113,7 +113,10 @@ impl WebExtension for OverviewWebExtension {
             control: self.control.clone(),
             assets_root: None,
         };
-        ctx.register("summary", move |_params| this.summary());
+        ctx.register_contextual("summary", move |context, _params| {
+            context.require(CAPABILITY_RUNTIME_READ)?;
+            this.summary()
+        });
         Ok(())
     }
 

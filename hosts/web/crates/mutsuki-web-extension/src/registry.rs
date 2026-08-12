@@ -43,10 +43,38 @@ impl Drop for Disposable {
     }
 }
 
-pub type RpcHandler = Arc<dyn Fn(JsonValue) -> Result<JsonValue, ExtensionError> + Send + Sync>;
+#[derive(Clone, Debug, Default)]
+pub struct RpcCallContext {
+    capabilities: Arc<[String]>,
+}
+
+impl RpcCallContext {
+    #[must_use]
+    pub fn new(capabilities: &[String]) -> Self {
+        Self {
+            capabilities: capabilities.to_vec().into(),
+        }
+    }
+
+    #[must_use]
+    pub fn capabilities(&self) -> &[String] {
+        &self.capabilities
+    }
+
+    pub fn require(&self, capability: &str) -> Result<(), ExtensionError> {
+        self.capabilities
+            .iter()
+            .any(|owned| owned == capability || owned == "*")
+            .then_some(())
+            .ok_or_else(|| ExtensionError::CapabilityDenied(capability.to_owned()))
+    }
+}
+
+pub type RpcHandler =
+    Arc<dyn Fn(RpcCallContext, JsonValue) -> Result<JsonValue, ExtensionError> + Send + Sync>;
 pub type RpcFuture =
     Pin<Box<dyn Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static>>;
-pub type AsyncRpcHandler = Arc<dyn Fn(JsonValue) -> RpcFuture + Send + Sync>;
+pub type AsyncRpcHandler = Arc<dyn Fn(RpcCallContext, JsonValue) -> RpcFuture + Send + Sync>;
 
 #[derive(Clone)]
 enum RegisteredRpcHandler {
@@ -77,13 +105,30 @@ impl RpcRegistry {
         F: Fn(JsonValue) -> Result<JsonValue, ExtensionError> + Send + Sync + 'static,
     {
         let key = format!("{}.{}", self.namespace, method);
-        self.handlers
-            .insert(key.clone(), RegisteredRpcHandler::Sync(Arc::new(handler)));
+        self.handlers.insert(
+            key.clone(),
+            RegisteredRpcHandler::Sync(Arc::new(move |_context, params| handler(params))),
+        );
         let handlers = &self.handlers as *const HashMap<String, RegisteredRpcHandler>;
         Disposable::new(move || {
             // Safety: Disposable is only used while registry lives and methods remove by key.
             // We store owned key and remove via a side table in ExtensionRecord instead.
             let _ = handlers;
+            let _ = key;
+        })
+    }
+
+    pub fn register_contextual<F>(&mut self, method: &str, handler: F) -> Disposable
+    where
+        F: Fn(RpcCallContext, JsonValue) -> Result<JsonValue, ExtensionError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let key = format!("{}.{}", self.namespace, method);
+        self.handlers
+            .insert(key.clone(), RegisteredRpcHandler::Sync(Arc::new(handler)));
+        Disposable::new(move || {
             let _ = key;
         })
     }
@@ -96,7 +141,26 @@ impl RpcRegistry {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers.insert(
             key.clone(),
-            RegisteredRpcHandler::Async(Arc::new(move |params| Box::pin(handler(params)))),
+            RegisteredRpcHandler::Async(Arc::new(move |_context, params| {
+                Box::pin(handler(params))
+            })),
+        );
+        Disposable::new(move || {
+            let _ = key;
+        })
+    }
+
+    pub fn register_async_contextual<F, Fut>(&mut self, method: &str, handler: F) -> Disposable
+    where
+        F: Fn(RpcCallContext, JsonValue) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static,
+    {
+        let key = format!("{}.{}", self.namespace, method);
+        self.handlers.insert(
+            key.clone(),
+            RegisteredRpcHandler::Async(Arc::new(move |context, params| {
+                Box::pin(handler(context, params))
+            })),
         );
         Disposable::new(move || {
             let _ = key;
@@ -114,7 +178,30 @@ impl RpcRegistry {
             .get(&key)
             .ok_or_else(|| ExtensionError::Registration(format!("rpc method not found: {key}")))?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => handler(params),
+            RegisteredRpcHandler::Sync(handler) => handler(RpcCallContext::default(), params),
+            RegisteredRpcHandler::Async(_) => Err(ExtensionError::Registration(format!(
+                "rpc method requires asynchronous dispatch: {key}"
+            ))),
+        }
+    }
+
+    pub fn call_with_context(
+        &self,
+        method: &str,
+        params: JsonValue,
+        context: RpcCallContext,
+    ) -> Result<JsonValue, ExtensionError> {
+        let key = if method.starts_with(&format!("{}.", self.namespace)) {
+            method.to_owned()
+        } else {
+            format!("{}.{}", self.namespace, method)
+        };
+        let handler = self
+            .handlers
+            .get(&key)
+            .ok_or_else(|| ExtensionError::Registration(format!("rpc method not found: {key}")))?;
+        match handler {
+            RegisteredRpcHandler::Sync(handler) => handler(context, params),
             RegisteredRpcHandler::Async(_) => Err(ExtensionError::Registration(format!(
                 "rpc method requires asynchronous dispatch: {key}"
             ))),
@@ -136,8 +223,31 @@ impl RpcRegistry {
                 ExtensionError::Registration(format!("rpc method not found: {key}"))
             })?;
         match handler {
-            RegisteredRpcHandler::Sync(handler) => handler(params),
-            RegisteredRpcHandler::Async(handler) => handler(params).await,
+            RegisteredRpcHandler::Sync(handler) => handler(RpcCallContext::default(), params),
+            RegisteredRpcHandler::Async(handler) => {
+                handler(RpcCallContext::default(), params).await
+            }
+        }
+    }
+
+    pub async fn call_async_with_context(
+        &self,
+        method: &str,
+        params: JsonValue,
+        context: RpcCallContext,
+    ) -> Result<JsonValue, ExtensionError> {
+        let key = if method.starts_with(&format!("{}.", self.namespace)) {
+            method.to_owned()
+        } else {
+            format!("{}.{}", self.namespace, method)
+        };
+        let handler =
+            self.handlers.get(&key).cloned().ok_or_else(|| {
+                ExtensionError::Registration(format!("rpc method not found: {key}"))
+            })?;
+        match handler {
+            RegisteredRpcHandler::Sync(handler) => handler(context, params),
+            RegisteredRpcHandler::Async(handler) => handler(context, params).await,
         }
     }
 
@@ -338,7 +448,7 @@ impl ExtensionRegistry {
         session_capabilities: &[String],
     ) -> Result<JsonValue, ExtensionError> {
         self.resolve_rpc(namespace, method, session_capabilities)?
-            .call(method, params)
+            .call_with_context(method, params, RpcCallContext::new(session_capabilities))
     }
 
     pub fn resolve_rpc(
@@ -382,7 +492,7 @@ impl ExtensionRegistry {
         session_capabilities: &[String],
     ) -> Result<JsonValue, ExtensionError> {
         self.resolve_rpc(namespace, method, session_capabilities)?
-            .call_async(method, params)
+            .call_async_with_context(method, params, RpcCallContext::new(session_capabilities))
             .await
     }
 }

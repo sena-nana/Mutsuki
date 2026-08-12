@@ -373,11 +373,11 @@ mod tests {
     #[test]
     fn extension_payload_fingerprint_is_independent_of_object_key_order() {
         let mut left = Map::new();
-        left.insert("node_type".into(), Value::String("source.qq".into()));
+        left.insert("entry_type".into(), Value::String("alpha".into()));
         left.insert("version".into(), Value::from(1));
         let mut right = Map::new();
         right.insert("version".into(), Value::from(1));
-        right.insert("node_type".into(), Value::String("source.qq".into()));
+        right.insert("entry_type".into(), Value::String("alpha".into()));
 
         assert_eq!(
             canonical_json(&Value::Object(left)),

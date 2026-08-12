@@ -1,15 +1,22 @@
-//! Bot-owned flow catalog, graph validation and atomic published snapshot lifecycle.
+//! Bot-owned flow catalog, graph validation and atomic active snapshot lifecycle.
 //! Generic runtime packages carry plugin extensions; only this crate interprets Bot node metadata.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, RwLock};
 
+use async_trait::async_trait;
 use mutsuki_bot_protocol::{
     BOT_FLOW_ERROR_TYPE, BOT_FLOW_NODE_EXTENSION_ID, BOT_FLOW_NODE_EXTENSION_VERSION,
-    BotFlowDocument, BotFlowDraft, BotFlowDraftSaveRequest, BotFlowEdgeKind, BotFlowPublishRequest,
-    BotFlowPublishedSnapshot, BotFlowStateSnapshot, BotFlowValidationIssue,
+    BotFlowDocument, BotFlowEdgeKind, BotFlowSnapshot, BotFlowValidationIssue,
     BotFlowValidationResult, BotFlowValidationSeverity, BotNodeCatalogFragment, BotNodeDescriptor,
     BotNodePortDirection, BotNodeRole,
+};
+use mutsuki_config_service::{
+    ConfigActivation, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigKey,
+    ConfigMutability, ConfigNode, ConfigPath, ConfigPresentation, ConfigProvider, ConfigProviderId,
+    ConfigRevision, ConfigScope, ConfigSnapshot, ConfigValue, ConfigValueType, LocalizedText,
+    PreparedConfigActivation, RestartPolicy, ValidationCode, ValidationIssue, ValidationResult,
+    ValidationSeverity,
 };
 use mutsuki_runtime_contracts::{PluginManifest, RuntimeLoadPlan};
 use thiserror::Error;
@@ -22,31 +29,6 @@ pub enum BotFlowError {
     Invalid(BotFlowValidationResult),
     #[error("flow catalog is invalid: {0}")]
     InvalidCatalog(String),
-    #[error("flow repository failed: {0}")]
-    Repository(String),
-}
-
-pub trait BotFlowRepository: Send + Sync {
-    fn snapshot(&self) -> Result<BotFlowStateSnapshot, BotFlowError>;
-
-    fn published_revision(
-        &self,
-        revision: u64,
-    ) -> Result<Option<BotFlowPublishedSnapshot>, BotFlowError>;
-
-    fn save_draft(
-        &self,
-        request: BotFlowDraftSaveRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowDraft, BotFlowError>;
-
-    fn discard_draft(&self, expected_revision: u64) -> Result<(), BotFlowError>;
-
-    fn publish(
-        &self,
-        request: BotFlowPublishRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowStateSnapshot, BotFlowError>;
 }
 
 #[derive(Clone, Debug, Default)]
@@ -542,38 +524,42 @@ fn push_issue(
     });
 }
 
+pub const BOT_FLOW_CONFIG_PROVIDER_ID: &str = "mutsuki.bot.flow";
+
 pub struct BotFlowRegistry {
-    repository: Arc<dyn BotFlowRepository>,
     catalog: RwLock<BotNodeCatalog>,
-    active: RwLock<Arc<BotFlowPublishedSnapshot>>,
+    active: RwLock<Arc<BotFlowSnapshot>>,
 }
 
 impl BotFlowRegistry {
-    pub fn restore(repository: Arc<dyn BotFlowRepository>) -> Result<Self, BotFlowError> {
-        let snapshot = repository.snapshot()?;
-        Ok(Self {
-            repository,
-            catalog: RwLock::new(BotNodeCatalog::default()),
-            active: RwLock::new(Arc::new(snapshot.published)),
-        })
+    #[must_use]
+    pub fn new(catalog: BotNodeCatalog) -> Self {
+        Self {
+            catalog: RwLock::new(catalog),
+            active: RwLock::new(Arc::new(BotFlowSnapshot {
+                revision: 0,
+                flows: Vec::new(),
+            })),
+        }
     }
 
-    pub fn open(
-        repository: Arc<dyn BotFlowRepository>,
+    /// Constructs an already-active immutable snapshot for owner assembly and tests.
+    /// Persistence remains the responsibility of `ConfigService` in production.
+    pub fn with_snapshot(
         catalog: BotNodeCatalog,
+        snapshot: BotFlowSnapshot,
     ) -> Result<Self, BotFlowError> {
-        let snapshot = repository.snapshot()?;
-        let validation = validate_flows(&snapshot.published.flows, &catalog);
+        let validation = validate_flows(&snapshot.flows, &catalog);
         if !validation.valid {
             return Err(BotFlowError::Invalid(validation));
         }
         Ok(Self {
-            repository,
             catalog: RwLock::new(catalog),
-            active: RwLock::new(Arc::new(snapshot.published)),
+            active: RwLock::new(Arc::new(snapshot)),
         })
     }
 
+    #[must_use]
     pub fn catalog(&self) -> Vec<BotNodeDescriptor> {
         self.catalog
             .read()
@@ -581,6 +567,7 @@ impl BotFlowRegistry {
             .descriptors()
     }
 
+    #[must_use]
     pub fn descriptor(&self, node_type_id: &str, version: u32) -> Option<BotNodeDescriptor> {
         self.catalog
             .read()
@@ -589,70 +576,20 @@ impl BotFlowRegistry {
             .cloned()
     }
 
-    pub fn snapshot(&self) -> Result<BotFlowStateSnapshot, BotFlowError> {
-        self.repository.snapshot()
-    }
-
-    pub fn active(&self) -> Arc<BotFlowPublishedSnapshot> {
+    #[must_use]
+    pub fn active(&self) -> Arc<BotFlowSnapshot> {
         self.active
             .read()
             .expect("Bot flow active lock poisoned")
             .clone()
     }
 
-    pub fn published_revision(
-        &self,
-        revision: u64,
-    ) -> Result<Arc<BotFlowPublishedSnapshot>, BotFlowError> {
-        let active = self.active();
-        if active.revision == revision {
-            return Ok(active);
-        }
-        self.repository
-            .published_revision(revision)?
-            .map(Arc::new)
-            .ok_or_else(|| BotFlowError::Repository(format!("missing graph revision {revision}")))
-    }
-
+    #[must_use]
     pub fn validate(&self, flows: &[BotFlowDocument]) -> BotFlowValidationResult {
         validate_flows(
             flows,
             &self.catalog.read().expect("Bot flow catalog lock poisoned"),
         )
-    }
-
-    pub fn save_draft(
-        &self,
-        request: BotFlowDraftSaveRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowDraft, BotFlowError> {
-        self.repository.save_draft(request, now_ms)
-    }
-
-    pub fn discard_draft(&self, expected_revision: u64) -> Result<(), BotFlowError> {
-        self.repository.discard_draft(expected_revision)
-    }
-
-    pub fn publish(
-        &self,
-        request: BotFlowPublishRequest,
-        now_ms: i64,
-    ) -> Result<Arc<BotFlowPublishedSnapshot>, BotFlowError> {
-        let snapshot = self.repository.snapshot()?;
-        let Some(draft) = snapshot.draft.as_ref() else {
-            return Err(BotFlowError::RevisionConflict {
-                expected: request.expected_draft_revision,
-                actual: 0,
-            });
-        };
-        let validation = self.validate(&draft.flows);
-        if !validation.valid {
-            return Err(BotFlowError::Invalid(validation));
-        }
-        let persisted = self.repository.publish(request, now_ms)?;
-        let published = Arc::new(persisted.published);
-        *self.active.write().expect("Bot flow active lock poisoned") = published.clone();
-        Ok(published)
     }
 
     pub fn validate_load_plan(&self, plan: &RuntimeLoadPlan) -> Result<(), BotFlowError> {
@@ -678,131 +615,190 @@ impl BotFlowRegistry {
     }
 }
 
-#[derive(Default)]
-pub struct InMemoryBotFlowRepository {
-    state: RwLock<InMemoryState>,
+struct FlowActivation {
+    registry: Arc<BotFlowRegistry>,
+    previous: Arc<BotFlowSnapshot>,
+    candidate: Arc<BotFlowSnapshot>,
+    activated: bool,
+    finished: bool,
 }
 
-#[derive(Clone)]
-struct InMemoryState {
-    draft: Option<BotFlowDraft>,
-    published: BotFlowPublishedSnapshot,
-    versions: BTreeMap<u64, BotFlowPublishedSnapshot>,
-}
-
-impl Default for InMemoryState {
-    fn default() -> Self {
-        let published = BotFlowPublishedSnapshot {
-            revision: 0,
-            flows: Vec::new(),
-            published_at_ms: 0,
-        };
-        Self {
-            draft: None,
-            published,
-            versions: BTreeMap::new(),
-        }
-    }
-}
-
-impl BotFlowRepository for InMemoryBotFlowRepository {
-    fn snapshot(&self) -> Result<BotFlowStateSnapshot, BotFlowError> {
-        let state = self.state.read().expect("memory flow lock poisoned");
-        Ok(BotFlowStateSnapshot {
-            draft: state.draft.clone(),
-            published: state.published.clone(),
-        })
-    }
-
-    fn published_revision(
-        &self,
-        revision: u64,
-    ) -> Result<Option<BotFlowPublishedSnapshot>, BotFlowError> {
-        let state = self.state.read().expect("memory flow lock poisoned");
-        if state.published.revision == revision {
-            Ok(Some(state.published.clone()))
-        } else {
-            Ok(state.versions.get(&revision).cloned())
-        }
-    }
-
-    fn save_draft(
-        &self,
-        request: BotFlowDraftSaveRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowDraft, BotFlowError> {
-        let mut state = self.state.write().expect("memory flow lock poisoned");
-        let actual = state.draft.as_ref().map_or(0, |draft| draft.revision);
-        if request.expected_draft_revision.unwrap_or(0) != actual
-            || request.base_published_revision != state.published.revision
-        {
-            return Err(BotFlowError::RevisionConflict {
-                expected: request.expected_draft_revision.unwrap_or(0),
-                actual,
-            });
-        }
-        let draft = BotFlowDraft {
-            revision: actual + 1,
-            base_published_revision: request.base_published_revision,
-            flows: request.flows,
-            updated_at_ms: now_ms,
-        };
-        state.draft = Some(draft.clone());
-        Ok(draft)
-    }
-
-    fn discard_draft(&self, expected_revision: u64) -> Result<(), BotFlowError> {
-        let mut state = self.state.write().expect("memory flow lock poisoned");
-        let actual = state.draft.as_ref().map_or(0, |draft| draft.revision);
-        if actual != expected_revision {
-            return Err(BotFlowError::RevisionConflict {
-                expected: expected_revision,
-                actual,
-            });
-        }
-        state.draft = None;
+impl ConfigActivation for FlowActivation {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        *self
+            .registry
+            .active
+            .write()
+            .expect("Bot flow active lock poisoned") = self.candidate.clone();
+        self.activated = true;
         Ok(())
     }
 
-    fn publish(
-        &self,
-        request: BotFlowPublishRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowStateSnapshot, BotFlowError> {
-        let mut state = self.state.write().expect("memory flow lock poisoned");
-        if state.published.revision != request.expected_published_revision {
-            return Err(BotFlowError::RevisionConflict {
-                expected: request.expected_published_revision,
-                actual: state.published.revision,
-            });
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        self.finished = true;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        if self.activated {
+            *self
+                .registry
+                .active
+                .write()
+                .expect("Bot flow active lock poisoned") = self.previous.clone();
         }
-        let Some(draft) = state.draft.as_ref() else {
-            return Err(BotFlowError::RevisionConflict {
-                expected: request.expected_draft_revision,
-                actual: 0,
-            });
-        };
-        if draft.revision != request.expected_draft_revision
-            || draft.base_published_revision != state.published.revision
-        {
-            return Err(BotFlowError::RevisionConflict {
-                expected: request.expected_draft_revision,
-                actual: draft.revision,
-            });
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for FlowActivation {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.rollback();
         }
-        let published = BotFlowPublishedSnapshot {
-            revision: state.published.revision + 1,
-            flows: draft.flows.clone(),
-            published_at_ms: now_ms,
-        };
-        let previous = state.published.clone();
-        state.versions.insert(previous.revision, previous);
-        state.published = published;
-        state.draft = None;
-        Ok(BotFlowStateSnapshot {
-            draft: None,
-            published: state.published.clone(),
+    }
+}
+
+pub struct BotFlowConfigProvider {
+    registry: Arc<BotFlowRegistry>,
+}
+
+impl BotFlowConfigProvider {
+    #[must_use]
+    pub fn new(registry: Arc<BotFlowRegistry>) -> Self {
+        Self { registry }
+    }
+
+    pub fn decode(value: &ConfigValue) -> Result<Vec<BotFlowDocument>, ConfigError> {
+        let json = value.to_json();
+        serde_json::from_value(
+            json.get("flows")
+                .cloned()
+                .unwrap_or_else(|| serde_json::Value::Array(Vec::new())),
+        )
+        .map_err(|error| ConfigError::ApplyRejected {
+            reason: format!("invalid Bot Flow document: {error}"),
         })
+    }
+
+    fn encode(flows: &[BotFlowDocument]) -> Result<ConfigValue, ConfigError> {
+        serde_json::to_value(flows)
+            .map(|flows| ConfigValue::from_json(&serde_json::json!({ "flows": flows })))
+            .map_err(|error| ConfigError::ApplyRejected {
+                reason: format!("failed to encode Bot Flow document: {error}"),
+            })
+    }
+
+    fn validation(&self, flows: &[BotFlowDocument]) -> ValidationResult {
+        let result = self.registry.validate(flows);
+        ValidationResult::from_issues(
+            result
+                .issues
+                .into_iter()
+                .map(|issue| ValidationIssue {
+                    path: ConfigPath(
+                        issue
+                            .path
+                            .into_iter()
+                            .chain(issue.flow_id)
+                            .chain(issue.node_id)
+                            .chain(issue.edge_id)
+                            .collect(),
+                    ),
+                    code: ValidationCode::BusinessRule,
+                    severity: match issue.severity {
+                        BotFlowValidationSeverity::Error => ValidationSeverity::Error,
+                        BotFlowValidationSeverity::Warning => ValidationSeverity::Warning,
+                    },
+                    message: LocalizedText::new(issue.message),
+                })
+                .collect(),
+        )
+    }
+}
+
+#[async_trait]
+impl ConfigProvider for BotFlowConfigProvider {
+    fn descriptor(&self) -> ConfigDescriptor {
+        ConfigDescriptor {
+            provider_id: ConfigProviderId::new(BOT_FLOW_CONFIG_PROVIDER_ID),
+            schema_version: 1,
+            value_version: 1,
+            title: LocalizedText::new("Bot Flow"),
+            description: None,
+            scopes: vec![ConfigScope::global()],
+            root: ConfigNode {
+                key: ConfigKey::new("root"),
+                value_type: ConfigValueType::Object,
+                title: LocalizedText::new("Bot Flow"),
+                description: None,
+                default_value: None,
+                constraints: ConfigConstraints::default(),
+                presentation: ConfigPresentation::default(),
+                visibility: None,
+                enabled_if: None,
+                mutability: ConfigMutability::ReadWrite,
+                restart_policy: RestartPolicy::None,
+                children: vec![ConfigNode {
+                    key: ConfigKey::new("flows"),
+                    value_type: ConfigValueType::Array {
+                        item: Box::new(ConfigValueType::Object),
+                    },
+                    title: LocalizedText::new("Flows"),
+                    description: None,
+                    default_value: Some(ConfigValue::Array(Vec::new())),
+                    constraints: ConfigConstraints::default(),
+                    presentation: ConfigPresentation::default(),
+                    visibility: None,
+                    enabled_if: None,
+                    mutability: ConfigMutability::ReadWrite,
+                    restart_policy: RestartPolicy::None,
+                    children: Vec::new(),
+                }],
+            },
+            groups: Vec::new(),
+        }
+    }
+
+    fn default_value(&self, _context: &ConfigContext) -> Result<ConfigValue, ConfigError> {
+        Self::encode(&[])
+    }
+
+    async fn validate(
+        &self,
+        candidate: ConfigValue,
+        _context: ConfigContext,
+    ) -> Result<ValidationResult, ConfigError> {
+        Ok(self.validation(&Self::decode(&candidate)?))
+    }
+
+    async fn prepare_activation(
+        &self,
+        candidate: ConfigValue,
+        _current: ConfigSnapshot,
+        next_revision: ConfigRevision,
+        _context: ConfigContext,
+    ) -> Result<PreparedConfigActivation, ConfigError> {
+        let flows = Self::decode(&candidate)?;
+        let validation = self.validation(&flows);
+        if !validation.ok {
+            return Err(ConfigError::ValidationFailed { result: validation });
+        }
+        let persisted = Self::encode(&flows)?;
+        Ok(PreparedConfigActivation::new(
+            persisted.clone(),
+            Box::new(FlowActivation {
+                registry: self.registry.clone(),
+                previous: self.registry.active(),
+                candidate: Arc::new(BotFlowSnapshot {
+                    revision: next_revision.0,
+                    flows,
+                }),
+                activated: false,
+                finished: false,
+            }),
+        ))
     }
 }
 
@@ -810,214 +806,128 @@ impl BotFlowRepository for InMemoryBotFlowRepository {
 mod tests {
     use super::*;
     use mutsuki_bot_protocol::{
-        BOT_FLOW_BOT_EVENT_TYPE, BotFlowEdge, BotFlowNode, BotFlowNodePosition,
-        BotFlowSourceSelector, BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment,
+        BotFlowEdge, BotFlowNode, BotFlowNodePosition, BotFlowSourceSelector, BotFlowTypeRef,
         BotNodePortDescriptor,
     };
-    use mutsuki_runtime_sdk::{PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder};
-    use serde_json::json;
-
-    const PROTOCOL: &str = "test.bot.node/process@1";
-    const RUNNER: &str = "test.bot.node.runner";
-
-    #[test]
-    fn validation_rejects_schema_errors_cycles_and_type_mismatches() {
-        let catalog = catalog();
-        let mut flow = valid_flow();
-        flow.nodes[1].config = json!({});
-        flow.edges.push(BotFlowEdge {
-            edge_id: "cycle".into(),
-            from_node_id: "processor".into(),
-            from_port_id: "event".into(),
-            to_node_id: "source".into(),
-            to_port_id: "missing".into(),
-            kind: BotFlowEdgeKind::Event,
-        });
-
-        let result = validate_flows(&[flow], &catalog);
-
-        assert!(!result.valid);
-        let codes = result
-            .issues
-            .iter()
-            .map(|issue| issue.code.as_str())
-            .collect::<BTreeSet<_>>();
-        assert!(codes.contains("flow.node.config_invalid"));
-        assert!(codes.contains("flow.edge.port_missing"));
-        assert!(codes.contains("flow.cycle"));
-    }
-
-    #[test]
-    fn publish_uses_cas_and_keeps_old_graph_revisions_immutable() {
-        let repository = Arc::new(InMemoryBotFlowRepository::default());
-        let registry = BotFlowRegistry::open(repository, catalog()).unwrap();
-        let first = registry
-            .save_draft(
-                BotFlowDraftSaveRequest {
-                    expected_draft_revision: None,
-                    base_published_revision: 0,
-                    flows: vec![valid_flow()],
-                },
-                10,
-            )
-            .unwrap();
-        let published = registry
-            .publish(
-                BotFlowPublishRequest {
-                    expected_draft_revision: first.revision,
-                    expected_published_revision: 0,
-                },
-                11,
-            )
-            .unwrap();
-        assert_eq!(published.revision, 1);
-
-        let mut changed = valid_flow();
-        changed.name = "changed".into();
-        let second = registry
-            .save_draft(
-                BotFlowDraftSaveRequest {
-                    expected_draft_revision: None,
-                    base_published_revision: 1,
-                    flows: vec![changed],
-                },
-                12,
-            )
-            .unwrap();
-        let conflict = registry.publish(
-            BotFlowPublishRequest {
-                expected_draft_revision: second.revision,
-                expected_published_revision: 0,
-            },
-            13,
-        );
-        assert!(matches!(
-            conflict,
-            Err(BotFlowError::RevisionConflict { .. })
-        ));
-        registry
-            .publish(
-                BotFlowPublishRequest {
-                    expected_draft_revision: second.revision,
-                    expected_published_revision: 1,
-                },
-                14,
-            )
-            .unwrap();
-        assert_eq!(
-            registry.published_revision(1).unwrap().flows[0].name,
-            "valid"
-        );
-        assert_eq!(registry.active().flows[0].name, "changed");
-    }
+    use mutsuki_config_service::{
+        ConfigApplyRequest, ConfigProviderRegistry, ConfigService, InMemoryConfigRepository,
+        capability,
+    };
 
     fn catalog() -> BotNodeCatalog {
-        let event_type = BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1);
-        let fragment = BotNodeCatalogFragment {
-            nodes: vec![
+        let event = BotFlowTypeRef::new("test.event", 1);
+        BotNodeCatalog {
+            nodes: BTreeMap::from([(
+                ("test.source".into(), 1),
                 BotNodeDescriptor {
                     node_type_id: "test.source".into(),
                     version: 1,
                     title: "Source".into(),
-                    category: "Test".into(),
+                    category: "test".into(),
                     role: BotNodeRole::Source,
                     binding: None,
-                    ports: vec![BotNodePortDescriptor {
-                        port_id: "event".into(),
-                        title: "Event".into(),
-                        direction: BotNodePortDirection::Output,
-                        event_type: event_type.clone(),
-                        required: false,
-                    }],
-                    config_schema: json!({"type": "object", "additionalProperties": false}),
-                },
-                BotNodeDescriptor {
-                    node_type_id: "test.processor".into(),
-                    version: 1,
-                    title: "Processor".into(),
-                    category: "Test".into(),
-                    role: BotNodeRole::Processor,
-                    binding: Some(BotNodeBinding {
-                        binding_id: format!("binding:{PROTOCOL}"),
-                        protocol_id: PROTOCOL.into(),
-                        runner_hint: Some(RUNNER.into()),
-                    }),
                     ports: vec![
                         BotNodePortDescriptor {
-                            port_id: "event".into(),
+                            port_id: "input".into(),
                             title: "Input".into(),
                             direction: BotNodePortDirection::Input,
-                            event_type: event_type.clone(),
-                            required: true,
+                            event_type: event.clone(),
+                            required: false,
                         },
                         BotNodePortDescriptor {
                             port_id: "event".into(),
-                            title: "Output".into(),
+                            title: "Event".into(),
                             direction: BotNodePortDirection::Output,
-                            event_type,
+                            event_type: event,
                             required: false,
                         },
                     ],
-                    config_schema: json!({
+                    config_schema: serde_json::json!({
                         "type": "object",
-                        "additionalProperties": false,
-                        "required": ["mode"],
-                        "properties": {"mode": {"type": "string", "enum": ["pass"]}}
+                        "additionalProperties": false
                     }),
                 },
-            ],
-        };
-        let manifest = PluginBuilder::new("test.bot.nodes")
-            .runner_descriptor(
-                RunnerDescriptorBuilder::new(RUNNER, "test.bot.nodes")
-                    .accepted_protocol(PROTOCOL)
-                    .build(),
-            )
-            .protocol_handler(
-                ProtocolDescriptorBuilder::new(PROTOCOL).build(),
-                RUNNER,
-                "test-node",
-            )
-            .extension(fragment.into_plugin_extension().unwrap())
-            .build()
-            .manifest;
-        BotNodeCatalog::from_manifests(&[manifest]).unwrap()
+            )]),
+        }
     }
 
-    fn valid_flow() -> BotFlowDocument {
+    fn flow(id: &str) -> BotFlowDocument {
         BotFlowDocument {
-            flow_id: "flow".into(),
-            name: "valid".into(),
+            flow_id: id.into(),
+            name: id.into(),
             enabled: true,
-            nodes: vec![
-                BotFlowNode {
-                    node_id: "source".into(),
-                    node_type_id: "test.source".into(),
-                    node_type_version: 1,
-                    config: json!({}),
-                    source: Some(BotFlowSourceSelector {
-                        protocol_id: "mutsuki.bot.event/ingest@1".into(),
-                        event_type: None,
-                    }),
-                    position: BotFlowNodePosition::default(),
-                },
-                BotFlowNode {
-                    node_id: "processor".into(),
-                    node_type_id: "test.processor".into(),
-                    node_type_version: 1,
-                    config: json!({"mode": "pass"}),
-                    source: None,
-                    position: BotFlowNodePosition::default(),
-                },
-            ],
-            edges: vec![BotFlowEdge {
-                edge_id: "edge".into(),
-                from_node_id: "source".into(),
-                from_port_id: "event".into(),
-                to_node_id: "processor".into(),
-                to_port_id: "event".into(),
-                kind: BotFlowEdgeKind::Event,
+            nodes: vec![BotFlowNode {
+                node_id: "source".into(),
+                node_type_id: "test.source".into(),
+                node_type_version: 1,
+                config: serde_json::json!({}),
+                source: Some(BotFlowSourceSelector {
+                    protocol_id: "test.ingress".into(),
+                    event_type: None,
+                }),
+                position: BotFlowNodePosition::default(),
             }],
+            edges: Vec::new(),
         }
+    }
+
+    fn service(registry: Arc<BotFlowRegistry>) -> Arc<ConfigService> {
+        let providers = Arc::new(ConfigProviderRegistry::default());
+        providers
+            .register(Arc::new(BotFlowConfigProvider::new(registry)))
+            .unwrap();
+        Arc::new(
+            ConfigService::new(providers, Arc::new(InMemoryConfigRepository::default())).unwrap(),
+        )
+    }
+
+    fn apply(service: Arc<ConfigService>, expected: u64, flows: Vec<BotFlowDocument>) {
+        futures_executor::block_on(async move {
+            service
+                .apply(
+                    BOT_FLOW_CONFIG_PROVIDER_ID,
+                    ConfigApplyRequest {
+                        candidate: BotFlowConfigProvider::encode(&flows).unwrap(),
+                        expected_revision: ConfigRevision(expected),
+                        dry_run: false,
+                    },
+                    ConfigContext::global(),
+                    &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+                )
+                .await
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn config_revision_swaps_snapshot_without_mutating_inflight_arc() {
+        let registry = Arc::new(BotFlowRegistry::new(catalog()));
+        let service = service(registry.clone());
+        apply(service.clone(), 0, vec![flow("first")]);
+        let inflight = registry.active();
+        apply(service, 1, vec![flow("second")]);
+
+        assert_eq!(inflight.revision, 1);
+        assert_eq!(inflight.flows[0].flow_id, "first");
+        assert_eq!(registry.active().revision, 2);
+        assert_eq!(registry.active().flows[0].flow_id, "second");
+    }
+
+    #[test]
+    fn validation_rejects_cycles_and_preserves_error_location() {
+        let registry = BotFlowRegistry::new(catalog());
+        let mut candidate = flow("cyclic");
+        candidate.edges.push(BotFlowEdge {
+            edge_id: "loop".into(),
+            from_node_id: "source".into(),
+            from_port_id: "event".into(),
+            to_node_id: "source".into(),
+            to_port_id: "input".into(),
+            kind: BotFlowEdgeKind::Event,
+        });
+
+        let result = registry.validate(&[candidate]);
+        assert!(!result.valid);
+        assert!(result.issues.iter().any(|issue| issue.code == "flow.cycle"));
     }
 }

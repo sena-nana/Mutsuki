@@ -10,7 +10,6 @@ async function authenticate(authToken) {
   const shell = createWebShellRuntime({
     bridgeUrl: `${protocol}://${location.host}/ws`,
     authToken,
-    capabilities: ["runtime.read", "runtime.write", "*"],
   });
   try {
     await shell.connect();

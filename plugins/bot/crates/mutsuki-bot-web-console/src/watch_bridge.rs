@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_config::ConfigService;
+use mutsuki_config_service::ConfigService;
 use mutsuki_web_host::MutsukiWebHost;
 use serde_json::json;
 

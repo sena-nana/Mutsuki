@@ -1,0 +1,15 @@
+[package]
+name = "mutsuki-config-derive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "#[derive(MutsukiConfig)] for schema-first plugin configuration."
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3.0.3", features = ["full", "extra-traits"] }
+serde_json = "1"

@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -52,18 +52,6 @@ pub enum ConfigError {
     SecretEnvironmentOverride { key: String, variable: String },
     #[error("Host secret {key} must not be empty")]
     InvalidSecretValue { key: String },
-    #[error("configured plugin management requires a loaded product config file")]
-    ConfigMutationUnavailable,
-    #[error("configured plugin {plugin_id} was not found exactly once in {path}")]
-    ConfiguredPluginNotFound { plugin_id: String, path: PathBuf },
-    #[error("configured plugin {plugin_id} config cannot be represented as TOML: {detail}")]
-    InvalidConfiguredPluginValue { plugin_id: String, detail: String },
-    #[error("product surface field `{field}` is read-only")]
-    ProductSurfaceReadOnly { field: String },
-    #[error("unknown product surface field `{field}`")]
-    UnknownProductSurfaceField { field: String },
-    #[error("product surface value invalid for `{field}`: {detail}")]
-    InvalidProductSurfaceValue { field: String, detail: String },
     #[error("failed to persist managed config file {path}: {source}")]
     WriteManagedFile {
         path: PathBuf,
@@ -93,8 +81,6 @@ pub struct ServiceConfig {
     pub security: SecuritySection,
     #[serde(skip)]
     secret_store: SecretStore,
-    #[serde(skip)]
-    configured_plugin_store: Option<ConfiguredPluginStore>,
 }
 
 #[derive(Default)]
@@ -102,6 +88,7 @@ struct SecretStoreInner {
     entries: RwLock<BTreeMap<String, String>>,
     path: Option<PathBuf>,
     write_lock: Mutex<()>,
+    transaction_active: Mutex<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -139,6 +126,7 @@ impl SecretStore {
             .path
             .clone()
             .ok_or(ConfigError::SecretRotationUnavailable)?;
+        let mut reservation = SecretTransactionReservation::reserve(self.clone())?;
         let _write = self.0.write_lock.lock().expect("secret store write lock");
         let content = fs::read_to_string(&path).map_err(|source| ConfigError::ReadSecretFile {
             path: path.clone(),
@@ -160,7 +148,57 @@ impl SecretStore {
         atomic_write(&path, content.as_bytes(), true)?;
         let entries = validate_secret_entries(&path, file.secrets)?;
         *self.0.entries.write().expect("secret store write lock") = entries;
+        reservation.release();
         Ok(())
+    }
+}
+
+struct SecretTransactionReservation {
+    store: SecretStore,
+    finished: bool,
+}
+
+impl SecretTransactionReservation {
+    fn reserve(store: SecretStore) -> ConfigResult<Self> {
+        let mut active = store
+            .0
+            .transaction_active
+            .lock()
+            .expect("secret transaction lock");
+        if *active {
+            return Err(ConfigError::ConfigJournal {
+                path: store
+                    .0
+                    .path
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("secret_file")),
+                detail: "another secret transaction is already prepared".into(),
+            });
+        }
+        *active = true;
+        drop(active);
+        Ok(Self {
+            store,
+            finished: false,
+        })
+    }
+
+    fn release(&mut self) {
+        *self
+            .store
+            .0
+            .transaction_active
+            .lock()
+            .expect("secret transaction lock") = false;
+        self.finished = true;
+    }
+}
+
+impl Drop for SecretTransactionReservation {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.release();
+        }
     }
 }
 
@@ -168,6 +206,43 @@ impl SecretStore {
 pub struct HostSecretStore {
     store: SecretStore,
     env_prefix: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ConfigJournalPhase {
+    Prepared,
+    Committing,
+    Committed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SecretChangeJournal {
+    path: PathBuf,
+    previous: String,
+    candidate: String,
+}
+
+struct PreparedSecretChange {
+    journal: SecretChangeJournal,
+    previous_entries: BTreeMap<String, String>,
+    candidate_entries: BTreeMap<String, String>,
+    reservation: SecretTransactionReservation,
+}
+
+pub struct PreparedHostSecretTransaction {
+    journal_path: PathBuf,
+    journal: StandaloneSecretJournal,
+    change: Option<PreparedSecretChange>,
+    activated: bool,
+    finished: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StandaloneSecretJournal {
+    version: u32,
+    phase: ConfigJournalPhase,
+    secret: SecretChangeJournal,
 }
 
 impl std::fmt::Debug for HostSecretStore {
@@ -201,330 +276,201 @@ impl HostSecretStore {
         }
         self.store.rotate(&key, value)
     }
+
+    /// Prepares one recoverable secret-file transaction without exposing plaintext on read.
+    pub fn prepare_transaction(
+        &self,
+        updates: BTreeMap<String, String>,
+    ) -> ConfigResult<PreparedHostSecretTransaction> {
+        self.prepare_mutations(
+            updates
+                .into_iter()
+                .map(|(key, value)| (key, Some(value)))
+                .collect(),
+        )
+    }
+
+    /// Prepares set/clear mutations under the same recoverable Host secret journal.
+    /// `None` removes the named file-backed secret. Environment-backed keys remain immutable.
+    pub fn prepare_mutations(
+        &self,
+        updates: BTreeMap<String, Option<String>>,
+    ) -> ConfigResult<PreparedHostSecretTransaction> {
+        let change = self.prepare_change(updates)?;
+        let Some(change) = change else {
+            return Ok(PreparedHostSecretTransaction {
+                journal_path: PathBuf::new(),
+                journal: StandaloneSecretJournal {
+                    version: 1,
+                    phase: ConfigJournalPhase::Prepared,
+                    secret: SecretChangeJournal {
+                        path: PathBuf::new(),
+                        previous: String::new(),
+                        candidate: String::new(),
+                    },
+                },
+                change: None,
+                activated: false,
+                finished: false,
+            });
+        };
+        let journal_path = secret_journal_path(&change.journal.path);
+        if journal_path.exists() {
+            return Err(ConfigError::ConfigJournal {
+                path: journal_path,
+                detail: "unfinished secret transaction requires recovery".into(),
+            });
+        }
+        let journal = StandaloneSecretJournal {
+            version: 1,
+            phase: ConfigJournalPhase::Prepared,
+            secret: change.journal.clone(),
+        };
+        write_secret_journal(&journal_path, &journal)?;
+        Ok(PreparedHostSecretTransaction {
+            journal_path,
+            journal,
+            change: Some(change),
+            activated: false,
+            finished: false,
+        })
+    }
+
+    fn prepare_change(
+        &self,
+        updates: BTreeMap<String, Option<String>>,
+    ) -> ConfigResult<Option<PreparedSecretChange>> {
+        if updates.is_empty() {
+            return Ok(None);
+        }
+        let mut normalized = BTreeMap::new();
+        for (raw_key, value) in updates {
+            let key = normalize_secret_key(&raw_key);
+            if key.is_empty()
+                || value
+                    .as_deref()
+                    .is_some_and(|candidate| candidate.trim().is_empty())
+            {
+                return Err(ConfigError::InvalidSecretValue { key });
+            }
+            let variable = format!("{}{key}", self.env_prefix);
+            if env::var_os(&variable).is_some() {
+                return Err(ConfigError::SecretEnvironmentOverride { key, variable });
+            }
+            normalized.insert(key, value);
+        }
+        let path = self
+            .store
+            .0
+            .path
+            .clone()
+            .ok_or(ConfigError::SecretRotationUnavailable)?;
+        let reservation = SecretTransactionReservation::reserve(self.store.clone())?;
+        let previous = fs::read_to_string(&path).map_err(|source| ConfigError::ReadSecretFile {
+            path: path.clone(),
+            source,
+        })?;
+        let mut file: SecretFile =
+            toml::from_str(&previous).map_err(|source| ConfigError::ParseSecretFile {
+                path: path.clone(),
+                source,
+            })?;
+        let previous_entries = validate_secret_entries(&path, file.secrets.clone())?;
+        for (key, value) in normalized {
+            file.secrets
+                .retain(|candidate, _| normalize_secret_key(candidate) != key);
+            if let Some(value) = value {
+                file.secrets.insert(key, value);
+            }
+        }
+        let candidate_entries = validate_secret_entries(&path, file.secrets.clone())?;
+        let candidate =
+            toml::to_string_pretty(&file).map_err(|source| ConfigError::InvalidSecretFile {
+                path: path.clone(),
+                detail: source.to_string(),
+            })?;
+        Ok(Some(PreparedSecretChange {
+            journal: SecretChangeJournal {
+                path,
+                previous,
+                candidate,
+            },
+            previous_entries,
+            candidate_entries,
+            reservation,
+        }))
+    }
 }
 
-#[derive(Clone, Debug)]
-pub struct ConfiguredPluginStore {
-    path: PathBuf,
-    transactions: Arc<Mutex<ConfigTransactionState>>,
-}
-
-#[derive(Debug, Default)]
-struct ConfigTransactionState {
-    active: Option<u64>,
-    sequence: u64,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ConfigJournalPhase {
-    Prepared,
-    Committing,
-    Committed,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ConfigChangeJournal {
-    version: u32,
-    transaction_id: u64,
-    phase: ConfigJournalPhase,
-    previous: String,
-    candidate: String,
-}
-
-pub struct PreparedConfiguredPluginChange {
-    path: PathBuf,
-    journal_path: PathBuf,
-    transactions: Arc<Mutex<ConfigTransactionState>>,
-    journal: ConfigChangeJournal,
-    finished: bool,
-}
-
-impl PreparedConfiguredPluginChange {
-    pub fn commit(&mut self) -> ConfigResult<()> {
-        self.ensure_active()?;
+impl PreparedHostSecretTransaction {
+    pub fn activate(&mut self) -> ConfigResult<()> {
+        let Some(change) = &mut self.change else {
+            self.activated = true;
+            return Ok(());
+        };
+        if self.activated {
+            return Ok(());
+        }
         self.journal.phase = ConfigJournalPhase::Committing;
-        write_config_journal(&self.journal_path, &self.journal)?;
-        atomic_write(&self.path, self.journal.candidate.as_bytes(), false)?;
-        self.journal.phase = ConfigJournalPhase::Committed;
-        write_config_journal(&self.journal_path, &self.journal)?;
-        remove_journal(&self.journal_path)?;
-        self.release();
+        write_secret_journal(&self.journal_path, &self.journal)?;
+        atomic_write(
+            &change.journal.path,
+            change.journal.candidate.as_bytes(),
+            true,
+        )?;
+        *change
+            .reservation
+            .store
+            .0
+            .entries
+            .write()
+            .expect("secret store write lock") = change.candidate_entries.clone();
+        self.activated = true;
+        Ok(())
+    }
+
+    pub fn commit(&mut self) -> ConfigResult<()> {
+        self.activate()?;
+        if let Some(change) = &mut self.change {
+            self.journal.phase = ConfigJournalPhase::Committed;
+            write_secret_journal(&self.journal_path, &self.journal)?;
+            remove_journal(&self.journal_path)?;
+            change.reservation.release();
+        }
+        self.finished = true;
         Ok(())
     }
 
     pub fn rollback(&mut self) -> ConfigResult<()> {
-        self.ensure_active()?;
-        atomic_write(&self.path, self.journal.previous.as_bytes(), false)?;
-        remove_journal(&self.journal_path)?;
-        self.release();
-        Ok(())
-    }
-
-    fn ensure_active(&self) -> ConfigResult<()> {
-        let state = self
-            .transactions
-            .lock()
-            .expect("configured plugin transaction lock");
-        if state.active == Some(self.journal.transaction_id) {
-            Ok(())
-        } else {
-            Err(ConfigError::ConfigJournal {
-                path: self.journal_path.clone(),
-                detail: "prepared transaction is no longer active".into(),
-            })
+        if let Some(change) = &mut self.change {
+            if self.activated {
+                atomic_write(
+                    &change.journal.path,
+                    change.journal.previous.as_bytes(),
+                    true,
+                )?;
+                *change
+                    .reservation
+                    .store
+                    .0
+                    .entries
+                    .write()
+                    .expect("secret store write lock") = change.previous_entries.clone();
+            }
+            remove_journal(&self.journal_path)?;
+            change.reservation.release();
         }
-    }
-
-    fn release(&mut self) {
-        self.transactions
-            .lock()
-            .expect("configured plugin transaction lock")
-            .active = None;
         self.finished = true;
+        Ok(())
     }
 }
 
-impl Drop for PreparedConfiguredPluginChange {
+impl Drop for PreparedHostSecretTransaction {
     fn drop(&mut self) {
         if !self.finished {
             let _ = self.rollback();
         }
     }
-}
-
-impl ConfiguredPluginStore {
-    /// Open a managed product config file for atomic plugin / product-surface patches.
-    pub fn open(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        Self {
-            transactions: shared_config_transactions(&path),
-            path,
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Atomically replaces one owner plugin's opaque config in the product config file.
-    pub fn replace_config(&self, plugin_id: &str, config: serde_json::Value) -> ConfigResult<()> {
-        let mut prepared = self.prepare_replace_config(plugin_id, config)?;
-        prepared.commit()
-    }
-
-    pub fn prepare_replace_config(
-        &self,
-        plugin_id: &str,
-        config: serde_json::Value,
-    ) -> ConfigResult<PreparedConfiguredPluginChange> {
-        let value =
-            json_to_toml(config).map_err(|detail| ConfigError::InvalidConfiguredPluginValue {
-                plugin_id: plugin_id.into(),
-                detail,
-            })?;
-        self.prepare_document_change(|document| {
-            let configured = document
-                .get_mut("plugins")
-                .and_then(toml::Value::as_table_mut)
-                .and_then(|plugins| plugins.get_mut("configured"))
-                .and_then(toml::Value::as_array_mut)
-                .ok_or_else(|| ConfigError::ConfiguredPluginNotFound {
-                    plugin_id: plugin_id.into(),
-                    path: self.path.clone(),
-                })?;
-            let matches = configured
-                .iter()
-                .enumerate()
-                .filter(|(_, selection)| {
-                    selection
-                        .get("id")
-                        .and_then(toml::Value::as_str)
-                        .is_some_and(|id| id.trim() == plugin_id.trim())
-                })
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
-            let [index] = matches.as_slice() else {
-                return Err(ConfigError::ConfiguredPluginNotFound {
-                    plugin_id: plugin_id.into(),
-                    path: self.path.clone(),
-                });
-            };
-            configured[*index]
-                .as_table_mut()
-                .expect("configured plugin selection is a TOML table")
-                .insert("config".into(), value);
-            Ok(())
-        })
-    }
-
-    /// Atomically patches known product surface keys under `service` / `web.console`.
-    ///
-    /// Accepted writable keys: `profile`, `console_enabled`, `console_listen`, `include_config`.
-    /// Read-only keys (`instance_id`, `distribution_mode`, `auth_token_key`) are rejected.
-    pub fn patch_product_surface(
-        &self,
-        fields: BTreeMap<String, serde_json::Value>,
-    ) -> ConfigResult<()> {
-        let mut prepared = self.prepare_product_surface(fields)?;
-        prepared.commit()
-    }
-
-    pub fn prepare_product_surface(
-        &self,
-        fields: BTreeMap<String, serde_json::Value>,
-    ) -> ConfigResult<PreparedConfiguredPluginChange> {
-        self.prepare_document_change(|document| {
-            for (field, value) in fields {
-                apply_product_surface_field(document, &field, value)?;
-            }
-            Ok(())
-        })
-    }
-
-    pub fn recover(&self) -> ConfigResult<()> {
-        let transaction_id = self.reserve_transaction()?;
-        let journal_path = config_journal_path(&self.path);
-        let result = (|| {
-            if !journal_path.exists() {
-                return Ok(());
-            }
-            let content =
-                fs::read_to_string(&journal_path).map_err(|source| ConfigError::ConfigJournal {
-                    path: journal_path.clone(),
-                    detail: source.to_string(),
-                })?;
-            let journal: ConfigChangeJournal =
-                toml::from_str(&content).map_err(|source| ConfigError::ConfigJournal {
-                    path: journal_path.clone(),
-                    detail: source.to_string(),
-                })?;
-            if journal.version != 1 {
-                return Err(ConfigError::ConfigJournal {
-                    path: journal_path.clone(),
-                    detail: format!("unsupported journal version {}", journal.version),
-                });
-            }
-            let recovered = match journal.phase {
-                ConfigJournalPhase::Prepared | ConfigJournalPhase::Committing => journal.previous,
-                ConfigJournalPhase::Committed => journal.candidate,
-            };
-            atomic_write(&self.path, recovered.as_bytes(), false)?;
-            remove_journal(&journal_path)
-        })();
-        self.release_transaction(transaction_id);
-        result
-    }
-
-    fn prepare_document_change(
-        &self,
-        change: impl FnOnce(&mut toml::Value) -> ConfigResult<()>,
-    ) -> ConfigResult<PreparedConfiguredPluginChange> {
-        let transaction_id = self.reserve_transaction()?;
-        let journal_path = config_journal_path(&self.path);
-        let result = (|| {
-            if journal_path.exists() {
-                return Err(ConfigError::ConfigJournal {
-                    path: journal_path.clone(),
-                    detail: "unfinished config transaction requires recovery".into(),
-                });
-            }
-            let previous =
-                fs::read_to_string(&self.path).map_err(|source| ConfigError::ReadFile {
-                    path: self.path.clone(),
-                    source,
-                })?;
-            let mut document =
-                toml::from_str(&previous).map_err(|source| ConfigError::ParseFile {
-                    path: self.path.clone(),
-                    source,
-                })?;
-            change(&mut document)?;
-            let candidate = toml::to_string_pretty(&document).map_err(|source| {
-                ConfigError::WriteManagedFile {
-                    path: self.path.clone(),
-                    source: std::io::Error::other(source.to_string()),
-                }
-            })?;
-            let journal = ConfigChangeJournal {
-                version: 1,
-                transaction_id,
-                phase: ConfigJournalPhase::Prepared,
-                previous,
-                candidate,
-            };
-            write_config_journal(&journal_path, &journal)?;
-            Ok(PreparedConfiguredPluginChange {
-                path: self.path.clone(),
-                journal_path,
-                transactions: self.transactions.clone(),
-                journal,
-                finished: false,
-            })
-        })();
-        if result.is_err() {
-            self.release_transaction(transaction_id);
-        }
-        result
-    }
-
-    fn reserve_transaction(&self) -> ConfigResult<u64> {
-        let mut state = self
-            .transactions
-            .lock()
-            .expect("configured plugin transaction lock");
-        if state.active.is_some() {
-            return Err(ConfigError::ConfigJournal {
-                path: config_journal_path(&self.path),
-                detail: "another config transaction is already prepared".into(),
-            });
-        }
-        state.sequence = state.sequence.saturating_add(1);
-        state.active = Some(state.sequence);
-        Ok(state.sequence)
-    }
-
-    fn release_transaction(&self, transaction_id: u64) {
-        let mut state = self
-            .transactions
-            .lock()
-            .expect("configured plugin transaction lock");
-        if state.active == Some(transaction_id) {
-            state.active = None;
-        }
-    }
-}
-
-fn shared_config_transactions(path: &Path) -> Arc<Mutex<ConfigTransactionState>> {
-    static REGISTRY: OnceLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<ConfigTransactionState>>>>> =
-        OnceLock::new();
-    let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let mut registry = REGISTRY
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .expect("configured plugin transaction registry lock");
-    if let Some(transactions) = registry.get(&key).and_then(Weak::upgrade) {
-        return transactions;
-    }
-    let transactions = Arc::new(Mutex::new(ConfigTransactionState::default()));
-    registry.insert(key, Arc::downgrade(&transactions));
-    transactions
-}
-
-fn config_journal_path(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("mutsuki-config");
-    path.with_file_name(format!(".{file_name}.journal"))
-}
-
-fn write_config_journal(path: &Path, journal: &ConfigChangeJournal) -> ConfigResult<()> {
-    let content = toml::to_string(journal).map_err(|source| ConfigError::ConfigJournal {
-        path: path.to_path_buf(),
-        detail: source.to_string(),
-    })?;
-    atomic_write(path, content.as_bytes(), false)
 }
 
 fn remove_journal(path: &Path) -> ConfigResult<()> {
@@ -536,138 +482,6 @@ fn remove_journal(path: &Path) -> ConfigResult<()> {
             detail: source.to_string(),
         }),
     }
-}
-
-fn apply_product_surface_field(
-    document: &mut toml::Value,
-    field: &str,
-    value: serde_json::Value,
-) -> ConfigResult<()> {
-    match field {
-        "instance_id" | "distribution_mode" | "auth_token_key" => {
-            Err(ConfigError::ProductSurfaceReadOnly {
-                field: field.into(),
-            })
-        }
-        "profile" => {
-            let text = value
-                .as_str()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: field.into(),
-                    detail: "expected string".into(),
-                })?;
-            ensure_table(document, "service")?
-                .insert("profile".into(), toml::Value::String(text.into()));
-            Ok(())
-        }
-        "console_enabled" => {
-            let flag = value
-                .as_bool()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: field.into(),
-                    detail: "expected bool".into(),
-                })?;
-            ensure_nested_table(document, &["web", "console"])?
-                .insert("enabled".into(), toml::Value::Boolean(flag));
-            Ok(())
-        }
-        "console_listen" => {
-            let text = value
-                .as_str()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: field.into(),
-                    detail: "expected string".into(),
-                })?;
-            ensure_nested_table(document, &["web", "console"])?
-                .insert("listen".into(), toml::Value::String(text.into()));
-            Ok(())
-        }
-        "include_config" => {
-            let flag = value
-                .as_bool()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: field.into(),
-                    detail: "expected bool".into(),
-                })?;
-            ensure_nested_table(document, &["web", "console"])?
-                .insert("include_config".into(), toml::Value::Boolean(flag));
-            Ok(())
-        }
-        other => Err(ConfigError::UnknownProductSurfaceField {
-            field: other.into(),
-        }),
-    }
-}
-
-fn ensure_table<'a>(
-    document: &'a mut toml::Value,
-    key: &str,
-) -> ConfigResult<&'a mut toml::map::Map<String, toml::Value>> {
-    if !document
-        .as_table()
-        .is_some_and(|table| table.contains_key(key))
-    {
-        document
-            .as_table_mut()
-            .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                field: key.into(),
-                detail: "document root must be a table".into(),
-            })?
-            .insert(key.into(), toml::Value::Table(toml::map::Map::new()));
-    }
-    document
-        .get_mut(key)
-        .and_then(toml::Value::as_table_mut)
-        .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-            field: key.into(),
-            detail: format!("`{key}` must be a table"),
-        })
-}
-
-fn ensure_nested_table<'a>(
-    document: &'a mut toml::Value,
-    path: &[&str],
-) -> ConfigResult<&'a mut toml::map::Map<String, toml::Value>> {
-    let mut current = document;
-    for (index, key) in path.iter().enumerate() {
-        let is_last = index + 1 == path.len();
-        if current
-            .as_table()
-            .is_none_or(|table| !table.contains_key(*key))
-        {
-            current
-                .as_table_mut()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: key.to_string(),
-                    detail: "document path must be tables".into(),
-                })?
-                .insert((*key).into(), toml::Value::Table(toml::map::Map::new()));
-        }
-        current = current
-            .get_mut(*key)
-            .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                field: key.to_string(),
-                detail: "missing nested table".into(),
-            })?;
-        if is_last {
-            return current
-                .as_table_mut()
-                .ok_or_else(|| ConfigError::InvalidProductSurfaceValue {
-                    field: key.to_string(),
-                    detail: "nested path must end at a table".into(),
-                });
-        }
-        if !current.is_table() {
-            return Err(ConfigError::InvalidProductSurfaceValue {
-                field: key.to_string(),
-                detail: "nested path must be tables".into(),
-            });
-        }
-    }
-    Err(ConfigError::InvalidProductSurfaceValue {
-        field: path.join("."),
-        detail: "empty product surface path".into(),
-    })
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1019,6 +833,24 @@ pub struct ConfigOverrides {
 }
 
 impl ServiceConfig {
+    /// Finalizes a candidate loaded from ConfigRepository using only bootstrap
+    /// directory and secret boundaries. It never reads product configuration.
+    pub fn finalize_bootstrap(
+        mut self,
+        bootstrap_file: &Path,
+        control_token: Option<String>,
+    ) -> ConfigResult<Self> {
+        if let Some(token) = control_token {
+            self.ipc.token = Some(token);
+        }
+        self.apply_env();
+        self.load_secret_file(bootstrap_file)?;
+        self.resolve_relative_dirs();
+        self.ensure_dirs()?;
+        self.ensure_control_token()?;
+        Ok(self)
+    }
+
     /// Resolves a named secret through the Host environment boundary.
     ///
     /// The returned value must remain inside product assembly and effectful
@@ -1042,11 +874,6 @@ impl ServiceConfig {
         }
     }
 
-    /// Host-owned product config persistence boundary, available only for a loaded file.
-    pub fn configured_plugin_store(&self) -> Option<ConfiguredPluginStore> {
-        self.configured_plugin_store.clone()
-    }
-
     pub fn load(overrides: ConfigOverrides) -> ConfigResult<Self> {
         let mut config = Self::default();
         if let Some(home) = overrides.home_dir {
@@ -1064,10 +891,6 @@ impl ServiceConfig {
         if explicit_config_file && !local_file.is_file() {
             return Err(ConfigError::MissingConfigFile { path: local_file });
         }
-        if local_file.is_file() {
-            ConfiguredPluginStore::open(&local_file).recover()?;
-        }
-
         let local_profile = read_optional_config(&local_file)?
             .map(|file_config| file_config.service.profile)
             .filter(|profile| !profile.is_empty());
@@ -1100,9 +923,6 @@ impl ServiceConfig {
             config.ipc.token = Some(token);
         }
         config.load_secret_file(&local_file)?;
-        if local_file.is_file() {
-            config.configured_plugin_store = Some(ConfiguredPluginStore::open(local_file));
-        }
         config.resolve_relative_dirs();
         config.ensure_dirs()?;
         config.ensure_control_token()?;
@@ -1122,6 +942,7 @@ impl ServiceConfig {
                 .unwrap_or_else(|| Path::new("."))
                 .join(configured_path)
         };
+        recover_secret_journal(&path)?;
         let content = fs::read_to_string(&path).map_err(|source| ConfigError::ReadSecretFile {
             path: path.clone(),
             source,
@@ -1137,6 +958,7 @@ impl ServiceConfig {
             entries: RwLock::new(secrets),
             path: self.security.secret_file.clone(),
             write_lock: Mutex::new(()),
+            transaction_active: Mutex::new(false),
         }));
         Ok(())
     }
@@ -1250,6 +1072,47 @@ impl ServiceConfig {
     }
 }
 
+fn secret_journal_path(path: &Path) -> PathBuf {
+    path.with_extension("mutsuki-secret-transaction.toml")
+}
+
+fn write_secret_journal(path: &Path, journal: &StandaloneSecretJournal) -> ConfigResult<()> {
+    let bytes = toml::to_string(journal).map_err(|source| ConfigError::ConfigJournal {
+        path: path.to_path_buf(),
+        detail: source.to_string(),
+    })?;
+    atomic_write(path, bytes.as_bytes(), true)
+}
+
+fn recover_secret_journal(secret_path: &Path) -> ConfigResult<()> {
+    let journal_path = secret_journal_path(secret_path);
+    if !journal_path.exists() {
+        return Ok(());
+    }
+    let content =
+        fs::read_to_string(&journal_path).map_err(|source| ConfigError::ConfigJournal {
+            path: journal_path.clone(),
+            detail: source.to_string(),
+        })?;
+    let journal: StandaloneSecretJournal =
+        toml::from_str(&content).map_err(|source| ConfigError::ConfigJournal {
+            path: journal_path.clone(),
+            detail: source.to_string(),
+        })?;
+    if journal.version != 1 || journal.secret.path != secret_path {
+        return Err(ConfigError::ConfigJournal {
+            path: journal_path,
+            detail: "invalid secret transaction journal".into(),
+        });
+    }
+    let recovered = match journal.phase {
+        ConfigJournalPhase::Prepared | ConfigJournalPhase::Committing => journal.secret.previous,
+        ConfigJournalPhase::Committed => journal.secret.candidate,
+    };
+    atomic_write(secret_path, recovered.as_bytes(), true)?;
+    remove_journal(&journal_path)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SecretFile {
@@ -1283,38 +1146,6 @@ fn validate_secret_entries(
         }
     }
     Ok(secrets)
-}
-
-fn json_to_toml(value: serde_json::Value) -> Result<toml::Value, String> {
-    match value {
-        serde_json::Value::Null => Err("null values are not representable in TOML".into()),
-        serde_json::Value::Bool(value) => Ok(toml::Value::Boolean(value)),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(toml::Value::Integer(value))
-            } else if let Some(value) = value.as_u64() {
-                i64::try_from(value)
-                    .map(toml::Value::Integer)
-                    .map_err(|_| "unsigned integer exceeds TOML range".into())
-            } else {
-                value
-                    .as_f64()
-                    .map(toml::Value::Float)
-                    .ok_or_else(|| "invalid JSON number".into())
-            }
-        }
-        serde_json::Value::String(value) => Ok(toml::Value::String(value)),
-        serde_json::Value::Array(values) => values
-            .into_iter()
-            .map(json_to_toml)
-            .collect::<Result<Vec<_>, _>>()
-            .map(toml::Value::Array),
-        serde_json::Value::Object(values) => values
-            .into_iter()
-            .map(|(key, value)| json_to_toml(value).map(|value| (key, value)))
-            .collect::<Result<toml::map::Map<_, _>, _>>()
-            .map(toml::Value::Table),
-    }
 }
 
 fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
@@ -1355,13 +1186,6 @@ fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
         }
         #[cfg(not(unix))]
         let _ = secret;
-        #[cfg(test)]
-        if injected_atomic_rename_failure() {
-            return Err(ConfigError::WriteManagedFile {
-                path: path.to_path_buf(),
-                source: std::io::Error::other("injected atomic rename failure"),
-            });
-        }
         fs::rename(&temp, path).map_err(|source| ConfigError::WriteManagedFile {
             path: path.to_path_buf(),
             source,
@@ -1381,33 +1205,6 @@ fn atomic_write(path: &Path, bytes: &[u8], secret: bool) -> ConfigResult<()> {
         let _ = fs::remove_file(temp);
     }
     result
-}
-
-#[cfg(test)]
-thread_local! {
-    static ATOMIC_RENAME_FAILURE_COUNTDOWN: std::cell::Cell<Option<usize>> = const {
-        std::cell::Cell::new(None)
-    };
-}
-
-#[cfg(test)]
-fn fail_atomic_rename_after(successful_renames: usize) {
-    ATOMIC_RENAME_FAILURE_COUNTDOWN.set(Some(successful_renames));
-}
-
-#[cfg(test)]
-fn injected_atomic_rename_failure() -> bool {
-    ATOMIC_RENAME_FAILURE_COUNTDOWN.with(|countdown| match countdown.get() {
-        Some(0) => {
-            countdown.set(None);
-            true
-        }
-        Some(remaining) => {
-            countdown.set(Some(remaining - 1));
-            false
-        }
-        None => false,
-    })
 }
 
 fn normalize_secret_key(key: &str) -> String {
@@ -1522,35 +1319,6 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn write_configured_plugin_fixture(path: &Path, mode: &str) {
-        fs::write(
-            path,
-            format!(
-                "[[plugins.configured]]\nid = \"owner.plugin\"\n\n[plugins.configured.config]\nmode = \"{mode}\"\n"
-            ),
-        )
-        .unwrap();
-    }
-
-    fn configured_plugin_mode(path: &Path) -> String {
-        let document: toml::Value = toml::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-        document["plugins"]["configured"][0]["config"]["mode"]
-            .as_str()
-            .unwrap()
-            .to_owned()
-    }
-
-    fn assert_no_atomic_temp_files(directory: &Path) {
-        assert!(fs::read_dir(directory).unwrap().all(|entry| {
-            entry
-                .unwrap()
-                .path()
-                .extension()
-                .and_then(|value| value.to_str())
-                != Some("tmp")
-        }));
-    }
 
     #[test]
     fn worker_profiles_keep_default_threads_close_to_compute_plus_bounded_blocking() {
@@ -1715,182 +1483,77 @@ mod tests {
     }
 
     #[test]
-    fn configured_plugin_store_replaces_only_owner_config() {
+    fn prepared_secret_transaction_recovers_the_previous_file_after_interruption() {
+        let _env = ENV_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
-        let config_path = root.path().join("local.toml");
-        let content = format!(
-            "[service]\nhome_dir = \"{}\"\n\n[ipc]\nenabled = false\n\n[plugins]\ndynamic_dirs = []\n\n[[plugins.configured]]\nid = \"mutsuki.bot.bilibili\"\n\n[plugins.configured.config]\ncookie_secret_key = \"BILIBILI_COOKIE\"\nsubscriptions = []\n\n[[plugins.configured]]\nid = \"other.plugin\"\n\n[plugins.configured.config]\nmode = \"kept\"\n",
-            root.path()
-                .join("home")
-                .to_string_lossy()
-                .replace('\\', "/")
-        );
-        fs::write(&config_path, content).unwrap();
+        let config_path = write_product_config(root.path(), "local.secret.toml");
+        let secret_path = root.path().join("local.secret.toml");
+        fs::write(&secret_path, "[secrets]\nOPENAI_API_KEY = \"OLD\"\n").unwrap();
         let config = ServiceConfig::load(ConfigOverrides {
             config_file: Some(config_path.clone()),
             ..Default::default()
         })
         .unwrap();
-        config
-            .configured_plugin_store()
-            .unwrap()
-            .replace_config(
-                "mutsuki.bot.bilibili",
-                serde_json::json!({
-                    "cookie_secret_key": "BILIBILI_COOKIE",
-                    "subscriptions": [{"id": "alice", "paused": true}]
-                }),
-            )
-            .unwrap();
 
-        let persisted: toml::Value =
-            toml::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
-        let configured = persisted["plugins"]["configured"].as_array().unwrap();
-        assert_eq!(
-            configured[0]["config"]["subscriptions"][0]["id"].as_str(),
-            Some("alice")
-        );
-        assert_eq!(configured[1]["config"]["mode"].as_str(), Some("kept"));
+        let mut prepared = config
+            .host_secret_store()
+            .prepare_mutations(BTreeMap::from([(
+                "OPENAI_API_KEY".into(),
+                Some("NEW".into()),
+            )]))
+            .unwrap();
+        assert_eq!(config.secret("OPENAI_API_KEY").as_deref(), Some("OLD"));
+        prepared.activate().unwrap();
+        assert_eq!(config.secret("OPENAI_API_KEY").as_deref(), Some("NEW"));
+        std::mem::forget(prepared);
+
+        let recovered = ServiceConfig::load(ConfigOverrides {
+            config_file: Some(config_path),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(recovered.secret("OPENAI_API_KEY").as_deref(), Some("OLD"));
+        assert!(!secret_journal_path(&secret_path).exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(secret_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
-    fn configured_plugin_transaction_is_exclusive_across_store_instances() {
+    fn prepared_secret_transaction_rejects_environment_owned_keys() {
+        let _env = ENV_LOCK.lock().unwrap();
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        write_configured_plugin_fixture(&path, "old");
-        let first_store = ConfiguredPluginStore::open(&path);
-        let second_store = ConfiguredPluginStore::open(&path);
+        let config_path = write_product_config(root.path(), "local.secret.toml");
+        let secret_path = root.path().join("local.secret.toml");
+        fs::write(&secret_path, "[secrets]\nOPENAI_API_KEY = \"FILE\"\n").unwrap();
+        let config = ServiceConfig::load(ConfigOverrides {
+            config_file: Some(config_path),
+            ..Default::default()
+        })
+        .unwrap();
 
-        let mut first = first_store
-            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "first" }))
-            .unwrap();
+        unsafe { env::set_var("MUTSUKI_SECRET_OPENAI_API_KEY", "ENV") };
+        let result = config
+            .host_secret_store()
+            .prepare_mutations(BTreeMap::from([(
+                "OPENAI_API_KEY".into(),
+                Some("REJECTED".into()),
+            )]));
+        unsafe { env::remove_var("MUTSUKI_SECRET_OPENAI_API_KEY") };
+
         assert!(matches!(
-            second_store
-                .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "second" })),
-            Err(ConfigError::ConfigJournal { .. })
+            result,
+            Err(ConfigError::SecretEnvironmentOverride { .. })
         ));
-        assert_eq!(configured_plugin_mode(&path), "old");
-
-        first.rollback().unwrap();
-        let mut second = second_store
-            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "second" }))
-            .unwrap();
-        second.commit().unwrap();
-        assert_eq!(configured_plugin_mode(&path), "second");
-        assert!(!config_journal_path(&path).exists());
-    }
-
-    #[test]
-    fn configured_plugin_recovery_chooses_unambiguous_transaction_side() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        let journal_path = config_journal_path(&path);
-        let previous = "[[plugins.configured]]\nid = \"owner.plugin\"\n[plugins.configured.config]\nmode = \"old\"\n";
-        let candidate = "[[plugins.configured]]\nid = \"owner.plugin\"\n[plugins.configured.config]\nmode = \"new\"\n";
-        fs::write(&path, candidate).unwrap();
-        write_config_journal(
-            &journal_path,
-            &ConfigChangeJournal {
-                version: 1,
-                transaction_id: 7,
-                phase: ConfigJournalPhase::Committing,
-                previous: previous.into(),
-                candidate: candidate.into(),
-            },
-        )
-        .unwrap();
-
-        ConfiguredPluginStore::open(&path).recover().unwrap();
-        assert_eq!(configured_plugin_mode(&path), "old");
-        assert!(!journal_path.exists());
-
-        write_config_journal(
-            &journal_path,
-            &ConfigChangeJournal {
-                version: 1,
-                transaction_id: 8,
-                phase: ConfigJournalPhase::Committed,
-                previous: previous.into(),
-                candidate: candidate.into(),
-            },
-        )
-        .unwrap();
-        ConfiguredPluginStore::open(&path).recover().unwrap();
-        assert_eq!(configured_plugin_mode(&path), "new");
-        assert!(!journal_path.exists());
-    }
-
-    #[test]
-    fn configured_plugin_transaction_rolls_back_atomic_write_failures() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        write_configured_plugin_fixture(&path, "old");
-        let store = ConfiguredPluginStore::open(&path);
-
-        fail_atomic_rename_after(0);
-        assert!(
-            store
-                .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "new" }))
-                .is_err()
-        );
-        assert_eq!(configured_plugin_mode(&path), "old");
-        assert!(!config_journal_path(&path).exists());
-
-        let mut prepared = store
-            .prepare_replace_config("owner.plugin", serde_json::json!({ "mode": "new" }))
-            .unwrap();
-        fail_atomic_rename_after(1);
-        assert!(prepared.commit().is_err());
-        assert_eq!(configured_plugin_mode(&path), "old");
-        prepared.rollback().unwrap();
-        assert!(!config_journal_path(&path).exists());
-        assert_no_atomic_temp_files(root.path());
-    }
-
-    #[test]
-    fn product_toml_store_patches_console_surface_atomically() {
-        let root = tempfile::tempdir().unwrap();
-        let config_path = root.path().join("local.toml");
-        fs::write(
-            &config_path,
-            format!(
-                "[service]\nhome_dir = \"{}\"\nprofile = \"bot\"\ninstance_id = \"demo\"\n\n[ipc]\nenabled = false\n\n[web.console]\nenabled = false\nlisten = \"127.0.0.1:1\"\ninclude_config = false\n",
-                root.path()
-                    .join("home")
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            ),
-        )
-        .unwrap();
-        let store = ConfiguredPluginStore::open(&config_path);
-        store
-            .patch_product_surface(BTreeMap::from([
-                ("profile".into(), serde_json::json!("prod")),
-                ("console_enabled".into(), serde_json::json!(true)),
-                ("console_listen".into(), serde_json::json!("127.0.0.1:8787")),
-                ("include_config".into(), serde_json::json!(true)),
-            ]))
-            .unwrap();
-        let persisted: toml::Value =
-            toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
-        assert_eq!(persisted["service"]["profile"].as_str(), Some("prod"));
-        assert_eq!(persisted["service"]["instance_id"].as_str(), Some("demo"));
-        assert_eq!(persisted["web"]["console"]["enabled"].as_bool(), Some(true));
         assert_eq!(
-            persisted["web"]["console"]["listen"].as_str(),
-            Some("127.0.0.1:8787")
+            fs::read_to_string(secret_path).unwrap(),
+            "[secrets]\nOPENAI_API_KEY = \"FILE\"\n"
         );
-        assert_eq!(
-            persisted["web"]["console"]["include_config"].as_bool(),
-            Some(true)
-        );
-        assert!(matches!(
-            store.patch_product_surface(BTreeMap::from([(
-                "instance_id".into(),
-                serde_json::json!("hijack")
-            )])),
-            Err(ConfigError::ProductSurfaceReadOnly { .. })
-        ));
     }
 
     #[test]

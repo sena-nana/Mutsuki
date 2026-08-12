@@ -1,6 +1,7 @@
 //! Production QQ management owner: revision-fenced writes, audit, and live provider injection.
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use mutsuki_bot_protocol::{
     BotDeliveryAttempt, BotDeliveryReceipt, BotInteractionSession, DeliveryStatus,
@@ -37,34 +38,140 @@ pub trait QqManagementProvider: Send + Sync {
         actor_id: &str,
         action: &QqManagementAction,
     ) -> Result<Value, QqManagementError>;
+
+    fn delivery_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<crate::QqManagementPage<QqDeliveryView>, QqManagementError> {
+        let snapshot = self.load_snapshot(query, false)?;
+        Ok(stable_page(snapshot.deliveries, after, limit, |item| {
+            item.receipt.delivery_id.clone()
+        }))
+    }
+
+    fn interaction_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<crate::QqManagementPage<BotInteractionSession>, QqManagementError> {
+        let snapshot = self.load_snapshot(query, false)?;
+        Ok(stable_page(snapshot.interactions, after, limit, |item| {
+            item.session_id.clone()
+        }))
+    }
 }
 
-#[derive(Clone, Debug)]
-struct AuditEntry {
-    audit_id: String,
-    actor_id: String,
-    action: String,
+#[derive(Clone, Debug, PartialEq)]
+pub struct QqManagementAuditEntry {
+    pub audit_id: String,
+    pub actor_id: String,
+    pub action: String,
+    pub revision: u64,
+    pub result: Value,
+    pub created_at_unix_ms: u64,
+}
+
+pub trait QqManagementStateStore: Send + Sync {
+    fn revision(&self) -> Result<u64, QqManagementError>;
+    fn commit(
+        &self,
+        expected_revision: u64,
+        actor_id: &str,
+        action: &str,
+        result: Value,
+        created_at_unix_ms: u64,
+    ) -> Result<Option<QqManagementAuditEntry>, QqManagementError>;
+    fn audits(&self) -> Result<Vec<QqManagementAuditEntry>, QqManagementError>;
+}
+
+#[derive(Default)]
+struct MemoryQqManagementStateStore {
+    state: Mutex<MemoryManagementState>,
+}
+
+#[derive(Default)]
+struct MemoryManagementState {
     revision: u64,
+    audits: Vec<QqManagementAuditEntry>,
+}
+
+impl QqManagementStateStore for MemoryQqManagementStateStore {
+    fn revision(&self) -> Result<u64, QqManagementError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("QQ management state mutex")
+            .revision)
+    }
+
+    fn commit(
+        &self,
+        expected_revision: u64,
+        actor_id: &str,
+        action: &str,
+        result: Value,
+        created_at_unix_ms: u64,
+    ) -> Result<Option<QqManagementAuditEntry>, QqManagementError> {
+        let mut state = self.state.lock().expect("QQ management state mutex");
+        if state.revision != expected_revision {
+            return Ok(None);
+        }
+        state.revision = state.revision.saturating_add(1);
+        let audit = QqManagementAuditEntry {
+            audit_id: format!("audit-{}", state.revision),
+            actor_id: actor_id.into(),
+            action: action.into(),
+            revision: state.revision,
+            result,
+            created_at_unix_ms,
+        };
+        state.audits.push(audit.clone());
+        Ok(Some(audit))
+    }
+
+    fn audits(&self) -> Result<Vec<QqManagementAuditEntry>, QqManagementError> {
+        Ok(self
+            .state
+            .lock()
+            .expect("QQ management state mutex")
+            .audits
+            .clone())
+    }
 }
 
 /// Production management service: revision fence + audit around an injected provider.
 pub struct QqBotManagementService {
-    revision: Mutex<u64>,
-    audits: Mutex<Vec<AuditEntry>>,
+    write_lock: Mutex<()>,
     provider: Arc<dyn QqManagementProvider>,
+    state: Arc<dyn QqManagementStateStore>,
 }
 
 impl QqBotManagementService {
     #[must_use]
     pub fn new(provider: Arc<dyn QqManagementProvider>) -> Self {
         Self {
-            revision: Mutex::new(0),
-            audits: Mutex::new(Vec::new()),
+            write_lock: Mutex::new(()),
             provider,
+            state: Arc::new(MemoryQqManagementStateStore::default()),
         }
     }
 
-    /// Builds a service backed by the in-process local provider.
+    #[must_use]
+    pub fn with_state_store(
+        provider: Arc<dyn QqManagementProvider>,
+        state: Arc<dyn QqManagementStateStore>,
+    ) -> Self {
+        Self {
+            write_lock: Mutex::new(()),
+            provider,
+            state,
+        }
+    }
+
+    /// Builds a deterministic in-memory service for Web and contract tests.
     #[must_use]
     pub fn local(provider: LocalQqManagementProvider) -> Self {
         Self::new(Arc::new(provider))
@@ -72,9 +179,9 @@ impl QqBotManagementService {
 
     #[must_use]
     pub fn audits(&self) -> Vec<(String, String, String, u64)> {
-        self.audits
-            .lock()
-            .expect("qq management audit mutex")
+        self.state
+            .audits()
+            .unwrap_or_default()
             .iter()
             .map(|entry| {
                 (
@@ -95,7 +202,7 @@ impl QqBotManagementApi for QqBotManagementService {
         include_secret_status: bool,
     ) -> Result<QqBotManagementSnapshot, QqManagementError> {
         let mut snapshot = self.provider.load_snapshot(query, include_secret_status)?;
-        snapshot.revision = *self.revision.lock().expect("qq management revision mutex");
+        snapshot.revision = self.state.revision()?;
         Ok(snapshot)
     }
 
@@ -103,38 +210,58 @@ impl QqBotManagementApi for QqBotManagementService {
         &self,
         request: QqManagementWriteRequest,
     ) -> Result<QqManagementWriteResult, QqManagementError> {
-        let mut revision = self.revision.lock().expect("qq management revision mutex");
-        if request.expected_revision != *revision {
+        let _write = self.write_lock.lock().expect("qq management write mutex");
+        let revision = self.state.revision()?;
+        if request.expected_revision != revision {
             return Err(QqManagementError {
                 code: "revision.conflict".into(),
                 message: format!(
                     "expected revision {}, current {}",
-                    request.expected_revision, *revision
+                    request.expected_revision, revision
                 ),
             });
         }
         let result = self.provider.apply(&request.actor_id, &request.action)?;
-        *revision = revision.saturating_add(1);
-        let next = *revision;
-        let audit_id = format!("audit-{next}");
-        self.audits
-            .lock()
-            .expect("qq management audit mutex")
-            .push(AuditEntry {
-                audit_id: audit_id.clone(),
-                actor_id: request.actor_id,
-                action: action_name(&request.action).into(),
-                revision: next,
-            });
+        let audit = self
+            .state
+            .commit(
+                revision,
+                &request.actor_id,
+                action_name(&request.action),
+                result.clone(),
+                unix_ms(),
+            )?
+            .ok_or_else(|| QqManagementError {
+                code: "revision.conflict".into(),
+                message: "management revision changed during operation".into(),
+            })?;
         Ok(QqManagementWriteResult {
-            revision: next,
-            audit_id,
+            revision: audit.revision,
+            audit_id: audit.audit_id,
             result,
         })
     }
+
+    fn delivery_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<crate::QqManagementPage<QqDeliveryView>, QqManagementError> {
+        self.provider.delivery_page(query, after, limit)
+    }
+
+    fn interaction_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<crate::QqManagementPage<BotInteractionSession>, QqManagementError> {
+        self.provider.interaction_page(query, after, limit)
+    }
 }
 
-/// In-process management owner used when a product has not replaced the live provider.
+/// Deterministic in-memory provider used by Web and contract tests.
 #[derive(Default)]
 pub struct LocalQqManagementProvider {
     state: Mutex<LocalState>,
@@ -300,8 +427,7 @@ impl QqManagementProvider for LocalQqManagementProvider {
                 match delivery.receipt.status {
                     DeliveryStatus::RetryScheduled
                     | DeliveryStatus::PermanentlyFailed
-                    | DeliveryStatus::ReconcileRequired
-                    | DeliveryStatus::Cancelled => {}
+                    | DeliveryStatus::ReconcileRequired => {}
                     other => {
                         return Err(QqManagementError {
                             code: "invalid_state".into(),
@@ -331,8 +457,14 @@ impl QqManagementProvider for LocalQqManagementProvider {
                 Ok(json!({ "delivery_id": delivery_id, "status": "cancelled" }))
             }
             QqManagementAction::DeliveryPreview { delivery_id } => {
-                let delivery = delivery_mut(&mut state, delivery_id)?;
-                delivery.receipt.status = DeliveryStatus::Previewed;
+                let delivery = state
+                    .deliveries
+                    .iter()
+                    .find(|item| item.receipt.delivery_id == *delivery_id)
+                    .ok_or_else(|| QqManagementError {
+                        code: "not_found".into(),
+                        message: format!("delivery `{delivery_id}` was not found"),
+                    })?;
                 Ok(json!({
                     "delivery_id": delivery_id,
                     "status": "previewed",
@@ -452,6 +584,33 @@ fn delivery_mut<'a>(
             code: "not_found".into(),
             message: format!("delivery `{delivery_id}` was not found"),
         })
+}
+
+fn stable_page<T>(
+    mut items: Vec<T>,
+    after: Option<&str>,
+    limit: u32,
+    id: impl Fn(&T) -> String,
+) -> crate::QqManagementPage<T> {
+    let limit = limit.clamp(1, 100);
+    items.sort_by_key(|item| id(item));
+    let after = after.unwrap_or_default();
+    let mut items = items
+        .into_iter()
+        .filter(|item| id(item).as_str() > after)
+        .take(limit.saturating_add(1) as usize)
+        .collect::<Vec<_>>();
+    let has_more = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    let next_cursor = has_more.then(|| items.last().map(&id)).flatten();
+    crate::QqManagementPage { items, next_cursor }
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
 
 fn action_name(action: &QqManagementAction) -> &'static str {
@@ -621,5 +780,24 @@ mod tests {
         assert_eq!(snap.revision, 2);
         assert_eq!(snap.deliveries[0].receipt.status, DeliveryStatus::Pending);
         assert_eq!(snap.interactions[0].status, InteractionStatus::Cancelled);
+    }
+
+    #[test]
+    fn delivery_preview_is_a_dry_run() {
+        let (api, _) = service();
+        let result = api
+            .write(QqManagementWriteRequest {
+                actor_id: "op".into(),
+                expected_revision: 0,
+                action: QqManagementAction::DeliveryPreview {
+                    delivery_id: "d1".into(),
+                },
+            })
+            .unwrap();
+        assert_eq!(result.result["status"], "previewed");
+        assert_eq!(
+            api.snapshot("", true).unwrap().deliveries[0].receipt.status,
+            DeliveryStatus::RetryScheduled
+        );
     }
 }

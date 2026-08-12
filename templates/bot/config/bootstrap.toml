@@ -1,0 +1,20 @@
+# Development bootstrap. SQLite is an explicit BotTemplate choice, not a framework default.
+
+[host]
+instance_id = "mutsuki-bot-local"
+home_dir = ".mutsuki-local"
+data_dir = ".mutsuki-local/data"
+
+[security]
+secret_file = "local.secret.toml"
+
+[plugin_discovery]
+dynamic_dirs = [".mutsuki-local/plugins/installed"]
+disabled_dir = ".mutsuki-local/plugins/disabled"
+
+[config_repository]
+repository_plugin_id = "mutsuki.config.repository.sqlite"
+document_namespace = "mutsuki-bot-local"
+
+[config_repository.options]
+path = ".mutsuki-local/config.sqlite3"

@@ -6,7 +6,10 @@ pub mod inbound_media;
 pub mod tasks;
 
 pub use api::*;
-pub use config::{DEFAULT_QQBOT_INTENTS, QqBotConfig, QqConfigError, validate_gateway_url};
+pub use config::{
+    DEFAULT_QQBOT_INTENTS, QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QqBotConfig,
+    QqConfigError, qq_config_descriptor, qq_config_value, validate_gateway_url,
+};
 pub use gateway::*;
 pub use inbound_media::*;
 pub use tasks::{

@@ -4,16 +4,18 @@ use std::time::Duration;
 use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
 use mutsuki_bot_protocol::{
     BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE, BotEvent, BotEventKind, BotFlowDocument,
-    BotFlowDraftSaveRequest, BotFlowEdge, BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition,
-    BotFlowPublishRequest, BotFlowSourceSelector, BotFlowTypeRef, BotNodeBinding,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
+    BotFlowEdge, BotFlowEdgeKind, BotFlowNode, BotFlowNodePosition, BotFlowSnapshot,
+    BotFlowSourceSelector, BotFlowTypeRef, BotNodeBinding, BotNodeCatalogFragment,
+    BotNodeDescriptor, BotNodeInvocation, BotNodePortDescriptor, BotNodePortDirection,
+    BotNodeResult, BotNodeRole, BotTarget, MessageSegment,
 };
 use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
-use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_plugin_bot_adapter_qqbot::tasks::qqbot_adapter_manifest;
-use mutsuki_plugin_bot_event_router::flow_router_manifest;
+use mutsuki_plugin_bot_event_router::{
+    BOT_FLOW_REGISTRY_SERVICE_ID, BotFlowMatchRunner, flow_ingress_runner, flow_node_runner,
+    flow_router_manifest,
+};
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, RunnerDescriptor, RunnerResult, WorkBatch,
 };
@@ -189,12 +191,36 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
         )
         .build()
         .manifest;
-    publish_capture_flow(&config, &manifest);
+    let flow_registry = capture_flow_registry(&manifest);
+    let flow_manifest = flow_router_manifest();
+    let loaded_flow_manifest = flow_manifest.clone();
+    let ingress_registry = flow_registry.clone();
+    let node_registry = flow_registry.clone();
+    let service_registry = flow_registry.clone();
     let runner_descriptor = descriptor.clone();
     let runner_events = events.clone();
     let runner_notify = notify.clone();
     let runtime = ServiceRuntimeBuilder::new(config)
         .with_configured_plugin_catalog(configured_bot_plugin_catalog().unwrap())
+        .register_builtin_loaded_plugin_factory(flow_manifest, move || {
+            Ok::<mutsuki_runtime_sdk::LoadedPlugin, String>(mutsuki_runtime_sdk::LoadedPlugin {
+                manifest: loaded_flow_manifest.clone(),
+                runners: Vec::new(),
+                async_handlers: Vec::new(),
+                host_services: vec![mutsuki_runtime_sdk::RuntimeBootstrapperService {
+                    service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
+                    capability: Some("bot.flow".into()),
+                    service: service_registry.clone(),
+                }],
+                resource_providers: Vec::new(),
+                async_resource_providers: Vec::new(),
+            })
+        })
+        .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
+        .register_builtin_runner(|| Box::new(BotFlowMatchRunner::default()))
+        .register_runtime_client_runner(move |client| {
+            flow_node_runner(client, node_registry.clone())
+        })
         .register_builtin_plugin(manifest)
         .register_builtin_runner(move || {
             Box::new(CaptureRunner {
@@ -335,10 +361,6 @@ dynamic_dirs = []
 disabled_dir = "disabled"
 
 [[plugins.configured]]
-id = "mutsuki.bot.router.flow"
-[plugins.configured.config]
-
-[[plugins.configured]]
 id = "mutsuki.bot.adapter.qqbot"
 [plugins.configured.config]
 account_id = "{}"
@@ -358,6 +380,9 @@ reconnect_jitter_ms = 0
 [[plugins.configured]]
 id = "{CAPTURE_PLUGIN_ID}"
 
+[[plugins.configured]]
+id = "mutsuki.bot.router.flow"
+
 [security]
 secret_file = "local.secret.toml"
 
@@ -376,25 +401,20 @@ panic_file = "panic.log"
     )
 }
 
-fn publish_capture_flow(
-    config: &ServiceConfig,
+fn capture_flow_registry(
     capture_manifest: &mutsuki_runtime_contracts::PluginManifest,
-) {
-    let state_dir = config.service.data_dir.join("bot");
-    std::fs::create_dir_all(&state_dir).unwrap();
-    let repository = Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
+) -> Arc<BotFlowRegistry> {
     let catalog = BotNodeCatalog::from_manifests(&[
         qqbot_adapter_manifest(1, false),
         flow_router_manifest(),
         capture_manifest.clone(),
     ])
     .unwrap();
-    let registry = BotFlowRegistry::open(repository, catalog).unwrap();
-    let draft = registry
-        .save_draft(
-            BotFlowDraftSaveRequest {
-                expected_draft_revision: None,
-                base_published_revision: 0,
+    Arc::new(
+        BotFlowRegistry::with_snapshot(
+            catalog,
+            BotFlowSnapshot {
+                revision: 1,
                 flows: vec![BotFlowDocument {
                     flow_id: "issue141.capture".into(),
                     name: "capture all QQ events".into(),
@@ -430,16 +450,7 @@ fn publish_capture_flow(
                     }],
                 }],
             },
-            1,
         )
-        .unwrap();
-    registry
-        .publish(
-            BotFlowPublishRequest {
-                expected_draft_revision: draft.revision,
-                expected_published_revision: 0,
-            },
-            2,
-        )
-        .unwrap();
+        .unwrap(),
+    )
 }

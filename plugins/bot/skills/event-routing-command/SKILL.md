@@ -5,7 +5,7 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
 
 # Bot Flow And Command Nodes
 
-- Treat the published Bot Flow revision as the only matching, ordering and branching source.
+- Treat the active Bot Flow configuration revision as the only matching, ordering and branching source.
 - Plugins declare `mutsuki.bot.flow.nodes@1` node descriptors, typed ports, config schema and exact
   Handler binding; they never declare commands, subscriptions, priority, propagation or hooks.
 - Consume typed `BotFlowEventEnvelope` values and emit named `BotNodeOutput` values; never call a
@@ -15,9 +15,11 @@ description: Change Bot Flow graph validation/execution, node catalogs, command 
 - Pin execution to an immutable graph revision and propagate generation, target, trace and
   correlation into deterministic child tasks.
 - Route structured failures only through explicit error edges; otherwise terminate that branch.
-- Keep drafts, immutable graph versions, CAS metadata and audits in the Bot-owned repository.
+- Persist Flow as the `mutsuki.bot.flow` provider document through `ConfigService`; the browser owns
+  the uncommitted draft and applies it once with document revision CAS. Never add a Flow-specific
+  repository, server draft, publish revision, path or database assumption.
 - Command prefix, path, aliases and typed arguments live only in Command Match node config;
   `matched` and `unmatched` are explicit outputs.
 
 Test validation failures, hit/miss, linear chains, fan-out, simultaneous flows, error edges,
-revision pinning, CAS conflicts, restart recovery and typed output shape.
+revision pinning, ConfigService CAS conflicts, restart recovery and typed output shape.

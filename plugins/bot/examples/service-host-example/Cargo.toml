@@ -16,7 +16,7 @@ serde_json.workspace = true
 [dev-dependencies]
 mutsuki-bot-testkit.workspace = true
 mutsuki-bot-flow.workspace = true
-mutsuki-bot-state-db.workspace = true
+mutsuki-config-service.workspace = true
 bot-echo.workspace = true
 mutsuki-service-config.workspace = true
 mutsuki-service-control.workspace = true
