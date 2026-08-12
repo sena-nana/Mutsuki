@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!(
         "{}",
-        serde_json::to_string_pretty(&qqbot_echo::example_draft_json())?
+        serde_json::to_string_pretty(&qqbot_echo::example_flow_config_json())?
     );
     Ok(())
 }

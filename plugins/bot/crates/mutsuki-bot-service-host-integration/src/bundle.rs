@@ -1,7 +1,20 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use mutsuki_bot_delivery::{
+    ActiveDeliveryService, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway,
+    QqDeliverySuccess,
+};
+use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError, InteractionService};
+use mutsuki_bot_protocol::{
+    BOT_MESSAGE_SEND_PROTOCOL_ID, BotActiveDeliveryRequest, BotDeliveryContent,
+    BotDeliveryPartReceipt, BotMessage, DeliveryPartStatus, DeliveryPolicy, MessageSegment,
+    QqConversationRef,
+};
+use mutsuki_bot_state_db::{BotManagementAuditRecord, BotStateDbRepository};
+use mutsuki_runtime_contracts::{Task, TaskOutcome};
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
+use mutsuki_runtime_sdk::RuntimeClientRef;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
@@ -11,14 +24,15 @@ use mutsuki_plugin_bot_adapter_qqbot::{
     ResourceGatewayQqMediaProvider, SharedQqCredentials, qqbot_adapter_manifest,
 };
 use mutsuki_plugin_bot_qq_web::{
-    LocalQqManagementProvider, QqBotManagementService, QqManagementAction, QqManagementError,
-    QqManagementProvider, account_view_from_config,
+    QqBotManagementService, QqDeliveryView, QqManagementAction, QqManagementAuditEntry,
+    QqManagementError, QqManagementPage, QqManagementProvider, QqManagementStateStore,
+    account_view_from_config,
 };
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
 
 use crate::console_bridge::QQ_MANAGEMENT_SERVICE_ID;
-use crate::event_source::{QqGatewayEventSource, QqGatewayHealthHandle};
+use crate::event_source::{QqGatewayControlHandle, QqGatewayEventSource, QqGatewayHealthHandle};
 
 type MediaFactory = Arc<
     dyn Fn(Arc<dyn ResourceRegistryGateway>) -> Result<Box<dyn QqMediaProvider>, String>
@@ -41,8 +55,6 @@ pub struct QqBotPluginBundle {
     media_factory: Option<MediaFactory>,
     media_provider_id: Option<String>,
     id_factory: IdFactory,
-    management: Arc<QqBotManagementService>,
-    local_management: Arc<LocalQqManagementProvider>,
 }
 
 impl QqBotPluginBundle {
@@ -56,29 +68,6 @@ impl QqBotPluginBundle {
         let event_source =
             QqGatewayEventSource::new(config.clone(), credentials.clone(), auth.clone());
         let health = event_source.health_handle();
-        let local_management = Arc::new(LocalQqManagementProvider::new());
-        local_management.upsert_account(account_view_from_config(
-            &config.account_id,
-            &config.client_secret_key,
-            false,
-            config.capability_matrix(),
-            config.gateway_intents,
-            config.shard,
-            false,
-            false,
-            None,
-            None,
-        ));
-        let provider = Arc::new(GatewayBackedQqManagementProvider {
-            local: local_management.clone(),
-            health: health.clone(),
-            account_id: config.account_id.clone(),
-            secret_key: config.client_secret_key.clone(),
-            capability: config.capability_matrix(),
-            intents: config.gateway_intents,
-            shard: config.shard,
-        });
-        let management = Arc::new(QqBotManagementService::new(provider));
         Ok(Self {
             config,
             credentials,
@@ -88,8 +77,6 @@ impl QqBotPluginBundle {
             media_factory: None,
             media_provider_id: None,
             id_factory: Arc::new(|| Box::new(SystemQqIdSource::new())),
-            management,
-            local_management,
         })
     }
 
@@ -125,14 +112,6 @@ impl QqBotPluginBundle {
         self.health.clone()
     }
 
-    pub fn management_service(&self) -> Arc<QqBotManagementService> {
-        self.management.clone()
-    }
-
-    pub fn local_management(&self) -> Arc<LocalQqManagementProvider> {
-        self.local_management.clone()
-    }
-
     pub fn install(
         mut self,
         builder: ServiceRuntimeBuilder,
@@ -146,12 +125,22 @@ impl QqBotPluginBundle {
         let media_enabled = media_factory.is_some();
         let id_factory = self.id_factory.clone();
         let health = self.health.clone();
-        let management = self.management.clone();
         let health_component_id = format!("mutsuki.bot.qqbot.gateway:{}", self.config.account_id);
         let source = self
             .event_source
             .take()
             .ok_or_else(|| QqOpenApiError::InvalidPayload("event source already taken".into()))?;
+        let control = source.control_handle();
+        let management_config = self.config.clone();
+        let management_health = self.health.clone();
+        let management_credentials = self.credentials.clone();
+        let state_dir = builder.data_dir().join("bot");
+        std::fs::create_dir_all(&state_dir).map_err(|error| {
+            QqOpenApiError::InvalidPayload(format!(
+                "failed to create QQ management state directory: {error}"
+            ))
+        })?;
+        let state_path = state_dir.join("state.sqlite3");
         let mut manifest = qqbot_adapter_manifest(1, media_enabled);
         if let Some(provider_id) = media_provider_id {
             manifest
@@ -159,20 +148,51 @@ impl QqBotPluginBundle {
                 .push(format!("resource_strategy:{provider_id}"));
         }
         let loaded_manifest = manifest.clone();
-        let builder = builder.register_builtin_loaded_plugin_factory(manifest, move || {
-            Ok::<LoadedPlugin, String>(LoadedPlugin {
-                manifest: loaded_manifest.clone(),
-                runners: Vec::new(),
-                async_handlers: Vec::new(),
-                host_services: vec![RuntimeBootstrapperService {
-                    service_id: QQ_MANAGEMENT_SERVICE_ID.into(),
-                    capability: None,
-                    service: management.clone(),
-                }],
-                resource_providers: Vec::new(),
-                async_resource_providers: Vec::new(),
-            })
-        });
+        let builder =
+            builder.register_runtime_client_loaded_plugin_factory(manifest, move |runtime| {
+                let repository = Arc::new(
+                    BotStateDbRepository::open(&state_path).map_err(|error| error.to_string())?,
+                );
+                let gateway = Arc::new(RuntimeQqDeliveryGateway {
+                    runtime,
+                    account_id: management_config.account_id.clone(),
+                });
+                let delivery = ActiveDeliveryService::new(
+                    repository.clone(),
+                    gateway,
+                    Arc::new(ConfiguredAccountDeliveryPolicy {
+                        account_id: management_config.account_id.clone(),
+                    }),
+                );
+                let interaction = InteractionService::new(
+                    repository.clone(),
+                    Arc::new(ManagementInteractionMatcher),
+                );
+                let provider = Arc::new(OwnerBackedQqManagementProvider {
+                    config: management_config.clone(),
+                    credentials: management_credentials.clone(),
+                    health: management_health.clone(),
+                    control: control.clone(),
+                    repository: repository.clone(),
+                    delivery,
+                    interaction,
+                });
+                let state = Arc::new(StateDbQqManagementStore { repository });
+                let management =
+                    Arc::new(QqBotManagementService::with_state_store(provider, state));
+                Ok::<LoadedPlugin, String>(LoadedPlugin {
+                    manifest: loaded_manifest.clone(),
+                    runners: Vec::new(),
+                    async_handlers: Vec::new(),
+                    host_services: vec![RuntimeBootstrapperService {
+                        service_id: QQ_MANAGEMENT_SERVICE_ID.into(),
+                        capability: None,
+                        service: management,
+                    }],
+                    resource_providers: Vec::new(),
+                    async_resource_providers: Vec::new(),
+                })
+            });
         let builder = if media_enabled {
             builder.register_fallible_runtime_services_async_handler(move |_runtime, resources| {
                 QqGatewayMediaHandler::new(gateway_config.clone(), resources).map(|handler| {
@@ -233,54 +253,563 @@ impl QqBotPluginBundle {
     }
 }
 
-struct GatewayBackedQqManagementProvider {
-    local: Arc<LocalQqManagementProvider>,
+struct OwnerBackedQqManagementProvider {
+    config: QqBotConfig,
+    credentials: SharedQqCredentials,
     health: QqGatewayHealthHandle,
-    account_id: String,
-    secret_key: String,
-    capability: mutsuki_bot_protocol::QqBotCapabilityMatrix,
-    intents: u64,
-    shard: [u64; 2],
+    control: QqGatewayControlHandle,
+    repository: Arc<BotStateDbRepository>,
+    delivery: ActiveDeliveryService,
+    interaction: InteractionService,
 }
 
-impl GatewayBackedQqManagementProvider {
-    fn refresh_account(&self) {
+impl OwnerBackedQqManagementProvider {
+    fn account_view(
+        &self,
+        include_secret_status: bool,
+    ) -> mutsuki_plugin_bot_qq_web::QqAccountView {
         let snapshot = self.health.snapshot();
-        self.local.upsert_account(account_view_from_config(
-            &self.account_id,
-            &self.secret_key,
-            true,
-            self.capability.clone(),
-            self.intents,
-            self.shard,
+        let mut account = account_view_from_config(
+            &self.config.account_id,
+            &self.config.client_secret_key,
+            self.credentials.is_configured(),
+            self.config.capability_matrix(),
+            self.config.gateway_intents,
+            self.config.shard,
             snapshot.connected,
             snapshot.identified,
             snapshot
                 .last_heartbeat_unix_ms
                 .map(|value| value.min(u128::from(u64::MAX)) as u64),
             snapshot.last_error.as_deref(),
-        ));
+        );
+        if !include_secret_status {
+            account.credential_reference.clear();
+            account.credential_status = "restricted".into();
+        }
+        account
+    }
+
+    fn require_account(&self, account_id: &str) -> Result<(), QqManagementError> {
+        (account_id == self.config.account_id)
+            .then_some(())
+            .ok_or_else(|| QqManagementError {
+                code: "not_found".into(),
+                message: format!("QQ 账号 `{account_id}` 不存在"),
+            })
+    }
+
+    fn find_interaction(
+        &self,
+        session_id: &str,
+    ) -> Result<mutsuki_bot_protocol::BotInteractionSession, QqManagementError> {
+        let mut cursor = None;
+        loop {
+            let page = self
+                .repository
+                .interaction_page(cursor.as_deref(), 100)
+                .map_err(state_error)?;
+            if let Some(session) = page
+                .items
+                .into_iter()
+                .find(|session| session.session_id == session_id)
+            {
+                return Ok(session);
+            }
+            let Some(next) = page.next_cursor else {
+                return Err(QqManagementError {
+                    code: "not_found".into(),
+                    message: format!("interaction `{session_id}` 不存在"),
+                });
+            };
+            cursor = Some(next);
+        }
     }
 }
 
-impl QqManagementProvider for GatewayBackedQqManagementProvider {
+impl QqManagementProvider for OwnerBackedQqManagementProvider {
     fn load_snapshot(
         &self,
         query: &str,
         include_secret_status: bool,
     ) -> Result<mutsuki_plugin_bot_qq_web::QqBotManagementSnapshot, QqManagementError> {
-        self.refresh_account();
-        self.local.load_snapshot(query, include_secret_status)
+        let query_lower = query.trim().to_ascii_lowercase();
+        let account = self.account_view(include_secret_status);
+        let accounts = (query_lower.is_empty()
+            || account
+                .account_id
+                .to_ascii_lowercase()
+                .contains(&query_lower))
+        .then_some(account)
+        .into_iter()
+        .collect();
+        Ok(mutsuki_plugin_bot_qq_web::QqBotManagementSnapshot {
+            revision: 0,
+            accounts,
+            deliveries: self.delivery_page(query, None, 50)?.items,
+            interactions: self.interaction_page(query, None, 50)?.items,
+        })
     }
 
     fn apply(
         &self,
-        actor_id: &str,
+        _actor_id: &str,
         action: &QqManagementAction,
     ) -> Result<Value, QqManagementError> {
-        self.refresh_account();
-        self.local.apply(actor_id, action)
+        match action {
+            QqManagementAction::AccountSetEnabled { .. } => Err(QqManagementError {
+                code: "configuration.required".into(),
+                message: "请在 QQ Bot 配置页启用或停用账号".into(),
+            }),
+            QqManagementAction::AccountHealthCheck { account_id } => {
+                self.require_account(account_id)?;
+                serde_json::to_value(self.account_view(false)).map_err(encode_error)
+            }
+            QqManagementAction::AccountReconnect { account_id } => {
+                self.require_account(account_id)?;
+                self.control
+                    .reconnect()
+                    .map_err(|message| QqManagementError {
+                        code: "qq.gateway_unavailable".into(),
+                        message,
+                    })?;
+                Ok(json!({ "account_id": account_id, "reconnect_requested": true }))
+            }
+            QqManagementAction::AccountSendTest {
+                account_id,
+                conversation,
+                text,
+            } => {
+                self.require_account(account_id)?;
+                if conversation.account_id != *account_id {
+                    return Err(QqManagementError {
+                        code: "invalid_argument".into(),
+                        message: "测试会话不属于当前 QQ 账号".into(),
+                    });
+                }
+                if text.trim().is_empty() {
+                    return Err(QqManagementError {
+                        code: "invalid_argument".into(),
+                        message: "测试消息不能为空".into(),
+                    });
+                }
+                let request = BotActiveDeliveryRequest {
+                    delivery_id: unique_id("qq-test"),
+                    idempotency_key: unique_id("qq-test-key"),
+                    conversation: conversation.clone(),
+                    content: BotDeliveryContent {
+                        segments: vec![MessageSegment::text(text.clone())],
+                        summary: Some("QQ 测试消息".into()),
+                        reply_to: None,
+                    },
+                    policy: DeliveryPolicy {
+                        max_attempts: 1,
+                        initial_backoff_ms: 1_000,
+                        max_backoff_ms: 1_000,
+                        not_before_unix_ms: None,
+                        expires_at_unix_ms: None,
+                    },
+                    dry_run: false,
+                    source_execution_id: None,
+                };
+                let delivery = self.delivery.clone();
+                let now = unix_ms();
+                let receipt = run_owner_future(async move {
+                    delivery.submit(&request, now).await.map_err(delivery_error)
+                })?;
+                serde_json::to_value(receipt).map_err(encode_error)
+            }
+            QqManagementAction::DeliveryRetry { delivery_id } => {
+                let delivery = self.delivery.clone();
+                let delivery_id = delivery_id.clone();
+                let receipt = run_owner_future(async move {
+                    delivery
+                        .retry(&delivery_id, unix_ms())
+                        .await
+                        .map_err(delivery_error)
+                })?;
+                serde_json::to_value(receipt).map_err(encode_error)
+            }
+            QqManagementAction::DeliveryCancel { delivery_id } => {
+                let delivery = self.delivery.clone();
+                let delivery_id = delivery_id.clone();
+                let receipt = run_owner_future(async move {
+                    delivery.cancel(&delivery_id).await.map_err(delivery_error)
+                })?;
+                serde_json::to_value(receipt).map_err(encode_error)
+            }
+            QqManagementAction::DeliveryPreview { delivery_id } => {
+                let delivery = self.delivery.clone();
+                let delivery_id = delivery_id.clone();
+                let receipt = run_owner_future(async move {
+                    delivery.preview(&delivery_id).await.map_err(delivery_error)
+                })?;
+                serde_json::to_value(receipt).map_err(encode_error)
+            }
+            QqManagementAction::InteractionCancel { session_id } => {
+                let session = self.find_interaction(session_id)?;
+                let next_version = session.version.saturating_add(1);
+                let interaction = self.interaction.clone();
+                run_owner_future(async move {
+                    interaction.cancel(session).await.map_err(interaction_error)
+                })?;
+                Ok(json!({
+                    "session_id": session_id,
+                    "status": "cancelled",
+                    "version": next_version,
+                }))
+            }
+        }
     }
+
+    fn delivery_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<QqManagementPage<QqDeliveryView>, QqManagementError> {
+        let page = self
+            .repository
+            .delivery_page(after, limit)
+            .map_err(state_error)?;
+        let query = query.trim().to_ascii_lowercase();
+        Ok(QqManagementPage {
+            items: page
+                .items
+                .into_iter()
+                .map(|(receipt, attempts)| QqDeliveryView { receipt, attempts })
+                .filter(|item| {
+                    query.is_empty()
+                        || item
+                            .receipt
+                            .delivery_id
+                            .to_ascii_lowercase()
+                            .contains(&query)
+                })
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    fn interaction_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<QqManagementPage<mutsuki_bot_protocol::BotInteractionSession>, QqManagementError>
+    {
+        let page = self
+            .repository
+            .interaction_page(after, limit)
+            .map_err(state_error)?;
+        let query = query.trim().to_ascii_lowercase();
+        Ok(QqManagementPage {
+            items: page
+                .items
+                .into_iter()
+                .filter(|session| {
+                    query.is_empty() || session.session_id.to_ascii_lowercase().contains(&query)
+                })
+                .collect(),
+            next_cursor: page.next_cursor,
+        })
+    }
+}
+
+struct StateDbQqManagementStore {
+    repository: Arc<BotStateDbRepository>,
+}
+
+impl QqManagementStateStore for StateDbQqManagementStore {
+    fn revision(&self) -> Result<u64, QqManagementError> {
+        self.repository.management_revision().map_err(state_error)
+    }
+
+    fn commit(
+        &self,
+        expected_revision: u64,
+        actor_id: &str,
+        action: &str,
+        result: Value,
+        created_at_unix_ms: u64,
+    ) -> Result<Option<QqManagementAuditEntry>, QqManagementError> {
+        self.repository
+            .commit_management_audit(
+                expected_revision,
+                actor_id,
+                action,
+                result,
+                created_at_unix_ms,
+            )
+            .map(|record| record.map(management_audit))
+            .map_err(state_error)
+    }
+
+    fn audits(&self) -> Result<Vec<QqManagementAuditEntry>, QqManagementError> {
+        self.repository
+            .management_audits(100)
+            .map(|records| records.into_iter().map(management_audit).collect())
+            .map_err(state_error)
+    }
+}
+
+fn management_audit(record: BotManagementAuditRecord) -> QqManagementAuditEntry {
+    QqManagementAuditEntry {
+        audit_id: record.audit_id,
+        actor_id: record.actor_id,
+        action: record.action,
+        revision: record.revision,
+        result: record.result,
+        created_at_unix_ms: record.created_at_unix_ms,
+    }
+}
+
+struct RuntimeQqDeliveryGateway {
+    runtime: RuntimeClientRef,
+    account_id: String,
+}
+
+impl QqDeliveryGateway for RuntimeQqDeliveryGateway {
+    fn send(
+        &self,
+        conversation: &QqConversationRef,
+        content: &BotDeliveryContent,
+    ) -> Result<QqDeliverySuccess, QqDeliveryFailure> {
+        if conversation.account_id != self.account_id {
+            return Err(qq_delivery_failure(
+                "qq.account_mismatch",
+                false,
+                Vec::new(),
+            ));
+        }
+        let target = conversation
+            .target()
+            .ok_or_else(|| qq_delivery_failure("qq.conversation.invalid", false, Vec::new()))?;
+        let message = BotMessage {
+            message_id: None,
+            target,
+            sender: None,
+            segments: content.segments.clone(),
+            reply_to: content.reply_to.clone(),
+            time_ms: None,
+            ext: Default::default(),
+        };
+        let task = Task::new(
+            unique_id("qq-management-send"),
+            BOT_MESSAGE_SEND_PROTOCOL_ID,
+            serde_json::to_value(message)
+                .map_err(|_| qq_delivery_failure("qq.message.encode", false, Vec::new()))?,
+        );
+        let handle = self.runtime.submit_one(task).map_err(|error| {
+            qq_delivery_failure(&format!("qq.runtime.submit:{error}"), true, Vec::new())
+        })?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match self.runtime.task_outcome(&handle) {
+                Ok(Some(TaskOutcome::Completed { output, .. })) => {
+                    let mut message_ids = Vec::new();
+                    if let Some(output) = output {
+                        collect_message_ids(&output, &mut message_ids);
+                    }
+                    if message_ids.is_empty() {
+                        return Err(qq_delivery_failure(
+                            "qq.response.message_id_missing",
+                            false,
+                            Vec::new(),
+                        ));
+                    }
+                    let part_receipts = message_ids
+                        .iter()
+                        .enumerate()
+                        .map(|(index, message_id)| BotDeliveryPartReceipt {
+                            part_index: index as u32,
+                            status: DeliveryPartStatus::Succeeded,
+                            platform_message_id: Some(message_id.clone()),
+                            error_code: None,
+                        })
+                        .collect();
+                    return Ok(QqDeliverySuccess {
+                        platform_message_ids: message_ids,
+                        part_receipts,
+                    });
+                }
+                Ok(Some(TaskOutcome::Failed { error, .. })) => {
+                    let transient = error.code.contains("rate")
+                        || error.code.contains("transient")
+                        || error.code.contains("timeout");
+                    return Err(qq_delivery_failure(&error.code, transient, Vec::new()));
+                }
+                Ok(Some(other)) => {
+                    return Err(qq_delivery_failure(
+                        &format!("qq.runtime.{other:?}"),
+                        false,
+                        Vec::new(),
+                    ));
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => {
+                    return Err(qq_delivery_failure("qq.runtime.timeout", true, Vec::new()));
+                }
+                Err(error) => {
+                    return Err(qq_delivery_failure(
+                        &format!("qq.runtime.outcome:{error}"),
+                        true,
+                        Vec::new(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+struct ConfiguredAccountDeliveryPolicy {
+    account_id: String,
+}
+
+impl DeliveryPolicyResolver for ConfiguredAccountDeliveryPolicy {
+    fn active_delivery_allowed(
+        &self,
+        conversation: &QqConversationRef,
+    ) -> Result<bool, mutsuki_bot_delivery::DeliveryError> {
+        Ok(conversation.account_id == self.account_id)
+    }
+}
+
+struct ManagementInteractionMatcher;
+
+impl InteractionConditionMatcher for ManagementInteractionMatcher {
+    fn command_matches(
+        &self,
+        _command: &str,
+        _event: &mutsuki_bot_protocol::BotEvent,
+    ) -> Result<bool, InteractionError> {
+        Ok(false)
+    }
+
+    fn predicate_matches(
+        &self,
+        _service_id: &str,
+        _event: &mutsuki_bot_protocol::BotEvent,
+    ) -> Result<bool, InteractionError> {
+        Ok(false)
+    }
+}
+
+fn run_owner_future<T, F>(future: F) -> Result<T, QqManagementError>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = Result<T, QqManagementError>> + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("mutsuki-qq-management".into())
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| QqManagementError {
+                    code: "qq.management_runtime".into(),
+                    message: error.to_string(),
+                })?
+                .block_on(future)
+        })
+        .map_err(|error| QqManagementError {
+            code: "qq.management_runtime".into(),
+            message: error.to_string(),
+        })?
+        .join()
+        .map_err(|_| QqManagementError {
+            code: "qq.management_runtime".into(),
+            message: "QQ 管理任务异常退出".into(),
+        })?
+}
+
+fn delivery_error(error: mutsuki_bot_delivery::DeliveryError) -> QqManagementError {
+    let code = match error {
+        mutsuki_bot_delivery::DeliveryError::NotFound => "not_found",
+        mutsuki_bot_delivery::DeliveryError::InvalidState => "invalid_state",
+        mutsuki_bot_delivery::DeliveryError::PolicyDenied => "policy_denied",
+        mutsuki_bot_delivery::DeliveryError::Conflict => "revision.conflict",
+        _ => "qq.delivery_failed",
+    };
+    QqManagementError {
+        code: code.into(),
+        message: error.to_string(),
+    }
+}
+
+fn interaction_error(error: InteractionError) -> QqManagementError {
+    let code = match error {
+        InteractionError::NotWaiting => "invalid_state",
+        InteractionError::GenerationConflict => "revision.conflict",
+        _ => "qq.interaction_failed",
+    };
+    QqManagementError {
+        code: code.into(),
+        message: error.to_string(),
+    }
+}
+
+fn state_error(error: mutsuki_bot_state_db::BotStateDbError) -> QqManagementError {
+    QqManagementError {
+        code: "qq.state_unavailable".into(),
+        message: error.to_string(),
+    }
+}
+
+fn encode_error(error: serde_json::Error) -> QqManagementError {
+    QqManagementError {
+        code: "qq.management_encode".into(),
+        message: error.to_string(),
+    }
+}
+
+fn qq_delivery_failure(
+    code: &str,
+    transient: bool,
+    sent_message_ids: Vec<String>,
+) -> QqDeliveryFailure {
+    QqDeliveryFailure {
+        code: code.into(),
+        transient,
+        retry_after_ms: None,
+        sent_message_ids,
+        part_receipts: Vec::new(),
+    }
+}
+
+fn collect_message_ids(value: &Value, message_ids: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(id) = object.get("id").and_then(Value::as_str)
+                && !id.is_empty()
+                && !message_ids.iter().any(|existing| existing == id)
+            {
+                message_ids.push(id.into());
+            }
+            for child in object.values() {
+                collect_message_ids(child, message_ids);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_message_ids(child, message_ids);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unique_id(prefix: &str) -> String {
+    format!("{prefix}-{}-{:016x}", unix_ms(), fastrand::u64(..))
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
 
 struct SystemQqIdSource {
@@ -313,6 +842,47 @@ impl QqIdSource for SystemQqIdSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    use mutsuki_bot_protocol::{BotConversationKind, QQ_CONVERSATION_REF_VERSION};
+    use mutsuki_runtime_contracts::{CancelPolicy, TaskBatch, TaskHandle};
+
+    struct CompletedRuntime {
+        submitted: Arc<Mutex<Vec<Task>>>,
+    }
+
+    impl mutsuki_runtime_sdk::RuntimeClient for CompletedRuntime {
+        fn submit_batch(
+            &self,
+            batch: TaskBatch,
+        ) -> mutsuki_runtime_core::RuntimeResult<Vec<TaskHandle>> {
+            let handles = batch
+                .tasks
+                .iter()
+                .map(|task| TaskHandle {
+                    task_id: task.task_id.clone(),
+                    protocol_id: task.protocol_id.clone(),
+                    target_binding_id: task.target_binding_id.clone(),
+                    cancel_policy: CancelPolicy::Cascade,
+                    trace_id: task.trace_id.clone(),
+                    correlation_id: task.correlation_id.clone(),
+                })
+                .collect();
+            self.submitted.lock().unwrap().extend(batch.tasks);
+            Ok(handles)
+        }
+
+        fn task_outcome(
+            &self,
+            handle: &TaskHandle,
+        ) -> mutsuki_runtime_core::RuntimeResult<Option<TaskOutcome>> {
+            Ok(Some(TaskOutcome::Completed {
+                task_id: handle.task_id.clone(),
+                output: Some(json!({"id": "QQ_MESSAGE_ID"})),
+                output_ref: None,
+            }))
+        }
+    }
 
     #[test]
     fn system_message_sequence_stays_within_qq_unsigned_16_bit_range() {
@@ -321,5 +891,42 @@ mod tests {
         assert_eq!(source.next_msg_seq(), u64::from(u16::MAX));
         assert_eq!(source.next_msg_seq(), 0);
         assert_eq!(source.next_msg_seq(), 1);
+    }
+
+    #[test]
+    fn management_delivery_uses_the_real_qq_typed_task_and_platform_receipt() {
+        let submitted = Arc::new(Mutex::new(Vec::new()));
+        let gateway = RuntimeQqDeliveryGateway {
+            runtime: Arc::new(CompletedRuntime {
+                submitted: submitted.clone(),
+            }),
+            account_id: "main".into(),
+        };
+        let success = gateway
+            .send(
+                &QqConversationRef {
+                    version: QQ_CONVERSATION_REF_VERSION,
+                    account_id: "main".into(),
+                    kind: BotConversationKind::Private,
+                    user_id: Some("user-openid".into()),
+                    group_id: None,
+                    guild_id: None,
+                    channel_id: None,
+                    thread_id: None,
+                },
+                &BotDeliveryContent {
+                    segments: vec![MessageSegment::text("hello")],
+                    summary: None,
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(success.platform_message_ids, vec!["QQ_MESSAGE_ID"]);
+        let tasks = submitted.lock().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].protocol_id, BOT_MESSAGE_SEND_PROTOCOL_ID);
+        let message: BotMessage = serde_json::from_value(tasks[0].payload.to_value()).unwrap();
+        assert_eq!(message.plain_text(), "hello");
     }
 }

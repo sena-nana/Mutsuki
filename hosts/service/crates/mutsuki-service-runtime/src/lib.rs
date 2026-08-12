@@ -25,13 +25,15 @@ use mutsuki_runtime_host::{
     HostTaskSnapshot, HostTaskState, LaneExecutionPolicy, ProcessRunnerSpec, RunnerLimits,
     RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor, resolve_load_plan,
 };
+#[cfg(test)]
+use mutsuki_runtime_sdk::RuntimeBootstrapperService;
 use mutsuki_runtime_sdk::{
     HostService, LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient,
     RuntimeClientRef, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
 use mutsuki_service_config::{
-    ConfiguredPluginSelection, ConfiguredPluginStore, DispatchLaneName, ExecutionClassName,
-    HostSecretStore, LanePolicySection, ServiceConfig, filtered_environment,
+    ConfiguredPluginSelection, DispatchLaneName, ExecutionClassName, HostSecretStore,
+    LanePolicySection, ServiceConfig, filtered_environment,
 };
 use mutsuki_service_control::{
     ControlCommand, ControlError, ControlFuture, ControlHandler, ControlRequest, ControlResponse,
@@ -83,6 +85,7 @@ type HealthProbe = Arc<dyn Fn() -> Value + Send + Sync>;
 pub trait LoadPlanLifecycleHook: Send + Sync {
     fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String>;
     fn activate(&self, plan: &RuntimeLoadPlan);
+    fn deactivate(&self) {}
 }
 
 #[derive(Clone, Debug)]
@@ -96,10 +99,10 @@ type RunnerLimitFactory = Arc<dyn Fn() -> RunnerLimitOverride + Send + Sync>;
 
 #[derive(Default)]
 struct PreparedComponent {
-    manifest: Option<mutsuki_runtime_contracts::PluginManifest>,
+    manifests: BTreeMap<String, mutsuki_runtime_contracts::PluginManifest>,
     native_runner_factories: Vec<NativeRunnerFactory>,
     async_handler_factories: Vec<AsyncHandlerFactory>,
-    loaded_plugin_factory: Option<(String, LoadedPluginFactory)>,
+    loaded_plugin_factories: BTreeMap<String, LoadedPluginFactory>,
     health_probe: Option<(String, HealthProbe)>,
     event_sources: Mutex<Vec<Box<dyn HostEventSource>>>,
     runner_limits: BTreeMap<String, RunnerLimits>,
@@ -107,9 +110,25 @@ struct PreparedComponent {
     load_plan_hooks: Vec<Arc<dyn LoadPlanLifecycleHook>>,
 }
 
+impl Clone for PreparedComponent {
+    fn clone(&self) -> Self {
+        Self {
+            manifests: self.manifests.clone(),
+            native_runner_factories: self.native_runner_factories.clone(),
+            async_handler_factories: self.async_handler_factories.clone(),
+            loaded_plugin_factories: self.loaded_plugin_factories.clone(),
+            health_probe: self.health_probe.clone(),
+            event_sources: Mutex::new(Vec::new()),
+            runner_limits: self.runner_limits.clone(),
+            runner_limit_factories: self.runner_limit_factories.clone(),
+            load_plan_hooks: self.load_plan_hooks.clone(),
+        }
+    }
+}
+
 /// Prepared ServiceHost assembly records. A component's manifest, executable factories,
 /// health/event surfaces and limit policy now travel through one owner instead of parallel lists.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct PreparedComponentRegistry {
     records: BTreeMap<String, PreparedComponent>,
     sequence: u64,
@@ -125,9 +144,12 @@ impl PreparedComponentRegistry {
         self.record(format!("{kind}:{}", self.sequence))
     }
 
+    #[cfg(test)]
     fn register_manifest(&mut self, manifest: mutsuki_runtime_contracts::PluginManifest) {
         let plugin_id = manifest.plugin_id.clone();
-        self.record(plugin_id).manifest = Some(manifest);
+        self.record(plugin_id.clone())
+            .manifests
+            .insert(plugin_id, manifest);
     }
 
     fn builtin_registry(&self) -> BuiltinRegistry {
@@ -135,7 +157,7 @@ impl PreparedComponentRegistry {
         for manifest in self
             .records
             .values()
-            .filter_map(|component| component.manifest.clone())
+            .flat_map(|component| component.manifests.values().cloned())
         {
             registry.register_manifest(manifest);
         }
@@ -159,7 +181,7 @@ impl PreparedComponentRegistry {
     fn loaded_plugin_factories(&self) -> BTreeMap<String, LoadedPluginFactory> {
         self.records
             .values()
-            .filter_map(|component| component.loaded_plugin_factory.clone())
+            .flat_map(|component| component.loaded_plugin_factories.clone())
             .collect()
     }
 
@@ -208,6 +230,17 @@ impl PreparedComponentRegistry {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    fn replace_component(&mut self, component_id: &str, candidate: Option<PreparedComponent>) {
+        match candidate {
+            Some(candidate) => {
+                self.records.insert(component_id.to_string(), candidate);
+            }
+            None => {
+                self.records.remove(component_id);
+            }
+        }
     }
 }
 
@@ -427,6 +460,8 @@ impl ResourceRegistryGateway for DeferredRuntimeClient {
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceRuntimeError {
     #[error(transparent)]
+    Config(#[from] mutsuki_service_config::ConfigError),
+    #[error(transparent)]
     Plugin(#[from] PluginLoaderError),
     #[error(transparent)]
     Core(#[from] RuntimeFailure),
@@ -488,12 +523,32 @@ pub struct ServiceRuntime {
     _observe: mutsuki_service_observe::ObserveGuard,
 }
 
+#[derive(Clone)]
+pub struct ServiceRuntimeHandle {
+    inner: Arc<ServiceRuntimeInner>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginReconfigureGeneration {
+    pub plugin_id: String,
+    pub previous_generation: u64,
+    pub generation: u64,
+    pub rolled_back: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginReconfigureReport {
+    pub components: Vec<PluginReconfigureGeneration>,
+    pub registry_generation: u64,
+}
+
 /// Product assembly boundary. All manifests, native runners and event sources are frozen at boot.
 pub struct ServiceRuntimeBuilder {
     config: ServiceConfig,
     configured_plugins: ConfiguredPluginCatalog,
     components: PreparedComponentRegistry,
     runtime_client: Arc<DeferredRuntimeClient>,
+    current_component: Option<String>,
 }
 
 /// Domain-neutral factory for a native product plugin selected by Host configuration.
@@ -559,12 +614,16 @@ impl ConfiguredPluginCatalog {
 
 struct ServiceRuntimeInner {
     config: ServiceConfig,
+    configured_selections: Mutex<Vec<ConfiguredPluginSelection>>,
     started_at: Instant,
     catalog: Mutex<PluginCatalog>,
     host_runtime: Mutex<Option<HostRuntime>>,
     supervisor: RunnerSupervisor,
     event_sources: EventSourceSupervisor,
-    components: PreparedComponentRegistry,
+    configured_plugins: ConfiguredPluginCatalog,
+    components: Mutex<PreparedComponentRegistry>,
+    component_generations: Mutex<BTreeMap<String, u64>>,
+    reconfigure_lock: tokio::sync::Mutex<()>,
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
@@ -573,6 +632,54 @@ struct ServiceRuntimeInner {
 impl ServiceRuntime {
     pub async fn start(config: ServiceConfig) -> ServiceRuntimeResult<Self> {
         ServiceRuntimeBuilder::new(config).start().await
+    }
+
+    pub fn handle(&self) -> ServiceRuntimeHandle {
+        ServiceRuntimeHandle {
+            inner: self.inner.clone(),
+        }
+    }
+
+    pub async fn reconfigure_plugins(
+        &self,
+        candidates: &[ConfiguredPluginSelection],
+    ) -> ServiceRuntimeResult<PluginReconfigureReport> {
+        self.inner.reconfigure_plugins(candidates).await
+    }
+}
+
+impl ServiceRuntimeHandle {
+    pub async fn reconfigure_plugins(
+        &self,
+        candidates: &[ConfiguredPluginSelection],
+    ) -> ServiceRuntimeResult<PluginReconfigureReport> {
+        self.inner.reconfigure_plugins(candidates).await
+    }
+
+    /// Returns the current owner selection used by generation-aware reconfiguration.
+    #[must_use]
+    pub fn configured_plugin_selection(
+        &self,
+        plugin_id: &str,
+    ) -> Option<ConfiguredPluginSelection> {
+        self.inner
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex")
+            .iter()
+            .find(|selection| selection.id == plugin_id)
+            .cloned()
+    }
+
+    pub fn host_service<T>(&self, service_id: &str) -> ServiceRuntimeResult<Arc<T>>
+    where
+        T: HostService,
+    {
+        let runtime = self.inner.host_runtime.lock().expect("host runtime mutex");
+        let runtime = runtime
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?;
+        Ok(runtime.host_context().services().require(service_id)?)
     }
 }
 
@@ -592,6 +699,15 @@ impl ServiceRuntimeBuilder {
             configured_plugins: ConfiguredPluginCatalog::new(),
             components: PreparedComponentRegistry::default(),
             runtime_client: Arc::new(DeferredRuntimeClient::default()),
+            current_component: None,
+        }
+    }
+
+    fn active_component(&mut self, kind: &str) -> &mut PreparedComponent {
+        if let Some(component_id) = self.current_component.clone() {
+            self.components.record(component_id)
+        } else {
+            self.components.anonymous(kind)
         }
     }
 
@@ -611,10 +727,6 @@ impl ServiceRuntimeBuilder {
     }
 
     /// Host-owned persistence boundary for owner-defined configured plugin data.
-    pub fn configured_plugin_store(&self) -> Option<ConfiguredPluginStore> {
-        self.config.configured_plugin_store()
-    }
-
     /// Reads one owner-defined configured selection during boot-time catalog composition.
     /// Domain factories may use this only to combine declared plugin contributions before the
     /// load plan is frozen.
@@ -634,7 +746,10 @@ impl ServiceRuntimeBuilder {
         mut self,
         manifest: mutsuki_runtime_contracts::PluginManifest,
     ) -> Self {
-        self.components.register_manifest(manifest);
+        let plugin_id = manifest.plugin_id.clone();
+        self.active_component("builtin-plugin")
+            .manifests
+            .insert(plugin_id, manifest);
         self
     }
 
@@ -643,8 +758,7 @@ impl ServiceRuntimeBuilder {
     where
         F: Fn() -> Box<dyn Runner> + Send + Sync + 'static,
     {
-        self.components
-            .anonymous("native-runner")
+        self.active_component("native-runner")
             .native_runner_factories
             .push(Arc::new(move || Ok(factory())));
         self
@@ -657,8 +771,7 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> Result<Box<dyn Runner>, E> + Send + Sync + 'static,
         E: std::fmt::Display,
     {
-        self.components
-            .anonymous("native-runner")
+        self.active_component("native-runner")
             .native_runner_factories
             .push(Arc::new(move || {
                 factory().map_err(|error| error.to_string())
@@ -671,8 +784,7 @@ impl ServiceRuntimeBuilder {
     where
         F: Fn() -> Arc<dyn AsyncBatchHandler> + Send + Sync + 'static,
     {
-        self.components
-            .anonymous("async-handler")
+        self.active_component("async-handler")
             .async_handler_factories
             .push(Arc::new(move || Ok(factory())));
         self
@@ -684,8 +796,7 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> Result<Arc<dyn AsyncBatchHandler>, E> + Send + Sync + 'static,
         E: std::fmt::Display,
     {
-        self.components
-            .anonymous("async-handler")
+        self.active_component("async-handler")
             .async_handler_factories
             .push(Arc::new(move || {
                 factory().map_err(|error| error.to_string())
@@ -706,8 +817,7 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let services = self.runtime_client.clone();
-        self.components
-            .anonymous("async-handler")
+        self.active_component("async-handler")
             .async_handler_factories
             .push(Arc::new(move || {
                 factory(services.clone(), services.clone()).map_err(|error| error.to_string())
@@ -721,8 +831,7 @@ impl ServiceRuntimeBuilder {
         F: Fn(RuntimeClientRef) -> Box<dyn Runner> + Send + Sync + 'static,
     {
         let client = self.runtime_client.clone();
-        self.components
-            .anonymous("native-runner")
+        self.active_component("native-runner")
             .native_runner_factories
             .push(Arc::new(move || Ok(factory(client.clone()))));
         self
@@ -737,8 +846,7 @@ impl ServiceRuntimeBuilder {
             + 'static,
     {
         let services = self.runtime_client.clone();
-        self.components
-            .anonymous("native-runner")
+        self.active_component("native-runner")
             .native_runner_factories
             .push(Arc::new(move || {
                 Ok(factory(services.clone(), services.clone()))
@@ -756,8 +864,7 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let services = self.runtime_client.clone();
-        self.components
-            .anonymous("native-runner")
+        self.active_component("native-runner")
             .native_runner_factories
             .push(Arc::new(move || {
                 factory(services.clone(), services.clone()).map_err(|error| error.to_string())
@@ -776,12 +883,37 @@ impl ServiceRuntimeBuilder {
         E: std::fmt::Display,
     {
         let plugin_id = manifest.plugin_id.clone();
-        let component = self.components.record(plugin_id.clone());
-        component.manifest = Some(manifest);
-        component.loaded_plugin_factory = Some((
+        let component = self.active_component("loaded-plugin");
+        component.manifests.insert(plugin_id.clone(), manifest);
+        component.loaded_plugin_factories.insert(
             plugin_id,
             Arc::new(move || factory().map_err(|error| error.to_string())),
-        ));
+        );
+        self
+    }
+
+    /// Registers a recreatable loaded plugin whose Host services need the booted runtime client.
+    ///
+    /// The deferred client is stable across targeted component replacements and is bound before
+    /// any registered Host service can be invoked. This keeps owner management services on the
+    /// same runtime generation without exposing Core internals through product assembly code.
+    pub fn register_runtime_client_loaded_plugin_factory<F, E>(
+        mut self,
+        manifest: mutsuki_runtime_contracts::PluginManifest,
+        factory: F,
+    ) -> Self
+    where
+        F: Fn(RuntimeClientRef) -> Result<LoadedPlugin, E> + Send + Sync + 'static,
+        E: std::fmt::Display,
+    {
+        let plugin_id = manifest.plugin_id.clone();
+        let client = self.runtime_client.clone();
+        let component = self.active_component("loaded-plugin");
+        component.manifests.insert(plugin_id.clone(), manifest);
+        component.loaded_plugin_factories.insert(
+            plugin_id,
+            Arc::new(move || factory(client.clone()).map_err(|error| error.to_string())),
+        );
         self
     }
 
@@ -791,13 +923,20 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> Value + Send + Sync + 'static,
     {
         let component_id = component_id.into();
-        let component = self.components.record(component_id.clone());
+        let record_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| component_id.clone());
+        let component = self.components.record(record_id);
         component.health_probe = Some((component_id, Arc::new(probe)));
         self
     }
 
     pub fn register_event_source(mut self, source: Box<dyn HostEventSource>) -> Self {
-        let component_id = source.descriptor().source_id.clone();
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| source.descriptor().source_id.clone());
         self.components
             .record(component_id)
             .event_sources
@@ -813,6 +952,10 @@ impl ServiceRuntimeBuilder {
         component_id: impl Into<String>,
         hook: Arc<dyn LoadPlanLifecycleHook>,
     ) -> Self {
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| component_id.into());
         self.components
             .record(component_id)
             .load_plan_hooks
@@ -831,9 +974,13 @@ impl ServiceRuntimeBuilder {
         wall_clock_timeout_ms: Option<u64>,
     ) -> Self {
         let runner_id = runner_id.into();
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| format!("runner:{runner_id}"));
         let limits = self
             .components
-            .record(format!("runner:{runner_id}"))
+            .record(component_id)
             .runner_limits
             .entry(runner_id)
             .or_default();
@@ -863,8 +1010,12 @@ impl ServiceRuntimeBuilder {
         F: Fn() -> (Option<usize>, Option<u64>) + Send + Sync + 'static,
     {
         let runner_id = runner_id.into();
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| format!("runner:{runner_id}"));
         self.components
-            .record(format!("runner:{runner_id}"))
+            .record(component_id)
             .runner_limit_factories
             .push(Arc::new(move || {
                 let (max_running, wall_clock_timeout_ms) = factory();
@@ -882,9 +1033,10 @@ impl ServiceRuntimeBuilder {
         let self_ = self.install_configured_plugins()?;
         let ServiceRuntimeBuilder {
             config,
-            configured_plugins: _,
+            configured_plugins,
             components,
             runtime_client,
+            current_component: _,
         } = self_;
         let builtin_registry = components.builtin_registry();
         let native_runner_factories = components.native_runner_factories();
@@ -925,12 +1077,24 @@ impl ServiceRuntimeBuilder {
 
         let inner = Arc::new(ServiceRuntimeInner {
             config: config.clone(),
+            configured_selections: Mutex::new(config.plugins.configured.clone()),
             started_at: Instant::now(),
             catalog: Mutex::new(catalog),
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor,
             event_sources: event_source_supervisor.clone(),
-            components,
+            configured_plugins,
+            component_generations: Mutex::new(
+                config
+                    .plugins
+                    .configured
+                    .iter()
+                    .filter(|selection| selection.enabled)
+                    .map(|selection| (selection.id.clone(), 1))
+                    .collect(),
+            ),
+            components: Mutex::new(components),
+            reconfigure_lock: tokio::sync::Mutex::new(()),
             runtime_client,
             deployment_state: Mutex::new(deployment_state),
             shutdown_tx: Mutex::new(Some(shutdown_tx)),
@@ -1000,9 +1164,11 @@ impl ServiceRuntimeBuilder {
         }
         for (selection, factory) in resolved {
             let plugin_id = selection.id.clone();
+            self.current_component = Some(plugin_id.clone());
             self = factory.prepare(&selection.config, self).map_err(|detail| {
                 ServiceRuntimeError::ConfiguredPluginInstall { plugin_id, detail }
             })?;
+            self.current_component = None;
         }
         Ok(self)
     }
@@ -1267,6 +1433,260 @@ impl ControlHandler for RuntimeControl {
 }
 
 impl ServiceRuntimeInner {
+    fn current_config(&self) -> ServiceConfig {
+        let mut config = self.config.clone();
+        config.plugins.configured = self
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex")
+            .clone();
+        config
+    }
+
+    async fn reconfigure_plugins(
+        &self,
+        candidates: &[ConfiguredPluginSelection],
+    ) -> ServiceRuntimeResult<PluginReconfigureReport> {
+        let _reconfigure = self.reconfigure_lock.lock().await;
+        let affected = candidates
+            .iter()
+            .map(|selection| selection.id.trim().to_string())
+            .collect::<BTreeSet<_>>();
+        if affected.is_empty() || affected.contains("") {
+            return Err(ServiceRuntimeError::EmptyConfiguredPluginId);
+        }
+
+        let mut candidate_config = self.current_config();
+        candidate_config
+            .plugins
+            .configured
+            .retain(|selection| !affected.contains(selection.id.trim()));
+        candidate_config
+            .plugins
+            .configured
+            .extend(candidates.iter().cloned());
+
+        let mut candidate_components = PreparedComponentRegistry::default();
+        for plugin_id in &affected {
+            let selections = candidate_config
+                .plugins
+                .configured
+                .iter()
+                .filter(|selection| selection.id.trim() == plugin_id)
+                .collect::<Vec<_>>();
+            let [selection] = selections.as_slice() else {
+                return Err(ServiceRuntimeError::UnknownConfiguredPlugin(
+                    plugin_id.clone(),
+                ));
+            };
+            if !selection.enabled {
+                continue;
+            }
+            if let Some(field) = raw_credential_field(&selection.config, "") {
+                return Err(ServiceRuntimeError::RawConfiguredPluginSecret {
+                    plugin_id: plugin_id.clone(),
+                    field,
+                });
+            }
+            let factory = self
+                .configured_plugins
+                .factory(plugin_id)
+                .ok_or_else(|| ServiceRuntimeError::UnknownConfiguredPlugin(plugin_id.clone()))?;
+            let builder = ServiceRuntimeBuilder {
+                config: candidate_config.clone(),
+                configured_plugins: self.configured_plugins.clone(),
+                components: PreparedComponentRegistry::default(),
+                runtime_client: self.runtime_client.clone(),
+                current_component: Some(plugin_id.clone()),
+            };
+            let prepared = factory
+                .prepare(&selection.config, builder)
+                .map_err(|detail| ServiceRuntimeError::ConfiguredPluginInstall {
+                    plugin_id: plugin_id.clone(),
+                    detail,
+                })?;
+            for (component_id, component) in prepared.components.records {
+                if !affected.contains(&component_id) {
+                    return Err(ServiceRuntimeError::ConfiguredPluginInstall {
+                        plugin_id: plugin_id.clone(),
+                        detail: format!(
+                            "configured factory emitted component owned by `{component_id}`"
+                        ),
+                    });
+                }
+                candidate_components.records.insert(component_id, component);
+            }
+        }
+
+        let candidate_load_plan_hooks = candidate_components.load_plan_hooks();
+        let new_event_sources = candidate_components.take_event_sources();
+        validate_event_sources(&new_event_sources, &candidate_config)?;
+        let mut combined_components = self
+            .components
+            .lock()
+            .expect("component registry mutex")
+            .clone();
+        let old_target_hooks = affected
+            .iter()
+            .filter_map(|plugin_id| combined_components.records.get(plugin_id))
+            .flat_map(|component| component.load_plan_hooks.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut runtime_affected = affected.clone();
+        for plugin_id in &affected {
+            if let Some(component) = combined_components.records.get(plugin_id) {
+                runtime_affected.extend(component.manifests.keys().cloned());
+            }
+            if let Some(component) = candidate_components.records.get(plugin_id) {
+                runtime_affected.extend(component.manifests.keys().cloned());
+            }
+            combined_components.replace_component(
+                plugin_id,
+                candidate_components.records.get(plugin_id).cloned(),
+            );
+        }
+
+        let state = self
+            .deployment_state
+            .lock()
+            .expect("deployment state mutex")
+            .clone();
+        let new_catalog = load_catalog_with_state(
+            &candidate_config,
+            &combined_components.builtin_registry(),
+            &state,
+        )?;
+        let native_runner_factories = combined_components.native_runner_factories();
+        let async_handler_factories = combined_components.async_handler_factories();
+        let loaded_plugin_factories = combined_components.loaded_plugin_factories();
+        let runner_limits = resolve_runner_limits(
+            &combined_components.runner_limits(),
+            &combined_components.runner_limit_factories(),
+        );
+        let load_plan_hooks = combined_components.load_plan_hooks();
+        let previous_registry_generation = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .registry_generation();
+        let registry_generation = previous_registry_generation.saturating_add(1);
+        let (bootstrapper, profile) = runtime_bootstrapper(
+            &candidate_config,
+            &new_catalog,
+            &native_runner_factories,
+            &async_handler_factories,
+            &loaded_plugin_factories,
+            self.runtime_client.clone(),
+        )
+        .await?;
+        let mut runtime_lock = resolve_load_plan(
+            &new_catalog
+                .records
+                .iter()
+                .map(|record| record.manifest.clone())
+                .collect::<Vec<_>>(),
+            &profile,
+        )?;
+        runtime_lock.registry_generation = registry_generation;
+        for hook in &load_plan_hooks {
+            hook.validate(&runtime_lock)
+                .map_err(ServiceRuntimeError::LoadPlanHook)?;
+        }
+        let prepared = bootstrapper.prepare_reload_with_runner_limits(
+            profile,
+            registry_generation,
+            runner_limits,
+        )?;
+        let runtime_lock_path = self.config.service.run_dir.join("runtime.lock.json");
+        let previous_runtime_lock = fs::read(&runtime_lock_path).ok();
+        write_runtime_lock(&self.config, &runtime_lock)?;
+        let graceful = Duration::from_millis(self.config.runners.graceful_shutdown_ms);
+        let old_event_sources = match self
+            .event_sources
+            .stop_plugins(&runtime_affected, graceful)
+            .await
+        {
+            Ok(sources) => sources,
+            Err(detail) => {
+                let _ = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
+                return Err(ServiceRuntimeError::EventSource(detail));
+            }
+        };
+        let task_submitter = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .host_context()
+            .task_submitter_ref();
+        let decision = {
+            let mut runtime = self.host_runtime.lock().expect("host runtime mutex");
+            let runtime = runtime
+                .as_mut()
+                .ok_or(ServiceRuntimeError::RuntimeUnavailable)?;
+            runtime.reload(
+                prepared,
+                reload_drain_timeout(&candidate_config, &new_catalog),
+            )
+        };
+        if let Err(error) = decision {
+            let restore_lock = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
+            for source in old_event_sources {
+                self.event_sources
+                    .start(source, task_submitter.clone(), &self.config, graceful);
+            }
+            return match restore_lock {
+                Ok(()) => Err(ServiceRuntimeError::Core(error)),
+                Err(restore) => Err(ServiceRuntimeError::PluginDeploymentState {
+                    path: runtime_lock_path.display().to_string(),
+                    detail: format!("{error}; restoring runtime lock failed: {restore}"),
+                }),
+            };
+        }
+
+        for hook in old_target_hooks {
+            hook.deactivate();
+        }
+        for hook in &candidate_load_plan_hooks {
+            hook.activate(&runtime_lock);
+        }
+        for source in new_event_sources {
+            self.event_sources
+                .start(source, task_submitter.clone(), &candidate_config, graceful);
+        }
+        *self.catalog.lock().expect("catalog mutex") = new_catalog;
+        *self.components.lock().expect("component registry mutex") = combined_components;
+        *self
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex") = candidate_config.plugins.configured.clone();
+        let mut generations = self
+            .component_generations
+            .lock()
+            .expect("component generations mutex");
+        let components = affected
+            .into_iter()
+            .map(|plugin_id| {
+                let previous_generation = generations.get(&plugin_id).copied().unwrap_or(0);
+                let generation = previous_generation.saturating_add(1);
+                generations.insert(plugin_id.clone(), generation);
+                PluginReconfigureGeneration {
+                    plugin_id,
+                    previous_generation,
+                    generation,
+                    rolled_back: false,
+                }
+            })
+            .collect();
+        Ok(PluginReconfigureReport {
+            components,
+            registry_generation,
+        })
+    }
+
     async fn handle_request(&self, request: ControlRequest) -> ControlResponse {
         if request.token != self.config.control_token() {
             return ControlResponse::err(ControlError::Unauthorized);
@@ -1410,14 +1830,16 @@ impl ServiceRuntimeInner {
 
     fn plugin_list(&self) -> ControlResponse {
         let catalog = self.catalog.lock().expect("catalog mutex");
+        let configured = self
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex")
+            .clone();
         let state = self
             .deployment_state
             .lock()
             .expect("deployment state mutex");
-        let mut plugin_ids = self
-            .config
-            .plugins
-            .configured
+        let mut plugin_ids = configured
             .iter()
             .map(|selection| selection.id.trim().to_string())
             .collect::<BTreeSet<_>>();
@@ -1435,10 +1857,7 @@ impl ServiceRuntimeInner {
                     .iter()
                     .find(|record| record.manifest.plugin_id == plugin_id);
                 PluginStatus {
-                    configured: self
-                        .config
-                        .plugins
-                        .configured
+                    configured: configured
                         .iter()
                         .any(|selection| selection.enabled && selection.id.trim() == plugin_id),
                     active_deployment: active
@@ -1482,13 +1901,18 @@ impl ServiceRuntimeInner {
     }
 
     async fn plugin_reload(&self) -> ControlResponse {
+        let config = self.current_config();
         let state = self
             .deployment_state
             .lock()
             .expect("deployment state mutex")
             .clone();
-        let builtin_registry = self.components.builtin_registry();
-        let new_catalog = match load_catalog_with_state(&self.config, &builtin_registry, &state) {
+        let builtin_registry = self
+            .components
+            .lock()
+            .expect("component registry mutex")
+            .builtin_registry();
+        let new_catalog = match load_catalog_with_state(&config, &builtin_registry, &state) {
             Ok(catalog) => catalog,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
@@ -1516,9 +1940,9 @@ impl ServiceRuntimeInner {
         result: fn(PluginReloadResponse) -> ControlResult,
     ) -> ControlResponse {
         if !self
-            .config
-            .plugins
-            .configured
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex")
             .iter()
             .any(|selection| selection.enabled && selection.id.trim() == plugin_id.trim())
         {
@@ -1540,8 +1964,13 @@ impl ServiceRuntimeInner {
                 next.plugins.remove(&plugin_id);
             }
         }
-        let builtin_registry = self.components.builtin_registry();
-        let new_catalog = match load_catalog_with_state(&self.config, &builtin_registry, &next) {
+        let builtin_registry = self
+            .components
+            .lock()
+            .expect("component registry mutex")
+            .builtin_registry();
+        let config = self.current_config();
+        let new_catalog = match load_catalog_with_state(&config, &builtin_registry, &next) {
             Ok(catalog) => catalog,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
@@ -1576,12 +2005,17 @@ impl ServiceRuntimeInner {
             runtime.host_context().registry_generation()
         };
         let registry_generation = previous_generation.saturating_add(1);
-        let native_runner_factories = self.components.native_runner_factories();
-        let async_handler_factories = self.components.async_handler_factories();
-        let loaded_plugin_factories = self.components.loaded_plugin_factories();
-        let configured_runner_limits = self.components.runner_limits();
-        let runner_limit_factories = self.components.runner_limit_factories();
-        let load_plan_hooks = self.components.load_plan_hooks();
+        let components = self
+            .components
+            .lock()
+            .expect("component registry mutex")
+            .clone();
+        let native_runner_factories = components.native_runner_factories();
+        let async_handler_factories = components.async_handler_factories();
+        let loaded_plugin_factories = components.loaded_plugin_factories();
+        let configured_runner_limits = components.runner_limits();
+        let runner_limit_factories = components.runner_limit_factories();
+        let load_plan_hooks = components.load_plan_hooks();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         let (prepared, runtime_lock) = match runtime_bootstrapper(
@@ -1983,6 +2417,8 @@ impl ServiceRuntimeInner {
         }
         let mut components = self
             .components
+            .lock()
+            .expect("component registry mutex")
             .health_probes()
             .iter()
             .map(|(id, probe)| (id.clone(), probe()))
@@ -3016,6 +3452,54 @@ mod tests {
 
     struct SecondConfiguredFactory;
 
+    #[derive(Debug)]
+    struct GenerationService(u64);
+
+    struct GenerationConfiguredFactory {
+        plugin_id: &'static str,
+        service_id: &'static str,
+    }
+
+    impl ConfiguredPluginFactory for GenerationConfiguredFactory {
+        fn plugin_id(&self) -> &str {
+            self.plugin_id
+        }
+
+        fn prepare(
+            &self,
+            config: &Value,
+            builder: ServiceRuntimeBuilder,
+        ) -> Result<ServiceRuntimeBuilder, String> {
+            let generation = config
+                .get("generation")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "generation is required".to_string())?;
+            if config.get("fail").and_then(Value::as_bool) == Some(true) {
+                return Err("candidate rejected".into());
+            }
+            let manifest = minimal_manifest(self.plugin_id);
+            let loaded_manifest = manifest.clone();
+            let service_id = self.service_id.to_string();
+            let service = Arc::new(GenerationService(generation));
+            Ok(
+                builder.register_builtin_loaded_plugin_factory(manifest, move || {
+                    Ok::<LoadedPlugin, String>(LoadedPlugin {
+                        manifest: loaded_manifest.clone(),
+                        runners: Vec::new(),
+                        async_handlers: Vec::new(),
+                        host_services: vec![RuntimeBootstrapperService {
+                            service_id: service_id.clone(),
+                            capability: None,
+                            service: service.clone(),
+                        }],
+                        resource_providers: Vec::new(),
+                        async_resource_providers: Vec::new(),
+                    })
+                }),
+            )
+        }
+    }
+
     struct DelayedAsyncHandler {
         descriptor: RunnerDescriptor,
     }
@@ -3105,6 +3589,121 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn targeted_reconfigure_replaces_only_the_selected_owner_component() {
+        let root = tempdir().expect("temp dir");
+        let config_dir = root.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        let config_path = config_dir.join("local.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[[plugins.configured]]
+id = "test.target"
+enabled = true
+[plugins.configured.config]
+generation = 1
+
+[[plugins.configured]]
+id = "test.stable"
+enabled = true
+[plugins.configured.config]
+generation = 7
+"#,
+        )
+        .expect("config file");
+        let mut config = ServiceConfig::load(mutsuki_service_config::ConfigOverrides {
+            config_file: Some(config_path),
+            home_dir: Some(root.path().to_path_buf()),
+            ..Default::default()
+        })
+        .expect("loaded config");
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = root.path().join("disabled");
+
+        let mut catalog = ConfiguredPluginCatalog::new();
+        catalog
+            .register(GenerationConfiguredFactory {
+                plugin_id: "test.target",
+                service_id: "service.target",
+            })
+            .unwrap();
+        catalog
+            .register(GenerationConfiguredFactory {
+                plugin_id: "test.stable",
+                service_id: "service.stable",
+            })
+            .unwrap();
+        let runtime = ServiceRuntimeBuilder::new(config.clone())
+            .with_configured_plugin_catalog(catalog)
+            .start()
+            .await
+            .expect("runtime starts");
+        let target_before = runtime
+            .host_service::<GenerationService>("service.target")
+            .unwrap();
+        let stable_before = runtime
+            .host_service::<GenerationService>("service.stable")
+            .unwrap();
+
+        let report = runtime
+            .reconfigure_plugins(&[ConfiguredPluginSelection {
+                id: "test.target".into(),
+                enabled: true,
+                config: json!({"generation": 2}),
+            }])
+            .await
+            .expect("target reconfigured");
+
+        let target_after = runtime
+            .host_service::<GenerationService>("service.target")
+            .unwrap();
+        let stable_after = runtime
+            .host_service::<GenerationService>("service.stable")
+            .unwrap();
+        assert_eq!(target_before.0, 1);
+        assert_eq!(target_after.0, 2);
+        assert!(!Arc::ptr_eq(&target_before, &target_after));
+        assert_eq!(stable_after.0, 7);
+        assert!(Arc::ptr_eq(&stable_before, &stable_after));
+        assert_eq!(
+            report.components,
+            vec![PluginReconfigureGeneration {
+                plugin_id: "test.target".into(),
+                previous_generation: 1,
+                generation: 2,
+                rolled_back: false,
+            }]
+        );
+
+        assert!(
+            runtime
+                .reconfigure_plugins(&[ConfiguredPluginSelection {
+                    id: "test.target".into(),
+                    enabled: true,
+                    config: json!({"generation": 3, "fail": true}),
+                }])
+                .await
+                .is_err()
+        );
+        let target_after_rejection = runtime
+            .host_service::<GenerationService>("service.target")
+            .unwrap();
+        assert!(Arc::ptr_eq(&target_after, &target_after_rejection));
+        assert_eq!(
+            runtime
+                .inner
+                .component_generations
+                .lock()
+                .unwrap()
+                .get("test.target"),
+            Some(&2)
+        );
+        runtime.shutdown().await;
     }
 
     #[tokio::test]
@@ -4645,14 +5244,19 @@ mod tests {
         )
         .await
         .expect("core");
+        let configured_selections = config.plugins.configured.clone();
         ServiceRuntimeInner {
             config,
+            configured_selections: Mutex::new(configured_selections),
             started_at: Instant::now(),
             catalog: Mutex::new(catalog),
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor: RunnerSupervisor::new(),
             event_sources: EventSourceSupervisor::default(),
-            components,
+            configured_plugins: ConfiguredPluginCatalog::default(),
+            components: Mutex::new(components),
+            component_generations: Mutex::new(BTreeMap::new()),
+            reconfigure_lock: tokio::sync::Mutex::new(()),
             runtime_client,
             deployment_state: Mutex::new(PluginDeploymentState {
                 version: deployment_state_version(),

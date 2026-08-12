@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::{
     AgentConnectionRegistry, configured_standard_agent_plugin_catalog,
@@ -8,19 +8,12 @@ use mutsuki_service_config::{ExecutionClassName, ExecutionDomainSection, Service
 use mutsuki_service_runtime::{ServiceRuntimeBuilder, ServiceRuntimeResult};
 use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
 
+mod bootstrap;
 mod distribution;
 mod web_console;
+pub use bootstrap::*;
 pub use distribution::*;
 pub use web_console::*;
-
-pub fn repository_local_config_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("mutsuki-bot crate must be inside the template workspace")
-        .join("config")
-        .join("local.toml")
-}
 
 /// Assemble a neutral ServiceRuntime from owner-provided plugin factories.
 /// Configuration selects every platform, route, business plugin and provider.
@@ -53,13 +46,27 @@ fn execution_domain(
     }
 }
 
-pub fn assemble_service(mut service: ServiceConfig) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
+pub fn assemble_service(
+    service: ServiceConfig,
+    config: Arc<mutsuki_config_service::ConfigService>,
+) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
+    assemble_service_with_connections(service, config, AgentConnectionRegistry::new())
+}
+
+pub fn assemble_service_with_connections(
+    mut service: ServiceConfig,
+    config: Arc<mutsuki_config_service::ConfigService>,
+    agent_connections: AgentConnectionRegistry,
+) -> ServiceRuntimeResult<ServiceRuntimeBuilder> {
     apply_product_runtime_profile(&mut service);
-    let agent_connections = AgentConnectionRegistry::new();
     let mut catalog = configured_std_plugin_catalog()?;
     catalog.merge(configured_standard_agent_plugin_catalog(
         agent_connections.clone(),
+        config.clone(),
     )?)?;
-    catalog.merge(configured_bot_plugin_catalog_with_agent(agent_connections)?)?;
+    catalog.merge(configured_bot_plugin_catalog_with_agent(
+        config,
+        agent_connections,
+    )?)?;
     Ok(ServiceRuntimeBuilder::new(service).with_configured_plugin_catalog(catalog))
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use mutsuki_bot_flow::{BotFlowError, BotFlowRegistry};
+use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_bot_protocol::{
     BOT_FLOW_ERROR_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID,
     BotFlowEdge, BotFlowEdgeKind, BotFlowErrorEvent, BotFlowEventEnvelope, BotFlowNode,
@@ -17,6 +17,7 @@ use mutsuki_runtime_sdk::{
     RunnerDescriptorBuilder, RuntimeClientRef, RuntimeFailure, RuntimeResult,
     TaskAwaitRunnerAdapter, map_work_batch_entries,
 };
+use serde::{Serialize, Serializer};
 
 use crate::{
     BOT_FLOW_EVENT_MATCH_PROTOCOL_ID, BOT_FLOW_MATCH_RUNNER_ID, BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
@@ -104,6 +105,49 @@ pub struct BotFlowIngressRunner {
     registry: Arc<BotFlowRegistry>,
 }
 
+/// Shares the immutable flow for native router tasks while preserving the
+/// public `BotFlowNodeExecution` wire representation when a task crosses a
+/// process boundary.
+#[derive(Clone)]
+struct PinnedBotFlowNodeExecution {
+    graph_revision: u64,
+    flow: Arc<mutsuki_bot_protocol::BotFlowDocument>,
+    execution_id: String,
+    node_id: String,
+    input_port_id: String,
+    event: BotFlowEventEnvelope,
+}
+
+impl Serialize for PinnedBotFlowNodeExecution {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        BotFlowNodeExecution {
+            graph_revision: self.graph_revision,
+            flow: self.flow.as_ref().clone(),
+            execution_id: self.execution_id.clone(),
+            node_id: self.node_id.clone(),
+            input_port_id: self.input_port_id.clone(),
+            event: self.event.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl From<BotFlowNodeExecution> for PinnedBotFlowNodeExecution {
+    fn from(execution: BotFlowNodeExecution) -> Self {
+        Self {
+            graph_revision: execution.graph_revision,
+            flow: Arc::new(execution.flow),
+            execution_id: execution.execution_id,
+            node_id: execution.node_id,
+            input_port_id: execution.input_port_id,
+            event: execution.event,
+        }
+    }
+}
+
 impl BotFlowIngressRunner {
     pub fn new(registry: Arc<BotFlowRegistry>) -> Self {
         Self {
@@ -123,14 +167,21 @@ impl Runner for BotFlowIngressRunner {
         ctx: mutsuki_runtime_core::RunnerContext,
         batch: mutsuki_runtime_contracts::WorkBatch,
     ) -> RuntimeResult<mutsuki_runtime_contracts::CompletionBatch> {
+        let snapshot = self.registry.active();
+        let graph_revision = snapshot.revision;
+        let flows = snapshot
+            .flows
+            .iter()
+            .cloned()
+            .map(Arc::new)
+            .collect::<Vec<_>>();
         map_work_batch_entries(&batch, |task| {
             let envelope = task
                 .payload
                 .decode_shared::<BotFlowEventEnvelope>()
                 .map_err(|error| runtime_error(task, "ingress.decode", error))?;
-            let snapshot = self.registry.active();
             let mut tasks = Vec::new();
-            for flow in snapshot.flows.iter().filter(|flow| flow.enabled) {
+            for flow in flows.iter().filter(|flow| flow.enabled) {
                 for source in &flow.nodes {
                     let Some(selector) = source.source.as_ref() else {
                         continue;
@@ -145,7 +196,7 @@ impl Runner for BotFlowIngressRunner {
                     }
                     let execution_id = format!(
                         "flow:{}:{}:{}",
-                        snapshot.revision, flow.flow_id, envelope.event_id
+                        graph_revision, flow.flow_id, envelope.event_id
                     );
                     let outgoing = flow.edges.iter().filter(|edge| {
                         edge.kind == BotFlowEdgeKind::Event && edge.from_node_id == source.node_id
@@ -161,8 +212,8 @@ impl Runner for BotFlowIngressRunner {
                         tasks.push(
                             downstream_task(
                                 task,
-                                snapshot.revision,
-                                &flow.flow_id,
+                                graph_revision,
+                                flow.clone(),
                                 &execution_id,
                                 target,
                                 edge,
@@ -178,7 +229,7 @@ impl Runner for BotFlowIngressRunner {
             let mut result = RunnerResult::completed(task.task_id.clone());
             result.tasks = tasks;
             result.output = Some(serde_json::json!({
-                "graph_revision": snapshot.revision,
+                "graph_revision": graph_revision,
                 "flow_tasks": result.tasks.len(),
             }));
             Ok(result)
@@ -191,18 +242,16 @@ async fn run_node(
     task: Task,
     registry: Arc<BotFlowRegistry>,
 ) -> RuntimeResult<RunnerResult> {
-    let execution = task
-        .payload
-        .decode_shared::<BotFlowNodeExecution>()
-        .map_err(|error| failure(&task, "node.decode", error))?;
-    let snapshot = registry
-        .published_revision(execution.graph_revision)
-        .map_err(|error| flow_failure(&task, "node.snapshot", error))?;
-    let flow = snapshot
-        .flows
-        .iter()
-        .find(|flow| flow.flow_id == execution.flow_id)
-        .ok_or_else(|| failure(&task, "node.flow_missing", &execution.flow_id))?;
+    let execution = if let Some(execution) = task.payload.as_local::<PinnedBotFlowNodeExecution>() {
+        execution
+    } else {
+        let wire = task
+            .payload
+            .decode_shared::<BotFlowNodeExecution>()
+            .map_err(|error| failure(&task, "node.decode", error))?;
+        Arc::new(PinnedBotFlowNodeExecution::from(wire.as_ref().clone()))
+    };
+    let flow = execution.flow.as_ref();
     let node = flow
         .nodes
         .iter()
@@ -216,7 +265,7 @@ async fn run_node(
         .as_ref()
         .ok_or_else(|| failure(&task, "node.binding_missing", &node.node_type_id))?;
     let invocation = BotNodeInvocation {
-        flow_id: execution.flow_id.clone(),
+        flow_id: flow.flow_id.clone(),
         graph_revision: execution.graph_revision,
         execution_id: execution.execution_id.clone(),
         node_id: execution.node_id.clone(),
@@ -310,7 +359,7 @@ fn decode_node_result(task: &Task, outcome: TaskOutcome) -> RuntimeResult<BotNod
 fn fan_out<'a>(
     task: &Task,
     flow: &mutsuki_bot_protocol::BotFlowDocument,
-    execution: &BotFlowNodeExecution,
+    execution: &PinnedBotFlowNodeExecution,
     outputs: impl IntoIterator<Item = (&'a BotFlowEdge, BotFlowEventEnvelope)>,
 ) -> RuntimeResult<RunnerResult> {
     let mut result = RunnerResult::completed(task.task_id.clone());
@@ -323,7 +372,7 @@ fn fan_out<'a>(
         result.tasks.push(downstream_task(
             task,
             execution.graph_revision,
-            &execution.flow_id,
+            execution.flow.clone(),
             &execution.execution_id,
             target,
             edge,
@@ -339,7 +388,7 @@ fn fan_out<'a>(
 fn downstream_task(
     parent: &Task,
     revision: u64,
-    flow_id: &str,
+    flow: Arc<mutsuki_bot_protocol::BotFlowDocument>,
     execution_id: &str,
     target: &BotFlowNode,
     edge: &BotFlowEdge,
@@ -347,9 +396,9 @@ fn downstream_task(
     registry_generation: u64,
     ordinal: usize,
 ) -> RuntimeResult<Task> {
-    let execution = BotFlowNodeExecution {
+    let execution = PinnedBotFlowNodeExecution {
         graph_revision: revision,
-        flow_id: flow_id.into(),
+        flow,
         execution_id: execution_id.into(),
         node_id: target.node_id.clone(),
         input_port_id: edge.to_port_id.clone(),
@@ -357,12 +406,11 @@ fn downstream_task(
     };
     let mut task = Task::new(
         format!(
-            "{}:graph:{revision}:flow:{flow_id}:edge:{}:output:{ordinal}:node:{}",
-            parent.task_id, edge.edge_id, target.node_id
+            "{}:graph:{revision}:flow:{}:edge:{}:output:{ordinal}:node:{}",
+            parent.task_id, execution.flow.flow_id, edge.edge_id, target.node_id
         ),
         BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID,
-        serde_json::to_value(execution)
-            .map_err(|error| failure(parent, "node.execution.encode", error))?,
+        mutsuki_runtime_contracts::TaskPayload::from_local(execution),
     );
     task.runner_hint = Some(BOT_FLOW_NODE_RUNNER_ID.into());
     task.trace_id = parent.trace_id.clone();
@@ -413,10 +461,6 @@ fn node_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .build()
 }
 
-fn flow_failure(task: &Task, route: &str, error: BotFlowError) -> RuntimeFailure {
-    failure(task, route, error)
-}
-
 fn failure(task: &Task, route: &str, error: impl std::fmt::Display) -> RuntimeFailure {
     RuntimeFailure::new(runtime_error(task, route, error))
 }
@@ -435,6 +479,8 @@ fn runtime_error(task: &Task, route: &str, error: impl std::fmt::Display) -> Run
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use mutsuki_bot_protocol::{
         BotFlowContext, BotFlowEdge, BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode,
         BotFlowNodePosition, BotFlowPayload, BotFlowTypeRef,
@@ -491,11 +537,25 @@ mod tests {
             trace_id: None,
             correlation_id: None,
         };
+        let left_flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "flow.left".into(),
+            name: "left".into(),
+            enabled: true,
+            nodes: vec![target.clone()],
+            edges: vec![edge.clone()],
+        };
+        let right_flow = mutsuki_bot_protocol::BotFlowDocument {
+            flow_id: "flow.right".into(),
+            name: "right".into(),
+            enabled: true,
+            nodes: vec![target.clone()],
+            edges: vec![edge.clone()],
+        };
 
         let left = downstream_task(
             &parent,
             1,
-            "flow.left",
+            Arc::new(left_flow),
             "execution-left",
             &target,
             &edge,
@@ -507,7 +567,7 @@ mod tests {
         let right = downstream_task(
             &parent,
             1,
-            "flow.right",
+            Arc::new(right_flow),
             "execution-right",
             &target,
             &edge,

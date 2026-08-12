@@ -5,9 +5,18 @@ use mutsuki_agent_contracts::{
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_bot_conversation::ConversationService;
 use mutsuki_bot_delivery::{bot_reply_delivery_manifest_for, reply_delivery_runner_for};
-use mutsuki_bot_flow::BotFlowRegistry;
+use mutsuki_bot_flow::{
+    BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
+    validate_flows,
+};
 use mutsuki_bot_protocol::ConversationPolicy;
 use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_config_service::{
+    ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
+    ConfigDocumentKey, ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation,
+    ConfigProviderId, ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
+    MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
+};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig};
 use mutsuki_plugin_bot_agent::{
     BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_BRIDGE_RUNNER_ID, BOT_AGENT_CONFIG_SERVICE_ID,
@@ -23,7 +32,7 @@ use mutsuki_plugin_bot_event_router::{
 };
 use mutsuki_runtime_contracts::{PluginManifest, RuntimeLoadPlan};
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
-use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
+use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,
     ServiceRuntimeResult,
@@ -53,7 +62,28 @@ use std::time::Duration;
 #[serde(deny_unknown_fields)]
 struct FlowRouterConfig {}
 
-pub struct BotFlowRouterConfiguredPlugin;
+pub struct BotFlowRouterConfiguredPlugin {
+    config: Arc<ConfigService>,
+    registry: Option<Arc<BotFlowRegistry>>,
+}
+
+impl BotFlowRouterConfiguredPlugin {
+    #[must_use]
+    pub fn new(config: Arc<ConfigService>) -> Self {
+        Self {
+            config,
+            registry: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_registry(config: Arc<ConfigService>, registry: Arc<BotFlowRegistry>) -> Self {
+        Self {
+            config,
+            registry: Some(registry),
+        }
+    }
+}
 
 struct LegacyBotEventRouterConfiguredPlugin;
 
@@ -67,25 +97,59 @@ impl ConfiguredPluginFactory for LegacyBotEventRouterConfiguredPlugin {
         _config: &Value,
         _builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        Err("legacy Bot event subscriptions are unsupported; configure mutsuki.bot.router.flow and publish a graph".into())
+        Err("legacy Bot event subscriptions are unsupported; configure mutsuki.bot.router.flow and apply a graph".into())
     }
 }
 
 struct BotFlowLoadPlanHook {
     registry: Arc<BotFlowRegistry>,
+    config: Arc<ConfigService>,
 }
 
 impl LoadPlanLifecycleHook for BotFlowLoadPlanHook {
     fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String> {
         self.registry
             .validate_load_plan(plan)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
+        let Some(snapshot) = self
+            .config
+            .repository()
+            .read(&key)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(());
+        };
+        let flows =
+            BotFlowConfigProvider::decode(&snapshot.value).map_err(|error| error.to_string())?;
+        let catalog = BotNodeCatalog::from_load_plan(plan).map_err(|error| error.to_string())?;
+        let validation = validate_flows(&flows, &catalog);
+        validation.valid.then_some(()).ok_or_else(|| {
+            format!(
+                "stored Bot Flow is incompatible with LoadPlan: {:?}",
+                validation.issues
+            )
+        })
     }
 
     fn activate(&self, plan: &RuntimeLoadPlan) {
         self.registry
             .activate_load_plan(plan)
             .expect("validated Bot Flow LoadPlan must activate");
+        let key = ConfigDocumentKey::new(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global());
+        if self
+            .config
+            .repository()
+            .read(&key)
+            .expect("validated ConfigRepository read must remain available")
+            .is_some()
+        {
+            futures_executor::block_on(
+                self.config
+                    .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global()),
+            )
+            .expect("validated Bot Flow snapshot must restore");
+        }
     }
 }
 
@@ -106,15 +170,14 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
         };
         let _config: FlowRouterConfig =
             serde_json::from_value(config).map_err(|error| error.to_string())?;
-        let state_dir = builder.data_dir().join("bot");
-        std::fs::create_dir_all(&state_dir)
-            .map_err(|error| format!("failed to create Bot flow state directory: {error}"))?;
-        let repository = Arc::new(
-            BotStateDbRepository::open(state_dir.join("state.sqlite3"))
-                .map_err(|error| error.to_string())?,
-        );
-        let registry =
-            Arc::new(BotFlowRegistry::restore(repository).map_err(|error| error.to_string())?);
+        let registry = self
+            .registry
+            .clone()
+            .unwrap_or_else(|| Arc::new(BotFlowRegistry::new(BotNodeCatalog::default())));
+        self.config
+            .registry()
+            .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
+            .map_err(|error| error.to_string())?;
         let manifest = flow_router_manifest();
         let loaded_manifest = manifest.clone();
         let ingress_registry = registry.clone();
@@ -142,7 +205,10 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             })
             .register_load_plan_hook(
                 BOT_FLOW_REGISTRY_SERVICE_ID,
-                Arc::new(BotFlowLoadPlanHook { registry }),
+                Arc::new(BotFlowLoadPlanHook {
+                    registry,
+                    config: self.config.clone(),
+                }),
             ))
     }
 }
@@ -387,7 +453,65 @@ impl ConfiguredPluginFactory for QqBotConfiguredPlugin {
     }
 }
 
-pub struct BilibiliConfiguredPlugin;
+pub struct BilibiliConfiguredPlugin {
+    config_service: Option<Arc<ConfigService>>,
+}
+
+impl BilibiliConfiguredPlugin {
+    fn new(config_service: Option<Arc<ConfigService>>) -> Self {
+        Self { config_service }
+    }
+}
+
+fn bilibili_config_descriptor() -> ConfigDescriptor {
+    ConfigDescriptor {
+        provider_id: ConfigProviderId::new(BILIBILI_PLUGIN_ID),
+        schema_version: 1,
+        value_version: 1,
+        title: LocalizedText::new("Bilibili"),
+        description: None,
+        scopes: vec![ConfigScope::global()],
+        root: ConfigNode {
+            key: ConfigKey::new("bilibili"),
+            value_type: ConfigValueType::Map {
+                key_strategy: MapKeyStrategy::FreeString,
+                value: Box::new(ConfigValueType::Object),
+            },
+            title: LocalizedText::new("Bilibili"),
+            description: None,
+            default_value: None,
+            constraints: ConfigConstraints::default(),
+            presentation: ConfigPresentation::default(),
+            visibility: None,
+            enabled_if: None,
+            mutability: ConfigMutability::ReadWrite,
+            restart_policy: RestartPolicy::None,
+            children: Vec::new(),
+        },
+        groups: Vec::new(),
+    }
+}
+
+fn block_on_config<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle)
+            if matches!(
+                handle.runtime_flavor(),
+                tokio::runtime::RuntimeFlavor::MultiThread
+            ) =>
+        {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        }
+        Ok(_) => std::thread::spawn(move || futures_executor::block_on(future))
+            .join()
+            .expect("Bilibili config worker"),
+        Err(_) => futures_executor::block_on(future),
+    }
+}
 
 struct HostBilibiliCredentialStore {
     host: HostSecretStore,
@@ -404,14 +528,37 @@ impl BilibiliCredentialStore for HostBilibiliCredentialStore {
     }
 }
 
-struct HostBilibiliConfigStore(ConfiguredPluginStore);
+struct ConfigServiceBilibiliConfigStore(Arc<ConfigService>);
 
-impl BilibiliConfigStore for HostBilibiliConfigStore {
+impl BilibiliConfigStore for ConfigServiceBilibiliConfigStore {
     fn replace(&self, config: &BilibiliConfig) -> Result<(), String> {
-        let value = serde_json::to_value(config).map_err(|error| error.to_string())?;
-        self.0
-            .replace_config(BILIBILI_PLUGIN_ID, value)
-            .map_err(|error| error.to_string())
+        let service = self.0.clone();
+        let candidate = ConfigValue::from_json(
+            &serde_json::to_value(config).map_err(|error| error.to_string())?,
+        );
+        block_on_config(async move {
+            let snapshot = service
+                .read(
+                    BILIBILI_PLUGIN_ID,
+                    ConfigContext::global(),
+                    &[capability::VALUE_READ.into()],
+                )
+                .await?;
+            service
+                .apply(
+                    BILIBILI_PLUGIN_ID,
+                    ConfigApplyRequest {
+                        candidate,
+                        expected_revision: snapshot.revision,
+                        dry_run: false,
+                    },
+                    ConfigContext::global(),
+                    &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+                )
+                .await
+        })
+        .map(|_| ())
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -437,11 +584,34 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: BilibiliConfig =
+        let mut config: BilibiliConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        if let Some(service) = &self.config_service {
+            service
+                .registry()
+                .register(Arc::new(MemoryConfigProvider::new(
+                    bilibili_config_descriptor(),
+                    ConfigValue::from_json(
+                        &serde_json::to_value(&config).expect("Bilibili config serializes"),
+                    ),
+                    ConfigApplyMode::HotReload,
+                )))
+                .map_err(|error| error.to_string())?;
+            let service = service.clone();
+            let seed = ConfigValue::from_json(
+                &serde_json::to_value(&config).expect("Bilibili config serializes"),
+            );
+            let snapshot = block_on_config(async move {
+                service
+                    .create_if_absent(BILIBILI_PLUGIN_ID, seed, ConfigContext::global())
+                    .await
+            })
+            .map_err(|error| error.to_string())?;
+            config = serde_json::from_value(snapshot.value.to_json())
+                .map_err(|error| error.to_string())?;
+        }
         config.validate()?;
         let host_secret_store = builder.host_secret_store();
-        let configured_plugin_store = builder.configured_plugin_store();
         if matches!(config.backend, BilibiliBackendConfig::OpenPlatform { .. })
             && !host_secret_store.rotation_available()
         {
@@ -458,10 +628,12 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                 return Err("Bilibili management requires a Host security.secret_file".into());
             }
         }
-        let configured_plugin_store = if config.management.enabled {
-            Some(configured_plugin_store.ok_or_else(|| {
-                "Bilibili management requires a loaded product config file".to_string()
-            })?)
+        let config_service = if config.management.enabled {
+            Some(
+                self.config_service
+                    .clone()
+                    .ok_or_else(|| "Bilibili management requires ConfigService".to_string())?,
+            )
         } else {
             None
         };
@@ -505,7 +677,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
             runner_config.snapshot().media_provider_id
         ));
 
-        let management_service = if let Some(store) = configured_plugin_store {
+        let management_service = if let Some(config_service) = config_service {
             let service = Arc::new(BilibiliManagementService::new(
                 runner_config.clone(),
                 web_credential.clone(),
@@ -518,7 +690,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     host: host_secret_store.clone(),
                     shared: web_credential.clone(),
                 }),
-                Arc::new(HostBilibiliConfigStore(store)),
+                Arc::new(ConfigServiceBilibiliConfigStore(config_service)),
                 Arc::new(HostSecretPresence(host_secret_store.clone())),
             ));
             Some(service)
@@ -688,23 +860,38 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
 /// Media upload is intentionally absent until a product registers an explicit provider-backed
 /// QQ factory of its own.
 pub fn configured_bot_plugin_catalog() -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    configured_bot_plugin_catalog_inner(None)
+}
+
+fn configured_bot_plugin_catalog_inner(
+    config: Option<Arc<ConfigService>>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
     catalog.register(LegacyBotEventRouterConfiguredPlugin)?;
-    catalog.register(BotFlowRouterConfiguredPlugin)?;
     catalog.register(BotCommandConfiguredPlugin)?;
     catalog.register(QqBotConfiguredPlugin)?;
-    catalog.register(BilibiliConfiguredPlugin)?;
+    catalog.register(BilibiliConfiguredPlugin::new(config))?;
     catalog.register(WorkshopConfiguredPlugin)?;
     catalog.register(MihuashiConfiguredPlugin)?;
+    Ok(catalog)
+}
+
+/// Adds the Flow Router only when product bootstrap supplies ConfigService.
+pub fn configured_bot_plugin_catalog_with_config(
+    config: Arc<ConfigService>,
+) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
+    let mut catalog = configured_bot_plugin_catalog_inner(Some(config.clone()))?;
+    catalog.register(BotFlowRouterConfiguredPlugin::new(config))?;
     Ok(catalog)
 }
 
 /// Production Bot catalog with configurable Agent nodes wired to a shared Agent owner
 /// registry. The base catalog intentionally remains Agent-free for products that do not opt in.
 pub fn configured_bot_plugin_catalog_with_agent(
+    config: Arc<ConfigService>,
     connections: AgentConnectionRegistry,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_bot_plugin_catalog()?;
+    let mut catalog = configured_bot_plugin_catalog_with_config(config)?;
     catalog.register(BotAgentConfiguredPlugin::new(connections))?;
     Ok(catalog)
 }
@@ -751,8 +938,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut service = ServiceConfig::default();
         service.service.data_dir = root.path().join("data");
+        let config = Arc::new(
+            ConfigService::new(
+                Arc::new(mutsuki_config_service::ConfigProviderRegistry::default()),
+                Arc::new(mutsuki_config_service::InMemoryConfigRepository::default()),
+            )
+            .unwrap(),
+        );
 
-        BotFlowRouterConfiguredPlugin
+        BotFlowRouterConfiguredPlugin::new(config)
             .prepare(&Value::Null, ServiceRuntimeBuilder::new(service.clone()))
             .expect("Flow Router should accept a graph-only selection without a config table");
         BotCommandConfiguredPlugin
@@ -781,7 +975,7 @@ mod tests {
                 "self_binding_outbound_binding": "qq-main"
             }
         });
-        let error = match BilibiliConfiguredPlugin.prepare(
+        let error = match BilibiliConfiguredPlugin::new(None).prepare(
             &config,
             ServiceRuntimeBuilder::new(ServiceConfig::default()),
         ) {
@@ -816,7 +1010,7 @@ mod tests {
                 "self_binding_outbound_binding": ""
             }
         });
-        let error = BilibiliConfiguredPlugin
+        let error = BilibiliConfiguredPlugin::new(None)
             .prepare(
                 &config,
                 ServiceRuntimeBuilder::new(ServiceConfig::default()),
@@ -833,7 +1027,7 @@ mod tests {
             .prepare(&json!({"subscriptions": []}), builder)
             .err()
             .expect("legacy event router must be rejected");
-        assert!(error.contains("publish a graph"));
+        assert!(error.contains("apply a graph"));
 
         let error = BotCommandConfiguredPlugin
             .prepare(

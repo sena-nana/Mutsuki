@@ -10,8 +10,8 @@ name = "config-demo"
 path = "src/main.rs"
 
 [dependencies]
-mutsuki-bot-config = { workspace = true }
-mutsuki-plugin-bot-config-web = { workspace = true }
+mutsuki-config-service = { workspace = true }
+mutsuki-plugin-config-web = { workspace = true }
 mutsuki-web-host = { workspace = true }
 mutsuki-web-protocol = { workspace = true }
 serde = { workspace = true }

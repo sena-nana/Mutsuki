@@ -103,6 +103,16 @@ impl SharedQqCredentials {
     pub fn clear(&self) {
         *self.client_secret.lock().expect("QQBot credential mutex") = None;
     }
+
+    /// Reports only whether a usable credential is loaded; the secret is never exposed.
+    #[must_use]
+    pub fn is_configured(&self) -> bool {
+        self.client_secret
+            .lock()
+            .expect("QQBot credential mutex")
+            .as_deref()
+            .is_some_and(|secret| !secret.is_empty())
+    }
 }
 
 impl QqCredentialProvider for SharedQqCredentials {

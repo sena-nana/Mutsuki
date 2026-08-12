@@ -21,9 +21,11 @@ pub const PLUGIN_ID: &str = "bot-agent";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_CONNECTION_READ: &str = "agent.connection.read";
 pub const CAPABILITY_CONNECTION_WRITE: &str = "agent.connection.write";
+pub type AgentConnectionManagementResolver =
+    Arc<dyn Fn() -> Result<Arc<AgentConnectionManager>, String> + Send + Sync>;
 
 pub struct BotAgentWebExtension {
-    connections: Option<Arc<AgentConnectionManager>>,
+    connections: Option<AgentConnectionManagementResolver>,
     assets_root: Option<PathBuf>,
 }
 
@@ -31,9 +33,20 @@ impl BotAgentWebExtension {
     #[must_use]
     pub fn new(connections: Option<Arc<AgentConnectionManager>>) -> Self {
         Self {
-            connections,
+            connections: connections.map(|manager| {
+                Arc::new(move || Ok(manager.clone())) as AgentConnectionManagementResolver
+            }),
             assets_root: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_connection_resolver(
+        mut self,
+        connections: Option<AgentConnectionManagementResolver>,
+    ) -> Self {
+        self.connections = connections;
+        self
     }
 
     #[must_use]
@@ -63,26 +76,31 @@ impl WebExtension for BotAgentWebExtension {
     fn register_rpc(&self, registry: &mut RpcRegistry) -> Result<(), ExtensionError> {
         if let Some(manager) = &self.connections {
             let manager = manager.clone();
-            registry.register("connections.snapshot", move |params| {
-                require_capability(&params, CAPABILITY_CONNECTION_READ)?;
-                serde_json::to_value(manager.snapshot()).map_err(encode_error)
-            });
-
-            let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register("connections.test", move |params| {
-                require_capability(&params, CAPABILITY_CONNECTION_WRITE)?;
-                let config = decode::<AgentConnectionConfig>(&params, "config")?;
-                serde_json::to_value(manager.test_connection(config).map_err(agent_error)?)
+            registry.register_contextual("connections.snapshot", move |context, _params| {
+                context.require(CAPABILITY_CONNECTION_READ)?;
+                serde_json::to_value(resolve_connections(&manager)?.snapshot())
                     .map_err(encode_error)
             });
 
             let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register("connections.upsert", move |params| {
-                require_capability(&params, CAPABILITY_CONNECTION_WRITE)?;
+            registry.register_contextual("connections.test", move |context, params| {
+                context.require(CAPABILITY_CONNECTION_WRITE)?;
+                let config = decode::<AgentConnectionConfig>(&params, "config")?;
+                serde_json::to_value(
+                    resolve_connections(&manager)?
+                        .test_connection(config)
+                        .map_err(agent_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let manager = self.connections.as_ref().expect("checked").clone();
+            registry.register_contextual("connections.upsert", move |context, params| {
+                context.require(CAPABILITY_CONNECTION_WRITE)?;
                 let expected_revision = required_u64(&params, "expected_revision")?;
                 let config = decode::<AgentConnectionConfig>(&params, "config")?;
                 serde_json::to_value(
-                    manager
+                    resolve_connections(&manager)?
                         .upsert(expected_revision, config)
                         .map_err(agent_error)?,
                 )
@@ -90,13 +108,13 @@ impl WebExtension for BotAgentWebExtension {
             });
 
             let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register("connections.reconnect", move |params| {
-                require_capability(&params, CAPABILITY_CONNECTION_WRITE)?;
+            registry.register_contextual("connections.reconnect", move |context, params| {
+                context.require(CAPABILITY_CONNECTION_WRITE)?;
                 let expected_revision = required_u64(&params, "expected_revision")?;
                 let connection_id = AgentConnectionId::new(required_str(&params, "connection_id")?)
                     .map_err(|error| ExtensionError::Registration(error.to_string()))?;
                 serde_json::to_value(
-                    manager
+                    resolve_connections(&manager)?
                         .reconnect(expected_revision, &connection_id)
                         .map_err(agent_error)?,
                 )
@@ -142,28 +160,22 @@ fn required_u64(params: &Value, key: &str) -> Result<u64, ExtensionError> {
         .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))
 }
 
-fn has_capability(params: &Value, required: &str) -> bool {
-    params
-        .get("capabilities")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .any(|capability| capability == "*" || capability == required)
-}
-
-fn require_capability(params: &Value, required: &str) -> Result<(), ExtensionError> {
-    has_capability(params, required)
-        .then_some(())
-        .ok_or_else(|| ExtensionError::CapabilityDenied(required.into()))
-}
-
 fn agent_error(
     error: mutsuki_agent_service_host_integration::AgentConnectionError,
 ) -> ExtensionError {
     ExtensionError::Registration(
         json!({"code": error.code(), "message": error.to_string()}).to_string(),
     )
+}
+
+fn resolve_connections(
+    resolver: &AgentConnectionManagementResolver,
+) -> Result<Arc<AgentConnectionManager>, ExtensionError> {
+    resolver().map_err(|message| {
+        ExtensionError::Registration(
+            json!({"code": "agent.connection_owner_unavailable", "message": message}).to_string(),
+        )
+    })
 }
 
 fn encode_error(error: serde_json::Error) -> ExtensionError {
@@ -221,6 +233,7 @@ pub fn materialize_frontend_assets(out_dir: &Path) -> Result<PathBuf, std::io::E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_web_extension::RpcCallContext;
 
     #[test]
     fn assets_are_materialized() {
@@ -228,5 +241,32 @@ mod tests {
         materialize_frontend_assets(root.path()).unwrap();
         assert!(root.path().join("index.js").is_file());
         assert!(root.path().join("manifest.json").is_file());
+    }
+
+    #[test]
+    fn rpc_authorization_uses_authenticated_context_not_request_fields() {
+        let extension = BotAgentWebExtension::new(None)
+            .with_connection_resolver(Some(Arc::new(|| Err("not running".into()))));
+        let mut rpc = RpcRegistry::new(PLUGIN_ID);
+        extension.register_rpc(&mut rpc).unwrap();
+
+        assert!(matches!(
+            rpc.call_with_context(
+                "connections.snapshot",
+                json!({ "capabilities": ["*"] }),
+                RpcCallContext::default(),
+            ),
+            Err(ExtensionError::CapabilityDenied(capability))
+                if capability == CAPABILITY_CONNECTION_READ
+        ));
+        assert!(matches!(
+            rpc.call_with_context(
+                "connections.snapshot",
+                json!({}),
+                RpcCallContext::new(&[CAPABILITY_CONNECTION_READ.into()]),
+            ),
+            Err(ExtensionError::Registration(message))
+                if message.contains("agent.connection_owner_unavailable")
+        ));
     }
 }

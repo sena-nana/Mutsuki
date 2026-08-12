@@ -1,7 +1,7 @@
 # Bot Agent Flow migration
 
-Bot orchestration is now a breaking replacement. The Web Console publishes a versioned Bot Flow;
-the published graph is the only source of matching, branching and invocation order.
+Bot orchestration is now a breaking replacement. Bot Flow is an ordinary versioned configuration
+provider; its active document is the only source of matching, branching and invocation order.
 
 Required migration:
 
@@ -14,7 +14,7 @@ Required migration:
 4. Recreate admission and routing in the Flow editor. Mention, wake word, account, role,
    permission and rate-limit conditions belong to Match nodes. Command prefix, path, aliases and
    typed arguments belong to Command Match node configuration.
-5. Publish the graph after validation. Old `subscriptions`, Handler priority/propagation/hooks,
+5. Validate and apply the graph with its configuration revision. Old `subscriptions`, Handler priority/propagation/hooks,
    command tables and conversation policy rules are rejected or ignored; no automatic import is
    attempted.
 
@@ -23,6 +23,7 @@ concurrency and timeout. Its submit/cancel/reset/fork/status/regenerate nodes em
 events; reliable Delivery sinks own outbound delivery. Existing session generation fencing,
 idempotency and connection handshake guarantees remain unchanged.
 
-Draft save and publish use revision CAS. Publish persists an immutable version before atomically
-switching the active snapshot; in-flight tasks keep their original graph revision. Connection
-management stays available as a separate Web page, while trigger-rule pages are removed.
+The editor keeps drafts in the browser and performs one ConfigService revision-CAS apply. The
+repository plugin durably commits the redacted document while the Flow provider atomically swaps
+its active snapshot; failures roll both sides back, and in-flight tasks keep their original graph
+revision. The Flow editor is an explicitly selected WebExtension and is independent of the Router.

@@ -71,20 +71,20 @@ impl WebExtension for BilibiliWebExtension {
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let service = self.service.clone();
 
-        ctx.register("status", {
+        ctx.register_contextual("status", {
             let service = service.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 Ok(serde_json::to_value(service.status()).unwrap_or_default())
             }
         });
 
-        ctx.register_async("login.start", {
+        ctx.register_async_contextual("login.start", {
             let service = service.clone();
-            move |params| {
+            move |context, params| {
                 let service = service.clone();
                 async move {
-                    require_runtime_write(&params)?;
+                    context.require(CAPABILITY_RUNTIME_WRITE)?;
                     let actor =
                         optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
                     let result = service.login_start(&actor).await.map_err(map_bili_error)?;
@@ -93,29 +93,29 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("login.poll", {
+        ctx.register_contextual("login.poll", {
             let service = service.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "actor_id").unwrap_or(CONSOLE_LOGIN_ACTOR.into());
                 let result = service.login_poll(&actor).map_err(map_bili_error)?;
                 Ok(serde_json::to_value(result).unwrap_or_default())
             }
         });
 
-        ctx.register("credential.clear", {
+        ctx.register_contextual("credential.clear", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 service.credential_clear().map_err(map_bili_error)?;
                 Ok(json!({ "ok": true }))
             }
         });
 
-        ctx.register("subscriptions.list", {
+        ctx.register_contextual("subscriptions.list", {
             let service = service.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
                 let is_admin = params
                     .get("is_admin")
@@ -126,10 +126,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("subscriptions.subscribe", {
+        ctx.register_contextual("subscriptions.subscribe", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let subscription_id = required_str(&params, "subscription_id")?;
                 let uid = required_u64(&params, "uid")?;
                 let notifications = parse_notifications_json(&params)?;
@@ -148,10 +148,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("subscriptions.unsubscribe", {
+        ctx.register_contextual("subscriptions.unsubscribe", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let subscription_id = required_str(&params, "subscription_id")?;
                 service
                     .unsubscribe(&subscription_id)
@@ -160,10 +160,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("subscriptions.set_paused", {
+        ctx.register_contextual("subscriptions.set_paused", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
                 let is_admin = params
                     .get("is_admin")
@@ -181,10 +181,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("subscriptions.preview", {
+        ctx.register_contextual("subscriptions.preview", {
             let service = service.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 let actor = optional_str(&params, "operator_user_id").unwrap_or_default();
                 let is_admin = params
                     .get("is_admin")
@@ -198,10 +198,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("binding.start", {
+        ctx.register_contextual("binding.start", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let operator = required_str(&params, "operator_user_id")?;
                 let uid = required_u64(&params, "uid")?;
                 let seed = optional_str(&params, "challenge_seed")
@@ -213,10 +213,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("binding.verify", {
+        ctx.register_contextual("binding.verify", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let operator = required_str(&params, "operator_user_id")?;
                 let platform = optional_str(&params, "platform").unwrap_or_else(|| "web".into());
                 let target = parse_target(&params)?;
@@ -227,10 +227,10 @@ impl WebExtension for BilibiliWebExtension {
             }
         });
 
-        ctx.register("binding.unbind", {
+        ctx.register_contextual("binding.unbind", {
             let service = service.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let operator = required_str(&params, "operator_user_id")?;
                 let removed = service.unbind(&operator).map_err(map_bili_error)?;
                 Ok(json!({ "removed": removed }))
@@ -306,35 +306,6 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
 
 fn map_bili_error(error: mutsuki_plugin_bot_bilibili::BilibiliError) -> ExtensionError {
     ExtensionError::Registration(error.to_string())
-}
-
-fn require_capability(params: &JsonValue, required: &str) -> Result<(), ExtensionError> {
-    let caps = caps_from_params(params);
-    if caps.iter().any(|cap| cap == "*" || cap == required) {
-        return Ok(());
-    }
-    Err(ExtensionError::CapabilityDenied(required.into()))
-}
-
-fn require_runtime_read(params: &JsonValue) -> Result<(), ExtensionError> {
-    require_capability(params, CAPABILITY_RUNTIME_READ)
-}
-
-fn require_runtime_write(params: &JsonValue) -> Result<(), ExtensionError> {
-    require_capability(params, CAPABILITY_RUNTIME_WRITE)
-}
-
-fn caps_from_params(params: &JsonValue) -> Vec<String> {
-    params
-        .get("capabilities")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError> {

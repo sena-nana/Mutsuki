@@ -9,13 +9,11 @@ use mutsuki_bot_delivery::{
     DELIVERY_SEND_LEASE_MS, DeliveryError, DeliveryRepository, ReplyDeliveryRepository,
     reply_part_request,
 };
-use mutsuki_bot_flow::{BotFlowError, BotFlowRepository};
 use mutsuki_bot_interaction::{InteractionError, InteractionRepository};
 use mutsuki_bot_protocol::{
     AgentSessionBinding, BotActiveDeliveryRequest, BotDeliveryAttempt, BotDeliveryReceipt,
-    BotFlowDraft, BotFlowDraftSaveRequest, BotFlowPublishRequest, BotFlowPublishedSnapshot,
-    BotFlowStateSnapshot, BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest,
-    DeliveryStatus, InteractionStatus,
+    BotInteractionSession, BotReplyDeliveryReceipt, BotReplyDeliveryRequest, DeliveryStatus,
+    InteractionStatus,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use thiserror::Error;
@@ -46,6 +44,22 @@ pub struct BotStateDbMetrics {
     pub transaction_latency_max_ns: u64,
     pub busy_count: u64,
     pub connection_open_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotStatePage<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BotManagementAuditRecord {
+    pub audit_id: String,
+    pub revision: u64,
+    pub actor_id: String,
+    pub action: String,
+    pub result: serde_json::Value,
+    pub created_at_unix_ms: u64,
 }
 
 #[derive(Default)]
@@ -177,6 +191,67 @@ impl BotStateDbRepository {
         self.inner.metrics.snapshot()
     }
 
+    /// Lists durable delivery receipts and attempts in stable delivery-id order.
+    pub fn delivery_page(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>, BotStateDbError> {
+        let after = after.unwrap_or_default().to_owned();
+        self.call_sync(|reply| DbJob::DeliveryPage {
+            after,
+            limit: bounded_page_limit(limit),
+            reply,
+        })
+    }
+
+    /// Lists durable interaction sessions in stable session-id order.
+    pub fn interaction_page(
+        &self,
+        after: Option<&str>,
+        limit: u32,
+    ) -> Result<BotStatePage<BotInteractionSession>, BotStateDbError> {
+        let after = after.unwrap_or_default().to_owned();
+        self.call_sync(|reply| DbJob::InteractionPage {
+            after,
+            limit: bounded_page_limit(limit),
+            reply,
+        })
+    }
+
+    pub fn management_revision(&self) -> Result<u64, BotStateDbError> {
+        self.call_sync(|reply| DbJob::ManagementRevision { reply })
+    }
+
+    pub fn management_audits(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<BotManagementAuditRecord>, BotStateDbError> {
+        self.call_sync(|reply| DbJob::ManagementAudits {
+            limit: bounded_page_limit(limit),
+            reply,
+        })
+    }
+
+    /// Commits one revision-fenced management audit entry atomically.
+    pub fn commit_management_audit(
+        &self,
+        expected_revision: u64,
+        actor_id: &str,
+        action: &str,
+        result: serde_json::Value,
+        created_at_unix_ms: u64,
+    ) -> Result<Option<BotManagementAuditRecord>, BotStateDbError> {
+        self.call_sync(|reply| DbJob::CommitManagementAudit {
+            expected_revision,
+            actor_id: actor_id.to_owned(),
+            action: action.to_owned(),
+            result,
+            created_at_unix_ms,
+            reply,
+        })
+    }
+
     async fn call<T>(
         &self,
         make_job: impl FnOnce(oneshot::Sender<Result<T, BotStateDbError>>) -> DbJob,
@@ -212,27 +287,6 @@ impl BotStateDbRepository {
 }
 
 enum DbJob {
-    FlowSnapshot {
-        reply: SyncDbReply<BotFlowStateSnapshot>,
-    },
-    FlowPublishedRevision {
-        revision: u64,
-        reply: SyncDbReply<Option<BotFlowPublishedSnapshot>>,
-    },
-    SaveFlowDraft {
-        request: BotFlowDraftSaveRequest,
-        now_ms: i64,
-        reply: SyncDbReply<BotFlowDraft>,
-    },
-    DiscardFlowDraft {
-        expected_revision: u64,
-        reply: SyncDbReply<()>,
-    },
-    PublishFlowDraft {
-        request: BotFlowPublishRequest,
-        now_ms: i64,
-        reply: SyncDbReply<BotFlowStateSnapshot>,
-    },
     SessionBindingSync {
         binding_key: String,
         reply: SyncDbReply<Option<AgentSessionBinding>>,
@@ -269,6 +323,11 @@ enum DbJob {
     DeliveryAttempts {
         delivery_id: String,
         reply: SyncDbReply<Vec<BotDeliveryAttempt>>,
+    },
+    DeliveryPage {
+        after: String,
+        limit: u32,
+        reply: SyncDbReply<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>>,
     },
     SaveDeliveryOutcome {
         attempt: BotDeliveryAttempt,
@@ -322,6 +381,26 @@ enum DbJob {
     RecoverWaitingInteractions {
         reply: DbReply<Vec<BotInteractionSession>>,
     },
+    InteractionPage {
+        after: String,
+        limit: u32,
+        reply: SyncDbReply<BotStatePage<BotInteractionSession>>,
+    },
+    ManagementRevision {
+        reply: SyncDbReply<u64>,
+    },
+    ManagementAudits {
+        limit: u32,
+        reply: SyncDbReply<Vec<BotManagementAuditRecord>>,
+    },
+    CommitManagementAudit {
+        expected_revision: u64,
+        actor_id: String,
+        action: String,
+        result: serde_json::Value,
+        created_at_unix_ms: u64,
+        reply: SyncDbReply<Option<BotManagementAuditRecord>>,
+    },
 }
 
 type DbReply<T> = oneshot::Sender<Result<T, BotStateDbError>>;
@@ -331,10 +410,7 @@ impl DbJob {
     fn transactional(&self) -> bool {
         matches!(
             self,
-            Self::SaveFlowDraft { .. }
-                | Self::DiscardFlowDraft { .. }
-                | Self::PublishFlowDraft { .. }
-                | Self::CompareAndSetSessionBindingSync { .. }
+            Self::CompareAndSetSessionBindingSync { .. }
                 | Self::BeginAgentEventSync { .. }
                 | Self::ReserveDelivery { .. }
                 | Self::SaveDeliveryOutcome { .. }
@@ -344,43 +420,12 @@ impl DbJob {
                 | Self::ClaimDueReplyParts { .. }
                 | Self::CreateInteraction { .. }
                 | Self::CompareAndSetInteraction { .. }
+                | Self::CommitManagementAudit { .. }
         )
     }
 
     fn execute(self, connection: &mut Connection, metrics: &ActorMetrics) {
         match self {
-            Self::FlowSnapshot { reply } => {
-                send_sync_reply(reply, flow_snapshot(connection), metrics);
-            }
-            Self::FlowPublishedRevision { revision, reply } => {
-                send_sync_reply(
-                    reply,
-                    flow_published_revision(connection, revision),
-                    metrics,
-                );
-            }
-            Self::SaveFlowDraft {
-                request,
-                now_ms,
-                reply,
-            } => send_sync_reply(reply, save_flow_draft(connection, request, now_ms), metrics),
-            Self::DiscardFlowDraft {
-                expected_revision,
-                reply,
-            } => send_sync_reply(
-                reply,
-                discard_flow_draft(connection, expected_revision),
-                metrics,
-            ),
-            Self::PublishFlowDraft {
-                request,
-                now_ms,
-                reply,
-            } => send_sync_reply(
-                reply,
-                publish_flow_draft(connection, request, now_ms),
-                metrics,
-            ),
             Self::SessionBindingSync { binding_key, reply } => {
                 send_sync_reply(reply, session_binding(connection, &binding_key), metrics);
             }
@@ -430,6 +475,11 @@ impl DbJob {
             Self::DeliveryAttempts { delivery_id, reply } => {
                 send_sync_reply(reply, delivery_attempts(connection, &delivery_id), metrics);
             }
+            Self::DeliveryPage {
+                after,
+                limit,
+                reply,
+            } => send_sync_reply(reply, delivery_page(connection, &after, limit), metrics),
             Self::SaveDeliveryOutcome {
                 attempt,
                 receipt,
@@ -494,6 +544,36 @@ impl DbJob {
             Self::RecoverWaitingInteractions { reply } => {
                 send_reply(reply, recover_waiting_interactions(connection), metrics);
             }
+            Self::InteractionPage {
+                after,
+                limit,
+                reply,
+            } => send_sync_reply(reply, interaction_page(connection, &after, limit), metrics),
+            Self::ManagementRevision { reply } => {
+                send_sync_reply(reply, management_revision(connection), metrics);
+            }
+            Self::ManagementAudits { limit, reply } => {
+                send_sync_reply(reply, management_audits(connection, limit), metrics);
+            }
+            Self::CommitManagementAudit {
+                expected_revision,
+                actor_id,
+                action,
+                result,
+                created_at_unix_ms,
+                reply,
+            } => send_sync_reply(
+                reply,
+                commit_management_audit(
+                    connection,
+                    expected_revision,
+                    &actor_id,
+                    &action,
+                    result,
+                    created_at_unix_ms,
+                ),
+                metrics,
+            ),
         }
     }
 }
@@ -622,37 +702,24 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              version INTEGER NOT NULL,
              body TEXT NOT NULL
          );
-         CREATE TABLE IF NOT EXISTS bot_flow_meta(
+         CREATE TABLE IF NOT EXISTS bot_management_meta(
              singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-             published_revision INTEGER NOT NULL,
-             next_draft_revision INTEGER NOT NULL,
-             active_draft_revision INTEGER
+             revision INTEGER NOT NULL
          );
-         INSERT OR IGNORE INTO bot_flow_meta(
-             singleton, published_revision, next_draft_revision, active_draft_revision
-         ) VALUES (1, 0, 1, NULL);
-         CREATE TABLE IF NOT EXISTS bot_flow_draft(
-             singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-             revision INTEGER NOT NULL UNIQUE,
-             base_published_revision INTEGER NOT NULL,
-             body TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS bot_flow_version(
-             revision INTEGER PRIMARY KEY,
-             body TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS bot_flow_audit(
+         INSERT OR IGNORE INTO bot_management_meta(singleton, revision) VALUES (1, 0);
+         CREATE TABLE IF NOT EXISTS bot_management_audit(
              audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+             revision INTEGER NOT NULL UNIQUE,
+             actor_id TEXT NOT NULL,
              action TEXT NOT NULL,
-             revision INTEGER NOT NULL,
-             created_at_ms INTEGER NOT NULL,
-             body TEXT NOT NULL
+             result TEXT NOT NULL,
+             created_at_unix_ms INTEGER NOT NULL
          );
          CREATE INDEX IF NOT EXISTS bot_delivery_attempt_due
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=5;
+         PRAGMA user_version=6;
          COMMIT;",
     )?;
 
@@ -688,249 +755,6 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
 
 fn immediate(connection: &mut Connection) -> Result<Transaction<'_>, BotStateDbError> {
     Ok(connection.transaction_with_behavior(TransactionBehavior::Immediate)?)
-}
-
-fn flow_snapshot(connection: &Connection) -> Result<BotFlowStateSnapshot, BotStateDbError> {
-    let (published_revision, active_draft_revision) = connection.query_row(
-        "SELECT published_revision, active_draft_revision FROM bot_flow_meta WHERE singleton=1",
-        [],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
-    )?;
-    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
-    let active_draft_revision = active_draft_revision
-        .map(|revision| sqlite_unsigned(revision, "draft revision"))
-        .transpose()?;
-    let published = if published_revision == 0 {
-        BotFlowPublishedSnapshot {
-            revision: 0,
-            flows: Vec::new(),
-            published_at_ms: 0,
-        }
-    } else {
-        flow_published_revision(connection, published_revision)?.ok_or_else(|| {
-            BotStateDbError::Invariant(format!(
-                "active Bot flow revision {published_revision} is missing"
-            ))
-        })?
-    };
-    let draft = match active_draft_revision {
-        Some(revision) => {
-            let body = connection
-                .query_row(
-                    "SELECT body FROM bot_flow_draft WHERE singleton=1 AND revision=?1",
-                    params![sqlite_integer(revision)?],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?;
-            Some(decode(&body.ok_or_else(|| {
-                BotStateDbError::Invariant(format!("active Bot flow draft {revision} is missing"))
-            })?)?)
-        }
-        None => None,
-    };
-    Ok(BotFlowStateSnapshot { draft, published })
-}
-
-fn flow_published_revision(
-    connection: &Connection,
-    revision: u64,
-) -> Result<Option<BotFlowPublishedSnapshot>, BotStateDbError> {
-    if revision == 0 {
-        return Ok(Some(BotFlowPublishedSnapshot {
-            revision: 0,
-            flows: Vec::new(),
-            published_at_ms: 0,
-        }));
-    }
-    connection
-        .query_row(
-            "SELECT body FROM bot_flow_version WHERE revision=?1",
-            params![sqlite_integer(revision)?],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
-        .map(|body| decode(&body))
-        .transpose()
-}
-
-fn save_flow_draft(
-    connection: &mut Connection,
-    request: BotFlowDraftSaveRequest,
-    now_ms: i64,
-) -> Result<BotFlowDraft, BotStateDbError> {
-    let transaction = immediate(connection)?;
-    let (published_revision, next_draft_revision, active_draft_revision) = transaction.query_row(
-        "SELECT published_revision, next_draft_revision, active_draft_revision
-         FROM bot_flow_meta WHERE singleton=1",
-        [],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-            ))
-        },
-    )?;
-    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
-    let next_draft_revision = sqlite_unsigned(next_draft_revision, "next draft revision")?;
-    let active_draft_revision = active_draft_revision
-        .map(|revision| sqlite_unsigned(revision, "draft revision"))
-        .transpose()?;
-    let expected = request.expected_draft_revision.unwrap_or(0);
-    let actual = active_draft_revision.unwrap_or(0);
-    if expected != actual {
-        return Err(BotStateDbError::FlowRevisionConflict { expected, actual });
-    }
-    if request.base_published_revision != published_revision {
-        return Err(BotStateDbError::FlowRevisionConflict {
-            expected: request.base_published_revision,
-            actual: published_revision,
-        });
-    }
-    let draft = BotFlowDraft {
-        revision: next_draft_revision,
-        base_published_revision: published_revision,
-        flows: request.flows,
-        updated_at_ms: now_ms,
-    };
-    let body = encode(&draft)?;
-    transaction.execute(
-        "INSERT INTO bot_flow_draft(singleton, revision, base_published_revision, body)
-         VALUES (1, ?1, ?2, ?3)
-         ON CONFLICT(singleton) DO UPDATE SET
-             revision=excluded.revision,
-             base_published_revision=excluded.base_published_revision,
-             body=excluded.body",
-        params![
-            sqlite_integer(draft.revision)?,
-            sqlite_integer(draft.base_published_revision)?,
-            body
-        ],
-    )?;
-    transaction.execute(
-        "UPDATE bot_flow_meta SET next_draft_revision=?1, active_draft_revision=?2
-         WHERE singleton=1",
-        params![
-            sqlite_integer(next_draft_revision + 1)?,
-            sqlite_integer(draft.revision)?
-        ],
-    )?;
-    transaction.execute(
-        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
-         VALUES ('draft.save', ?1, ?2, ?3)",
-        params![sqlite_integer(draft.revision)?, now_ms, encode(&draft)?],
-    )?;
-    transaction.commit()?;
-    Ok(draft)
-}
-
-fn discard_flow_draft(
-    connection: &mut Connection,
-    expected_revision: u64,
-) -> Result<(), BotStateDbError> {
-    let transaction = immediate(connection)?;
-    let actual = transaction
-        .query_row(
-            "SELECT active_draft_revision FROM bot_flow_meta WHERE singleton=1",
-            [],
-            |row| row.get::<_, Option<i64>>(0),
-        )?
-        .map(|revision| sqlite_unsigned(revision, "draft revision"))
-        .transpose()?
-        .unwrap_or(0);
-    if expected_revision != actual {
-        return Err(BotStateDbError::FlowRevisionConflict {
-            expected: expected_revision,
-            actual,
-        });
-    }
-    transaction.execute("DELETE FROM bot_flow_draft WHERE singleton=1", [])?;
-    transaction.execute(
-        "UPDATE bot_flow_meta SET active_draft_revision=NULL WHERE singleton=1",
-        [],
-    )?;
-    transaction.execute(
-        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
-         VALUES ('draft.discard', ?1, 0, '{}')",
-        params![sqlite_integer(actual)?],
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
-fn publish_flow_draft(
-    connection: &mut Connection,
-    request: BotFlowPublishRequest,
-    now_ms: i64,
-) -> Result<BotFlowStateSnapshot, BotStateDbError> {
-    let transaction = immediate(connection)?;
-    let (published_revision, active_draft_revision) = transaction.query_row(
-        "SELECT published_revision, active_draft_revision FROM bot_flow_meta WHERE singleton=1",
-        [],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
-    )?;
-    let published_revision = sqlite_unsigned(published_revision, "published revision")?;
-    let active_draft_revision = active_draft_revision
-        .map(|revision| sqlite_unsigned(revision, "draft revision"))
-        .transpose()?;
-    if published_revision != request.expected_published_revision {
-        return Err(BotStateDbError::FlowRevisionConflict {
-            expected: request.expected_published_revision,
-            actual: published_revision,
-        });
-    }
-    let actual_draft = active_draft_revision.unwrap_or(0);
-    if actual_draft != request.expected_draft_revision {
-        return Err(BotStateDbError::FlowRevisionConflict {
-            expected: request.expected_draft_revision,
-            actual: actual_draft,
-        });
-    }
-    let draft_body = transaction
-        .query_row(
-            "SELECT body FROM bot_flow_draft WHERE singleton=1 AND revision=?1",
-            params![sqlite_integer(actual_draft)?],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
-        .ok_or_else(|| BotStateDbError::Invariant("active Bot flow draft is missing".into()))?;
-    let draft: BotFlowDraft = decode(&draft_body)?;
-    if draft.base_published_revision != published_revision {
-        return Err(BotStateDbError::FlowRevisionConflict {
-            expected: draft.base_published_revision,
-            actual: published_revision,
-        });
-    }
-    let published = BotFlowPublishedSnapshot {
-        revision: published_revision + 1,
-        flows: draft.flows,
-        published_at_ms: now_ms,
-    };
-    let body = encode(&published)?;
-    transaction.execute(
-        "INSERT INTO bot_flow_version(revision, body) VALUES (?1, ?2)",
-        params![sqlite_integer(published.revision)?, body],
-    )?;
-    transaction.execute("DELETE FROM bot_flow_draft WHERE singleton=1", [])?;
-    transaction.execute(
-        "UPDATE bot_flow_meta SET published_revision=?1, active_draft_revision=NULL
-         WHERE singleton=1",
-        params![sqlite_integer(published.revision)?],
-    )?;
-    transaction.execute(
-        "INSERT INTO bot_flow_audit(action, revision, created_at_ms, body)
-         VALUES ('publish', ?1, ?2, ?3)",
-        params![
-            sqlite_integer(published.revision)?,
-            now_ms,
-            encode(&published)?
-        ],
-    )?;
-    transaction.commit()?;
-    Ok(BotFlowStateSnapshot {
-        draft: None,
-        published,
-    })
 }
 
 fn session_binding(
@@ -1261,6 +1085,37 @@ fn delivery_attempts(
         .collect()
 }
 
+fn delivery_page(
+    connection: &Connection,
+    after: &str,
+    limit: u32,
+) -> Result<BotStatePage<(BotDeliveryReceipt, Vec<BotDeliveryAttempt>)>, BotStateDbError> {
+    let fetch = i64::from(limit.saturating_add(1));
+    let mut statement = connection.prepare(
+        "SELECT delivery_id FROM bot_delivery_receipt
+         WHERE delivery_id > ?1 ORDER BY delivery_id LIMIT ?2",
+    )?;
+    let mut delivery_ids = statement
+        .query_map(params![after, fetch], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let has_more = delivery_ids.len() > limit as usize;
+    delivery_ids.truncate(limit as usize);
+    let next_cursor = has_more.then(|| delivery_ids.last().cloned()).flatten();
+    let items = delivery_ids
+        .into_iter()
+        .map(|delivery_id| {
+            let receipt = delivery_receipt(connection, &delivery_id)?.ok_or_else(|| {
+                BotStateDbError::Invariant(format!(
+                    "listed delivery receipt disappeared: {delivery_id}"
+                ))
+            })?;
+            let attempts = delivery_attempts(connection, &delivery_id)?;
+            Ok((receipt, attempts))
+        })
+        .collect::<Result<Vec<_>, BotStateDbError>>()?;
+    Ok(BotStatePage { items, next_cursor })
+}
+
 fn insert_delivery_attempt(
     connection: &Connection,
     attempt: &BotDeliveryAttempt,
@@ -1586,6 +1441,128 @@ fn recover_waiting_interactions(
         .collect()
 }
 
+fn interaction_page(
+    connection: &Connection,
+    after: &str,
+    limit: u32,
+) -> Result<BotStatePage<BotInteractionSession>, BotStateDbError> {
+    let fetch = i64::from(limit.saturating_add(1));
+    let mut statement = connection.prepare(
+        "SELECT session_id, body FROM bot_interaction
+         WHERE session_id > ?1 ORDER BY session_id LIMIT ?2",
+    )?;
+    let mut rows = statement
+        .query_map(params![after, fetch], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let has_more = rows.len() > limit as usize;
+    rows.truncate(limit as usize);
+    let next_cursor = has_more
+        .then(|| rows.last().map(|(session_id, _)| session_id.clone()))
+        .flatten();
+    let items = rows
+        .into_iter()
+        .map(|(_, body)| decode(&body))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BotStatePage { items, next_cursor })
+}
+
+fn management_revision(connection: &Connection) -> Result<u64, BotStateDbError> {
+    let revision = connection.query_row(
+        "SELECT revision FROM bot_management_meta WHERE singleton=1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    sqlite_unsigned(revision, "management revision")
+}
+
+fn management_audits(
+    connection: &Connection,
+    limit: u32,
+) -> Result<Vec<BotManagementAuditRecord>, BotStateDbError> {
+    let mut statement = connection.prepare(
+        "SELECT audit_id, revision, actor_id, action, result, created_at_unix_ms
+         FROM bot_management_audit ORDER BY revision DESC LIMIT ?1",
+    )?;
+    statement
+        .query_map(params![i64::from(limit)], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .map(|row| {
+            let (audit_id, revision, actor_id, action, result, created_at_unix_ms) = row?;
+            Ok(BotManagementAuditRecord {
+                audit_id: format!("audit-{audit_id}"),
+                revision: sqlite_unsigned(revision, "management audit revision")?,
+                actor_id,
+                action,
+                result: decode(&result)?,
+                created_at_unix_ms: sqlite_unsigned(
+                    created_at_unix_ms,
+                    "management audit timestamp",
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn commit_management_audit(
+    connection: &mut Connection,
+    expected_revision: u64,
+    actor_id: &str,
+    action: &str,
+    result: serde_json::Value,
+    created_at_unix_ms: u64,
+) -> Result<Option<BotManagementAuditRecord>, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let current = management_revision(&transaction)?;
+    if current != expected_revision {
+        return Ok(None);
+    }
+    let revision = current.saturating_add(1);
+    let changed = transaction.execute(
+        "UPDATE bot_management_meta SET revision=?1
+         WHERE singleton=1 AND revision=?2",
+        params![sqlite_integer(revision)?, sqlite_integer(current)?],
+    )?;
+    if changed != 1 {
+        return Ok(None);
+    }
+    transaction.execute(
+        "INSERT INTO bot_management_audit(
+             revision, actor_id, action, result, created_at_unix_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            sqlite_integer(revision)?,
+            actor_id,
+            action,
+            encode(&result)?,
+            sqlite_integer(created_at_unix_ms)?,
+        ],
+    )?;
+    let audit_id = format!("audit-{}", transaction.last_insert_rowid());
+    transaction.commit()?;
+    Ok(Some(BotManagementAuditRecord {
+        audit_id,
+        revision,
+        actor_id: actor_id.to_owned(),
+        action: action.to_owned(),
+        result,
+        created_at_unix_ms,
+    }))
+}
+
+fn bounded_page_limit(limit: u32) -> u32 {
+    limit.clamp(1, 100)
+}
+
 fn encode(value: &impl serde::Serialize) -> Result<String, BotStateDbError> {
     serde_json::to_string(value).map_err(|error| BotStateDbError::Serialization(error.to_string()))
 }
@@ -1883,64 +1860,6 @@ fn state_db_error_message(error: BotStateDbError) -> String {
     message
 }
 
-impl BotFlowRepository for BotStateDbRepository {
-    fn snapshot(&self) -> Result<BotFlowStateSnapshot, BotFlowError> {
-        self.call_sync(|reply| DbJob::FlowSnapshot { reply })
-            .map_err(flow_error)
-    }
-
-    fn published_revision(
-        &self,
-        revision: u64,
-    ) -> Result<Option<BotFlowPublishedSnapshot>, BotFlowError> {
-        self.call_sync(|reply| DbJob::FlowPublishedRevision { revision, reply })
-            .map_err(flow_error)
-    }
-
-    fn save_draft(
-        &self,
-        request: BotFlowDraftSaveRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowDraft, BotFlowError> {
-        self.call_sync(|reply| DbJob::SaveFlowDraft {
-            request,
-            now_ms,
-            reply,
-        })
-        .map_err(flow_error)
-    }
-
-    fn discard_draft(&self, expected_revision: u64) -> Result<(), BotFlowError> {
-        self.call_sync(|reply| DbJob::DiscardFlowDraft {
-            expected_revision,
-            reply,
-        })
-        .map_err(flow_error)
-    }
-
-    fn publish(
-        &self,
-        request: BotFlowPublishRequest,
-        now_ms: i64,
-    ) -> Result<BotFlowStateSnapshot, BotFlowError> {
-        self.call_sync(|reply| DbJob::PublishFlowDraft {
-            request,
-            now_ms,
-            reply,
-        })
-        .map_err(flow_error)
-    }
-}
-
-fn flow_error(error: BotStateDbError) -> BotFlowError {
-    match error {
-        BotStateDbError::FlowRevisionConflict { expected, actual } => {
-            BotFlowError::RevisionConflict { expected, actual }
-        }
-        other => BotFlowError::Repository(state_db_error_message(other)),
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum BotStateDbError {
     #[error(transparent)]
@@ -1957,8 +1876,6 @@ pub enum BotStateDbError {
     QueueFull,
     #[error("invalid database actor configuration: {0}")]
     InvalidConfiguration(String),
-    #[error("expected Bot flow revision {expected}, current revision is {actual}")]
-    FlowRevisionConflict { expected: u64, actual: u64 },
 }
 
 #[cfg(test)]
@@ -1974,61 +1891,6 @@ mod tests {
     use tokio::task::JoinSet;
 
     use super::*;
-
-    #[test]
-    fn flow_draft_publish_uses_cas_and_recovers_immutable_revision() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("flow.db");
-        let repository = BotStateDbRepository::open(&path).unwrap();
-        let draft = BotFlowRepository::save_draft(
-            &repository,
-            BotFlowDraftSaveRequest {
-                expected_draft_revision: None,
-                base_published_revision: 0,
-                flows: Vec::new(),
-            },
-            10,
-        )
-        .unwrap();
-        assert_eq!(draft.revision, 1);
-        assert!(matches!(
-            BotFlowRepository::save_draft(
-                &repository,
-                BotFlowDraftSaveRequest {
-                    expected_draft_revision: None,
-                    base_published_revision: 0,
-                    flows: Vec::new(),
-                },
-                11,
-            ),
-            Err(BotFlowError::RevisionConflict {
-                expected: 0,
-                actual: 1
-            })
-        ));
-        let snapshot = BotFlowRepository::publish(
-            &repository,
-            BotFlowPublishRequest {
-                expected_draft_revision: 1,
-                expected_published_revision: 0,
-            },
-            20,
-        )
-        .unwrap();
-        assert_eq!(snapshot.published.revision, 1);
-        drop(repository);
-
-        let reopened = BotStateDbRepository::open(path).unwrap();
-        let snapshot = BotFlowRepository::snapshot(&reopened).unwrap();
-        assert_eq!(snapshot.published.revision, 1);
-        assert!(snapshot.draft.is_none());
-        assert_eq!(
-            BotFlowRepository::published_revision(&reopened, 1)
-                .unwrap()
-                .unwrap(),
-            snapshot.published
-        );
-    }
 
     #[tokio::test]
     async fn pending_after_reserve_and_expired_sending_are_recoverable() {
@@ -2216,6 +2078,62 @@ mod tests {
         );
         assert_eq!(reopened.recover_waiting().await.unwrap().len(), 1);
         assert_eq!(reopened.metrics().connection_open_count, 1);
+    }
+
+    #[tokio::test]
+    async fn management_revision_audit_and_stable_pages_survive_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("management.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        let conversation = conversation();
+        for (delivery_id, key) in [("delivery-b", "key-b"), ("delivery-a", "key-a")] {
+            assert!(
+                repository
+                    .reserve(&delivery(&conversation, delivery_id, key))
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut second_interaction = interaction(&conversation);
+        second_interaction.session_id = "interaction-b".into();
+        repository.create(second_interaction).await.unwrap();
+        let mut first_interaction = interaction(&conversation);
+        first_interaction.session_id = "interaction-a".into();
+        repository.create(first_interaction).await.unwrap();
+
+        let deliveries = repository.delivery_page(None, 1).unwrap();
+        assert_eq!(deliveries.items[0].0.delivery_id, "delivery-a");
+        assert_eq!(deliveries.next_cursor.as_deref(), Some("delivery-a"));
+        let interactions = repository.interaction_page(None, 1).unwrap();
+        assert_eq!(interactions.items[0].session_id, "interaction-a");
+        assert_eq!(interactions.next_cursor.as_deref(), Some("interaction-a"));
+
+        let audit = repository
+            .commit_management_audit(
+                0,
+                "local-web-console",
+                "delivery_preview",
+                serde_json::json!({"delivery_id": "delivery-a"}),
+                100,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(audit.revision, 1);
+        assert!(
+            repository
+                .commit_management_audit(0, "forged", "retry", serde_json::Value::Null, 101)
+                .unwrap()
+                .is_none()
+        );
+        drop(repository);
+
+        let reopened = BotStateDbRepository::open(path).unwrap();
+        assert_eq!(reopened.management_revision().unwrap(), 1);
+        let audits = reopened.management_audits(10).unwrap();
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0].actor_id, "local-web-console");
+        assert_eq!(audits[0].result["delivery_id"], "delivery-a");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

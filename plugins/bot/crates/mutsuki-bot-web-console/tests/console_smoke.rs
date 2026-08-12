@@ -5,11 +5,9 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot_web_console::{
-    ControlPluginReloadLifecycle, ProductConfigOptions, SecretKeyResolver, SecretMonitor,
-    WebConsoleConfig, WebConsolePaths, WebConsoleSecrets, build_console_host, demo_config_service,
-    empty_config_service, product_config_service_with_options,
+    SecretKeyResolver, SecretMonitor, WebConsoleConfig, WebConsolePaths, WebConsoleSecrets,
+    build_console_host, demo_config_service, empty_config_service,
 };
-use mutsuki_plugin_bot_agent::BotAgentConfigHandle;
 use mutsuki_plugin_bot_control_web::FixtureControlHandler;
 use mutsuki_web_host::WebHost;
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
@@ -42,7 +40,7 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: false,
+        extensions: Vec::new(),
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -78,23 +76,11 @@ async fn embedded_console_serves_workspace_css_and_shell_markup() {
         "overview content groups must use raised Lilia .card, not transparent card--flat"
     );
     assert!(js.contains("<ul class=\"kv\">") || js.contains("className = \"kv\""));
-    assert!(js.contains("系统状态"));
     assert!(js.contains("overview-dashboard"));
     assert!(js.contains("metric-grid"));
-    assert!(js.contains("运行时间"));
-    assert!(js.contains("主机资源"));
-    assert!(js.contains("健康组件"));
-    assert!(js.contains("密钥状态"));
-    assert!(js.contains("运行时"));
-    assert!(js.contains("topology-graph"));
-    assert!(js.contains("advanced-fold"));
     assert!(js.contains("mountConfigPanel"));
-    assert!(!js.contains("label: \"Runners\""));
-    assert!(!js.contains("label: \"EventSources\""));
     assert!(css.contains(".mutsuki-console .overview-dashboard"));
     assert!(css.contains(".mutsuki-console .metric-grid"));
-    assert!(css.contains(".mutsuki-console .tab-bar"));
-    assert!(css.contains(".mutsuki-console .topology-graph"));
 
     let html = http_get_body(&addr, "/").await;
     assert!(html.contains("mutsuki-ui.css?v="));
@@ -126,7 +112,7 @@ async fn embedded_console_reads_overview_and_control() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: false,
+        extensions: Vec::new(),
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -172,7 +158,7 @@ async fn embedded_console_with_config_shell() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: true,
+        extensions: vec!["config".into()],
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -223,7 +209,7 @@ async fn embedded_console_demo_config_provider_is_usable() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: true,
+        extensions: vec!["config".into()],
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -255,179 +241,6 @@ async fn embedded_console_demo_config_provider_is_usable() {
 }
 
 #[tokio::test]
-async fn embedded_console_manages_bot_agent_provider_over_web_rpc() {
-    let root = tempfile::tempdir().unwrap();
-    let product_path = root.path().join("product.toml");
-    std::fs::write(
-        &product_path,
-        r#"
-[service]
-profile = "bot"
-instance_id = "demo"
-
-[[plugins.configured]]
-id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, connection_id = "primary", default_profile_id = "from-web", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
-"#,
-    )
-    .unwrap();
-
-    let control = Arc::new(FixtureControlHandler::default());
-    let bot_agent_config = BotAgentConfigHandle::default();
-    let service = product_config_service_with_options(
-        &product_path,
-        ProductConfigOptions {
-            lifecycle: Some(Arc::new(ControlPluginReloadLifecycle::new(
-                control.clone(),
-                "fixture",
-            ))),
-            bot_agent_config: Some(bot_agent_config.clone()),
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let config = WebConsoleConfig {
-        enabled: true,
-        listen: "127.0.0.1:0".into(),
-        auth_token_key: None,
-        include_config: true,
-        ..Default::default()
-    };
-    let secrets = WebConsoleSecrets {
-        auth_token: "local-dev".into(),
-    };
-    let (mut host, _dirs) = build_console_host(
-        &config,
-        &secrets,
-        control.clone(),
-        "local-dev",
-        Some(service),
-        None,
-        &WebConsolePaths::default(),
-        None,
-        None,
-    )
-    .unwrap();
-    host.start().await.unwrap();
-    let addr = host.listen_addr().unwrap().to_string();
-
-    let providers = ws_rpc(&addr, "config", "providers.list").await.unwrap();
-    assert!(
-        providers
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|provider| provider == "mutsuki.plugin.bot.agent")
-    );
-
-    let schema = ws_rpc_params(
-        &addr,
-        "config",
-        "schema.get",
-        json!({"provider_id":"mutsuki.plugin.bot.agent"}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(schema["provider_id"], "mutsuki.plugin.bot.agent");
-    assert!(
-        schema["root"]["children"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|field| field["key"] == "streaming")
-    );
-
-    let snapshot = ws_rpc_params(
-        &addr,
-        "config",
-        "snapshot.read",
-        json!({
-            "provider_id":"mutsuki.plugin.bot.agent",
-            "context":{"scope":"plugin_instance","plugin_instance_id":"default"}
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(snapshot["revision"], 1);
-
-    let mut invalid_candidate = snapshot["value"].clone();
-    invalid_candidate["value"]["max_concurrency"]["value"] = json!(0);
-    let invalid_apply = ws_rpc_params(
-        &addr,
-        "config",
-        "apply",
-        json!({
-            "provider_id":"mutsuki.plugin.bot.agent",
-            "context":{"scope":"plugin_instance","plugin_instance_id":"default"},
-            "request":{
-                "expected_revision":snapshot["revision"],
-                "candidate":invalid_candidate
-            }
-        }),
-    )
-    .await;
-    assert!(invalid_apply.is_err());
-    assert_eq!(bot_agent_config.snapshot().max_concurrency, 2);
-    let generation_before_apply = bot_agent_config.versioned_snapshot().generation;
-
-    let mut candidate = snapshot["value"].clone();
-    candidate["value"]["streaming"]["value"] = json!("segment_messages");
-    candidate["value"]["max_concurrency"]["value"] = json!(3);
-    candidate["value"]["timeout_ms"]["value"] = json!(30000);
-
-    let applied = ws_rpc_params(
-        &addr,
-        "config",
-        "apply",
-        json!({
-            "provider_id":"mutsuki.plugin.bot.agent",
-            "context":{"scope":"plugin_instance","plugin_instance_id":"default"},
-            "request":{
-                "expected_revision":snapshot["revision"],
-                "candidate":candidate
-            }
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(applied["applied"], true);
-    assert_eq!(applied["restart_policy"], "plugin_reload");
-    assert!(
-        applied["actions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|action| action == "plugin_reloaded")
-    );
-    assert!(applied["pending_actions"].as_array().unwrap().is_empty());
-    assert_eq!(bot_agent_config.snapshot().streaming, "segment_messages");
-    assert_eq!(bot_agent_config.snapshot().max_concurrency, 3);
-    assert_eq!(bot_agent_config.snapshot().timeout_ms, 30000);
-    assert_eq!(
-        bot_agent_config.versioned_snapshot().generation,
-        generation_before_apply + 1
-    );
-    assert!(
-        control
-            .mutations
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|mutation| mutation == "plugin_reload")
-    );
-
-    let persisted: toml::Value =
-        toml::from_str(&std::fs::read_to_string(&product_path).unwrap()).unwrap();
-    assert_eq!(
-        persisted["plugins"]["configured"][0]["config"]["streaming"].as_str(),
-        Some("segment_messages")
-    );
-
-    host.stop().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-}
-
-#[tokio::test]
 async fn embedded_console_starts_upgrade_extension_when_release_set_configured() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -438,7 +251,7 @@ async fn embedded_console_starts_upgrade_extension_when_release_set_configured()
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: false,
+        extensions: vec!["upgrade".into()],
         release_set: Some(root.join("release-set.toml").to_string_lossy().into()),
     };
     let secrets = WebConsoleSecrets {
@@ -481,7 +294,7 @@ async fn embedded_console_secret_status_is_read_only() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: Some("WEB_CONSOLE_AUTH_TOKEN".into()),
-        include_config: false,
+        extensions: Vec::new(),
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -568,7 +381,7 @@ async fn embedded_console_mounts_qq_management_extension() {
         enabled: true,
         listen: "127.0.0.1:0".into(),
         auth_token_key: None,
-        include_config: false,
+        extensions: vec!["qq".into()],
         ..Default::default()
     };
     let secrets = WebConsoleSecrets {
@@ -592,14 +405,9 @@ async fn embedded_console_mounts_qq_management_extension() {
     assert!(options.contains("\"includeQq\":true"));
     let qq_js = http_get_body(&addr, "/qq-bot/index.js").await;
     assert!(qq_js.contains("mountQqBotPanel"));
-    let snap = ws_rpc_params(
-        &addr,
-        "qq-bot",
-        "snapshot",
-        json!({ "capabilities": ["bot.read", "bot.secret.status"] }),
-    )
-    .await
-    .unwrap();
+    let snap = ws_rpc_params(&addr, "qq-bot", "snapshot", json!({}))
+        .await
+        .unwrap();
     assert_eq!(snap["accounts"][0]["account_id"], "main");
     assert_eq!(snap["accounts"][0]["credential_status"], "configured");
     assert!(!dirs.qq_assets.as_os_str().is_empty());
@@ -640,7 +448,7 @@ async fn ws_rpc_params(
     ws.send(Message::Binary(
         WireMessage::Hello {
             protocol_version: WEB_PROTOCOL_VERSION.into(),
-            capabilities: vec!["runtime.read".into(), "*".into()],
+            capabilities: Vec::new(),
             auth_token: Some("local-dev".into()),
         }
         .encode()
@@ -657,11 +465,7 @@ async fn ws_rpc_params(
         WireMessage::HelloAck { .. }
     ));
     let id = Uuid::new_v4();
-    let mut params = extra;
-    if let Some(obj) = params.as_object_mut() {
-        obj.entry("capabilities")
-            .or_insert(json!(["runtime.read", "runtime.write", "*"]));
-    }
+    let params = extra;
     ws.send(Message::Binary(
         WireMessage::Rpc(RpcRequest {
             id,

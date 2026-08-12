@@ -2,10 +2,12 @@ use std::time::Duration;
 
 use bot_echo::{echo_manifest, echo_runner};
 use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
-use mutsuki_bot_protocol::{BotFlowDraftSaveRequest, BotFlowPublishRequest};
-use mutsuki_bot_service_host_integration::configured_bot_plugin_catalog;
-use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_bot_protocol::BotFlowSnapshot;
+use mutsuki_bot_service_host_integration::{
+    BotFlowRouterConfiguredPlugin, configured_bot_plugin_catalog,
+};
 use mutsuki_bot_testkit::FakeQqServer;
+use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
 use mutsuki_plugin_bot_command::BOT_COMMAND_PLUGIN_ID;
 use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
@@ -56,11 +58,25 @@ async fn configured_service_runtime_runs_resume_echo_ping_and_clean_shutdown() {
         ..Default::default()
     })
     .unwrap();
-    publish_example_flow(&service);
+    let flow_registry = example_flow_registry();
+    let config = std::sync::Arc::new(
+        ConfigService::new(
+            std::sync::Arc::new(ConfigProviderRegistry::default()),
+            std::sync::Arc::new(InMemoryConfigRepository::default()),
+        )
+        .unwrap(),
+    );
+    let mut catalog = configured_bot_plugin_catalog().unwrap();
+    catalog
+        .register(BotFlowRouterConfiguredPlugin::with_registry(
+            config,
+            flow_registry,
+        ))
+        .unwrap();
     let control_config = service.clone();
 
     let runtime = ServiceRuntimeBuilder::new(service)
-        .with_configured_plugin_catalog(configured_bot_plugin_catalog().unwrap())
+        .with_configured_plugin_catalog(catalog)
         .register_builtin_plugin(echo_manifest(1))
         .register_builtin_runner(|| echo_runner(1))
         .start()
@@ -209,32 +225,18 @@ panic_file = "panic.log"
     )
 }
 
-fn publish_example_flow(service: &ServiceConfig) {
-    let state_dir = service.service.data_dir.join("bot");
-    std::fs::create_dir_all(&state_dir).unwrap();
-    let repository =
-        std::sync::Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
+fn example_flow_registry() -> std::sync::Arc<BotFlowRegistry> {
     let catalog = BotNodeCatalog::from_manifests(&qqbot_echo::qqbot_echo_manifests()).unwrap();
-    let registry = BotFlowRegistry::open(repository, catalog).unwrap();
-    let draft = registry
-        .save_draft(
-            BotFlowDraftSaveRequest {
-                expected_draft_revision: None,
-                base_published_revision: 0,
+    std::sync::Arc::new(
+        BotFlowRegistry::with_snapshot(
+            catalog,
+            BotFlowSnapshot {
+                revision: 1,
                 flows: vec![qqbot_echo::qqbot_echo_flow(), qqbot_ping_flow()],
             },
-            1,
         )
-        .unwrap();
-    registry
-        .publish(
-            BotFlowPublishRequest {
-                expected_draft_revision: draft.revision,
-                expected_published_revision: 0,
-            },
-            2,
-        )
-        .unwrap();
+        .unwrap(),
+    )
 }
 
 fn qqbot_ping_flow() -> mutsuki_bot_protocol::BotFlowDocument {

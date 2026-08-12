@@ -233,7 +233,11 @@ async fn agentkit_issue3_runs_real_state_machine_through_service_host_and_core()
         .context
         .set_system_prompt("Use product-provided coding context and public tools.");
 
-    let mut builder = assemble_service(service.clone()).unwrap();
+    let mut builder = assemble_service(
+        service.clone(),
+        mutsuki_bot_web_console::empty_config_service(),
+    )
+    .unwrap();
     for manifest in bundle.manifests() {
         builder = builder.register_builtin_plugin(manifest);
     }

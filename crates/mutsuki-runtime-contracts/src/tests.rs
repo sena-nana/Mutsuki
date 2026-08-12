@@ -441,9 +441,9 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
         capabilities: Vec::new(),
         extensions: vec![PluginExtensionDescriptor {
-            extension_id: "mutsuki.bot.flow.nodes".into(),
+            extension_id: "example.plugin.catalog".into(),
             version: 1,
-            payload: serde_json::json!({"nodes": []}),
+            payload: serde_json::json!({"entries": []}),
         }],
         runners: Vec::new(),
         protocols: vec![ProtocolDescriptor {
@@ -581,6 +581,13 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
                 kind: ContractSurfaceKind::HandlerBinding,
                 owner_plugin_id: "plugin-a".into(),
                 fingerprint: "handler_binding:message-handler".into(),
+                deprecated: false,
+            },
+            ContractSurface {
+                surface_id: "plugin_extension:plugin-a:example.plugin.catalog@1".into(),
+                kind: ContractSurfaceKind::PluginExtension,
+                owner_plugin_id: "plugin-a".into(),
+                fingerprint: "plugin_extension:example.plugin.catalog@1:{\"entries\":[]}".into(),
                 deprecated: false,
             },
         ],

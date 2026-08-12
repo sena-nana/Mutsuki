@@ -193,38 +193,9 @@ fn default_enabled() -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BotFlowPublishedSnapshot {
+pub struct BotFlowSnapshot {
     pub revision: u64,
     pub flows: Vec<BotFlowDocument>,
-    pub published_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BotFlowDraft {
-    pub revision: u64,
-    pub base_published_revision: u64,
-    pub flows: Vec<BotFlowDocument>,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BotFlowStateSnapshot {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub draft: Option<BotFlowDraft>,
-    pub published: BotFlowPublishedSnapshot,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BotFlowDraftSaveRequest {
-    pub expected_draft_revision: Option<u64>,
-    pub base_published_revision: u64,
-    pub flows: Vec<BotFlowDocument>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BotFlowPublishRequest {
-    pub expected_draft_revision: u64,
-    pub expected_published_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,7 +254,9 @@ pub struct BotNodeResult {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BotFlowNodeExecution {
     pub graph_revision: u64,
-    pub flow_id: String,
+    /// The immutable flow is pinned into every task so applying a new config
+    /// revision cannot change in-flight execution.
+    pub flow: BotFlowDocument,
     pub execution_id: String,
     pub node_id: String,
     pub input_port_id: String,

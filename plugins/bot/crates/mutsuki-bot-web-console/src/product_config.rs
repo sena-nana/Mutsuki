@@ -1,724 +1,547 @@
-//! Product TOML ConfigProvider for Console `include_config` assembly.
+//! Product configuration provider. Durable storage is supplied by product bootstrap.
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
-use mutsuki_bot_config::{
-    ConfigApplyMode, ConfigContext, ConfigDescriptor, ConfigError, ConfigLifecycle,
-    ConfigMutability, ConfigNode, ConfigPersistSink, ConfigProviderId, ConfigProviderRegistry,
-    ConfigScope, ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
-    PreparedConfigPersist, RestartPolicy,
+use mutsuki_agent_service_host_integration::{AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig};
+use mutsuki_config_service::{
+    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError,
+    ConfigLifecycle, ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction,
+    ConfigPresentation, ConfigProviderId, ConfigProviderRegistry, ConfigRepository, ConfigScope,
+    ConfigSecretMutation, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
+    MapKeyStrategy, MemoryConfigProvider, RestartPolicy, capability,
+};
+use mutsuki_plugin_bot_adapter_qqbot::{
+    QQ_CLIENT_SECRET_FIELD, QQ_CLIENT_SECRET_KEY, QQBOT_ADAPTER_PLUGIN_ID, QqBotConfig,
+    qq_config_descriptor, qq_config_value,
 };
 use mutsuki_plugin_bot_agent::{
-    BOT_AGENT_CONFIG_PROVIDER_ID, BotAgentConfig, BotAgentConfigHandle, bot_agent_config_schema,
+    BOT_AGENT_BRIDGE_PLUGIN_ID, BotAgentConfig, bot_agent_config_schema,
 };
-use mutsuki_service_config::{ConfiguredPluginStore, PreparedConfiguredPluginChange};
+use mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID;
+use mutsuki_service_config::{
+    ConfiguredPluginSelection, HostSecretStore, PreparedHostSecretTransaction,
+};
+
+pub const PRODUCT_CONFIG_PROVIDER_ID: &str = "mutsuki.product";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProductConfigError {
-    #[error("product config unreadable: {0}")]
-    Unreadable(String),
-    #[error("product config invalid: {0}")]
-    Invalid(String),
     #[error("product config provider registration failed: {0}")]
     Register(String),
-    #[error("Bot Agent is selected in product config but no live Agent bridge is installed")]
-    MissingBotAgentBridge,
 }
 
-#[derive(Default)]
+struct HostSecretPersist {
+    store: HostSecretStore,
+    key_by_field: BTreeMap<String, String>,
+}
+
+struct PreparedHostSecretPersist(PreparedHostSecretTransaction);
+
+impl ConfigPersistTransaction for PreparedHostSecretPersist {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        self.0.activate().map_err(persist_error)
+    }
+
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        self.0.commit().map_err(persist_error)
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        self.0.rollback().map_err(persist_error)
+    }
+}
+
+impl ConfigPersistSink for HostSecretPersist {
+    fn prepare(
+        &self,
+        _persisted_value: &ConfigValue,
+        secret_mutations: BTreeMap<String, ConfigSecretMutation>,
+    ) -> Result<Box<dyn ConfigPersistTransaction>, ConfigError> {
+        let updates = secret_mutations
+            .into_iter()
+            .filter_map(|(field, mutation)| {
+                self.key_by_field.get(&field).cloned().map(|key| {
+                    let value = match mutation {
+                        ConfigSecretMutation::Set(value) => Some(value),
+                        ConfigSecretMutation::Clear => None,
+                    };
+                    (key, value)
+                })
+            })
+            .collect();
+        self.store
+            .prepare_mutations(updates)
+            .map(|transaction| {
+                Box::new(PreparedHostSecretPersist(transaction))
+                    as Box<dyn ConfigPersistTransaction>
+            })
+            .map_err(persist_error)
+    }
+}
+
 pub struct ProductConfigOptions {
-    pub store: Option<ConfiguredPluginStore>,
+    pub repository: Arc<dyn ConfigRepository>,
     pub lifecycle: Option<Arc<dyn ConfigLifecycle>>,
-    pub bot_agent_config: Option<BotAgentConfigHandle>,
-    pub agent_connections: Option<AgentConnectionRegistry>,
+}
+
+impl ProductConfigOptions {
+    #[must_use]
+    pub fn new(repository: Arc<dyn ConfigRepository>) -> Self {
+        Self {
+            repository,
+            lifecycle: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn ConfigLifecycle>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
+    }
 }
 
 pub fn product_config_service(
-    product_config_path: &Path,
+    repository: Arc<dyn ConfigRepository>,
 ) -> Result<Arc<ConfigService>, ProductConfigError> {
-    product_config_service_with_options(product_config_path, ProductConfigOptions::default())
+    product_config_service_with_options(ProductConfigOptions::new(repository))
 }
 
 pub fn product_config_service_with_options(
-    product_config_path: &Path,
     options: ProductConfigOptions,
 ) -> Result<Arc<ConfigService>, ProductConfigError> {
-    let text = std::fs::read_to_string(product_config_path).map_err(|error| {
-        ProductConfigError::Unreadable(format!("{}: {error}", product_config_path.display()))
-    })?;
-    let product: toml::Value =
-        toml::from_str(&text).map_err(|error| ProductConfigError::Invalid(error.to_string()))?;
-    let bot_agent_config = options.bot_agent_config;
-    let agent_connections = options.agent_connections;
-    let store = options
-        .store
-        .unwrap_or_else(|| ConfiguredPluginStore::open(product_config_path));
-    store
-        .recover()
-        .map_err(|error| ProductConfigError::Invalid(format!("config recovery: {error}")))?;
     let registry = Arc::new(ConfigProviderRegistry::default());
-
-    let product_provider = Arc::new(
-        MemoryConfigProvider::new(
-            product_descriptor(),
-            product_defaults(&product),
-            ConfigApplyMode::RequireRestart,
-        )
-        .with_persist(Arc::new(ProductSurfacePersist {
-            store: store.clone(),
-        })),
-    );
     registry
-        .register(product_provider)
+        .register(Arc::new(MemoryConfigProvider::new(
+            product_descriptor(),
+            product_seed_defaults(),
+            ConfigApplyMode::HotReload,
+        )))
+        .map_err(register_error)?;
+    let service = ConfigService::new(registry, options.repository)
         .map_err(|error| ProductConfigError::Register(error.to_string()))?;
-
-    if let Some(handle) = bot_agent_config {
-        if let Some(defaults) = bot_agent_defaults_from_product(&product, &handle)? {
-            let provider = Arc::new(
-                MemoryConfigProvider::new(
-                    bot_agent_config_schema(),
-                    ConfigValue::from_json(
-                        &serde_json::to_value(&defaults)
-                            .map_err(|error| ProductConfigError::Invalid(error.to_string()))?,
-                    ),
-                    ConfigApplyMode::HotReload,
-                )
-                .with_persist(Arc::new(ConfiguredPluginPersist {
-                    store: store.clone(),
-                    plugin_id: BOT_AGENT_CONFIG_PROVIDER_ID.into(),
-                    bot_agent_config: Some(handle),
-                    agent_connections: agent_connections.clone(),
-                })),
-            );
-            registry
-                .register(provider)
-                .map_err(|error| ProductConfigError::Register(error.to_string()))?;
-        }
-    } else if plugin_selected(&product, BOT_AGENT_CONFIG_PROVIDER_ID) {
-        return Err(ProductConfigError::MissingBotAgentBridge);
-    }
-
-    let mut service = ConfigService::new(registry);
     if let Some(lifecycle) = options.lifecycle {
-        service = service.with_lifecycle(lifecycle);
+        service.set_lifecycle(lifecycle);
     }
     Ok(Arc::new(service))
 }
 
-struct ProductSurfacePersist {
-    store: ConfiguredPluginStore,
-}
-
-impl ConfigPersistSink for ProductSurfacePersist {
-    fn prepare(
-        &self,
-        _context: &ConfigContext,
-        value: &ConfigValue,
-        _secrets: &HashMap<String, String>,
-    ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
-        let ConfigValue::Object(map) = value else {
-            return Err(ConfigError::PersistenceFailed {
-                reason: "product candidate must be an object".into(),
-            });
-        };
-        let mut fields = BTreeMap::new();
-        for key in [
-            "profile",
-            "console_enabled",
-            "console_listen",
-            "include_config",
-        ] {
-            if let Some(field) = map.get(key) {
-                fields.insert(key.to_string(), field.to_json());
-            }
-        }
-        let prepared = self
-            .store
-            .prepare_product_surface(fields)
-            .map_err(|error| ConfigError::PersistenceFailed {
-                reason: error.to_string(),
-            })?;
-        Ok(Box::new(ProductSurfaceChange { prepared }))
-    }
-}
-
-struct ProductSurfaceChange {
-    prepared: PreparedConfiguredPluginChange,
-}
-
-impl PreparedConfigPersist for ProductSurfaceChange {
-    fn commit(&mut self) -> Result<(), ConfigError> {
-        self.prepared
-            .commit()
-            .map_err(|error| ConfigError::PersistenceFailed {
-                reason: error.to_string(),
-            })
-    }
-
-    fn rollback(&mut self) -> Result<(), ConfigError> {
-        self.prepared
-            .rollback()
-            .map_err(|error| ConfigError::PersistenceFailed {
-                reason: error.to_string(),
-            })
-    }
-}
-
-struct ConfiguredPluginPersist {
-    store: ConfiguredPluginStore,
-    plugin_id: String,
-    bot_agent_config: Option<BotAgentConfigHandle>,
-    agent_connections: Option<AgentConnectionRegistry>,
-}
-
-impl ConfigPersistSink for ConfiguredPluginPersist {
-    fn prepare(
-        &self,
-        _context: &ConfigContext,
-        value: &ConfigValue,
-        _secrets: &HashMap<String, String>,
-    ) -> Result<Box<dyn PreparedConfigPersist>, ConfigError> {
-        let json = value.to_json();
-        let decoded_bot_agent =
-            if self.plugin_id == BOT_AGENT_CONFIG_PROVIDER_ID {
-                let decoded: BotAgentConfig =
-                    serde_json::from_value(json.clone()).map_err(|error| {
-                        ConfigError::PersistenceFailed {
-                            reason: format!("bot-agent config decode failed: {error}"),
-                        }
-                    })?;
-                decoded
-                    .validate()
-                    .map_err(|error| ConfigError::ApplyRejected {
-                        reason: error.to_string(),
-                    })?;
-                if let Some(connection_id) = decoded.selected_connection_id().map_err(|error| {
-                    ConfigError::ApplyRejected {
-                        reason: error.to_string(),
-                    }
-                })? && self
-                    .agent_connections
-                    .as_ref()
-                    .is_some_and(|registry| !registry.is_healthy(&connection_id))
-                {
-                    return Err(ConfigError::ApplyRejected {
-                        reason: format!(
-                            "Agent connection `{connection_id}` is not registered and healthy"
-                        ),
-                    });
-                }
-                Some(decoded)
-            } else {
-                None
-            };
-        let prepared = self
-            .store
-            .prepare_replace_config(&self.plugin_id, json)
-            .map_err(|error| ConfigError::PersistenceFailed {
-                reason: error.to_string(),
-            })?;
-        let previous_bot_agent = self
-            .bot_agent_config
-            .as_ref()
-            .map(BotAgentConfigHandle::snapshot);
-        Ok(Box::new(ConfiguredPluginChange {
-            prepared,
-            bot_agent_config: self.bot_agent_config.clone(),
-            previous_bot_agent,
-            candidate_bot_agent: decoded_bot_agent,
-        }))
-    }
-}
-
-struct ConfiguredPluginChange {
-    prepared: PreparedConfiguredPluginChange,
-    bot_agent_config: Option<BotAgentConfigHandle>,
-    previous_bot_agent: Option<BotAgentConfig>,
-    candidate_bot_agent: Option<BotAgentConfig>,
-}
-
-impl PreparedConfigPersist for ConfiguredPluginChange {
-    fn activate(&mut self) -> Result<(), ConfigError> {
-        if let (Some(handle), Some(config)) = (&self.bot_agent_config, &self.candidate_bot_agent) {
-            handle
-                .replace(config.clone())
-                .map_err(|error| ConfigError::PersistenceFailed {
-                    reason: format!("candidate bot-agent config activation failed: {error}"),
-                })?;
-        }
-        Ok(())
-    }
-
-    fn commit(&mut self) -> Result<(), ConfigError> {
-        self.prepared
-            .commit()
-            .map_err(|error| ConfigError::PersistenceFailed {
-                reason: error.to_string(),
-            })
-    }
-
-    fn rollback(&mut self) -> Result<(), ConfigError> {
-        let file_result =
-            self.prepared
-                .rollback()
-                .map_err(|error| ConfigError::PersistenceFailed {
-                    reason: error.to_string(),
-                });
-        let live_result = match (&self.bot_agent_config, &self.previous_bot_agent) {
-            (Some(handle), Some(previous)) => {
-                handle
-                    .replace(previous.clone())
-                    .map_err(|error| ConfigError::PersistenceFailed {
-                        reason: format!("bot-agent config rollback failed: {error}"),
-                    })
-            }
-            _ => Ok(()),
-        };
-        match (file_result, live_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(file), Ok(())) => Err(file),
-            (Ok(()), Err(live)) => Err(live),
-            (Err(file), Err(live)) => Err(ConfigError::PersistenceFailed {
-                reason: format!("{file}; {live}"),
-            }),
-        }
-    }
-}
-
-fn bot_agent_defaults_from_product(
-    product: &toml::Value,
-    handle: &BotAgentConfigHandle,
-) -> Result<Option<BotAgentConfig>, ProductConfigError> {
-    let Some(selection) = configured_plugin_selection(product, BOT_AGENT_CONFIG_PROVIDER_ID) else {
-        return Ok(None);
-    };
-    let value = selection
-        .get("config")
-        .cloned()
-        .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
-    let json = serde_json::to_value(value)
-        .map_err(|error| ProductConfigError::Invalid(error.to_string()))?;
-    let config: BotAgentConfig = serde_json::from_value(json)
-        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
-    config
-        .validate()
-        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
-    handle
-        .replace(config.clone())
-        .map_err(|error| ProductConfigError::Invalid(format!("bot-agent config: {error}")))?;
-    Ok(Some(config))
-}
-
-fn plugin_selected(product: &toml::Value, plugin_id: &str) -> bool {
-    configured_plugin_selection(product, plugin_id).is_some()
-}
-
-fn configured_plugin_selection<'a>(
-    product: &'a toml::Value,
-    plugin_id: &str,
-) -> Option<&'a toml::Value> {
-    product
-        .get("plugins")
-        .and_then(|plugins| plugins.get("configured"))
-        .and_then(|value| value.as_array())
-        .and_then(|configured| {
-            configured.iter().find(|selection| {
-                selection
-                    .get("id")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|id| id.trim() == plugin_id)
-                    && selection
-                        .get("enabled")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(true)
-            })
-        })
-}
-
-fn product_descriptor() -> ConfigDescriptor {
+pub fn product_descriptor() -> ConfigDescriptor {
     ConfigDescriptor {
-        provider_id: ConfigProviderId::new("product"),
+        provider_id: ConfigProviderId::new(PRODUCT_CONFIG_PROVIDER_ID),
         schema_version: 1,
         value_version: 1,
         title: LocalizedText::new("产品配置"),
-        description: Some(LocalizedText::new(
-            "来自产品 TOML 的真实装配面（service / distribution / web.console）",
-        )),
-        scopes: vec![ConfigScope::Global],
+        description: None,
+        scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: "product".into(),
             value_type: ConfigValueType::Object,
-            title: LocalizedText::new("产品"),
+            title: LocalizedText::new("产品配置"),
             description: None,
             default_value: None,
-            constraints: Default::default(),
-            presentation: Default::default(),
+            constraints: ConfigConstraints::default(),
+            presentation: ConfigPresentation::default(),
             visibility: None,
             enabled_if: None,
             mutability: ConfigMutability::ReadWrite,
-            restart_policy: RestartPolicy::BotRestart,
+            restart_policy: RestartPolicy::None,
             children: vec![
-                string_node("profile", "服务 Profile", ConfigMutability::ReadWrite),
-                string_node("instance_id", "实例 ID", ConfigMutability::ReadOnly),
-                string_node("distribution_mode", "分发模式", ConfigMutability::ReadOnly),
-                bool_node("console_enabled", "启用 Web Console"),
+                string_node("profile", "运行配置", RestartPolicy::ApplicationRestart),
+                bool_node("console_enabled", "启用管理台", RestartPolicy::Reconfigure),
                 string_node(
                     "console_listen",
-                    "Console 监听地址",
-                    ConfigMutability::ReadWrite,
+                    "管理地址",
+                    RestartPolicy::ApplicationRestart,
                 ),
-                bool_node("include_config", "挂载配置页"),
                 string_node(
                     "auth_token_key",
-                    "Console Auth Secret Key（仅引用名）",
-                    ConfigMutability::ReadOnly,
+                    "鉴权密钥引用",
+                    RestartPolicy::ApplicationRestart,
                 ),
+                ConfigNode {
+                    key: "extensions".into(),
+                    value_type: ConfigValueType::Array {
+                        item: Box::new(ConfigValueType::String { multiline: false }),
+                    },
+                    title: LocalizedText::new("管理扩展"),
+                    description: None,
+                    default_value: None,
+                    constraints: ConfigConstraints::default(),
+                    presentation: ConfigPresentation::default(),
+                    visibility: None,
+                    enabled_if: None,
+                    mutability: ConfigMutability::ReadWrite,
+                    restart_policy: RestartPolicy::ApplicationRestart,
+                    children: Vec::new(),
+                },
+                ConfigNode {
+                    key: "runtime_plugins".into(),
+                    value_type: ConfigValueType::Map {
+                        key_strategy: MapKeyStrategy::FreeString,
+                        value: Box::new(ConfigValueType::Object),
+                    },
+                    title: LocalizedText::new("运行插件"),
+                    description: None,
+                    default_value: None,
+                    constraints: ConfigConstraints::default(),
+                    presentation: ConfigPresentation::default(),
+                    visibility: None,
+                    enabled_if: None,
+                    mutability: ConfigMutability::ReadWrite,
+                    restart_policy: RestartPolicy::PluginReload,
+                    children: Vec::new(),
+                },
             ],
         },
-        groups: vec![],
+        groups: Vec::new(),
     }
 }
 
-fn product_defaults(product: &toml::Value) -> ConfigValue {
-    let service = product.get("service");
-    let distribution = product.get("distribution");
-    let console = product.get("web").and_then(|web| web.get("console"));
-    let mut map = BTreeMap::new();
-    map.insert(
-        "profile".into(),
-        ConfigValue::String(
-            service
-                .and_then(|s| s.get("profile"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("bot")
-                .into(),
-        ),
-    );
-    map.insert(
-        "instance_id".into(),
-        ConfigValue::String(
-            service
-                .and_then(|s| s.get("instance_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .into(),
-        ),
-    );
-    map.insert(
-        "distribution_mode".into(),
-        ConfigValue::String(
-            distribution
-                .and_then(|d| d.get("mode"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("disabled")
-                .into(),
-        ),
-    );
-    map.insert(
-        "console_enabled".into(),
-        ConfigValue::Bool(
-            console
-                .and_then(|c| c.get("enabled"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-        ),
-    );
-    map.insert(
-        "console_listen".into(),
-        ConfigValue::String(
-            console
-                .and_then(|c| c.get("listen"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("127.0.0.1:8787")
-                .into(),
-        ),
-    );
-    map.insert(
-        "include_config".into(),
-        ConfigValue::Bool(
-            console
-                .and_then(|c| c.get("include_config"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-        ),
-    );
-    map.insert(
-        "auth_token_key".into(),
-        ConfigValue::String(
-            console
-                .and_then(|c| c.get("auth_token_key"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .into(),
-        ),
-    );
-    ConfigValue::Object(map)
-}
-
-fn string_node(key: &str, title: &str, mutability: ConfigMutability) -> ConfigNode {
+fn string_node(key: &str, title: &str, restart_policy: RestartPolicy) -> ConfigNode {
     ConfigNode {
         key: key.into(),
         value_type: ConfigValueType::String { multiline: false },
         title: LocalizedText::new(title),
         description: None,
         default_value: None,
-        constraints: Default::default(),
-        presentation: Default::default(),
+        constraints: ConfigConstraints::default(),
+        presentation: ConfigPresentation::default(),
         visibility: None,
         enabled_if: None,
-        mutability,
-        restart_policy: RestartPolicy::BotRestart,
-        children: vec![],
+        mutability: ConfigMutability::ReadWrite,
+        restart_policy,
+        children: Vec::new(),
     }
 }
 
-fn bool_node(key: &str, title: &str) -> ConfigNode {
+fn bool_node(key: &str, title: &str, restart_policy: RestartPolicy) -> ConfigNode {
     ConfigNode {
         key: key.into(),
         value_type: ConfigValueType::Bool,
         title: LocalizedText::new(title),
         description: None,
         default_value: None,
-        constraints: Default::default(),
-        presentation: Default::default(),
+        constraints: ConfigConstraints::default(),
+        presentation: ConfigPresentation::default(),
         visibility: None,
         enabled_if: None,
         mutability: ConfigMutability::ReadWrite,
-        restart_policy: RestartPolicy::BotRestart,
-        children: vec![],
+        restart_policy,
+        children: Vec::new(),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mutsuki_bot_config::{ConfigApplyRequest, ConfigRevision, ConfigSource};
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn product_config_service_registers_product_provider() {
-        let root = tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        std::fs::write(
-            &path,
-            r#"
-[service]
-profile = "bot"
-instance_id = "demo"
-
-[distribution]
-mode = "disabled"
-
-[web.console]
-enabled = true
-listen = "127.0.0.1:8787"
-auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
-include_config = true
-"#,
-        )
-        .unwrap();
-        let service = product_config_service(&path).unwrap();
-        let caps = vec!["config.schema.read".into(), "config.value.read".into()];
-        let providers = service.list_providers(&caps).unwrap();
-        assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].0, "product");
-        let snapshot = service
-            .read(
-                "product",
-                mutsuki_bot_config::ConfigContext::global(),
-                &caps,
-            )
-            .await
-            .unwrap();
-        match snapshot.value {
-            ConfigValue::Object(map) => {
-                assert_eq!(
-                    map.get("instance_id"),
-                    Some(&ConfigValue::String("demo".into()))
-                );
-                assert_eq!(
-                    map.get("auth_token_key"),
-                    Some(&ConfigValue::String("WEB_CONSOLE_AUTH_TOKEN".into()))
-                );
-            }
-            other => panic!("unexpected value: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn product_apply_persists_atomically_and_fails_loud() {
-        let root = tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        std::fs::write(
-            &path,
-            r#"
-[service]
-profile = "bot"
-instance_id = "demo"
-
-[web.console]
-enabled = false
-listen = "127.0.0.1:1"
-include_config = false
-auth_token_key = "WEB_CONSOLE_AUTH_TOKEN"
-"#,
-        )
-        .unwrap();
-        let service = product_config_service(&path).unwrap();
-        let caps = vec![
-            "config.schema.read".into(),
-            "config.value.read".into(),
-            "config.value.write".into(),
-            "config.apply".into(),
-        ];
-        let snap = service
-            .read("product", ConfigContext::global(), &caps)
-            .await
-            .unwrap();
-        let mut candidate = match snap.value {
-            ConfigValue::Object(map) => ConfigValue::Object(map),
-            other => panic!("{other:?}"),
-        };
-        candidate.as_object_mut().unwrap().insert(
+pub fn product_seed_defaults() -> ConfigValue {
+    ConfigValue::Object(BTreeMap::from([
+        ("profile".into(), ConfigValue::String("bot".into())),
+        ("console_enabled".into(), ConfigValue::Bool(true)),
+        (
             "console_listen".into(),
             ConfigValue::String("127.0.0.1:8787".into()),
-        );
-        candidate
-            .as_object_mut()
-            .unwrap()
-            .insert("console_enabled".into(), ConfigValue::Bool(true));
-        let applied = service
-            .apply(
-                "product",
-                ConfigApplyRequest {
-                    candidate,
-                    expected_revision: snap.revision,
-                    dry_run: false,
-                },
-                ConfigContext::global(),
-                &caps,
-            )
-            .await
-            .unwrap();
-        assert!(applied.applied);
-        let persisted: toml::Value =
-            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            persisted["web"]["console"]["listen"].as_str(),
-            Some("127.0.0.1:8787")
-        );
-        assert_eq!(persisted["web"]["console"]["enabled"].as_bool(), Some(true));
-        let again = service
-            .read("product", ConfigContext::global(), &caps)
-            .await
-            .unwrap();
-        assert_eq!(again.source, ConfigSource::Persisted);
-        assert_eq!(again.revision, ConfigRevision(1));
-    }
+        ),
+        (
+            "auth_token_key".into(),
+            ConfigValue::String("mutsuki.web.console.token".into()),
+        ),
+        (
+            "extensions".into(),
+            ConfigValue::Array(vec![ConfigValue::String("config".into())]),
+        ),
+        (
+            "runtime_plugins".into(),
+            ConfigValue::Object(BTreeMap::new()),
+        ),
+    ]))
+}
 
-    #[tokio::test]
-    async fn bot_agent_provider_updates_the_live_bridge_and_product_file() {
-        let root = tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        std::fs::write(
-            &path,
-            r#"
-[service]
-profile = "bot"
-instance_id = "demo"
+/// Known local-product selections. An empty repository enables none of them.
+#[must_use]
+pub fn product_runtime_selections() -> Vec<ConfiguredPluginSelection> {
+    vec![
+        ConfiguredPluginSelection {
+            id: AGENT_CONNECTIONS_PLUGIN_ID.into(),
+            enabled: false,
+            config: serde_json::to_value(AgentConnectionsConfig::default())
+                .expect("Agent connection defaults serialize"),
+        },
+        ConfiguredPluginSelection {
+            id: BOT_FLOW_ROUTER_PLUGIN_ID.into(),
+            enabled: false,
+            config: serde_json::json!({}),
+        },
+        ConfiguredPluginSelection {
+            id: QQBOT_ADAPTER_PLUGIN_ID.into(),
+            enabled: false,
+            config: serde_json::to_value(QqBotConfig::default()).expect("QQ defaults serialize"),
+        },
+        ConfiguredPluginSelection {
+            id: BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
+            enabled: false,
+            config: serde_json::to_value(BotAgentConfig::default())
+                .expect("Bot Agent defaults serialize"),
+        },
+    ]
+}
 
-[[plugins.configured]]
-id = "mutsuki.plugin.bot.agent"
-config = { enabled = true, connection_id = "primary", default_profile_id = "from-file", streaming = "final_only", max_concurrency = 2, timeout_ms = 10000, max_message_bytes = 1200 }
-"#,
-        )
-        .unwrap();
-        let handle = BotAgentConfigHandle::default();
-        let service = product_config_service_with_options(
-            &path,
-            ProductConfigOptions {
-                bot_agent_config: Some(handle.clone()),
-                ..ProductConfigOptions::default()
-            },
-        )
-        .unwrap();
-        let caps = vec!["*".into()];
-        assert!(
-            service
-                .list_providers(&caps)
-                .unwrap()
-                .iter()
-                .any(|id| id.0 == BOT_AGENT_CONFIG_PROVIDER_ID)
-        );
-        assert_eq!(
-            handle.snapshot().default_profile_id,
-            "from-file".to_string()
-        );
-
-        let snapshot = service
-            .read(
-                BOT_AGENT_CONFIG_PROVIDER_ID,
-                ConfigContext::plugin_instance("default"),
-                &caps,
-            )
-            .await
-            .unwrap();
-        let mut candidate = snapshot.value;
-        candidate.as_object_mut().unwrap().insert(
-            "streaming".into(),
-            ConfigValue::String("segment_messages".into()),
-        );
-        let result = service
-            .apply(
-                BOT_AGENT_CONFIG_PROVIDER_ID,
-                ConfigApplyRequest {
-                    candidate,
-                    expected_revision: snapshot.revision,
-                    dry_run: false,
-                },
-                ConfigContext::plugin_instance("default"),
-                &caps,
-            )
-            .await
-            .unwrap();
-        assert!(result.applied);
-        assert_eq!(result.restart_policy, RestartPolicy::PluginReload);
-        assert_eq!(handle.snapshot().streaming, "segment_messages");
-        let persisted: toml::Value =
-            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            persisted["plugins"]["configured"][0]["config"]["streaming"].as_str(),
-            Some("segment_messages")
-        );
-    }
-
-    #[test]
-    fn selected_bot_agent_without_a_live_bridge_fails_loud() {
-        let root = tempdir().unwrap();
-        let path = root.path().join("product.toml");
-        std::fs::write(
-            &path,
-            r#"
-[[plugins.configured]]
-id = "mutsuki.plugin.bot.agent"
-"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            product_config_service(&path),
-            Err(ProductConfigError::MissingBotAgentBridge)
-        ));
-    }
-
-    #[test]
-    fn missing_product_file_fails_loud() {
-        match product_config_service(Path::new("/no/such/product.toml")) {
-            Err(ProductConfigError::Unreadable(_)) => {}
-            Err(other) => panic!("unexpected error: {other}"),
-            Ok(_) => panic!("expected unreadable product config"),
+/// Preserves stored product selections while ensuring every v1 owner component is declared.
+pub fn merge_required_product_selections(selections: &mut Vec<ConfiguredPluginSelection>) {
+    for required in product_runtime_selections() {
+        if !selections
+            .iter()
+            .any(|selection| selection.id == required.id)
+        {
+            selections.push(required);
         }
     }
+}
+
+/// Registers the product-facing owner providers after Host secrets have been loaded.
+pub async fn register_configured_product_providers(
+    service: &Arc<ConfigService>,
+    selections: &[ConfiguredPluginSelection],
+    secrets: HostSecretStore,
+) -> Result<(), ProductConfigError> {
+    let qq = selection_or_default(selections, QQBOT_ADAPTER_PLUGIN_ID);
+    let qq_config = deserialize_or_default::<QqBotConfig>(&qq.config, "QQ Bot")?;
+    let mut qq_provider = MemoryConfigProvider::new(
+        qq_config_descriptor(QQBOT_ADAPTER_PLUGIN_ID),
+        qq_config_value(qq.enabled, &qq_config),
+        ConfigApplyMode::HotReload,
+    )
+    .with_persist(Arc::new(HostSecretPersist {
+        store: secrets.clone(),
+        key_by_field: BTreeMap::from([(
+            QQ_CLIENT_SECRET_FIELD.into(),
+            QQ_CLIENT_SECRET_KEY.into(),
+        )]),
+    }));
+    if secrets.resolve(QQ_CLIENT_SECRET_KEY).is_some() {
+        qq_provider = qq_provider.with_initial_secret(QQ_CLIENT_SECRET_FIELD, "configured".into());
+    }
+    service
+        .registry()
+        .register(Arc::new(qq_provider))
+        .map_err(register_error)?;
+
+    let bridge = selection_or_default(selections, BOT_AGENT_BRIDGE_PLUGIN_ID);
+    let bridge_config = deserialize_or_default::<BotAgentConfig>(&bridge.config, "Bot Agent")?;
+    service
+        .registry()
+        .register(Arc::new(MemoryConfigProvider::new(
+            bot_agent_config_schema(),
+            ConfigValue::from_json(
+                &serde_json::to_value(bridge_config).expect("Bot Agent config serializes"),
+            ),
+            ConfigApplyMode::HotReload,
+        )))
+        .map_err(register_error)?;
+
+    for provider_id in [QQBOT_ADAPTER_PLUGIN_ID, BOT_AGENT_BRIDGE_PLUGIN_ID] {
+        service
+            .restore(provider_id, provider_context(provider_id))
+            .await
+            .map_err(register_error)?;
+    }
+    Ok(())
+}
+
+/// Overlays persisted owner documents onto the runtime selections before initial startup.
+pub async fn restore_configured_product_selections(
+    service: &Arc<ConfigService>,
+    selections: &mut Vec<ConfiguredPluginSelection>,
+) -> Result<(), ProductConfigError> {
+    for provider_id in [QQBOT_ADAPTER_PLUGIN_ID, BOT_AGENT_BRIDGE_PLUGIN_ID] {
+        let snapshot = service
+            .read(
+                provider_id,
+                provider_context(provider_id),
+                &[capability::VALUE_READ.into()],
+            )
+            .await
+            .map_err(register_error)?;
+        let base = selections
+            .iter()
+            .find(|selection| selection.id == provider_id);
+        let restored = configured_plugin_selection_from_value(provider_id, &snapshot.value, base)
+            .map_err(register_error)?;
+        if let Some(current) = selections
+            .iter_mut()
+            .find(|selection| selection.id == provider_id)
+        {
+            *current = restored;
+        } else {
+            selections.push(restored);
+        }
+    }
+    Ok(())
+}
+
+pub fn configured_plugin_selection_from_value(
+    provider_id: &str,
+    value: &ConfigValue,
+    base: Option<&ConfiguredPluginSelection>,
+) -> Result<ConfiguredPluginSelection, ConfigError> {
+    let json = value.to_json();
+    let object = json.as_object().ok_or_else(|| ConfigError::ApplyRejected {
+        reason: "配置必须是对象".into(),
+    })?;
+    match provider_id {
+        AGENT_CONNECTIONS_PLUGIN_ID => {
+            let config: AgentConnectionsConfig =
+                serde_json::from_value(json).map_err(|error| ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                })?;
+            config
+                .validate()
+                .map_err(|error| ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                })?;
+            Ok(ConfiguredPluginSelection {
+                id: provider_id.into(),
+                enabled: base.is_some_and(|selection| selection.enabled),
+                config: serde_json::to_value(config).expect("Agent connections serialize"),
+            })
+        }
+        QQBOT_ADAPTER_PLUGIN_ID => {
+            let mut config: QqBotConfig = base
+                .and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
+                .unwrap_or_default();
+            config.account_id = if config.account_id.trim().is_empty() {
+                "local".into()
+            } else {
+                config.account_id
+            };
+            config.app_id = string_field(object, "app_id")?;
+            config.client_secret_key = QQ_CLIENT_SECRET_KEY.into();
+            config.gateway_intents = unsigned_field(object, "gateway_intents")?;
+            config.shard = [
+                unsigned_field(object, "shard_index")?,
+                unsigned_field(object, "shard_count")?,
+            ];
+            let enabled = bool_field(object, "enabled")?;
+            if enabled {
+                config
+                    .validate()
+                    .map_err(|error| ConfigError::ApplyRejected {
+                        reason: error.to_string(),
+                    })?;
+            }
+            Ok(ConfiguredPluginSelection {
+                id: provider_id.into(),
+                enabled,
+                config: serde_json::to_value(config).expect("QQ config serializes"),
+            })
+        }
+        BOT_AGENT_BRIDGE_PLUGIN_ID => {
+            let config: BotAgentConfig =
+                serde_json::from_value(json).map_err(|error| ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                })?;
+            config
+                .validate()
+                .map_err(|error| ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                })?;
+            let enabled = config.enabled;
+            Ok(ConfiguredPluginSelection {
+                id: provider_id.into(),
+                enabled,
+                config: serde_json::to_value(config).expect("Bot Agent config serializes"),
+            })
+        }
+        _ => Err(ConfigError::ApplyRejected {
+            reason: format!("未知产品配置 `{provider_id}`"),
+        }),
+    }
+}
+
+fn selection_or_default(
+    selections: &[ConfiguredPluginSelection],
+    plugin_id: &str,
+) -> ConfiguredPluginSelection {
+    selections
+        .iter()
+        .find(|selection| selection.id == plugin_id)
+        .cloned()
+        .or_else(|| {
+            product_runtime_selections()
+                .into_iter()
+                .find(|selection| selection.id == plugin_id)
+        })
+        .expect("product owner selection exists")
+}
+
+fn deserialize_or_default<T>(
+    value: &serde_json::Value,
+    title: &str,
+) -> Result<T, ProductConfigError>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    if value.is_null() {
+        Ok(T::default())
+    } else {
+        serde_json::from_value(value.clone())
+            .map_err(|error| ProductConfigError::Register(format!("{title} 配置无效：{error}")))
+    }
+}
+
+fn bool_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<bool, ConfigError> {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| ConfigError::ApplyRejected {
+            reason: format!("`{field}` 必须是布尔值"),
+        })
+}
+
+fn string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<String, ConfigError> {
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| ConfigError::ApplyRejected {
+            reason: format!("`{field}` 必须是字符串"),
+        })
+}
+
+fn unsigned_field<T>(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<T, ConfigError>
+where
+    T: TryFrom<u64>,
+{
+    object
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| T::try_from(value).ok())
+        .ok_or_else(|| ConfigError::ApplyRejected {
+            reason: format!("`{field}` 超出允许范围"),
+        })
+}
+
+fn persist_error(error: mutsuki_service_config::ConfigError) -> ConfigError {
+    ConfigError::ApplyRejected {
+        reason: error.to_string(),
+    }
+}
+
+fn provider_context(provider_id: &str) -> ConfigContext {
+    if provider_id == BOT_AGENT_BRIDGE_PLUGIN_ID {
+        ConfigContext::plugin_instance("default")
+    } else {
+        ConfigContext::global()
+    }
+}
+
+fn register_error(error: ConfigError) -> ProductConfigError {
+    ProductConfigError::Register(error.to_string())
 }

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use mutsuki_bot_config::{
+use mutsuki_config_service::{
     ConfigApplyMode, ConfigDescriptor, ConfigMutability, ConfigNode, ConfigProviderId,
     ConfigProviderRegistry, ConfigScope, ConfigService, ConfigValue, ConfigValueType,
     LocalizedText, MemoryConfigProvider, RestartPolicy, SecretState,
@@ -16,7 +16,7 @@ pub fn demo_config_service() -> Arc<ConfigService> {
         value_version: 1,
         title: LocalizedText::new("产品设置"),
         description: Some(LocalizedText::new("Console 演示用最小 ConfigProvider")),
-        scopes: vec![ConfigScope::Global],
+        scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: "product".into(),
             value_type: ConfigValueType::Object,
@@ -83,5 +83,11 @@ pub fn demo_config_service() -> Arc<ConfigService> {
             ConfigApplyMode::HotReload,
         )))
         .expect("demo config provider registers once");
-    Arc::new(ConfigService::new(registry))
+    Arc::new(
+        ConfigService::new(
+            registry,
+            Arc::new(mutsuki_config_service::InMemoryConfigRepository::default()),
+        )
+        .expect("memory ConfigRepository recovers"),
+    )
 }

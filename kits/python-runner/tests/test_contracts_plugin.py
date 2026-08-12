@@ -111,9 +111,9 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
         handler_bindings=(binding,),
         extensions=(
             PluginExtensionDescriptor(
-                extension_id="mutsuki.bot.flow.nodes",
+                extension_id="example.plugin.catalog",
                 version=1,
-                payload={"nodes": []},
+                payload={"entries": []},
             ),
         ),
         resource_schemas=("bytes.v1",),
@@ -307,6 +307,13 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 kind=ContractSurfaceKind.HANDLER_BINDING,
                 owner_plugin_id="plugin-a",
                 fingerprint="handler_binding:message-handler",
+                deprecated=False,
+            ),
+            ContractSurface(
+                surface_id="plugin_extension:plugin-a:example.plugin.catalog@1",
+                kind=ContractSurfaceKind.PLUGIN_EXTENSION,
+                owner_plugin_id="plugin-a",
+                fingerprint='plugin_extension:example.plugin.catalog@1:{"entries":[]}',
                 deprecated=False,
             ),
             ContractSurface(

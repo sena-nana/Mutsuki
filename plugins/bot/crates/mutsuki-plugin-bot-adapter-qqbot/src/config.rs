@@ -6,8 +6,15 @@ use mutsuki_bot_protocol::{
     BotConversationKind, BotMediaKind, QqBotCapabilityMatrix, QqMessageSegmentKind,
     QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
 };
+use mutsuki_config_service::{
+    ConfigConstraints, ConfigDescriptor, ConfigKey, ConfigMutability, ConfigNode,
+    ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
+    RestartPolicy, SecretState,
+};
 
 pub const DEFAULT_QQBOT_INTENTS: u64 = 1_325_405_185;
+pub const QQ_CLIENT_SECRET_FIELD: &str = "client_secret";
+pub const QQ_CLIENT_SECRET_KEY: &str = "QQBOT_CLIENT_SECRET";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -285,6 +292,143 @@ impl QqBotConfig {
             required_intents,
             required_permissions,
         }
+    }
+}
+
+/// Product-facing QQ configuration. Network and retry tuning stays on owner defaults.
+#[must_use]
+pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
+    ConfigDescriptor {
+        provider_id: ConfigProviderId::new(provider_id),
+        schema_version: 1,
+        value_version: 1,
+        title: LocalizedText::new("QQ Bot"),
+        description: Some(LocalizedText::new("连接一个 QQ Bot 账号并管理消息能力")),
+        scopes: vec![ConfigScope::global()],
+        root: ConfigNode {
+            key: ConfigKey::new("qq"),
+            value_type: ConfigValueType::Object,
+            title: LocalizedText::new("QQ Bot"),
+            description: None,
+            default_value: None,
+            constraints: ConfigConstraints::default(),
+            presentation: ConfigPresentation::default(),
+            visibility: None,
+            enabled_if: None,
+            mutability: ConfigMutability::ReadWrite,
+            restart_policy: RestartPolicy::PluginReload,
+            children: vec![
+                bool_node("enabled", "启用 QQ Bot"),
+                string_node("app_id", "App ID", false),
+                secret_node(QQ_CLIENT_SECRET_FIELD, "Client Secret"),
+                integer_node("gateway_intents", "接收事件范围", 1.0, u64::MAX as f64),
+                integer_node("shard_index", "分片序号", 0.0, u32::MAX as f64),
+                integer_node("shard_count", "分片总数", 1.0, u32::MAX as f64),
+            ],
+        },
+        groups: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn qq_config_value(enabled: bool, config: &QqBotConfig) -> ConfigValue {
+    ConfigValue::Object(
+        [
+            ("enabled".into(), ConfigValue::Bool(enabled)),
+            ("app_id".into(), ConfigValue::String(config.app_id.clone())),
+            (
+                QQ_CLIENT_SECRET_FIELD.into(),
+                ConfigValue::Secret(SecretState::Keep),
+            ),
+            (
+                "gateway_intents".into(),
+                ConfigValue::Integer(i64::try_from(config.gateway_intents).unwrap_or(i64::MAX)),
+            ),
+            (
+                "shard_index".into(),
+                ConfigValue::Integer(i64::try_from(config.shard[0]).unwrap_or(i64::MAX)),
+            ),
+            (
+                "shard_count".into(),
+                ConfigValue::Integer(i64::try_from(config.shard[1]).unwrap_or(i64::MAX)),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
+fn bool_node(key: &str, title: &str) -> ConfigNode {
+    field_node(
+        key,
+        title,
+        ConfigValueType::Bool,
+        ConfigConstraints::default(),
+    )
+}
+
+fn string_node(key: &str, title: &str, multiline: bool) -> ConfigNode {
+    field_node(
+        key,
+        title,
+        ConfigValueType::String { multiline },
+        ConfigConstraints {
+            required: true,
+            min_length: Some(1),
+            max_length: Some(2_048),
+            ..ConfigConstraints::default()
+        },
+    )
+}
+
+fn integer_node(key: &str, title: &str, min: f64, max: f64) -> ConfigNode {
+    field_node(
+        key,
+        title,
+        ConfigValueType::Integer,
+        ConfigConstraints {
+            required: true,
+            min: Some(min),
+            max: Some(max),
+            ..ConfigConstraints::default()
+        },
+    )
+}
+
+fn secret_node(key: &str, title: &str) -> ConfigNode {
+    let mut node = field_node(
+        key,
+        title,
+        ConfigValueType::Secret,
+        ConfigConstraints {
+            required: true,
+            ..ConfigConstraints::default()
+        },
+    );
+    node.description = Some(LocalizedText::new("保存后不会再次显示"));
+    node.presentation.secret = true;
+    node
+}
+
+fn field_node(
+    key: &str,
+    title: &str,
+    value_type: ConfigValueType,
+    constraints: ConfigConstraints,
+) -> ConfigNode {
+    ConfigNode {
+        key: ConfigKey::new(key),
+        value_type,
+        title: LocalizedText::new(title),
+        description: None,
+        default_value: None,
+        constraints,
+        presentation: ConfigPresentation::default(),
+        visibility: None,
+        enabled_if: None,
+        mutability: ConfigMutability::ReadWrite,
+        restart_policy: RestartPolicy::PluginReload,
+        children: Vec::new(),
     }
 }
 

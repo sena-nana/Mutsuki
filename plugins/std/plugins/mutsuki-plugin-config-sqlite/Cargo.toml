@@ -1,0 +1,18 @@
+[package]
+name = "mutsuki-plugin-config-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite ConfigRepository selected explicitly by product bootstrap."
+
+[dependencies]
+mutsuki-config-service = { workspace = true }
+parking_lot.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

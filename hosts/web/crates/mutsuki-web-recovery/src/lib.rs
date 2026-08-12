@@ -99,7 +99,7 @@ function connect() {
     send(ws, {
       type: 'hello',
       protocol_version: '1.0.0',
-      capabilities: ['recovery.read', 'recovery.write', 'host.read'],
+      capabilities: [],
     });
   });
 

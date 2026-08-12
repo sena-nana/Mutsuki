@@ -9,7 +9,7 @@ QQ Source -> Event/Command Match -> Agent Processor -> reliable Delivery Sink
 
 `QqConversationRef` is the stable private/group/channel identity. Its v1 origin key is length
 delimited and can be parsed back during state migration; persisted keys are validated before they
-are used to rebuild a target. The published Bot Flow owns mention/wake-word, allow/deny,
+are used to rebuild a target. The active Bot Flow configuration owns mention/wake-word, allow/deny,
 account/role/rate-limit and command matching. Agent conversation state keeps only profile,
 session scope, STT/TTS and delivery execution settings. Session bindings and processed event
 claims are durable and generation-fenced. Reset and expiry create a new binding while preserving the old
@@ -58,10 +58,10 @@ retry, emits the configured retry prompt through `BOT_MESSAGE_SEND_PROTOCOL_ID`,
 waiting or becomes failed. Completed steps can transition to a new state/wait specification; reload
 recovery cancels stale generations and deterministically times out expired waiters.
 
-Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that publishes a
+Functional acceptance consists of owner crate tests plus the ServiceRuntime E2E that applies a
 graph, routes QQ ingress through Agent and reliable delivery, suppresses replay, and recovers the
-same graph after restart. Flow Web RPC tests cover permission, draft persistence, validation,
-publish CAS and discard. QQ Web keeps account management only; Flow editing is a separate real
+same graph after restart. Flow Web RPC tests cover authenticated permission, browser-local draft,
+validation and apply CAS conflict. QQ Web keeps account management only; Flow editing is a separate real
 WebExtension with its own revision and permission contracts.
 It cannot be registered without an injected management API and is not enabled by the default
 catalog, so a product must bind those actions to its live account/secret/audit provider before the

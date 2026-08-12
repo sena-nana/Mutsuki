@@ -118,11 +118,14 @@ panic_file = "panic.log"
     })
     .unwrap();
 
-    let runtime = assemble_service(service.clone())
-        .unwrap()
-        .start()
-        .await
-        .unwrap();
+    let runtime = assemble_service(
+        service.clone(),
+        mutsuki_bot_web_console::empty_config_service(),
+    )
+    .unwrap()
+    .start()
+    .await
+    .unwrap();
     runtime.shutdown().await;
     let builtin_lock: serde_json::Value = serde_json::from_slice(
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
@@ -133,11 +136,14 @@ panic_file = "panic.log"
         "builtin"
     );
 
-    let runtime = assemble_service(service.clone())
-        .unwrap()
-        .start()
-        .await
-        .unwrap();
+    let runtime = assemble_service(
+        service.clone(),
+        mutsuki_bot_web_console::empty_config_service(),
+    )
+    .unwrap()
+    .start()
+    .await
+    .unwrap();
     let client = ControlClient::new(ControlClientConfig::from(&service));
     let switched = client
         .request(ControlCommand::PluginDeploymentSet(PluginDeploymentParam {
@@ -157,11 +163,14 @@ panic_file = "panic.log"
     assert_eq!(abi_lock["plugin_deployments"]["mutsuki.bot.command"], "abi");
     runtime.shutdown().await;
 
-    let runtime = assemble_service(service.clone())
-        .unwrap()
-        .start()
-        .await
-        .unwrap();
+    let runtime = assemble_service(
+        service.clone(),
+        mutsuki_bot_web_console::empty_config_service(),
+    )
+    .unwrap()
+    .start()
+    .await
+    .unwrap();
     let abi_lock: serde_json::Value = serde_json::from_slice(
         &fs::read(root.path().join("run").join("runtime.lock.json")).unwrap(),
     )

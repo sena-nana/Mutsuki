@@ -10,7 +10,7 @@ use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryError, DeliveryPolicyResolver, DeliveryRepository,
     QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
 };
-use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog, InMemoryBotFlowRepository};
+use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
 use mutsuki_bot_interaction::{
     InteractionConditionMatcher, InteractionError, InteractionRepository, InteractionService,
 };
@@ -297,8 +297,6 @@ fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
         bot_command_manifest(1),
     ];
     let catalog = BotNodeCatalog::from_manifests(&manifests).unwrap();
-    let repository = Arc::new(InMemoryBotFlowRepository::default());
-    let registry = Arc::new(BotFlowRegistry::open(repository, catalog).unwrap());
     let mut nodes = vec![BotFlowNode {
         node_id: "source".into(),
         node_type_id: "mutsuki.bot.qq.source".into(),
@@ -332,11 +330,11 @@ fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
             kind: BotFlowEdgeKind::Event,
         });
     }
-    let draft = registry
-        .save_draft(
-            BotFlowDraftSaveRequest {
-                expected_draft_revision: None,
-                base_published_revision: 0,
+    Arc::new(
+        BotFlowRegistry::with_snapshot(
+            catalog,
+            BotFlowSnapshot {
+                revision: 1,
                 flows: vec![BotFlowDocument {
                     flow_id: "benchmark.fanout".into(),
                     name: "explicit fan-out".into(),
@@ -345,19 +343,9 @@ fn benchmark_fanout_registry(branch_count: usize) -> Arc<BotFlowRegistry> {
                     edges,
                 }],
             },
-            1,
         )
-        .unwrap();
-    registry
-        .publish(
-            BotFlowPublishRequest {
-                expected_draft_revision: draft.revision,
-                expected_published_revision: 0,
-            },
-            2,
-        )
-        .unwrap();
-    registry
+        .unwrap(),
+    )
 }
 
 pub fn conversation_sample(event_count: usize) -> Sample {

@@ -509,3 +509,16 @@ Contract surface 兼容性：
   round-robin 候选选择执行公平性，Background/Bulk 在交互需求存在时不能消费保留容量。
 - Core Actor 使用独立有界 control/data mailbox；control burst quota 保证完成洪峰不会
   淹没 submit/query/cancel，同时避免 data mailbox 永久饥饿。
+
+## 12. Configuration Ownership
+
+- `mutsuki-protocol-config` owns domain-neutral schema, value, qualified scope, revision, validation,
+  apply and error DTOs; product domains must not leak into these names.
+- `mutsuki-config-service` coordinates one document per provider/context as validate, durable
+  pending CAS, reversible provider activation/lifecycle, repository commit and rollback.
+- `ConfigRepository` is a replaceable bootstrap plugin boundary. Core, ServiceHost, providers and
+  WebExtensions never infer a file, SQLite database or remote endpoint.
+- SQLite is one Std plugin selected explicitly by BotTemplate bootstrap. It is not a framework
+  default and receives both path and logical namespace from its caller.
+- Bot Flow is an ordinary Bot-owned `ConfigProvider`; only Bot packages decode its document.
+  The independent editor adapts Web RPC to ConfigService and owns no server-side storage or draft.

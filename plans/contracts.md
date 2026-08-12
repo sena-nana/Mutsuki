@@ -68,7 +68,12 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 | `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 视图，用于 host 声明与裁剪一致性 |
 | `CapabilityProviderSelection` | resolver 为 active capability 选择的 provider 插件、版本和 surface descriptor |
 | `PermissionAuditEntry` | resolver 对插件 effect/resource 权限 grant 的结构化审计结果 |
-| `PluginManifest` | 插件声明 owner-defined capability、runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
+| `PluginExtensionDescriptor` | 插件发布的领域中立扩展信封；包含稳定 extension_id、正整数 version 和 owner-defined JSON object payload，Core 与通用 Host 不解释 payload |
+| `ConfigDocumentKey` / `ConfigDocumentSnapshot` | provider id 与 owner-defined qualified context 定位的通用配置文档；每个 key 独立 revision |
+| `ConfigCompareAndSetRequest` | 配置仓库的 expected revision、redacted value 与 schema/value version；仓库不解释 owner payload |
+| `ConfigRepository` / `PreparedConfigWrite` | Host-neutral durable pending、CAS commit、rollback 与 crash recovery 边界 |
+| `ConfigProvider` / `PreparedConfigActivation` | owner validation、default 与可回滚运行态激活边界；不决定存储位置 |
+| `PluginManifest` | 插件声明 owner-defined capability、versioned extension、runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `HostExtensionDescriptor` | Host 内部 backend/service 扩展点 descriptor，例如 bridge、codec、trace sink、resource backend、scheduler policy |
 | `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
 | `CodecDescriptor` / `BridgeDescriptor` | 连接级 codec 与 host-side shim/bridge descriptor |
@@ -526,6 +531,18 @@ artifact 类型兼容。部署形态属于 host 执行面约束，不得进入�
 `PluginProvides.capabilities` 可声明不隐含 Runner、Protocol、Resource 或 Host backend 的
 owner-defined capability。resolver 将非空完整 capability 字符串作为 load-plan 的
 provided/active capability 与 provider selection 事实，Core 不解释其领域语义。
+
+`PluginProvides.extensions` 只承载版本化、owner-defined 的不透明扩展描述。通用 resolver
+只校验 `extension_id` 非空且使用稳定限定字符、`version > 0`、`payload` 是 JSON object，
+并拒绝同一插件内重复的 `(extension_id, version)`；它不得识别领域 extension id、读取
+payload 字段或执行领域 schema 校验。领域 owner 在自己的 package 中按 extension id 和
+version 解码 typed contract，并负责更细的 schema 与 binding 可用性校验。
+
+扩展描述保留在 `PluginManifest::business_surface`，并以
+`ContractSurfaceKind::PluginExtension` 进入 `RuntimeLoadPlan.contract_surfaces`。resolver 只对
+JSON object key 做确定性排序后生成完整 payload fingerprint；扩展 identity、version 或
+payload 的变化按普通 contract surface 进入热重载兼容性比较。Core 只携带和比较这些事实，
+不据此创建 task、选择 runner、执行 fan-out 或改变调度语义。
 
 `PluginArtifact.companion_artifacts` 可声明与主 artifact 同包分发的辅助文件。每项使用
 包内相对 `path`、`sha256`、`executable` 和可选领域中立 `role` 描述；产品 Host 负责路径

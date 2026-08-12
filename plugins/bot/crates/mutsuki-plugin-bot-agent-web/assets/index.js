@@ -1,5 +1,3 @@
-const ALL = ["*"];
-
 function esc(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -21,7 +19,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
   const result = el.querySelector("#agent-connection-result");
 
   async function refresh() {
-    const body = await rpc.call("bot-agent", "connections.snapshot", { capabilities: ALL });
+    const body = await rpc.call("bot-agent", "connections.snapshot", {});
     const snapshot = body.snapshot || body;
     revision = snapshot.revision || 0;
     const items = snapshot.connections || [];
@@ -29,7 +27,7 @@ export async function mountAgentConnectionsPanel(el, rpc) {
     list.querySelectorAll("[data-reconnect]").forEach((button) => {
       button.onclick = async () => {
         try {
-          await rpc.call("bot-agent", "connections.reconnect", { capabilities: ALL, expected_revision: revision, connection_id: button.dataset.reconnect });
+          await rpc.call("bot-agent", "connections.reconnect", { expected_revision: revision, connection_id: button.dataset.reconnect });
           await refresh();
         } catch (error) { result.textContent = errorText(error); }
       };
@@ -38,12 +36,12 @@ export async function mountAgentConnectionsPanel(el, rpc) {
 
   function config() { return JSON.parse(el.querySelector("#agent-connection-json").value); }
   el.querySelector("#agent-test").onclick = async () => {
-    try { result.textContent = JSON.stringify(await rpc.call("bot-agent", "connections.test", { capabilities: ALL, config: config() }), null, 2); }
+    try { result.textContent = JSON.stringify(await rpc.call("bot-agent", "connections.test", { config: config() }), null, 2); }
     catch (error) { result.textContent = errorText(error); }
   };
   el.querySelector("#agent-save").onclick = async () => {
     try {
-      await rpc.call("bot-agent", "connections.upsert", { capabilities: ALL, expected_revision: revision, config: config() });
+      await rpc.call("bot-agent", "connections.upsert", { expected_revision: revision, config: config() });
       result.textContent = "连接验证成功，已原子切换。";
       await refresh();
     } catch (error) { result.textContent = errorText(error); }

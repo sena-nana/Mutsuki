@@ -5,11 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+futures-executor = "0.3"
 hex.workspace = true
 mutsuki-agent-client.workspace = true
 mutsuki-agent-contracts.workspace = true
 mutsuki-link-core.workspace = true
 mutsuki-link-local.workspace = true
+mutsuki-config-service.workspace = true
 mutsuki-runtime-contracts.workspace = true
 mutsuki-runtime-sdk.workspace = true
 mutsuki-service-config.workspace = true

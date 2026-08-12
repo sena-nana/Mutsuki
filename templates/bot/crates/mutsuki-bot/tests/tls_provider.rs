@@ -44,7 +44,11 @@ panic_file = "panic.log"
     })
     .unwrap();
 
-    let runtime = assemble_service(service).unwrap().start().await.unwrap();
+    let runtime = assemble_service(service, mutsuki_bot_web_console::empty_config_service())
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
     let _client = reqwest::Client::new();
     runtime.shutdown().await;
 }

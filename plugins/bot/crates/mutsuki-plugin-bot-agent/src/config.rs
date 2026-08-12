@@ -2,10 +2,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use mutsuki_agent_client::{AgentConnectionId, AgentConnectionIdError};
-use mutsuki_bot_config::{
+use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, QqStreamingStrategy};
+use mutsuki_config_service::{
     ConfigDescriptor, ConfigValueType, EnumOption, LocalizedText, MutsukiConfigSchema,
 };
-use mutsuki_bot_protocol::{AgentSessionScope, BotSpeechReplyPolicy, QqStreamingStrategy};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -24,7 +24,7 @@ pub const BOT_AGENT_MAX_TIMEOUT_MS: u64 = 600_000;
 /// Conversation-level policy remains the authority for permissions and explicit profile
 /// bindings. These settings only provide product defaults and delivery/runtime controls.
 #[derive(
-    Clone, Debug, Deserialize, Eq, PartialEq, Serialize, mutsuki_bot_config::MutsukiConfig,
+    Clone, Debug, Deserialize, Eq, PartialEq, Serialize, mutsuki_config_service::MutsukiConfig,
 )]
 #[config(
     provider_id = "mutsuki.plugin.bot.agent",

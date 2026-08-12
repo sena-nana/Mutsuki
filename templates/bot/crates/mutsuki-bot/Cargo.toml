@@ -16,6 +16,9 @@ mutsuki-service-runtime.workspace = true
 mutsuki-agent-service-host-integration.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-bot-web-console.workspace = true
+mutsuki-config-service.workspace = true
+mutsuki-plugin-config-sqlite.workspace = true
+mutsuki-plugin-config-web.workspace = true
 mutsuki-std-service-host-integration.workspace = true
 mutsuki-web-host.workspace = true
 mutsuki-web-protocol.workspace = true
@@ -24,6 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 mutsuki-agent-bundle.workspace = true
@@ -36,6 +40,8 @@ mutsuki-service-control.workspace = true
 mutsuki-service-ipc.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-command.workspace = true
+mutsuki-bot-flow.workspace = true
+mutsuki-plugin-bot-event-router.workspace = true
 mutsuki-bot-testkit.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-runtime-core.workspace = true
@@ -46,4 +52,3 @@ sha2.workspace = true
 tempfile.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
-uuid = { version = "1", features = ["v4"] }

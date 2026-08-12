@@ -5,12 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 mutsuki-bot-protocol.workspace = true
+mutsuki-config-service.workspace = true
 mutsuki-runtime-contracts.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+futures-executor = "0.3"
 mutsuki-runtime-sdk.workspace = true
 
 [lints]

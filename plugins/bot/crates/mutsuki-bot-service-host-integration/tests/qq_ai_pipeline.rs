@@ -12,20 +12,22 @@ use mutsuki_bot_delivery::{
     DeliveryError, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
     bot_reply_delivery_manifest,
 };
-use mutsuki_bot_flow::{BotFlowRegistry, BotNodeCatalog};
+use mutsuki_bot_flow::{
+    BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
+};
 use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
 use mutsuki_bot_protocol::{
     AgentSessionScope, BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE,
     BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotAccountRef, BotDeliveryContent,
-    BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowDraftSaveRequest, BotFlowEdge,
-    BotFlowEdgeKind, BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload,
-    BotFlowPublishRequest, BotFlowSourceSelector, BotFlowTypeRef, BotMessage,
-    BotNodeCatalogFragment, BotNodeDescriptor, BotNodePortDescriptor, BotNodePortDirection,
-    BotNodeRole, BotPlatform, BotSpeechReplyPolicy, BotTarget, BotUser, ConversationPolicy,
-    QqConversationRef,
+    BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
+    BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector,
+    BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodePortDescriptor,
+    BotNodePortDirection, BotNodeRole, BotPlatform, BotSpeechReplyPolicy, BotTarget, BotUser,
+    ConversationPolicy, QqConversationRef,
 };
 use mutsuki_bot_service_host_integration::QqAiBotPluginBundle;
 use mutsuki_bot_state_db::BotStateDbRepository;
+use mutsuki_config_service::{ConfigContext, ConfigProviderRegistry, ConfigService, ConfigValue};
 use mutsuki_plugin_bot_agent::{
     AgentBridgeClient, BOT_AGENT_BRIDGE_PLUGIN_ID, BOT_AGENT_NODE_SUBMIT, bot_agent_bridge_manifest,
 };
@@ -33,6 +35,7 @@ use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
     flow_ingress_runner, flow_node_runner, flow_router_manifest,
 };
+use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_runtime_contracts::{
     CompletionBatch, ExecutionClass, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
     ResourceSealState, ResourceSemantic, RunnerResult, Task, TaskHandle, TaskOutcome, TaskStatus,
@@ -137,26 +140,34 @@ async fn start_runtime(
         reply_manifest,
     ])
     .unwrap();
-    let registry = Arc::new(BotFlowRegistry::open(repository.clone(), catalog).unwrap());
+    let registry = Arc::new(BotFlowRegistry::new(catalog));
+    let providers = Arc::new(ConfigProviderRegistry::default());
+    providers
+        .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
+        .unwrap();
+    let flow_config = Arc::new(
+        ConfigService::new(
+            providers,
+            Arc::new(
+                SqliteConfigRepository::open(root.join("flow-config.sqlite3"), "qq-ai-pipeline")
+                    .unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
     if publish {
-        let draft = registry
-            .save_draft(
-                BotFlowDraftSaveRequest {
-                    expected_draft_revision: None,
-                    base_published_revision: 0,
-                    flows: vec![agent_flow()],
-                },
-                10,
+        flow_config
+            .create_if_absent(
+                BOT_FLOW_CONFIG_PROVIDER_ID,
+                ConfigValue::from_json(&json!({ "flows": [agent_flow()] })),
+                ConfigContext::global(),
             )
+            .await
             .unwrap();
-        registry
-            .publish(
-                BotFlowPublishRequest {
-                    expected_draft_revision: draft.revision,
-                    expected_published_revision: 0,
-                },
-                20,
-            )
+    } else {
+        flow_config
+            .restore(BOT_FLOW_CONFIG_PROVIDER_ID, ConfigContext::global())
+            .await
             .unwrap();
     }
 

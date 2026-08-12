@@ -46,11 +46,11 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 1. 能力缺失时在 owner package 补齐并验证，再更新模板；禁止复制实现、生产 fallback 或兼容 shim。
 2. 规范源使用根 Workspace path；导出的独立模板必须把依赖转换为统一 Mutsuki tag/commit，禁止仓库外 `path`/`[patch]`。
 3. 配置只声明 capability、插件和部署选择。模板不按平台、Agent、Provider 或 backend 硬编码替代路径。
-4. 只提交无账号、无凭据的简单 `config/template.toml` 与 Secret 占位模板；不暴露完整 Host 高级配置样例。实际 `config/local.toml`、账号和专用 secret 文件只能本地存在并被 Git 忽略，主配置只保存 Host secret key 引用。
+4. 只提交无账号、无凭据的最小 `config/bootstrap.toml` 与 Secret 占位模板；bootstrap 只选择 Host 边界与配置仓库，产品和 owner 配置进入 `ConfigRepository`，只保存 secret key 引用。
 5. 模板不得拥有业务 Runner、命令、回复或 Agent 流程；这些能力由 owner 仓库实现，并遵守 batch-first、`TaskHandle` 和通用协议契约。
 6. RuntimeProfile/RuntimeLoadPlan 是装配权威；registry freeze 后不得动态越权注册。
 7. 缺失 capability、配置、secret、artifact 或 revision 必须结构化失败，禁止假成功和吞错。
-8. 生产入口按 CLI、`MUTSUKI_CONFIG`、仓库 `config/local.toml` 的顺序选择配置；脚手架只公开用户需要修改的产品字段，目录、IPC、Runner 和观测等高级值继承 ServiceHost 默认。生产代码只聚合 owner factory catalog，不默认启用平台、Router、Command、Agent、Provider 或业务插件。零插件配置可以启动为空闲 Runtime；显式选择的能力缺失时必须失败。Mock 仅限测试。
+8. 生产入口按 CLI、`MUTSUKI_BOOTSTRAP`、仓库 `config/bootstrap.toml` 选择最小 bootstrap；模板显式选择 SQLite 配置仓库，但框架不假设路径或存储实现。空仓库只写一次版本化种子，不启用 Runtime 插件且只选择通用配置 WebExtension；其他插件和编辑器均由保存后的产品配置显式启用。Mock 仅限测试。
 9. `sena-nana/MutsukiBotTemplate` 只是 release 自动生成的 GitHub Template；禁止在生成仓
    手工维护实现、规范、Issue 或依赖版本。
 

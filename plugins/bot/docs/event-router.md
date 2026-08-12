@@ -1,7 +1,7 @@
 # Bot Flow Router
 
-`mutsuki.bot.router.flow` executes immutable Bot DAG revisions published by the Web Console. The
-graph stored by the Bot owner is the only routing source of truth; plugin manifests contribute only
+`mutsuki.bot.router.flow` executes immutable Bot DAG revisions applied through `ConfigService`. The
+active Flow provider snapshot is the only routing source of truth; plugin manifests contribute only
 `mutsuki.bot.flow.nodes@1` catalogs containing node types, typed ports, configuration schemas and
 exact `HandlerBinding` targets.
 
@@ -15,11 +15,12 @@ invoked only through the binding stored in its catalog descriptor. Failures term
 branch unless the node has an error edge, in which case the router emits a typed structured error
 event on that edge. Other branches and flows continue independently.
 
-Every node Task pins `graph_revision`, registry generation, trace and correlation. Publishing a new
-revision atomically changes new ingress only; an in-flight node reloads its immutable pinned graph
-version from the Bot repository.
+Every node Task pins `graph_revision`, registry generation, trace and correlation. Applying a new
+configuration revision atomically changes new ingress only; an in-flight task keeps its immutable
+`Arc` snapshot.
 
-Publishing is revision-fenced: validate against the current LoadPlan catalog, durably persist the
-new version and audit record, then atomically activate it. Cold boot and plugin reload run the same
-catalog validation through a domain-neutral ServiceHost LoadPlan hook. A missing node, port or
-binding prevents activation and leaves the previous graph active.
+Apply is revision-fenced: the browser keeps its draft and base revision, then submits one CAS after
+validation against the current LoadPlan catalog. `ConfigRepository` owns durable storage and
+`BotFlowConfigProvider` owns activation/rollback. Cold boot and plugin reload run the same catalog
+validation through a domain-neutral ServiceHost LoadPlan hook. A missing node, port or binding
+prevents activation and leaves the previous graph active.

@@ -11,15 +11,23 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 pub use mutsuki_agent_client::AgentConnectionId;
 use mutsuki_agent_client::{AgentClient, AgentClientBackend, AgentLinkClient};
 use mutsuki_agent_contracts::{
     AgentWireError, AgentWireNegotiation, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
 };
+use mutsuki_config_service::{
+    ConfigActivation, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
+    ConfigError, ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation, ConfigProvider,
+    ConfigProviderId, ConfigRevision, ConfigScope, ConfigService, ConfigSnapshot, ConfigValue,
+    ConfigValueType, LocalizedText, MapKeyStrategy, PreparedConfigActivation, RestartPolicy,
+    ValidationCode, ValidationIssue, ValidationResult, ValidationSeverity, capability,
+};
 use mutsuki_link_core::{ConnectContext, EndpointId, TransportBudget};
 use mutsuki_link_local::{LocalAddress, connect};
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
-use mutsuki_service_config::{ConfiguredPluginStore, HostSecretStore};
+use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
     ConfiguredPluginCatalog, ConfiguredPluginFactory, ServiceRuntimeBuilder, ServiceRuntimeResult,
 };
@@ -65,7 +73,6 @@ const fn enabled_by_default() -> bool {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentConnectionsConfig {
-    pub revision: u64,
     pub connections: Vec<AgentConnectionConfig>,
 }
 
@@ -164,6 +171,7 @@ impl AgentConnectorCatalog {
     }
 }
 
+#[derive(Clone)]
 struct ActiveConnection {
     config: AgentConnectionConfig,
     generation: u64,
@@ -310,26 +318,6 @@ impl AgentConnectionRegistry {
         status_of(connections.get(&id).expect("connection was inserted"))
     }
 
-    fn commit_disabled(&self, config: AgentConnectionConfig) -> AgentConnectionStatus {
-        let mut connections = self.connections.write();
-        let generation = connections
-            .get(&config.connection_id)
-            .map_or(1, |connection| connection.generation.saturating_add(1));
-        let id = config.connection_id.clone();
-        connections.insert(
-            id.clone(),
-            ActiveConnection {
-                config,
-                generation,
-                state: AgentConnectionState::Disabled,
-                negotiation: None,
-                backend: None,
-                last_error_code: None,
-            },
-        );
-        status_of(connections.get(&id).expect("connection was inserted"))
-    }
-
     fn mark_unavailable(&self, id: &AgentConnectionId, generation: u64, error: &AgentWireError) {
         if let Some(connection) = self.connections.write().get_mut(id)
             && connection.generation == generation
@@ -418,8 +406,14 @@ pub struct AgentConnectionManager {
     registry: AgentConnectionRegistry,
     connectors: AgentConnectorCatalog,
     secrets: HostSecretStore,
-    store: Option<ConfiguredPluginStore>,
-    config: Mutex<AgentConnectionsConfig>,
+    config_service: Arc<ConfigService>,
+    state: Arc<Mutex<AgentConnectionsState>>,
+}
+
+#[derive(Clone, Default)]
+struct AgentConnectionsState {
+    revision: ConfigRevision,
+    config: AgentConnectionsConfig,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -433,35 +427,22 @@ impl AgentConnectionManager {
         registry: AgentConnectionRegistry,
         connectors: AgentConnectorCatalog,
         secrets: HostSecretStore,
-        store: Option<ConfiguredPluginStore>,
+        config_service: Arc<ConfigService>,
+        state: Arc<Mutex<AgentConnectionsState>>,
     ) -> Self {
         Self {
             registry,
             connectors,
             secrets,
-            store,
-            config: Mutex::new(AgentConnectionsConfig::default()),
+            config_service,
+            state,
         }
-    }
-
-    fn bootstrap(&self, config: AgentConnectionsConfig) -> Result<(), AgentConnectionError> {
-        config.validate()?;
-        let prepared = config
-            .connections
-            .iter()
-            .filter(|item| item.enabled)
-            .cloned()
-            .map(|item| AgentConnectionRegistry::prepare(item, &self.connectors, &self.secrets))
-            .collect::<Result<Vec<_>, _>>()?;
-        self.registry.replace_all(&config, prepared);
-        *self.config.lock() = config;
-        Ok(())
     }
 
     #[must_use]
     pub fn snapshot(&self) -> AgentConnectionManagementSnapshot {
         AgentConnectionManagementSnapshot {
-            revision: self.config.lock().revision,
+            revision: self.state.lock().revision.0,
             connections: self.registry.statuses(),
         }
     }
@@ -489,40 +470,41 @@ impl AgentConnectionManager {
         config: AgentConnectionConfig,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         config.validate()?;
-        let index = {
-            let current = self.config.lock();
-            ensure_revision(&current, expected_revision)?;
-            current
-                .connections
-                .iter()
-                .position(|item| item.connection_id == config.connection_id)
-                .ok_or_else(|| {
-                    AgentConnectionError::ConnectionNotFound(config.connection_id.clone())
-                })?
+        let mut next = {
+            let current = self.state.lock();
+            ensure_revision(current.revision, expected_revision)?;
+            current.config.clone()
         };
-        let candidate = if config.enabled {
-            Some(AgentConnectionRegistry::prepare(
-                config.clone(),
-                &self.connectors,
-                &self.secrets,
-            )?)
+        if let Some(index) = next
+            .connections
+            .iter()
+            .position(|item| item.connection_id == config.connection_id)
+        {
+            next.connections[index] = config.clone();
         } else {
-            None
-        };
-        let mut current = self.config.lock();
-        ensure_revision(&current, expected_revision)?;
-        let mut next = current.clone();
-        next.connections[index] = config.clone();
+            next.connections.push(config.clone());
+        }
         next.connections
             .sort_by(|left, right| left.connection_id.cmp(&right.connection_id));
-        next.revision = next.revision.saturating_add(1);
-        self.persist(&next)?;
-        let status = match candidate {
-            Some(candidate) => self.registry.commit(candidate),
-            None => self.registry.commit_disabled(config.clone()),
-        };
-        *current = next;
-        Ok(status)
+        let service = self.config_service.clone();
+        block_on_config(async move {
+            service
+                .apply(
+                    AGENT_CONNECTIONS_PLUGIN_ID,
+                    ConfigApplyRequest {
+                        candidate: ConfigValue::from_json(
+                            &serde_json::to_value(next).expect("Agent config serializes"),
+                        ),
+                        expected_revision: ConfigRevision(expected_revision),
+                        dry_run: false,
+                    },
+                    ConfigContext::global(),
+                    &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+                )
+                .await
+        })
+        .map_err(config_service_error)?;
+        self.registry.status(&config.connection_id)
     }
 
     pub fn reconnect(
@@ -531,9 +513,10 @@ impl AgentConnectionManager {
         connection_id: &AgentConnectionId,
     ) -> Result<AgentConnectionStatus, AgentConnectionError> {
         let config = {
-            let current = self.config.lock();
-            ensure_revision(&current, expected_revision)?;
+            let current = self.state.lock();
+            ensure_revision(current.revision, expected_revision)?;
             current
+                .config
                 .connections
                 .iter()
                 .find(|item| &item.connection_id == connection_id)
@@ -546,50 +529,237 @@ impl AgentConnectionManager {
             ));
         }
         let candidate = AgentConnectionRegistry::prepare(config, &self.connectors, &self.secrets)?;
-        let current = self.config.lock();
-        ensure_revision(&current, expected_revision)?;
+        let current = self.state.lock();
+        ensure_revision(current.revision, expected_revision)?;
         let status = self.registry.commit(candidate);
         Ok(status)
-    }
-
-    fn persist(&self, config: &AgentConnectionsConfig) -> Result<(), AgentConnectionError> {
-        let store = self
-            .store
-            .as_ref()
-            .ok_or(AgentConnectionError::PersistenceUnavailable)?;
-        let value = serde_json::to_value(config)
-            .map_err(|error| AgentConnectionError::Config(error.to_string()))?;
-        store
-            .replace_config(AGENT_CONNECTIONS_PLUGIN_ID, value)
-            .map_err(|error| AgentConnectionError::Persistence(error.to_string()))
     }
 }
 
 fn ensure_revision(
-    current: &AgentConnectionsConfig,
+    current: ConfigRevision,
     expected_revision: u64,
 ) -> Result<(), AgentConnectionError> {
-    if current.revision == expected_revision {
+    if current.0 == expected_revision {
         Ok(())
     } else {
         Err(AgentConnectionError::RevisionConflict {
             expected: expected_revision,
-            actual: current.revision,
+            actual: current.0,
         })
+    }
+}
+
+fn config_service_error(error: ConfigError) -> AgentConnectionError {
+    match error {
+        ConfigError::RevisionConflict {
+            expected, current, ..
+        } => AgentConnectionError::RevisionConflict {
+            expected,
+            actual: current,
+        },
+        other => AgentConnectionError::Persistence(other.to_string()),
+    }
+}
+
+#[must_use]
+pub fn agent_connections_config_descriptor() -> ConfigDescriptor {
+    ConfigDescriptor {
+        provider_id: ConfigProviderId::new(AGENT_CONNECTIONS_PLUGIN_ID),
+        schema_version: 1,
+        value_version: 1,
+        title: LocalizedText::new("Agent connections"),
+        description: None,
+        scopes: vec![ConfigScope::global()],
+        root: ConfigNode {
+            key: ConfigKey::new("agent_connections"),
+            value_type: ConfigValueType::Map {
+                key_strategy: MapKeyStrategy::FreeString,
+                value: Box::new(ConfigValueType::Object),
+            },
+            title: LocalizedText::new("Agent connections"),
+            description: None,
+            default_value: None,
+            constraints: ConfigConstraints::default(),
+            presentation: ConfigPresentation::default(),
+            visibility: None,
+            enabled_if: None,
+            mutability: ConfigMutability::ReadWrite,
+            restart_policy: RestartPolicy::None,
+            children: Vec::new(),
+        },
+        groups: Vec::new(),
+    }
+}
+
+#[must_use]
+pub fn agent_connections_config_value(config: &AgentConnectionsConfig) -> ConfigValue {
+    ConfigValue::from_json(&serde_json::to_value(config).expect("Agent config serializes"))
+}
+
+struct AgentConnectionsConfigProvider {
+    registry: AgentConnectionRegistry,
+    connectors: AgentConnectorCatalog,
+    secrets: HostSecretStore,
+    state: Arc<Mutex<AgentConnectionsState>>,
+}
+
+struct AgentConnectionsActivation {
+    registry: AgentConnectionRegistry,
+    state: Arc<Mutex<AgentConnectionsState>>,
+    before_state: AgentConnectionsState,
+    before_connections: BTreeMap<AgentConnectionId, ActiveConnection>,
+    candidate: AgentConnectionsConfig,
+    next_revision: ConfigRevision,
+    prepared: Option<Vec<PreparedConnection>>,
+    activated: bool,
+}
+
+impl ConfigActivation for AgentConnectionsActivation {
+    fn activate(&mut self) -> Result<(), ConfigError> {
+        self.registry.replace_all(
+            &self.candidate,
+            self.prepared
+                .take()
+                .ok_or_else(|| ConfigError::ApplyRejected {
+                    reason: "Agent connection activation was already consumed".into(),
+                })?,
+        );
+        *self.state.lock() = AgentConnectionsState {
+            revision: self.next_revision,
+            config: self.candidate.clone(),
+        };
+        self.activated = true;
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), ConfigError> {
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> Result<(), ConfigError> {
+        if self.activated {
+            *self.registry.connections.write() = self.before_connections.clone();
+            *self.state.lock() = self.before_state.clone();
+            self.activated = false;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ConfigProvider for AgentConnectionsConfigProvider {
+    fn descriptor(&self) -> ConfigDescriptor {
+        agent_connections_config_descriptor()
+    }
+
+    fn default_value(&self, _context: &ConfigContext) -> Result<ConfigValue, ConfigError> {
+        Ok(agent_connections_config_value(
+            &AgentConnectionsConfig::default(),
+        ))
+    }
+
+    async fn validate(
+        &self,
+        candidate: ConfigValue,
+        _context: ConfigContext,
+    ) -> Result<ValidationResult, ConfigError> {
+        let result = serde_json::from_value::<AgentConnectionsConfig>(candidate.to_json())
+            .map_err(|error| error.to_string())
+            .and_then(|config| config.validate().map_err(|error| error.to_string()));
+        Ok(match result {
+            Ok(()) => ValidationResult::success(),
+            Err(reason) => ValidationResult::from_issues(vec![ValidationIssue {
+                path: mutsuki_config_service::ConfigPath::root(),
+                code: ValidationCode::BusinessRule,
+                severity: ValidationSeverity::Error,
+                message: LocalizedText::new(reason),
+            }]),
+        })
+    }
+
+    async fn prepare_activation(
+        &self,
+        candidate: ConfigValue,
+        _current: ConfigSnapshot,
+        next_revision: ConfigRevision,
+        _context: ConfigContext,
+    ) -> Result<PreparedConfigActivation, ConfigError> {
+        let config: AgentConnectionsConfig =
+            serde_json::from_value(candidate.to_json()).map_err(|error| {
+                ConfigError::ApplyRejected {
+                    reason: error.to_string(),
+                }
+            })?;
+        config
+            .validate()
+            .map_err(|error| ConfigError::ApplyRejected {
+                reason: error.to_string(),
+            })?;
+        let prepared = config
+            .connections
+            .iter()
+            .filter(|item| item.enabled)
+            .cloned()
+            .map(|item| AgentConnectionRegistry::prepare(item, &self.connectors, &self.secrets))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ConfigError::ApplyRejected {
+                reason: error.to_string(),
+            })?;
+        Ok(PreparedConfigActivation::new(
+            candidate,
+            Box::new(AgentConnectionsActivation {
+                registry: self.registry.clone(),
+                state: self.state.clone(),
+                before_state: self.state.lock().clone(),
+                before_connections: self.registry.connections.read().clone(),
+                candidate: config,
+                next_revision,
+                prepared: Some(prepared),
+                activated: false,
+            }),
+        ))
+    }
+}
+
+fn block_on_config<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle)
+            if matches!(
+                handle.runtime_flavor(),
+                tokio::runtime::RuntimeFlavor::MultiThread
+            ) =>
+        {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        }
+        Ok(_) => std::thread::spawn(move || futures_executor::block_on(future))
+            .join()
+            .expect("Agent config worker"),
+        Err(_) => futures_executor::block_on(future),
     }
 }
 
 pub struct ConfiguredAgentConnectionsPlugin {
     registry: AgentConnectionRegistry,
     connectors: AgentConnectorCatalog,
+    config_service: Arc<ConfigService>,
 }
 
 impl ConfiguredAgentConnectionsPlugin {
     #[must_use]
-    pub fn new(registry: AgentConnectionRegistry, connectors: AgentConnectorCatalog) -> Self {
+    pub fn new(
+        registry: AgentConnectionRegistry,
+        connectors: AgentConnectorCatalog,
+        config_service: Arc<ConfigService>,
+    ) -> Self {
         Self {
             registry,
             connectors,
+            config_service,
         }
     }
 }
@@ -604,17 +774,40 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
         config: &Value,
         builder: ServiceRuntimeBuilder,
     ) -> Result<ServiceRuntimeBuilder, String> {
-        let config: AgentConnectionsConfig =
+        let seed: AgentConnectionsConfig =
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
+        let state = Arc::new(Mutex::new(AgentConnectionsState::default()));
+        self.config_service
+            .registry()
+            .register(Arc::new(AgentConnectionsConfigProvider {
+                registry: self.registry.clone(),
+                connectors: self.connectors.clone(),
+                secrets: builder.host_secret_store(),
+                state: state.clone(),
+            }))
+            .map_err(|error| error.to_string())?;
+        let config_service = self.config_service.clone();
+        block_on_config(async move {
+            config_service
+                .create_if_absent(
+                    AGENT_CONNECTIONS_PLUGIN_ID,
+                    agent_connections_config_value(&seed),
+                    ConfigContext::global(),
+                )
+                .await?;
+            config_service
+                .restore(AGENT_CONNECTIONS_PLUGIN_ID, ConfigContext::global())
+                .await
+        })
+        .map_err(|error: ConfigError| error.to_string())?;
+        let config = state.lock().config.clone();
         let manager = Arc::new(AgentConnectionManager::new(
             self.registry.clone(),
             self.connectors.clone(),
             builder.host_secret_store(),
-            builder.configured_plugin_store(),
+            self.config_service.clone(),
+            state,
         ));
-        manager
-            .bootstrap(config.clone())
-            .map_err(|error| error.to_string())?;
         let mut manifest = PluginBuilder::new(AGENT_CONNECTIONS_PLUGIN_ID)
             .build()
             .manifest;
@@ -655,16 +848,28 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
 pub fn configured_agent_plugin_catalog(
     registry: AgentConnectionRegistry,
     connectors: AgentConnectorCatalog,
+    config_service: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
     let mut catalog = ConfiguredPluginCatalog::new();
-    catalog.register(ConfiguredAgentConnectionsPlugin::new(registry, connectors))?;
+    catalog.register(ConfiguredAgentConnectionsPlugin::new(
+        registry,
+        connectors,
+        config_service,
+    ))?;
     Ok(catalog)
 }
 
 pub fn configured_standard_agent_plugin_catalog(
     registry: AgentConnectionRegistry,
+    config_service: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    configured_agent_plugin_catalog(registry, AgentConnectorCatalog::standard())
+    let mut catalog = configured_agent_plugin_catalog(
+        registry.clone(),
+        AgentConnectorCatalog::standard(),
+        config_service,
+    )?;
+    catalog.register(ConfiguredLocalAgentPlugin::new(registry))?;
+    Ok(catalog)
 }
 
 #[derive(Debug, Deserialize)]
@@ -830,8 +1035,6 @@ pub enum AgentConnectionError {
     InvalidEndpointId(String),
     #[error("expected connection revision {expected}, current revision is {actual}")]
     RevisionConflict { expected: u64, actual: u64 },
-    #[error("configured plugin persistence is unavailable")]
-    PersistenceUnavailable,
     #[error("configured plugin persistence failed: {0}")]
     Persistence(String),
 }
@@ -850,9 +1053,7 @@ impl AgentConnectionError {
             Self::Connector(_) | Self::InvalidEndpointId(_) => "agent.connection.connect_failed",
             Self::Handshake(_) => "agent.connection.handshake_failed",
             Self::RevisionConflict { .. } => "agent.connection.revision_conflict",
-            Self::PersistenceUnavailable | Self::Persistence(_) => {
-                "agent.connection.persistence_failed"
-            }
+            Self::Persistence(_) => "agent.connection.persistence_failed",
         }
     }
 }
@@ -864,6 +1065,10 @@ mod tests {
 
     use mutsuki_agent_contracts::{
         AGENT_WIRE_SUPPORTED_FEATURES, AGENT_WIRE_VERSION, AgentWireRequest, AgentWireResponse,
+    };
+    use mutsuki_config_service::{
+        ConfigCompareAndSetRequest, ConfigDocumentKey, ConfigDocumentSnapshot,
+        ConfigProviderRegistry, ConfigRepository, InMemoryConfigRepository, PreparedConfigWrite,
     };
     use mutsuki_service_config::{ConfiguredPluginSelection, ServiceConfig};
     use serde_json::json;
@@ -1014,22 +1219,62 @@ mod tests {
         }
     }
 
-    fn manager(fail_requests: Arc<AtomicBool>) -> AgentConnectionManager {
-        manager_with_connector(FakeConnector::new(fail_requests), None)
+    fn manager(fail_requests: Arc<AtomicBool>) -> Arc<AgentConnectionManager> {
+        manager_with_connector(FakeConnector::new(fail_requests), config(false)).1
     }
 
     fn manager_with_connector(
         connector: FakeConnector,
-        store: Option<ConfiguredPluginStore>,
-    ) -> AgentConnectionManager {
+        initial: AgentConnectionConfig,
+    ) -> (Arc<ConfigService>, Arc<AgentConnectionManager>) {
+        manager_with_repository(
+            connector,
+            initial,
+            Arc::new(InMemoryConfigRepository::default()),
+        )
+    }
+
+    fn manager_with_repository(
+        connector: FakeConnector,
+        initial: AgentConnectionConfig,
+        repository: Arc<dyn ConfigRepository>,
+    ) -> (Arc<ConfigService>, Arc<AgentConnectionManager>) {
         let mut connectors = AgentConnectorCatalog::new();
         connectors.register(connector).unwrap();
-        AgentConnectionManager::new(
-            AgentConnectionRegistry::new(),
+        let registry = AgentConnectionRegistry::new();
+        let secrets = ServiceConfig::default().host_secret_store();
+        let state = Arc::new(Mutex::new(AgentConnectionsState::default()));
+        let providers = Arc::new(ConfigProviderRegistry::default());
+        providers
+            .register(Arc::new(AgentConnectionsConfigProvider {
+                registry: registry.clone(),
+                connectors: connectors.clone(),
+                secrets: secrets.clone(),
+                state: state.clone(),
+            }))
+            .unwrap();
+        let service = Arc::new(ConfigService::new(providers, repository).unwrap());
+        let service_for_seed = service.clone();
+        block_on_config(async move {
+            service_for_seed
+                .create_if_absent(
+                    AGENT_CONNECTIONS_PLUGIN_ID,
+                    agent_connections_config_value(&AgentConnectionsConfig {
+                        connections: vec![initial],
+                    }),
+                    ConfigContext::global(),
+                )
+                .await
+        })
+        .unwrap();
+        let manager = Arc::new(AgentConnectionManager::new(
+            registry,
             connectors,
-            ServiceConfig::default().host_secret_store(),
-            store,
-        )
+            secrets,
+            service.clone(),
+            state,
+        ));
+        (service, manager)
     }
 
     fn disabled_config() -> AgentConnectionConfig {
@@ -1037,19 +1282,6 @@ mod tests {
             enabled: false,
             ..config(false)
         }
-    }
-
-    fn write_disabled_product_config(path: &std::path::Path) {
-        std::fs::write(
-            path,
-            r#"
-[[plugins.configured]]
-id = "mutsuki.agent.connections"
-enabled = true
-config = { revision = 0, connections = [{ connection_id = "primary", connector_id = "test.connector", enabled = false, config = {} }] }
-"#,
-        )
-        .unwrap();
     }
 
     fn gated_connector(gate: Arc<HandshakeGate>) -> FakeConnector {
@@ -1063,25 +1295,23 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     fn stored_manager(
         connector: FakeConnector,
         initial: AgentConnectionConfig,
-    ) -> (
-        tempfile::TempDir,
-        std::path::PathBuf,
-        Arc<AgentConnectionManager>,
-    ) {
-        let root = tempfile::tempdir().unwrap();
-        let product = root.path().join("local.toml");
-        write_disabled_product_config(&product);
-        let manager = Arc::new(manager_with_connector(
-            connector,
-            Some(ConfiguredPluginStore::open(&product)),
-        ));
-        manager
-            .bootstrap(AgentConnectionsConfig {
-                revision: 0,
-                connections: vec![initial],
-            })
-            .unwrap();
-        (root, product, manager)
+    ) -> (Arc<ConfigService>, Arc<AgentConnectionManager>) {
+        manager_with_connector(connector, initial)
+    }
+
+    fn persisted_config(service: &Arc<ConfigService>) -> AgentConnectionsConfig {
+        let service = service.clone();
+        let snapshot = block_on_config(async move {
+            service
+                .read(
+                    AGENT_CONNECTIONS_PLUGIN_ID,
+                    ConfigContext::global(),
+                    &[capability::VALUE_READ.into()],
+                )
+                .await
+        })
+        .unwrap();
+        serde_json::from_value(snapshot.value.to_json()).unwrap()
     }
 
     #[test]
@@ -1091,7 +1321,6 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
         let item = config(false);
         assert!(matches!(
             AgentConnectionsConfig {
-                revision: 0,
                 connections: vec![item.clone(), item],
             }
             .validate(),
@@ -1102,12 +1331,6 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     #[test]
     fn failed_candidate_keeps_the_healthy_generation() {
         let manager = manager(Arc::new(AtomicBool::new(false)));
-        manager
-            .bootstrap(AgentConnectionsConfig {
-                revision: 7,
-                connections: vec![config(false)],
-            })
-            .unwrap();
         let before = manager.registry.statuses()[0].clone();
         assert!(manager.test_connection(config(true)).is_err());
         assert_eq!(manager.registry.statuses()[0], before);
@@ -1117,12 +1340,6 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     fn runtime_disconnect_marks_only_the_active_generation_unavailable() {
         let fail = Arc::new(AtomicBool::new(false));
         let manager = manager(fail.clone());
-        manager
-            .bootstrap(AgentConnectionsConfig {
-                revision: 0,
-                connections: vec![config(false)],
-            })
-            .unwrap();
         let id = AgentConnectionId::new("primary").unwrap();
         let mut backend = manager.registry.client_backend(&id);
         fail.store(true, Ordering::SeqCst);
@@ -1147,13 +1364,12 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     #[test]
     fn slow_upsert_handshake_does_not_block_snapshot() {
         let gate = Arc::new(HandshakeGate::default());
-        let (_root, _product, manager) =
-            stored_manager(gated_connector(gate.clone()), disabled_config());
+        let (_service, manager) = stored_manager(gated_connector(gate.clone()), disabled_config());
 
         gate.block();
         let updating = {
             let manager = manager.clone();
-            thread::spawn(move || manager.upsert(0, config(false)))
+            thread::spawn(move || manager.upsert(1, config(false)))
         };
         let started = gate.wait_until_started();
         let (snapshot_tx, snapshot_rx) = mpsc::sync_channel(1);
@@ -1172,7 +1388,7 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
 
         assert!(started, "upsert handshake did not reach the gate");
         assert_eq!(timely_snapshot.unwrap(), completed_snapshot);
-        assert_eq!(completed_snapshot.revision, 0);
+        assert_eq!(completed_snapshot.revision, 1);
         assert_eq!(
             completed_snapshot.connections[0].state,
             AgentConnectionState::Disabled
@@ -1183,18 +1399,13 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
     #[test]
     fn slow_reconnect_handshake_does_not_block_snapshot_or_change_revision() {
         let gate = Arc::new(HandshakeGate::default());
-        let manager = Arc::new(manager_with_connector(gated_connector(gate.clone()), None));
-        manager
-            .bootstrap(AgentConnectionsConfig {
-                revision: 4,
-                connections: vec![config(false)],
-            })
-            .unwrap();
+        let (_service, manager) =
+            manager_with_connector(gated_connector(gate.clone()), config(false));
 
         gate.block();
         let reconnecting = {
             let manager = manager.clone();
-            thread::spawn(move || manager.reconnect(4, &AgentConnectionId::new("primary").unwrap()))
+            thread::spawn(move || manager.reconnect(1, &AgentConnectionId::new("primary").unwrap()))
         };
         let started = gate.wait_until_started();
         let (snapshot_tx, snapshot_rx) = mpsc::sync_channel(1);
@@ -1209,18 +1420,17 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
 
         assert!(started, "reconnect handshake did not reach the gate");
         let snapshot = timely_snapshot.unwrap();
-        assert_eq!(snapshot.revision, 4);
+        assert_eq!(snapshot.revision, 1);
         assert_eq!(snapshot.connections[0].generation, 1);
         assert_eq!(snapshot.connections[0].state, AgentConnectionState::Healthy);
         assert_eq!(reconnect.unwrap().generation, 2);
-        assert_eq!(manager.snapshot().revision, 4);
+        assert_eq!(manager.snapshot().revision, 1);
     }
 
     #[test]
     fn concurrent_upserts_commit_once_and_discard_the_stale_candidate() {
         let gate = Arc::new(HandshakeGate::default());
-        let (_root, product, manager) =
-            stored_manager(gated_connector(gate.clone()), disabled_config());
+        let (service, manager) = stored_manager(gated_connector(gate.clone()), disabled_config());
 
         gate.block();
         let stale_update = {
@@ -1228,13 +1438,13 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
             thread::spawn(move || {
                 let mut candidate = config(false);
                 candidate.config = json!({ "writer": "stale" });
-                manager.upsert(0, candidate)
+                manager.upsert(1, candidate)
             })
         };
         let started = gate.wait_until_started();
         let mut winner = disabled_config();
         winner.config = json!({ "writer": "winner" });
-        let winner_status = manager.upsert(0, winner).unwrap();
+        let winner_status = manager.upsert(1, winner).unwrap();
         gate.release();
         let stale_result = stale_update.join().unwrap();
 
@@ -1242,36 +1452,32 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
         assert!(matches!(
             stale_result,
             Err(AgentConnectionError::RevisionConflict {
-                expected: 0,
-                actual: 1,
+                expected: 1,
+                actual: 2,
             })
         ));
         assert_eq!(winner_status.state, AgentConnectionState::Disabled);
         let snapshot = manager.snapshot();
-        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.revision, 2);
         assert_eq!(snapshot.connections[0], winner_status);
-        let persisted: toml::Value =
-            toml::from_str(&std::fs::read_to_string(&product).unwrap()).unwrap();
         assert_eq!(
-            persisted["plugins"]["configured"][0]["config"]["connections"][0]["config"]["writer"]
-                .as_str(),
-            Some("winner")
+            persisted_config(&service).connections[0].config["writer"],
+            "winner"
         );
     }
 
     #[test]
     fn stale_reconnect_candidate_cannot_replace_a_newer_config_revision() {
         let gate = Arc::new(HandshakeGate::default());
-        let (_root, _product, manager) =
-            stored_manager(gated_connector(gate.clone()), config(false));
+        let (_service, manager) = stored_manager(gated_connector(gate.clone()), config(false));
 
         gate.block();
         let stale_reconnect = {
             let manager = manager.clone();
-            thread::spawn(move || manager.reconnect(0, &AgentConnectionId::new("primary").unwrap()))
+            thread::spawn(move || manager.reconnect(1, &AgentConnectionId::new("primary").unwrap()))
         };
         let started = gate.wait_until_started();
-        let winner_status = manager.upsert(0, disabled_config()).unwrap();
+        let winner_status = manager.upsert(1, disabled_config()).unwrap();
         gate.release();
         let stale_result = stale_reconnect.join().unwrap();
 
@@ -1279,13 +1485,13 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
         assert!(matches!(
             stale_result,
             Err(AgentConnectionError::RevisionConflict {
-                expected: 0,
-                actual: 1,
+                expected: 1,
+                actual: 2,
             })
         ));
         assert_eq!(winner_status.state, AgentConnectionState::Disabled);
         let snapshot = manager.snapshot();
-        assert_eq!(snapshot.revision, 1);
+        assert_eq!(snapshot.revision, 2);
         assert_eq!(snapshot.connections[0], winner_status);
     }
 
@@ -1297,77 +1503,96 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
             fail_handshakes: fail_handshakes.clone(),
             handshake_gate: None,
         };
-        let (_root, product, manager) = stored_manager(connector, config(false));
+        let (service, manager) = stored_manager(connector, config(false));
         let before_snapshot = manager.snapshot();
-        let before_file = std::fs::read_to_string(&product).unwrap();
+        let before_config = persisted_config(&service);
 
         fail_handshakes.store(true, Ordering::SeqCst);
+        assert!(manager.upsert(1, config(false)).is_err());
         assert!(matches!(
-            manager.upsert(0, config(false)),
-            Err(AgentConnectionError::Handshake(_))
-        ));
-        assert!(matches!(
-            manager.reconnect(0, &AgentConnectionId::new("primary").unwrap()),
+            manager.reconnect(1, &AgentConnectionId::new("primary").unwrap()),
             Err(AgentConnectionError::Handshake(_))
         ));
 
         assert_eq!(manager.snapshot(), before_snapshot);
-        assert_eq!(std::fs::read_to_string(&product).unwrap(), before_file);
+        assert_eq!(persisted_config(&service), before_config);
+    }
+
+    struct ToggleFailRepository {
+        inner: InMemoryConfigRepository,
+        fail: Arc<AtomicBool>,
+    }
+
+    impl ConfigRepository for ToggleFailRepository {
+        fn read(
+            &self,
+            key: &ConfigDocumentKey,
+        ) -> Result<Option<ConfigDocumentSnapshot>, ConfigError> {
+            self.inner.read(key)
+        }
+
+        fn prepare_compare_and_set(
+            &self,
+            request: ConfigCompareAndSetRequest,
+        ) -> Result<Box<dyn PreparedConfigWrite>, ConfigError> {
+            if self.fail.load(Ordering::SeqCst) {
+                return Err(ConfigError::PersistenceFailed {
+                    reason: "injected repository failure".into(),
+                });
+            }
+            self.inner.prepare_compare_and_set(request)
+        }
+
+        fn recover(&self) -> Result<(), ConfigError> {
+            self.inner.recover()
+        }
     }
 
     #[test]
     fn persistence_failure_does_not_publish_the_prepared_candidate() {
-        let root = tempfile::tempdir().unwrap();
-        let missing_product = root.path().join("missing.toml");
-        let manager = manager_with_connector(
+        let fail = Arc::new(AtomicBool::new(false));
+        let repository = Arc::new(ToggleFailRepository {
+            inner: InMemoryConfigRepository::default(),
+            fail: fail.clone(),
+        });
+        let (_service, manager) = manager_with_repository(
             FakeConnector::new(Arc::new(AtomicBool::new(false))),
-            Some(ConfiguredPluginStore::open(&missing_product)),
+            disabled_config(),
+            repository,
         );
-        manager
-            .bootstrap(AgentConnectionsConfig {
-                revision: 0,
-                connections: vec![disabled_config()],
-            })
-            .unwrap();
         let before = manager.snapshot();
+        fail.store(true, Ordering::SeqCst);
 
         assert!(matches!(
-            manager.upsert(0, config(false)),
+            manager.upsert(1, config(false)),
             Err(AgentConnectionError::Persistence(_))
         ));
         assert_eq!(manager.snapshot(), before);
-        assert!(!missing_product.exists());
     }
 
     #[test]
     fn successful_management_update_is_revision_fenced_persisted_and_atomic() {
-        let (_root, product, manager) = stored_manager(
+        let (service, manager) = stored_manager(
             FakeConnector::new(Arc::new(AtomicBool::new(false))),
             disabled_config(),
         );
 
-        let status = manager.upsert(0, config(false)).unwrap();
+        let status = manager.upsert(1, config(false)).unwrap();
         assert_eq!(status.generation, 2);
-        assert_eq!(manager.snapshot().revision, 1);
-        let persisted: toml::Value =
-            toml::from_str(&std::fs::read_to_string(&product).unwrap()).unwrap();
-        assert_eq!(
-            persisted["plugins"]["configured"][0]["config"]["revision"].as_integer(),
-            Some(1)
-        );
+        assert_eq!(manager.snapshot().revision, 2);
+        assert_eq!(persisted_config(&service).connections, vec![config(false)]);
 
-        let before = std::fs::read_to_string(&product).unwrap();
-        assert!(manager.upsert(1, config(true)).is_err());
-        assert_eq!(std::fs::read_to_string(&product).unwrap(), before);
-        assert_eq!(manager.snapshot().revision, 1);
+        let before = persisted_config(&service);
+        assert!(manager.upsert(2, config(true)).is_err());
+        assert_eq!(persisted_config(&service), before);
+        assert_eq!(manager.snapshot().revision, 2);
 
-        let unknown = AgentConnectionConfig {
-            connection_id: AgentConnectionId::new("not-declared").unwrap(),
-            ..config(false)
-        };
         assert!(matches!(
-            manager.upsert(1, unknown),
-            Err(AgentConnectionError::ConnectionNotFound(_))
+            manager.upsert(1, config(false)),
+            Err(AgentConnectionError::RevisionConflict {
+                expected: 1,
+                actual: 2,
+            })
         ));
     }
 
@@ -1391,12 +1616,19 @@ config = { revision = 0, connections = [{ connection_id = "primary", connector_i
             id: AGENT_CONNECTIONS_PLUGIN_ID.into(),
             enabled: true,
             config: serde_json::to_value(AgentConnectionsConfig {
-                revision: 0,
                 connections: vec![config(false)],
             })
             .unwrap(),
         }];
-        let catalog = configured_agent_plugin_catalog(registry.clone(), connectors).unwrap();
+        let config_service = Arc::new(
+            ConfigService::new(
+                Arc::new(ConfigProviderRegistry::default()),
+                Arc::new(InMemoryConfigRepository::default()),
+            )
+            .unwrap(),
+        );
+        let catalog =
+            configured_agent_plugin_catalog(registry.clone(), connectors, config_service).unwrap();
         let runtime = ServiceRuntimeBuilder::new(service)
             .with_configured_plugin_catalog(catalog)
             .start()

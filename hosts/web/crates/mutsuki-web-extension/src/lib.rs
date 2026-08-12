@@ -8,8 +8,8 @@ mod registry;
 
 pub use manifest::{ManifestError, content_hash, load_manifest, validate_manifest};
 pub use registry::{
-    Disposable, EventRegistry, ExtensionLoadReport, ExtensionRecord, ExtensionRegistry, RpcHandler,
-    RpcRegistry, WebExtensionContext, WebServiceContext,
+    Disposable, EventRegistry, ExtensionLoadReport, ExtensionRecord, ExtensionRegistry,
+    RpcCallContext, RpcHandler, RpcRegistry, WebExtensionContext, WebServiceContext,
 };
 
 use mutsuki_web_protocol::{ExtensionManifest, WebFrontendAssets};

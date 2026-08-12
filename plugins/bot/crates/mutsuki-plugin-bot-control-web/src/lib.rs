@@ -1,7 +1,7 @@
 //! Control WebExtension: exposes typed ServiceHost [`ControlCommand`] operations as `control.*` RPC.
 //!
 //! Read-only methods require the `runtime.read` capability; mutating ops require
-//! `runtime.write` (both declared on the extension manifest and checked per RPC params).
+//! `runtime.write` from the WebHost-authenticated RPC context.
 
 use std::sync::Arc;
 
@@ -15,9 +15,7 @@ use mutsuki_service_control::{
     TaskSubmitBatchParam, TaskSubmitBatchResponse,
 };
 use mutsuki_web_extension::{ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor};
-use mutsuki_web_protocol::{
-    EXTENSION_MANIFEST_VERSION, ExtensionManifest, JsonValue, WEB_PROTOCOL_VERSION,
-};
+use mutsuki_web_protocol::{EXTENSION_MANIFEST_VERSION, ExtensionManifest, WEB_PROTOCOL_VERSION};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -252,150 +250,150 @@ impl WebExtension for ControlWebExtension {
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let caller = self.caller.clone();
-        ctx.register("health", {
+        ctx.register_contextual("health", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.health()?)
             }
         });
-        ctx.register("service_status", {
+        ctx.register_contextual("service_status", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.service_status()?)
             }
         });
-        ctx.register("plugin_list", {
+        ctx.register_contextual("plugin_list", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.plugin_list()?)
             }
         });
-        ctx.register("runner_list", {
+        ctx.register_contextual("runner_list", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.runner_list()?)
             }
         });
-        ctx.register("event_source_list", {
+        ctx.register_contextual("event_source_list", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.event_source_list()?)
             }
         });
-        ctx.register("runtime_statistics", {
+        ctx.register_contextual("runtime_statistics", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.runtime_statistics()?)
             }
         });
-        ctx.register("host_metrics", {
+        ctx.register_contextual("host_metrics", {
             let caller = caller.clone();
-            move |_params| {
-                require_runtime_read(&_params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.host_metrics()?)
             }
         });
-        ctx.register("log_tail", {
+        ctx.register_contextual("log_tail", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 let params = decode_control_params::<LogTailParams>(&params)?;
                 encode_web(caller.log_tail(params)?)
             }
         });
-        ctx.register("task_list", {
+        ctx.register_contextual("task_list", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 encode_web(caller.task_list()?)
             }
         });
-        ctx.register("task_events_after", {
+        ctx.register_contextual("task_events_after", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_read(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_READ)?;
                 let params = decode_control_params::<TaskEventsAfterParam>(&params)?;
                 encode_web(caller.task_events_after(params)?)
             }
         });
-        ctx.register("plugin_reload", {
+        ctx.register_contextual("plugin_reload", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 encode_web(caller.plugin_reload()?)
             }
         });
-        ctx.register("plugin_deployment_set", {
+        ctx.register_contextual("plugin_deployment_set", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let params = decode_control_params::<PluginDeploymentParam>(&params)?;
                 encode_web(caller.plugin_deployment_set(params)?)
             }
         });
-        ctx.register("plugin_deployment_clear", {
+        ctx.register_contextual("plugin_deployment_clear", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let params = decode_control_params::<PluginDeploymentClearParam>(&params)?;
                 encode_web(caller.plugin_deployment_clear(params)?)
             }
         });
-        ctx.register("runner_restart", {
+        ctx.register_contextual("runner_restart", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 caller.runner_restart(decode_control_params::<IdParam>(&params)?)?;
                 Ok(Value::Null)
             }
         });
-        ctx.register("runner_stop", {
+        ctx.register_contextual("runner_stop", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 caller.runner_stop(decode_control_params::<IdParam>(&params)?)?;
                 Ok(Value::Null)
             }
         });
-        ctx.register("event_source_restart", {
+        ctx.register_contextual("event_source_restart", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 caller.event_source_restart(decode_control_params::<IdParam>(&params)?)?;
                 Ok(Value::Null)
             }
         });
-        ctx.register("task_submit_batch", {
+        ctx.register_contextual("task_submit_batch", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 let params = decode_control_params::<TaskSubmitBatchParam>(&params)?;
                 encode_web(caller.task_submit_batch(params)?)
             }
         });
-        ctx.register("task_cancel", {
+        ctx.register_contextual("task_cancel", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 caller.task_cancel(decode_control_params::<IdParam>(&params)?)?;
                 Ok(Value::Null)
             }
         });
-        ctx.register("core_begin_drain", {
+        ctx.register_contextual("core_begin_drain", {
             let caller = caller.clone();
-            move |params| {
-                require_runtime_write(&params)?;
+            move |context, _params| {
+                context.require(CAPABILITY_RUNTIME_WRITE)?;
                 encode_web(caller.core_begin_drain()?)
             }
         });
-        ctx.register("service_shutdown", move |params| {
-            require_runtime_write(&params)?;
+        ctx.register_contextual("service_shutdown", move |context, _params| {
+            context.require(CAPABILITY_RUNTIME_WRITE)?;
             caller.service_shutdown()?;
             Ok(Value::Null)
         });
@@ -410,54 +408,14 @@ impl WebExtension for ControlWebExtension {
     }
 }
 
-fn require_capability(params: &JsonValue, required: &str) -> Result<(), ExtensionError> {
-    let caps = caps_from_params(params);
-    if caps.iter().any(|cap| cap == "*" || cap == required) {
-        return Ok(());
-    }
-    Err(ExtensionError::CapabilityDenied(required.into()))
-}
-
-fn require_runtime_read(params: &JsonValue) -> Result<(), ExtensionError> {
-    require_capability(params, CAPABILITY_RUNTIME_READ)
-}
-
-fn require_runtime_write(params: &JsonValue) -> Result<(), ExtensionError> {
-    require_capability(params, CAPABILITY_RUNTIME_WRITE)
-}
-
-fn control_params(params: &JsonValue) -> Value {
-    match params {
-        Value::Object(map) => {
-            let mut out = map.clone();
-            out.remove("capabilities");
-            Value::Object(out)
-        }
-        other => other.clone(),
-    }
-}
-
-fn decode_control_params<T: DeserializeOwned>(params: &JsonValue) -> Result<T, ExtensionError> {
-    serde_json::from_value(control_params(params))
+fn decode_control_params<T: DeserializeOwned>(params: &Value) -> Result<T, ExtensionError> {
+    serde_json::from_value(params.clone())
         .map_err(|error| ExtensionError::Registration(format!("invalid control request: {error}")))
 }
 
 fn encode_web<T: Serialize>(value: T) -> Result<Value, ExtensionError> {
     serde_json::to_value(value)
         .map_err(|error| ExtensionError::Registration(format!("encode control response: {error}")))
-}
-
-fn caps_from_params(params: &JsonValue) -> Vec<String> {
-    params
-        .get("capabilities")
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn manifest() -> ExtensionManifest {

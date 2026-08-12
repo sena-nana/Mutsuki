@@ -18,6 +18,7 @@ mutsuki-bot-link-parser.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-bot-service-host-integration.workspace = true
 mutsuki-bot-testkit.workspace = true
+mutsuki-config-service.workspace = true
 mutsuki-plugin-bot-adapter-qqbot.workspace = true
 mutsuki-plugin-bot-command.workspace = true
 mutsuki-plugin-bot-event-router.workspace = true

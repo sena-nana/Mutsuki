@@ -3,17 +3,19 @@ name = "mutsuki-plugin-bot-flow-web"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WebExtension for Bot flow graph authoring and revision-fenced publication."
+description = "Independently selected Bot Flow editor backed by ConfigService."
 
 [dependencies]
 mutsuki-bot-flow.workspace = true
 mutsuki-bot-protocol.workspace = true
+mutsuki-config-service.workspace = true
 mutsuki-web-extension.workspace = true
 mutsuki-web-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+futures-executor = "0.3"
 tempfile.workspace = true
 
 [lints]
