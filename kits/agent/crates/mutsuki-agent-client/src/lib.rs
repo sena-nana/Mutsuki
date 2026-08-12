@@ -8,7 +8,7 @@ use mutsuki_agent_contracts::{
     AGENT_WIRE_SUPPORTED_FEATURES, AGENT_WIRE_VERSION, AgentEventEnvelope, AgentEventPage,
     AgentSession, AgentSessionCreateRequest, AgentWireError, AgentWireHello, AgentWireNegotiation,
     AgentWireRequest, AgentWireRequestEnvelope, AgentWireResponse, AgentWireResponseEnvelope,
-    PermissionDecision, ResourceRef, SessionSnapshotRef, SessionVersion,
+    InteractionResolution, PermissionDecision, ResourceRef, SessionSnapshotRef, SessionVersion,
 };
 use mutsuki_link_core::{
     Connection, ProtocolId, RequestReplay, TransportError, TransportErrorKind,
@@ -158,6 +158,7 @@ impl<B: AgentClientBackend> AgentClient<B> {
                 optional_features: vec![
                     "approval-binding".into(),
                     "event-resume".into(),
+                    "interaction-binding".into(),
                     "resource-ref".into(),
                 ],
             },
@@ -285,6 +286,31 @@ impl<B: AgentClientBackend> AgentClient<B> {
             self.dispatch(AgentWireRequest::RejectAction { decision })?,
             &session_id,
             "RejectAction",
+        )
+    }
+
+    pub fn resolve_interaction(
+        &mut self,
+        resolution: InteractionResolution,
+    ) -> Result<SessionVersion, AgentWireError> {
+        let session_id = resolution.session_id.clone();
+        self.ensure_negotiated()?;
+        if !self.negotiation.as_ref().is_some_and(|negotiation| {
+            negotiation
+                .enabled_features
+                .iter()
+                .any(|feature| feature == "interaction-binding")
+        }) {
+            return Err(protocol_error(
+                "agent.wire.unsupported_feature",
+                "interaction resolution requires the interaction-binding feature",
+                false,
+            ));
+        }
+        accepted_version(
+            self.dispatch(AgentWireRequest::ResolveInteraction { resolution })?,
+            &session_id,
+            "ResolveInteraction",
         )
     }
 
@@ -753,6 +779,11 @@ fn validate_envelope(request: &AgentWireRequestEnvelope) -> Result<(), AgentWire
             non_empty(&decision.turn_id, "turn_id")?;
             non_empty(&decision.action_id, "action_id")
         }
+        AgentWireRequest::ResolveInteraction { resolution } => {
+            non_empty(&resolution.session_id, "session_id")?;
+            non_empty(&resolution.turn_id, "turn_id")?;
+            non_empty(&resolution.interaction_id, "interaction_id")
+        }
         AgentWireRequest::SubscribeSessionEvents {
             session_id, limit, ..
         } => {
@@ -1032,6 +1063,9 @@ fn replay_policy(request: &AgentWireRequest) -> RequestReplay {
         AgentWireRequest::SubmitTurn {
             idempotency_key, ..
         } if !idempotency_key.trim().is_empty() => RequestReplay::ApplicationDecides,
+        AgentWireRequest::ApproveAction { .. }
+        | AgentWireRequest::RejectAction { .. }
+        | AgentWireRequest::ResolveInteraction { .. } => RequestReplay::ApplicationDecides,
         _ => RequestReplay::Never,
     }
 }
@@ -1043,6 +1077,7 @@ fn default_hello() -> AgentWireHello {
         optional_features: vec![
             "approval-binding".into(),
             "event-resume".into(),
+            "interaction-binding".into(),
             "resource-ref".into(),
         ],
     }
@@ -1116,6 +1151,12 @@ mod tests {
                     session_id: decision.session_id,
                     version: SessionVersion(decision.version + 1),
                 },
+                AgentWireRequest::ResolveInteraction { resolution } => {
+                    AgentWireResponse::Accepted {
+                        session_id: resolution.session_id,
+                        version: SessionVersion(resolution.version + 1),
+                    }
+                }
                 AgentWireRequest::SubscribeSessionEvents {
                     session_id,
                     after_sequence,
@@ -1261,6 +1302,17 @@ mod tests {
         }
     }
 
+    fn interaction_resolution() -> InteractionResolution {
+        InteractionResolution {
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+            version: 3,
+            interaction_id: "ask-1".into(),
+            accepted: true,
+            response: serde_json::json!({ "answer": "A" }),
+        }
+    }
+
     fn submit_turn() -> AgentWireRequest {
         AgentWireRequest::SubmitTurn {
             session_id: "session".into(),
@@ -1331,6 +1383,12 @@ mod tests {
                 .reject_action(decision(PermissionDecisionKind::Rejected))
                 .unwrap(),
             SessionVersion(3)
+        );
+        assert_eq!(
+            client
+                .resolve_interaction(interaction_resolution())
+                .unwrap(),
+            SessionVersion(4)
         );
         assert_eq!(
             client

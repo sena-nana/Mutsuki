@@ -2,14 +2,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AgentEventEnvelope, AgentMessage, AgentUsage, PermissionDecision, PermissionRequest,
-    ResourceRef,
+    AgentEventEnvelope, AgentMessage, AgentUsage, InteractionRequest, InteractionResolution,
+    PermissionDecision, PermissionRequest, ResourceRef,
 };
 
 pub const DEFAULT_MAX_STEPS: u32 = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentRunBudget {
+    /// Maximum tokens admitted into one model request after context assembly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_total_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,6 +24,7 @@ pub struct AgentRunBudget {
 pub enum AgentRunStatus {
     Completed,
     WaitingApproval,
+    WaitingInteraction,
     BudgetExceeded,
     Cancelled,
     Failed,
@@ -66,6 +70,8 @@ pub struct AgentRunRequest {
     pub result_context: Option<Value>,
     #[serde(default)]
     pub permission_decisions: Vec<PermissionDecision>,
+    #[serde(default)]
+    pub interaction_resolutions: Vec<InteractionResolution>,
 }
 
 impl AgentRunRequest {
@@ -85,6 +91,7 @@ impl AgentRunRequest {
             result_protocol_id: None,
             result_context: None,
             permission_decisions: Vec::new(),
+            interaction_resolutions: Vec::new(),
         }
     }
 }
@@ -111,6 +118,8 @@ pub struct AgentRunResult {
     pub output_resource: Option<ResourceRef>,
     #[serde(default)]
     pub pending_approvals: Vec<PermissionRequest>,
+    #[serde(default)]
+    pub pending_interactions: Vec<InteractionRequest>,
     /// Monotonic session events produced by this invocation. Durable sessions
     /// persist these alongside the transcript for reconnect/replay.
     #[serde(default)]

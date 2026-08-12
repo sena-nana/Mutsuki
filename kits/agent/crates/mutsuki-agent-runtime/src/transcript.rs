@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_agent_contracts::{
-    AgentError, AgentEventEnvelope, AgentResult, AgentSession, AgentSessionAppendRequest,
-    AgentSessionCreateRequest, AgentSessionForkRequest, AgentSessionGetRequest,
-    AgentSessionSnapshotRequest,
+    AgentError, AgentEvent, AgentEventEnvelope, AgentMessage, AgentResult, AgentRole, AgentSession,
+    AgentSessionAppendRequest, AgentSessionCreateRequest, AgentSessionForkRequest,
+    AgentSessionGetRequest, AgentSessionSnapshotRequest,
 };
 use mutsuki_agent_sdk::{session_cell_ref, session_resource_ref};
 
@@ -311,10 +311,22 @@ impl SessionStore {
             session_cell_ref(SESSION_OWNER_ID, &request.target_session_id),
         );
         forked.title = request.title.or_else(|| source.title.clone());
-        forked.messages = source.messages.clone();
-        forked.turn_count = source.turn_count;
-        forked.events = source
-            .events
+        let (messages, events, turn_count, next_event_sequence) = request
+            .through_turn_id
+            .as_deref()
+            .map(|turn_id| session_through_turn(source, turn_id))
+            .transpose()?
+            .unwrap_or_else(|| {
+                (
+                    source.messages.clone(),
+                    source.events.clone(),
+                    source.turn_count,
+                    source.next_event_sequence,
+                )
+            });
+        forked.messages = messages;
+        forked.turn_count = turn_count;
+        forked.events = events
             .iter()
             .cloned()
             .map(|mut event| {
@@ -322,7 +334,7 @@ impl SessionStore {
                 event
             })
             .collect();
-        forked.next_event_sequence = source.next_event_sequence;
+        forked.next_event_sequence = next_event_sequence;
         self.persist(&forked)?;
         sessions.insert(request.target_session_id, forked.clone());
         Ok(forked)
@@ -336,9 +348,61 @@ impl SessionStore {
     }
 }
 
+fn session_through_turn(
+    source: &AgentSession,
+    through_turn_id: &str,
+) -> AgentResult<(Vec<AgentMessage>, Vec<AgentEventEnvelope>, u64, u64)> {
+    let through_turn_id = through_turn_id.trim();
+    if through_turn_id.is_empty() {
+        return Err(AgentError::invalid_input(
+            "through_turn_id must not be empty",
+        ));
+    }
+    let next_event_sequence = source
+        .events
+        .iter()
+        .filter(|event| event.meta.turn_id.as_deref() == Some(through_turn_id))
+        .map(|event| event.sequence)
+        .max()
+        .ok_or_else(|| AgentError::not_found(format!("turn `{through_turn_id}` not found")))?;
+    let events = source
+        .events
+        .iter()
+        .filter(|event| event.sequence <= next_event_sequence)
+        .cloned()
+        .collect::<Vec<_>>();
+    let turn_count = events
+        .iter()
+        .filter(|event| matches!(event.event, AgentEvent::UserMessage { .. }))
+        .count() as u64;
+    if turn_count == 0 {
+        return Err(AgentError::invalid_input(format!(
+            "turn `{through_turn_id}` has no user-message boundary"
+        )));
+    }
+    let mut seen_user_messages = 0_u64;
+    let mut messages = Vec::new();
+    for message in &source.messages {
+        if message.role == AgentRole::User {
+            if seen_user_messages == turn_count {
+                break;
+            }
+            seen_user_messages = seen_user_messages.saturating_add(1);
+        }
+        messages.push(message.clone());
+    }
+    if seen_user_messages != turn_count {
+        return Err(AgentError::invalid_input(format!(
+            "turn `{through_turn_id}` transcript boundary is incomplete"
+        )));
+    }
+    Ok((messages, events, turn_count, next_event_sequence))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mutsuki_agent_contracts::AgentEventMeta;
 
     #[derive(Default)]
     struct MemoryPersistence {
@@ -432,10 +496,61 @@ mod tests {
                 source_session_id: session.session_id,
                 target_session_id: "session-2".into(),
                 title: None,
+                through_turn_id: None,
             })
             .unwrap();
         assert_eq!(fork.messages.len(), 1);
         assert_eq!(fork.events[0].session_id, "session-2");
+    }
+
+    #[test]
+    fn fork_can_stop_at_a_durable_turn_boundary() {
+        let store = SessionStore::default();
+        let session = store
+            .create(AgentSessionCreateRequest {
+                session_id: Some("session-source".into()),
+                profile_id: "coding".into(),
+                title: None,
+            })
+            .unwrap();
+        for (sequence, turn_id, content) in [(1, "turn-1", "first"), (2, "turn-2", "second")] {
+            store
+                .append(AgentSessionAppendRequest {
+                    session_id: session.session_id.clone(),
+                    messages: vec![
+                        AgentMessage::user(content),
+                        AgentMessage::assistant(format!("answer-{content}")),
+                    ],
+                    events: vec![AgentEventEnvelope {
+                        session_id: session.session_id.clone(),
+                        sequence,
+                        meta: AgentEventMeta::new(format!("event-{sequence}"), "turn")
+                            .with_turn(turn_id),
+                        event: AgentEvent::UserMessage {
+                            turn_id: turn_id.into(),
+                            content: content.into(),
+                            metadata: None,
+                        },
+                    }],
+                    advance_turn: true,
+                })
+                .unwrap();
+        }
+
+        let fork = store
+            .fork(AgentSessionForkRequest {
+                source_session_id: session.session_id,
+                target_session_id: "session-fork".into(),
+                title: None,
+                through_turn_id: Some("turn-1".into()),
+            })
+            .unwrap();
+        assert_eq!(fork.turn_count, 1);
+        assert_eq!(fork.messages.len(), 2);
+        assert_eq!(fork.messages[0].content, "first");
+        assert_eq!(fork.events.len(), 1);
+        assert_eq!(fork.events[0].session_id, "session-fork");
+        assert_eq!(fork.next_event_sequence, 1);
     }
 
     #[test]

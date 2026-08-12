@@ -442,6 +442,7 @@ impl WebHttpGateway for ReqwestHttpTransport {
         body: &Value,
         timeout: Duration,
     ) -> Result<(u16, Value), AgentError> {
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let mut request = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())
@@ -469,6 +470,7 @@ impl WebHttpGateway for ReqwestHttpTransport {
         timeout: Duration,
         max_bytes: u64,
     ) -> Result<(u16, String, Vec<u8>, Option<String>), AgentError> {
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let mut request = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())

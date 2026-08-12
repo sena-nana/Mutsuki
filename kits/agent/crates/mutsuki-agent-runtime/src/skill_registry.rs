@@ -27,6 +27,15 @@ pub struct SkillRoots {
     pub plugin: Option<PathBuf>,
     pub user: Option<PathBuf>,
     pub sandbox: Option<PathBuf>,
+    /// Exact package directories registered by a host. Unlike the four broad
+    /// roots, these entries never discover sibling packages.
+    pub registered_packages: Vec<SkillPackageRoot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillPackageRoot {
+    pub source_kind: SkillSourceKind,
+    pub path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -237,6 +246,16 @@ impl SkillRegistry {
                     .or_default()
                     .push(parsed);
             }
+        }
+        for package in &roots.registered_packages {
+            if !package.path.is_dir() || !package.path.join("SKILL.md").is_file() {
+                continue;
+            }
+            let parsed = parse_skill_package(&package.path, package.source_kind)?;
+            by_id
+                .entry(parsed.skill_id.clone())
+                .or_default()
+                .push(parsed);
         }
 
         let mut overrides = Vec::new();
@@ -707,6 +726,7 @@ mod tests {
             plugin: Some(plugin.path().to_path_buf()),
             user: Some(user.path().to_path_buf()),
             sandbox: None,
+            registered_packages: Vec::new(),
         });
         let result = registry.discover(SkillDiscoverRequest::default()).unwrap();
         let ids: Vec<_> = result
@@ -717,6 +737,35 @@ mod tests {
         assert!(ids.contains(&"ws-skill"));
         assert!(ids.contains(&"plugin-skill"));
         assert!(ids.contains(&"user-skill"));
+    }
+
+    #[test]
+    fn registered_package_roots_do_not_discover_siblings() {
+        let root = TempDir::new().unwrap();
+        write_skill(
+            root.path(),
+            "enabled-skill",
+            "id: enabled-skill\nversion: 1.0.0\ntitle: Enabled\nsummary: enabled",
+            "enabled instructions",
+            &[],
+        );
+        write_skill(
+            root.path(),
+            "disabled-skill",
+            "id: disabled-skill\nversion: 1.0.0\ntitle: Disabled\nsummary: disabled",
+            "disabled instructions",
+            &[],
+        );
+        let registry = registry_with_roots(SkillRoots {
+            registered_packages: vec![SkillPackageRoot {
+                source_kind: SkillSourceKind::User,
+                path: root.path().join("enabled-skill"),
+            }],
+            ..Default::default()
+        });
+        let result = registry.discover(SkillDiscoverRequest::default()).unwrap();
+        assert_eq!(result.catalog.len(), 1);
+        assert_eq!(result.catalog[0].skill_id, "enabled-skill");
     }
 
     #[test]
@@ -744,6 +793,7 @@ mod tests {
             plugin: Some(plugin.path().to_path_buf()),
             user: Some(user.path().to_path_buf()),
             sandbox: Some(sandbox.path().to_path_buf()),
+            registered_packages: Vec::new(),
         });
         let result = registry.discover(SkillDiscoverRequest::default()).unwrap();
         let winner = result

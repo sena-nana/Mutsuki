@@ -16,6 +16,7 @@ mod skill_registry;
 mod subagent;
 mod tool_routing;
 mod transcript;
+mod transcript_context;
 
 pub use agent_loop::*;
 pub use context_assembly::*;
@@ -39,3 +40,4 @@ pub use skill_registry::*;
 pub use subagent::*;
 pub use tool_routing::*;
 pub use transcript::*;
+pub use transcript_context::*;

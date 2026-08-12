@@ -13,6 +13,29 @@
       "enum": ["none", "workspace_read", "workspace_write", "external_read", "external_write"]
     },
     "requires_approval": { "type": "boolean" },
+    "target_payload_mode": { "enum": ["raw_input", "execution_request"], "default": "raw_input" },
+    "execution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "routed" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "interaction_kind"],
+          "properties": {
+            "kind": { "const": "interaction" },
+            "interaction_kind": {
+              "enum": ["approval", "clarification", "plan_confirm", "custom"]
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "default": { "kind": "routed" }
+    },
     "permissions": { "type": "array", "items": { "type": "string" } },
     "call_id": { "type": ["string", "null"] },
     "input": true,

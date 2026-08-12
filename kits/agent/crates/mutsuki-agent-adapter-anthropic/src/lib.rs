@@ -45,7 +45,7 @@ impl AnthropicMessagesAdapter {
                 "adapter and runner ids are required",
             ));
         }
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let client = Client::builder()
             .build()
             .map_err(|err| transport_error(&err))?;
@@ -336,6 +336,11 @@ fn messages_payload(value: ModelGenerateRequest) -> Result<Value, ProtocolError>
     {
         payload["system"] = Value::String(system.content.clone());
     }
+    if let Some(reasoning) = value.reasoning.as_ref() {
+        let effort = anthropic_reasoning_effort(reasoning)?;
+        payload["thinking"] = json!({"type": "adaptive"});
+        payload["output_config"] = json!({"effort": effort});
+    }
     if !value.tools.is_empty() {
         payload["tools"] = Value::Array(
             value
@@ -352,6 +357,16 @@ fn messages_payload(value: ModelGenerateRequest) -> Result<Value, ProtocolError>
         );
     }
     Ok(payload)
+}
+
+fn anthropic_reasoning_effort(reasoning: &Value) -> Result<&str, ProtocolError> {
+    match reasoning.as_str().map(str::trim) {
+        Some(value @ ("low" | "medium" | "high" | "max")) => Ok(value),
+        Some("xhigh") => Ok("max"),
+        _ => Err(invalid_request(
+            "Anthropic reasoning must be low, medium, high, xhigh, or max",
+        )),
+    }
 }
 
 fn assistant_tool_calls(message: &AgentMessage) -> Result<Vec<AgentToolCall>, ProtocolError> {
@@ -661,6 +676,22 @@ mod tests {
         );
         assert_eq!(resolve_endpoint(Some("  ")), DEFAULT_ENDPOINT);
         assert_eq!(resolve_endpoint(None), DEFAULT_ENDPOINT);
+    }
+
+    #[test]
+    fn reasoning_uses_adaptive_thinking_and_output_effort() {
+        let mut request = model_request(vec![AgentMessage::user("think carefully")]);
+        request.reasoning = Some(json!("high"));
+        let payload = messages_payload(request).unwrap();
+        assert_eq!(payload["thinking"], json!({"type": "adaptive"}));
+        assert_eq!(payload["output_config"], json!({"effort": "high"}));
+
+        let mut xhigh = model_request(vec![AgentMessage::user("think harder")]);
+        xhigh.reasoning = Some(json!("xhigh"));
+        assert_eq!(
+            messages_payload(xhigh).unwrap()["output_config"]["effort"],
+            "max"
+        );
     }
 
     #[test]

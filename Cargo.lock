@@ -3347,6 +3347,7 @@ version = "0.1.0"
 dependencies = [
  "mutsuki-agent-adapter-api",
  "mutsuki-agent-contracts",
+ "mutsuki-agent-sdk",
  "reqwest",
  "rustls",
  "serde",
@@ -3596,11 +3597,13 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
+ "mutsuki-agent-sdk",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3624,6 +3627,7 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
+ "mutsuki-agent-sdk",
  "reqwest",
  "serde",
  "serde_json",
@@ -3652,6 +3656,7 @@ dependencies = [
  "mutsuki-agent-contracts",
  "mutsuki-agent-macros",
  "mutsuki-runtime-sdk",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

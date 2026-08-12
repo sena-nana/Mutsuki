@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use mutsuki_agent_contracts::{
     AgentEventEnvelope, AgentEventPage, AgentMessage, AgentSession, AgentSessionCreateRequest,
     AgentWireError, AgentWireRequest, AgentWireRequestEnvelope, AgentWireResponse,
-    AgentWireResponseEnvelope, PermissionDecision, PermissionDecisionKind, ResourceRef,
-    SessionSnapshotRef, SessionVersion,
+    AgentWireResponseEnvelope, InteractionResolution, PermissionDecision, PermissionDecisionKind,
+    ResourceRef, SessionSnapshotRef, SessionVersion,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +36,10 @@ pub trait AgentWireRuntime: Send + Sync {
     fn apply_permission(
         &self,
         decision: &PermissionDecision,
+    ) -> Result<AgentWireTurnOutput, AgentWireError>;
+    fn apply_interactions(
+        &self,
+        resolutions: &[InteractionResolution],
     ) -> Result<AgentWireTurnOutput, AgentWireError>;
     fn events_after(
         &self,
@@ -114,11 +118,20 @@ struct ApprovalReplay {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct InteractionReplay {
+    resolution: InteractionResolution,
+    version: SessionVersion,
+    output: AgentWireTurnOutput,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct WireSessionState {
     session: AgentSession,
     version: SessionVersion,
     idempotency: BTreeMap<String, TurnReplay>,
     approvals: BTreeMap<String, ApprovalReplay>,
+    #[serde(default)]
+    interactions: BTreeMap<String, InteractionReplay>,
     cancelled_turns: BTreeMap<String, SessionVersion>,
     fork_source: Option<(String, SessionVersion)>,
     closed: bool,
@@ -188,6 +201,7 @@ impl<R: AgentWireRuntime, P: AgentWireStateStore> AgentWireAuthority<R, P> {
                 version: SessionVersion(1),
                 idempotency: BTreeMap::new(),
                 approvals: BTreeMap::new(),
+                interactions: BTreeMap::new(),
                 cancelled_turns: BTreeMap::new(),
                 fork_source: None,
                 closed: false,
@@ -305,6 +319,69 @@ impl<R: AgentWireRuntime, P: AgentWireStateStore> AgentWireAuthority<R, P> {
         Ok((version, output))
     }
 
+    pub fn apply_interaction(
+        &mut self,
+        resolution: InteractionResolution,
+    ) -> Result<(SessionVersion, AgentWireTurnOutput), AgentWireError> {
+        let session_id = resolution.session_id.clone();
+        let key = format!(
+            "{}:{}:{}",
+            resolution.turn_id, resolution.interaction_id, resolution.version
+        );
+        if let Some(replay) = self.record(&session_id)?.interactions.get(&key) {
+            if replay.resolution == resolution {
+                return Ok((replay.version, replay.output.clone()));
+            }
+            return Err(wire_error(
+                "agent.interaction.idempotency_conflict",
+                "interaction was already resolved with a different response",
+                false,
+            ));
+        }
+        if self.record(&session_id)?.closed {
+            return Err(wire_error(
+                "agent.session.closed",
+                "session is closed",
+                false,
+            ));
+        }
+        let mut resolutions = self
+            .record(&session_id)?
+            .interactions
+            .values()
+            .filter(|replay| {
+                replay.resolution.turn_id == resolution.turn_id
+                    && replay.resolution.version == resolution.version
+            })
+            .map(|replay| replay.resolution.clone())
+            .collect::<Vec<_>>();
+        resolutions.push(resolution.clone());
+        resolutions.sort_by(|left, right| left.interaction_id.cmp(&right.interaction_id));
+        let output = self.runtime.apply_interactions(&resolutions)?;
+        let record = self.record_mut(&session_id)?;
+        record.version = SessionVersion(record.version.0.saturating_add(1));
+        let version = record.version;
+        record.session.events.extend(output.events.iter().cloned());
+        record.session.next_event_sequence = output.next_sequence;
+        record.session.cell.generation = version.0;
+        for resolution in resolutions {
+            let key = format!(
+                "{}:{}:{}",
+                resolution.turn_id, resolution.interaction_id, resolution.version
+            );
+            record.interactions.insert(
+                key,
+                InteractionReplay {
+                    resolution,
+                    version,
+                    output: output.clone(),
+                },
+            );
+        }
+        self.persist(&session_id)?;
+        Ok((version, output))
+    }
+
     pub fn events(
         &self,
         session_id: &str,
@@ -408,6 +485,7 @@ impl<R: AgentWireRuntime, P: AgentWireStateStore> AgentWireAuthority<R, P> {
             version: SessionVersion(1),
             idempotency: BTreeMap::new(),
             approvals: BTreeMap::new(),
+            interactions: BTreeMap::new(),
             cancelled_turns: BTreeMap::new(),
             fork_source: Some((source_session_id.to_string(), snapshot.version)),
             closed: false,
@@ -550,6 +628,13 @@ impl<R: AgentWireRuntime, P: AgentWireStateStore> InProcessAgentService
                     version: self.apply_permission(decision)?.0,
                 }
             }
+            AgentWireRequest::ResolveInteraction { resolution } => {
+                let session_id = resolution.session_id.clone();
+                AgentWireResponse::Accepted {
+                    session_id,
+                    version: self.apply_interaction(resolution)?.0,
+                }
+            }
             AgentWireRequest::SubscribeSessionEvents {
                 session_id,
                 after_sequence,
@@ -644,6 +729,8 @@ mod tests {
         events: Arc<Mutex<BTreeMap<String, Vec<AgentEventEnvelope>>>>,
         submits: Arc<AtomicUsize>,
         approvals: Arc<AtomicUsize>,
+        interactions: Arc<AtomicUsize>,
+        interaction_batches: Arc<Mutex<Vec<Vec<InteractionResolution>>>>,
         cancels: Arc<AtomicUsize>,
     }
 
@@ -698,6 +785,31 @@ mod tests {
                 AgentEvent::TurnState {
                     turn_id: decision.turn_id.clone(),
                     status: "resumed".into(),
+                },
+            )
+        }
+
+        fn apply_interactions(
+            &self,
+            resolutions: &[InteractionResolution],
+        ) -> Result<AgentWireTurnOutput, AgentWireError> {
+            self.interactions.fetch_add(1, Ordering::SeqCst);
+            self.interaction_batches
+                .lock()
+                .unwrap()
+                .push(resolutions.to_vec());
+            let resolution = resolutions.last().ok_or_else(|| {
+                wire_error(
+                    "agent.interaction.resolution_required",
+                    "at least one interaction resolution is required",
+                    false,
+                )
+            })?;
+            self.emit(
+                &resolution.session_id,
+                AgentEvent::InteractionResolved {
+                    turn_id: resolution.turn_id.clone(),
+                    resolution: resolution.clone(),
                 },
             )
         }
@@ -835,6 +947,25 @@ mod tests {
         }
     }
 
+    fn interaction_resolution() -> InteractionResolution {
+        InteractionResolution {
+            session_id: "session-1".into(),
+            turn_id: "turn-1".into(),
+            version: 3,
+            interaction_id: "ask-1".into(),
+            accepted: true,
+            response: serde_json::json!({ "answer": "A" }),
+        }
+    }
+
+    fn second_interaction_resolution() -> InteractionResolution {
+        InteractionResolution {
+            interaction_id: "ask-2".into(),
+            response: serde_json::json!({ "answer": "B" }),
+            ..interaction_resolution()
+        }
+    }
+
     #[test]
     fn authority_fences_duplicate_turn_approval_and_cancel_execution() {
         let runtime = FakeRuntime::default();
@@ -868,6 +999,20 @@ mod tests {
         assert_eq!(authority.apply_permission(decision).unwrap(), approval);
         assert_eq!(runtime.approvals.load(Ordering::SeqCst), 1);
 
+        let resolution = interaction_resolution();
+        let interaction = authority.apply_interaction(resolution.clone()).unwrap();
+        assert_eq!(
+            authority.apply_interaction(resolution.clone()).unwrap(),
+            interaction
+        );
+        let mut conflicting = resolution;
+        conflicting.response = serde_json::json!({ "answer": "B" });
+        assert_eq!(
+            authority.apply_interaction(conflicting).unwrap_err().code,
+            "agent.interaction.idempotency_conflict"
+        );
+        assert_eq!(runtime.interactions.load(Ordering::SeqCst), 1);
+
         let version = authority.current_version("session-1").unwrap();
         let cancelled = authority.cancel("session-1", "turn-1", version).unwrap();
         assert_eq!(
@@ -875,6 +1020,53 @@ mod tests {
             cancelled
         );
         assert_eq!(runtime.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn authority_aggregates_same_turn_interactions_in_stable_order() {
+        let runtime = FakeRuntime::default();
+        let mut authority =
+            AgentWireAuthority::new(runtime.clone(), InMemoryAgentWireStateStore::default())
+                .unwrap();
+        authority.start(request()).unwrap();
+
+        let first = interaction_resolution();
+        let second = second_interaction_resolution();
+        authority.apply_interaction(second.clone()).unwrap();
+        authority.apply_interaction(first.clone()).unwrap();
+
+        assert_eq!(
+            *runtime.interaction_batches.lock().unwrap(),
+            vec![vec![second.clone()], vec![first, second]]
+        );
+        assert_eq!(runtime.interactions.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn authority_restores_aggregated_interactions_and_replays_without_runtime_execution() {
+        let runtime = FakeRuntime::default();
+        let store = InMemoryAgentWireStateStore::default();
+        let first = interaction_resolution();
+        let second = second_interaction_resolution();
+
+        {
+            let mut authority = AgentWireAuthority::new(runtime.clone(), store.clone()).unwrap();
+            authority.start(request()).unwrap();
+            authority.apply_interaction(second.clone()).unwrap();
+        }
+        let aggregate = {
+            let mut restored = AgentWireAuthority::new(runtime.clone(), store.clone()).unwrap();
+            restored.apply_interaction(first.clone()).unwrap()
+        };
+        assert_eq!(
+            *runtime.interaction_batches.lock().unwrap(),
+            vec![vec![second.clone()], vec![first.clone(), second.clone()]]
+        );
+
+        let mut restored = AgentWireAuthority::new(runtime.clone(), store).unwrap();
+        assert_eq!(restored.apply_interaction(first).unwrap(), aggregate);
+        assert_eq!(restored.apply_interaction(second).unwrap(), aggregate);
+        assert_eq!(runtime.interactions.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -893,15 +1085,22 @@ mod tests {
                     "key-1",
                 )
                 .unwrap();
+            authority
+                .apply_interaction(interaction_resolution())
+                .unwrap();
         }
-        let mut restored = AgentWireAuthority::new(runtime, store).unwrap();
+        let mut restored = AgentWireAuthority::new(runtime.clone(), store).unwrap();
         assert_eq!(
             restored.current_version("session-1").unwrap(),
-            SessionVersion(2)
+            SessionVersion(3)
         );
+        restored
+            .apply_interaction(interaction_resolution())
+            .unwrap();
+        assert_eq!(runtime.interactions.load(Ordering::SeqCst), 1);
         let snapshot = SessionSnapshotRef {
             session_id: "session-1".into(),
-            version: SessionVersion(2),
+            version: SessionVersion(3),
             snapshot: resource("session-1"),
             base: None,
             deltas: Vec::new(),

@@ -10,6 +10,7 @@ pub mod protocol;
 pub mod resource;
 pub mod task;
 pub mod tool_builder;
+pub mod transport;
 
 pub use agent_client::*;
 pub use agent_context::*;
@@ -22,6 +23,7 @@ pub use protocol::*;
 pub use resource::*;
 pub use task::*;
 pub use tool_builder::*;
+pub use transport::*;
 
 pub use mutsuki_agent_contracts as protocol_types;
 pub use mutsuki_agent_macros::{agent_profile, agent_tool};

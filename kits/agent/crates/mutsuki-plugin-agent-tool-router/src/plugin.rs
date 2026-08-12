@@ -51,6 +51,16 @@ async fn run_task(
             let descriptor = registry
                 .get(&request.name)
                 .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;
+            if !matches!(descriptor.execution, AgentToolExecution::Routed) {
+                return Err(runtime_failure(
+                    PLUGIN_ID,
+                    &task.task_id,
+                    AgentError::new(
+                        "agent.interaction.loop_required",
+                        "interaction tools must be handled by the active Agent loop",
+                    ),
+                ));
+            }
             if descriptor.requires_approval {
                 validate_approval(&request, &descriptor)
                     .map_err(|error| runtime_failure(PLUGIN_ID, &task.task_id, error))?;

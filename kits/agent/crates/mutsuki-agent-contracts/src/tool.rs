@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AgentError, PermissionDecision, PermissionRequest};
+use crate::{AgentError, InteractionKind, PermissionDecision, PermissionRequest};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +25,16 @@ pub enum ToolTargetPayloadMode {
     ExecutionRequest,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentToolExecution {
+    #[default]
+    Routed,
+    Interaction {
+        interaction_kind: InteractionKind,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentToolDescriptor {
     pub name: String,
@@ -40,6 +50,8 @@ pub struct AgentToolDescriptor {
     pub requires_approval: bool,
     #[serde(default)]
     pub target_payload_mode: ToolTargetPayloadMode,
+    #[serde(default)]
+    pub execution: AgentToolExecution,
     #[serde(default)]
     pub permissions: Vec<String>,
 }
@@ -59,6 +71,7 @@ impl AgentToolDescriptor {
             side_effect: ToolSideEffect::None,
             requires_approval: false,
             target_payload_mode: ToolTargetPayloadMode::RawInput,
+            execution: AgentToolExecution::Routed,
             permissions: Vec::new(),
         }
     }
@@ -175,6 +188,7 @@ mod tests {
             descriptor.target_payload_mode,
             ToolTargetPayloadMode::RawInput
         );
+        assert_eq!(descriptor.execution, AgentToolExecution::Routed);
 
         let execution: AgentToolExecuteRequest = serde_json::from_value(serde_json::json!({
             "name": "echo",
@@ -182,5 +196,25 @@ mod tests {
         }))
         .unwrap();
         assert!(execution.context.is_none());
+    }
+
+    #[test]
+    fn interaction_tool_execution_round_trips_with_its_kind() {
+        let mut descriptor = AgentToolDescriptor::new(
+            "confirm_plan",
+            crate::AGENT_RUN_PROTOCOL,
+            "Confirm a proposed plan",
+        );
+        descriptor.execution = AgentToolExecution::Interaction {
+            interaction_kind: InteractionKind::PlanConfirm,
+        };
+
+        let encoded = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(encoded["execution"]["kind"], "interaction");
+        assert_eq!(encoded["execution"]["interaction_kind"], "plan_confirm");
+        assert_eq!(
+            serde_json::from_value::<AgentToolDescriptor>(encoded).unwrap(),
+            descriptor
+        );
     }
 }

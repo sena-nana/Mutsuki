@@ -66,11 +66,8 @@ impl McpTransportFactory for StdioMcpTransportFactory {
             .args(&manifest.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env_clear();
-        for (key, value) in &manifest.env_allowlist {
-            process.env(key, value);
-        }
+            .stderr(Stdio::null());
+        configure_stdio_environment(&mut process, &manifest.env_allowlist);
         let mut child = process
             .spawn()
             .map_err(|error| AgentError::new("agent.mcp.spawn_failed", error.to_string()))?;
@@ -102,6 +99,19 @@ impl McpTransportFactory for StdioMcpTransportFactory {
             stdin: BufWriter::new(stdin),
             receiver,
         }))
+    }
+}
+
+fn configure_stdio_environment(process: &mut Command, allowlist: &[(String, String)]) {
+    process.env_clear();
+    #[cfg(windows)]
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        // Windows cryptography and several language runtimes require this
+        // non-secret bootstrap path even when the child environment is isolated.
+        process.env("SystemRoot", system_root);
+    }
+    for (key, value) in allowlist {
+        process.env(key, value);
     }
 }
 
@@ -204,7 +214,7 @@ impl McpHttpClient for ReqwestMcpHttpClient {
         body: &Value,
         timeout: Duration,
     ) -> Result<Value, AgentError> {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let mut request = reqwest::blocking::Client::builder()
             .timeout(timeout)
             .build()
@@ -269,6 +279,7 @@ pub struct HttpMcpTransport {
     url: String,
     headers: Vec<(String, String)>,
     client: Arc<dyn McpHttpClient>,
+    request_timeout: Duration,
     pending: VecDeque<Value>,
     closed: bool,
 }
@@ -279,10 +290,20 @@ impl HttpMcpTransport {
         headers: Vec<(String, String)>,
         client: Arc<dyn McpHttpClient>,
     ) -> Self {
+        Self::with_timeout(url, headers, client, DEFAULT_REQUEST_TIMEOUT)
+    }
+
+    pub fn with_timeout(
+        url: impl Into<String>,
+        headers: Vec<(String, String)>,
+        client: Arc<dyn McpHttpClient>,
+        request_timeout: Duration,
+    ) -> Self {
         Self {
             url: url.into(),
             headers,
             client,
+            request_timeout,
             pending: VecDeque::new(),
             closed: false,
         }
@@ -299,14 +320,14 @@ impl McpTransport for HttpMcpTransport {
         }
         if value.get("id").is_none() {
             // notifications are fire-and-forget over streamable HTTP
-            let _ =
-                self.client
-                    .post_json(&self.url, &self.headers, value, DEFAULT_REQUEST_TIMEOUT)?;
+            let _ = self
+                .client
+                .post_json(&self.url, &self.headers, value, self.request_timeout)?;
             return Ok(());
         }
         let response =
             self.client
-                .post_json(&self.url, &self.headers, value, DEFAULT_REQUEST_TIMEOUT)?;
+                .post_json(&self.url, &self.headers, value, self.request_timeout)?;
         self.pending.push_back(response);
         Ok(())
     }
@@ -330,6 +351,312 @@ impl McpTransport for HttpMcpTransport {
     }
 }
 
+pub struct LegacySseMcpTransport {
+    message_url: String,
+    headers: Vec<(String, String)>,
+    client: Arc<dyn McpHttpClient>,
+    receiver: Receiver<Result<Value, AgentError>>,
+    alive: Arc<AtomicBool>,
+    shutdown: tokio::sync::watch::Sender<bool>,
+    request_timeout: Duration,
+    closed: bool,
+}
+
+impl LegacySseMcpTransport {
+    fn connect(
+        stream_url: &str,
+        headers: Vec<(String, String)>,
+        client: Arc<dyn McpHttpClient>,
+        timeout: Duration,
+    ) -> Result<Self, AgentError> {
+        let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
+        let (messages, receiver) = mpsc::sync_channel(64);
+        let alive = Arc::new(AtomicBool::new(false));
+        let reader_alive = alive.clone();
+        let (shutdown, shutdown_receiver) = tokio::sync::watch::channel(false);
+        let reader_url = stream_url.to_owned();
+        let reader_headers = headers.clone();
+        thread::Builder::new()
+            .name("mutsuki-mcp-sse-reader".into())
+            .spawn(move || {
+                run_legacy_sse_reader(
+                    &reader_url,
+                    &reader_headers,
+                    timeout,
+                    startup_sender,
+                    messages,
+                    reader_alive,
+                    shutdown_receiver,
+                );
+            })
+            .map_err(|error| AgentError::new("agent.mcp.spawn_failed", error.to_string()))?;
+        let message_url =
+            startup_receiver
+                .recv_timeout(timeout)
+                .map_err(|error| match error {
+                    RecvTimeoutError::Timeout => {
+                        AgentError::new("agent.mcp.timeout", "MCP SSE endpoint timed out")
+                    }
+                    RecvTimeoutError::Disconnected => AgentError::new(
+                        "agent.mcp.closed",
+                        "MCP SSE stream closed before announcing its endpoint",
+                    ),
+                })??;
+        Ok(Self {
+            message_url,
+            headers,
+            client,
+            receiver,
+            alive,
+            shutdown,
+            request_timeout: timeout,
+            closed: false,
+        })
+    }
+}
+
+impl McpTransport for LegacySseMcpTransport {
+    fn send(&mut self, value: &Value) -> Result<(), AgentError> {
+        if self.closed || !self.alive.load(Ordering::Acquire) {
+            return Err(AgentError::new(
+                "agent.mcp.closed",
+                "MCP SSE transport is closed",
+            ));
+        }
+        self.client
+            .post_json(
+                &self.message_url,
+                &self.headers,
+                value,
+                self.request_timeout,
+            )
+            .map(|_| ())
+    }
+
+    fn receive(&mut self, timeout: Duration) -> Result<Option<Value>, AgentError> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(result) => result.map(Some),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            Err(RecvTimeoutError::Disconnected) => Err(AgentError::new(
+                "agent.mcp.closed",
+                "MCP SSE response stream closed",
+            )),
+        }
+    }
+
+    fn is_alive(&mut self) -> Result<bool, AgentError> {
+        Ok(!self.closed && self.alive.load(Ordering::Acquire))
+    }
+
+    fn terminate(&mut self) -> Result<(), AgentError> {
+        self.closed = true;
+        self.alive.store(false, Ordering::Release);
+        let _ = self.shutdown.send(true);
+        Ok(())
+    }
+}
+
+impl Drop for LegacySseMcpTransport {
+    fn drop(&mut self) {
+        let _ = self.terminate();
+    }
+}
+
+fn run_legacy_sse_reader(
+    stream_url: &str,
+    headers: &[(String, String)],
+    timeout: Duration,
+    startup: mpsc::SyncSender<Result<String, AgentError>>,
+    messages: mpsc::SyncSender<Result<Value, AgentError>>,
+    alive: Arc<AtomicBool>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let endpoint_ready = Arc::new(AtomicBool::new(false));
+    let reader_endpoint_ready = endpoint_ready.clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| AgentError::new("agent.mcp.spawn_failed", error.to_string()));
+    let result = runtime.and_then(|runtime| {
+        runtime.block_on(read_legacy_sse_stream(
+            stream_url,
+            headers,
+            timeout,
+            &startup,
+            &messages,
+            &alive,
+            shutdown,
+            &reader_endpoint_ready,
+        ))
+    });
+    alive.store(false, Ordering::Release);
+    if let Err(error) = result {
+        if endpoint_ready.load(Ordering::Acquire) {
+            let _ = messages.send(Err(error));
+        } else {
+            let _ = startup.send(Err(error));
+        }
+    }
+}
+
+async fn read_legacy_sse_stream(
+    stream_url: &str,
+    headers: &[(String, String)],
+    timeout: Duration,
+    startup: &mpsc::SyncSender<Result<String, AgentError>>,
+    messages: &mpsc::SyncSender<Result<Value, AgentError>>,
+    alive: &Arc<AtomicBool>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    endpoint_ready: &Arc<AtomicBool>,
+) -> Result<(), AgentError> {
+    mutsuki_agent_sdk::ensure_http_crypto_provider();
+    let client = reqwest::Client::builder()
+        .connect_timeout(timeout)
+        .build()
+        .map_err(|error| AgentError::new("agent.mcp.request_failed", error.to_string()))?;
+    let mut request = client.get(stream_url).header("accept", "text/event-stream");
+    for (key, value) in headers {
+        request = request.header(key, value);
+    }
+    let response = tokio::time::timeout(timeout, request.send())
+        .await
+        .map_err(|_| AgentError::new("agent.mcp.timeout", "MCP SSE connection timed out"))?
+        .map_err(|error| AgentError::new("agent.mcp.request_failed", error.to_string()))?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(AgentError::new(
+            "agent.mcp.request_failed",
+            format!("HTTP {status} opening MCP SSE stream"),
+        ));
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !content_type.contains("text/event-stream") {
+        return Err(AgentError::new(
+            "agent.mcp.request_failed",
+            "MCP SSE endpoint did not return text/event-stream",
+        ));
+    }
+    let base_url = response.url().clone();
+    let mut response = response;
+    let mut buffer = Vec::new();
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return Ok(());
+                }
+            }
+            chunk = response.chunk() => {
+                let chunk = chunk
+                    .map_err(|error| AgentError::new("agent.mcp.read_failed", error.to_string()))?
+                    .ok_or_else(|| AgentError::new("agent.mcp.closed", "MCP SSE stream closed"))?;
+                buffer.extend_from_slice(&chunk);
+                if buffer.len() > 16 * 1024 * 1024 {
+                    return Err(AgentError::new(
+                        "agent.mcp.read_failed",
+                        "MCP SSE buffer exceeds 16 MiB",
+                    ));
+                }
+                while let Some(frame) = take_sse_frame(&mut buffer) {
+                    let Some((event, data)) = parse_sse_frame(&frame)? else {
+                        continue;
+                    };
+                    if event == "endpoint" {
+                        let endpoint = resolve_legacy_sse_endpoint(&base_url, &data)?;
+                        if endpoint_ready.swap(true, Ordering::AcqRel) {
+                            continue;
+                        }
+                        alive.store(true, Ordering::Release);
+                        startup
+                            .send(Ok(endpoint))
+                            .map_err(|_| AgentError::new("agent.mcp.closed", "MCP SSE startup receiver closed"))?;
+                    } else if event == "message" || event.is_empty() {
+                        if !endpoint_ready.load(Ordering::Acquire) {
+                            return Err(AgentError::new(
+                                "agent.mcp.request_failed",
+                                "MCP SSE message arrived before endpoint negotiation",
+                            ));
+                        }
+                        let value = serde_json::from_str(&data).map_err(|error| {
+                            AgentError::new("agent.mcp.encode_failed", error.to_string())
+                        })?;
+                        messages
+                            .send(Ok(value))
+                            .map_err(|_| AgentError::new("agent.mcp.closed", "MCP SSE message receiver closed"))?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn take_sse_frame(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let crlf_separator = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4));
+    let lf_separator = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    let separator = match (crlf_separator, lf_separator) {
+        (Some(crlf), Some(lf)) => Some(if crlf.0 <= lf.0 { crlf } else { lf }),
+        (Some(separator), None) | (None, Some(separator)) => Some(separator),
+        (None, None) => None,
+    }?;
+    let frame = buffer[..separator.0].to_vec();
+    buffer.drain(..separator.0 + separator.1);
+    Some(frame)
+}
+
+fn parse_sse_frame(frame: &[u8]) -> Result<Option<(String, String)>, AgentError> {
+    let frame = std::str::from_utf8(frame)
+        .map_err(|error| AgentError::new("agent.mcp.encode_failed", error.to_string()))?;
+    let mut event = String::new();
+    let mut data = Vec::new();
+    for line in frame.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.starts_with(':') {
+            continue;
+        }
+        let (field, value) = line.split_once(':').unwrap_or((line, ""));
+        let value = value.strip_prefix(' ').unwrap_or(value);
+        match field {
+            "event" => event = value.to_owned(),
+            "data" => data.push(value),
+            _ => {}
+        }
+    }
+    if data.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((event, data.join("\n"))))
+}
+
+fn resolve_legacy_sse_endpoint(
+    stream_url: &reqwest::Url,
+    endpoint: &str,
+) -> Result<String, AgentError> {
+    let endpoint = stream_url
+        .join(endpoint.trim())
+        .map_err(|error| AgentError::new("agent.mcp.request_failed", error.to_string()))?;
+    let same_origin = endpoint.scheme() == stream_url.scheme()
+        && endpoint.host_str() == stream_url.host_str()
+        && endpoint.port_or_known_default() == stream_url.port_or_known_default();
+    if !same_origin || !endpoint.username().is_empty() || endpoint.password().is_some() {
+        return Err(AgentError::new(
+            "agent.mcp.request_failed",
+            "MCP SSE message endpoint must use the stream origin without credentials",
+        ));
+    }
+    Ok(endpoint.to_string())
+}
+
 pub struct HttpMcpTransportFactory {
     client: Arc<dyn McpHttpClient>,
 }
@@ -342,23 +669,27 @@ impl HttpMcpTransportFactory {
 
 impl McpTransportFactory for HttpMcpTransportFactory {
     fn open(&self, manifest: &McpServerManifest) -> Result<Box<dyn McpTransport>, AgentError> {
-        match manifest.transport {
-            McpTransportKind::StreamableHttp | McpTransportKind::Sse => {}
-            McpTransportKind::Stdio => {
-                return Err(AgentError::invalid_input(
-                    "HttpMcpTransportFactory requires streamable HTTP or SSE",
-                ));
-            }
-        }
         let url = manifest
             .url
             .as_deref()
             .ok_or_else(|| AgentError::invalid_input("HTTP MCP manifest requires url"))?;
-        Ok(Box::new(HttpMcpTransport::new(
-            url,
-            manifest.headers.clone(),
-            self.client.clone(),
-        )))
+        match manifest.transport {
+            McpTransportKind::StreamableHttp => Ok(Box::new(HttpMcpTransport::with_timeout(
+                url,
+                manifest.headers.clone(),
+                self.client.clone(),
+                Duration::from_millis(manifest.request_timeout_ms.unwrap_or(10_000).max(1)),
+            ))),
+            McpTransportKind::Sse => Ok(Box::new(LegacySseMcpTransport::connect(
+                url,
+                manifest.headers.clone(),
+                self.client.clone(),
+                Duration::from_millis(manifest.request_timeout_ms.unwrap_or(10_000).max(1)),
+            )?)),
+            McpTransportKind::Stdio => Err(AgentError::invalid_input(
+                "HttpMcpTransportFactory requires streamable HTTP or SSE",
+            )),
+        }
     }
 }
 
@@ -433,24 +764,27 @@ impl McpSession {
         params: Value,
         control: &McpRequestControl,
     ) -> Result<Value, AgentError> {
-        if !self.transport.is_alive()? {
-            self.state = McpServerState::Failed;
-            self.last_error = Some("MCP server exited".into());
-            self.fail_pending("agent.mcp.crashed", "MCP server process exited");
-            return Err(AgentError::new(
-                "agent.mcp.crashed",
-                "MCP server process exited",
-            ));
+        match self.transport.is_alive() {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(self.fail_transport(AgentError::new(
+                    "agent.mcp.crashed",
+                    "MCP server process exited",
+                )));
+            }
+            Err(error) => return Err(self.fail_transport(error)),
         }
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.saturating_add(1);
         self.pending.insert(id);
-        self.transport.send(&json!({
+        if let Err(error) = self.transport.send(&json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
-        }))?;
+        })) {
+            return Err(self.fail_transport(error));
+        }
         let deadline = Instant::now() + control.timeout;
         loop {
             if control.cancellation.is_cancelled() {
@@ -470,10 +804,14 @@ impl McpSession {
                     format!("MCP request `{method}` timed out"),
                 ));
             }
-            let Some(message) = self
+            let message = match self
                 .transport
-                .receive((deadline - now).min(Duration::from_millis(25)))?
-            else {
+                .receive((deadline - now).min(Duration::from_millis(25)))
+            {
+                Ok(message) => message,
+                Err(error) => return Err(self.fail_transport(error)),
+            };
+            let Some(message) = message else {
                 continue;
             };
             if message.get("id").and_then(Value::as_u64) == Some(id) {
@@ -507,6 +845,13 @@ impl McpSession {
 
     fn fail_pending(&mut self, _code: &str, _message: &str) {
         self.pending.clear();
+    }
+
+    fn fail_transport(&mut self, error: AgentError) -> AgentError {
+        self.state = McpServerState::Failed;
+        self.last_error = Some(error.to_string());
+        self.fail_pending("agent.mcp.crashed", &error.to_string());
+        error
     }
 
     fn handle_server_message(&mut self, message: Value) -> Result<(), AgentError> {
@@ -1447,6 +1792,7 @@ mod tests {
         responses: BTreeMap<String, Value>,
         stalled: BTreeSet<String>,
         alive: Arc<AtomicBool>,
+        send_fails: Arc<AtomicBool>,
         sent: Arc<Mutex<Vec<Value>>>,
         list_tools_extra: Arc<Mutex<Option<Value>>>,
     }
@@ -1457,6 +1803,7 @@ mod tests {
                 responses: BTreeMap::new(),
                 stalled: BTreeSet::new(),
                 alive: Arc::new(AtomicBool::new(true)),
+                send_fails: Arc::new(AtomicBool::new(false)),
                 sent: Arc::new(Mutex::new(Vec::new())),
                 list_tools_extra: Arc::new(Mutex::new(None)),
             }
@@ -1469,6 +1816,7 @@ mod tests {
                 responses: self.responses.clone(),
                 stalled: self.stalled.clone(),
                 alive: self.alive.clone(),
+                send_fails: self.send_fails.clone(),
                 sent: self.sent.clone(),
                 list_tools_extra: self.list_tools_extra.clone(),
                 pending: VecDeque::new(),
@@ -1477,10 +1825,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stdio_environment_is_isolated_but_keeps_required_windows_bootstrap() {
+        let mut command = Command::new("unused");
+        configure_stdio_environment(
+            &mut command,
+            &[("MCP_TEST_TOKEN".to_owned(), "configured".to_owned())],
+        );
+        let configured = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            configured.get("MCP_TEST_TOKEN").and_then(Option::as_deref),
+            Some("configured")
+        );
+        assert!(
+            !configured
+                .keys()
+                .any(|key| key.eq_ignore_ascii_case("PATH"))
+        );
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            assert_eq!(
+                configured
+                    .iter()
+                    .find(|(key, _)| key.eq_ignore_ascii_case("SystemRoot"))
+                    .and_then(|(_, value)| value.as_deref()),
+                Some(system_root.to_string_lossy().as_ref())
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_sse_frames_are_incremental_and_endpoints_stay_on_origin() {
+        let mut buffer = b"event: endpoint\r\ndata: /messages?session=1\r\n\r\nevent: message\ndata: {\"jsonrpc\":\"2.0\"}\n\n"
+            .to_vec();
+        let endpoint_frame = take_sse_frame(&mut buffer).unwrap();
+        assert_eq!(
+            parse_sse_frame(&endpoint_frame).unwrap(),
+            Some(("endpoint".into(), "/messages?session=1".into()))
+        );
+        let message_frame = take_sse_frame(&mut buffer).unwrap();
+        assert_eq!(
+            parse_sse_frame(&message_frame).unwrap(),
+            Some(("message".into(), "{\"jsonrpc\":\"2.0\"}".into()))
+        );
+        assert!(buffer.is_empty());
+
+        let mut mixed_endings = b"data: first\n\nevent: message\r\ndata: second\r\n\r\n".to_vec();
+        assert_eq!(
+            parse_sse_frame(&take_sse_frame(&mut mixed_endings).unwrap()).unwrap(),
+            Some((String::new(), "first".into()))
+        );
+        assert_eq!(
+            parse_sse_frame(&take_sse_frame(&mut mixed_endings).unwrap()).unwrap(),
+            Some(("message".into(), "second".into()))
+        );
+
+        let stream = reqwest::Url::parse("https://mcp.example.test/events").unwrap();
+        assert_eq!(
+            resolve_legacy_sse_endpoint(&stream, "/messages")
+                .unwrap()
+                .as_str(),
+            "https://mcp.example.test/messages"
+        );
+        assert!(resolve_legacy_sse_endpoint(&stream, "https://other.example/messages").is_err());
+        assert!(
+            resolve_legacy_sse_endpoint(&stream, "https://token@mcp.example.test/messages")
+                .is_err()
+        );
+    }
+
     struct MockTransport {
         responses: BTreeMap<String, Value>,
         stalled: BTreeSet<String>,
         alive: Arc<AtomicBool>,
+        send_fails: Arc<AtomicBool>,
         sent: Arc<Mutex<Vec<Value>>>,
         list_tools_extra: Arc<Mutex<Option<Value>>>,
         pending: VecDeque<Value>,
@@ -1489,6 +1915,12 @@ mod tests {
 
     impl McpTransport for MockTransport {
         fn send(&mut self, value: &Value) -> Result<(), AgentError> {
+            if self.send_fails.load(Ordering::Acquire) {
+                return Err(AgentError::new(
+                    "agent.mcp.request_failed",
+                    "mock transport request failed",
+                ));
+            }
             self.sent.lock().unwrap().push(value.clone());
             let Some(id) = value.get("id").and_then(Value::as_u64) else {
                 return Ok(());
@@ -1751,6 +2183,43 @@ mod tests {
         assert_eq!(reloaded.state, McpServerState::Ready);
         service.dispose().unwrap();
         assert_eq!(service.active_server_count(), 0);
+    }
+
+    #[test]
+    fn request_transport_failure_marks_session_failed_and_reload_recovers() {
+        let mut factory = MockFactory::new();
+        factory.responses.insert(
+            "initialize".into(),
+            json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}),
+        );
+        factory.responses.insert(
+            "tools/list".into(),
+            json!({"tools": [echo_tool("alpha", false)]}),
+        );
+        factory
+            .responses
+            .insert("resources/list".into(), json!({"resources": []}));
+        factory
+            .responses
+            .insert("prompts/list".into(), json!({"prompts": []}));
+        let send_fails = factory.send_fails.clone();
+        let service = SharedMcpService::new(Arc::new(factory));
+        service.connect(manifest("alpha")).unwrap();
+
+        send_fails.store(true, Ordering::Release);
+        let error = service
+            .call_tool("alpha/echo", json!({}), &McpRequestControl::default())
+            .unwrap_err();
+        assert_eq!(error.code, "agent.mcp.request_failed");
+        let failed = service.status("alpha").unwrap();
+        assert_eq!(failed.state, McpServerState::Failed);
+        let message = error.to_string();
+        assert_eq!(failed.last_error.as_deref(), Some(message.as_str()));
+
+        send_fails.store(false, Ordering::Release);
+        let recovered = service.reload("alpha").unwrap();
+        assert_eq!(recovered.state, McpServerState::Ready);
+        assert_eq!(recovered.restart_count, 1);
     }
 
     #[test]

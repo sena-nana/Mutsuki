@@ -195,9 +195,10 @@ mod tests {
         CredentialBroker, CredentialFuture, CredentialValue, ModelProtocolAdapter,
     };
     use mutsuki_agent_contracts::{
-        AGENT_RUN_PROTOCOL, AgentMessage, AgentRunRequest, AgentRunResult, AgentRunStatus,
-        AgentSessionCreateRequest, AgentToolDescriptor, CredentialRef, PermissionDecision,
-        PermissionDecisionKind,
+        AGENT_RUN_PROTOCOL, AgentEvent, AgentMessage, AgentRunRequest, AgentRunResult,
+        AgentRunStatus, AgentSessionCreateRequest, AgentSessionGetRequest, AgentToolDescriptor,
+        AgentToolExecution, CredentialRef, InteractionKind, InteractionResolution,
+        PermissionDecision, PermissionDecisionKind,
     };
     use mutsuki_agent_sdk::orchestration_runner;
     use mutsuki_runtime_contracts::{
@@ -328,6 +329,25 @@ mod tests {
     fn in_process_core_runs_agent_runtime_through_public_bootstrapper() {
         let model_calls = Arc::new(AtomicUsize::new(0));
         let tool_calls = Arc::new(AtomicUsize::new(0));
+        let mut interaction_tool = AgentToolDescriptor::new(
+            "ask_user_question",
+            AGENT_RUN_PROTOCOL,
+            "Ask the user for a clarification",
+        );
+        interaction_tool.execution = AgentToolExecution::Interaction {
+            interaction_kind: InteractionKind::Clarification,
+        };
+        interaction_tool.input_schema = serde_json::json!({
+            "type": "object",
+            "required": ["question"],
+            "properties": {
+                "question": { "type": "string" },
+                "options": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                }
+            }
+        });
         let mut reference_tool = AgentToolDescriptor::new(
             "workspace.inspect",
             TOOL_PROTOCOL,
@@ -342,34 +362,67 @@ mod tests {
             server_model_calls.fetch_add(1, Ordering::SeqCst);
             let first_payload = read_json_request(&mut first);
             assert_eq!(first_payload["messages"][0]["role"], "user");
-            assert_eq!(first_payload["tools"][0]["name"], "workspace.inspect");
+            let first_payload_text = first_payload.to_string();
+            assert!(first_payload_text.contains("Earlier conversation was compacted"));
+            assert!(first_payload_text.contains("inspect"));
+            assert!(
+                first_payload_text.matches("legacy-marker").count() <= 2,
+                "raw historical turns must not be sent to the model"
+            );
+            let tool_names = first_payload["tools"]
+                .as_array()
+                .expect("model tools are an array")
+                .iter()
+                .filter_map(|tool| tool["name"].as_str())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                tool_names,
+                BTreeSet::from(["ask_user_question", "workspace.inspect"])
+            );
             write_json_response(
                 &mut first,
-                r#"{"content":[{"type":"tool_use","id":"reference-tool","name":"workspace.inspect","input":{"path":"."}}],"stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":1}}"#,
+                r#"{"content":[{"type":"tool_use","id":"ask-1","name":"ask_user_question","input":{"question":"Which target?","options":["A","B"]}}],"stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":1}}"#,
             );
 
             let (mut second, _) = listener.accept().expect("second model request arrives");
             server_model_calls.fetch_add(1, Ordering::SeqCst);
             let second_payload = read_json_request(&mut second);
-            assert_eq!(
-                second_payload["messages"][1]["content"][0]["id"],
-                "reference-tool"
-            );
-            assert_eq!(
-                second_payload["messages"][2]["content"][0]["tool_use_id"],
-                "reference-tool"
-            );
-            assert_eq!(
-                second_payload["messages"][2]["content"][0]["is_error"],
-                true
-            );
+            let second_messages = second_payload["messages"]
+                .as_array()
+                .expect("second model messages are an array");
+            let second_assistant = &second_messages[second_messages.len() - 2];
+            let second_tool = &second_messages[second_messages.len() - 1];
+            assert_eq!(second_assistant["content"][0]["id"], "ask-1");
+            assert_eq!(second_tool["content"][0]["tool_use_id"], "ask-1");
+            assert_ne!(second_tool["content"][0]["is_error"], true);
             assert!(
-                second_payload["messages"][2]["content"][0]["content"]
+                second_tool["content"][0]["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains('A'))
+            );
+            write_json_response(
+                &mut second,
+                r#"{"content":[{"type":"tool_use","id":"reference-tool","name":"workspace.inspect","input":{"path":"."}}],"stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":1}}"#,
+            );
+
+            let (mut third, _) = listener.accept().expect("third model request arrives");
+            server_model_calls.fetch_add(1, Ordering::SeqCst);
+            let third_payload = read_json_request(&mut third);
+            let messages = third_payload["messages"]
+                .as_array()
+                .expect("model messages are an array");
+            let assistant = &messages[messages.len() - 2];
+            let tool_result = &messages[messages.len() - 1];
+            assert_eq!(assistant["content"][0]["id"], "reference-tool");
+            assert_eq!(tool_result["content"][0]["tool_use_id"], "reference-tool");
+            assert_eq!(tool_result["content"][0]["is_error"], true);
+            assert!(
+                tool_result["content"][0]["content"]
                     .as_str()
                     .is_some_and(|content| content.contains("reference.tool_failed"))
             );
             write_json_response(
-                &mut second,
+                &mut third,
                 r#"{"content":[{"type":"text","text":"reference-final"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":1}}"#,
             );
         });
@@ -394,7 +447,7 @@ mod tests {
                     "claude-loopback",
                 ),
                 adapter,
-                vec![reference_tool.clone()],
+                vec![interaction_tool.clone(), reference_tool.clone()],
             )
             .expect("adapter-backed provider constructs"),
         ));
@@ -403,6 +456,10 @@ mod tests {
             model,
             ..Default::default()
         };
+        bundle
+            .tools
+            .register(interaction_tool)
+            .expect("interaction tool registers");
         bundle
             .tools
             .register(reference_tool)
@@ -495,9 +552,18 @@ mod tests {
             .expect("in-process Agent runtime boots");
         deferred.bind(&runtime);
 
-        let mut initial_request =
-            AgentRunRequest::new("reference.profile", vec![AgentMessage::user("inspect")]);
+        let mut initial_request = AgentRunRequest::new(
+            "reference.profile",
+            vec![
+                AgentMessage::user(format!("legacy-marker {}", "history ".repeat(600))),
+                AgentMessage::assistant(format!("legacy-marker {}", "result ".repeat(600))),
+                AgentMessage::user("inspect"),
+            ],
+        );
         initial_request.session_id = Some(session_id.clone());
+        initial_request.turn_id = Some("reference-turn".into());
+        initial_request.max_steps = 3;
+        initial_request.budget.max_context_tokens = Some(300);
         let handle = runtime
             .submit_task(Task::new(
                 "agent-reference-in-process",
@@ -524,16 +590,116 @@ mod tests {
             panic!("in-process Agent run did not complete: {outcome:?}");
         };
         let waiting: AgentRunResult = serde_json::from_value(output).expect("typed Agent result");
-        assert_eq!(waiting.status, AgentRunStatus::WaitingApproval);
-        assert_eq!(waiting.pending_approvals.len(), 1);
+        assert_eq!(waiting.status, AgentRunStatus::WaitingInteraction);
+        assert_eq!(waiting.pending_interactions.len(), 1);
+        assert!(
+            waiting
+                .events
+                .iter()
+                .any(|event| matches!(event.event, AgentEvent::InteractionRequested { .. }))
+        );
+        let interaction_usage = waiting.usage.total_tokens;
+        assert!(interaction_usage > 0);
         assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
 
-        let pending = waiting.pending_approvals[0].clone();
+        let pending = waiting.pending_interactions[0].clone();
         // Session-backed resume loads the persisted waiting history. Only the
-        // approval decision is new input; replaying `waiting.messages` would
+        // interaction resolution is new input; replaying `waiting.messages` would
         // duplicate the assistant tool_use and violate provider causality.
         let mut resume_request = AgentRunRequest::new("reference.profile", Vec::new());
+        resume_request.session_id = Some(session_id.clone());
+        resume_request.turn_id = Some(pending.turn_id.clone());
+        resume_request.max_steps = 100;
+        resume_request.budget.max_context_tokens = Some(300);
+        resume_request.interaction_resolutions = vec![InteractionResolution {
+            session_id: pending.session_id,
+            turn_id: pending.turn_id,
+            version: pending.version,
+            interaction_id: pending.interaction_id,
+            accepted: true,
+            response: serde_json::json!({ "answer": "A" }),
+        }];
+        let handle = runtime
+            .submit_task(Task::new(
+                "agent-reference-interaction-resume",
+                AGENT_RUN_PROTOCOL,
+                serde_json::to_value(resume_request).expect("interaction resume serializes"),
+            ))
+            .expect("Agent interaction resume submits");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let outcome = loop {
+            if let Some(outcome) = runtime
+                .task_outcome(&handle)
+                .expect("Agent interaction resume outcome query succeeds")
+            {
+                break outcome;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "in-process Agent interaction resume timed out"
+            );
+            std::thread::yield_now();
+        };
+        let TaskOutcome::Completed {
+            output: Some(output),
+            ..
+        } = outcome
+        else {
+            panic!("in-process Agent interaction resume did not complete: {outcome:?}");
+        };
+        let waiting: AgentRunResult = serde_json::from_value(output).expect("typed Agent result");
+        assert_eq!(waiting.status, AgentRunStatus::WaitingApproval);
+        assert_eq!(waiting.pending_approvals.len(), 1);
+        assert!(
+            waiting
+                .events
+                .iter()
+                .any(|event| matches!(event.event, AgentEvent::InteractionResolved { .. }))
+        );
+        let approval_usage = waiting.usage.total_tokens;
+        assert!(approval_usage > interaction_usage);
+        assert!(waiting.steps.iter().any(|step| step.step_index == 1));
+        assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
+        let persisted = bundle
+            .sessions
+            .get(AgentSessionGetRequest {
+                session_id: session_id.clone(),
+            })
+            .expect("interaction resume persists session state");
+        assert!(
+            persisted
+                .messages
+                .iter()
+                .any(|message| message.content.starts_with("legacy-marker history")),
+            "context compaction must not replace the durable transcript"
+        );
+        assert_eq!(
+            persisted
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.metadata.as_ref().is_some_and(|metadata| {
+                        metadata.get("interaction_resume_receipt").is_some()
+                    })
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            persisted
+                .events
+                .iter()
+                .filter(|event| matches!(event.event, AgentEvent::InteractionResolved { .. }))
+                .count(),
+            1
+        );
+
+        let pending = waiting.pending_approvals[0].clone();
+        let mut resume_request = AgentRunRequest::new("reference.profile", Vec::new());
         resume_request.session_id = Some(session_id);
+        resume_request.turn_id = Some(pending.turn_id.clone());
+        resume_request.max_steps = 100;
+        resume_request.budget.max_context_tokens = Some(300);
         resume_request.permission_decisions = vec![PermissionDecision {
             session_id: pending.session_id,
             turn_id: pending.turn_id,
@@ -543,7 +709,7 @@ mod tests {
         }];
         let handle = runtime
             .submit_task(Task::new(
-                "agent-reference-resume",
+                "agent-reference-approval-resume",
                 AGENT_RUN_PROTOCOL,
                 serde_json::to_value(resume_request).expect("resume request serializes"),
             ))
@@ -572,7 +738,9 @@ mod tests {
         let result: AgentRunResult = serde_json::from_value(output).expect("typed Agent result");
         assert_eq!(result.status, AgentRunStatus::Completed);
         assert_eq!(result.messages.last().unwrap().content, "reference-final");
-        assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+        assert!(result.usage.total_tokens > approval_usage);
+        assert!(result.steps.iter().any(|step| step.step_index == 2));
+        assert_eq!(model_calls.load(Ordering::SeqCst), 3);
         assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
         model_server.join().expect("model server assertions pass");
     }

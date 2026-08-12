@@ -145,7 +145,7 @@ impl OpenAiCompatibleAdapter {
 }
 
 pub(crate) fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    mutsuki_agent_sdk::ensure_http_crypto_provider();
 }
 
 impl ModelProtocolAdapter for OpenAiCompatibleAdapter {

@@ -42,6 +42,7 @@ impl ChildAgentExecutor for EchoChildExecutor {
             cost_microunits: 0,
             output_resource: None,
             pending_approvals: Vec::new(),
+            pending_interactions: Vec::new(),
             events: Vec::new(),
         })
     }
@@ -440,6 +441,37 @@ impl SubAgentOrchestrator {
             }
         };
 
+        let summary = run_result
+            .messages
+            .last()
+            .map(|message| message.content.clone())
+            .unwrap_or_else(|| "child completed".into());
+        let details = Some(memory_resource_ref(
+            OWNER_ID,
+            format!("{}:details", child_run.child_run_id),
+        ));
+        let kind = match run_result.status {
+            AgentRunStatus::Completed => SubAgentOutcomeKind::Succeeded,
+            AgentRunStatus::Cancelled => SubAgentOutcomeKind::Cancelled,
+            AgentRunStatus::BudgetExceeded => SubAgentOutcomeKind::BudgetExceeded,
+            AgentRunStatus::Failed => SubAgentOutcomeKind::Failed,
+            AgentRunStatus::WaitingApproval | AgentRunStatus::WaitingInteraction => {
+                SubAgentOutcomeKind::Failed
+            }
+        };
+        if matches!(
+            run_result.status,
+            AgentRunStatus::WaitingApproval | AgentRunStatus::WaitingInteraction
+        ) {
+            return Ok(SubAgentResult {
+                child_run,
+                kind,
+                summary,
+                details,
+                run: Some(run_result),
+                partial: true,
+            });
+        }
         if !self
             .inner
             .committed_side_effects
@@ -456,23 +488,6 @@ impl SubAgentOrchestrator {
                 partial: false,
             });
         }
-
-        let summary = run_result
-            .messages
-            .last()
-            .map(|message| message.content.clone())
-            .unwrap_or_else(|| "child completed".into());
-        let details = Some(memory_resource_ref(
-            OWNER_ID,
-            format!("{}:details", child_run.child_run_id),
-        ));
-        let kind = match run_result.status {
-            AgentRunStatus::Completed => SubAgentOutcomeKind::Succeeded,
-            AgentRunStatus::Cancelled => SubAgentOutcomeKind::Cancelled,
-            AgentRunStatus::BudgetExceeded => SubAgentOutcomeKind::BudgetExceeded,
-            AgentRunStatus::Failed => SubAgentOutcomeKind::Failed,
-            AgentRunStatus::WaitingApproval => SubAgentOutcomeKind::Failed,
-        };
         Ok(SubAgentResult {
             child_run,
             kind,
@@ -568,6 +583,7 @@ mod tests {
                 inherit_knowledge: false,
             },
             DelegationBudget {
+                max_context_tokens: None,
                 max_total_tokens: Some(10_000),
                 max_cost_microunits: Some(5_000),
                 deadline_unix_ms: Some(9_999),
@@ -756,5 +772,52 @@ mod tests {
             .invoke_as_tool(delegation("writer", "profile.write", "ok"))
             .unwrap();
         assert_eq!(ok.kind, SubAgentOutcomeKind::Succeeded);
+    }
+
+    #[test]
+    fn waiting_child_does_not_commit_a_terminal_side_effect_fence() {
+        struct WaitingExecutor;
+        impl ChildAgentExecutor for WaitingExecutor {
+            fn execute_child(&self, _request: AgentRunRequest) -> AgentResult<AgentRunResult> {
+                Ok(AgentRunResult {
+                    status: AgentRunStatus::WaitingInteraction,
+                    messages: vec![AgentMessage::assistant("waiting for user")],
+                    steps: Vec::new(),
+                    usage: Default::default(),
+                    cost_microunits: 0,
+                    output_resource: None,
+                    pending_approvals: Vec::new(),
+                    pending_interactions: Vec::new(),
+                    events: Vec::new(),
+                })
+            }
+        }
+        let orch = SubAgentOrchestrator::new(Arc::new(WaitingExecutor));
+        orch.register_agent(SubAgentDescriptor {
+            agent_id: "researcher".into(),
+            profile_id: "profile.research".into(),
+            summary: "research".into(),
+            tools: vec!["search".into()],
+            permissions: Vec::new(),
+            max_depth: 2,
+        })
+        .unwrap();
+        orch.bind_parent(
+            "parent",
+            DelegationScope {
+                allowed_tools: vec!["search".into()],
+                allowed_permissions: Vec::new(),
+                inherit_conversation: false,
+                inherit_knowledge: false,
+            },
+            DelegationBudget::default(),
+        );
+
+        let result = orch
+            .invoke_as_tool(delegation("researcher", "profile.research", "ask"))
+            .unwrap();
+        assert_eq!(result.kind, SubAgentOutcomeKind::Failed);
+        assert!(result.partial);
+        assert!(orch.inner.committed_side_effects.lock().unwrap().is_empty());
     }
 }

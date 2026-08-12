@@ -15,7 +15,7 @@
 
 另有 context / session / prompt / memory.activate 等 MVP 协议。memory / stream 结果可携带 `ResourceRef` / `ResourceCellRef`。
 
-## Session、权限与事件
+## Session、权限、交互与事件
 
 - `mutsuki.agent.session/create|get|append|snapshot|fork@1` 由 AgentKit Session Runner
   统一拥有；Host 可注入 `SessionPersistence`，但不得解释或复制 transcript、事件序号和
@@ -23,10 +23,26 @@
 - `AgentRunRequest.turn_id` 允许产品绑定稳定 turn；`permission_mode` 为 `ask`、`full` 或
   `read_only`。`full` 仍由 Agent loop 生成版本化批准，`read_only` 将写操作转为结构化
   tool error 后回送模型，不调用目标 effect Runner。
+- `AgentToolDescriptor.execution` 区分普通 `routed` 工具和由 Agent loop 拥有的
+  `interaction` 工具。Native Coding bundle 提供 `ask_user_question` 与 `confirm_plan`；
+  Tool Router 直接执行 interaction descriptor 必须返回 `agent.interaction.loop_required`。
+- interaction 工具只能运行在 durable session。模型发出 interaction tool call 后，Run 返回
+  `WaitingInteraction` 与版本化 `InteractionRequest`；恢复请求必须复用同一 `session_id`、
+  `turn_id`，并提交精确匹配 `{session_id, turn_id, version, interaction_id}` 的
+  `InteractionResolution`，不得把回答伪装成新 user turn。
+- `InteractionRequest.source_tool`、`permission_mode` 与可选 `context` 由 Agent loop 从已注册
+  descriptor 和当前 `AgentRunRequest` 注入，不来自模型参数。产品可据此识别自定义交互并
+  校验权限或业务作用域；字段保持可选/默认值，以便旧 checkpoint 和 Wire peer 继续解码。
+- 接受后的回答以原 `call_id` 写为 `AgentRole::Tool` 并继续同一 turn；取消写入 error tool
+  result 并将 turn 收口为 `Cancelled`。interaction 与 routed tool 不得出现在同一模型批次，
+  避免在等待用户期间产生未授权副作用。
 - `AgentRunResult.events` 是本次调用产生的单调事件段。持久 session 通过同一次
   `session/append` 原子提交新增消息与事件；事件必须绑定 session 且序号连续。
 - `AgentWireAuthority` 位于 Agent Client owner，统一处理 Wire version、idempotency、
-  approval/cancel replay、fork 与 reconnect；产品只实现 `AgentWireRuntime` 和持久化注入。
+  approval/interaction/cancel replay、fork 与 reconnect；产品只实现 `AgentWireRuntime` 和
+  持久化注入。Wire peer 必须协商 `interaction-binding` 后才可发送
+  `resolve_interaction`；相同 resolution 重放返回已有结果，异值重放返回
+  `agent.interaction.idempotency_conflict`。
 
 ## Tool 回合因果链
 

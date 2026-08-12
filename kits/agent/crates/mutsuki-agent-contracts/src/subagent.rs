@@ -29,6 +29,8 @@ pub enum DelegationMode {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DelegationBudget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_total_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_cost_microunits: Option<u64>,
@@ -41,6 +43,7 @@ pub struct DelegationBudget {
 impl From<AgentRunBudget> for DelegationBudget {
     fn from(value: AgentRunBudget) -> Self {
         Self {
+            max_context_tokens: value.max_context_tokens,
             max_total_tokens: value.max_total_tokens,
             max_cost_microunits: value.max_cost_microunits,
             deadline_unix_ms: None,
@@ -53,6 +56,7 @@ impl DelegationBudget {
     /// Intersect parent remaining budget with an explicit child allotment.
     pub fn intersect(&self, child: &Self) -> Self {
         Self {
+            max_context_tokens: min_opt_u64(self.max_context_tokens, child.max_context_tokens),
             max_total_tokens: min_opt_u64(self.max_total_tokens, child.max_total_tokens),
             max_cost_microunits: min_opt_u64(self.max_cost_microunits, child.max_cost_microunits),
             deadline_unix_ms: min_opt_u64(self.deadline_unix_ms, child.deadline_unix_ms),
@@ -62,6 +66,7 @@ impl DelegationBudget {
 
     pub fn into_run_budget(self) -> AgentRunBudget {
         AgentRunBudget {
+            max_context_tokens: self.max_context_tokens,
             max_total_tokens: self.max_total_tokens,
             max_cost_microunits: self.max_cost_microunits,
         }

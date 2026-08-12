@@ -65,11 +65,20 @@ impl AdapterBackedModelProvider {
     }
 
     fn adapter_request(&self, request: AgentModelGenerateRequest) -> ModelGenerateRequest {
+        let reasoning = request
+            .metadata
+            .as_ref()
+            .and_then(|metadata| {
+                metadata
+                    .get("reasoning")
+                    .or_else(|| metadata.get("reasoningEffort"))
+            })
+            .cloned();
         ModelGenerateRequest {
             request,
             tools: self.tools.as_ref().clone(),
             structured_output: None,
-            reasoning: None,
+            reasoning,
         }
     }
 }
@@ -292,7 +301,7 @@ impl HttpModelProvider {
                 "model provider secret is missing",
             ));
         }
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let client = reqwest::Client::builder()
             .build()
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
@@ -308,6 +317,7 @@ impl HttpModelProvider {
         request: AgentModelGenerateRequest,
     ) -> AgentResult<AgentModelGenerateResult> {
         let payload = self.payload(&request);
+        mutsuki_agent_sdk::ensure_http_crypto_provider();
         let client = reqwest::blocking::Client::builder()
             .build()
             .map_err(|error| AgentError::provider_unavailable(error.to_string()))?;
@@ -728,7 +738,7 @@ mod http_tests {
             temperature: None,
             max_output_tokens: None,
             provider_hint: None,
-            metadata: None,
+            metadata: Some(serde_json::json!({"reasoningEffort": "high"})),
             result_protocol_id: None,
             result_context: None,
             session_id: None,
@@ -743,6 +753,7 @@ mod http_tests {
         let forwarded = recorded.lock().unwrap().clone().unwrap();
         assert_eq!(forwarded.tools.len(), 1);
         assert_eq!(forwarded.tools[0].name, "echo");
+        assert_eq!(forwarded.reasoning, Some(serde_json::json!("high")));
     }
 
     #[test]
