@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::path::Path;
 
 use crate::{
     ConfigContext, ConfigDescriptor, ConfigError, ConfigRevision, ConfigSnapshot, ConfigValue,
@@ -8,7 +9,13 @@ use crate::{
 /// Reversible domain-side activation prepared before repository commit.
 pub trait ConfigActivation: Send {
     fn activate(&mut self) -> Result<(), ConfigError>;
+    fn commit_marker(&self) -> Option<&Path> {
+        None
+    }
     fn commit(&mut self) -> Result<(), ConfigError>;
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        Ok(())
+    }
     fn rollback(&mut self) -> Result<(), ConfigError>;
 }
 
@@ -46,9 +53,23 @@ impl PreparedConfigActivation {
         Ok(())
     }
 
+    #[must_use]
+    pub fn commit_marker(&self) -> Option<&Path> {
+        self.transaction
+            .as_ref()
+            .and_then(|transaction| transaction.commit_marker())
+    }
+
     pub fn commit(&mut self) -> Result<(), ConfigError> {
         if let Some(transaction) = &mut self.transaction {
             transaction.commit()?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<(), ConfigError> {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.finish()?;
         }
         self.transaction = None;
         Ok(())
@@ -108,6 +129,7 @@ pub trait ConfigProvider: Send + Sync {
             .prepare_activation(value, current, revision, context)
             .await?;
         activation.activate()?;
-        activation.commit()
+        activation.commit()?;
+        activation.finish()
     }
 }

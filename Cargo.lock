@@ -3669,22 +3669,30 @@ dependencies = [
  "async-trait",
  "futures-executor",
  "hex",
+ "mutsuki-agent-adapter-api",
+ "mutsuki-agent-adapter-openai",
+ "mutsuki-agent-bundle",
  "mutsuki-agent-client",
  "mutsuki-agent-contracts",
+ "mutsuki-agent-runtime",
  "mutsuki-config-service",
  "mutsuki-link-core",
  "mutsuki-link-local",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "mutsuki-service-config",
  "mutsuki-service-runtime",
  "parking_lot",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
+ "url",
 ]
 
 [[package]]
@@ -3727,10 +3735,11 @@ dependencies = [
  "mutsuki-distributed-control-client",
  "mutsuki-plugin-agent-model-gateway",
  "mutsuki-plugin-bot-adapter-qqbot",
+ "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-command",
+ "mutsuki-plugin-bot-control-web",
  "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-config-sqlite",
- "mutsuki-plugin-config-web",
  "mutsuki-protocol-browser",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -3860,6 +3869,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutsuki-bot-management"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mutsuki-bot-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "mutsuki-bot-protocol"
 version = "0.1.0"
 dependencies = [
@@ -3909,6 +3929,7 @@ dependencies = [
  "mutsuki-bot-delivery",
  "mutsuki-bot-flow",
  "mutsuki-bot-interaction",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-bot-state-db",
  "mutsuki-bot-testkit",
@@ -3974,28 +3995,21 @@ dependencies = [
 name = "mutsuki-bot-web-console"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
  "futures-util",
- "mutsuki-agent-service-host-integration",
  "mutsuki-bot-flow",
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
- "mutsuki-plugin-bot-adapter-qqbot",
- "mutsuki-plugin-bot-agent",
  "mutsuki-plugin-bot-agent-web",
  "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-web",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-control-web",
- "mutsuki-plugin-bot-event-router",
  "mutsuki-plugin-bot-flow-web",
  "mutsuki-plugin-bot-overview-web",
  "mutsuki-plugin-bot-qq-web",
  "mutsuki-plugin-bot-upgrade-web",
  "mutsuki-plugin-config-web",
- "mutsuki-service-config",
  "mutsuki-service-control",
- "mutsuki-service-runtime",
  "mutsuki-web-extension",
  "mutsuki-web-host",
  "mutsuki-web-protocol",
@@ -4005,7 +4019,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-tungstenite 0.30.0",
- "toml 1.1.4+spec-1.1.0",
  "uuid",
 ]
 
@@ -4435,12 +4448,14 @@ dependencies = [
 name = "mutsuki-plugin-bot-agent-web"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-agent-contracts",
  "mutsuki-agent-service-host-integration",
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -4633,7 +4648,9 @@ dependencies = [
 name = "mutsuki-plugin-bot-qq-web"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "futures-util",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-web-extension",
  "mutsuki-web-host",

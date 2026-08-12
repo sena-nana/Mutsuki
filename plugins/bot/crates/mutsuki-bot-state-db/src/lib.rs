@@ -62,6 +62,13 @@ pub struct BotManagementAuditRecord {
     pub created_at_unix_ms: u64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum BotManagementOperationReservation {
+    Reserved,
+    Resume,
+    Completed(BotManagementAuditRecord),
+}
+
 #[derive(Default)]
 struct ActorMetrics {
     queue_depth: AtomicUsize,
@@ -233,6 +240,40 @@ impl BotStateDbRepository {
         })
     }
 
+    pub fn begin_management_operation(
+        &self,
+        operation_id: &str,
+        expected_revision: u64,
+        actor_id: &str,
+        action: &str,
+        created_at_unix_ms: u64,
+    ) -> Result<BotManagementOperationReservation, BotStateDbError> {
+        self.call_sync(|reply| DbJob::BeginManagementOperation {
+            operation_id: operation_id.to_owned(),
+            expected_revision,
+            actor_id: actor_id.to_owned(),
+            action: action.to_owned(),
+            created_at_unix_ms,
+            reply,
+        })
+    }
+
+    pub fn complete_management_operation(
+        &self,
+        operation_id: &str,
+        action: &str,
+        result: serde_json::Value,
+        created_at_unix_ms: u64,
+    ) -> Result<BotManagementAuditRecord, BotStateDbError> {
+        self.call_sync(|reply| DbJob::CompleteManagementOperation {
+            operation_id: operation_id.to_owned(),
+            action: action.to_owned(),
+            result,
+            created_at_unix_ms,
+            reply,
+        })
+    }
+
     /// Commits one revision-fenced management audit entry atomically.
     pub fn commit_management_audit(
         &self,
@@ -393,6 +434,21 @@ enum DbJob {
         limit: u32,
         reply: SyncDbReply<Vec<BotManagementAuditRecord>>,
     },
+    BeginManagementOperation {
+        operation_id: String,
+        expected_revision: u64,
+        actor_id: String,
+        action: String,
+        created_at_unix_ms: u64,
+        reply: SyncDbReply<BotManagementOperationReservation>,
+    },
+    CompleteManagementOperation {
+        operation_id: String,
+        action: String,
+        result: serde_json::Value,
+        created_at_unix_ms: u64,
+        reply: SyncDbReply<BotManagementAuditRecord>,
+    },
     CommitManagementAudit {
         expected_revision: u64,
         actor_id: String,
@@ -420,6 +476,8 @@ impl DbJob {
                 | Self::ClaimDueReplyParts { .. }
                 | Self::CreateInteraction { .. }
                 | Self::CompareAndSetInteraction { .. }
+                | Self::BeginManagementOperation { .. }
+                | Self::CompleteManagementOperation { .. }
                 | Self::CommitManagementAudit { .. }
         )
     }
@@ -555,6 +613,42 @@ impl DbJob {
             Self::ManagementAudits { limit, reply } => {
                 send_sync_reply(reply, management_audits(connection, limit), metrics);
             }
+            Self::BeginManagementOperation {
+                operation_id,
+                expected_revision,
+                actor_id,
+                action,
+                created_at_unix_ms,
+                reply,
+            } => send_sync_reply(
+                reply,
+                begin_management_operation(
+                    connection,
+                    &operation_id,
+                    expected_revision,
+                    &actor_id,
+                    &action,
+                    created_at_unix_ms,
+                ),
+                metrics,
+            ),
+            Self::CompleteManagementOperation {
+                operation_id,
+                action,
+                result,
+                created_at_unix_ms,
+                reply,
+            } => send_sync_reply(
+                reply,
+                complete_management_operation(
+                    connection,
+                    &operation_id,
+                    &action,
+                    result,
+                    created_at_unix_ms,
+                ),
+                metrics,
+            ),
             Self::CommitManagementAudit {
                 expected_revision,
                 actor_id,
@@ -715,11 +809,20 @@ fn migrate_schema(connection: &Connection) -> Result<(), BotStateDbError> {
              result TEXT NOT NULL,
              created_at_unix_ms INTEGER NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS bot_management_operation(
+             operation_id TEXT PRIMARY KEY,
+             expected_revision INTEGER NOT NULL,
+             actor_id TEXT NOT NULL,
+             action TEXT NOT NULL,
+             audit_revision INTEGER,
+             created_at_unix_ms INTEGER NOT NULL,
+             FOREIGN KEY(audit_revision) REFERENCES bot_management_audit(revision)
+         );
          CREATE INDEX IF NOT EXISTS bot_delivery_attempt_due
              ON bot_delivery_attempt(status, retry_at, delivery_id, attempt);
          CREATE INDEX IF NOT EXISTS bot_interaction_active
              ON bot_interaction(origin_key, status, session_id);
-         PRAGMA user_version=6;
+         PRAGMA user_version=7;
          COMMIT;",
     )?;
 
@@ -1513,6 +1616,174 @@ fn management_audits(
         .collect()
 }
 
+fn management_audit_by_revision(
+    connection: &Connection,
+    revision: u64,
+) -> Result<BotManagementAuditRecord, BotStateDbError> {
+    let (audit_id, actor_id, action, result, created_at_unix_ms) = connection.query_row(
+        "SELECT audit_id, actor_id, action, result, created_at_unix_ms
+         FROM bot_management_audit WHERE revision=?1",
+        params![sqlite_integer(revision)?],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        },
+    )?;
+    Ok(BotManagementAuditRecord {
+        audit_id: format!("audit-{audit_id}"),
+        revision,
+        actor_id,
+        action: action.to_owned(),
+        result: decode(&result)?,
+        created_at_unix_ms: sqlite_unsigned(created_at_unix_ms, "management audit timestamp")?,
+    })
+}
+
+fn begin_management_operation(
+    connection: &mut Connection,
+    operation_id: &str,
+    expected_revision: u64,
+    actor_id: &str,
+    action: &str,
+    created_at_unix_ms: u64,
+) -> Result<BotManagementOperationReservation, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let existing = transaction
+        .query_row(
+            "SELECT expected_revision, actor_id, action, audit_revision
+             FROM bot_management_operation WHERE operation_id=?1",
+            params![operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((stored_revision, stored_actor, stored_action, audit_revision)) = existing {
+        if sqlite_unsigned(stored_revision, "management expected revision")? != expected_revision
+            || stored_actor != actor_id
+            || stored_action != action
+        {
+            return Err(BotStateDbError::Conflict);
+        }
+        return audit_revision.map_or_else(
+            || Ok(BotManagementOperationReservation::Resume),
+            |revision| {
+                management_audit_by_revision(
+                    &transaction,
+                    sqlite_unsigned(revision, "management audit revision")?,
+                )
+                .map(BotManagementOperationReservation::Completed)
+            },
+        );
+    }
+    if management_revision(&transaction)? != expected_revision {
+        return Err(BotStateDbError::Conflict);
+    }
+    let pending_exists = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM bot_management_operation
+             WHERE expected_revision=?1 AND audit_revision IS NULL
+         )",
+        params![sqlite_integer(expected_revision)?],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if pending_exists {
+        return Err(BotStateDbError::Conflict);
+    }
+    transaction.execute(
+        "INSERT INTO bot_management_operation(
+             operation_id, expected_revision, actor_id, action, audit_revision, created_at_unix_ms
+         ) VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+        params![
+            operation_id,
+            sqlite_integer(expected_revision)?,
+            actor_id,
+            action,
+            sqlite_integer(created_at_unix_ms)?,
+        ],
+    )?;
+    transaction.commit()?;
+    Ok(BotManagementOperationReservation::Reserved)
+}
+
+fn complete_management_operation(
+    connection: &mut Connection,
+    operation_id: &str,
+    action: &str,
+    result: serde_json::Value,
+    created_at_unix_ms: u64,
+) -> Result<BotManagementAuditRecord, BotStateDbError> {
+    let transaction = immediate(connection)?;
+    let (expected_revision, actor_id, _operation_fingerprint, audit_revision) = transaction
+        .query_row(
+            "SELECT expected_revision, actor_id, action, audit_revision
+         FROM bot_management_operation WHERE operation_id=?1",
+            params![operation_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )?;
+    if let Some(revision) = audit_revision {
+        return management_audit_by_revision(
+            &transaction,
+            sqlite_unsigned(revision, "management audit revision")?,
+        );
+    }
+    let expected_revision = sqlite_unsigned(expected_revision, "management expected revision")?;
+    if management_revision(&transaction)? != expected_revision {
+        return Err(BotStateDbError::Conflict);
+    }
+    let revision = expected_revision.saturating_add(1);
+    transaction.execute(
+        "UPDATE bot_management_meta SET revision=?1 WHERE singleton=1 AND revision=?2",
+        params![
+            sqlite_integer(revision)?,
+            sqlite_integer(expected_revision)?
+        ],
+    )?;
+    transaction.execute(
+        "INSERT INTO bot_management_audit(
+             revision, actor_id, action, result, created_at_unix_ms
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            sqlite_integer(revision)?,
+            actor_id,
+            action,
+            encode(&result)?,
+            sqlite_integer(created_at_unix_ms)?,
+        ],
+    )?;
+    let audit_id = format!("audit-{}", transaction.last_insert_rowid());
+    transaction.execute(
+        "UPDATE bot_management_operation SET audit_revision=?2 WHERE operation_id=?1",
+        params![operation_id, sqlite_integer(revision)?],
+    )?;
+    transaction.commit()?;
+    Ok(BotManagementAuditRecord {
+        audit_id,
+        revision,
+        actor_id,
+        action: action.to_owned(),
+        result,
+        created_at_unix_ms,
+    })
+}
+
 fn commit_management_audit(
     connection: &mut Connection,
     expected_revision: u64,
@@ -1876,6 +2147,8 @@ pub enum BotStateDbError {
     QueueFull,
     #[error("invalid database actor configuration: {0}")]
     InvalidConfiguration(String),
+    #[error("state revision or idempotency reservation conflicts with the request")]
+    Conflict,
 }
 
 #[cfg(test)]
@@ -2134,6 +2407,51 @@ mod tests {
         assert_eq!(audits.len(), 1);
         assert_eq!(audits[0].actor_id, "local-web-console");
         assert_eq!(audits[0].result["delivery_id"], "delivery-a");
+    }
+
+    #[test]
+    fn management_operation_reservation_is_durable_and_replayable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("management-operation.db");
+        let repository = BotStateDbRepository::open(&path).unwrap();
+        assert_eq!(
+            repository
+                .begin_management_operation("op-1", 0, "console", "send_test", 10)
+                .unwrap(),
+            BotManagementOperationReservation::Reserved
+        );
+        assert!(matches!(
+            repository.begin_management_operation("op-2", 0, "console", "send_test", 10),
+            Err(BotStateDbError::Conflict)
+        ));
+        drop(repository);
+
+        let reopened = BotStateDbRepository::open(&path).unwrap();
+        assert_eq!(
+            reopened
+                .begin_management_operation("op-1", 0, "console", "send_test", 11)
+                .unwrap(),
+            BotManagementOperationReservation::Resume
+        );
+        let audit = reopened
+            .complete_management_operation(
+                "op-1",
+                "send_test",
+                serde_json::json!({"message_id": "m1"}),
+                12,
+            )
+            .unwrap();
+        assert_eq!(audit.revision, 1);
+        assert_eq!(
+            reopened
+                .begin_management_operation("op-1", 0, "console", "send_test", 13)
+                .unwrap(),
+            BotManagementOperationReservation::Completed(audit)
+        );
+        assert!(matches!(
+            reopened.begin_management_operation("op-1", 0, "forged", "send_test", 14),
+            Err(BotStateDbError::Conflict)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

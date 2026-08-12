@@ -1,11 +1,15 @@
-//! Product configuration provider. Durable storage is supplied by product bootstrap.
+//! Product configuration and owner-provider assembly for the local Bot application.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use mutsuki_agent_service_host_integration::{AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig};
+use mutsuki_agent_service_host_integration::{
+    AGENT_CONNECTIONS_PLUGIN_ID, AgentConnectionsConfig, LOCAL_AGENT_API_KEY,
+    LOCAL_AGENT_API_KEY_FIELD, LOCAL_AGENT_CONFIG_PROVIDER_ID, LOCAL_AGENT_PLUGIN_ID,
+    LocalAgentConfig, local_agent_config_descriptor, local_agent_config_value,
+};
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError,
+    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigError, ConfigExpr,
     ConfigLifecycle, ConfigMutability, ConfigNode, ConfigPersistSink, ConfigPersistTransaction,
     ConfigPresentation, ConfigProviderId, ConfigProviderRegistry, ConfigRepository, ConfigScope,
     ConfigSecretMutation, ConfigService, ConfigValue, ConfigValueType, LocalizedText,
@@ -43,8 +47,16 @@ impl ConfigPersistTransaction for PreparedHostSecretPersist {
         self.0.activate().map_err(persist_error)
     }
 
+    fn commit_marker(&self) -> Option<&std::path::Path> {
+        self.0.commit_marker()
+    }
+
     fn commit(&mut self) -> Result<(), ConfigError> {
         self.0.commit().map_err(persist_error)
+    }
+
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        self.0.finish().map_err(persist_error)
     }
 
     fn rollback(&mut self) -> Result<(), ConfigError> {
@@ -72,6 +84,10 @@ impl ConfigPersistSink for HostSecretPersist {
             .collect();
         self.store
             .prepare_mutations(updates)
+            .and_then(|mut transaction| {
+                transaction.enable_coordinated_commit()?;
+                Ok(transaction)
+            })
             .map(|transaction| {
                 Box::new(PreparedHostSecretPersist(transaction))
                     as Box<dyn ConfigPersistTransaction>
@@ -129,15 +145,15 @@ pub fn product_config_service_with_options(
 pub fn product_descriptor() -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(PRODUCT_CONFIG_PROVIDER_ID),
-        schema_version: 1,
-        value_version: 1,
-        title: LocalizedText::new("产品配置"),
+        schema_version: 2,
+        value_version: 2,
+        title: LocalizedText::new("本机 Bot"),
         description: None,
         scopes: vec![ConfigScope::global()],
         root: ConfigNode {
             key: "product".into(),
             value_type: ConfigValueType::Object,
-            title: LocalizedText::new("产品配置"),
+            title: LocalizedText::new("本机 Bot"),
             description: None,
             default_value: None,
             constraints: ConfigConstraints::default(),
@@ -147,19 +163,32 @@ pub fn product_descriptor() -> ConfigDescriptor {
             mutability: ConfigMutability::ReadWrite,
             restart_policy: RestartPolicy::None,
             children: vec![
-                string_node("profile", "运行配置", RestartPolicy::ApplicationRestart),
-                bool_node("console_enabled", "启用管理台", RestartPolicy::Reconfigure),
-                string_node(
+                bool_node(
+                    "workspace_enabled",
+                    "启用本机 Bot 工作区",
+                    RestartPolicy::ApplicationRestart,
+                ),
+                hidden(string_node(
+                    "profile",
+                    "运行配置",
+                    RestartPolicy::ApplicationRestart,
+                )),
+                hidden(bool_node(
+                    "console_enabled",
+                    "启用管理台",
+                    RestartPolicy::Reconfigure,
+                )),
+                hidden(string_node(
                     "console_listen",
                     "管理地址",
                     RestartPolicy::ApplicationRestart,
-                ),
-                string_node(
+                )),
+                hidden(string_node(
                     "auth_token_key",
                     "鉴权密钥引用",
                     RestartPolicy::ApplicationRestart,
-                ),
-                ConfigNode {
+                )),
+                hidden(ConfigNode {
                     key: "extensions".into(),
                     value_type: ConfigValueType::Array {
                         item: Box::new(ConfigValueType::String { multiline: false }),
@@ -174,8 +203,8 @@ pub fn product_descriptor() -> ConfigDescriptor {
                     mutability: ConfigMutability::ReadWrite,
                     restart_policy: RestartPolicy::ApplicationRestart,
                     children: Vec::new(),
-                },
-                ConfigNode {
+                }),
+                hidden(ConfigNode {
                     key: "runtime_plugins".into(),
                     value_type: ConfigValueType::Map {
                         key_strategy: MapKeyStrategy::FreeString,
@@ -191,7 +220,7 @@ pub fn product_descriptor() -> ConfigDescriptor {
                     mutability: ConfigMutability::ReadWrite,
                     restart_policy: RestartPolicy::PluginReload,
                     children: Vec::new(),
-                },
+                }),
             ],
         },
         groups: Vec::new(),
@@ -232,8 +261,16 @@ fn bool_node(key: &str, title: &str, restart_policy: RestartPolicy) -> ConfigNod
     }
 }
 
+fn hidden(mut node: ConfigNode) -> ConfigNode {
+    node.visibility = Some(ConfigExpr::Literal {
+        value: ConfigValue::Bool(false),
+    });
+    node
+}
+
 pub fn product_seed_defaults() -> ConfigValue {
     ConfigValue::Object(BTreeMap::from([
+        ("workspace_enabled".into(), ConfigValue::Bool(false)),
         ("profile".into(), ConfigValue::String("bot".into())),
         ("console_enabled".into(), ConfigValue::Bool(true)),
         (
@@ -274,6 +311,12 @@ pub fn product_runtime_selections() -> Vec<ConfiguredPluginSelection> {
             id: QQBOT_ADAPTER_PLUGIN_ID.into(),
             enabled: false,
             config: serde_json::to_value(QqBotConfig::default()).expect("QQ defaults serialize"),
+        },
+        ConfiguredPluginSelection {
+            id: LOCAL_AGENT_PLUGIN_ID.into(),
+            enabled: false,
+            config: serde_json::to_value(LocalAgentConfig::default())
+                .expect("Local Agent defaults serialize"),
         },
         ConfiguredPluginSelection {
             id: BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
@@ -324,6 +367,29 @@ pub async fn register_configured_product_providers(
         .register(Arc::new(qq_provider))
         .map_err(register_error)?;
 
+    let local = selection_or_default(selections, LOCAL_AGENT_PLUGIN_ID);
+    let local_config = deserialize_or_default::<LocalAgentConfig>(&local.config, "Agent")?;
+    let mut local_provider = MemoryConfigProvider::new(
+        local_agent_config_descriptor(),
+        local_agent_config_value(local.enabled, &local_config),
+        ConfigApplyMode::HotReload,
+    )
+    .with_persist(Arc::new(HostSecretPersist {
+        store: secrets.clone(),
+        key_by_field: BTreeMap::from([(
+            LOCAL_AGENT_API_KEY_FIELD.into(),
+            LOCAL_AGENT_API_KEY.into(),
+        )]),
+    }));
+    if secrets.resolve(LOCAL_AGENT_API_KEY).is_some() {
+        local_provider =
+            local_provider.with_initial_secret(LOCAL_AGENT_API_KEY_FIELD, "configured".into());
+    }
+    service
+        .registry()
+        .register(Arc::new(local_provider))
+        .map_err(register_error)?;
+
     let bridge = selection_or_default(selections, BOT_AGENT_BRIDGE_PLUGIN_ID);
     let bridge_config = deserialize_or_default::<BotAgentConfig>(&bridge.config, "Bot Agent")?;
     service
@@ -337,7 +403,11 @@ pub async fn register_configured_product_providers(
         )))
         .map_err(register_error)?;
 
-    for provider_id in [QQBOT_ADAPTER_PLUGIN_ID, BOT_AGENT_BRIDGE_PLUGIN_ID] {
+    for provider_id in [
+        QQBOT_ADAPTER_PLUGIN_ID,
+        LOCAL_AGENT_CONFIG_PROVIDER_ID,
+        BOT_AGENT_BRIDGE_PLUGIN_ID,
+    ] {
         service
             .restore(provider_id, provider_context(provider_id))
             .await
@@ -351,7 +421,11 @@ pub async fn restore_configured_product_selections(
     service: &Arc<ConfigService>,
     selections: &mut Vec<ConfiguredPluginSelection>,
 ) -> Result<(), ProductConfigError> {
-    for provider_id in [QQBOT_ADAPTER_PLUGIN_ID, BOT_AGENT_BRIDGE_PLUGIN_ID] {
+    for provider_id in [
+        QQBOT_ADAPTER_PLUGIN_ID,
+        LOCAL_AGENT_CONFIG_PROVIDER_ID,
+        BOT_AGENT_BRIDGE_PLUGIN_ID,
+    ] {
         let snapshot = service
             .read(
                 provider_id,
@@ -431,6 +505,26 @@ pub fn configured_plugin_selection_from_value(
                 id: provider_id.into(),
                 enabled,
                 config: serde_json::to_value(config).expect("QQ config serializes"),
+            })
+        }
+        LOCAL_AGENT_CONFIG_PROVIDER_ID => {
+            let mut config: LocalAgentConfig = base
+                .and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
+                .unwrap_or_default();
+            config.endpoint = string_field(object, "endpoint")?;
+            config.model = string_field(object, "model")?;
+            config.api_key_key = LOCAL_AGENT_API_KEY.into();
+            config.assistant_instruction = string_field(object, "assistant_instruction")?;
+            let enabled = bool_field(object, "enabled")?;
+            if enabled {
+                config
+                    .validate()
+                    .map_err(|reason| ConfigError::ApplyRejected { reason })?;
+            }
+            Ok(ConfiguredPluginSelection {
+                id: provider_id.into(),
+                enabled,
+                config: serde_json::to_value(config).expect("Local Agent config serializes"),
             })
         }
         BOT_AGENT_BRIDGE_PLUGIN_ID => {

@@ -12,8 +12,15 @@ use crate::BridgeMetrics;
 #[derive(Debug, Clone)]
 pub struct BridgeSession {
     pub session_id: Uuid,
+    pub principal_id: String,
     pub capabilities: Vec<String>,
     pub safe_mode: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthGrant {
+    pub principal_id: String,
+    pub capabilities: Vec<String>,
 }
 
 impl BridgeSession {
@@ -78,7 +85,7 @@ impl AuthPolicy {
         }
     }
 
-    pub fn authenticate(&self, token: Option<&str>) -> ProtocolResult<Vec<String>> {
+    pub fn authenticate(&self, token: Option<&str>) -> ProtocolResult<AuthGrant> {
         match self {
             Self::Local {
                 accepted_tokens,
@@ -86,11 +93,17 @@ impl AuthPolicy {
                 allow_unauthenticated,
             } => {
                 if *allow_unauthenticated && token.is_none() {
-                    return Ok(default_capabilities.clone());
+                    return Ok(AuthGrant {
+                        principal_id: "local-readonly".into(),
+                        capabilities: default_capabilities.clone(),
+                    });
                 }
                 let token = token.ok_or(ProtocolError::Unauthenticated)?;
                 if accepted_tokens.is_empty() || accepted_tokens.iter().any(|item| item == token) {
-                    Ok(default_capabilities.clone())
+                    Ok(AuthGrant {
+                        principal_id: "local-web-console".into(),
+                        capabilities: default_capabilities.clone(),
+                    })
                 } else {
                     Err(ProtocolError::Unauthenticated)
                 }
@@ -106,7 +119,10 @@ impl AuthPolicy {
                 }
                 let token = token.ok_or(ProtocolError::Unauthenticated)?;
                 if accepted_tokens.iter().any(|item| item == token) {
-                    Ok(default_capabilities.clone())
+                    Ok(AuthGrant {
+                        principal_id: "remote-web-console".into(),
+                        capabilities: default_capabilities.clone(),
+                    })
                 } else {
                     Err(ProtocolError::Unauthenticated)
                 }
@@ -146,6 +162,15 @@ impl SessionManager {
         capabilities: Vec<String>,
         safe_mode: bool,
     ) -> ProtocolResult<BridgeSession> {
+        self.create_authenticated("internal", capabilities, safe_mode)
+    }
+
+    pub fn create_authenticated(
+        &self,
+        principal_id: impl Into<String>,
+        capabilities: Vec<String>,
+        safe_mode: bool,
+    ) -> ProtocolResult<BridgeSession> {
         let mut sessions = self.sessions.lock();
         if sessions.len() >= self.budgets.max_sessions {
             return Err(ProtocolError::BudgetExceeded(format!(
@@ -155,6 +180,7 @@ impl SessionManager {
         }
         let session = BridgeSession {
             session_id: Uuid::new_v4(),
+            principal_id: principal_id.into(),
             capabilities,
             safe_mode,
         };

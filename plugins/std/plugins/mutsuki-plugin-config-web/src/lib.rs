@@ -10,6 +10,7 @@
 //!
 //! Frontend assets generate forms from ConfigDescriptor (Koishi-like shell + LiliaUI tokens).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ pub struct ConfigWebExtension {
     service: Arc<ConfigService>,
     assets_root: Option<PathBuf>,
     capabilities: Vec<String>,
+    visible_providers: Option<BTreeSet<String>>,
 }
 
 impl ConfigWebExtension {
@@ -45,11 +47,21 @@ impl ConfigWebExtension {
                 mutsuki_config_service::capability::APPLY.into(),
                 mutsuki_config_service::capability::RELOAD.into(),
             ],
+            visible_providers: None,
         }
     }
 
     pub fn with_frontend_assets(mut self, root: impl Into<PathBuf>) -> Self {
         self.assets_root = Some(root.into());
+        self
+    }
+
+    /// Restricts both discovery and direct RPC access to product-selected providers.
+    pub fn with_visible_providers(
+        mut self,
+        providers: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.visible_providers = Some(providers.into_iter().map(Into::into).collect());
         self
     }
 
@@ -91,22 +103,29 @@ impl WebExtension for ConfigWebExtension {
 
     fn register_rpc(&self, ctx: &mut RpcRegistry) -> Result<(), ExtensionError> {
         let service = self.service.clone();
+        let visible_providers = self.visible_providers.clone();
         ctx.register_contextual("providers.list", {
             let service = service.clone();
+            let visible_providers = visible_providers.clone();
             move |context, _params| {
                 context.require(mutsuki_config_service::capability::SCHEMA_READ)?;
-                let list = service
+                let mut list = service
                     .list_providers(context.capabilities())
                     .map_err(map_config_error)?;
+                if let Some(visible) = &visible_providers {
+                    list.retain(|provider| visible.contains(provider.as_str()));
+                }
                 Ok(serde_json::to_value(list).unwrap_or_default())
             }
         });
 
         ctx.register_contextual("schema.get", {
             let service = service.clone();
+            let visible_providers = visible_providers.clone();
             move |context, params| {
                 context.require(mutsuki_config_service::capability::SCHEMA_READ)?;
                 let provider_id = required_str(&params, "provider_id")?;
+                require_visible_provider(&visible_providers, &provider_id)?;
                 let schema = service
                     .get_schema(&provider_id, context.capabilities())
                     .map_err(map_config_error)?;
@@ -116,9 +135,11 @@ impl WebExtension for ConfigWebExtension {
 
         ctx.register_contextual("snapshot.read", {
             let service = service.clone();
+            let visible_providers = visible_providers.clone();
             move |call_context, params| {
                 call_context.require(mutsuki_config_service::capability::VALUE_READ)?;
                 let provider_id = required_str(&params, "provider_id")?;
+                require_visible_provider(&visible_providers, &provider_id)?;
                 let context = context_from_params(&params)?;
                 let snapshot = ConfigWebExtension::block_on(service.read(
                     &provider_id,
@@ -131,9 +152,11 @@ impl WebExtension for ConfigWebExtension {
 
         ctx.register_contextual("validate", {
             let service = service.clone();
+            let visible_providers = visible_providers.clone();
             move |call_context, params| {
                 call_context.require(mutsuki_config_service::capability::VALUE_WRITE)?;
                 let provider_id = required_str(&params, "provider_id")?;
+                require_visible_provider(&visible_providers, &provider_id)?;
                 let context = context_from_params(&params)?;
                 let candidate = candidate_from_params(&params)?;
                 let result = ConfigWebExtension::block_on(service.validate(
@@ -148,9 +171,11 @@ impl WebExtension for ConfigWebExtension {
 
         ctx.register_contextual("apply", {
             let service = service.clone();
+            let visible_providers = visible_providers.clone();
             move |call_context, params| {
                 call_context.require(mutsuki_config_service::capability::APPLY)?;
                 let provider_id = required_str(&params, "provider_id")?;
+                require_visible_provider(&visible_providers, &provider_id)?;
                 let context = context_from_params(&params)?;
                 let request = apply_request_from_params(&params)?;
                 let result = ConfigWebExtension::block_on(service.apply(
@@ -181,6 +206,21 @@ impl WebExtension for ConfigWebExtension {
         ctx.register_topic("revision_changed");
         Ok(())
     }
+}
+
+fn require_visible_provider(
+    visible: &Option<BTreeSet<String>>,
+    provider_id: &str,
+) -> Result<(), ExtensionError> {
+    if visible
+        .as_ref()
+        .is_some_and(|providers| !providers.contains(provider_id))
+    {
+        return Err(ExtensionError::Registration(
+            "configuration provider is not exposed by this application".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn map_config_error(err: mutsuki_config_service::ConfigError) -> ExtensionError {

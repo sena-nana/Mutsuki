@@ -4,8 +4,6 @@
 //! Does not embed business pages into WebHost Recovery.
 
 mod config_demo;
-mod lifecycle;
-mod product_config;
 mod secret_status;
 mod watch_bridge;
 
@@ -13,21 +11,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use config_demo::demo_config_service;
-pub use lifecycle::{ControlPluginReloadLifecycle, TargetedPluginReloadLifecycle};
-pub use product_config::{
-    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigError, ProductConfigOptions,
-    configured_plugin_selection_from_value, merge_required_product_selections,
-    product_config_service, product_config_service_with_options, product_descriptor,
-    product_runtime_selections, product_seed_defaults, register_configured_product_providers,
-    restore_configured_product_selections,
-};
 pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtension};
 pub use watch_bridge::attach_revision_changed_bridge;
 
 use mutsuki_bot_flow::BotFlowRegistry;
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
-    AgentConnectionManagementResolver, BotAgentWebExtension,
+    AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
     materialize_frontend_assets as materialize_bot_agent_assets,
 };
 use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
@@ -71,6 +61,9 @@ pub struct WebConsoleConfig {
     /// Explicit WebExtension selection. Runtime plugins never imply pages.
     #[serde(default)]
     pub extensions: Vec<String>,
+    /// Product-selected Config providers. Empty preserves the generic Config Web default.
+    #[serde(default)]
+    pub config_provider_ids: Vec<String>,
     /// Relative path to active release set manifest (enables auto-upgrade page).
     pub release_set: Option<String>,
 }
@@ -151,6 +144,7 @@ pub fn build_console_host(
 #[derive(Default)]
 pub struct BotAgentConsoleServices {
     pub connections: Option<AgentConnectionManagementResolver>,
+    pub sessions: Option<LocalAgentManagementResolver>,
     pub flow: Option<Arc<BotFlowRegistry>>,
 }
 
@@ -208,9 +202,12 @@ pub fn build_console_host_with_agent(
                 "web.console.include_config requires ConfigService".into(),
             )
         })?;
-        builder = builder.extension(
-            ConfigWebExtension::new(service).with_frontend_assets(&asset_dirs.config_assets),
-        );
+        let mut extension =
+            ConfigWebExtension::new(service).with_frontend_assets(&asset_dirs.config_assets);
+        if !config.config_provider_ids.is_empty() {
+            extension = extension.with_visible_providers(config.config_provider_ids.clone());
+        }
+        builder = builder.extension(extension);
     }
     if config.has_extension("bilibili") {
         let service = bilibili.ok_or_else(|| {
@@ -232,7 +229,7 @@ pub fn build_console_host_with_agent(
             .extension(QqBotWebExtension::new(api).with_frontend_assets(&asset_dirs.qq_assets));
     }
     if config.has_extension("agent") {
-        if bot_agent.connections.is_none() {
+        if bot_agent.connections.is_none() && bot_agent.sessions.is_none() {
             return Err(mutsuki_web_host::WebHostError::InvalidConfig(
                 "agent WebExtension requires an Agent management service".into(),
             ));
@@ -240,6 +237,7 @@ pub fn build_console_host_with_agent(
         builder = builder.extension(
             BotAgentWebExtension::new(None)
                 .with_connection_resolver(bot_agent.connections)
+                .with_sessions(bot_agent.sessions)
                 .with_frontend_assets(&asset_dirs.bot_agent_assets),
         );
     }

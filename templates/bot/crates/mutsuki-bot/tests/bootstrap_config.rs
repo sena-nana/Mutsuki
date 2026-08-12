@@ -1,8 +1,8 @@
 use std::path::Path;
 
+use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
 use mutsuki_bot::load_bootstrapped_product;
-use mutsuki_bot_web_console::PRODUCT_CONFIG_PROVIDER_ID;
-use mutsuki_config_service::{ConfigContext, capability};
+use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue, capability};
 
 fn bootstrap(root: &Path, extra: &str) -> std::path::PathBuf {
     let path = root.join("bootstrap.toml");
@@ -69,6 +69,58 @@ async fn empty_sqlite_is_seeded_once_and_restored() {
         .await
         .unwrap();
     assert_eq!(second_product.revision, first_product.revision);
+}
+
+#[tokio::test]
+async fn enabling_local_workspace_takes_effect_after_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let path = bootstrap(root.path(), "");
+    let first = load_bootstrapped_product(&path).await.unwrap();
+    let snapshot = first
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    let ConfigValue::Object(mut candidate) = snapshot.value else {
+        panic!("product config must be an object");
+    };
+    candidate.insert("workspace_enabled".into(), ConfigValue::Bool(true));
+    first
+        .config
+        .apply(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: ConfigValue::Object(candidate),
+                expected_revision: snapshot.revision,
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+        )
+        .await
+        .unwrap();
+    drop(first);
+
+    let restarted = load_bootstrapped_product(&path).await.unwrap();
+    for id in ["mutsuki.agent.connections", "mutsuki.bot.router.flow"] {
+        assert!(
+            restarted
+                .service
+                .plugins
+                .configured
+                .iter()
+                .any(|selection| selection.id == id && selection.enabled),
+            "workspace component {id} was not enabled"
+        );
+    }
+    assert_eq!(
+        restarted.console.extensions,
+        vec!["config", "qq", "agent", "bot-flow-editor"]
+    );
 }
 
 #[tokio::test]

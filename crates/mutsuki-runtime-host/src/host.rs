@@ -576,9 +576,16 @@ impl HostRuntime {
 
     pub fn reload(
         &mut self,
-        prepared: PreparedRuntimeReload,
+        mut prepared: PreparedRuntimeReload,
         drain_timeout: Duration,
     ) -> RuntimeResult<ReloadDecision> {
+        if let Some(affected_plugins) = &prepared.affected_plugins {
+            prepared.services = mutsuki_runtime_sdk::HostServiceRegistry::merge_for_plugins(
+                self.context.services(),
+                &prepared.services,
+                affected_plugins,
+            )?;
+        }
         let capabilities = prepared.capabilities.clone();
         let services = prepared.services.clone();
         let profile_id = prepared.profile_id.clone();

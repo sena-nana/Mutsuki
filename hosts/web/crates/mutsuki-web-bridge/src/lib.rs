@@ -6,7 +6,7 @@ mod metrics;
 mod session;
 
 pub use metrics::{BridgeMetrics, BridgeMetricsSnapshot};
-pub use session::{AuthPolicy, BridgeSession, SessionManager};
+pub use session::{AuthGrant, AuthPolicy, BridgeSession, SessionManager};
 
 use std::sync::Arc;
 
@@ -117,15 +117,21 @@ impl WebBridge {
             } => {
                 ensure_protocol_compatible(&protocol_version)?;
                 // Capabilities are server-granted only. Client Hello must not escalate.
-                let mut session_caps = self.inner.auth.authenticate(auth_token.as_deref())?;
+                let mut grant = self.inner.auth.authenticate(auth_token.as_deref())?;
                 if self.safe_mode() {
-                    session_caps.retain(|cap| cap.starts_with("recovery.") || cap == "*");
-                    if session_caps.is_empty() {
-                        session_caps.push("recovery.read".into());
-                        session_caps.push("recovery.write".into());
+                    grant
+                        .capabilities
+                        .retain(|cap| cap.starts_with("recovery.") || cap == "*");
+                    if grant.capabilities.is_empty() {
+                        grant.capabilities.push("recovery.read".into());
+                        grant.capabilities.push("recovery.write".into());
                     }
                 }
-                let session = self.inner.sessions.create(session_caps, self.safe_mode())?;
+                let session = self.inner.sessions.create_authenticated(
+                    grant.principal_id,
+                    grant.capabilities,
+                    self.safe_mode(),
+                )?;
                 self.inner.metrics.inc_sessions();
                 Ok(HandleOutcome::Reply(WireMessage::HelloAck {
                     protocol_version: WEB_PROTOCOL_VERSION.to_string(),
@@ -227,12 +233,21 @@ impl WebBridge {
         } else if request.namespace == "recovery" {
             self.dispatch_recovery_rpc(session, &request)
         } else {
-            match self.inner.extensions.read().call_rpc(
+            let rpc = self.inner.extensions.read().resolve_rpc(
                 &request.namespace,
                 &request.method,
-                request.params.clone(),
                 &session.capabilities,
-            ) {
+            );
+            match rpc.and_then(|rpc| {
+                rpc.call_with_context(
+                    &request.method,
+                    request.params.clone(),
+                    mutsuki_web_extension::RpcCallContext::authenticated(
+                        &session.principal_id,
+                        &session.capabilities,
+                    ),
+                )
+            }) {
                 Ok(result) => RpcResponse {
                     id: request.id,
                     result: Some(result),
@@ -268,7 +283,10 @@ impl WebBridge {
                 .call_async_with_context(
                     &request.method,
                     request.params.clone(),
-                    mutsuki_web_extension::RpcCallContext::new(&session.capabilities),
+                    mutsuki_web_extension::RpcCallContext::authenticated(
+                        &session.principal_id,
+                        &session.capabilities,
+                    ),
                 )
                 .await
                 .map(|result| RpcResponse {

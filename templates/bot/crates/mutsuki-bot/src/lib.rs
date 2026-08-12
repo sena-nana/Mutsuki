@@ -10,9 +10,15 @@ use mutsuki_std_service_host_integration::configured_std_plugin_catalog;
 
 mod bootstrap;
 mod distribution;
+mod lifecycle;
+mod product_config;
+#[cfg(feature = "web-console")]
 mod web_console;
 pub use bootstrap::*;
 pub use distribution::*;
+pub use lifecycle::*;
+pub use product_config::*;
+#[cfg(feature = "web-console")]
 pub use web_console::*;
 
 /// Assemble a neutral ServiceRuntime from owner-provided plugin factories.

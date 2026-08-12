@@ -34,6 +34,18 @@ function element(tag, className, content) {
   return node;
 }
 
+function errorMessage(error, fallback = "操作失败，请稍后重试") {
+  const raw = error?.message || String(error ?? "");
+  const start = raw.indexOf("{");
+  if (start >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(start));
+      if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message;
+    } catch (_) {}
+  }
+  return raw.startsWith("extension ") || raw.includes("rpc ") ? fallback : raw || fallback;
+}
+
 function actionButton(label, action, state, rpc, refresh, options = {}) {
   const button = element("button", "ghost", label);
   button.type = "button";
@@ -41,16 +53,19 @@ function actionButton(label, action, state, rpc, refresh, options = {}) {
     if (options.confirm !== false && !window.confirm(`确认${label}？`)) return;
     const resolved = typeof action === "function" ? action() : action;
     if (!resolved) return;
+    const operationId = button.dataset.operationId || crypto.randomUUID();
+    button.dataset.operationId = operationId;
     button.disabled = true;
     try {
       const result = await rpc.write("qq-bot", "write", {
         confirmed: options.confirm !== false,
         request: {
-          actor_id: state.actorId,
+          operation_id: operationId,
           expected_revision: state.snapshot.revision,
           action: resolved,
         },
       });
+      delete button.dataset.operationId;
       await refresh();
       options.onResult?.(result);
     } catch (error) {
@@ -75,13 +90,19 @@ function accountCard(account, state, rpc, refresh) {
     actionButton("健康检查", { action: "account_health_check", account_id: account.account_id }, state, rpc, refresh),
     actionButton("重新连接", { action: "account_reconnect", account_id: account.account_id }, state, rpc, refresh),
   );
+  card.append(actions);
+  if (!account.capability?.active_message) return card;
   const sendForm = element("div", "toolbar nested");
   const scene = element("select");
-  [["private", "私聊"], ["group", "群聊"], ["channel", "频道"]].forEach(([value, label]) => {
+  const activeKinds = new Set(account.capability?.active_message_kinds || []);
+  [["private", "私聊"], ["group", "群聊"], ["channel", "频道"]]
+    .filter(([value]) => activeKinds.has(value))
+    .forEach(([value, label]) => {
     const option = element("option", "", label);
     option.value = value;
     scene.append(option);
   });
+  if (!scene.options.length) return card;
   const target = element("input");
   target.placeholder = "用户 OpenID";
   const channel = element("input");
@@ -114,7 +135,7 @@ function accountCard(account, state, rpc, refresh) {
     await refresh();
   });
   sendForm.append(scene, target, channel, message, send, sendResult);
-  card.append(actions, sendForm);
+  card.append(sendForm);
   return card;
 }
 
@@ -184,7 +205,7 @@ export function mountQqBotPanel(host, rpc, options = {}) {
 
   state.reportError = (error) => {
     status.className = "error-banner";
-    status.textContent = error?.message || String(error);
+    status.textContent = errorMessage(error);
   };
 
   function render() {

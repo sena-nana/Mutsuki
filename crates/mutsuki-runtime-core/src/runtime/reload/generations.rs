@@ -40,12 +40,16 @@ impl CoreRuntime {
             } else {
                 let bag = generation.registry.dispose_all()?;
                 disposed.disposed.extend(bag.disposed);
-                disposed_generations.push(generation.registry_generation);
+                disposed_generations.push((generation.registry_generation, generation.plugin_ids));
             }
         }
         self.draining_generations = remaining;
-        for registry_generation in disposed_generations {
-            self.mark_generation_phase(registry_generation, PluginGenerationPhase::Disposed);
+        for (registry_generation, plugin_ids) in disposed_generations {
+            self.mark_generation_phase_for_plugins(
+                registry_generation,
+                &plugin_ids,
+                PluginGenerationPhase::Disposed,
+            );
         }
         Ok(disposed)
     }
@@ -62,6 +66,19 @@ impl CoreRuntime {
         }
     }
 
+    pub(super) fn mark_generation_phase_for_plugins(
+        &mut self,
+        registry_generation: u64,
+        plugin_ids: &std::collections::BTreeSet<String>,
+        phase: PluginGenerationPhase,
+    ) {
+        for state in &mut self.generation_states {
+            if state.generation == registry_generation && plugin_ids.contains(&state.plugin_id) {
+                state.phase = phase.clone();
+            }
+        }
+    }
+
     pub(super) fn set_active_generation_states(&mut self) {
         let active_generation = self.load_plan.registry_generation;
         for state in &mut self.generation_states {
@@ -72,6 +89,32 @@ impl CoreRuntime {
             }
         }
         for new_state in generation_states_for_plan(&self.load_plan, PluginGenerationPhase::Active)
+        {
+            if !self.generation_states.iter().any(|state| {
+                state.plugin_id == new_state.plugin_id && state.generation == new_state.generation
+            }) {
+                self.generation_states.push(new_state);
+            }
+        }
+    }
+
+    pub(super) fn set_active_generation_states_for_plugins(
+        &mut self,
+        plugin_ids: &std::collections::BTreeSet<String>,
+    ) {
+        let active_generation = self.load_plan.registry_generation;
+        for state in &mut self.generation_states {
+            if plugin_ids.contains(&state.plugin_id) {
+                if state.generation == active_generation {
+                    state.phase = PluginGenerationPhase::Active;
+                } else if state.phase == PluginGenerationPhase::Active {
+                    state.phase = PluginGenerationPhase::Draining;
+                }
+            }
+        }
+        for new_state in generation_states_for_plan(&self.load_plan, PluginGenerationPhase::Active)
+            .into_iter()
+            .filter(|state| plugin_ids.contains(&state.plugin_id))
         {
             if !self.generation_states.iter().any(|state| {
                 state.plugin_id == new_state.plugin_id && state.generation == new_state.generation

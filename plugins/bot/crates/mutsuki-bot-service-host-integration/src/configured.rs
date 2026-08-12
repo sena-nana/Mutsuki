@@ -34,7 +34,7 @@ use mutsuki_runtime_contracts::{PluginManifest, RuntimeLoadPlan};
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
-    ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanLifecycleHook, ServiceRuntimeBuilder,
+    ConfiguredPluginCatalog, ConfiguredPluginFactory, LoadPlanObserver, ServiceRuntimeBuilder,
     ServiceRuntimeResult,
 };
 use serde::Deserialize;
@@ -101,12 +101,12 @@ impl ConfiguredPluginFactory for LegacyBotEventRouterConfiguredPlugin {
     }
 }
 
-struct BotFlowLoadPlanHook {
+struct BotFlowLoadPlanObserver {
     registry: Arc<BotFlowRegistry>,
     config: Arc<ConfigService>,
 }
 
-impl LoadPlanLifecycleHook for BotFlowLoadPlanHook {
+impl LoadPlanObserver for BotFlowLoadPlanObserver {
     fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String> {
         self.registry
             .validate_load_plan(plan)
@@ -203,9 +203,9 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             .register_runtime_client_runner(move |client| {
                 flow_node_runner(client, node_registry.clone())
             })
-            .register_load_plan_hook(
+            .register_load_plan_observer(
                 BOT_FLOW_REGISTRY_SERVICE_ID,
-                Arc::new(BotFlowLoadPlanHook {
+                Arc::new(BotFlowLoadPlanObserver {
                     registry,
                     config: self.config.clone(),
                 }),

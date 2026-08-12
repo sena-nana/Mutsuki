@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use mutsuki_bot_delivery::{
     ActiveDeliveryService, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway,
     QqDeliverySuccess,
@@ -11,22 +12,24 @@ use mutsuki_bot_protocol::{
     BotDeliveryPartReceipt, BotMessage, DeliveryPartStatus, DeliveryPolicy, MessageSegment,
     QqConversationRef,
 };
-use mutsuki_bot_state_db::{BotManagementAuditRecord, BotStateDbRepository};
+use mutsuki_bot_state_db::{
+    BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
+};
 use mutsuki_runtime_contracts::{Task, TaskOutcome};
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
 use serde_json::json;
 
+use mutsuki_bot_management::{
+    QqAccountViewInput, QqBotManagementService, QqDeliveryView, QqManagementAction,
+    QqManagementAuditEntry, QqManagementError, QqManagementOperationReservation, QqManagementPage,
+    QqManagementProvider, QqManagementStateStore, account_view_from_config,
+};
 use mutsuki_plugin_bot_adapter_qqbot::{
     QqAuthManager, QqBotClients, QqBotConfig, QqGatewayMapRunner, QqGatewayMediaHandler,
     QqIdSource, QqMediaProvider, QqOpenApiError, QqOpenApiRunner, ReqwestQqHttpClient,
     ResourceGatewayQqMediaProvider, SharedQqCredentials, qqbot_adapter_manifest,
-};
-use mutsuki_plugin_bot_qq_web::{
-    QqBotManagementService, QqDeliveryView, QqManagementAction, QqManagementAuditEntry,
-    QqManagementError, QqManagementPage, QqManagementProvider, QqManagementStateStore,
-    account_view_from_config,
 };
 use mutsuki_runtime_sdk::{LoadedPlugin, RuntimeBootstrapperService};
 use serde_json::Value;
@@ -264,25 +267,22 @@ struct OwnerBackedQqManagementProvider {
 }
 
 impl OwnerBackedQqManagementProvider {
-    fn account_view(
-        &self,
-        include_secret_status: bool,
-    ) -> mutsuki_plugin_bot_qq_web::QqAccountView {
+    fn account_view(&self, include_secret_status: bool) -> mutsuki_bot_management::QqAccountView {
         let snapshot = self.health.snapshot();
-        let mut account = account_view_from_config(
-            &self.config.account_id,
-            &self.config.client_secret_key,
-            self.credentials.is_configured(),
-            self.config.capability_matrix(),
-            self.config.gateway_intents,
-            self.config.shard,
-            snapshot.connected,
-            snapshot.identified,
-            snapshot
+        let mut account = account_view_from_config(QqAccountViewInput {
+            account_id: self.config.account_id.clone(),
+            credential_reference: self.config.client_secret_key.clone(),
+            credential_present: self.credentials.is_configured(),
+            capability: self.config.capability_matrix(),
+            intents: self.config.gateway_intents,
+            shard: self.config.shard,
+            connected: snapshot.connected,
+            identified: snapshot.identified,
+            last_heartbeat_unix_ms: snapshot
                 .last_heartbeat_unix_ms
-                .map(|value| value.min(u128::from(u64::MAX)) as u64),
-            snapshot.last_error.as_deref(),
-        );
+                .map(|value| u64::try_from(value).unwrap_or(u64::MAX)),
+            last_error: snapshot.last_error,
+        });
         if !include_secret_status {
             account.credential_reference.clear();
             account.credential_status = "restricted".into();
@@ -327,12 +327,13 @@ impl OwnerBackedQqManagementProvider {
     }
 }
 
+#[async_trait]
 impl QqManagementProvider for OwnerBackedQqManagementProvider {
     fn load_snapshot(
         &self,
         query: &str,
         include_secret_status: bool,
-    ) -> Result<mutsuki_plugin_bot_qq_web::QqBotManagementSnapshot, QqManagementError> {
+    ) -> Result<mutsuki_bot_management::QqBotManagementSnapshot, QqManagementError> {
         let query_lower = query.trim().to_ascii_lowercase();
         let account = self.account_view(include_secret_status);
         let accounts = (query_lower.is_empty()
@@ -343,7 +344,7 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
         .then_some(account)
         .into_iter()
         .collect();
-        Ok(mutsuki_plugin_bot_qq_web::QqBotManagementSnapshot {
+        Ok(mutsuki_bot_management::QqBotManagementSnapshot {
             revision: 0,
             accounts,
             deliveries: self.delivery_page(query, None, 50)?.items,
@@ -351,8 +352,10 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
         })
     }
 
-    fn apply(
+    async fn apply(
         &self,
+        operation_id: &str,
+        replaying: bool,
         _actor_id: &str,
         action: &QqManagementAction,
     ) -> Result<Value, QqManagementError> {
@@ -394,8 +397,8 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
                     });
                 }
                 let request = BotActiveDeliveryRequest {
-                    delivery_id: unique_id("qq-test"),
-                    idempotency_key: unique_id("qq-test-key"),
+                    delivery_id: format!("qq-test-{operation_id}"),
+                    idempotency_key: format!("qq-test-key-{operation_id}"),
                     conversation: conversation.clone(),
                     content: BotDeliveryContent {
                         segments: vec![MessageSegment::text(text.clone())],
@@ -412,47 +415,63 @@ impl QqManagementProvider for OwnerBackedQqManagementProvider {
                     dry_run: false,
                     source_execution_id: None,
                 };
-                let delivery = self.delivery.clone();
                 let now = unix_ms();
-                let receipt = run_owner_future(async move {
-                    delivery.submit(&request, now).await.map_err(delivery_error)
-                })?;
+                let receipt = self
+                    .delivery
+                    .submit(&request, now)
+                    .await
+                    .map_err(delivery_error)?;
                 serde_json::to_value(receipt).map_err(encode_error)
             }
             QqManagementAction::DeliveryRetry { delivery_id } => {
-                let delivery = self.delivery.clone();
-                let delivery_id = delivery_id.clone();
-                let receipt = run_owner_future(async move {
-                    delivery
-                        .retry(&delivery_id, unix_ms())
+                let receipt = match self.delivery.retry(delivery_id, unix_ms()).await {
+                    Ok(receipt) => receipt,
+                    Err(mutsuki_bot_delivery::DeliveryError::InvalidState) if replaying => self
+                        .delivery
+                        .inspect(delivery_id)
                         .await
-                        .map_err(delivery_error)
-                })?;
+                        .map(|(receipt, _)| receipt)
+                        .map_err(delivery_error)?,
+                    Err(error) => return Err(delivery_error(error)),
+                };
                 serde_json::to_value(receipt).map_err(encode_error)
             }
             QqManagementAction::DeliveryCancel { delivery_id } => {
-                let delivery = self.delivery.clone();
-                let delivery_id = delivery_id.clone();
-                let receipt = run_owner_future(async move {
-                    delivery.cancel(&delivery_id).await.map_err(delivery_error)
-                })?;
+                let receipt = match self.delivery.cancel(delivery_id).await {
+                    Ok(receipt) => receipt,
+                    Err(mutsuki_bot_delivery::DeliveryError::InvalidState) if replaying => self
+                        .delivery
+                        .inspect(delivery_id)
+                        .await
+                        .map(|(receipt, _)| receipt)
+                        .map_err(delivery_error)?,
+                    Err(error) => return Err(delivery_error(error)),
+                };
                 serde_json::to_value(receipt).map_err(encode_error)
             }
             QqManagementAction::DeliveryPreview { delivery_id } => {
-                let delivery = self.delivery.clone();
-                let delivery_id = delivery_id.clone();
-                let receipt = run_owner_future(async move {
-                    delivery.preview(&delivery_id).await.map_err(delivery_error)
-                })?;
+                let receipt = self
+                    .delivery
+                    .preview(delivery_id)
+                    .await
+                    .map_err(delivery_error)?;
                 serde_json::to_value(receipt).map_err(encode_error)
             }
             QqManagementAction::InteractionCancel { session_id } => {
                 let session = self.find_interaction(session_id)?;
                 let next_version = session.version.saturating_add(1);
-                let interaction = self.interaction.clone();
-                run_owner_future(async move {
-                    interaction.cancel(session).await.map_err(interaction_error)
-                })?;
+                if replaying && session.status == mutsuki_bot_protocol::InteractionStatus::Cancelled
+                {
+                    return Ok(json!({
+                        "session_id": session_id,
+                        "status": "cancelled",
+                        "version": session.version,
+                    }));
+                }
+                self.interaction
+                    .cancel(session)
+                    .await
+                    .map_err(interaction_error)?;
                 Ok(json!({
                     "session_id": session_id,
                     "status": "cancelled",
@@ -525,23 +544,46 @@ impl QqManagementStateStore for StateDbQqManagementStore {
         self.repository.management_revision().map_err(state_error)
     }
 
-    fn commit(
+    fn begin_operation(
         &self,
+        operation_id: &str,
         expected_revision: u64,
         actor_id: &str,
         action: &str,
-        result: Value,
         created_at_unix_ms: u64,
-    ) -> Result<Option<QqManagementAuditEntry>, QqManagementError> {
+    ) -> Result<QqManagementOperationReservation, QqManagementError> {
         self.repository
-            .commit_management_audit(
+            .begin_management_operation(
+                operation_id,
                 expected_revision,
                 actor_id,
                 action,
-                result,
                 created_at_unix_ms,
             )
-            .map(|record| record.map(management_audit))
+            .map(|reservation| match reservation {
+                BotManagementOperationReservation::Reserved => {
+                    QqManagementOperationReservation::Reserved
+                }
+                BotManagementOperationReservation::Resume => {
+                    QqManagementOperationReservation::Resume
+                }
+                BotManagementOperationReservation::Completed(record) => {
+                    QqManagementOperationReservation::Completed(management_audit(record))
+                }
+            })
+            .map_err(state_error)
+    }
+
+    fn complete_operation(
+        &self,
+        operation_id: &str,
+        action: &str,
+        result: Value,
+        created_at_unix_ms: u64,
+    ) -> Result<QqManagementAuditEntry, QqManagementError> {
+        self.repository
+            .complete_management_operation(operation_id, action, result, created_at_unix_ms)
+            .map(management_audit)
             .map_err(state_error)
     }
 
@@ -697,34 +739,6 @@ impl InteractionConditionMatcher for ManagementInteractionMatcher {
     }
 }
 
-fn run_owner_future<T, F>(future: F) -> Result<T, QqManagementError>
-where
-    T: Send + 'static,
-    F: std::future::Future<Output = Result<T, QqManagementError>> + Send + 'static,
-{
-    std::thread::Builder::new()
-        .name("mutsuki-qq-management".into())
-        .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| QqManagementError {
-                    code: "qq.management_runtime".into(),
-                    message: error.to_string(),
-                })?
-                .block_on(future)
-        })
-        .map_err(|error| QqManagementError {
-            code: "qq.management_runtime".into(),
-            message: error.to_string(),
-        })?
-        .join()
-        .map_err(|_| QqManagementError {
-            code: "qq.management_runtime".into(),
-            message: "QQ 管理任务异常退出".into(),
-        })?
-}
-
 fn delivery_error(error: mutsuki_bot_delivery::DeliveryError) -> QqManagementError {
     let code = match error {
         mutsuki_bot_delivery::DeliveryError::NotFound => "not_found",
@@ -752,8 +766,13 @@ fn interaction_error(error: InteractionError) -> QqManagementError {
 }
 
 fn state_error(error: mutsuki_bot_state_db::BotStateDbError) -> QqManagementError {
+    let code = if matches!(&error, mutsuki_bot_state_db::BotStateDbError::Conflict) {
+        "operation.conflict"
+    } else {
+        "qq.state_unavailable"
+    };
     QqManagementError {
-        code: "qq.state_unavailable".into(),
+        code: code.into(),
         message: error.to_string(),
     }
 }

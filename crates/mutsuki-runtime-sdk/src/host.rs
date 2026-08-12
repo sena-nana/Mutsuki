@@ -215,6 +215,7 @@ impl<T> HostService for T where T: Any + Send + Sync {}
 #[derive(Default)]
 pub struct HostServiceRegistry {
     services: Mutex<BTreeMap<String, Arc<dyn Any + Send + Sync>>>,
+    owners: Mutex<BTreeMap<String, String>>,
     frozen: AtomicBool,
 }
 
@@ -235,6 +236,15 @@ impl HostServiceRegistry {
         service_id: impl Into<String>,
         service: Arc<dyn Any + Send + Sync>,
     ) -> RuntimeResult<()> {
+        self.register_erased_owned(service_id, "", service)
+    }
+
+    pub fn register_erased_owned(
+        &self,
+        service_id: impl Into<String>,
+        owner_plugin_id: impl Into<String>,
+        service: Arc<dyn Any + Send + Sync>,
+    ) -> RuntimeResult<()> {
         let service_id = service_id.into();
         if self.frozen.load(Ordering::SeqCst) {
             return Err(sdk_error(
@@ -252,8 +262,53 @@ impl HostServiceRegistry {
                 format!("host_service.duplicate.{service_id}"),
             ));
         }
-        services.insert(service_id, service);
+        services.insert(service_id.clone(), service);
+        self.owners
+            .lock()
+            .expect("host service owner registry mutex poisoned")
+            .insert(service_id, owner_plugin_id.into());
         Ok(())
+    }
+
+    pub fn merge_for_plugins(
+        current: &Self,
+        candidate: &Self,
+        affected_plugins: &BTreeSet<String>,
+    ) -> RuntimeResult<Arc<Self>> {
+        let merged = Arc::new(Self::new());
+        for (service_id, owner_plugin_id, service) in current.entries() {
+            if !affected_plugins.contains(&owner_plugin_id) {
+                merged.register_erased_owned(service_id, owner_plugin_id, service)?;
+            }
+        }
+        for (service_id, owner_plugin_id, service) in candidate.entries() {
+            if affected_plugins.contains(&owner_plugin_id) {
+                merged.register_erased_owned(service_id, owner_plugin_id, service)?;
+            }
+        }
+        merged.freeze();
+        Ok(merged)
+    }
+
+    fn entries(&self) -> Vec<(String, String, Arc<dyn Any + Send + Sync>)> {
+        let services = self
+            .services
+            .lock()
+            .expect("host service registry mutex poisoned");
+        let owners = self
+            .owners
+            .lock()
+            .expect("host service owner registry mutex poisoned");
+        services
+            .iter()
+            .map(|(service_id, service)| {
+                (
+                    service_id.clone(),
+                    owners.get(service_id).cloned().unwrap_or_default(),
+                    service.clone(),
+                )
+            })
+            .collect()
     }
 
     pub fn require<T>(&self, service_id: &str) -> RuntimeResult<Arc<T>>

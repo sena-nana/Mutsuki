@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use mutsuki_agent_contracts::{
     AgentEventEnvelope, AgentEventPage, AgentMessage, AgentSession, AgentSessionCreateRequest,
-    AgentWireError, AgentWireRequest, AgentWireRequestEnvelope, AgentWireResponse,
-    AgentWireResponseEnvelope, InteractionResolution, PermissionDecision, PermissionDecisionKind,
-    ResourceRef, SessionSnapshotRef, SessionVersion,
+    AgentSessionState, AgentWireError, AgentWireRequest, AgentWireRequestEnvelope,
+    AgentWireResponse, AgentWireResponseEnvelope, InteractionResolution, PermissionDecision,
+    PermissionDecisionKind, ResourceRef, SessionSnapshotRef, SessionVersion,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +26,7 @@ pub trait AgentWireRuntime: Send + Sync {
         session_id: &str,
         request: AgentSessionCreateRequest,
     ) -> Result<AgentSession, AgentWireError>;
+    fn session_state(&self, session_id: &str) -> Result<AgentSessionState, AgentWireError>;
     fn submit_turn(
         &self,
         session_id: &str,
@@ -574,6 +575,12 @@ impl<R: AgentWireRuntime, P: AgentWireStateStore> InProcessAgentService
             AgentWireRequest::GetSession { session_id } => {
                 AgentWireResponse::Session(self.get_session(&session_id)?)
             }
+            AgentWireRequest::GetSessionState { session_id } => {
+                let version = self.record(&session_id)?.version;
+                let mut state = self.runtime.session_state(&session_id)?;
+                state.version = version;
+                AgentWireResponse::SessionState(state)
+            }
             AgentWireRequest::SubmitTurn {
                 session_id,
                 expected_version,
@@ -716,11 +723,15 @@ pub fn wire_error(
 mod tests {
     use super::*;
     use crate::{AgentClient, InProcessAgentClient};
-    use mutsuki_agent_contracts::{AGENT_WIRE_VERSION, AgentEvent, AgentEventMeta, AgentWireHello};
+    use mutsuki_agent_contracts::{
+        AGENT_WIRE_VERSION, AgentBudget, AgentEvent, AgentEventMeta, AgentSessionStatus,
+        AgentWireHello, InteractionKind, InteractionRequest,
+    };
     use mutsuki_runtime_contracts::{
         ResourceAccess, ResourceCellRef, ResourceId, ResourceLifetime, ResourceSealState,
         ResourceSemantic,
     };
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone, Default)]
@@ -752,6 +763,43 @@ mod tests {
                 .unwrap()
                 .insert(session_id.to_string(), session.clone());
             Ok(session)
+        }
+
+        fn session_state(&self, session_id: &str) -> Result<AgentSessionState, AgentWireError> {
+            let session = self
+                .sessions
+                .lock()
+                .unwrap()
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| wire_error("agent.session.not_found", "session missing", false))?;
+            Ok(AgentSessionState {
+                session_id: session.session_id,
+                profile_id: session.profile_id,
+                version: SessionVersion(1),
+                status: AgentSessionStatus::Active,
+                budget: AgentBudget::default(),
+                usage: Default::default(),
+                cost_microunits: 0,
+                snapshot: resource(session_id),
+                turns: Vec::new(),
+                pending_approvals: Vec::new(),
+                pending_interactions: vec![InteractionRequest {
+                    session_id: session_id.into(),
+                    turn_id: "turn-1".into(),
+                    version: 1,
+                    interaction_id: "ask-1".into(),
+                    kind: InteractionKind::Clarification,
+                    source_tool: None,
+                    permission_mode: Default::default(),
+                    prompt: "Choose a response".into(),
+                    options: serde_json::json!(["A", "B"]),
+                    context: None,
+                    details: None,
+                }],
+                completed_attempts: BTreeSet::new(),
+                committed_side_effects: BTreeSet::new(),
+            })
         }
 
         fn submit_turn(
@@ -1040,6 +1088,30 @@ mod tests {
             vec![vec![second.clone()], vec![first, second]]
         );
         assert_eq!(runtime.interactions.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn authority_returns_runtime_session_state_with_pending_interactions() {
+        let runtime = FakeRuntime::default();
+        let mut authority =
+            AgentWireAuthority::new(runtime, InMemoryAgentWireStateStore::default()).unwrap();
+        authority.start(request()).unwrap();
+
+        let response = authority
+            .dispatch(envelope(
+                1,
+                AgentWireRequest::GetSessionState {
+                    session_id: "session-1".into(),
+                },
+            ))
+            .unwrap()
+            .response
+            .unwrap();
+        let AgentWireResponse::SessionState(state) = response else {
+            panic!("expected session state response");
+        };
+        assert_eq!(state.pending_interactions.len(), 1);
+        assert_eq!(state.pending_interactions[0].interaction_id, "ask-1");
     }
 
     #[test]

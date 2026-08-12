@@ -5,8 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use mutsuki_agent_contracts::{InteractionResolution, PermissionDecision, SessionVersion};
 use mutsuki_agent_service_host_integration::{
-    AgentConnectionConfig, AgentConnectionId, AgentConnectionManager,
+    AgentConnectionConfig, AgentConnectionId, AgentConnectionManager, LocalAgentManagementService,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -21,11 +22,16 @@ pub const PLUGIN_ID: &str = "bot-agent";
 pub const PLUGIN_VERSION: &str = "0.1.0";
 pub const CAPABILITY_CONNECTION_READ: &str = "agent.connection.read";
 pub const CAPABILITY_CONNECTION_WRITE: &str = "agent.connection.write";
+pub const CAPABILITY_SESSION_READ: &str = "agent.session.read";
+pub const CAPABILITY_SESSION_WRITE: &str = "agent.session.write";
 pub type AgentConnectionManagementResolver =
     Arc<dyn Fn() -> Result<Arc<AgentConnectionManager>, String> + Send + Sync>;
+pub type LocalAgentManagementResolver =
+    Arc<dyn Fn() -> Result<Arc<LocalAgentManagementService>, String> + Send + Sync>;
 
 pub struct BotAgentWebExtension {
     connections: Option<AgentConnectionManagementResolver>,
+    sessions: Option<LocalAgentManagementResolver>,
     assets_root: Option<PathBuf>,
 }
 
@@ -36,6 +42,7 @@ impl BotAgentWebExtension {
             connections: connections.map(|manager| {
                 Arc::new(move || Ok(manager.clone())) as AgentConnectionManagementResolver
             }),
+            sessions: None,
             assets_root: None,
         }
     }
@@ -46,6 +53,12 @@ impl BotAgentWebExtension {
         connections: Option<AgentConnectionManagementResolver>,
     ) -> Self {
         self.connections = connections;
+        self
+    }
+
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Option<LocalAgentManagementResolver>) -> Self {
+        self.sessions = sessions;
         self
     }
 
@@ -83,42 +96,189 @@ impl WebExtension for BotAgentWebExtension {
             });
 
             let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register_contextual("connections.test", move |context, params| {
-                context.require(CAPABILITY_CONNECTION_WRITE)?;
-                let config = decode::<AgentConnectionConfig>(&params, "config")?;
+            registry.register_async_contextual("connections.test", move |context, params| {
+                let manager = manager.clone();
+                async move {
+                    context.require(CAPABILITY_CONNECTION_WRITE)?;
+                    let config = decode::<AgentConnectionConfig>(&params, "config")?;
+                    let manager = resolve_connections(&manager)?;
+                    let status =
+                        tokio::task::spawn_blocking(move || manager.test_connection(config))
+                            .await
+                            .map_err(join_error)?
+                            .map_err(agent_error)?;
+                    serde_json::to_value(status).map_err(encode_error)
+                }
+            });
+
+            let manager = self.connections.as_ref().expect("checked").clone();
+            registry.register_async_contextual("connections.upsert", move |context, params| {
+                let manager = manager.clone();
+                async move {
+                    context.require(CAPABILITY_CONNECTION_WRITE)?;
+                    let expected_revision = required_u64(&params, "expected_revision")?;
+                    let config = decode::<AgentConnectionConfig>(&params, "config")?;
+                    let manager = resolve_connections(&manager)?;
+                    let status = tokio::task::spawn_blocking(move || {
+                        manager.upsert(expected_revision, config)
+                    })
+                    .await
+                    .map_err(join_error)?
+                    .map_err(agent_error)?;
+                    serde_json::to_value(status).map_err(encode_error)
+                }
+            });
+
+            let manager = self.connections.as_ref().expect("checked").clone();
+            registry.register_async_contextual("connections.reconnect", move |context, params| {
+                let manager = manager.clone();
+                async move {
+                    context.require(CAPABILITY_CONNECTION_WRITE)?;
+                    let expected_revision = required_u64(&params, "expected_revision")?;
+                    let connection_id =
+                        AgentConnectionId::new(required_str(&params, "connection_id")?)
+                            .map_err(|error| ExtensionError::Registration(error.to_string()))?;
+                    let manager = resolve_connections(&manager)?;
+                    let status = tokio::task::spawn_blocking(move || {
+                        manager.reconnect(expected_revision, &connection_id)
+                    })
+                    .await
+                    .map_err(join_error)?
+                    .map_err(agent_error)?;
+                    serde_json::to_value(status).map_err(encode_error)
+                }
+            });
+        }
+
+        if let Some(sessions) = &self.sessions {
+            let provider_sessions = sessions.clone();
+            registry.register_async_contextual("provider.test", move |context, _params| {
+                let provider_sessions = provider_sessions.clone();
+                async move {
+                    context.require(CAPABILITY_CONNECTION_WRITE)?;
+                    let sessions = resolve_sessions(&provider_sessions)?;
+                    tokio::task::spawn_blocking(move || sessions.test_provider())
+                        .await
+                        .map_err(join_error)?
+                        .map_err(wire_error)?;
+                    Ok(json!({"ok": true}))
+                }
+            });
+
+            let sessions = sessions.clone();
+            registry.register_contextual("sessions.list", move |context, params| {
+                context.require(CAPABILITY_SESSION_READ)?;
+                let after = params.get("after_session_id").and_then(Value::as_str);
+                let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
                 serde_json::to_value(
-                    resolve_connections(&manager)?
-                        .test_connection(config)
-                        .map_err(agent_error)?,
+                    resolve_sessions(&sessions)?
+                        .list_sessions(after, limit)
+                        .map_err(wire_error)?,
                 )
                 .map_err(encode_error)
             });
 
-            let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register_contextual("connections.upsert", move |context, params| {
-                context.require(CAPABILITY_CONNECTION_WRITE)?;
-                let expected_revision = required_u64(&params, "expected_revision")?;
-                let config = decode::<AgentConnectionConfig>(&params, "config")?;
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.get", move |context, params| {
+                context.require(CAPABILITY_SESSION_READ)?;
                 serde_json::to_value(
-                    resolve_connections(&manager)?
-                        .upsert(expected_revision, config)
-                        .map_err(agent_error)?,
+                    resolve_sessions(&sessions)?
+                        .session(&required_str(&params, "session_id")?)
+                        .map_err(wire_error)?,
                 )
                 .map_err(encode_error)
             });
 
-            let manager = self.connections.as_ref().expect("checked").clone();
-            registry.register_contextual("connections.reconnect", move |context, params| {
-                context.require(CAPABILITY_CONNECTION_WRITE)?;
-                let expected_revision = required_u64(&params, "expected_revision")?;
-                let connection_id = AgentConnectionId::new(required_str(&params, "connection_id")?)
-                    .map_err(|error| ExtensionError::Registration(error.to_string()))?;
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.state", move |context, params| {
+                context.require(CAPABILITY_SESSION_READ)?;
                 serde_json::to_value(
-                    resolve_connections(&manager)?
-                        .reconnect(expected_revision, &connection_id)
-                        .map_err(agent_error)?,
+                    resolve_sessions(&sessions)?
+                        .session_state(&required_str(&params, "session_id")?)
+                        .map_err(wire_error)?,
                 )
                 .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.events", move |context, params| {
+                context.require(CAPABILITY_SESSION_READ)?;
+                serde_json::to_value(
+                    resolve_sessions(&sessions)?
+                        .events_after(
+                            &required_str(&params, "session_id")?,
+                            params
+                                .get("after_sequence")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0),
+                            params.get("limit").and_then(Value::as_u64).unwrap_or(100) as u32,
+                        )
+                        .map_err(wire_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.approve", move |context, params| {
+                context.require(CAPABILITY_SESSION_WRITE)?;
+                serde_json::to_value(
+                    resolve_sessions(&sessions)?
+                        .approve(decode::<PermissionDecision>(&params, "decision")?)
+                        .map_err(wire_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.reject", move |context, params| {
+                context.require(CAPABILITY_SESSION_WRITE)?;
+                serde_json::to_value(
+                    resolve_sessions(&sessions)?
+                        .reject(decode::<PermissionDecision>(&params, "decision")?)
+                        .map_err(wire_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.interact", move |context, params| {
+                context.require(CAPABILITY_SESSION_WRITE)?;
+                serde_json::to_value(
+                    resolve_sessions(&sessions)?
+                        .resolve_interaction(decode::<InteractionResolution>(
+                            &params,
+                            "resolution",
+                        )?)
+                        .map_err(wire_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.cancel_turn", move |context, params| {
+                context.require(CAPABILITY_SESSION_WRITE)?;
+                serde_json::to_value(
+                    resolve_sessions(&sessions)?
+                        .cancel_turn(
+                            &required_str(&params, "session_id")?,
+                            &required_str(&params, "turn_id")?,
+                            SessionVersion(required_u64(&params, "expected_version")?),
+                        )
+                        .map_err(wire_error)?,
+                )
+                .map_err(encode_error)
+            });
+
+            let sessions = self.sessions.as_ref().expect("checked").clone();
+            registry.register_contextual("sessions.close", move |context, params| {
+                context.require(CAPABILITY_SESSION_WRITE)?;
+                resolve_sessions(&sessions)?
+                    .close_session(
+                        &required_str(&params, "session_id")?,
+                        SessionVersion(required_u64(&params, "expected_version")?),
+                    )
+                    .map_err(wire_error)?;
+                Ok(json!({"closed": true}))
             });
         }
 
@@ -168,6 +328,23 @@ fn agent_error(
     )
 }
 
+fn wire_error(error: mutsuki_agent_contracts::AgentWireError) -> ExtensionError {
+    ExtensionError::Registration(
+        json!({"code": error.code, "message": error.message, "retryable": error.retryable})
+            .to_string(),
+    )
+}
+
+fn resolve_sessions(
+    resolver: &LocalAgentManagementResolver,
+) -> Result<Arc<LocalAgentManagementService>, ExtensionError> {
+    resolver().map_err(|message| {
+        ExtensionError::Registration(
+            json!({"code": "agent.owner_unavailable", "message": message}).to_string(),
+        )
+    })
+}
+
 fn resolve_connections(
     resolver: &AgentConnectionManagementResolver,
 ) -> Result<Arc<AgentConnectionManager>, ExtensionError> {
@@ -182,6 +359,10 @@ fn encode_error(error: serde_json::Error) -> ExtensionError {
     ExtensionError::Registration(format!("response encoding failed: {error}"))
 }
 
+fn join_error(error: tokio::task::JoinError) -> ExtensionError {
+    ExtensionError::Registration(format!("management task failed: {error}"))
+}
+
 fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
     ExtensionManifest {
         manifest_version: EXTENSION_MANIFEST_VERSION,
@@ -191,6 +372,8 @@ fn manifest(assets: Vec<AssetEntry>) -> ExtensionManifest {
         capabilities: vec![
             CAPABILITY_CONNECTION_READ.into(),
             CAPABILITY_CONNECTION_WRITE.into(),
+            CAPABILITY_SESSION_READ.into(),
+            CAPABILITY_SESSION_WRITE.into(),
         ],
         permissions: vec!["pages".into(), "navigation".into()],
         assets,

@@ -12,9 +12,9 @@ catalog 并启动 ServiceRuntime；它不实现命令、回复、Agent 流程或
 以及配置仓库选择。模板显式选择 SQLite；框架和 ConfigService 不假设存储位置。
 
 ```powershell
-Copy-Item config/bootstrap.toml config/local.bootstrap.toml
+Copy-Item config/bootstrap.toml config/local.toml
 Copy-Item config/secret.template.toml config/local.secret.toml
-cargo run -p mutsuki-bot -- config/local.bootstrap.toml
+cargo run -p mutsuki-bot -- config/local.toml
 ```
 
 路径优先级为 CLI、`MUTSUKI_BOOTSTRAP`、`config/bootstrap.toml`。旧完整产品 TOML 会因未知
@@ -25,6 +25,10 @@ cargo run -p mutsuki-bot -- config/local.bootstrap.toml
 - 不启用任何 Runtime 插件；
 - 预声明但不启用 Agent connection、Flow Router、QQ 与 Bot Agent bridge；
 - 启用仅监听 `127.0.0.1:8787` 的鉴权 Console，且只选择通用配置页面。
+
+首次进入配置页后，启用“本机 Bot 工作区”并保存；应用提示重启后才装配 Agent connection、
+Flow Router 及对应管理页面。QQ、模型和 Bot Agent 仍分别由各自配置页启用，系统不会自动生成
+Flow。
 
 已有 document 永不被种子覆盖。产品插件选择、WebExtension 选择以及各 owner 配置均保存到
 配置仓库，而不是写回 bootstrap。Secret 明文只进入 Host secret store，配置文档保存引用或

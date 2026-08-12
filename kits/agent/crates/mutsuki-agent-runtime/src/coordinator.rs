@@ -34,9 +34,12 @@ impl AgentSessionCoordinator {
             version: SessionVersion(1),
             status: AgentSessionStatus::Active,
             budget: budget.into(),
+            usage: Default::default(),
+            cost_microunits: 0,
             snapshot,
             turns: Vec::new(),
             pending_approvals: Vec::new(),
+            pending_interactions: Vec::new(),
             completed_attempts: BTreeSet::new(),
             committed_side_effects: BTreeSet::new(),
         })

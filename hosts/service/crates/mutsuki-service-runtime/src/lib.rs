@@ -88,6 +88,16 @@ pub trait LoadPlanLifecycleHook: Send + Sync {
     fn deactivate(&self) {}
 }
 
+/// Domain-neutral observer for state derived from the complete RuntimeLoadPlan.
+///
+/// Unlike an owner lifecycle hook, an observer is validated and committed for every successful
+/// registry generation, even when its owning component was not replaced. This keeps global
+/// projections such as a Flow node catalog aligned without recreating unrelated owner services.
+pub trait LoadPlanObserver: Send + Sync {
+    fn validate(&self, plan: &RuntimeLoadPlan) -> Result<(), String>;
+    fn activate(&self, plan: &RuntimeLoadPlan);
+}
+
 #[derive(Clone, Debug)]
 struct RunnerLimitOverride {
     runner_id: String,
@@ -108,6 +118,7 @@ struct PreparedComponent {
     runner_limits: BTreeMap<String, RunnerLimits>,
     runner_limit_factories: Vec<RunnerLimitFactory>,
     load_plan_hooks: Vec<Arc<dyn LoadPlanLifecycleHook>>,
+    load_plan_observers: Vec<Arc<dyn LoadPlanObserver>>,
 }
 
 impl Clone for PreparedComponent {
@@ -122,6 +133,7 @@ impl Clone for PreparedComponent {
             runner_limits: self.runner_limits.clone(),
             runner_limit_factories: self.runner_limit_factories.clone(),
             load_plan_hooks: self.load_plan_hooks.clone(),
+            load_plan_observers: self.load_plan_observers.clone(),
         }
     }
 }
@@ -215,6 +227,13 @@ impl PreparedComponentRegistry {
         self.records
             .values()
             .flat_map(|component| component.load_plan_hooks.iter().cloned())
+            .collect()
+    }
+
+    fn load_plan_observers(&self) -> Vec<Arc<dyn LoadPlanObserver>> {
+        self.records
+            .values()
+            .flat_map(|component| component.load_plan_observers.iter().cloned())
             .collect()
     }
 
@@ -963,6 +982,23 @@ impl ServiceRuntimeBuilder {
         self
     }
 
+    /// Registers an observer whose projection depends on the complete resolved LoadPlan.
+    pub fn register_load_plan_observer(
+        mut self,
+        component_id: impl Into<String>,
+        observer: Arc<dyn LoadPlanObserver>,
+    ) -> Self {
+        let component_id = self
+            .current_component
+            .clone()
+            .unwrap_or_else(|| component_id.into());
+        self.components
+            .record(component_id)
+            .load_plan_observers
+            .push(observer);
+        self
+    }
+
     /// Narrows Host-owned execution limits for a logical runner.
     ///
     /// Repeated registrations keep the strictest non-empty value, which lets multiple public
@@ -1045,6 +1081,7 @@ impl ServiceRuntimeBuilder {
         let configured_runner_limits = components.runner_limits();
         let runner_limit_factories = components.runner_limit_factories();
         let load_plan_hooks = components.load_plan_hooks();
+        let load_plan_observers = components.load_plan_observers();
         let event_sources = components.take_event_sources();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
@@ -1064,10 +1101,14 @@ impl ServiceRuntimeBuilder {
             runtime_client.clone(),
             &runner_limits,
             &load_plan_hooks,
+            &load_plan_observers,
         )
         .await?;
         for hook in &load_plan_hooks {
             hook.activate(&runtime_lock);
+        }
+        for observer in &load_plan_observers {
+            observer.activate(&runtime_lock);
         }
         let task_submitter = host_runtime.host_context().task_submitter_ref();
         let resource_gateway = host_runtime.host_context().resource_gateway_ref();
@@ -1562,7 +1603,7 @@ impl ServiceRuntimeInner {
             &combined_components.runner_limits(),
             &combined_components.runner_limit_factories(),
         );
-        let load_plan_hooks = combined_components.load_plan_hooks();
+        let load_plan_observers = combined_components.load_plan_observers();
         let previous_registry_generation = self
             .host_runtime
             .lock()
@@ -1590,14 +1631,20 @@ impl ServiceRuntimeInner {
             &profile,
         )?;
         runtime_lock.registry_generation = registry_generation;
-        for hook in &load_plan_hooks {
+        for hook in &candidate_load_plan_hooks {
             hook.validate(&runtime_lock)
                 .map_err(ServiceRuntimeError::LoadPlanHook)?;
         }
-        let prepared = bootstrapper.prepare_reload_with_runner_limits(
+        for observer in &load_plan_observers {
+            observer
+                .validate(&runtime_lock)
+                .map_err(ServiceRuntimeError::LoadPlanHook)?;
+        }
+        let prepared = bootstrapper.prepare_targeted_reload_with_runner_limits(
             profile,
             registry_generation,
             runner_limits,
+            runtime_affected.clone(),
         )?;
         let runtime_lock_path = self.config.service.run_dir.join("runtime.lock.json");
         let previous_runtime_lock = fs::read(&runtime_lock_path).ok();
@@ -1652,6 +1699,9 @@ impl ServiceRuntimeInner {
         }
         for hook in &candidate_load_plan_hooks {
             hook.activate(&runtime_lock);
+        }
+        for observer in &load_plan_observers {
+            observer.activate(&runtime_lock);
         }
         for source in new_event_sources {
             self.event_sources
@@ -2016,6 +2066,7 @@ impl ServiceRuntimeInner {
         let configured_runner_limits = components.runner_limits();
         let runner_limit_factories = components.runner_limit_factories();
         let load_plan_hooks = components.load_plan_hooks();
+        let load_plan_observers = components.load_plan_observers();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
         let (prepared, runtime_lock) = match runtime_bootstrapper(
@@ -2054,6 +2105,11 @@ impl ServiceRuntimeInner {
                 return ControlResponse::err(ControlError::Failed(error));
             }
         }
+        for observer in &load_plan_observers {
+            if let Err(error) = observer.validate(&runtime_lock) {
+                return ControlResponse::err(ControlError::Failed(error));
+            }
+        }
         let drain_timeout = reload_drain_timeout(&self.config, &new_catalog);
         let plugin_count = new_catalog.records.len();
         let sidecars = sidecar_specs(&self.config, &new_catalog);
@@ -2083,6 +2139,9 @@ impl ServiceRuntimeInner {
 
         for hook in &load_plan_hooks {
             hook.activate(&runtime_lock);
+        }
+        for observer in &load_plan_observers {
+            observer.activate(&runtime_lock);
         }
 
         *self.catalog.lock().expect("catalog mutex") = new_catalog;
@@ -2711,6 +2770,7 @@ async fn boot_core(
     runtime_client: Arc<DeferredRuntimeClient>,
     runner_limits: &BTreeMap<String, RunnerLimits>,
     load_plan_hooks: &[Arc<dyn LoadPlanLifecycleHook>],
+    load_plan_observers: &[Arc<dyn LoadPlanObserver>],
 ) -> ServiceRuntimeResult<(HostRuntime, RuntimeLoadPlan)> {
     let (bootstrapper, profile) = runtime_bootstrapper(
         config,
@@ -2796,6 +2856,11 @@ async fn boot_core(
     )?;
     for hook in load_plan_hooks {
         hook.validate(&lock)
+            .map_err(ServiceRuntimeError::LoadPlanHook)?;
+    }
+    for observer in load_plan_observers {
+        observer
+            .validate(&lock)
             .map_err(ServiceRuntimeError::LoadPlanHook)?;
     }
     let runtime = bootstrapper.into_host_runtime_with_config(profile, host_config)?;
@@ -5240,6 +5305,7 @@ generation = 7
             &BTreeMap::new(),
             runtime_client.clone(),
             &BTreeMap::new(),
+            &[],
             &[],
         )
         .await

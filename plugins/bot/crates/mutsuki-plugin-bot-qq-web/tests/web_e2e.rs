@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_plugin_bot_qq_web::*;
 use mutsuki_web_host::{MinimalWebApplication, MutsukiWebHost, WebHost};
@@ -14,11 +15,12 @@ use uuid::Uuid;
 #[derive(Default)]
 struct Api {
     revision: Mutex<u64>,
-    writes: Mutex<Vec<QqManagementWriteRequest>>,
+    writes: Mutex<Vec<(String, QqManagementWriteRequest)>>,
 }
 
+#[async_trait]
 impl QqBotManagementApi for Api {
-    fn snapshot(
+    async fn snapshot(
         &self,
         _query: &str,
         include_secret_status: bool,
@@ -52,8 +54,9 @@ impl QqBotManagementApi for Api {
         })
     }
 
-    fn write(
+    async fn write(
         &self,
+        actor_id: &str,
         request: QqManagementWriteRequest,
     ) -> Result<QqManagementWriteResult, QqManagementError> {
         let mut revision = self.revision.lock().unwrap();
@@ -63,7 +66,7 @@ impl QqBotManagementApi for Api {
                 message: "stale revision".into(),
             });
         }
-        self.writes.lock().unwrap().push(request);
+        self.writes.lock().unwrap().push((actor_id.into(), request));
         *revision += 1;
         Ok(QqManagementWriteResult {
             revision: *revision,
@@ -120,7 +123,7 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
         "configured"
     );
 
-    let request = json!({
+    let forged = json!({
         "actor_id": "operator",
         "expected_revision": 0,
         "action": {"action": "account_reconnect", "account_id": "main"}
@@ -130,8 +133,24 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
             &address,
             "write",
             json!({
+                "confirmed": true,
+                "request": forged
+            }),
+        )
+        .await
+        .is_err()
+    );
+    let request = json!({
+        "expected_revision": 0,
+        "action": {"action": "account_reconnect", "account_id": "main"}
+    });
+    assert!(
+        rpc(
+            &address,
+            "write",
+            json!({
                 "confirmed": false,
-                "request": request
+                "request": request.clone()
             }),
         )
         .await
@@ -149,9 +168,11 @@ async fn qq_management_rpc_uses_authenticated_capabilities_confirmation_and_fixe
     .unwrap();
     assert_eq!(written["revision"], 1);
     assert_eq!(written["audit_id"], "audit-1");
-    let writes = api.writes.lock().unwrap();
-    assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].actor_id, "local-web-console");
+    {
+        let writes = api.writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, "local-web-console");
+    }
 
     host.stop().await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;

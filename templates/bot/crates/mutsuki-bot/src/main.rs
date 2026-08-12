@@ -2,8 +2,10 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mutsuki_bot::{WebConsoleGuard, assemble_service_with_connections, load_bootstrapped_product};
-use mutsuki_bot_web_console::TargetedPluginReloadLifecycle;
+use mutsuki_bot::{
+    TargetedPluginReloadLifecycle, WebConsoleGuard, assemble_service_with_connections,
+    load_bootstrapped_product,
+};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

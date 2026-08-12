@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -9,7 +10,18 @@ use crate::{
 };
 
 pub trait PreparedConfigWrite: Send {
+    fn set_commit_marker(&mut self, marker: Option<&Path>) -> Result<(), ConfigError> {
+        if marker.is_some() {
+            return Err(ConfigError::PersistenceFailed {
+                reason: "repository does not support coordinated recovery".into(),
+            });
+        }
+        Ok(())
+    }
     fn commit(&mut self) -> Result<ConfigDocumentSnapshot, ConfigError>;
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        Ok(())
+    }
     fn rollback(&mut self) -> Result<(), ConfigError>;
 }
 
@@ -34,7 +46,12 @@ pub struct InMemoryConfigRepository {
 #[derive(Default)]
 struct MemoryState {
     documents: HashMap<ConfigDocumentKey, ConfigDocumentSnapshot>,
-    pending: HashMap<ConfigDocumentKey, ConfigCompareAndSetRequest>,
+    pending: HashMap<ConfigDocumentKey, MemoryPendingWrite>,
+}
+
+struct MemoryPendingWrite {
+    before: Option<ConfigDocumentSnapshot>,
+    commit_marker: Option<PathBuf>,
 }
 
 struct MemoryPreparedWrite {
@@ -43,9 +60,18 @@ struct MemoryPreparedWrite {
     before: Option<ConfigDocumentSnapshot>,
     committed: bool,
     finished: bool,
+    commit_marker: Option<PathBuf>,
 }
 
 impl PreparedConfigWrite for MemoryPreparedWrite {
+    fn set_commit_marker(&mut self, marker: Option<&Path>) -> Result<(), ConfigError> {
+        self.commit_marker = marker.map(Path::to_path_buf);
+        if let Some(pending) = self.state.lock().pending.get_mut(&self.request.key) {
+            pending.commit_marker = self.commit_marker.clone();
+        }
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<ConfigDocumentSnapshot, ConfigError> {
         let mut state = self.state.lock();
         let current = state
@@ -70,13 +96,27 @@ impl PreparedConfigWrite for MemoryPreparedWrite {
         state
             .documents
             .insert(snapshot.key.clone(), snapshot.clone());
-        state.pending.remove(&snapshot.key);
+        if self.commit_marker.is_none() {
+            state.pending.remove(&snapshot.key);
+            self.finished = true;
+        }
         self.committed = true;
-        self.finished = true;
         Ok(snapshot)
     }
 
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        self.state.lock().pending.remove(&self.request.key);
+        if let Some(marker) = &self.commit_marker {
+            remove_commit_marker(marker)?;
+        }
+        self.finished = true;
+        Ok(())
+    }
+
     fn rollback(&mut self) -> Result<(), ConfigError> {
+        if self.commit_marker.as_deref().is_some_and(Path::exists) {
+            return self.finish();
+        }
         let mut state = self.state.lock();
         state.pending.remove(&self.request.key);
         if self.committed {
@@ -86,6 +126,9 @@ impl PreparedConfigWrite for MemoryPreparedWrite {
                 state.documents.remove(&self.request.key);
             }
         }
+        if let Some(marker) = &self.commit_marker {
+            remove_commit_marker(marker)?;
+        }
         self.finished = true;
         Ok(())
     }
@@ -94,7 +137,11 @@ impl PreparedConfigWrite for MemoryPreparedWrite {
 impl Drop for MemoryPreparedWrite {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.rollback();
+            let committed_decision =
+                self.committed && self.commit_marker.as_deref().is_some_and(Path::exists);
+            if !committed_decision {
+                let _ = self.rollback();
+            }
         }
     }
 }
@@ -123,7 +170,13 @@ impl ConfigRepository for InMemoryConfigRepository {
         }
         if state
             .pending
-            .insert(request.key.clone(), request.clone())
+            .insert(
+                request.key.clone(),
+                MemoryPendingWrite {
+                    before: before.clone(),
+                    commit_marker: None,
+                },
+            )
             .is_some()
         {
             return Err(ConfigError::ApplyRejected {
@@ -137,11 +190,36 @@ impl ConfigRepository for InMemoryConfigRepository {
             before,
             committed: false,
             finished: false,
+            commit_marker: None,
         }))
     }
 
     fn recover(&self) -> Result<(), ConfigError> {
-        self.state.lock().pending.clear();
+        let mut state = self.state.lock();
+        let pending = std::mem::take(&mut state.pending);
+        for (key, pending) in pending {
+            let committed = pending.commit_marker.as_deref().is_some_and(Path::exists);
+            if !committed {
+                if let Some(before) = pending.before {
+                    state.documents.insert(key, before);
+                } else {
+                    state.documents.remove(&key);
+                }
+            }
+            if let Some(marker) = pending.commit_marker {
+                remove_commit_marker(&marker)?;
+            }
+        }
         Ok(())
+    }
+}
+
+fn remove_commit_marker(path: &Path) -> Result<(), ConfigError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ConfigError::PersistenceFailed {
+            reason: format!("failed to remove commit marker {}: {error}", path.display()),
+        }),
     }
 }

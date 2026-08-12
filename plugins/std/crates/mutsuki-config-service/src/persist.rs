@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use crate::{ConfigError, ConfigValue};
 
@@ -11,7 +12,13 @@ pub enum ConfigSecretMutation {
 /// Reversible owner persistence prepared as part of one ConfigService CAS.
 pub trait ConfigPersistTransaction: Send {
     fn activate(&mut self) -> Result<(), ConfigError>;
+    fn commit_marker(&self) -> Option<&Path> {
+        None
+    }
     fn commit(&mut self) -> Result<(), ConfigError>;
+    fn finish(&mut self) -> Result<(), ConfigError> {
+        Ok(())
+    }
     fn rollback(&mut self) -> Result<(), ConfigError>;
 }
 

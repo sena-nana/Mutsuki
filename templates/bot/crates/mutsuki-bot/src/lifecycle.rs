@@ -2,9 +2,11 @@
 
 use std::sync::Arc;
 
+use mutsuki_agent_service_host_integration::LOCAL_AGENT_PLUGIN_ID;
 use mutsuki_config_service::{
     ConfigAction, ConfigError, ConfigLifecycle, ConfigValue, RestartPolicy,
 };
+use mutsuki_plugin_bot_agent::BOT_AGENT_BRIDGE_PLUGIN_ID;
 use mutsuki_service_control::{
     ControlCommand, ControlHandler, ControlRequest, ControlResponse, ControlResult,
 };
@@ -49,11 +51,19 @@ impl TargetedPluginReloadLifecycle {
                 .collect::<Vec<_>>()
         } else {
             let base = runtime.configured_plugin_selection(provider_id);
-            vec![crate::configured_plugin_selection_from_value(
+            let mut selections = vec![crate::configured_plugin_selection_from_value(
                 provider_id,
                 value,
                 base.as_ref(),
-            )?]
+            )?];
+            if provider_id == LOCAL_AGENT_PLUGIN_ID {
+                if let Some(bridge) =
+                    runtime.configured_plugin_selection(BOT_AGENT_BRIDGE_PLUGIN_ID)
+                {
+                    selections.push(bridge);
+                }
+            }
+            selections
         };
         block_on_result(async move { runtime.reconfigure_plugins(&selections).await })
             .map(|_| ())
