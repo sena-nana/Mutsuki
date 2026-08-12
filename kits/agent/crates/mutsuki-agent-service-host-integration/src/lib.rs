@@ -863,13 +863,7 @@ pub fn configured_standard_agent_plugin_catalog(
     registry: AgentConnectionRegistry,
     config_service: Arc<ConfigService>,
 ) -> ServiceRuntimeResult<ConfiguredPluginCatalog> {
-    let mut catalog = configured_agent_plugin_catalog(
-        registry.clone(),
-        AgentConnectorCatalog::standard(),
-        config_service,
-    )?;
-    catalog.register(ConfiguredLocalAgentPlugin::new(registry))?;
-    Ok(catalog)
+    configured_agent_plugin_catalog(registry, AgentConnectorCatalog::standard(), config_service)
 }
 
 #[derive(Debug, Deserialize)]
