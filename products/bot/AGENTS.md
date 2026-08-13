@@ -43,11 +43,11 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 1. 能力缺失时在 owner package 补齐并验证，再更新产品装配；禁止复制实现、生产 fallback 或兼容 shim。
 2. 产品使用根 Workspace path 和唯一根 `Cargo.lock`；禁止仓库内 Mutsuki Git 依赖、仓库外 `path` 或本地 `[patch]`。
 3. 配置只声明 capability、插件和部署选择。产品不按平台、Agent、Provider 或 backend 硬编码替代路径。
-4. 只提交无账号、无凭据的最小 `config/bootstrap.toml` 与 Secret 占位文件；bootstrap 只选择 Host 边界与配置仓库，产品和 owner 配置进入 `ConfigRepository`，只保存 secret key 引用。
+4. 产品只支持可执行文件旁 `.mutsuki-bot` 单实例目录；Host 边界与 SQLite repository 由产品内建，产品和 owner 配置进入 `ConfigRepository`，只保存 secret key 引用。
 5. 产品不得拥有业务 Runner、命令、回复或 Agent 流程；这些能力由 owner package 实现，并遵守 batch-first、`TaskHandle` 和通用协议契约。
 6. RuntimeProfile/RuntimeLoadPlan 是装配权威；registry freeze 后不得动态越权注册。
 7. 缺失 capability、配置、secret、artifact 或 revision 必须结构化失败，禁止假成功和吞错。
-8. 生产入口按 CLI、`MUTSUKI_BOOTSTRAP`、本目录 `config/bootstrap.toml` 选择最小 bootstrap；产品显式选择 SQLite 配置仓库，但框架不假设路径或存储实现。空仓库只写一次版本化种子，不启用 Runtime 插件且只选择通用配置 WebExtension；其他插件和编辑器均由保存后的产品配置显式启用。Mock 仅限测试。
+8. 生产入口不接受配置路径、profile 或 namespace；产品显式选择固定 SQLite 配置仓库，但框架不假设路径或存储实现。空仓库只写一次版本化种子，直接启用 Agent Connections、Flow Router 与对应管理页；QQ、Local Agent、Bot Agent 和业务 Flow 仍由保存后的 owner 配置显式启用。Mock 仅限测试。
 9. `sena-nana/MutsukiBotTemplate` 已退出源码和分发职责；不得恢复独立实现、Issue 或发布同步。
 
 ## Git 与验证

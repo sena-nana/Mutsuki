@@ -30,7 +30,7 @@ async fn production_binary_runs_fake_qq_from_config_repository_and_shuts_down_cl
     )
     .await;
     let mut process =
-        ProductProcess::spawn(&product.bootstrap_path, root.path().join("product.log"));
+        ProductProcess::spawn(&product.executable_path, root.path().join("product.log"));
 
     let health = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -93,7 +93,7 @@ async fn sigterm_uses_the_same_orderly_product_shutdown_path() {
         .expect("short Unix smoke directory");
     let (fake, product) = support::fake_qq_product(root.path()).await;
     let mut process =
-        ProductProcess::spawn(&product.bootstrap_path, root.path().join("product.log"));
+        ProductProcess::spawn(&product.executable_path, root.path().join("product.log"));
 
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -141,7 +141,7 @@ async fn console_start_failure_rolls_back_the_started_runtime() {
     let occupied = std::net::TcpListener::bind(&product.console_address)
         .expect("occupy configured console address");
     let mut process =
-        ProductProcess::spawn(&product.bootstrap_path, root.path().join("product.log"));
+        ProductProcess::spawn(&product.executable_path, root.path().join("product.log"));
 
     let status = process.wait_for_exit(Duration::from_secs(30)).await;
     assert!(

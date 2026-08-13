@@ -1,19 +1,19 @@
 use std::path::{Path, PathBuf};
 
 use futures_util::{SinkExt, StreamExt};
-use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
-use mutsuki_bot::load_bootstrapped_product;
+use mutsuki_bot::{CONSOLE_AUTH_TOKEN_KEY, load_single_instance_product_for_test};
 use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
-use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue};
+use mutsuki_config_service::{ConfigApplyRequest, ConfigContext};
 use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, qq_config_value};
 use mutsuki_service_control::{HealthReport, TaskSnapshot};
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
 use uuid::Uuid;
 
 pub struct ProductFixture {
-    pub bootstrap_path: PathBuf,
+    pub executable_path: PathBuf,
     pub console_address: String,
     pub console_token: String,
+    _console_permit: tokio::sync::OwnedSemaphorePermit,
 }
 
 pub async fn fake_qq_product(root: &Path) -> (FakeQqServer, ProductFixture) {
@@ -24,66 +24,28 @@ pub async fn fake_qq_product_with_script(
     root: &Path,
     script: FakeQqGatewayScript,
 ) -> (FakeQqServer, ProductFixture) {
+    let console_permit = console_semaphore()
+        .acquire_owned()
+        .await
+        .expect("single-instance console semaphore");
     let fake = FakeQqServer::start_with_gateway_script(script).await;
     let secret_key = "QQBOT_CLIENT_SECRET";
     let qq = fake.config("template", "TEST_APP_ID", secret_key);
+    let executable_path = copy_product_executable(root);
+    let instance_root = root.join(".mutsuki-bot");
+    std::fs::create_dir_all(&instance_root).expect("create single-instance root");
+    let console_token = "test-console-token".to_string();
     std::fs::write(
-        root.join("product.secret.toml"),
-        format!("[secrets]\n{secret_key} = \"TEST_CLIENT_SECRET\"\n"),
-    )
-    .expect("write local smoke secret");
-    let bootstrap_path = root.join("bootstrap.toml");
-    std::fs::write(
-        &bootstrap_path,
+        instance_root.join("secrets.toml"),
         format!(
-            r#"[host]
-instance_id = "product-qqbot-fake"
-home_dir = "{}"
-data_dir = "data"
-
-[security]
-secret_file = "product.secret.toml"
-
-[config_repository]
-repository_plugin_id = "mutsuki.config.repository.sqlite"
-document_namespace = "product-qqbot-fake"
-
-[config_repository.options]
-path = "config.sqlite3"
-"#,
-            root.to_string_lossy().replace('\\', "/"),
+            "[secrets]\n\"{CONSOLE_AUTH_TOKEN_KEY}\" = \"{console_token}\"\n{secret_key} = \"TEST_CLIENT_SECRET\"\n"
         ),
     )
-    .expect("write product bootstrap");
+    .expect("write local smoke secret");
 
-    let first = load_bootstrapped_product(&bootstrap_path)
+    let first = load_single_instance_product_for_test(&instance_root, "unused")
         .await
-        .expect("load product bootstrap");
-    let snapshot = first
-        .config
-        .read(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            ConfigContext::global(),
-            &["*".into()],
-        )
-        .await
-        .expect("read product config");
-    let mut product = snapshot.value.to_json();
-    product["console_listen"] = serde_json::Value::String(free_loopback_address());
-    first
-        .config
-        .apply(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            ConfigApplyRequest {
-                candidate: ConfigValue::from_json(&product),
-                expected_revision: snapshot.revision,
-                dry_run: false,
-            },
-            ConfigContext::global(),
-            &["*".into()],
-        )
-        .await
-        .expect("persist fake QQ product config");
+        .expect("load single-instance product");
     let qq_snapshot = first
         .config
         .read(
@@ -109,33 +71,41 @@ path = "config.sqlite3"
         .expect("persist fake QQ owner config");
     drop(first);
 
-    let product = load_bootstrapped_product(&bootstrap_path)
+    let product = load_single_instance_product_for_test(&instance_root, "unused")
         .await
         .expect("restore fake QQ product config");
-    let console_token = product
-        .service
-        .host_secret_store()
-        .resolve(
-            product
-                .console
-                .auth_token_key
-                .as_deref()
-                .expect("console auth token key"),
-        )
-        .expect("console auth token");
     (
         fake,
         ProductFixture {
-            bootstrap_path,
+            executable_path,
             console_address: product.console.listen,
             console_token,
+            _console_permit: console_permit,
         },
     )
 }
 
-fn free_loopback_address() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve console port");
-    listener.local_addr().expect("console address").to_string()
+fn console_semaphore() -> std::sync::Arc<tokio::sync::Semaphore> {
+    static CONSOLE: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    CONSOLE
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+}
+
+fn copy_product_executable(root: &Path) -> PathBuf {
+    let source = Path::new(env!("CARGO_BIN_EXE_mutsuki-bot"));
+    let file_name = source.file_name().expect("product executable file name");
+    let target = root.join(file_name);
+    std::fs::copy(source, &target).expect("copy product executable beside fixture data");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&target).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&target, permissions).unwrap();
+    }
+    target
 }
 
 pub fn gateway_ready(health: &HealthReport) -> bool {

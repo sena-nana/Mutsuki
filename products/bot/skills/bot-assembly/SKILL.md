@@ -9,8 +9,8 @@ description: Assemble the first-party Mutsuki Bot product from external configur
 
 ## 配置
 
-- 提交无账号、无凭据的最小 `config/bootstrap.toml`；它只声明 Host identity/directories、secret、插件发现和配置仓库选择。
-- 按 CLI、`MUTSUKI_BOOTSTRAP`、仓库 `config/bootstrap.toml` 选择 bootstrap；旧完整产品 TOML 必须拒绝。
+- 产品固定使用可执行文件旁 `.mutsuki-bot` 单实例目录；Host identity、目录、secret 文件、插件发现和 SQLite repository 选择由产品内建。
+- 生产入口不得接受配置路径、profile、namespace 或 `MUTSUKI_BOOTSTRAP`；旧 bootstrap 和完整产品 TOML 不读取、不迁移。
 - Mutsuki Bot 产品显式选择 SQLite repository plugin、document namespace 和路径；Mutsuki 框架不得内置该选择。
 - 产品插件选择、WebExtension 选择和每个 owner 配置由 `ConfigService` 保存到独立 provider document。
 - 主配置只保存 secret key；实际值由 Host 从显式引用且被忽略的专用 secret 文件或环境变量注入。
@@ -18,7 +18,7 @@ description: Assemble the first-party Mutsuki Bot product from external configur
 
 ## 装配
 
-1. 打开 bootstrap 选择的配置仓库，空仓库以 CAS 写一次零 Runtime 插件种子；已有文档不覆盖。
+1. 打开产品固定的 SQLite 配置仓库，空仓库以 CAS 写一次工作区种子；已有文档不覆盖。
 2. 将配置文档解析为 capability、plugin、deployment、binding 和 Host 资源需求；Bot 匹配与顺序只来自 active Flow provider snapshot。
 3. 只聚合 owner 公开 factory catalog；产品不得注册自有业务 manifest 或 Runner。
 4. 启动前生成并校验 RuntimeProfile/RuntimeLoadPlan；registry freeze 后不得越权注册。

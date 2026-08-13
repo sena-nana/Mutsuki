@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use mutsuki_bot::load_bootstrapped_product;
+use mutsuki_bot::load_single_instance_product_for_test;
 use mutsuki_plugin_bot_adapter_qqbot::QqBotConfig;
 use mutsuki_service_config::ServiceConfig;
 use mutsuki_service_control::HealthReport;
@@ -21,15 +21,14 @@ const QQBOT_HEALTH_PREFIX: &str = "mutsuki.bot.qqbot.gateway:";
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires ignored local QQBot config and secret files"]
 async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
-    let config_path = std::env::var_os("MUTSUKI_QQBOT_SMOKE_BOOTSTRAP")
-        .or_else(|| std::env::var_os("MUTSUKI_BOOTSTRAP"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../config/bootstrap.toml")
-        });
-    let product = load_bootstrapped_product(&config_path)
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_mutsuki-bot"));
+    let instance_root = executable
+        .parent()
+        .expect("product executable parent")
+        .join(".mutsuki-bot");
+    let product = load_single_instance_product_for_test(&instance_root, "")
         .await
-        .unwrap_or_else(|_| panic!("failed to load local QQBot smoke bootstrap"));
+        .unwrap_or_else(|_| panic!("failed to load configured single-instance QQBot product"));
     let service = product.service;
     let console = product.console;
     assert!(
@@ -54,7 +53,7 @@ async fn real_qqbot_product_process_is_healthy_and_shuts_down_cleanly() {
         .prefix("mtk-qqbot-real-")
         .tempdir()
         .expect("create smoke output directory");
-    let mut process = ProductProcess::spawn(&config_path, output_dir.path().join("product.log"));
+    let mut process = ProductProcess::spawn(&executable, output_dir.path().join("product.log"));
 
     let health_result = tokio::time::timeout(Duration::from_secs(45), async {
         loop {

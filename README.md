@@ -61,13 +61,13 @@ Web and Tauri frontend packages retain their package-level scripts and lockfiles
 The first-party Bot runs directly from this repository and shares the root compatibility lock:
 
 ```bash
-cp products/bot/config/bootstrap.toml products/bot/config/local.toml
-cp products/bot/config/secret.template.toml products/bot/config/local.secret.toml
-cargo run --locked -p mutsuki-bot -- products/bot/config/local.toml
+cargo run --locked -p mutsuki-bot
 ```
 
-Product configuration is stored through the selected ConfigRepository. Local secret files and
-runtime data remain ignored by Git.
+The product owns one configuration beside the executable under `.mutsuki-bot/`. On first
+interactive startup it asks for the Console passphrase and creates SQLite, secret and runtime
+directories automatically. Non-interactive startup supplies the passphrase through
+`MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`.
 
 ## Performance
 

@@ -6,32 +6,35 @@ Issue 和发布基线均位于 Mutsuki 主仓 `products/bot`。
 
 ## 启动
 
-`config/bootstrap.toml` 是最小 bootstrap，只包含 Host identity/directories、secret、插件发现
-以及配置仓库选择。产品显式选择 SQLite；框架和 ConfigService 不假设存储位置。
+产品只支持一个本地实例，不读取配置路径、profile、namespace 或 `MUTSUKI_BOOTSTRAP`：
 
 ```powershell
-Copy-Item products/bot/config/bootstrap.toml products/bot/config/local.toml
-Copy-Item products/bot/config/secret.template.toml products/bot/config/local.secret.toml
-cargo run --locked -p mutsuki-bot -- products/bot/config/local.toml
+cargo run --locked -p mutsuki-bot
 ```
 
-路径优先级为 CLI、`MUTSUKI_BOOTSTRAP`、本目录 `config/bootstrap.toml`。旧完整产品 TOML 会因未知
-字段被拒绝，不自动导入旧配置或旧 Flow 数据。
+运行目录固定在可执行文件旁的 `.mutsuki-bot/`。源码运行时即
+`target/debug/.mutsuki-bot/`，其中包含 `config.sqlite3`、`secrets.toml`、`data/`、`logs/`、
+`run/` 和 `plugins/{installed,disabled}/`。目录不可写、端口占用或重复启动会直接失败，不回退
+到其他位置。
+
+首次交互启动会隐藏输入并确认管理台口令；非交互部署必须设置
+`MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN`。口令只进入权限受限的 Host secret 文件，不打印、
+不写日志、不进入 SQLite。
 
 空仓库只以 revision CAS 写入一次版本化种子：
 
-- 不启用任何 Runtime 插件；
-- 预声明但不启用 Agent connection、Flow Router、QQ 与 Bot Agent bridge；
-- 启用仅监听 `127.0.0.1:8787` 的鉴权 Console，且只选择通用配置页面。
+- 直接启用 Agent Connections 与 Flow Router；
+- 直接提供 Config、QQ、Agent 和 Bot Flow 管理页面，无首次重启步骤；
+- QQ、Local Agent 与 Bot Agent bridge 仍保持关闭，不生成业务 Flow；
+- 鉴权 Console 固定监听 `127.0.0.1:8787`。
 
-首次进入配置页后，启用“本机 Bot 工作区”并保存；应用提示重启后才装配 Agent connection、
-Flow Router 及对应管理页面。QQ、模型和 Bot Agent 仍分别由各自配置页启用，系统不会自动生成
-Flow。
+旧 `local.toml`、旧 bootstrap、旧 SQLite 和旧 secret 不读取、不迁移；升级后需在新实例中重新
+配置。QQ、模型和 Bot Agent 分别由各自配置页启用，系统不会自动生成 Flow。
 
 已有 document 永不被种子覆盖。产品插件选择、WebExtension 选择以及各 owner 配置均保存到
 配置仓库，而不是写回 bootstrap。Secret 明文只进入 Host secret store，配置文档保存引用或
-脱敏状态。首次启动会在 Git 忽略的 `config/local.secret.toml` 创建随机 Console Token，并在
-Unix 平台限制为当前用户可读写；QQ 与模型密钥只能在 Web 中写入，之后不会回显。
+脱敏状态。Unix 平台的 `.mutsuki-bot/secrets.toml` 仅允许当前用户读写；QQ 与模型密钥只能在
+Web 中写入，之后不会回显。
 
 当前 `mutsuki.product` 使用 schema/value v3。v3 是破坏性配置边界：旧版本 SQLite 产品文档
 会以 `product.config.version_unsupported` 拒绝启动，部署者必须重建配置仓库；Secret 文件不会
