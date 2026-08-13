@@ -197,9 +197,10 @@ mod tests {
     use mutsuki_agent_contracts::{
         AGENT_RUN_PROTOCOL, AgentEvent, AgentMessage, AgentRunRequest, AgentRunResult,
         AgentRunStatus, AgentSessionCreateRequest, AgentSessionGetRequest, AgentToolDescriptor,
-        AgentToolExecution, CredentialRef, InteractionKind, InteractionResolution,
+        AgentToolExecution, ContextBudget, CredentialRef, InteractionKind, InteractionResolution,
         PermissionDecision, PermissionDecisionKind,
     };
+    use mutsuki_agent_runtime::AgentRuntimeProfileBuilder;
     use mutsuki_agent_sdk::orchestration_runner;
     use mutsuki_runtime_contracts::{
         PluginDeploymentKind, RuntimeError, RuntimeProfile, RuntimeProfileMode, ScalarValue, Task,
@@ -358,12 +359,23 @@ mod tests {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let server_model_calls = model_calls.clone();
         let model_server = std::thread::spawn(move || {
+            let (mut summary, _) = listener.accept().expect("context summary request arrives");
+            server_model_calls.fetch_add(1, Ordering::SeqCst);
+            let summary_payload = read_json_request(&mut summary);
+            let summary_payload_text = summary_payload.to_string();
+            assert!(summary_payload_text.contains("Summarize the earlier transcript"));
+            assert!(summary_payload_text.contains("legacy-marker"));
+            write_json_response(
+                &mut summary,
+                r#"{"content":[{"type":"text","text":"Earlier work established the legacy-marker fixture and its completed result."}],"stop_reason":"end_turn","usage":{"input_tokens":6,"output_tokens":2}}"#,
+            );
+
             let (mut first, _) = listener.accept().expect("first model request arrives");
             server_model_calls.fetch_add(1, Ordering::SeqCst);
             let first_payload = read_json_request(&mut first);
             assert_eq!(first_payload["messages"][0]["role"], "user");
             let first_payload_text = first_payload.to_string();
-            assert!(first_payload_text.contains("Earlier conversation was compacted"));
+            assert!(first_payload_text.contains("Earlier work established"));
             assert!(first_payload_text.contains("inspect"));
             assert!(
                 first_payload_text.matches("legacy-marker").count() <= 2,
@@ -382,6 +394,22 @@ mod tests {
             write_json_response(
                 &mut first,
                 r#"{"content":[{"type":"tool_use","id":"ask-1","name":"ask_user_question","input":{"question":"Which target?","options":["A","B"]}}],"stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":1}}"#,
+            );
+
+            let (mut second_summary, _) = listener
+                .accept()
+                .expect("interaction resume summary request arrives");
+            server_model_calls.fetch_add(1, Ordering::SeqCst);
+            let second_summary_payload = read_json_request(&mut second_summary);
+            assert!(
+                second_summary_payload
+                    .to_string()
+                    .contains("Summarize the earlier transcript"),
+                "unexpected interaction resume request: {second_summary_payload}"
+            );
+            write_json_response(
+                &mut second_summary,
+                r#"{"content":[{"type":"text","text":"Earlier work established the fixture; the user then selected target A."}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":2}}"#,
             );
 
             let (mut second, _) = listener.accept().expect("second model request arrives");
@@ -456,6 +484,23 @@ mod tests {
             model,
             ..Default::default()
         };
+        let profile = AgentRuntimeProfileBuilder::new("reference.profile")
+            .context_policy(mutsuki_agent_contracts::AgentContextPolicy {
+                provider_ids: Vec::new(),
+                budget: ContextBudget {
+                    max_tokens: Some(300),
+                    max_bytes: None,
+                    max_items: None,
+                },
+                compaction_service: Some("mutsuki.agent.context.compaction@1".into()),
+                provider_options: serde_json::json!({}),
+            })
+            .build()
+            .expect("reference profile is valid");
+        bundle
+            .agent_loop
+            .configure_profile(&profile)
+            .expect("reference profile configures AgentLoop");
         bundle
             .tools
             .register(interaction_tool)
@@ -740,7 +785,7 @@ mod tests {
         assert_eq!(result.messages.last().unwrap().content, "reference-final");
         assert!(result.usage.total_tokens > approval_usage);
         assert!(result.steps.iter().any(|step| step.step_index == 2));
-        assert_eq!(model_calls.load(Ordering::SeqCst), 3);
+        assert_eq!(model_calls.load(Ordering::SeqCst), 5);
         assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
         model_server.join().expect("model server assertions pass");
     }

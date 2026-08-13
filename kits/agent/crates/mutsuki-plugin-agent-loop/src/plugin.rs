@@ -125,18 +125,40 @@ async fn execute(
         .cloned()
         .collect::<Vec<_>>();
 
+    let turn_id = request
+        .turn_id
+        .clone()
+        .unwrap_or_else(|| format!("turn:ephemeral:{}", event_sequence.saturating_add(1)));
+    let compaction = agent_loop
+        .context_policy(&request.profile_id)?
+        .and_then(|policy| policy.compaction_service)
+        .filter(|service_id| !service_id.trim().is_empty())
+        .map(|service_id| AgentContextCompactionConfig {
+            service_id,
+            model: model.clone(),
+            provider_hint: request.provider_hint.clone(),
+        });
+
     let outcome = ctx
         .call::<AgentContextBuildProtocol>(AgentContextBuildRequest {
             profile_id: request.profile_id.clone(),
             messages: request.messages.clone(),
             session_id: request.session_id.clone(),
+            turn_id: Some(turn_id.clone()),
             max_context_tokens: request.budget.max_context_tokens,
+            compaction: if resuming_existing_turn {
+                None
+            } else {
+                compaction.clone()
+            },
             metadata: request.metadata.clone(),
         })
         .await
         .map_err(runtime_agent_error)?;
     let context: AgentContext =
         completed_output(PLUGIN_ID, ctx.task_id(), outcome).map_err(runtime_agent_error)?;
+    let preparation_usage = context.preparation_usage.clone();
+    let preparation_cost_microunits = context.preparation_cost_microunits;
     let mut model_messages = context.messages;
     if let Some(prompt) = context.rendered_prompt {
         if !request
@@ -156,10 +178,6 @@ async fn execute(
         }
     }
 
-    let turn_id = request
-        .turn_id
-        .clone()
-        .unwrap_or_else(|| format!("turn:ephemeral:{}", event_sequence.saturating_add(1)));
     let mut events = RunEventPublisher::new(
         &ctx,
         request.session_id.clone(),
@@ -188,7 +206,12 @@ async fn execute(
             .await?;
     }
     let mut result = match execute_run(
-        model,
+        ModelContextRouting {
+            model,
+            compaction,
+            preparation_usage,
+            preparation_cost_microunits,
+        },
         &ctx,
         &request,
         model_messages,
@@ -287,8 +310,15 @@ async fn execute(
     Ok(result)
 }
 
-async fn execute_run(
+struct ModelContextRouting {
     model: String,
+    compaction: Option<AgentContextCompactionConfig>,
+    preparation_usage: AgentUsage,
+    preparation_cost_microunits: u64,
+}
+
+async fn execute_run(
+    routing: ModelContextRouting,
     ctx: &AsyncRunnerContext,
     request: &AgentRunRequest,
     mut model_messages: Vec<AgentMessage>,
@@ -297,8 +327,18 @@ async fn execute_run(
     resuming_existing_turn: bool,
     ambiguous_tool_calls: Vec<AgentToolCall>,
 ) -> AgentResult<AgentRunResult> {
+    let ModelContextRouting {
+        model,
+        compaction,
+        preparation_usage,
+        preparation_cost_microunits,
+    } = routing;
     let mut messages = request.messages.clone();
-    let mut model_synced_message_count = messages.len();
+    let mut model_synced_message_count = if resuming_existing_turn {
+        0
+    } else {
+        messages.len()
+    };
     let mut steps = Vec::new();
     if let Some(compaction) = model_messages.iter().find_map(|message| {
         message
@@ -313,8 +353,8 @@ async fn execute_run(
             detail: Some(compaction),
         });
     }
-    let mut usage = AgentUsage::default();
-    let mut cost_microunits = 0_u64;
+    let mut usage = preparation_usage.clone();
+    let mut cost_microunits = preparation_cost_microunits;
     let mut output_resource = None;
     let mut first_model_step = 0;
     let mut max_steps = request.max_steps;
@@ -332,7 +372,10 @@ async fn execute_run(
         max_steps = continuation.max_steps;
         budget = continuation.budget.clone();
         usage = continuation.usage.clone();
-        cost_microunits = continuation.cost_microunits;
+        usage.add(&preparation_usage);
+        cost_microunits = continuation
+            .cost_microunits
+            .saturating_add(preparation_cost_microunits);
         output_resource = continuation.output_resource.clone();
         let action_step_index = first_model_step.saturating_sub(1);
         let pending = tool_recovery_interactions(request, messages.len(), &ambiguous_tool_calls)?;
@@ -409,7 +452,11 @@ async fn execute_run(
         max_steps = receipt.continuation.max_steps;
         budget = receipt.continuation.budget;
         usage = receipt.continuation.usage;
-        cost_microunits = receipt.continuation.cost_microunits;
+        usage.add(&preparation_usage);
+        cost_microunits = receipt
+            .continuation
+            .cost_microunits
+            .saturating_add(preparation_cost_microunits);
         output_resource = receipt.continuation.output_resource;
     } else if let Some(receipt) = interaction_resume_receipt(&messages)?
         && receipt.resolutions == request.interaction_resolutions
@@ -418,7 +465,11 @@ async fn execute_run(
         max_steps = receipt.continuation.max_steps;
         budget = receipt.continuation.budget;
         usage = receipt.continuation.usage;
-        cost_microunits = receipt.continuation.cost_microunits;
+        usage.add(&preparation_usage);
+        cost_microunits = receipt
+            .continuation
+            .cost_microunits
+            .saturating_add(preparation_cost_microunits);
         output_resource = receipt.continuation.output_resource;
     } else if let Some(pending) = pending_tool_batch(&messages)? {
         let continuation = pending
@@ -435,7 +486,10 @@ async fn execute_run(
         max_steps = continuation.max_steps;
         budget = continuation.budget.clone();
         usage = continuation.usage.clone();
-        cost_microunits = continuation.cost_microunits;
+        usage.add(&preparation_usage);
+        cost_microunits = continuation
+            .cost_microunits
+            .saturating_add(preparation_cost_microunits);
         output_resource = continuation.output_resource.clone();
         let action_step_index = first_model_step.saturating_sub(1);
         if !pending.interactions.is_empty() {
@@ -561,7 +615,27 @@ async fn execute_run(
 
     for step_index in first_model_step..max_steps {
         if model_synced_message_count < messages.len() {
-            model_messages = rebuild_model_context(ctx, request, &messages).await?;
+            let rebuilt = rebuild_model_context(
+                ctx,
+                request,
+                events.turn_id(),
+                compaction.clone(),
+                &messages,
+            )
+            .await?;
+            model_messages = rebuilt.messages;
+            usage.add(&rebuilt.usage);
+            cost_microunits = cost_microunits.saturating_add(rebuilt.cost_microunits);
+            if exceeds_budget(&budget, &usage, cost_microunits) {
+                return Ok(run_result(
+                    AgentRunStatus::BudgetExceeded,
+                    messages,
+                    steps,
+                    usage,
+                    cost_microunits,
+                    output_resource,
+                ));
+            }
         }
         events
             .emit(
@@ -1965,17 +2039,27 @@ fn exceeds_budget(budget: &AgentRunBudget, usage: &AgentUsage, cost_microunits: 
             .is_some_and(|limit| cost_microunits > limit)
 }
 
+struct PreparedModelContext {
+    messages: Vec<AgentMessage>,
+    usage: AgentUsage,
+    cost_microunits: u64,
+}
+
 async fn rebuild_model_context(
     ctx: &AsyncRunnerContext,
     request: &AgentRunRequest,
+    turn_id: &str,
+    compaction: Option<AgentContextCompactionConfig>,
     messages: &[AgentMessage],
-) -> AgentResult<Vec<AgentMessage>> {
+) -> AgentResult<PreparedModelContext> {
     let outcome = ctx
         .call::<AgentContextBuildProtocol>(AgentContextBuildRequest {
             profile_id: request.profile_id.clone(),
             messages: messages.to_vec(),
             session_id: request.session_id.clone(),
+            turn_id: Some(turn_id.to_owned()),
             max_context_tokens: request.budget.max_context_tokens,
+            compaction,
             metadata: request.metadata.clone(),
         })
         .await
@@ -1990,7 +2074,11 @@ async fn rebuild_model_context(
     {
         model_messages.insert(0, AgentMessage::system(prompt));
     }
-    Ok(model_messages)
+    Ok(PreparedModelContext {
+        messages: model_messages,
+        usage: context.preparation_usage,
+        cost_microunits: context.preparation_cost_microunits,
+    })
 }
 
 fn run_result(

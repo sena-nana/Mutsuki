@@ -45,12 +45,120 @@ pub struct PreparedContext {
     pub compaction: CompactionDisposition,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingContextCompaction {
+    initial: ContextPlan,
+    request: CompactionRequest,
+    source_snapshot: ResourceRef,
+    version: SessionVersion,
+    budget: ContextBudget,
+}
+
+impl PendingContextCompaction {
+    pub fn request(&self) -> &CompactionRequest {
+        &self.request
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContextCompactionPreparation {
+    Ready(PreparedContext),
+    Required(Box<PendingContextCompaction>),
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ContextCompactionCoordinator {
     planner: ContextPlanner,
 }
 
 impl ContextCompactionCoordinator {
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        version: SessionVersion,
+        budget: ContextBudget,
+        items: Vec<ContextItemRef>,
+        source_snapshot: ResourceRef,
+    ) -> Result<ContextCompactionPreparation, AgentError> {
+        let initial = self
+            .planner
+            .plan(session_id, turn_id, version, budget.clone(), items)?;
+        if !initial
+            .decisions
+            .iter()
+            .any(|decision| decision.decision == ContextDecisionKind::CompactionRequired)
+        {
+            return Ok(ContextCompactionPreparation::Ready(PreparedContext {
+                plan: initial,
+                compaction: CompactionDisposition::NotRequired,
+            }));
+        }
+
+        let request = CompactionRequest {
+            session_id: session_id.into(),
+            turn_id: turn_id.into(),
+            source_snapshot: source_snapshot.clone(),
+            target_budget: budget.clone(),
+        };
+        Ok(ContextCompactionPreparation::Required(Box::new(
+            PendingContextCompaction {
+                initial,
+                request,
+                source_snapshot,
+                version,
+                budget,
+            },
+        )))
+    }
+
+    pub fn finish(
+        &self,
+        pending: PendingContextCompaction,
+        outcome: Result<CompactionResult, AgentError>,
+        cancellation: &CompactionCancellation,
+    ) -> Result<PreparedContext, AgentError> {
+        debug_assert!(
+            pending
+                .initial
+                .decisions
+                .iter()
+                .any(|decision| { decision.decision == ContextDecisionKind::CompactionRequired })
+        );
+        let (item, disposition) = if cancellation.is_cancelled() {
+            (
+                fallback_item(pending.source_snapshot.clone(), pending.version),
+                CompactionDisposition::FallbackCancelled,
+            )
+        } else {
+            match outcome {
+                Ok(compacted) if !cancellation.is_cancelled() => {
+                    (compacted_item(compacted), CompactionDisposition::Completed)
+                }
+                Ok(_) => (
+                    fallback_item(pending.source_snapshot.clone(), pending.version),
+                    CompactionDisposition::FallbackCancelled,
+                ),
+                Err(error) => (
+                    fallback_item(pending.source_snapshot.clone(), pending.version),
+                    CompactionDisposition::FallbackError { code: error.code },
+                ),
+            }
+        };
+        let plan = self.planner.plan(
+            &pending.request.session_id,
+            &pending.request.turn_id,
+            pending.version,
+            pending.budget,
+            vec![item],
+        )?;
+        Ok(PreparedContext {
+            plan,
+            compaction: disposition,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &self,
@@ -63,53 +171,20 @@ impl ContextCompactionCoordinator {
         compactor: &dyn ContextCompactor,
         cancellation: &CompactionCancellation,
     ) -> Result<PreparedContext, AgentError> {
-        let initial = self
-            .planner
-            .plan(session_id, turn_id, version, budget.clone(), items)?;
-        if !initial
-            .decisions
-            .iter()
-            .any(|decision| decision.decision == ContextDecisionKind::CompactionRequired)
-        {
-            return Ok(PreparedContext {
-                plan: initial,
-                compaction: CompactionDisposition::NotRequired,
-            });
-        }
-
-        let request = CompactionRequest {
-            session_id: session_id.into(),
-            turn_id: turn_id.into(),
-            source_snapshot: source_snapshot.clone(),
-            target_budget: budget.clone(),
-        };
-        let (item, disposition) = if cancellation.is_cancelled() {
-            (
-                fallback_item(source_snapshot, version),
-                CompactionDisposition::FallbackCancelled,
-            )
-        } else {
-            match compactor.compact(request, cancellation) {
-                Ok(compacted) if !cancellation.is_cancelled() => {
-                    (compacted_item(compacted), CompactionDisposition::Completed)
-                }
-                Ok(_) => (
-                    fallback_item(source_snapshot, version),
-                    CompactionDisposition::FallbackCancelled,
-                ),
-                Err(error) => (
-                    fallback_item(source_snapshot, version),
-                    CompactionDisposition::FallbackError { code: error.code },
-                ),
+        match self.begin(session_id, turn_id, version, budget, items, source_snapshot)? {
+            ContextCompactionPreparation::Ready(prepared) => Ok(prepared),
+            ContextCompactionPreparation::Required(pending) => {
+                let outcome = if cancellation.is_cancelled() {
+                    Err(AgentError::new(
+                        "agent.context.compaction_cancelled",
+                        "context compaction was cancelled",
+                    ))
+                } else {
+                    compactor.compact(pending.request().clone(), cancellation)
+                };
+                self.finish(*pending, outcome, cancellation)
             }
-        };
-        let plan = self
-            .planner
-            .plan(session_id, turn_id, version, budget, vec![item])?;
-        Ok(PreparedContext {
-            plan,
-            compaction: disposition,
-        })
+        }
     }
 }
 

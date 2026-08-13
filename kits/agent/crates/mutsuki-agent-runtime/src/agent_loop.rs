@@ -3,12 +3,15 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use mutsuki_agent_contracts::{AgentError, AgentResult, AgentRunRequest};
+use mutsuki_agent_contracts::{
+    AgentContextPolicy, AgentError, AgentResult, AgentRunRequest, AgentRuntimeProfile,
+};
 
 #[derive(Clone, Default)]
 pub struct AgentLoop {
     default_model: Option<String>,
     active_turns: Arc<Mutex<BTreeMap<String, String>>>,
+    context_policies: Arc<Mutex<BTreeMap<String, AgentContextPolicy>>>,
 }
 
 /// Runtime-owned fence for the single active turn allowed by a session.
@@ -34,6 +37,35 @@ impl AgentLoop {
     pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
         self.default_model = Some(model.into());
         self
+    }
+
+    pub fn configure_profile(&self, profile: &AgentRuntimeProfile) -> AgentResult<()> {
+        if profile.profile_id.trim().is_empty() {
+            return Err(AgentError::invalid_input("profile_id is required"));
+        }
+        self.context_policies
+            .lock()
+            .map_err(|_| {
+                AgentError::new(
+                    "agent.runtime.state_poisoned",
+                    "Agent profile context registry lock poisoned",
+                )
+            })?
+            .insert(profile.profile_id.clone(), profile.context.clone());
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn context_policy(&self, profile_id: &str) -> AgentResult<Option<AgentContextPolicy>> {
+        self.context_policies
+            .lock()
+            .map_err(|_| {
+                AgentError::new(
+                    "agent.runtime.state_poisoned",
+                    "Agent profile context registry lock poisoned",
+                )
+            })
+            .map(|policies| policies.get(profile_id).cloned())
     }
 
     #[doc(hidden)]

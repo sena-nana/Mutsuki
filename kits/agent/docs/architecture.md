@@ -28,6 +28,16 @@ tool call 持久为等待点，并以版本绑定的 resolution 继续原 sessio
 `TaskAwaitRunnerAdapter` 提交回 Core；Runtime 不拥有 scheduler、worker、ResultRouter 或
 通用重试器。
 
+上下文压缩由 profile 的 `context.compaction_service` 显式启用。Host 在安装或刷新
+`AgentRuntimeProfile` 时调用 `AgentLoop::configure_profile`；AgentLoop 把同一 turn 的 model/provider
+选择传给 Context runner。ContextBuilder 先把被淘汰的旧 transcript 写成不可变 `ResourceRef`，
+`ContextCompactionCoordinator` 产生带 budget/version 的两阶段请求，Context runner 再通过正常
+`AgentModelGenerateProtocol` 路由生成语义摘要。Provider 不可用、返回工具调用、空摘要或内容过滤时，
+只对本次模型输入回退到确定性 turn-window 摘要；durable session transcript 始终保留原消息，不能被
+摘要原地覆盖。摘要调用的 usage/cost 计入 AgentRun budget；相同 session/turn/source hash 与路由配置
+复用有界缓存。resume 在 interaction/approval 处理完成、确实要进入下一次主模型前才重建语义上下文，
+等待或取消路径不预付一次无效摘要调用。
+
 ## Adapter
 
 `mutsuki-agent-adapter-api` 定义统一请求、流事件、Provider instance descriptor 和错误
@@ -49,6 +59,10 @@ tool call 持久为等待点，并以版本绑定的 resolution 继续原 sessio
 - remote task/sub-agent 映射到 DistributedHost placement，不复制选主与 scheduler。
 - client wire 运行在 MutsukiLink control stream，不建立 Agent 专属网络 server。
 - ServiceHost/TauriHost 只提供公开 runner、async handler、service 和 bridge 装配入口。
+- Git 写入由 `mutsuki-agent-plugin-git` 提供的 `GitWorktreeState` 做乐观并发门禁；令牌覆盖
+  canonical worktree 的 HEAD、index 与未忽略 working files，并可跨 service 重启比较。同一 service
+  内的同 worktree 写请求在“重读状态→校验 expected state→执行”期间串行化；产品 UI 应从 status 或
+  approval plan 回传完整令牌，旧 `expected_head` 只保留兼容用途。
 
 ## 产品边界
 
