@@ -242,22 +242,15 @@ impl SimpleReact {
             assistant.metadata = Some(json!({"tool_calls": &tool_calls}));
             messages.push(assistant);
             for call in tool_calls {
-                let tool_message = self.executor.execute(call).await?;
-                if tool_message.role != AgentRole::Tool
-                    || tool_message
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.get("call_id"))
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .is_empty()
-                {
+                if call.call_id.trim().is_empty() {
                     return Err(err(
-                        "agent.react.invalid_tool_result",
-                        "tool executor must return AgentRole::Tool with call_id",
+                        "agent.react.invalid_model_result",
+                        "model returned a tool call with an empty call_id",
                     ));
                 }
+                let expected_call_id = call.call_id.clone();
+                let tool_message = self.executor.execute(call).await?;
+                validate_tool_message(&tool_message, &expected_call_id)?;
                 messages.push(tool_message);
             }
         }
@@ -271,6 +264,39 @@ impl SimpleReact {
             status: SimpleReactStatus::BudgetExceeded,
         })
     }
+}
+
+fn validate_tool_message(
+    message: &AgentMessage,
+    expected_call_id: &str,
+) -> Result<(), ProtocolError> {
+    if message.role != AgentRole::Tool {
+        return Err(err(
+            "agent.react.invalid_tool_result",
+            "tool executor must return AgentRole::Tool",
+        ));
+    }
+    let call_id = message
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("call_id"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if call_id.trim().is_empty() {
+        return Err(err(
+            "agent.react.invalid_tool_result",
+            "tool executor must return a non-empty call_id",
+        ));
+    }
+    if call_id != expected_call_id {
+        return Err(err(
+            "agent.react.tool_call_id_mismatch",
+            format!(
+                "tool result call_id `{call_id}` does not match requested `{expected_call_id}`"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn err(code: impl Into<String>, message: impl Into<String>) -> ProtocolError {
@@ -294,6 +320,7 @@ mod tests {
     struct ScriptedAdapter {
         descriptor: ModelProtocolAdapterDescriptor,
         calls: AtomicUsize,
+        tool_call_id: String,
     }
 
     impl ModelProtocolAdapter for ScriptedAdapter {
@@ -307,13 +334,14 @@ mod tests {
             request: ModelGenerateRequest,
         ) -> ModelAdapterFuture {
             let step = self.calls.fetch_add(1, Ordering::SeqCst);
+            let tool_call_id = self.tool_call_id.clone();
             Box::pin(async move {
                 if step == 0 {
                     Ok(AgentModelGenerateResult {
                         message: AgentMessage::assistant(""),
                         stop_reason: AgentModelStopReason::ToolCalls,
                         tool_calls: vec![AgentToolCall {
-                            call_id: "call-1".into(),
+                            call_id: tool_call_id,
                             name: "echo".into(),
                             input: json!({"text": "ping"}),
                         }],
@@ -367,8 +395,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn simple_react_runs_one_tool_round_then_completes() {
+    fn scripted_react(
+        tool_call_id: impl Into<String>,
+        executor: Arc<dyn ReactToolExecutor>,
+    ) -> SimpleReact {
         let adapter: Arc<dyn ModelProtocolAdapter> = Arc::new(ScriptedAdapter {
             descriptor: ModelProtocolAdapterDescriptor {
                 adapter_id: "test".into(),
@@ -381,6 +411,7 @@ mod tests {
                 },
             },
             calls: AtomicUsize::new(0),
+            tool_call_id: tool_call_id.into(),
         });
         let provider = ProviderInstanceDescriptor {
             provider_id: "p1".into(),
@@ -395,13 +426,53 @@ mod tests {
             compatibility: Default::default(),
             remote_execution_allowed: true,
         };
+        let mut tool = AgentToolDescriptor::new("echo", "test.echo@1", "echo");
+        tool.input_schema = json!({"type": "object"});
+        SimpleReact::new(adapter, provider, vec![tool], executor).unwrap()
+    }
+
+    #[tokio::test]
+    async fn simple_react_enforces_tool_call_causality() {
+        let executions = Arc::new(AtomicUsize::new(0));
+        let executor: Arc<dyn ReactToolExecutor> = Arc::new(FnToolExecutor::new({
+            let executions = Arc::clone(&executions);
+            move |mut call| {
+                executions.fetch_add(1, Ordering::SeqCst);
+                call.call_id = "call-other".into();
+                Box::pin(async move { tool_result_message(&call, "wrong") })
+            }
+        }));
+
+        let empty_id_error = scripted_react("   ", Arc::clone(&executor))
+            .run(SimpleReactRequest::new(
+                "model",
+                vec![AgentMessage::user("hi")],
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(empty_id_error.code, "agent.react.invalid_model_result");
+        assert_eq!(executions.load(Ordering::SeqCst), 0);
+
+        let mismatched_id_error = scripted_react("call-1", executor)
+            .run(SimpleReactRequest::new(
+                "model",
+                vec![AgentMessage::user("hi")],
+            ))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            mismatched_id_error.code,
+            "agent.react.tool_call_id_mismatch"
+        );
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn simple_react_runs_one_tool_round_then_completes() {
         let executor = Arc::new(FnToolExecutor::new(|call| {
             Box::pin(async move { tool_result_message(&call, "pong-tool") })
         }));
-        let mut tool = AgentToolDescriptor::new("echo", "test.echo@1", "echo");
-        tool.input_schema = json!({"type": "object"});
-        let result = SimpleReact::new(adapter, provider, vec![tool], executor)
-            .unwrap()
+        let result = scripted_react("call-1", executor)
             .run(SimpleReactRequest::new("model", vec![AgentMessage::user("hi")]).with_max_steps(4))
             .await
             .unwrap();
