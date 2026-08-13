@@ -132,6 +132,7 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
                 }),
             ),
         ],
+        ..FakeQqGatewayScript::default()
     })
     .await;
     let secret_key = format!("QQBOT_ISSUE141_SECRET_{}", fake.websocket_addr().port());

@@ -47,6 +47,47 @@ pub struct PreparedRuntimeReload {
     pub(crate) affected_plugins: Option<BTreeSet<String>>,
 }
 
+pub struct PreparedHostRuntime {
+    prepared: PreparedRuntime,
+    config: HostRuntimeConfig,
+}
+
+impl PreparedHostRuntime {
+    #[must_use]
+    pub fn load_plan(&self) -> &RuntimeLoadPlan {
+        &self.prepared.plan
+    }
+
+    pub fn start(self) -> RuntimeResult<HostRuntime> {
+        let booted = boot_prepared_runtime(self.prepared)?;
+        let config = configure_resource_provider(
+            self.config,
+            &booted.active_resource_providers,
+            booted.resource_providers,
+            booted.async_resource_providers,
+        )?;
+        HostRuntime::start(
+            booted.core,
+            config,
+            booted.capabilities,
+            booted.services,
+            booted.profile_id,
+            booted.registry_generation,
+        )
+    }
+}
+
+impl PreparedRuntimeReload {
+    #[must_use]
+    pub fn load_plan(&self) -> &RuntimeLoadPlan {
+        &self.plan
+    }
+
+    pub(crate) fn append_core_kernel(&mut self) {
+        append_core_kernel(&mut self.plan, &mut self.runners);
+    }
+}
+
 struct RegisteredRunner {
     deployment_kind: PluginDeploymentKind,
     runner: Box<dyn Runner>,
@@ -210,26 +251,21 @@ impl RuntimeBootstrapper {
         profile: RuntimeProfile,
         config: HostRuntimeConfig,
     ) -> RuntimeResult<HostRuntime> {
+        self.prepare_host_runtime_with_config(profile, config)?
+            .start()
+    }
+
+    pub fn prepare_host_runtime_with_config(
+        self,
+        profile: RuntimeProfile,
+        config: HostRuntimeConfig,
+    ) -> RuntimeResult<PreparedHostRuntime> {
         let prepared = self.prepare_runtime(profile)?;
         validate_configured_scheduler_policy(
             &prepared.capabilities,
             config.scheduler_policy.as_ref(),
         )?;
-        let booted = boot_prepared_runtime(prepared)?;
-        let config = configure_resource_provider(
-            config,
-            &booted.active_resource_providers,
-            booted.resource_providers,
-            booted.async_resource_providers,
-        )?;
-        HostRuntime::start(
-            booted.core,
-            config,
-            booted.capabilities,
-            booted.services,
-            booted.profile_id,
-            booted.registry_generation,
-        )
+        Ok(PreparedHostRuntime { prepared, config })
     }
 
     pub fn prepare_reload(
@@ -294,7 +330,6 @@ impl RuntimeBootstrapper {
                     as Arc<dyn AsyncBatchHandler>
             })
             .collect();
-        append_core_kernel(&mut prepared.plan, &mut prepared.runners);
         prepared.registry_generation = registry_generation;
         Ok(PreparedRuntimeReload {
             plan: prepared.plan,

@@ -586,6 +586,7 @@ impl HostRuntime {
                 affected_plugins,
             )?;
         }
+        prepared.append_core_kernel();
         let capabilities = prepared.capabilities.clone();
         let services = prepared.services.clone();
         let profile_id = prepared.profile_id.clone();

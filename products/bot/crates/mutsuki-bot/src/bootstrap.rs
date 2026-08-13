@@ -4,23 +4,20 @@ use std::sync::Arc;
 
 use mutsuki_agent_service_host_integration::AgentConnectionRegistry;
 use mutsuki_config_service::{
-    ConfigApplyMode, ConfigApplyRequest, ConfigConstraints, ConfigContext, ConfigDescriptor,
-    ConfigKey, ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope,
-    ConfigService, ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider,
-    RestartPolicy, capability,
+    ConfigApplyMode, ConfigConstraints, ConfigContext, ConfigDescriptor, ConfigKey,
+    ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigService,
+    ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
 };
 use mutsuki_plugin_config_sqlite::{
     PLUGIN_ID as SQLITE_REPOSITORY_PLUGIN_ID, SqliteConfigRepository,
 };
-use mutsuki_service_config::{
-    ConfiguredPluginSelection, ServiceConfig, recover_host_secret_transaction,
-};
+use mutsuki_service_config::{ServiceConfig, recover_host_secret_transaction};
 use serde::Deserialize;
 
 use crate::{
-    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, merge_required_product_selections,
-    product_config_service_with_options, product_seed_defaults,
-    register_configured_product_providers, restore_configured_product_selections,
+    PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, configured_product_owner_selections,
+    configured_product_selections, product_config_service_with_options, product_seed_defaults,
+    register_configured_product_providers,
 };
 
 pub const SERVICE_CONFIG_PROVIDER_ID: &str = "mutsuki.service.runtime";
@@ -139,8 +136,6 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         )
         .await
         .map_err(|error| error.to_string())?;
-    migrate_product_config(&config).await?;
-
     let seed = service_seed(&bootstrap, &root);
     config
         .registry()
@@ -175,7 +170,7 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         .map_err(|error| format!("stored ServiceConfig is invalid: {error}"))?;
     apply_bootstrap_boundaries(&mut service, &bootstrap, &root);
 
-    let product = config
+    let product_snapshot = config
         .read(
             PRODUCT_CONFIG_PROVIDER_ID,
             ConfigContext::global(),
@@ -183,23 +178,25 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         )
         .await
         .map_err(|error| error.to_string())?;
-    let product = product.value.to_json();
-    service.plugins.configured = decode_runtime_plugins(&product)?;
-    merge_required_product_selections(&mut service.plugins.configured);
+    if product_snapshot.schema_version != 3 || product_snapshot.value_version != 3 {
+        return Err(format!(
+            "product.config.version_unsupported: stored mutsuki.product schema/value version {}/{} is unsupported; recreate the product config repository for version 3",
+            product_snapshot.schema_version, product_snapshot.value_version
+        ));
+    }
+    let product = product_snapshot.value.to_json();
     let console = decode_console(&product)?;
     ensure_local_auth_secret(&service, &console, path)?;
     let mut service = service
         .finalize_bootstrap(path, None)
         .map_err(|error| error.to_string())?;
-    register_configured_product_providers(
-        &config,
-        &service.plugins.configured,
-        service.host_secret_store(),
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    restore_configured_product_selections(&config, &mut service.plugins.configured)
+    register_configured_product_providers(&config, service.host_secret_store())
         .await
+        .map_err(|error| error.to_string())?;
+    let owner_selections = configured_product_owner_selections(&config)
+        .await
+        .map_err(|error| error.to_string())?;
+    service.plugins.configured = configured_product_selections(&product, owner_selections)
         .map_err(|error| error.to_string())?;
     let agent_connections = AgentConnectionRegistry::new();
     Ok(BootstrappedProduct {
@@ -209,50 +206,6 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         root,
         agent_connections,
     })
-}
-
-async fn migrate_product_config(config: &Arc<ConfigService>) -> Result<(), String> {
-    let context = ConfigContext::global();
-    let snapshot = config
-        .read(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            context.clone(),
-            &[capability::VALUE_READ.into()],
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    let ConfigValue::Object(mut value) = snapshot.value else {
-        return Err("stored product config must be an object".into());
-    };
-    if value.contains_key("workspace_enabled") {
-        return Ok(());
-    }
-    let enabled = value
-        .get("runtime_plugins")
-        .and_then(ConfigValue::as_object)
-        .is_some_and(|plugins| {
-            plugins.values().any(|plugin| {
-                plugin
-                    .as_object()
-                    .and_then(|object| object.get("enabled"))
-                    .is_some_and(|enabled| matches!(enabled, ConfigValue::Bool(true)))
-            })
-        });
-    value.insert("workspace_enabled".into(), ConfigValue::Bool(enabled));
-    config
-        .apply(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            ConfigApplyRequest {
-                candidate: ConfigValue::Object(value),
-                expected_revision: snapshot.revision,
-                dry_run: false,
-            },
-            context,
-            &[capability::APPLY.into(), capability::VALUE_WRITE.into()],
-        )
-        .await
-        .map(drop)
-        .map_err(|error| error.to_string())
 }
 
 fn service_seed(bootstrap: &BotBootstrap, root: &Path) -> ServiceConfig {
@@ -286,57 +239,6 @@ fn apply_bootstrap_boundaries(service: &mut ServiceConfig, bootstrap: &BotBootst
         .collect();
     if let Some(path) = &bootstrap.plugin_discovery.disabled_dir {
         service.plugins.disabled_dir = resolve(root, path);
-    }
-}
-
-fn decode_runtime_plugins(
-    product: &serde_json::Value,
-) -> Result<Vec<ConfiguredPluginSelection>, String> {
-    let mut selections = product
-        .get("runtime_plugins")
-        .and_then(serde_json::Value::as_object)
-        .into_iter()
-        .flatten()
-        .map(|(id, value)| {
-            Ok(ConfiguredPluginSelection {
-                id: id.clone(),
-                enabled: value
-                    .get("enabled")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(true),
-                config: value
-                    .get("config")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({})),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    if product
-        .get("workspace_enabled")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        set_selection_enabled(
-            &mut selections,
-            mutsuki_agent_service_host_integration::AGENT_CONNECTIONS_PLUGIN_ID,
-        );
-        set_selection_enabled(
-            &mut selections,
-            mutsuki_plugin_bot_event_router::BOT_FLOW_ROUTER_PLUGIN_ID,
-        );
-    }
-    Ok(selections)
-}
-
-fn set_selection_enabled(selections: &mut Vec<ConfiguredPluginSelection>, id: &str) {
-    if let Some(selection) = selections.iter_mut().find(|selection| selection.id == id) {
-        selection.enabled = true;
-    } else {
-        selections.push(ConfiguredPluginSelection {
-            id: id.into(),
-            enabled: true,
-            config: serde_json::json!({}),
-        });
     }
 }
 

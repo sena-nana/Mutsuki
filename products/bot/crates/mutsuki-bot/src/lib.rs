@@ -13,11 +13,15 @@ mod distribution;
 mod lifecycle;
 mod product_config;
 #[cfg(feature = "web-console")]
+mod product_runtime;
+#[cfg(feature = "web-console")]
 mod web_console;
 pub use bootstrap::*;
 pub use distribution::*;
 pub use lifecycle::*;
 pub use product_config::*;
+#[cfg(feature = "web-console")]
+pub use product_runtime::*;
 #[cfg(feature = "web-console")]
 pub use web_console::*;
 

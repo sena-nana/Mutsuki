@@ -7,7 +7,7 @@ use mutsuki_bot_protocol::{
     QqPermissionRequirement, QqRateLimitPolicy, QqStreamingStrategy, QqUploadConstraints,
 };
 use mutsuki_config_service::{
-    ConfigConstraints, ConfigDescriptor, ConfigKey, ConfigMutability, ConfigNode,
+    ConfigConstraints, ConfigDescriptor, ConfigExpr, ConfigKey, ConfigMutability, ConfigNode,
     ConfigPresentation, ConfigProviderId, ConfigScope, ConfigValue, ConfigValueType, LocalizedText,
     RestartPolicy, SecretState,
 };
@@ -295,13 +295,14 @@ impl QqBotConfig {
     }
 }
 
-/// Product-facing QQ configuration. Network and retry tuning stays on owner defaults.
+/// Product-facing QQ configuration. Network and retry tuning remains hidden but is persisted by
+/// the owner document so deployment-specific values have one authority.
 #[must_use]
 pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(provider_id),
-        schema_version: 1,
-        value_version: 1,
+        schema_version: 2,
+        value_version: 2,
         title: LocalizedText::new("QQ Bot"),
         description: Some(LocalizedText::new("连接一个 QQ Bot 账号并管理消息能力")),
         scopes: vec![ConfigScope::global()],
@@ -324,6 +325,7 @@ pub fn qq_config_descriptor(provider_id: &str) -> ConfigDescriptor {
                 integer_node("gateway_intents", "接收事件范围", 1.0, u64::MAX as f64),
                 integer_node("shard_index", "分片序号", 0.0, u32::MAX as f64),
                 integer_node("shard_count", "分片总数", 1.0, u32::MAX as f64),
+                hidden_object_node("runtime_config", "QQ Runtime Config"),
             ],
         },
         groups: Vec::new(),
@@ -352,10 +354,29 @@ pub fn qq_config_value(enabled: bool, config: &QqBotConfig) -> ConfigValue {
                 "shard_count".into(),
                 ConfigValue::Integer(i64::try_from(config.shard[1]).unwrap_or(i64::MAX)),
             ),
+            (
+                "runtime_config".into(),
+                ConfigValue::from_json(
+                    &serde_json::to_value(config).expect("QQ runtime config serializes"),
+                ),
+            ),
         ]
         .into_iter()
         .collect(),
     )
+}
+
+fn hidden_object_node(key: &str, title: &str) -> ConfigNode {
+    let mut node = field_node(
+        key,
+        title,
+        ConfigValueType::Object,
+        ConfigConstraints::default(),
+    );
+    node.visibility = Some(ConfigExpr::Literal {
+        value: ConfigValue::Bool(false),
+    });
+    node
 }
 
 fn bool_node(key: &str, title: &str) -> ConfigNode {

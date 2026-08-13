@@ -145,8 +145,8 @@ pub fn product_config_service_with_options(
 pub fn product_descriptor() -> ConfigDescriptor {
     ConfigDescriptor {
         provider_id: ConfigProviderId::new(PRODUCT_CONFIG_PROVIDER_ID),
-        schema_version: 2,
-        value_version: 2,
+        schema_version: 3,
+        value_version: 3,
         title: LocalizedText::new("本机 Bot"),
         description: None,
         scopes: vec![ConfigScope::global()],
@@ -188,22 +188,6 @@ pub fn product_descriptor() -> ConfigDescriptor {
                     "鉴权密钥引用",
                     RestartPolicy::ApplicationRestart,
                 )),
-                hidden(ConfigNode {
-                    key: "extensions".into(),
-                    value_type: ConfigValueType::Array {
-                        item: Box::new(ConfigValueType::String { multiline: false }),
-                    },
-                    title: LocalizedText::new("管理扩展"),
-                    description: None,
-                    default_value: None,
-                    constraints: ConfigConstraints::default(),
-                    presentation: ConfigPresentation::default(),
-                    visibility: None,
-                    enabled_if: None,
-                    mutability: ConfigMutability::ReadWrite,
-                    restart_policy: RestartPolicy::ApplicationRestart,
-                    children: Vec::new(),
-                }),
                 hidden(ConfigNode {
                     key: "runtime_plugins".into(),
                     value_type: ConfigValueType::Map {
@@ -282,74 +266,21 @@ pub fn product_seed_defaults() -> ConfigValue {
             ConfigValue::String("mutsuki.web.console.token".into()),
         ),
         (
-            "extensions".into(),
-            ConfigValue::Array(vec![ConfigValue::String("config".into())]),
-        ),
-        (
             "runtime_plugins".into(),
             ConfigValue::Object(BTreeMap::new()),
         ),
     ]))
 }
 
-/// Known local-product selections. An empty repository enables none of them.
-#[must_use]
-pub fn product_runtime_selections() -> Vec<ConfiguredPluginSelection> {
-    vec![
-        ConfiguredPluginSelection {
-            id: AGENT_CONNECTIONS_PLUGIN_ID.into(),
-            enabled: false,
-            config: serde_json::to_value(AgentConnectionsConfig::default())
-                .expect("Agent connection defaults serialize"),
-        },
-        ConfiguredPluginSelection {
-            id: BOT_FLOW_ROUTER_PLUGIN_ID.into(),
-            enabled: false,
-            config: serde_json::json!({}),
-        },
-        ConfiguredPluginSelection {
-            id: QQBOT_ADAPTER_PLUGIN_ID.into(),
-            enabled: false,
-            config: serde_json::to_value(QqBotConfig::default()).expect("QQ defaults serialize"),
-        },
-        ConfiguredPluginSelection {
-            id: LOCAL_AGENT_PLUGIN_ID.into(),
-            enabled: false,
-            config: serde_json::to_value(LocalAgentConfig::default())
-                .expect("Local Agent defaults serialize"),
-        },
-        ConfiguredPluginSelection {
-            id: BOT_AGENT_BRIDGE_PLUGIN_ID.into(),
-            enabled: false,
-            config: serde_json::to_value(BotAgentConfig::default())
-                .expect("Bot Agent defaults serialize"),
-        },
-    ]
-}
-
-/// Preserves stored product selections while ensuring every v1 owner component is declared.
-pub fn merge_required_product_selections(selections: &mut Vec<ConfiguredPluginSelection>) {
-    for required in product_runtime_selections() {
-        if !selections
-            .iter()
-            .any(|selection| selection.id == required.id)
-        {
-            selections.push(required);
-        }
-    }
-}
-
 /// Registers the product-facing owner providers after Host secrets have been loaded.
-pub async fn register_configured_product_providers(
+pub(crate) async fn register_configured_product_providers(
     service: &Arc<ConfigService>,
-    selections: &[ConfiguredPluginSelection],
     secrets: HostSecretStore,
 ) -> Result<(), ProductConfigError> {
-    let qq = selection_or_default(selections, QQBOT_ADAPTER_PLUGIN_ID);
-    let qq_config = deserialize_or_default::<QqBotConfig>(&qq.config, "QQ Bot")?;
+    let qq_config = QqBotConfig::default();
     let mut qq_provider = MemoryConfigProvider::new(
         qq_config_descriptor(QQBOT_ADAPTER_PLUGIN_ID),
-        qq_config_value(qq.enabled, &qq_config),
+        qq_config_value(false, &qq_config),
         ConfigApplyMode::HotReload,
     )
     .with_persist(Arc::new(HostSecretPersist {
@@ -367,11 +298,10 @@ pub async fn register_configured_product_providers(
         .register(Arc::new(qq_provider))
         .map_err(register_error)?;
 
-    let local = selection_or_default(selections, LOCAL_AGENT_PLUGIN_ID);
-    let local_config = deserialize_or_default::<LocalAgentConfig>(&local.config, "Agent")?;
+    let local_config = LocalAgentConfig::default();
     let mut local_provider = MemoryConfigProvider::new(
         local_agent_config_descriptor(),
-        local_agent_config_value(local.enabled, &local_config),
+        local_agent_config_value(false, &local_config),
         ConfigApplyMode::HotReload,
     )
     .with_persist(Arc::new(HostSecretPersist {
@@ -390,8 +320,7 @@ pub async fn register_configured_product_providers(
         .register(Arc::new(local_provider))
         .map_err(register_error)?;
 
-    let bridge = selection_or_default(selections, BOT_AGENT_BRIDGE_PLUGIN_ID);
-    let bridge_config = deserialize_or_default::<BotAgentConfig>(&bridge.config, "Bot Agent")?;
+    let bridge_config = BotAgentConfig::default();
     service
         .registry()
         .register(Arc::new(MemoryConfigProvider::new(
@@ -416,11 +345,11 @@ pub async fn register_configured_product_providers(
     Ok(())
 }
 
-/// Overlays persisted owner documents onto the runtime selections before initial startup.
-pub async fn restore_configured_product_selections(
+/// Resolves the owner documents that are authoritative for configurable product plugins.
+pub(crate) async fn configured_product_owner_selections(
     service: &Arc<ConfigService>,
-    selections: &mut Vec<ConfiguredPluginSelection>,
-) -> Result<(), ProductConfigError> {
+) -> Result<Vec<ConfiguredPluginSelection>, ProductConfigError> {
+    let mut selections = Vec::new();
     for provider_id in [
         QQBOT_ADAPTER_PLUGIN_ID,
         LOCAL_AGENT_CONFIG_PROVIDER_ID,
@@ -434,24 +363,80 @@ pub async fn restore_configured_product_selections(
             )
             .await
             .map_err(register_error)?;
-        let base = selections
-            .iter()
-            .find(|selection| selection.id == provider_id);
-        let restored = configured_plugin_selection_from_value(provider_id, &snapshot.value, base)
+        let restored = configured_plugin_selection_from_value(provider_id, &snapshot.value, None)
             .map_err(register_error)?;
-        if let Some(current) = selections
-            .iter_mut()
-            .find(|selection| selection.id == provider_id)
-        {
-            *current = restored;
-        } else {
-            selections.push(restored);
-        }
+        selections.push(restored);
     }
-    Ok(())
+    Ok(selections)
 }
 
-pub fn configured_plugin_selection_from_value(
+pub(crate) fn configured_product_selections(
+    product: &serde_json::Value,
+    owner_selections: Vec<ConfiguredPluginSelection>,
+) -> Result<Vec<ConfiguredPluginSelection>, ConfigError> {
+    let workspace_enabled = product
+        .get("workspace_enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let mut selections = runtime_plugin_selections(product)?;
+    selections.extend([
+        ConfiguredPluginSelection {
+            id: AGENT_CONNECTIONS_PLUGIN_ID.into(),
+            enabled: workspace_enabled,
+            config: serde_json::to_value(AgentConnectionsConfig::default())
+                .expect("Agent connection defaults serialize"),
+        },
+        ConfiguredPluginSelection {
+            id: BOT_FLOW_ROUTER_PLUGIN_ID.into(),
+            enabled: workspace_enabled,
+            config: serde_json::json!({}),
+        },
+    ]);
+    selections.extend(owner_selections);
+    Ok(selections)
+}
+
+pub(crate) fn runtime_plugin_selections(
+    product: &serde_json::Value,
+) -> Result<Vec<ConfiguredPluginSelection>, ConfigError> {
+    product
+        .get("runtime_plugins")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(id, value)| {
+            if is_product_owner_plugin(id) {
+                return Err(ConfigError::ApplyRejected {
+                    reason: format!("`runtime_plugins` 不得配置 owner 插件 `{id}`"),
+                });
+            }
+            Ok(ConfiguredPluginSelection {
+                id: id.clone(),
+                enabled: value
+                    .get("enabled")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true),
+                config: value
+                    .get("config")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn is_product_owner_plugin(id: &str) -> bool {
+    matches!(
+        id,
+        AGENT_CONNECTIONS_PLUGIN_ID
+            | BOT_FLOW_ROUTER_PLUGIN_ID
+            | QQBOT_ADAPTER_PLUGIN_ID
+            | LOCAL_AGENT_PLUGIN_ID
+            | BOT_AGENT_BRIDGE_PLUGIN_ID
+    )
+}
+
+pub(crate) fn configured_plugin_selection_from_value(
     provider_id: &str,
     value: &ConfigValue,
     base: Option<&ConfiguredPluginSelection>,
@@ -478,8 +463,13 @@ pub fn configured_plugin_selection_from_value(
             })
         }
         QQBOT_ADAPTER_PLUGIN_ID => {
-            let mut config: QqBotConfig = base
-                .and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
+            let mut config: QqBotConfig = object
+                .get("runtime_config")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .or_else(|| {
+                    base.and_then(|selection| serde_json::from_value(selection.config.clone()).ok())
+                })
                 .unwrap_or_default();
             config.account_id = if config.account_id.trim().is_empty() {
                 "local".into()
@@ -547,37 +537,6 @@ pub fn configured_plugin_selection_from_value(
         _ => Err(ConfigError::ApplyRejected {
             reason: format!("未知产品配置 `{provider_id}`"),
         }),
-    }
-}
-
-fn selection_or_default(
-    selections: &[ConfiguredPluginSelection],
-    plugin_id: &str,
-) -> ConfiguredPluginSelection {
-    selections
-        .iter()
-        .find(|selection| selection.id == plugin_id)
-        .cloned()
-        .or_else(|| {
-            product_runtime_selections()
-                .into_iter()
-                .find(|selection| selection.id == plugin_id)
-        })
-        .expect("product owner selection exists")
-}
-
-fn deserialize_or_default<T>(
-    value: &serde_json::Value,
-    title: &str,
-) -> Result<T, ProductConfigError>
-where
-    T: serde::de::DeserializeOwned + Default,
-{
-    if value.is_null() {
-        Ok(T::default())
-    } else {
-        serde_json::from_value(value.clone())
-            .map_err(|error| ProductConfigError::Register(format!("{title} 配置无效：{error}")))
     }
 }
 

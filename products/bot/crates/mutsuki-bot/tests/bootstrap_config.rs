@@ -2,7 +2,10 @@ use std::path::Path;
 
 use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
 use mutsuki_bot::load_bootstrapped_product;
-use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue, capability};
+use mutsuki_config_service::{
+    ConfigApplyRequest, ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigValue,
+    capability,
+};
 
 fn bootstrap(root: &Path, extra: &str) -> std::path::PathBuf {
     let path = root.join("bootstrap.toml");
@@ -46,6 +49,16 @@ async fn empty_sqlite_is_seeded_once_and_restored() {
         .await
         .unwrap();
     assert_eq!(first_product.revision.0, 1);
+    assert_eq!(first_product.schema_version, 3);
+    assert_eq!(first_product.value_version, 3);
+    assert!(
+        first_product
+            .value
+            .as_object()
+            .unwrap()
+            .get("extensions")
+            .is_none()
+    );
     let enabled = first
         .service
         .plugins
@@ -69,6 +82,90 @@ async fn empty_sqlite_is_seeded_once_and_restored() {
         .await
         .unwrap();
     assert_eq!(second_product.revision, first_product.revision);
+}
+
+#[tokio::test]
+async fn legacy_product_document_version_is_rejected_without_migration() {
+    let root = tempfile::tempdir().unwrap();
+    let path = bootstrap(root.path(), "");
+    let first = load_bootstrapped_product(&path).await.unwrap();
+    let snapshot = first
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    let mut write = first
+        .config
+        .repository()
+        .prepare_compare_and_set(ConfigCompareAndSetRequest {
+            key: ConfigDocumentKey::new(PRODUCT_CONFIG_PROVIDER_ID, ConfigContext::global()),
+            expected_revision: snapshot.revision,
+            value: snapshot.value,
+            schema_version: 2,
+            value_version: 2,
+        })
+        .unwrap();
+    write.commit().unwrap();
+    write.finish().unwrap();
+    drop(first);
+
+    let error = match load_bootstrapped_product(&path).await {
+        Ok(_) => panic!("legacy product document unexpectedly loaded"),
+        Err(error) => error,
+    };
+    assert!(error.contains("product.config.version_unsupported"));
+}
+
+#[tokio::test]
+async fn owner_plugin_ids_are_rejected_from_runtime_plugins() {
+    let root = tempfile::tempdir().unwrap();
+    let path = bootstrap(root.path(), "");
+    let first = load_bootstrapped_product(&path).await.unwrap();
+    let snapshot = first
+        .config
+        .read(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigContext::global(),
+            &[capability::VALUE_READ.into()],
+        )
+        .await
+        .unwrap();
+    let ConfigValue::Object(mut candidate) = snapshot.value else {
+        panic!("product config must be an object");
+    };
+    candidate
+        .get_mut("runtime_plugins")
+        .and_then(ConfigValue::as_object_mut)
+        .unwrap()
+        .insert(
+            "mutsuki.bot.adapter.qqbot".into(),
+            ConfigValue::from_json(&serde_json::json!({"enabled": true, "config": {}})),
+        );
+    first
+        .config
+        .apply(
+            PRODUCT_CONFIG_PROVIDER_ID,
+            ConfigApplyRequest {
+                candidate: ConfigValue::Object(candidate),
+                expected_revision: snapshot.revision,
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
+        )
+        .await
+        .unwrap();
+    drop(first);
+
+    let error = match load_bootstrapped_product(&path).await {
+        Ok(_) => panic!("reserved owner plugin unexpectedly loaded"),
+        Err(error) => error,
+    };
+    assert!(error.contains("不得配置 owner 插件"));
 }
 
 #[tokio::test]

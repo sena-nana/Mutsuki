@@ -29,7 +29,7 @@ pub use async_executor::{
 };
 pub use backend::{HostExtension, PluginBackend};
 pub use binary::{BinaryRunner, BinaryTransport};
-pub use bootstrapper::{PreparedRuntimeReload, RuntimeBootstrapper};
+pub use bootstrapper::{PreparedHostRuntime, PreparedRuntimeReload, RuntimeBootstrapper};
 pub use capabilities::HostCapabilityRegistry;
 pub use clients::{
     AbiResourceClient, AbiTaskClient, LocalResourceClient, LocalTaskClient, ResourcePlanClient,

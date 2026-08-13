@@ -28,6 +28,11 @@ impl ProductProcess {
         }
     }
 
+    #[allow(dead_code)] // Shared by Unix smoke; the credential-gated smoke compiles this helper too.
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub async fn wait_for_exit(&mut self, timeout: Duration) -> ExitStatus {
         let deadline = Instant::now() + timeout;
         loop {

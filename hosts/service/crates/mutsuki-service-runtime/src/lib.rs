@@ -23,7 +23,7 @@ use mutsuki_runtime_host::BinaryRunner;
 use mutsuki_runtime_host::{
     ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply,
     HostTaskSnapshot, HostTaskState, LaneExecutionPolicy, ProcessRunnerSpec, RunnerLimits,
-    RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor, resolve_load_plan,
+    RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor,
 };
 #[cfg(test)]
 use mutsuki_runtime_sdk::RuntimeBootstrapperService;
@@ -688,6 +688,16 @@ impl ServiceRuntimeHandle {
             .iter()
             .find(|selection| selection.id == plugin_id)
             .cloned()
+    }
+
+    /// Returns the complete configured selection snapshot for product-owned diff compilation.
+    #[must_use]
+    pub fn configured_plugin_selections(&self) -> Vec<ConfiguredPluginSelection> {
+        self.inner
+            .configured_selections
+            .lock()
+            .expect("configured selections mutex")
+            .clone()
     }
 
     pub fn host_service<T>(&self, service_id: &str) -> ServiceRuntimeResult<Arc<T>>
@@ -1364,8 +1374,13 @@ impl ServiceRuntime {
             .await
     }
 
-    pub async fn run_until_shutdown_signal<F>(
-        mut self,
+    pub async fn wait_for_shutdown_request(&mut self) -> ServiceRuntimeResult<()> {
+        self.wait_for_shutdown_request_with(platform_shutdown_signal())
+            .await
+    }
+
+    pub async fn wait_for_shutdown_request_with<F>(
+        &mut self,
         shutdown_signal: F,
     ) -> ServiceRuntimeResult<()>
     where
@@ -1384,6 +1399,17 @@ impl ServiceRuntime {
                 tracing::info!(reason, "service shutdown signal received");
             }
         }
+        Ok(())
+    }
+
+    pub async fn run_until_shutdown_signal<F>(
+        mut self,
+        shutdown_signal: F,
+    ) -> ServiceRuntimeResult<()>
+    where
+        F: Future<Output = String>,
+    {
+        self.wait_for_shutdown_request_with(shutdown_signal).await?;
         self.shutdown().await;
         Ok(())
     }
@@ -1622,15 +1648,13 @@ impl ServiceRuntimeInner {
             self.runtime_client.clone(),
         )
         .await?;
-        let mut runtime_lock = resolve_load_plan(
-            &new_catalog
-                .records
-                .iter()
-                .map(|record| record.manifest.clone())
-                .collect::<Vec<_>>(),
-            &profile,
+        let prepared = bootstrapper.prepare_targeted_reload_with_runner_limits(
+            profile,
+            registry_generation,
+            runner_limits,
+            runtime_affected.clone(),
         )?;
-        runtime_lock.registry_generation = registry_generation;
+        let runtime_lock = prepared.load_plan().clone();
         for hook in &candidate_load_plan_hooks {
             hook.validate(&runtime_lock)
                 .map_err(ServiceRuntimeError::LoadPlanHook)?;
@@ -1640,12 +1664,6 @@ impl ServiceRuntimeInner {
                 .validate(&runtime_lock)
                 .map_err(ServiceRuntimeError::LoadPlanHook)?;
         }
-        let prepared = bootstrapper.prepare_targeted_reload_with_runner_limits(
-            profile,
-            registry_generation,
-            runner_limits,
-            runtime_affected.clone(),
-        )?;
         let runtime_lock_path = self.config.service.run_dir.join("runtime.lock.json");
         let previous_runtime_lock = fs::read(&runtime_lock_path).ok();
         write_runtime_lock(&self.config, &runtime_lock)?;
@@ -2069,7 +2087,7 @@ impl ServiceRuntimeInner {
         let load_plan_observers = components.load_plan_observers();
         let runner_limits =
             resolve_runner_limits(&configured_runner_limits, &runner_limit_factories);
-        let (prepared, runtime_lock) = match runtime_bootstrapper(
+        let prepared = match runtime_bootstrapper(
             &self.config,
             &new_catalog,
             &native_runner_factories,
@@ -2079,27 +2097,16 @@ impl ServiceRuntimeInner {
         )
         .await
         .and_then(|(bootstrapper, profile)| {
-            let mut lock = resolve_load_plan(
-                &new_catalog
-                    .records
-                    .iter()
-                    .map(|record| record.manifest.clone())
-                    .collect::<Vec<_>>(),
-                &profile,
-            )?;
-            lock.registry_generation = registry_generation;
-            Ok((
-                bootstrapper.prepare_reload_with_runner_limits(
-                    profile,
-                    registry_generation,
-                    runner_limits,
-                )?,
-                lock,
-            ))
+            Ok(bootstrapper.prepare_reload_with_runner_limits(
+                profile,
+                registry_generation,
+                runner_limits,
+            )?)
         }) {
-            Ok(reload) => reload,
+            Ok(prepared) => prepared,
             Err(error) => return ControlResponse::err(ControlError::Failed(error.to_string())),
         };
+        let runtime_lock = prepared.load_plan().clone();
         for hook in &load_plan_hooks {
             if let Err(error) = hook.validate(&runtime_lock) {
                 return ControlResponse::err(ControlError::Failed(error));
@@ -2846,14 +2853,8 @@ async fn boot_core(
         )?)),
         ..HostRuntimeConfig::default()
     };
-    let lock = resolve_load_plan(
-        &catalog
-            .records
-            .iter()
-            .map(|record| record.manifest.clone())
-            .collect::<Vec<_>>(),
-        &profile,
-    )?;
+    let prepared = bootstrapper.prepare_host_runtime_with_config(profile, host_config)?;
+    let lock = prepared.load_plan().clone();
     for hook in load_plan_hooks {
         hook.validate(&lock)
             .map_err(ServiceRuntimeError::LoadPlanHook)?;
@@ -2863,7 +2864,7 @@ async fn boot_core(
             .validate(&lock)
             .map_err(ServiceRuntimeError::LoadPlanHook)?;
     }
-    let runtime = bootstrapper.into_host_runtime_with_config(profile, host_config)?;
+    let runtime = prepared.start()?;
     write_runtime_lock(config, &lock)?;
     Ok((runtime, lock))
 }
@@ -4862,6 +4863,34 @@ generation = 7
         tokio::time::timeout(Duration::from_secs(3), runtime.shutdown())
             .await
             .expect("shutdown interrupts idle actor sleep");
+    }
+
+    #[tokio::test]
+    async fn waiting_for_shutdown_request_does_not_release_the_runtime() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::create_dir_all(dir.path().join("logs")).expect("logs");
+        let mut config = ServiceConfig::default();
+        config.ipc.enabled = false;
+        config.observe.console = false;
+        config.service.home_dir = dir.path().to_path_buf();
+        config.service.data_dir = dir.path().join("data");
+        config.service.log_dir = dir.path().join("logs");
+        config.service.run_dir = dir.path().join("run");
+        config.plugins.dynamic_dirs.clear();
+        config.plugins.disabled_dir = dir.path().join("disabled");
+
+        let mut runtime = ServiceRuntimeBuilder::new(config)
+            .start()
+            .await
+            .expect("runtime starts");
+        runtime
+            .wait_for_shutdown_request_with(async { "test".to_string() })
+            .await
+            .expect("shutdown request observed");
+        let report = runtime.inner.health_check().await;
+        let report: HealthReport = control_result!(report, ControlResult::HealthCheck);
+        assert_eq!(report.core, "ok");
+        runtime.shutdown().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
