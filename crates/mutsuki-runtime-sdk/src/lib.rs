@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -194,6 +194,7 @@ pub struct AsyncRunnerContext {
     next_call: Arc<AtomicU64>,
     pending: Arc<Mutex<Option<PendingAwait>>>,
     allow_self_call: bool,
+    allowed_protocols: Arc<BTreeSet<String>>,
 }
 
 impl AsyncRunnerContext {
@@ -218,6 +219,14 @@ impl AsyncRunnerContext {
         P: SdkProtocol,
         T: Serialize,
     {
+        if let Err(error) = self.require_protocol(P::PROTOCOL_ID) {
+            return BatchCallFuture::failed(
+                self.client.clone(),
+                self.parent_task_id.clone(),
+                self.pending.clone(),
+                error,
+            );
+        }
         let mut tasks = Vec::new();
         let mut handles = Vec::new();
         for input in inputs {
@@ -370,8 +379,16 @@ impl AsyncRunnerContext {
         target: Option<(String, String)>,
         cancel_policy: CancelPolicy,
     ) -> CallFuture {
-        let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
         let protocol_id = protocol_id.into();
+        if let Err(error) = self.require_protocol(&protocol_id) {
+            return CallFuture::failed(
+                self.client.clone(),
+                self.parent_task_id.clone(),
+                self.pending.clone(),
+                error,
+            );
+        }
+        let call_index = self.next_call.fetch_add(1, Ordering::Relaxed) + 1;
         let task_id = format!("{}:call:{call_index}", self.parent_task_id);
         let mut task = Task::new(task_id.clone(), protocol_id.clone(), payload);
         task.trace_id = self.trace_id.clone();
@@ -402,6 +419,20 @@ impl AsyncRunnerContext {
             },
             self_call_blocked,
         }
+    }
+
+    fn require_protocol(&self, protocol_id: &str) -> RuntimeResult<()> {
+        if self.allowed_protocols.contains(protocol_id) {
+            return Ok(());
+        }
+        Err(RuntimeFailure::new(RuntimeError::new(
+            mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+            "runtime.sdk.outbound_surface",
+            format!(
+                "runner.{}.undeclared_task_protocol.{protocol_id}",
+                self.current_runner_id
+            ),
+        )))
     }
 }
 
@@ -802,6 +833,17 @@ impl TaskAwaitRunnerAdapter {
                 next_call: Arc::new(AtomicU64::new(0)),
                 pending: pending.clone(),
                 allow_self_call: self.allow_self_call,
+                allowed_protocols: Arc::new(
+                    self.descriptor
+                        .contract_surfaces
+                        .iter()
+                        .filter_map(|surface| {
+                            surface
+                                .strip_prefix("requires:task_protocol:")
+                                .map(ToOwned::to_owned)
+                        })
+                        .collect(),
+                ),
             };
             let future = (self.factory)(async_ctx, task);
             self.invocations

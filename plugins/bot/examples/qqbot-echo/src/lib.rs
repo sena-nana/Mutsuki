@@ -151,11 +151,12 @@ mod tests {
                 .map(|manifest| manifest.plugin_id.clone())
                 .collect(),
             bindings: BTreeMap::new(),
+            surface_bindings: BTreeMap::new(),
             plugin_deployments: BTreeMap::new(),
             observability: Default::default(),
             allow_dynamic_registration: false,
             allow_hot_reload: false,
         };
-        assert!(resolve_load_plan(&qqbot_echo_manifests(), &profile).is_ok());
+        resolve_load_plan(&qqbot_echo_manifests(), &profile).unwrap();
     }
 }

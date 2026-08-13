@@ -1003,6 +1003,7 @@ pub fn wait_resume_sample() -> Sample {
     let client = Arc::new(OutcomeClient::default());
     let descriptor = RunnerDescriptorBuilder::new("benchmark.wait.runner", "benchmark.bot")
         .accepted_protocol("mutsuki.bot.benchmark/wait@1")
+        .requires_protocol("mutsuki.bot.benchmark/result@1")
         .build();
     let mut runner = TaskAwaitRunnerAdapter::new(
         descriptor,

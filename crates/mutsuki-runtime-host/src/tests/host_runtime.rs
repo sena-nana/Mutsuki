@@ -2331,7 +2331,10 @@ fn process_runner_helper() {
 fn host_runtime_requires_active_scheduler_policy_instance() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
-    manifest.requires = vec!["scheduler_policy:scheduler.fair".into()];
+    manifest.requires = vec![SurfaceRequirement::new(
+        ContractSurfaceKind::SchedulerPolicy,
+        "scheduler.fair",
+    )];
     manifest.provides.scheduler_policies = vec![SchedulerPolicyDescriptor {
         policy_id: "scheduler.fair".into(),
         version: "1.0.0".into(),
@@ -2405,8 +2408,8 @@ fn host_runtime_registers_only_active_capability_graph_extensions() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor.clone()]);
     manifest.requires = vec![
-        "scheduler_policy:scheduler.fair".into(),
-        "workflow:workflow.linear".into(),
+        SurfaceRequirement::new(ContractSurfaceKind::SchedulerPolicy, "scheduler.fair"),
+        SurfaceRequirement::new(ContractSurfaceKind::Workflow, "workflow.linear"),
     ];
     manifest.provides.host_extensions = vec![
         HostExtensionDescriptor {

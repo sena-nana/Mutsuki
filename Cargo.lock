@@ -3569,11 +3569,13 @@ dependencies = [
 name = "mutsuki-agent-plugin-git"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "mutsuki-agent-contracts",
  "mutsuki-agent-plugin-api",
  "mutsuki-agent-runtime",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
 ]
 
@@ -4450,7 +4452,6 @@ name = "mutsuki-plugin-bot-agent-web"
 version = "0.1.0"
 dependencies = [
  "mutsuki-agent-contracts",
- "mutsuki-agent-service-host-integration",
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
  "serde",

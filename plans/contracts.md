@@ -63,7 +63,7 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 | `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
 | `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 provider plan commit receipt；receipt 只能携带 descriptor 更新和小型结构化输出，不携带资源 bytes |
 | `TransactionPlan` / `CommandBatch` / `SagaPlan` | Experimental provider/workflow descriptor；CoreRuntime 不解释事务、批处理或 saga 执行语义 |
-| `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、绑定哪些能力、是否允许热重载 |
+| `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、runner 绑定、公共 surface provider 绑定，以及是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
 | `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 视图，用于 host 声明与裁剪一致性 |
 | `CapabilityProviderSelection` | resolver 为 active capability 选择的 provider 插件、版本和 surface descriptor |
@@ -73,7 +73,7 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 | `ConfigCompareAndSetRequest` | 配置仓库的 expected revision、redacted value 与 schema/value version；仓库不解释 owner payload |
 | `ConfigRepository` / `PreparedConfigWrite` | Host-neutral durable pending、CAS commit、rollback 与 crash recovery 边界 |
 | `ConfigProvider` / `PreparedConfigActivation` | owner validation、default 与可回滚运行态激活边界；不决定存储位置 |
-| `PluginManifest` | 插件声明 owner-defined capability、versioned extension、runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
+| `PluginManifest` | 插件声明 owner-defined capability、Host service、typed surface requirement、versioned extension、runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
 | `HostExtensionDescriptor` | Host 内部 backend/service 扩展点 descriptor，例如 bridge、codec、trace sink、resource backend、scheduler policy |
 | `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
 | `CodecDescriptor` / `BridgeDescriptor` | 连接级 codec 与 host-side shim/bridge descriptor |
@@ -532,6 +532,10 @@ artifact 类型兼容。部署形态属于 host 执行面约束，不得进入�
 owner-defined capability。resolver 将非空完整 capability 字符串作为 load-plan 的
 provided/active capability 与 provider selection 事实，Core 不解释其领域语义。
 
+`PluginProvides.services` 声明 Host 注册表中可被其他插件消费的稳定 service id。每个实际
+注册的 `RuntimeBootstrapperService` 必须同时给出所属 capability，并且 service 与 capability
+都必须出现在同一 manifest 的 provides 中；Host 在发布 registry 前完成校验。
+
 `PluginProvides.extensions` 只承载版本化、owner-defined 的不透明扩展描述。通用 resolver
 只校验 `extension_id` 非空且使用稳定限定字符、`version > 0`、`payload` 是 JSON object，
 并拒绝同一插件内重复的 `(extension_id, version)`；它不得识别领域 extension id、读取
@@ -577,11 +581,17 @@ RuntimeBootstrapper / host boot 必须在 CoreRuntime 启动前校验 active plu
 引用的 bridge deployment 与 codec 支持关系，并拒绝不匹配 active scheduler descriptor 的
 host scheduler policy 实例。
 
-`PluginManifest.requires` 兼容既有 capability 字符串，并可用
-`<capability>@<version-constraint>` 表达 resolver 级版本约束。resolver 只校验 load plan
-内已声明 provider descriptor 的版本，不负责下载、安装或跨版本依赖解算。插件声明的
+`PluginManifest.requires` 只接受 typed `SurfaceRequirement { kind, surface_id, version }`，
+依赖类型不再从字符串前缀、插件 id 或加载顺序推断。多个插件提供同一公共 surface 时，
+`RuntimeProfile.surface_bindings` 必须用 canonical `<kind>:<surface-id>` key 显式选择 provider；
+缺失或指向非 provider 的绑定必须结构化失败。resolver 只校验 load plan 内已声明 provider
+descriptor 的版本，不负责下载、安装或跨版本依赖解算。插件声明的
 effect / resource permission 必须能映射到 active effect、resource provider、resource type
 或 resource operation；无法映射时 resolver 必须结构化失败，不能生成看似授权的 load plan。
+
+Runner 使用 `task.call` 发出的 outbound protocol 必须在 SDK builder / macro 中声明为 typed
+task-protocol requirement；Host 在 registry freeze 前解析并验证，运行时 adapter 再拒绝未声明
+调用，避免依赖只存在于实现代码中。
 
 Builtin 插件必须仍通过 host 注册 runner/provider 能力，不能因为静态编译进 Host 就进入
 Core 内建逻辑。ABI / WASM / process / Python 插件必须通过对应 host bridge 注册相同的

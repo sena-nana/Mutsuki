@@ -20,10 +20,15 @@ pub fn plugin(client: RuntimeClientRef, registry: ToolRegistry) -> PluginBuilder
 }
 
 pub fn runner(client: RuntimeClientRef, registry: ToolRegistry) -> TaskAwaitRunnerAdapter {
-    let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
+    let mut descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentToolListProtocol>()
-        .accepts::<AgentToolExecuteProtocol>()
-        .build();
+        .accepts::<AgentToolExecuteProtocol>();
+    for tool in registry.list(AgentToolListRequest::default()).tools {
+        if matches!(tool.execution, AgentToolExecution::Routed) {
+            descriptor = descriptor.requires_protocol(tool.target_protocol_id);
+        }
+    }
+    let descriptor = descriptor.build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
         client,

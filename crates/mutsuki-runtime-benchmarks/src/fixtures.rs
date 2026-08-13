@@ -47,6 +47,7 @@ pub fn runtime_profile(observability: ObservabilityProfile) -> RuntimeProfile {
         mode: RuntimeProfileMode::FullDev,
         enabled_plugins: vec![BENCH_PLUGIN_ID.into()],
         bindings: BTreeMap::new(),
+        surface_bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
         observability,
         allow_dynamic_registration: false,

@@ -35,6 +35,7 @@ from mutsuki_runner_kit.contracts.plugin import (
     RuntimeLoadPlan,
     RuntimeProfile,
     RuntimeProfileMode,
+    SurfaceRequirement,
 )
 from mutsuki_runner_kit.contracts.resource import (
     ResourceProviderCompatibility,
@@ -190,6 +191,8 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
                 reload_policy="state_resource_handoff",
             ),
         ),
+        capabilities=("agent.management",),
+        services=("mutsuki.agent.management",),
     )
     manifest = PluginManifest(
         plugin_id="plugin-a",
@@ -201,7 +204,12 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             sha256="sha256:plugin",
         ),
         provides=provides,
-        requires=(),
+        requires=(
+            SurfaceRequirement(
+                kind=ContractSurfaceKind.SERVICE,
+                surface_id="mutsuki.agent.management",
+            ),
+        ),
         permissions=PermissionGrant(effects=("effect.chat.send",), resources=("read",)),
         lifecycle=LifecyclePolicy(
             reload_policy="drain_and_swap",
@@ -387,6 +395,7 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
     )
     assert_json_roundtrip(PermissionAuditEntry, plan.capability_graph.permission_audit[0])
     assert_json_roundtrip(PluginProvides, provides)
+    assert_json_roundtrip(SurfaceRequirement, manifest.requires[0])
     legacy_provides = replace(provides, protocol_classes={})
     legacy_json = to_json_dict(legacy_provides)
     assert "protocol_classes" not in legacy_json
@@ -405,6 +414,9 @@ def test_plugin_load_plan_profile_protocol_and_handler_binding_roundtrip() -> No
             observability=observability,
             allow_dynamic_registration=False,
             allow_hot_reload=True,
+            surface_bindings={
+                "service:mutsuki.agent.management": "plugin-a",
+            },
         ),
     )
 

@@ -18,6 +18,7 @@ use mutsuki_runtime_sdk::{
     TaskAwaitRunnerAdapter, map_work_batch_entries,
 };
 use serde::{Serialize, Serializer};
+use serde_json::json;
 
 use crate::{
     BOT_FLOW_EVENT_MATCH_PROTOCOL_ID, BOT_FLOW_MATCH_RUNNER_ID, BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
@@ -31,27 +32,50 @@ pub const BOT_FLOW_REGISTRY_SERVICE_ID: &str = "mutsuki.bot.flow.registry";
 
 #[must_use]
 pub fn flow_router_manifest() -> PluginManifest {
+    flow_router_manifest_for_catalog(&[])
+}
+
+#[must_use]
+pub fn flow_router_manifest_for_catalog(
+    catalog: &[mutsuki_bot_protocol::BotNodeDescriptor],
+) -> PluginManifest {
     PluginBuilder::new(BOT_FLOW_ROUTER_PLUGIN_ID)
         .runner_descriptor(ingress_descriptor())
-        .runner_descriptor(node_descriptor())
+        .runner_descriptor(node_descriptor(catalog))
         .runner_descriptor(match_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_FLOW_INGRESS_PROTOCOL_ID).build(),
+            protocol_descriptor(
+                BOT_FLOW_INGRESS_PROTOCOL_ID,
+                &["event_id", "protocol_id", "payload", "context"],
+                &["graph_revision", "flow_tasks"],
+            ),
             BOT_FLOW_INGRESS_RUNNER_ID,
             "bot-flow-ingress",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID).build(),
+            protocol_descriptor(
+                BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID,
+                &["flow", "graph_revision", "execution_id", "node_id", "event"],
+                &["output"],
+            ),
             BOT_FLOW_NODE_RUNNER_ID,
             "bot-flow-node",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_FLOW_EVENT_MATCH_PROTOCOL_ID).build(),
+            protocol_descriptor(
+                BOT_FLOW_EVENT_MATCH_PROTOCOL_ID,
+                &["event", "condition"],
+                &["matched"],
+            ),
             BOT_FLOW_MATCH_RUNNER_ID,
             "bot-flow-event-match",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_FLOW_RATE_LIMIT_PROTOCOL_ID).build(),
+            protocol_descriptor(
+                BOT_FLOW_RATE_LIMIT_PROTOCOL_ID,
+                &["key", "limit", "window_ms"],
+                &["allowed"],
+            ),
             BOT_FLOW_MATCH_RUNNER_ID,
             "bot-flow-rate-limit",
         )
@@ -64,11 +88,27 @@ pub fn flow_router_manifest() -> PluginManifest {
         .manifest
 }
 
+fn protocol_descriptor(
+    protocol_id: &str,
+    request_required: &[&str],
+    response_required: &[&str],
+) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(json!({"type": "object", "required": request_required}))
+        .output_schema(json!({"type": "object", "required": response_required}))
+        .error_schema(json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
+}
+
 pub fn flow_router_runners(
     client: RuntimeClientRef,
     registry: Arc<BotFlowRegistry>,
 ) -> Vec<Box<dyn Runner>> {
     let node_registry = registry.clone();
+    let descriptor = node_descriptor(&node_registry.catalog());
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let registry = node_registry.clone();
         Box::pin(run_node(ctx, task, registry))
@@ -76,8 +116,7 @@ pub fn flow_router_runners(
     vec![
         Box::new(BotFlowIngressRunner::new(registry)),
         Box::new(
-            TaskAwaitRunnerAdapter::new(node_descriptor(), client, factory)
-                .with_self_call_policy(false),
+            TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false),
         ),
     ]
 }
@@ -90,14 +129,12 @@ pub fn flow_node_runner(
     client: RuntimeClientRef,
     registry: Arc<BotFlowRegistry>,
 ) -> Box<dyn Runner> {
+    let descriptor = node_descriptor(&registry.catalog());
     let factory: BoxedTaskAwaitRunner = Box::new(move |ctx, task| {
         let registry = registry.clone();
         Box::pin(run_node(ctx, task, registry))
     });
-    Box::new(
-        TaskAwaitRunnerAdapter::new(node_descriptor(), client, factory)
-            .with_self_call_policy(false),
-    )
+    Box::new(TaskAwaitRunnerAdapter::new(descriptor, client, factory).with_self_call_policy(false))
 }
 
 pub struct BotFlowIngressRunner {
@@ -438,8 +475,10 @@ fn ingress_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .build()
 }
 
-fn node_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
-    RunnerDescriptorBuilder::new(BOT_FLOW_NODE_RUNNER_ID, BOT_FLOW_ROUTER_PLUGIN_ID)
+fn node_descriptor(
+    catalog: &[mutsuki_bot_protocol::BotNodeDescriptor],
+) -> mutsuki_runtime_contracts::RunnerDescriptor {
+    let builder = RunnerDescriptorBuilder::new(BOT_FLOW_NODE_RUNNER_ID, BOT_FLOW_ROUTER_PLUGIN_ID)
         .accepted_protocol(BOT_FLOW_NODE_EXECUTE_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
         .invocation_mode(InvocationMode::SyncExclusive)
@@ -457,6 +496,12 @@ fn node_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
             entry_cancel: true,
             batch_cancel: true,
             timeout_granularity: TimeoutGranularity::Entry,
+        });
+    catalog
+        .iter()
+        .filter_map(|descriptor| descriptor.binding.as_ref())
+        .fold(builder, |builder, binding| {
+            builder.requires_protocol(binding.protocol_id.clone())
         })
         .build()
 }
@@ -492,7 +537,7 @@ mod tests {
 
     #[test]
     fn cooperative_node_runner_dispatches_one_stateful_batch_without_blocking_waiters() {
-        let descriptor = node_descriptor();
+        let descriptor = node_descriptor(&[]);
 
         assert_eq!(descriptor.invocation_mode, InvocationMode::SyncExclusive);
         assert_eq!(

@@ -12,7 +12,10 @@ fn resolver_activates_owner_defined_capabilities_and_fences_consumers() {
     let mut provider = runner_manifest("agent-connections", Vec::new());
     provider.provides.capabilities = vec!["agent_connection:primary".into()];
     let mut consumer = runner_manifest("bot-agent", Vec::new());
-    consumer.requires = vec!["agent_connection:primary".into()];
+    consumer.requires = vec![SurfaceRequirement::new(
+        ContractSurfaceKind::Capability,
+        "agent_connection:primary",
+    )];
     let mut profile = runtime_profile();
     profile.enabled_plugins = vec!["agent-connections".into(), "bot-agent".into()];
 
@@ -20,13 +23,13 @@ fn resolver_activates_owner_defined_capabilities_and_fences_consumers() {
     assert!(
         plan.capability_graph
             .active_capabilities
-            .contains(&"agent_connection:primary".into())
+            .contains(&"capability:agent_connection:primary".into())
     );
     assert_eq!(
         plan.capability_graph
             .active_capability_providers
             .iter()
-            .find(|selection| selection.capability == "agent_connection:primary")
+            .find(|selection| selection.capability == "capability:agent_connection:primary")
             .map(|selection| selection.provider_plugin_id.as_str()),
         Some("agent-connections")
     );
@@ -96,9 +99,9 @@ fn resolver_rejects_cross_plugin_protocol_class_conflicts() {
         manifest.provides.protocols = vec![ProtocolDescriptor {
             protocol_id: "shared.protocol".into(),
             version: "1.0.0".into(),
-            input_schema: json!({}),
-            output_schema: json!({}),
-            error_schema: json!({}),
+            input_schema: json!({"type": "object"}),
+            output_schema: json!({"type": "object"}),
+            error_schema: json!({"type": "object"}),
             codec: "json".into(),
             compatibility: "semver".into(),
         }];
@@ -122,6 +125,26 @@ fn resolver_rejects_cross_plugin_protocol_class_conflicts() {
 
     assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
     assert!(error.error().route.contains("cross_plugin_conflict"));
+}
+
+#[test]
+fn resolver_rejects_empty_production_protocol_schema() {
+    let mut manifest =
+        runner_manifest("plugin-a", vec![descriptor("schema.runner", "schema.work")]);
+    manifest.provides.protocols = vec![ProtocolDescriptor {
+        protocol_id: "schema.work".into(),
+        version: "1.0.0".into(),
+        input_schema: json!({}),
+        output_schema: json!({"type": "object"}),
+        error_schema: json!({"type": "object"}),
+        codec: "json".into(),
+        compatibility: "semver".into(),
+    }];
+
+    let error = crate::resolve_load_plan(&[manifest], &runtime_profile())
+        .expect_err("empty request schema must be rejected before registry freeze");
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+    assert_eq!(error.error().source, "host.load_plan.protocol_schema");
 }
 
 #[test]
@@ -250,6 +273,7 @@ fn resolver_emits_declared_runtime_surfaces() {
         mode: RuntimeProfileMode::FullDev,
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
+        surface_bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
@@ -331,7 +355,10 @@ fn resolver_emits_declared_runtime_surfaces() {
 fn locked_builtin_profile_prunes_unused_external_extensions() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
-    manifest.requires = vec!["workflow:workflow.linear".into()];
+    manifest.requires = vec![SurfaceRequirement::new(
+        ContractSurfaceKind::Workflow,
+        "workflow.linear",
+    )];
     manifest.provides.resource_providers = vec![
         "mutsuki.std.resource.memory".into(),
         "resource.shared-memory".into(),
@@ -557,7 +584,10 @@ fn builtin_only_profile_prunes_unused_resource_providers() {
 fn resolver_rejects_missing_required_capability() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
-    manifest.requires = vec!["workflow:workflow.missing".into()];
+    manifest.requires = vec![SurfaceRequirement::new(
+        ContractSurfaceKind::Workflow,
+        "workflow.missing",
+    )];
     let mut profile = runtime_profile();
     profile.mode = RuntimeProfileMode::LockedBuiltin;
 
@@ -584,7 +614,7 @@ fn resolver_preserves_at_version_inside_task_protocol_identity() {
         "http-consumer",
         vec![descriptor("consumer.runner", "consumer.work")],
     );
-    consumer.requires = vec![format!("task_protocol:{protocol_id}")];
+    consumer.requires = vec![SurfaceRequirement::task_protocol(protocol_id)];
     let mut profile = runtime_profile();
     profile.enabled_plugins = vec!["http-provider".into(), "http-consumer".into()];
 
@@ -603,12 +633,60 @@ fn resolver_preserves_at_version_inside_task_protocol_identity() {
 }
 
 #[test]
+fn resolver_requires_explicit_surface_provider_when_multiple_plugins_match() {
+    let protocol_id = "shared.work@1";
+    let provider_a = runner_manifest(
+        "provider-a",
+        vec![descriptor("provider-a.runner", protocol_id)],
+    );
+    let provider_b = runner_manifest(
+        "provider-b",
+        vec![descriptor("provider-b.runner", protocol_id)],
+    );
+    let mut consumer = runner_manifest(
+        "consumer",
+        vec![descriptor("consumer.runner", "consumer.work")],
+    );
+    consumer.requires = vec![SurfaceRequirement::task_protocol(protocol_id)];
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec!["provider-a".into(), "provider-b".into(), "consumer".into()];
+    profile
+        .bindings
+        .insert(protocol_id.into(), "provider-a.runner".into());
+
+    let error = crate::resolve_load_plan(
+        &[provider_a.clone(), provider_b.clone(), consumer.clone()],
+        &profile,
+    )
+    .expect_err("ambiguous surface must not depend on manifest order");
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+
+    profile
+        .surface_bindings
+        .insert(format!("task_protocol:{protocol_id}"), "provider-a".into());
+    let plan = crate::resolve_load_plan(&[provider_b, consumer, provider_a], &profile).unwrap();
+    assert!(
+        plan.capability_graph
+            .active_capability_providers
+            .iter()
+            .any(
+                |selection| selection.capability == format!("task_protocol:{protocol_id}")
+                    && selection.provider_plugin_id == "provider-a"
+            )
+    );
+}
+
+#[test]
 fn resolver_records_capability_provider_selection_and_permission_audit() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
     manifest.requires = vec![
-        "protocol:contract.v1@>=1.0.0".into(),
-        "resource_strategy:mutsuki.std.resource.memory".into(),
+        SurfaceRequirement::new(ContractSurfaceKind::Protocol, "contract.v1")
+            .with_version(">=1.0.0"),
+        SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            "mutsuki.std.resource.memory",
+        ),
     ];
     manifest.provides.protocols = vec![ProtocolDescriptor {
         protocol_id: "contract.v1".into(),
@@ -694,7 +772,10 @@ fn resolver_uses_protocol_class_for_non_prefixed_effect_permissions_and_surfaces
 fn resolver_rejects_unsatisfied_capability_version_constraint() {
     let runner_descriptor = descriptor("builtin.runner", "builtin.work");
     let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
-    manifest.requires = vec!["protocol:contract.v1@>=2.0.0".into()];
+    manifest.requires = vec![
+        SurfaceRequirement::new(ContractSurfaceKind::Protocol, "contract.v1")
+            .with_version(">=2.0.0"),
+    ];
     manifest.provides.protocols = vec![ProtocolDescriptor {
         protocol_id: "contract.v1".into(),
         version: "1.2.0".into(),

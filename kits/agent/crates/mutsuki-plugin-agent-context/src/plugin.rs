@@ -22,6 +22,7 @@ pub fn plugin(client: RuntimeClientRef, builder: ContextBuilder) -> PluginBuilde
 pub fn runner(client: RuntimeClientRef, builder: ContextBuilder) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentContextBuildProtocol>()
+        .requires::<AgentModelGenerateProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,

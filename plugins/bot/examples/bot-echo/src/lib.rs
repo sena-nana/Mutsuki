@@ -25,12 +25,12 @@ pub fn echo_manifest(plugin_generation: u64) -> mutsuki_runtime_contracts::Plugi
     PluginBuilder::new(ECHO_PLUGIN_ID)
         .runner_descriptor(echo_descriptor(plugin_generation))
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(ECHO_PROTOCOL_ID).build(),
+            reply_protocol_descriptor(ECHO_PROTOCOL_ID),
             ECHO_RUNNER_ID,
             "echo-reply",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(PING_PROTOCOL_ID).build(),
+            reply_protocol_descriptor(PING_PROTOCOL_ID),
             ECHO_RUNNER_ID,
             "ping-reply",
         )
@@ -46,6 +46,23 @@ pub fn echo_manifest(plugin_generation: u64) -> mutsuki_runtime_contracts::Plugi
         )
         .build()
         .manifest
+}
+
+fn reply_protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(json!({
+            "type": "object",
+            "required": ["flow_id", "node_id", "input"]
+        }))
+        .output_schema(json!({
+            "type": "object",
+            "required": ["outputs", "metadata"]
+        }))
+        .error_schema(json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
 }
 
 fn reply_node(node_type_id: &str, title: &str, protocol_id: &str) -> BotNodeDescriptor {

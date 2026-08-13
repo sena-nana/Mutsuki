@@ -26,6 +26,8 @@ use mutsuki_protocol_image::{
     CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, QR_RENDER, QrRenderRequest,
     Rgba,
 };
+#[cfg(test)]
+use mutsuki_runtime_contracts::SurfaceRequirement;
 use mutsuki_runtime_contracts::{
     CompletionBatch, DomainEvent, ExecutionClass, ProtocolClass, ReadPlan, RunnerBatchCapability,
     RunnerContext, RunnerDescriptor, RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect,
@@ -1002,7 +1004,11 @@ impl BilibiliRunner {
         client: RuntimeClientRef,
         risk_control: Option<BilibiliRiskControlConfig>,
     ) -> Box<dyn Runner> {
-        let descriptor = runner_descriptor(self.managed_config.is_some(), self.backend_kind);
+        let descriptor = runner_descriptor(
+            self.managed_config.is_some(),
+            risk_control.is_some(),
+            self.backend_kind,
+        );
         let state = Arc::new(Mutex::new(self));
         let factory = Box::new(move |ctx: AsyncRunnerContext, task: Task| {
             let state = state.clone();
@@ -1848,7 +1854,7 @@ fn manifest_for_backend(
 ) -> mutsuki_runtime_contracts::PluginManifest {
     let mut builder = PluginBuilder::new(PLUGIN_ID)
         .runner(Box::new(ManifestRunner {
-            descriptor: runner_descriptor(management_enabled, backend_kind),
+            descriptor: runner_descriptor(management_enabled, risk_control_enabled, backend_kind),
         }))
         .protocol_handler(protocol(POLL_LIVE), RUNNER_ID, "orchestration")
         .protocol_handler(protocol(POLL_VIDEO), RUNNER_ID, "orchestration");
@@ -1907,19 +1913,14 @@ fn manifest_for_backend(
             .protocol_classes
             .insert(protocol_id, ProtocolClass::Effect);
     }
-    if risk_control_enabled {
-        manifest.requires.push(format!("task_protocol:{SNAPSHOT}"));
-    }
-    manifest
-        .requires
-        .push(format!("task_protocol:{CARD_RENDER}"));
-    if management_enabled {
-        manifest.requires.push(format!("task_protocol:{QR_RENDER}"));
-    }
     manifest
 }
 
-fn runner_descriptor(management: bool, backend_kind: BilibiliBackendKind) -> RunnerDescriptor {
+fn runner_descriptor(
+    management: bool,
+    risk_control: bool,
+    backend_kind: BilibiliBackendKind,
+) -> RunnerDescriptor {
     let mut builder = RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID);
     let protocols: &[&str] = match backend_kind {
         BilibiliBackendKind::WebCookie => &[POLL_LIVE, POLL_DYNAMIC, POLL_VIDEO, LINK_RESOLVE],
@@ -1929,9 +1930,15 @@ fn runner_descriptor(management: bool, backend_kind: BilibiliBackendKind) -> Run
         builder = builder.accepted_protocol(*protocol);
     }
     if management {
-        builder = builder.accepted_protocol(MANAGEMENT_COMMAND);
+        builder = builder
+            .accepted_protocol(MANAGEMENT_COMMAND)
+            .requires_protocol(QR_RENDER);
+    }
+    if risk_control {
+        builder = builder.requires_protocol(SNAPSHOT);
     }
     builder
+        .requires_protocol(CARD_RENDER)
         .purity(RunnerPurity::Effectful)
         .execution_class(ExecutionClass::Orchestration)
         .batch_capability(RunnerBatchCapability {
@@ -2916,12 +2923,12 @@ mod tests {
         let base = manifest();
         assert!(
             base.requires
-                .contains(&format!("task_protocol:{CARD_RENDER}"))
+                .contains(&SurfaceRequirement::task_protocol(CARD_RENDER))
         );
         assert!(
             !base
                 .requires
-                .contains(&format!("task_protocol:{QR_RENDER}"))
+                .contains(&SurfaceRequirement::task_protocol(QR_RENDER))
         );
         assert!(base.provides.extensions.is_empty());
 
@@ -2930,7 +2937,7 @@ mod tests {
         assert!(
             managed
                 .requires
-                .contains(&format!("task_protocol:{QR_RENDER}"))
+                .contains(&SurfaceRequirement::task_protocol(QR_RENDER))
         );
         assert!(
             managed.provides.runners[0]
@@ -2968,7 +2975,7 @@ mod tests {
         assert!(
             risk_control
                 .requires
-                .contains(&format!("task_protocol:{SNAPSHOT}"))
+                .contains(&SurfaceRequirement::task_protocol(SNAPSHOT))
         );
         assert_eq!(
             risk_control.provides.runners[0].execution_class,

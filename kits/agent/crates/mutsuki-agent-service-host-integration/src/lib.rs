@@ -849,6 +849,14 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
             .iter()
             .map(|connection| connection.connection_id.capability())
             .collect();
+        manifest.provides.capabilities.extend([
+            "agent.connection.read".into(),
+            "agent.connection.write".into(),
+        ]);
+        manifest.provides.services.extend([
+            AGENT_CONNECTION_REGISTRY_SERVICE_ID.into(),
+            AGENT_CONNECTION_MANAGEMENT_SERVICE_ID.into(),
+        ]);
         let loaded_manifest = manifest.clone();
         let registry_service = Arc::new(self.registry.clone());
         let management_service = manager;
@@ -861,12 +869,12 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
                     host_services: vec![
                         RuntimeBootstrapperService {
                             service_id: AGENT_CONNECTION_REGISTRY_SERVICE_ID.into(),
-                            capability: Some("agent.connection.read".into()),
+                            capability: "agent.connection.read".into(),
                             service: registry_service.clone(),
                         },
                         RuntimeBootstrapperService {
                             service_id: AGENT_CONNECTION_MANAGEMENT_SERVICE_ID.into(),
-                            capability: Some("agent.connection.write".into()),
+                            capability: "agent.connection.write".into(),
                             service: management_service.clone(),
                         },
                     ],
@@ -1064,6 +1072,116 @@ pub enum AgentConnectionError {
     RevisionConflict { expected: u64, actual: u64 },
     #[error("configured plugin persistence failed: {0}")]
     Persistence(String),
+}
+
+impl mutsuki_agent_contracts::AgentConnectionManagementApi for AgentConnectionManager {
+    fn snapshot(&self) -> mutsuki_agent_contracts::AgentConnectionManagementSnapshot {
+        let snapshot = Self::snapshot(self);
+        mutsuki_agent_contracts::AgentConnectionManagementSnapshot {
+            revision: snapshot.revision,
+            connections: snapshot
+                .connections
+                .into_iter()
+                .map(connection_status_view)
+                .collect(),
+        }
+    }
+
+    fn test_connection(
+        &self,
+        config: mutsuki_agent_contracts::AgentConnectionConfig,
+    ) -> Result<
+        mutsuki_agent_contracts::AgentConnectionStatus,
+        mutsuki_agent_contracts::AgentManagementError,
+    > {
+        Self::test_connection(self, connection_config_from_view(config)?)
+            .map(connection_status_view)
+            .map_err(management_error)
+    }
+
+    fn upsert(
+        &self,
+        expected_revision: u64,
+        config: mutsuki_agent_contracts::AgentConnectionConfig,
+    ) -> Result<
+        mutsuki_agent_contracts::AgentConnectionStatus,
+        mutsuki_agent_contracts::AgentManagementError,
+    > {
+        Self::upsert(
+            self,
+            expected_revision,
+            connection_config_from_view(config)?,
+        )
+        .map(connection_status_view)
+        .map_err(management_error)
+    }
+
+    fn reconnect(
+        &self,
+        expected_revision: u64,
+        connection_id: &str,
+    ) -> Result<
+        mutsuki_agent_contracts::AgentConnectionStatus,
+        mutsuki_agent_contracts::AgentManagementError,
+    > {
+        let connection_id = AgentConnectionId::new(connection_id).map_err(|error| {
+            mutsuki_agent_contracts::AgentManagementError {
+                code: "agent.connection.invalid_config".into(),
+                message: error.to_string(),
+            }
+        })?;
+        Self::reconnect(self, expected_revision, &connection_id)
+            .map(connection_status_view)
+            .map_err(management_error)
+    }
+}
+
+fn connection_config_from_view(
+    config: mutsuki_agent_contracts::AgentConnectionConfig,
+) -> Result<AgentConnectionConfig, mutsuki_agent_contracts::AgentManagementError> {
+    Ok(AgentConnectionConfig {
+        connection_id: AgentConnectionId::new(config.connection_id).map_err(|error| {
+            mutsuki_agent_contracts::AgentManagementError {
+                code: "agent.connection.invalid_config".into(),
+                message: error.to_string(),
+            }
+        })?,
+        connector_id: config.connector_id,
+        enabled: config.enabled,
+        config: config.config,
+    })
+}
+
+fn connection_status_view(
+    status: AgentConnectionStatus,
+) -> mutsuki_agent_contracts::AgentConnectionStatus {
+    mutsuki_agent_contracts::AgentConnectionStatus {
+        connection_id: status.connection_id.to_string(),
+        connector_id: status.connector_id,
+        generation: status.generation,
+        state: match status.state {
+            AgentConnectionState::Disabled => {
+                mutsuki_agent_contracts::AgentConnectionState::Disabled
+            }
+            AgentConnectionState::Healthy => mutsuki_agent_contracts::AgentConnectionState::Healthy,
+            AgentConnectionState::Unavailable => {
+                mutsuki_agent_contracts::AgentConnectionState::Unavailable
+            }
+            AgentConnectionState::Reconnecting => {
+                mutsuki_agent_contracts::AgentConnectionState::Reconnecting
+            }
+        },
+        negotiated_version: status.negotiated_version,
+        enabled_features: status.enabled_features,
+        last_error_code: status.last_error_code,
+    }
+}
+
+fn management_error(error: AgentConnectionError) -> mutsuki_agent_contracts::AgentManagementError {
+    mutsuki_agent_contracts::AgentManagementError {
+        code: error.code().into(),
+        message: error.to_string(),
+    }
 }
 
 impl AgentConnectionError {
@@ -1319,13 +1437,6 @@ mod tests {
         }
     }
 
-    fn stored_manager(
-        connector: FakeConnector,
-        initial: AgentConnectionConfig,
-    ) -> (Arc<ConfigService>, Arc<AgentConnectionManager>) {
-        manager_with_connector(connector, initial)
-    }
-
     fn persisted_config(service: &Arc<ConfigService>) -> AgentConnectionsConfig {
         let service = service.clone();
         let snapshot = block_on_config(async move {
@@ -1391,7 +1502,8 @@ mod tests {
     #[test]
     fn slow_upsert_handshake_does_not_block_snapshot() {
         let gate = Arc::new(HandshakeGate::default());
-        let (_service, manager) = stored_manager(gated_connector(gate.clone()), disabled_config());
+        let (_service, manager) =
+            manager_with_connector(gated_connector(gate.clone()), disabled_config());
 
         gate.block();
         let updating = {
@@ -1457,7 +1569,8 @@ mod tests {
     #[test]
     fn concurrent_upserts_commit_once_and_discard_the_stale_candidate() {
         let gate = Arc::new(HandshakeGate::default());
-        let (service, manager) = stored_manager(gated_connector(gate.clone()), disabled_config());
+        let (service, manager) =
+            manager_with_connector(gated_connector(gate.clone()), disabled_config());
 
         gate.block();
         let stale_update = {
@@ -1496,7 +1609,8 @@ mod tests {
     #[test]
     fn stale_reconnect_candidate_cannot_replace_a_newer_config_revision() {
         let gate = Arc::new(HandshakeGate::default());
-        let (_service, manager) = stored_manager(gated_connector(gate.clone()), config(false));
+        let (_service, manager) =
+            manager_with_connector(gated_connector(gate.clone()), config(false));
 
         gate.block();
         let stale_reconnect = {
@@ -1530,7 +1644,7 @@ mod tests {
             fail_handshakes: fail_handshakes.clone(),
             handshake_gate: None,
         };
-        let (service, manager) = stored_manager(connector, config(false));
+        let (service, manager) = manager_with_connector(connector, config(false));
         let before_snapshot = manager.snapshot();
         let before_config = persisted_config(&service);
 
@@ -1599,7 +1713,7 @@ mod tests {
 
     #[test]
     fn successful_management_update_is_revision_fenced_persisted_and_atomic() {
-        let (service, manager) = stored_manager(
+        let (service, manager) = manager_with_connector(
             FakeConnector::new(Arc::new(AtomicBool::new(false))),
             disabled_config(),
         );

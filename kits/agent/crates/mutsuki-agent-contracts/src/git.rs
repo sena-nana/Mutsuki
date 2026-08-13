@@ -30,11 +30,28 @@ pub struct GitHeadIdentity {
     pub generation: u64,
 }
 
+/// Stable optimistic-concurrency token for the complete mutable worktree state.
+///
+/// Unlike the process-local `generation`, these digests survive service restarts
+/// and fence writes against changes to HEAD, the index, or working files.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitWorktreeState {
+    pub head_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_ref: Option<String>,
+    pub index_hash: String,
+    pub worktree_hash: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitRevisionConflict {
     pub worktree: GitWorktreeRef,
     pub expected: GitHeadIdentity,
     pub actual: GitHeadIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_state: Option<GitWorktreeState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_state: Option<GitWorktreeState>,
     pub message: String,
 }
 
@@ -52,6 +69,38 @@ impl GitRevisionConflict {
             ),
             expected,
             actual,
+            expected_state: None,
+            actual_state: None,
+        }
+    }
+
+    pub fn stale_state(
+        worktree: GitWorktreeRef,
+        expected_state: GitWorktreeState,
+        actual_state: GitWorktreeState,
+        actual: GitHeadIdentity,
+    ) -> Self {
+        let expected = GitHeadIdentity {
+            commit: expected_state.head_commit.clone(),
+            branch: expected_state.head_ref.clone(),
+            upstream: None,
+            generation: 0,
+        };
+        Self {
+            worktree,
+            message: format!(
+                "git write expected state {}:{}:{}, observed {}:{}:{}",
+                expected_state.head_commit,
+                expected_state.index_hash,
+                expected_state.worktree_hash,
+                actual_state.head_commit,
+                actual_state.index_hash,
+                actual_state.worktree_hash
+            ),
+            expected,
+            actual,
+            expected_state: Some(expected_state),
+            actual_state: Some(actual_state),
         }
     }
 }
@@ -114,6 +163,7 @@ pub struct GitFileChange {
 pub struct GitStatusSnapshot {
     pub worktree: GitWorktreeRef,
     pub head: GitHeadIdentity,
+    pub state: GitWorktreeState,
     #[serde(default)]
     pub changes: Vec<GitFileChange>,
     #[serde(default)]
@@ -293,6 +343,7 @@ pub struct GitActionPlan {
     pub approval: PermissionRequest,
     pub worktree: GitWorktreeRef,
     pub head: GitHeadIdentity,
+    pub state: GitWorktreeState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Value>,
 }
@@ -312,6 +363,9 @@ pub struct GitWriteContext {
     /// When set, reject the write if the live HEAD / generation differs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_head: Option<GitHeadIdentity>,
+    /// Preferred restart-stable fence covering HEAD, index, and worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_state: Option<GitWorktreeState>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
 }

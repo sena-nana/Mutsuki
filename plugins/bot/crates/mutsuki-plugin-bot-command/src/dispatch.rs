@@ -67,7 +67,7 @@ pub fn bot_command_manifest(plugin_generation: u64) -> PluginManifest {
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
         .runner_descriptor(command_node_descriptor(plugin_generation))
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
+            command_protocol_descriptor(),
             BOT_COMMAND_RUNNER_ID,
             "bot-command-parse",
         )
@@ -164,7 +164,7 @@ fn command_plugin(plugin_generation: u64, artifact: PluginArtifact) -> LoadedPlu
     PluginBuilder::new(BOT_COMMAND_PLUGIN_ID)
         .runner(Box::new(BotCommandNodeRunner::new(plugin_generation)))
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID).build(),
+            command_protocol_descriptor(),
             BOT_COMMAND_RUNNER_ID,
             "bot-command-parse",
         )
@@ -174,6 +174,26 @@ fn command_plugin(plugin_generation: u64, artifact: PluginArtifact) -> LoadedPlu
                 .expect("command node catalog serializes"),
         )
         .artifact(artifact)
+        .build()
+}
+
+fn command_protocol_descriptor() -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(BOT_COMMAND_PARSE_PROTOCOL_ID)
+        .input_schema(json!({
+            "type": "object",
+            "oneOf": [
+                {"required": ["flow_id", "node_id", "input"]},
+                {"required": ["event_id", "message"]}
+            ]
+        }))
+        .output_schema(json!({
+            "type": "object",
+            "required": ["outputs", "metadata"]
+        }))
+        .error_schema(json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
         .build()
 }
 

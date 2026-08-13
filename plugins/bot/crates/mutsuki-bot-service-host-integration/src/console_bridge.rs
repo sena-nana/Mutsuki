@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use mutsuki_agent_contracts::{AgentConnectionManagementApi, AgentSessionManagementApi};
 use mutsuki_agent_service_host_integration::{
     AGENT_CONNECTION_MANAGEMENT_SERVICE_ID, AGENT_CONNECTION_REGISTRY_SERVICE_ID,
     AgentConnectionManager, AgentConnectionRegistry, LOCAL_AGENT_MANAGEMENT_SERVICE_ID,
@@ -41,11 +42,13 @@ pub struct AgentConnectionConsoleBridge;
 impl AgentConnectionConsoleBridge {
     pub fn get(
         runtime: &ServiceRuntime,
-    ) -> Option<Arc<dyn Fn() -> Result<Arc<AgentConnectionManager>, String> + Send + Sync>> {
+    ) -> Option<Arc<dyn Fn() -> Result<Arc<dyn AgentConnectionManagementApi>, String> + Send + Sync>>
+    {
         let runtime = runtime.handle();
         Some(Arc::new(move || {
             runtime
-                .host_service(AGENT_CONNECTION_MANAGEMENT_SERVICE_ID)
+                .host_service::<AgentConnectionManager>(AGENT_CONNECTION_MANAGEMENT_SERVICE_ID)
+                .map(|manager| manager as Arc<dyn AgentConnectionManagementApi>)
                 .map_err(|_| "Agent 状态暂时不可用".into())
         }))
     }
@@ -67,12 +70,13 @@ pub struct LocalAgentConsoleBridge;
 impl LocalAgentConsoleBridge {
     pub fn get(
         runtime: &ServiceRuntime,
-    ) -> Option<Arc<dyn Fn() -> Result<Arc<LocalAgentManagementService>, String> + Send + Sync>>
+    ) -> Option<Arc<dyn Fn() -> Result<Arc<dyn AgentSessionManagementApi>, String> + Send + Sync>>
     {
         let runtime = runtime.handle();
         Some(Arc::new(move || {
             runtime
-                .host_service(LOCAL_AGENT_MANAGEMENT_SERVICE_ID)
+                .host_service::<LocalAgentManagementService>(LOCAL_AGENT_MANAGEMENT_SERVICE_ID)
+                .map(|service| service as Arc<dyn AgentSessionManagementApi>)
                 .map_err(|_| "Agent 当前未启用或尚未就绪".into())
         }))
     }

@@ -70,7 +70,20 @@ pub fn bot_agent_bridge_manifest() -> PluginManifest {
         (BOT_AGENT_REGENERATE_PROTOCOL_ID, "bot-agent-regenerate"),
     ] {
         builder = builder.protocol_handler(
-            ProtocolDescriptorBuilder::new(protocol_id).build(),
+            ProtocolDescriptorBuilder::new(protocol_id)
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["action", "event"]
+                }))
+                .output_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["binding", "turn_id", "outgoing", "resolved"]
+                }))
+                .error_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["code", "source", "route"]
+                }))
+                .build(),
             BOT_AGENT_BRIDGE_RUNNER_ID,
             binding_name,
         );
@@ -214,6 +227,9 @@ fn agent_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
         .accepted_protocol(BOT_AGENT_FORK_PROTOCOL_ID)
         .accepted_protocol(BOT_AGENT_STATUS_PROTOCOL_ID)
         .accepted_protocol(BOT_AGENT_REGENERATE_PROTOCOL_ID)
+        .requires_protocol(BOT_REPLY_DELIVERY_PROTOCOL_ID)
+        .requires_protocol(BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID)
+        .requires_protocol(BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
         .invocation_mode(InvocationMode::AsyncReentrant)
         .concurrency(RunnerConcurrency::Reentrant {

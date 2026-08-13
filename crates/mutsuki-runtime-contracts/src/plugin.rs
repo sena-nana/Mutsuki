@@ -120,6 +120,8 @@ pub struct PluginProvides {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extensions: Vec<PluginExtensionDescriptor>,
     pub runners: Vec<RunnerDescriptor>,
     pub protocols: Vec<ProtocolDescriptor>,
@@ -144,6 +146,52 @@ pub struct PluginProvides {
     pub bridges: Vec<BridgeDescriptor>,
     pub scheduler_policies: Vec<SchedulerPolicyDescriptor>,
     pub workflows: Vec<WorkflowDescriptor>,
+}
+
+/// A typed dependency on a public surface owned by another plugin or the Host.
+///
+/// Requirements are resolved before registry freeze. Implementations must not
+/// infer dependencies from plugin ids, load order, or protocol-name prefixes.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SurfaceRequirement {
+    pub kind: ContractSurfaceKind,
+    pub surface_id: SurfaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl SurfaceRequirement {
+    pub fn new(kind: ContractSurfaceKind, surface_id: impl Into<SurfaceId>) -> Self {
+        Self {
+            kind,
+            surface_id: surface_id.into(),
+            version: None,
+        }
+    }
+
+    pub fn task_protocol(protocol_id: impl Into<SurfaceId>) -> Self {
+        Self::new(ContractSurfaceKind::TaskProtocol, protocol_id)
+    }
+
+    pub fn service(service_id: impl Into<SurfaceId>) -> Self {
+        Self::new(ContractSurfaceKind::Service, service_id)
+    }
+
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+
+    pub fn capability_key(&self) -> String {
+        format!("{}:{}", self.kind.capability_prefix(), self.surface_id)
+    }
+
+    pub fn display_key(&self) -> String {
+        match &self.version {
+            Some(version) => format!("{}@{version}", self.capability_key()),
+            None => self.capability_key(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -187,7 +235,8 @@ pub struct PluginManifest {
     pub api_version: String,
     pub artifact: PluginArtifact,
     pub provides: PluginProvides,
-    pub requires: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<SurfaceRequirement>,
     pub permissions: PermissionGrant,
     pub lifecycle: LifecyclePolicy,
     pub metadata: BTreeMap<String, ScalarValue>,
@@ -203,7 +252,7 @@ pub struct PluginBusinessSurface {
     pub plugin_id: String,
     pub api_version: String,
     pub provides: PluginProvides,
-    pub requires: Vec<String>,
+    pub requires: Vec<SurfaceRequirement>,
     pub permissions: PermissionGrant,
 }
 
@@ -230,6 +279,10 @@ pub struct RuntimeProfile {
     pub mode: RuntimeProfileMode,
     pub enabled_plugins: Vec<String>,
     pub bindings: BTreeMap<String, String>,
+    /// Explicit public-surface provider selection. Keys use the canonical
+    /// `<kind>:<surface-id>` form and values are provider plugin ids.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub surface_bindings: BTreeMap<String, String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
     pub observability: ObservabilityProfile,
     pub allow_dynamic_registration: bool,
@@ -272,7 +325,7 @@ pub struct PermissionAuditEntry {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractSurfaceKind {
     Runner,
@@ -296,6 +349,38 @@ pub enum ContractSurfaceKind {
     StateSchema,
     Lifecycle,
     Permission,
+    Capability,
+    Service,
+}
+
+impl ContractSurfaceKind {
+    pub fn capability_prefix(&self) -> &'static str {
+        match self {
+            Self::Runner => "runner",
+            Self::TaskProtocol => "task_protocol",
+            Self::Schema => "schema",
+            Self::ResourceSchema => "resource_schema",
+            Self::ResourceProvider => "resource_provider",
+            Self::HostExtension => "host_extension",
+            Self::PluginBackend => "plugin_backend",
+            Self::Codec => "codec",
+            Self::Bridge => "bridge",
+            Self::SchedulerPolicy => "scheduler_policy",
+            Self::Workflow => "workflow",
+            Self::Effect => "effect",
+            Self::Stream => "stream",
+            Self::Subscription => "subscription",
+            Self::Timer => "timer",
+            Self::Protocol => "protocol",
+            Self::HandlerBinding => "handler_binding",
+            Self::PluginExtension => "plugin_extension",
+            Self::StateSchema => "state_schema",
+            Self::Lifecycle => "lifecycle",
+            Self::Permission => "permission",
+            Self::Capability => "capability",
+            Self::Service => "service",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

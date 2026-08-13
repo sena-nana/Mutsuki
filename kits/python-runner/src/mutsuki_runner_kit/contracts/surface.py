@@ -37,6 +37,8 @@ class ContractSurfaceKind(StrEnum):
     STATE_SCHEMA = "state_schema"
     LIFECYCLE = "lifecycle"
     PERMISSION = "permission"
+    CAPABILITY = "capability"
+    SERVICE = "service"
 
 
 class SurfaceCompatibility(StrEnum):

@@ -15,7 +15,7 @@ use mutsuki_bot_protocol::{
 use mutsuki_bot_state_db::{
     BotManagementAuditRecord, BotManagementOperationReservation, BotStateDbRepository,
 };
-use mutsuki_runtime_contracts::{Task, TaskOutcome};
+use mutsuki_runtime_contracts::{ContractSurfaceKind, SurfaceRequirement, Task, TaskOutcome};
 use mutsuki_runtime_sdk::ResourceRegistryGateway;
 use mutsuki_runtime_sdk::RuntimeClientRef;
 use mutsuki_service_runtime::ServiceRuntimeBuilder;
@@ -145,10 +145,19 @@ impl QqBotPluginBundle {
         })?;
         let state_path = state_dir.join("state.sqlite3");
         let mut manifest = qqbot_adapter_manifest(1, media_enabled);
+        manifest
+            .provides
+            .services
+            .push(QQ_MANAGEMENT_SERVICE_ID.into());
+        manifest
+            .provides
+            .capabilities
+            .push("bot.qq.management".into());
         if let Some(provider_id) = media_provider_id {
-            manifest
-                .requires
-                .push(format!("resource_strategy:{provider_id}"));
+            manifest.requires.push(SurfaceRequirement::new(
+                ContractSurfaceKind::ResourceProvider,
+                provider_id,
+            ));
         }
         let loaded_manifest = manifest.clone();
         let builder =
@@ -189,7 +198,7 @@ impl QqBotPluginBundle {
                     async_handlers: Vec::new(),
                     host_services: vec![RuntimeBootstrapperService {
                         service_id: QQ_MANAGEMENT_SERVICE_ID.into(),
-                        capability: None,
+                        capability: "bot.qq.management".into(),
                         service: management,
                     }],
                     resource_providers: Vec::new(),

@@ -3043,6 +3043,7 @@ async fn runtime_bootstrapper(
             mode: RuntimeProfileMode::ExtensibleRuntime,
             enabled_plugins,
             bindings: BTreeMap::new(),
+            surface_bindings: BTreeMap::new(),
             plugin_deployments: deployments,
             observability: Default::default(),
             allow_dynamic_registration: false,
@@ -3543,9 +3544,15 @@ mod tests {
             if config.get("fail").and_then(Value::as_bool) == Some(true) {
                 return Err("candidate rejected".into());
             }
-            let manifest = minimal_manifest(self.plugin_id);
-            let loaded_manifest = manifest.clone();
+            let mut manifest = minimal_manifest(self.plugin_id);
             let service_id = self.service_id.to_string();
+            let service_capability = format!("test.generation.service:{}", self.plugin_id);
+            manifest.provides.services.push(service_id.clone());
+            manifest
+                .provides
+                .capabilities
+                .push(service_capability.clone());
+            let loaded_manifest = manifest.clone();
             let service = Arc::new(GenerationService(generation));
             Ok(
                 builder.register_builtin_loaded_plugin_factory(manifest, move || {
@@ -3555,7 +3562,7 @@ mod tests {
                         async_handlers: Vec::new(),
                         host_services: vec![RuntimeBootstrapperService {
                             service_id: service_id.clone(),
-                            capability: None,
+                            capability: service_capability.clone(),
                             service: service.clone(),
                         }],
                         resource_providers: Vec::new(),

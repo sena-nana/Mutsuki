@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,17 +13,27 @@ use mutsuki_agent_contracts::{
     GitDiffResult, GitDiffScope, GitFileChange, GitFileStatus, GitHeadIdentity, GitLogResult,
     GitOperationHandle, GitOperationKind, GitOperationState, GitRepositoryRef, GitRevisionConflict,
     GitRisk, GitServiceRequest, GitServiceResponse, GitShowResult, GitStatusSnapshot,
-    GitWorktreeInfo, GitWorktreeRef, GitWriteContext, PermissionRequest, ResourceRef,
+    GitWorktreeInfo, GitWorktreeRef, GitWorktreeState, GitWriteContext, PermissionRequest,
+    ResourceRef,
 };
 use mutsuki_agent_plugin_api::{AgentPluginRegistrar, AgentService, ContextProvider, ToolProvider};
 use mutsuki_agent_runtime::AgentResourceStore;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 pub const PLUGIN_ID: &str = "mutsuki.plugin.agent.git";
 pub const SERVICE_ID: &str = "mutsuki.agent.service.git";
 pub const CONTEXT_PROVIDER_ID: &str = "mutsuki.agent.context.git";
 pub const INLINE_LIMIT: usize = 2_048;
 pub const SUMMARY_LIMIT: usize = 512;
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+fn digest_json(value: &impl serde::Serialize) -> String {
+    digest_bytes(&serde_json::to_vec(value).expect("git state must serialize"))
+}
 
 /// Process / VCS execution backend. Host injects CLI or test doubles; AgentKit
 /// owns Git domain semantics only.
@@ -250,6 +262,32 @@ impl InMemoryGitBackend {
         }
     }
 
+    fn state_of(state: &RepoState) -> GitWorktreeState {
+        let mut index = state
+            .commits
+            .get(&state.head)
+            .map(|commit| commit.tree.clone())
+            .unwrap_or_default();
+        for (path, content) in &state.staged {
+            if let Some(content) = content {
+                index.insert(path.clone(), content.clone());
+            } else {
+                index.remove(path);
+            }
+        }
+        let worktree = state
+            .worktree_files
+            .iter()
+            .map(|(path, blob)| (path.clone(), blob.content.clone()))
+            .collect::<BTreeMap<_, _>>();
+        GitWorktreeState {
+            head_commit: state.head.clone(),
+            head_ref: Some(state.branch.clone()),
+            index_hash: digest_json(&index),
+            worktree_hash: digest_json(&worktree),
+        }
+    }
+
     fn bump(state: &mut RepoState) {
         state.generation = state.generation.saturating_add(1);
     }
@@ -473,6 +511,7 @@ impl GitGateway for InMemoryGitBackend {
             Ok(GitStatusSnapshot {
                 worktree: worktree.clone(),
                 head: Self::head_of(state),
+                state: Self::state_of(state),
                 clean: changes.is_empty(),
                 changes,
             })
@@ -1072,6 +1111,7 @@ impl GitGateway for InMemoryGitBackend {
 pub struct CliGitBackend {
     git_bin: PathBuf,
     children: Mutex<BTreeMap<String, Child>>,
+    observed_states: Mutex<BTreeMap<String, (GitWorktreeState, u64)>>,
 }
 
 impl Default for CliGitBackend {
@@ -1079,6 +1119,7 @@ impl Default for CliGitBackend {
         Self {
             git_bin: PathBuf::from("git"),
             children: Mutex::new(BTreeMap::new()),
+            observed_states: Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -1088,6 +1129,7 @@ impl CliGitBackend {
         Self {
             git_bin: git_bin.into(),
             children: Mutex::new(BTreeMap::new()),
+            observed_states: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -1208,18 +1250,162 @@ impl CliGitBackend {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn parse_worktree(path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError> {
+    fn run_bytes(&self, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, AgentError> {
+        let output = Command::new(&self.git_bin)
+            .args(args)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env_remove("GIT_ASKPASS")
+            .env_remove("SSH_ASKPASS")
+            .output()
+            .map_err(|error| AgentError::new("agent.git.spawn_failed", error.to_string()))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(AgentError::new(
+                "agent.git.command_failed",
+                if stderr.is_empty() {
+                    format!("git {} failed", args.join(" "))
+                } else {
+                    stderr
+                },
+            ));
+        }
+        Ok(output.stdout)
+    }
+
+    fn state_token(
+        &self,
+        worktree: &GitWorktreeRef,
+        head: &GitHeadIdentity,
+    ) -> Result<GitWorktreeState, AgentError> {
+        let cwd = Path::new(&worktree.path);
+        let index_patch = self.run_bytes(
+            cwd,
+            &[
+                "diff",
+                "--cached",
+                "--binary",
+                "--no-ext-diff",
+                "--full-index",
+            ],
+        )?;
+        let tracked_patch =
+            self.run_bytes(cwd, &["diff", "--binary", "--no-ext-diff", "--full-index"])?;
+        let untracked =
+            self.run_bytes(cwd, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let mut worktree_hasher = Sha256::new();
+        worktree_hasher.update((tracked_patch.len() as u64).to_le_bytes());
+        worktree_hasher.update(&tracked_patch);
+        for path in untracked
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+        {
+            let relative = std::str::from_utf8(path).map_err(|_| {
+                AgentError::invalid_input("git state cannot represent a non-UTF-8 path")
+            })?;
+            let relative_path = Path::new(relative);
+            if relative_path.is_absolute()
+                || relative_path.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(AgentError::invalid_input(
+                    "git returned an unsafe untracked path",
+                ));
+            }
+            worktree_hasher.update((path.len() as u64).to_le_bytes());
+            worktree_hasher.update(path);
+            let absolute = cwd.join(relative_path);
+            let metadata = fs::symlink_metadata(&absolute)
+                .map_err(|error| AgentError::new("agent.git.state_failed", error.to_string()))?;
+            if metadata.file_type().is_symlink() {
+                worktree_hasher.update(b"symlink");
+                let target = fs::read_link(&absolute).map_err(|error| {
+                    AgentError::new("agent.git.state_failed", error.to_string())
+                })?;
+                let target = target.as_os_str().as_encoded_bytes();
+                worktree_hasher.update((target.len() as u64).to_le_bytes());
+                worktree_hasher.update(target);
+            } else if metadata.is_file() {
+                worktree_hasher.update(b"file");
+                worktree_hasher.update(metadata.len().to_le_bytes());
+                let mut file = File::open(&absolute).map_err(|error| {
+                    AgentError::new("agent.git.state_failed", error.to_string())
+                })?;
+                let mut buffer = [0_u8; 64 * 1024];
+                loop {
+                    let read = file.read(&mut buffer).map_err(|error| {
+                        AgentError::new("agent.git.state_failed", error.to_string())
+                    })?;
+                    if read == 0 {
+                        break;
+                    }
+                    worktree_hasher.update(&buffer[..read]);
+                }
+            } else {
+                worktree_hasher.update(b"other");
+            }
+        }
+        Ok(GitWorktreeState {
+            head_commit: head.commit.clone(),
+            head_ref: head.branch.clone(),
+            index_hash: digest_bytes(&index_patch),
+            worktree_hash: format!("sha256:{}", hex::encode(worktree_hasher.finalize())),
+        })
+    }
+
+    fn observe_generation(&self, worktree: &GitWorktreeRef, state: &GitWorktreeState) -> u64 {
+        let mut observed = self.observed_states.lock().expect("git observed state");
+        let entry = observed
+            .entry(worktree.worktree_id.clone())
+            .or_insert_with(|| (state.clone(), 1));
+        if &entry.0 != state {
+            entry.0 = state.clone();
+            entry.1 = entry.1.saturating_add(1);
+        }
+        entry.1
+    }
+
+    fn inspect_path(
+        &self,
+        path: &str,
+    ) -> Result<(GitWorktreeRef, GitHeadIdentity, GitWorktreeState), AgentError> {
+        for _ in 0..3 {
+            let (worktree, first_head) = self.parse_worktree(path)?;
+            let first_state = self.state_token(&worktree, &first_head)?;
+            let (_, mut second_head) = self.parse_worktree(path)?;
+            let second_state = self.state_token(&worktree, &second_head)?;
+            if first_head.commit == second_head.commit
+                && first_head.branch == second_head.branch
+                && first_head.upstream == second_head.upstream
+                && first_state == second_state
+            {
+                second_head.generation = self.observe_generation(&worktree, &second_state);
+                return Ok((worktree, second_head, second_state));
+            }
+        }
+        Err(AgentError::new(
+            "agent.git.state_unstable",
+            "git state changed while the concurrency token was captured",
+        ))
+    }
+
+    fn parse_worktree(&self, path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError> {
         let root = PathBuf::from(path);
-        let backend = CliGitBackend::default();
-        let toplevel = backend
+        let toplevel = self
             .run(&root, &["rev-parse", "--show-toplevel"], None, None)?
             .trim()
             .to_string();
-        let commit = backend
+        let commit = self
             .run(Path::new(&toplevel), &["rev-parse", "HEAD"], None, None)?
             .trim()
             .to_string();
-        let branch = backend
+        let branch = self
             .run(
                 Path::new(&toplevel),
                 &["rev-parse", "--abbrev-ref", "HEAD"],
@@ -1228,7 +1414,7 @@ impl CliGitBackend {
             )?
             .trim()
             .to_string();
-        let upstream = backend
+        let upstream = self
             .run(
                 Path::new(&toplevel),
                 &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
@@ -1244,8 +1430,8 @@ impl CliGitBackend {
         };
         Ok((
             GitWorktreeRef {
-                worktree_id: format!("wt:{path}"),
-                path: path.into(),
+                worktree_id: format!("wt:{toplevel}"),
+                path: toplevel,
                 repository,
             },
             GitHeadIdentity {
@@ -1260,13 +1446,14 @@ impl CliGitBackend {
 
 impl GitGateway for CliGitBackend {
     fn discover(&self, path: &str) -> Result<(GitWorktreeRef, GitHeadIdentity), AgentError> {
-        Self::parse_worktree(path)
+        let (worktree, head, _) = self.inspect_path(path)?;
+        Ok((worktree, head))
     }
 
     fn status(&self, worktree: &GitWorktreeRef) -> Result<GitStatusSnapshot, AgentError> {
         let cwd = Path::new(&worktree.path);
         let porcelain = self.run(cwd, &["status", "--porcelain=v1"], None, None)?;
-        let head = self.head(worktree)?;
+        let (_, head, state) = self.inspect_path(&worktree.path)?;
         let mut changes = Vec::new();
         for line in porcelain.lines() {
             if line.len() < 4 {
@@ -1314,6 +1501,7 @@ impl GitGateway for CliGitBackend {
         Ok(GitStatusSnapshot {
             worktree: worktree.clone(),
             head,
+            state,
             clean: changes.is_empty(),
             changes,
         })
@@ -1785,7 +1973,7 @@ impl GitGateway for CliGitBackend {
     }
 
     fn head(&self, worktree: &GitWorktreeRef) -> Result<GitHeadIdentity, AgentError> {
-        let (_, head) = self.discover(&worktree.path)?;
+        let (_, head, _) = self.inspect_path(&worktree.path)?;
         Ok(head)
     }
 
@@ -1815,6 +2003,7 @@ pub struct SharedGitService {
     resources: AgentResourceStore,
     next_action: AtomicU64,
     active: Mutex<BTreeMap<String, ActiveOp>>,
+    write_fences: Mutex<BTreeMap<String, Arc<Mutex<()>>>>,
 }
 
 impl SharedGitService {
@@ -1832,6 +2021,7 @@ impl SharedGitService {
             resources,
             next_action: AtomicU64::new(1),
             active: Mutex::new(BTreeMap::new()),
+            write_fences: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -1908,8 +2098,7 @@ impl SharedGitService {
         operation: &str,
         risk: GitRisk,
         summary: impl Into<String>,
-        worktree: &GitWorktreeRef,
-        head: &GitHeadIdentity,
+        snapshot: &GitStatusSnapshot,
         write: &GitWriteContext,
         preview: Option<Value>,
     ) -> GitActionPlan {
@@ -1928,8 +2117,9 @@ impl SharedGitService {
                 summary: format!("{operation} requires approval"),
                 version: write.approval_version.unwrap_or(1),
             },
-            worktree: worktree.clone(),
-            head: head.clone(),
+            worktree: snapshot.worktree.clone(),
+            head: snapshot.head.clone(),
+            state: snapshot.state.clone(),
             preview,
         }
     }
@@ -1942,12 +2132,27 @@ impl SharedGitService {
         write: &GitWriteContext,
         preview: Option<Value>,
     ) -> Result<Option<GitServiceResponse>, AgentError> {
-        let head = self.backend.head(worktree)?;
-        if let Some(expected) = &write.expected_head
+        let snapshot = self.backend.status(worktree)?;
+        let head = &snapshot.head;
+        let state = &snapshot.state;
+        if let Some(expected) = &write.expected_state
+            && expected != state
+        {
+            return Ok(Some(GitServiceResponse::Conflict(
+                GitRevisionConflict::stale_state(
+                    worktree.clone(),
+                    expected.clone(),
+                    state.clone(),
+                    head.clone(),
+                ),
+            )));
+        }
+        if write.expected_state.is_none()
+            && let Some(expected) = &write.expected_head
             && (expected.commit != head.commit || expected.generation != head.generation)
         {
             return Ok(Some(GitServiceResponse::Conflict(
-                GitRevisionConflict::stale(worktree.clone(), expected.clone(), head),
+                GitRevisionConflict::stale(worktree.clone(), expected.clone(), head.clone()),
             )));
         }
         if risk.requires_approval() && !write.approved {
@@ -1955,13 +2160,21 @@ impl SharedGitService {
                 operation,
                 risk,
                 format!("{operation} is waiting for approval"),
-                worktree,
-                &head,
+                &snapshot,
                 write,
                 preview,
             ))));
         }
         Ok(None)
+    }
+
+    fn write_fence(&self, key: String) -> Arc<Mutex<()>> {
+        self.write_fences
+            .lock()
+            .expect("git write fences")
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     fn begin_op(
@@ -2039,6 +2252,17 @@ impl SharedGitService {
     }
 
     fn dispatch(&self, request: GitServiceRequest) -> Result<GitServiceResponse, AgentError> {
+        let Some(key) = write_affinity(&request) else {
+            return self.dispatch_inner(request);
+        };
+        let fence = self.write_fence(key);
+        let _guard = fence.lock().map_err(|_| {
+            AgentError::new("agent.git.state_poisoned", "git write fence lock poisoned")
+        })?;
+        self.dispatch_inner(request)
+    }
+
+    fn dispatch_inner(&self, request: GitServiceRequest) -> Result<GitServiceResponse, AgentError> {
         match request {
             GitServiceRequest::Discover { path } => {
                 let (worktree, head) = self.backend.discover(&path)?;
@@ -2560,6 +2784,29 @@ impl SharedGitService {
     }
 }
 
+fn write_affinity(request: &GitServiceRequest) -> Option<String> {
+    match request {
+        GitServiceRequest::Stage { worktree, .. }
+        | GitServiceRequest::Unstage { worktree, .. }
+        | GitServiceRequest::Commit { worktree, .. }
+        | GitServiceRequest::BranchCreate { worktree, .. }
+        | GitServiceRequest::BranchSwitch { worktree, .. }
+        | GitServiceRequest::BranchDelete { worktree, .. }
+        | GitServiceRequest::WorktreeRemove { worktree, .. }
+        | GitServiceRequest::Push { worktree, .. }
+        | GitServiceRequest::Pull { worktree, .. }
+        | GitServiceRequest::Fetch { worktree, .. }
+        | GitServiceRequest::Merge { worktree, .. }
+        | GitServiceRequest::Rebase { worktree, .. }
+        | GitServiceRequest::Reset { worktree, .. }
+        | GitServiceRequest::CherryPick { worktree, .. } => Some(worktree.worktree_id.clone()),
+        GitServiceRequest::WorktreeCreate { repository, .. } => {
+            Some(format!("repository:{}", repository.repo_id))
+        }
+        _ => None,
+    }
+}
+
 fn truncate(input: &str, limit: usize) -> String {
     if input.chars().count() <= limit {
         return input.to_string();
@@ -2670,6 +2917,21 @@ impl ContextProvider for SharedGitService {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use tempfile::TempDir;
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git command should start");
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn seeded() -> (SharedGitService, GitWorktreeRef) {
         let mut files = BTreeMap::new();
@@ -2863,6 +3125,128 @@ mod tests {
             }))
             .unwrap();
         assert_eq!(conflict["kind"], "conflict");
+    }
+
+    #[test]
+    fn cli_state_token_fences_head_index_and_worktree_across_service_restarts() {
+        let root = TempDir::new().unwrap();
+        git(root.path(), &["init"]);
+        git(root.path(), &["config", "user.name", "Mutsuki Test"]);
+        git(
+            root.path(),
+            &["config", "user.email", "mutsuki@example.invalid"],
+        );
+        fs::write(root.path().join("README.md"), "initial\n").unwrap();
+        git(root.path(), &["add", "README.md"]);
+        git(root.path(), &["commit", "-m", "initial"]);
+        fs::create_dir(root.path().join("nested")).unwrap();
+
+        let service = SharedGitService::new(
+            Arc::new(CliGitBackend::default()),
+            AgentResourceStore::default(),
+        );
+        let discovered = service
+            .call_value(json!({
+                "op": "discover",
+                "path": root.path().to_string_lossy()
+            }))
+            .unwrap();
+        let worktree: GitWorktreeRef =
+            serde_json::from_value(discovered["worktree"].clone()).unwrap();
+        let nested_discovered = service
+            .call_value(json!({
+                "op": "discover",
+                "path": root.path().join("nested").to_string_lossy()
+            }))
+            .unwrap();
+        assert_eq!(nested_discovered["worktree"], discovered["worktree"]);
+        let initial = service
+            .call_value(json!({ "op": "status", "worktree": worktree }))
+            .unwrap();
+        let initial_state: GitWorktreeState =
+            serde_json::from_value(initial["state"].clone()).unwrap();
+
+        let restarted = SharedGitService::new(
+            Arc::new(CliGitBackend::default()),
+            AgentResourceStore::default(),
+        );
+        let after_restart = restarted
+            .call_value(json!({ "op": "status", "worktree": worktree }))
+            .unwrap();
+        assert_eq!(after_restart["state"], initial["state"]);
+
+        fs::write(root.path().join("outside-nested.txt"), "untracked\n").unwrap();
+        let untracked_changed = service
+            .call_value(json!({ "op": "status", "worktree": worktree }))
+            .unwrap();
+        assert_ne!(
+            untracked_changed["state"]["worktree_hash"],
+            initial["state"]["worktree_hash"]
+        );
+        fs::remove_file(root.path().join("outside-nested.txt")).unwrap();
+
+        fs::write(root.path().join("README.md"), "changed outside service\n").unwrap();
+        let worktree_changed = service
+            .call_value(json!({ "op": "status", "worktree": worktree }))
+            .unwrap();
+        let worktree_state: GitWorktreeState =
+            serde_json::from_value(worktree_changed["state"].clone()).unwrap();
+        assert_eq!(initial_state.head_commit, worktree_state.head_commit);
+        assert_eq!(initial_state.index_hash, worktree_state.index_hash);
+        assert_ne!(initial_state.worktree_hash, worktree_state.worktree_hash);
+
+        let conflict = service
+            .call_value(json!({
+                "op": "stage",
+                "worktree": worktree,
+                "paths": ["README.md"],
+                "session_id": "session",
+                "turn_id": "turn",
+                "approved": true,
+                "expected_state": initial_state
+            }))
+            .unwrap();
+        assert_eq!(conflict["kind"], "conflict");
+        assert!(conflict["expected_state"].is_object());
+        assert!(conflict["actual_state"].is_object());
+
+        let staged = service
+            .call_value(json!({
+                "op": "stage",
+                "worktree": worktree,
+                "paths": ["README.md"],
+                "session_id": "session",
+                "turn_id": "turn",
+                "approved": true,
+                "expected_state": worktree_state
+            }))
+            .unwrap();
+        assert_eq!(staged["kind"], "staged");
+        let index_changed = service
+            .call_value(json!({ "op": "status", "worktree": worktree }))
+            .unwrap();
+        let index_state: GitWorktreeState =
+            serde_json::from_value(index_changed["state"].clone()).unwrap();
+        assert_ne!(index_state.index_hash, worktree_state.index_hash);
+
+        git(root.path(), &["commit", "-m", "external commit"]);
+        let head_conflict = service
+            .call_value(json!({
+                "op": "commit",
+                "worktree": worktree,
+                "message": "must not commit",
+                "allow_empty": true,
+                "session_id": "session",
+                "turn_id": "turn",
+                "approved": true,
+                "expected_state": index_state
+            }))
+            .unwrap();
+        assert_eq!(head_conflict["kind"], "conflict");
+        assert_ne!(
+            head_conflict["expected_state"]["head_commit"],
+            head_conflict["actual_state"]["head_commit"]
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod error;
 pub mod git;
 pub mod knowledge;
 pub mod lsp;
+pub mod management;
 pub mod mcp;
 pub mod media;
 pub mod memory;
@@ -45,6 +46,11 @@ pub use error::*;
 pub use git::*;
 pub use knowledge::*;
 pub use lsp::*;
+pub use management::{
+    AgentConnectionConfig, AgentConnectionManagementApi, AgentConnectionManagementSnapshot,
+    AgentConnectionState, AgentConnectionStatus, AgentManagementError, AgentSessionManagementApi,
+    AgentSessionPage, AgentSessionSummary,
+};
 pub use mcp::*;
 pub use media::*;
 pub use memory::*;

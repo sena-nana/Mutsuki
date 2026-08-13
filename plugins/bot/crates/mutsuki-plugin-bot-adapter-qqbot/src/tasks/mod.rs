@@ -51,18 +51,30 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
         .runner_descriptor(gateway)
         .runner_descriptor(openapi_descriptor(plugin_generation, media_enabled))
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MESSAGE_SEND_PROTOCOL_ID).build(),
+            qqbot_protocol_descriptor(
+                BOT_MESSAGE_SEND_PROTOCOL_ID,
+                &["target", "segments"],
+                &["message_id"],
+            ),
             QQBOT_OPENAPI_RUNNER_ID,
             "qqbot-message-send",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MESSAGE_RECALL_PROTOCOL_ID).build(),
+            qqbot_protocol_descriptor(
+                BOT_MESSAGE_RECALL_PROTOCOL_ID,
+                &["target", "message_id"],
+                &["message_id"],
+            ),
             QQBOT_OPENAPI_RUNNER_ID,
             "qqbot-message-recall",
         );
     if media_enabled {
         builder = builder.protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MEDIA_UPLOAD_PROTOCOL_ID).build(),
+            qqbot_protocol_descriptor(
+                BOT_MEDIA_UPLOAD_PROTOCOL_ID,
+                &["target", "resource"],
+                &["file_info"],
+            ),
             QQBOT_OPENAPI_RUNNER_ID,
             "qqbot-media-upload",
         );
@@ -75,6 +87,21 @@ pub fn qqbot_adapter_manifest(plugin_generation: u64, media_enabled: bool) -> Pl
         )
         .build()
         .manifest
+}
+
+fn qqbot_protocol_descriptor(
+    protocol_id: &str,
+    request_required: &[&str],
+    response_required: &[&str],
+) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(json!({"type": "object", "required": request_required}))
+        .output_schema(json!({"type": "object", "required": response_required}))
+        .error_schema(json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
 }
 
 fn qqbot_node_catalog(media_enabled: bool) -> BotNodeCatalogFragment {

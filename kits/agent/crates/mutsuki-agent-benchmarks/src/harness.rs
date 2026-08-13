@@ -686,7 +686,9 @@ pub fn context_sample(label: &str, bytes: usize) -> Sample {
             profile_id: "benchmark.profile".into(),
             messages: vec![AgentMessage::user(content)],
             session_id: None,
+            turn_id: None,
             max_context_tokens: Some(bytes as u64),
+            compaction: None,
             metadata: Some(json!({"fixture": label, "seed": BENCHMARK_FIXED_SEED})),
         })
         .unwrap();

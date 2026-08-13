@@ -32,7 +32,7 @@ from mutsuki_runner_kit.contracts.extension import (
 from mutsuki_runner_kit.contracts.observability import ObservabilityProfile
 from mutsuki_runner_kit.contracts.resource import ResourceTypeDescriptor
 from mutsuki_runner_kit.contracts.runner import RunnerDescriptor
-from mutsuki_runner_kit.contracts.surface import ContractSurface
+from mutsuki_runner_kit.contracts.surface import ContractSurface, ContractSurfaceKind
 
 
 class ArtifactType(StrEnum):
@@ -55,6 +55,23 @@ class ProtocolClass(StrEnum):
     EFFECT = "effect"
     CORE = "core"
     CONTROL = "control"
+
+
+@dataclass(frozen=True)
+class SurfaceRequirement:
+    kind: ContractSurfaceKind
+    surface_id: str
+    version: str | None = None
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
+        raw = as_mapping(data, "SurfaceRequirement")
+        version = raw.get("version")
+        return cls(
+            kind=ContractSurfaceKind(as_str(field_value(raw, "kind"), "kind")),
+            surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
+            version=None if version is None else as_str(version, "version"),
+        )
 
 
 def as_plugin_deployments(value: object, field: str) -> dict[str, PluginDeploymentKind]:
@@ -212,6 +229,10 @@ class PluginProvides:
         default_factory=tuple,
         metadata={"skip_serializing_if_empty": True},
     )
+    services: tuple[str, ...] = field(
+        default_factory=tuple,
+        metadata={"skip_serializing_if_empty": True},
+    )
     extensions: tuple[PluginExtensionDescriptor, ...] = field(
         default_factory=tuple,
         metadata={"skip_serializing_if_empty": True},
@@ -248,6 +269,7 @@ class PluginProvides:
             ),
             workflows=tuple_from_json(raw, "workflows", WorkflowDescriptor),
             capabilities=as_str_tuple(raw.get("capabilities", ()), "capabilities"),
+            services=as_str_tuple(raw.get("services", ()), "services"),
             extensions=tuple_from_json(
                 raw, "extensions", PluginExtensionDescriptor
             ) if "extensions" in raw else (),
@@ -265,7 +287,7 @@ class PluginManifest:
     api_version: str
     artifact: PluginArtifact
     provides: PluginProvides
-    requires: tuple[str, ...]
+    requires: tuple[SurfaceRequirement, ...]
     permissions: PermissionGrant
     lifecycle: LifecyclePolicy
     metadata: dict[str, ScalarValue]
@@ -283,7 +305,11 @@ class PluginManifest:
             provides=PluginProvides.from_json_dict(
                 as_mapping(field_value(raw, "provides"), "provides")
             ),
-            requires=as_str_tuple(field_value(raw, "requires"), "requires"),
+            requires=(
+                tuple_from_json(raw, "requires", SurfaceRequirement)
+                if "requires" in raw
+                else ()
+            ),
             permissions=PermissionGrant.from_json_dict(
                 as_mapping(field_value(raw, "permissions"), "permissions")
             ),
@@ -304,6 +330,7 @@ class RuntimeProfile:
     observability: ObservabilityProfile
     allow_dynamic_registration: bool
     allow_hot_reload: bool
+    surface_bindings: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -313,6 +340,9 @@ class RuntimeProfile:
             mode=RuntimeProfileMode(as_str(field_value(raw, "mode"), "mode")),
             enabled_plugins=as_str_tuple(field_value(raw, "enabled_plugins"), "enabled_plugins"),
             bindings=as_str_dict(raw, "bindings"),
+            surface_bindings=as_str_dict(raw, "surface_bindings")
+            if "surface_bindings" in raw
+            else {},
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"
             ),

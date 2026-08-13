@@ -5,7 +5,7 @@ use mutsuki_runtime_contracts::{
     ArtifactType, BridgeDescriptor, CodecDescriptor, HandlerBinding, HostExtensionDescriptor,
     HostExtensionKind, LifecyclePolicy, PermissionGrant, PluginArtifact, PluginBackendDescriptor,
     PluginDeploymentKind, PluginExtensionDescriptor, PluginManifest, PluginProvides, ProtocolClass,
-    ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue,
+    ProtocolDescriptor, ResourceTypeDescriptor, RunnerDescriptor, ScalarValue, SurfaceRequirement,
 };
 use mutsuki_runtime_core::{AsyncBatchHandler, Runner, RuntimeResult};
 
@@ -16,7 +16,7 @@ use crate::{
 
 pub struct RuntimeBootstrapperService {
     pub service_id: String,
-    pub capability: Option<String>,
+    pub capability: String,
     pub service: Arc<dyn std::any::Any + Send + Sync>,
 }
 
@@ -79,7 +79,7 @@ pub struct PluginBuilder {
     api_version: String,
     artifact: PluginArtifact,
     provides: PluginProvides,
-    requires: Vec<String>,
+    requires: Vec<SurfaceRequirement>,
     permissions: PermissionGrant,
     lifecycle: LifecyclePolicy,
     metadata: BTreeMap<String, ScalarValue>,
@@ -145,8 +145,16 @@ impl PluginBuilder {
         self
     }
 
-    pub fn requires(mut self, capability: impl Into<String>) -> Self {
-        self.requires.push(capability.into());
+    pub fn requires(mut self, requirement: SurfaceRequirement) -> Self {
+        self.insert_requirement(requirement);
+        self
+    }
+
+    pub fn requires_protocol<P>(mut self) -> Self
+    where
+        P: ProtocolSpec,
+    {
+        self.insert_requirement(SurfaceRequirement::task_protocol(P::PROTOCOL_ID));
         self
     }
 
@@ -166,18 +174,23 @@ impl PluginBuilder {
     }
 
     pub fn runner(mut self, runner: Box<dyn Runner>) -> Self {
-        self.provides.runners.push(runner.descriptor().clone());
+        let descriptor = runner.descriptor().clone();
+        self.collect_runner_requirements(&descriptor);
+        self.provides.runners.push(descriptor);
         self.runners.push(runner);
         self
     }
 
     pub fn runner_descriptor(mut self, descriptor: RunnerDescriptor) -> Self {
+        self.collect_runner_requirements(&descriptor);
         self.provides.runners.push(descriptor);
         self
     }
 
     pub fn async_handler(mut self, handler: Arc<dyn AsyncBatchHandler>) -> Self {
-        self.provides.runners.push(handler.descriptor().clone());
+        let descriptor = handler.descriptor().clone();
+        self.collect_runner_requirements(&descriptor);
+        self.provides.runners.push(descriptor);
         self.async_handlers.push(handler);
         self
     }
@@ -309,13 +322,21 @@ impl PluginBuilder {
         mut self,
         service_id: impl Into<String>,
         service: Arc<T>,
-        capability: Option<String>,
+        capability: impl Into<String>,
     ) -> Self
     where
         T: HostService,
     {
+        let service_id = service_id.into();
+        let capability = capability.into();
+        if !self.provides.services.contains(&service_id) {
+            self.provides.services.push(service_id.clone());
+        }
+        if !self.provides.capabilities.contains(&capability) {
+            self.provides.capabilities.push(capability.clone());
+        }
         self.host_services.push(RuntimeBootstrapperService {
-            service_id: service_id.into(),
+            service_id,
             capability,
             service,
         });
@@ -412,6 +433,21 @@ impl PluginBuilder {
                     drain_policy: "drain_and_swap".into(),
                 });
             }
+        }
+    }
+
+    fn insert_requirement(&mut self, requirement: SurfaceRequirement) {
+        if !self.requires.contains(&requirement) {
+            self.requires.push(requirement);
+        }
+    }
+
+    fn collect_runner_requirements(&mut self, descriptor: &RunnerDescriptor) {
+        for surface in &descriptor.contract_surfaces {
+            let Some(protocol_id) = surface.strip_prefix("requires:task_protocol:") else {
+                continue;
+            };
+            self.insert_requirement(SurfaceRequirement::task_protocol(protocol_id));
         }
     }
 }

@@ -68,7 +68,7 @@ fn openai_api_key_login_import_status_revoke() {
         broker.resolve_secret(&login.descriptor.credential).unwrap(),
         secret
     );
-    broker
+    let revoked = broker
         .revoke(CredentialRevokeRequest {
             credential: login.descriptor.credential.clone(),
             reason: Some("invalidated".into()),
@@ -76,7 +76,7 @@ fn openai_api_key_login_import_status_revoke() {
         .expect("revoke");
     assert_eq!(
         broker
-            .resolve_secret(&login.descriptor.credential)
+            .resolve_secret(&revoked.descriptor.credential)
             .unwrap_err()
             .code,
         CREDENTIAL_REVOKED
@@ -222,14 +222,14 @@ fn revoked_credential_blocks_adapter_resolve() {
             metadata: Value::Null,
         })
         .unwrap();
-    service
+    let revoked = service
         .revoke(CredentialRevokeRequest {
             credential: login.descriptor.credential.clone(),
             reason: Some("invalid".into()),
         })
         .unwrap();
     let adapter = AdapterCredentialBroker::new(service);
-    let error = block_on(adapter.resolve(login.descriptor.credential)).unwrap_err();
+    let error = block_on(adapter.resolve(revoked.descriptor.credential)).unwrap_err();
     assert_eq!(error.code, CREDENTIAL_REVOKED);
 }
 

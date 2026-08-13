@@ -563,6 +563,7 @@ impl LocalAgentEngine {
                     mode: RuntimeProfileMode::LockedBuiltin,
                     enabled_plugins: enabled_plugins.clone(),
                     bindings: BTreeMap::new(),
+                    surface_bindings: BTreeMap::new(),
                     plugin_deployments: enabled_plugins
                         .into_iter()
                         .map(|plugin_id| (plugin_id, PluginDeploymentKind::Builtin))
@@ -1199,7 +1200,88 @@ impl LocalAgentManagementService {
         let mut client = self.client()?;
         client.close_session(session_id, expected_version)
     }
+}
 
+impl mutsuki_agent_contracts::AgentSessionManagementApi for LocalAgentManagementService {
+    fn test_provider(&self) -> Result<(), AgentWireError> {
+        Self::test_provider(self)
+    }
+
+    fn list_sessions(
+        &self,
+        after_session_id: Option<&str>,
+        limit: usize,
+    ) -> Result<mutsuki_agent_contracts::AgentSessionPage, AgentWireError> {
+        let page = Self::list_sessions(self, after_session_id, limit)?;
+        Ok(mutsuki_agent_contracts::AgentSessionPage {
+            items: page
+                .items
+                .into_iter()
+                .map(|item| mutsuki_agent_contracts::AgentSessionSummary {
+                    session_id: item.session_id,
+                    title: item.title,
+                    turn_count: item.turn_count,
+                    message_count: item.message_count,
+                    status: item.status,
+                    total_tokens: item.total_tokens,
+                    cost_microunits: item.cost_microunits,
+                })
+                .collect(),
+            next_session_id: page.next_session_id,
+        })
+    }
+
+    fn session(&self, session_id: &str) -> Result<AgentSession, AgentWireError> {
+        Self::session(self, session_id)
+    }
+
+    fn session_state(&self, session_id: &str) -> Result<AgentSessionState, AgentWireError> {
+        Self::session_state(self, session_id)
+    }
+
+    fn events_after(
+        &self,
+        session_id: &str,
+        after_sequence: u64,
+        limit: u32,
+    ) -> Result<Vec<AgentEventEnvelope>, AgentWireError> {
+        Self::events_after(self, session_id, after_sequence, limit)
+    }
+
+    fn approve(&self, decision: PermissionDecision) -> Result<SessionVersion, AgentWireError> {
+        Self::approve(self, decision)
+    }
+
+    fn reject(&self, decision: PermissionDecision) -> Result<SessionVersion, AgentWireError> {
+        Self::reject(self, decision)
+    }
+
+    fn resolve_interaction(
+        &self,
+        resolution: InteractionResolution,
+    ) -> Result<SessionVersion, AgentWireError> {
+        Self::resolve_interaction(self, resolution)
+    }
+
+    fn cancel_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        expected_version: SessionVersion,
+    ) -> Result<SessionVersion, AgentWireError> {
+        Self::cancel_turn(self, session_id, turn_id, expected_version)
+    }
+
+    fn close_session(
+        &self,
+        session_id: &str,
+        expected_version: SessionVersion,
+    ) -> Result<(), AgentWireError> {
+        Self::close_session(self, session_id, expected_version)
+    }
+}
+
+impl LocalAgentManagementService {
     fn client(&self) -> Result<AgentClient<Box<dyn AgentClientBackend + Send>>, AgentWireError> {
         let connection_id = LOCAL_AGENT_CONNECTION_ID
             .parse()
@@ -1287,12 +1369,12 @@ impl ConfiguredPluginFactory for ConfiguredLocalAgentPlugin {
             .host_service(
                 LOCAL_AGENT_SERVICE_ID,
                 runtime_service.clone(),
-                Some("agent.runtime.local".into()),
+                "agent.runtime.local",
             )
             .host_service(
                 LOCAL_AGENT_MANAGEMENT_SERVICE_ID,
                 management.clone(),
-                Some("agent.session.manage".into()),
+                "agent.session.manage",
             )
             .build()
             .manifest;
@@ -1311,12 +1393,12 @@ impl ConfiguredPluginFactory for ConfiguredLocalAgentPlugin {
                     host_services: vec![
                         RuntimeBootstrapperService {
                             service_id: LOCAL_AGENT_SERVICE_ID.into(),
-                            capability: Some("agent.runtime.local".into()),
+                            capability: "agent.runtime.local".into(),
                             service: runtime_service.clone(),
                         },
                         RuntimeBootstrapperService {
                             service_id: LOCAL_AGENT_MANAGEMENT_SERVICE_ID.into(),
-                            capability: Some("agent.session.manage".into()),
+                            capability: "agent.session.manage".into(),
                             service: management.clone(),
                         },
                     ],

@@ -34,11 +34,36 @@ pub(super) fn resolve_enabled_plugins(
         resolved.deployments.insert(plugin_id.clone(), deployment);
         let mut manifest = manifest.clone();
         validate_plugin_extensions(&manifest)?;
+        validate_protocol_schemas(&manifest)?;
         normalize_protocol_classes(&mut manifest)?;
         resolved.manifests.push(manifest);
     }
     reject_cross_plugin_protocol_class_conflicts(&resolved.manifests)?;
     Ok(resolved)
+}
+
+fn validate_protocol_schemas(manifest: &PluginManifest) -> RuntimeResult<()> {
+    for protocol in &manifest.provides.protocols {
+        for (direction, schema) in [
+            ("input", &protocol.input_schema),
+            ("output", &protocol.output_schema),
+            ("error", &protocol.error_schema),
+        ] {
+            if schema.is_null() || schema.as_object().is_some_and(serde_json::Map::is_empty) {
+                return Err(mutsuki_runtime_core::RuntimeFailure::new(
+                    mutsuki_runtime_contracts::RuntimeError::new(
+                        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                        "host.load_plan.protocol_schema",
+                        format!(
+                            "plugin.{}.protocol.{}.schema.{direction}.empty",
+                            manifest.plugin_id, protocol.protocol_id
+                        ),
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_plugin_extensions(manifest: &PluginManifest) -> RuntimeResult<()> {
@@ -232,14 +257,35 @@ pub(super) fn runner_bindings(
 ) -> RuntimeResult<BTreeMap<String, String>> {
     let mut runner_bindings = profile.bindings.clone();
     validate_profile_bindings(&runner_bindings, manifests)?;
+    let mut candidates = BTreeMap::<String, BTreeSet<String>>::new();
     for manifest in manifests {
         for runner in &manifest.provides.runners {
             for protocol_id in &runner.accepted_protocol_ids {
-                runner_bindings
+                candidates
                     .entry(protocol_id.clone())
-                    .or_insert_with(|| runner.runner_id.clone());
+                    .or_default()
+                    .insert(runner.runner_id.clone());
             }
         }
+    }
+    for (protocol_id, protocol_candidates) in candidates {
+        if runner_bindings.contains_key(&protocol_id) {
+            continue;
+        }
+        if protocol_candidates.len() != 1 {
+            return Err(runner_binding_invalid(
+                &protocol_id,
+                "",
+                "ambiguous_runner_requires_explicit_binding",
+            ));
+        }
+        runner_bindings.insert(
+            protocol_id,
+            protocol_candidates
+                .into_iter()
+                .next()
+                .expect("one runner candidate exists"),
+        );
     }
     Ok(runner_bindings)
 }

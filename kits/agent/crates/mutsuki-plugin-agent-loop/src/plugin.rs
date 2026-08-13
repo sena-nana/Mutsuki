@@ -25,6 +25,13 @@ pub fn plugin(client: RuntimeClientRef, agent_loop: AgentLoop) -> PluginBuilder 
 pub fn runner(client: RuntimeClientRef, agent_loop: AgentLoop) -> TaskAwaitRunnerAdapter {
     let descriptor = orchestration_runner(RUNNER_ID, PLUGIN_ID)
         .accepts::<AgentRunProtocol>()
+        .requires::<AgentSessionGetProtocol>()
+        .requires::<AgentSessionAppendProtocol>()
+        .requires::<AgentContextBuildProtocol>()
+        .requires::<AgentModelGenerateProtocol>()
+        .requires::<AgentModelStreamProtocol>()
+        .requires::<AgentToolListProtocol>()
+        .requires::<AgentToolExecuteProtocol>()
         .build();
     TaskAwaitRunnerAdapter::new(
         descriptor,
