@@ -114,6 +114,7 @@ impl BotNodeCatalogFragment {
         Ok(PluginExtensionDescriptor {
             extension_id: BOT_FLOW_NODE_EXTENSION_ID.into(),
             version: BOT_FLOW_NODE_EXTENSION_VERSION,
+            projection: mutsuki_runtime_contracts::ExtensionProjection::Universal,
             payload: serde_json::to_value(self)?,
         })
     }

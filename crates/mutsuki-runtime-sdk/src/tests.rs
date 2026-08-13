@@ -880,6 +880,20 @@ fn host_service_registry_freezes_and_rejects_invalid_access() {
 }
 
 #[test]
+fn plugin_builder_preserves_rebindable_host_service_contract() {
+    let plugin = PluginBuilder::new("service-provider")
+        .rebindable_host_service(
+            "service.echo",
+            Arc::new(String::from("ready")),
+            "service.echo.capability",
+        )
+        .build();
+
+    assert_eq!(plugin.host_services.len(), 1);
+    assert!(plugin.host_services[0].rebindable);
+}
+
+#[test]
 fn static_capability_broker_serves_only_active_load_plan_surfaces() {
     let plan = capability_plan();
     let broker = StaticCapabilityBroker::from_load_plan(&plan);
@@ -1175,6 +1189,7 @@ fn capability_plan() -> RuntimeLoadPlan {
                 "workflow:workflow.linear".into(),
             ],
             active_capability_providers: Vec::new(),
+            active_plugin_extensions: Vec::new(),
             active_resource_providers: Vec::new(),
             active_host_extensions: vec!["host.extension.builtin".into()],
             active_plugin_backends: vec!["plugin.backend.builtin".into()],

@@ -450,6 +450,7 @@ fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
         extensions: vec![PluginExtensionDescriptor {
             extension_id: "example.plugin.catalog".into(),
             version: 1,
+            projection: ExtensionProjection::Universal,
             payload: serde_json::json!({"entries": []}),
         }],
         runners: Vec::new(),

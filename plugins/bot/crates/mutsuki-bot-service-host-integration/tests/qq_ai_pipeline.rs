@@ -405,9 +405,11 @@ async fn start_runtime(
                     service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
                     capability: "bot.flow".into(),
                     service: service_registry.clone(),
+                    rebindable: false,
                 }],
                 resource_providers: Vec::new(),
                 async_resource_providers: Vec::new(),
+                host_effects: Vec::new(),
             })
         })
         .register_builtin_async_handler(move || {

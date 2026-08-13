@@ -9,40 +9,6 @@ use mutsuki_web_protocol::{
 
 use crate::{ExtensionError, WebExtension};
 
-/// Disposable registration handle. Dropping removes the registration.
-pub struct Disposable {
-    dispose: Option<Box<dyn FnOnce() + Send + Sync>>,
-}
-
-impl Disposable {
-    pub fn new<F>(dispose: F) -> Self
-    where
-        F: FnOnce() + Send + Sync + 'static,
-    {
-        Self {
-            dispose: Some(Box::new(dispose)),
-        }
-    }
-
-    pub fn noop() -> Self {
-        Self { dispose: None }
-    }
-
-    pub fn dispose(mut self) {
-        if let Some(dispose) = self.dispose.take() {
-            dispose();
-        }
-    }
-}
-
-impl Drop for Disposable {
-    fn drop(&mut self) {
-        if let Some(dispose) = self.dispose.take() {
-            dispose();
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct RpcCallContext {
     principal_id: Arc<str>,
@@ -112,25 +78,18 @@ impl RpcRegistry {
         &self.namespace
     }
 
-    pub fn register<F>(&mut self, method: &str, handler: F) -> Disposable
+    pub fn register<F>(&mut self, method: &str, handler: F)
     where
         F: Fn(JsonValue) -> Result<JsonValue, ExtensionError> + Send + Sync + 'static,
     {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers.insert(
-            key.clone(),
+            key,
             RegisteredRpcHandler::Sync(Arc::new(move |_context, params| handler(params))),
         );
-        let handlers = &self.handlers as *const HashMap<String, RegisteredRpcHandler>;
-        Disposable::new(move || {
-            // Safety: Disposable is only used while registry lives and methods remove by key.
-            // We store owned key and remove via a side table in ExtensionRecord instead.
-            let _ = handlers;
-            let _ = key;
-        })
     }
 
-    pub fn register_contextual<F>(&mut self, method: &str, handler: F) -> Disposable
+    pub fn register_contextual<F>(&mut self, method: &str, handler: F)
     where
         F: Fn(RpcCallContext, JsonValue) -> Result<JsonValue, ExtensionError>
             + Send
@@ -139,44 +98,35 @@ impl RpcRegistry {
     {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers
-            .insert(key.clone(), RegisteredRpcHandler::Sync(Arc::new(handler)));
-        Disposable::new(move || {
-            let _ = key;
-        })
+            .insert(key, RegisteredRpcHandler::Sync(Arc::new(handler)));
     }
 
-    pub fn register_async<F, Fut>(&mut self, method: &str, handler: F) -> Disposable
+    pub fn register_async<F, Fut>(&mut self, method: &str, handler: F)
     where
         F: Fn(JsonValue) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static,
     {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers.insert(
-            key.clone(),
+            key,
             RegisteredRpcHandler::Async(Arc::new(move |_context, params| {
                 Box::pin(handler(params))
             })),
         );
-        Disposable::new(move || {
-            let _ = key;
-        })
     }
 
-    pub fn register_async_contextual<F, Fut>(&mut self, method: &str, handler: F) -> Disposable
+    pub fn register_async_contextual<F, Fut>(&mut self, method: &str, handler: F)
     where
         F: Fn(RpcCallContext, JsonValue) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<JsonValue, ExtensionError>> + Send + 'static,
     {
         let key = format!("{}.{}", self.namespace, method);
         self.handlers.insert(
-            key.clone(),
+            key,
             RegisteredRpcHandler::Async(Arc::new(move |context, params| {
                 Box::pin(handler(context, params))
             })),
         );
-        Disposable::new(move || {
-            let _ = key;
-        })
     }
 
     pub fn call(&self, method: &str, params: JsonValue) -> Result<JsonValue, ExtensionError> {
@@ -282,12 +232,9 @@ impl EventRegistry {
         }
     }
 
-    pub fn register_topic(&mut self, topic: &str) -> Disposable {
+    pub fn register_topic(&mut self, topic: &str) {
         let full = format!("{}.{}", self.namespace, topic);
-        self.topics.push(full.clone());
-        Disposable::new(move || {
-            let _ = full;
-        })
+        self.topics.push(full);
     }
 
     pub fn topics(&self) -> &[String] {
@@ -414,6 +361,8 @@ impl ExtensionRegistry {
     pub fn disable(&mut self, extension_id: &str) -> bool {
         if let Some(record) = self.records.get_mut(extension_id) {
             record.enabled = false;
+            record.rpc = Arc::new(RpcRegistry::new(extension_id));
+            record.events = Arc::new(EventRegistry::new(extension_id));
             true
         } else {
             false
@@ -539,5 +488,43 @@ mod tests {
             .unwrap();
         assert_eq!(value, serde_json::json!({"content": "login"}));
         assert!(rpc.call("qr.render", serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn disabling_extension_releases_owned_registrations() {
+        let owned = Arc::new(());
+        let weak = Arc::downgrade(&owned);
+        let mut rpc = RpcRegistry::new("demo");
+        rpc.register("ping", {
+            let owned = owned.clone();
+            move |_params| {
+                let _ = &owned;
+                Ok(JsonValue::Null)
+            }
+        });
+        let record = ExtensionRecord {
+            manifest: ExtensionManifest {
+                manifest_version: mutsuki_web_protocol::EXTENSION_MANIFEST_VERSION,
+                id: "demo".into(),
+                version: "1.0.0".into(),
+                entry: "index.js".into(),
+                capabilities: Vec::new(),
+                permissions: Vec::new(),
+                assets: Vec::new(),
+                protocol_version: mutsuki_web_protocol::WEB_PROTOCOL_VERSION.into(),
+            },
+            assets: None,
+            rpc: Arc::new(rpc),
+            events: Arc::new(EventRegistry::new("demo")),
+            enabled: true,
+            failed: None,
+        };
+        let mut registry = ExtensionRegistry::new(DEFAULT_BUDGETS);
+        registry.records.insert("demo".into(), record);
+        drop(owned);
+
+        assert!(weak.upgrade().is_some());
+        assert!(registry.disable("demo"));
+        assert!(weak.upgrade().is_none());
     }
 }

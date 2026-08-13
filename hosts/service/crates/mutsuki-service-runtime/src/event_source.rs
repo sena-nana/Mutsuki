@@ -330,6 +330,31 @@ impl EventSourceSupervisor {
         }
     }
 
+    pub(crate) async fn shutdown_source(
+        &self,
+        source_id: &str,
+        graceful: Duration,
+    ) -> Result<(), String> {
+        let managed = self
+            .sources
+            .lock()
+            .expect("event source supervisor mutex")
+            .remove(source_id);
+        let Some(source) = managed else {
+            return Ok(());
+        };
+        let _ = source.commands.send(SourceCommand::Shutdown).await;
+        let mut task = source.task;
+        match tokio::time::timeout(graceful + Duration::from_millis(100), &mut task).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(error)) => Err(format!("event source lifecycle task failed: {error}")),
+            Err(_) => {
+                task.abort();
+                Err(format!("event source {source_id} did not stop in time"))
+            }
+        }
+    }
+
     pub(crate) async fn stop_plugins(
         &self,
         plugin_ids: &std::collections::BTreeSet<String>,

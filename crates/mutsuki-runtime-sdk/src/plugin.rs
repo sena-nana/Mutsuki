@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use mutsuki_runtime_contracts::{
@@ -14,10 +16,12 @@ use crate::{
     ResourceKindSpec, ResourceProviderGateway,
 };
 
+#[derive(Clone)]
 pub struct RuntimeBootstrapperService {
     pub service_id: String,
     pub capability: String,
     pub service: Arc<dyn std::any::Any + Send + Sync>,
+    pub rebindable: bool,
 }
 
 pub struct RuntimeBootstrapperResourceProvider {
@@ -30,6 +34,23 @@ pub struct RuntimeBootstrapperAsyncResourceProvider {
     pub provider: Arc<dyn AsyncResourceProviderGateway>,
 }
 
+pub type HostEffectFuture<'a> = Pin<Box<dyn Future<Output = RuntimeResult<()>> + Send + 'a>>;
+
+pub trait HostEffect: Send {
+    fn dispose(&mut self) -> HostEffectFuture<'_>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostEffectKind {
+    HostLocal,
+    BackendInstance,
+}
+
+pub struct RuntimeBootstrapperEffect {
+    pub kind: HostEffectKind,
+    pub effect: Box<dyn HostEffect>,
+}
+
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub runners: Vec<Box<dyn Runner>>,
@@ -37,6 +58,7 @@ pub struct LoadedPlugin {
     pub host_services: Vec<RuntimeBootstrapperService>,
     pub resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
     pub async_resource_providers: Vec<RuntimeBootstrapperAsyncResourceProvider>,
+    pub host_effects: Vec<RuntimeBootstrapperEffect>,
 }
 
 pub trait Plugin: Send {
@@ -88,6 +110,7 @@ pub struct PluginBuilder {
     host_services: Vec<RuntimeBootstrapperService>,
     resource_providers: Vec<RuntimeBootstrapperResourceProvider>,
     async_resource_providers: Vec<RuntimeBootstrapperAsyncResourceProvider>,
+    host_effects: Vec<RuntimeBootstrapperEffect>,
 }
 
 impl PluginBuilder {
@@ -121,6 +144,7 @@ impl PluginBuilder {
             host_services: Vec::new(),
             resource_providers: Vec::new(),
             async_resource_providers: Vec::new(),
+            host_effects: Vec::new(),
         }
     }
 
@@ -170,6 +194,12 @@ impl PluginBuilder {
 
     pub fn lifecycle(mut self, lifecycle: LifecyclePolicy) -> Self {
         self.lifecycle = lifecycle;
+        self
+    }
+
+    pub fn host_effect(mut self, kind: HostEffectKind, effect: Box<dyn HostEffect>) -> Self {
+        self.host_effects
+            .push(RuntimeBootstrapperEffect { kind, effect });
         self
     }
 
@@ -327,6 +357,32 @@ impl PluginBuilder {
     where
         T: HostService,
     {
+        self.push_host_service(service_id, service, capability, false);
+        self
+    }
+
+    pub fn rebindable_host_service<T>(
+        mut self,
+        service_id: impl Into<String>,
+        service: Arc<T>,
+        capability: impl Into<String>,
+    ) -> Self
+    where
+        T: HostService,
+    {
+        self.push_host_service(service_id, service, capability, true);
+        self
+    }
+
+    fn push_host_service<T>(
+        &mut self,
+        service_id: impl Into<String>,
+        service: Arc<T>,
+        capability: impl Into<String>,
+        rebindable: bool,
+    ) where
+        T: HostService,
+    {
         let service_id = service_id.into();
         let capability = capability.into();
         if !self.provides.services.contains(&service_id) {
@@ -339,8 +395,8 @@ impl PluginBuilder {
             service_id,
             capability,
             service,
+            rebindable,
         });
-        self
     }
 
     pub fn build(mut self) -> LoadedPlugin {
@@ -362,6 +418,7 @@ impl PluginBuilder {
             host_services: self.host_services,
             resource_providers: self.resource_providers,
             async_resource_providers: self.async_resource_providers,
+            host_effects: self.host_effects,
         }
     }
 

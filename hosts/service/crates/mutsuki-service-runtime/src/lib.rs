@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 
 use mutsuki_runtime_contracts::resource::experimental::{CommandBatch, SagaPlan};
 use mutsuki_runtime_contracts::{
-    CancelPolicy, CommandPlan, DispatchLane, ExecutionClass, ExportPlan, PlanReceipt,
-    PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeLoadPlan, RuntimeProfile,
-    RuntimeProfileMode, SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task, TaskBatch,
-    TaskHandle, TaskOutcome, TaskStatus, WritePlan,
+    CancelPolicy, CommandPlan, DispatchLane, ERR_RUNTIME_HOST_FAILED, ExecutionClass, ExportPlan,
+    PlanReceipt, PluginDeploymentKind, ReadPlan, ResourceRef, RuntimeError, RuntimeLoadPlan,
+    RuntimeProfile, RuntimeProfileMode, SnapshotDescriptor, StreamPlan, SurfaceCompatibility, Task,
+    TaskBatch, TaskHandle, TaskOutcome, TaskStatus, WritePlan,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, Runner, RuntimeFailure, RuntimeResult, RuntimeStopState,
@@ -21,15 +21,16 @@ use mutsuki_runtime_core::{
 #[cfg(test)]
 use mutsuki_runtime_host::BinaryRunner;
 use mutsuki_runtime_host::{
-    ExecutionDomainConfig, HostRuntime, HostRuntimeCommand, HostRuntimeConfig, HostRuntimeReply,
-    HostTaskSnapshot, HostTaskState, LaneExecutionPolicy, ProcessRunnerSpec, RunnerLimits,
-    RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor,
+    AttachedEffectHandle, ExecutionDomainConfig, HostRuntime, HostRuntimeCommand,
+    HostRuntimeConfig, HostRuntimeReply, HostTaskSnapshot, HostTaskState, LaneExecutionPolicy,
+    ProcessRunnerSpec, RunnerLimits, RuntimeBootstrapper, SpawnedBinaryRunner, TokioAsyncExecutor,
 };
 #[cfg(test)]
 use mutsuki_runtime_sdk::RuntimeBootstrapperService;
 use mutsuki_runtime_sdk::{
-    HostService, LoadedPlugin, ResourcePlanGateway, ResourceRegistryGateway, RuntimeClient,
-    RuntimeClientRef, TaskSubmitter, TaskSubmitterRuntimeClient,
+    HostEffect, HostEffectFuture, HostEffectKind, HostService, LoadedPlugin, ResourcePlanGateway,
+    ResourceRegistryGateway, RuntimeClient, RuntimeClientRef, TaskSubmitter,
+    TaskSubmitterRuntimeClient,
 };
 use mutsuki_service_config::{
     ConfiguredPluginSelection, DispatchLaneName, ExecutionClassName, HostSecretStore,
@@ -639,6 +640,7 @@ struct ServiceRuntimeInner {
     host_runtime: Mutex<Option<HostRuntime>>,
     supervisor: RunnerSupervisor,
     event_sources: EventSourceSupervisor,
+    event_source_effects: Mutex<BTreeMap<String, AttachedEffectHandle>>,
     configured_plugins: ConfiguredPluginCatalog,
     components: Mutex<PreparedComponentRegistry>,
     component_generations: Mutex<BTreeMap<String, u64>>,
@@ -646,6 +648,29 @@ struct ServiceRuntimeInner {
     runtime_client: Arc<DeferredRuntimeClient>,
     deployment_state: Mutex<PluginDeploymentState>,
     shutdown_tx: Mutex<Option<oneshot::Sender<String>>>,
+}
+
+struct EventSourceScopeEffect {
+    supervisor: EventSourceSupervisor,
+    source_id: String,
+    graceful: Duration,
+}
+
+impl HostEffect for EventSourceScopeEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move {
+            self.supervisor
+                .shutdown_source(&self.source_id, self.graceful)
+                .await
+                .map_err(|detail| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        ERR_RUNTIME_HOST_FAILED,
+                        "service.event_source",
+                        detail,
+                    ))
+                })
+        })
+    }
 }
 
 impl ServiceRuntime {
@@ -1134,6 +1159,7 @@ impl ServiceRuntimeBuilder {
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor,
             event_sources: event_source_supervisor.clone(),
+            event_source_effects: Mutex::new(BTreeMap::new()),
             configured_plugins,
             component_generations: Mutex::new(
                 config
@@ -1171,7 +1197,9 @@ impl ServiceRuntimeBuilder {
         };
         let graceful = Duration::from_millis(config.runners.graceful_shutdown_ms);
         for source in event_sources {
+            let descriptor = source.descriptor().clone();
             event_source_supervisor.start(source, task_submitter.clone(), &config, graceful);
+            inner.attach_event_source_effect(&descriptor, graceful)?;
         }
         Ok(ServiceRuntime {
             inner,
@@ -1500,6 +1528,59 @@ impl ControlHandler for RuntimeControl {
 }
 
 impl ServiceRuntimeInner {
+    fn attach_event_source_effect(
+        &self,
+        descriptor: &HostEventSourceDescriptor,
+        graceful: Duration,
+    ) -> ServiceRuntimeResult<()> {
+        let handle = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+            .ok_or(ServiceRuntimeError::RuntimeUnavailable)?
+            .attach_application_effect(
+                &descriptor.plugin_id,
+                HostEffectKind::HostLocal,
+                Box::new(EventSourceScopeEffect {
+                    supervisor: self.event_sources.clone(),
+                    source_id: descriptor.source_id.clone(),
+                    graceful,
+                }),
+            )?;
+        self.event_source_effects
+            .lock()
+            .expect("event source effect mutex")
+            .insert(descriptor.source_id.clone(), handle);
+        Ok(())
+    }
+
+    fn retire_event_source_effects<'a>(
+        &self,
+        source_ids: impl IntoIterator<Item = &'a str>,
+        timeout: Duration,
+    ) {
+        let mut effects = self
+            .event_source_effects
+            .lock()
+            .expect("event source effect mutex");
+        let handles = source_ids
+            .into_iter()
+            .filter_map(|source_id| effects.remove(source_id))
+            .collect::<Vec<_>>();
+        drop(effects);
+        if let Some(runtime) = self
+            .host_runtime
+            .lock()
+            .expect("host runtime mutex")
+            .as_ref()
+        {
+            for handle in handles {
+                let _ = runtime.dispose_attached_effect(&handle, timeout);
+            }
+        }
+    }
+
     fn current_config(&self) -> ServiceConfig {
         let mut config = self.config.clone();
         config.plugins.configured = self
@@ -1679,6 +1760,11 @@ impl ServiceRuntimeInner {
                 return Err(ServiceRuntimeError::EventSource(detail));
             }
         };
+        let old_source_ids = old_event_sources
+            .iter()
+            .map(|source| source.descriptor().source_id.as_str())
+            .collect::<Vec<_>>();
+        self.retire_event_source_effects(old_source_ids, graceful);
         let task_submitter = self
             .host_runtime
             .lock()
@@ -1700,8 +1786,10 @@ impl ServiceRuntimeInner {
         if let Err(error) = decision {
             let restore_lock = restore_runtime_lock(&runtime_lock_path, previous_runtime_lock);
             for source in old_event_sources {
+                let descriptor = source.descriptor().clone();
                 self.event_sources
                     .start(source, task_submitter.clone(), &self.config, graceful);
+                self.attach_event_source_effect(&descriptor, graceful)?;
             }
             return match restore_lock {
                 Ok(()) => Err(ServiceRuntimeError::Core(error)),
@@ -1722,8 +1810,10 @@ impl ServiceRuntimeInner {
             observer.activate(&runtime_lock);
         }
         for source in new_event_sources {
+            let descriptor = source.descriptor().clone();
             self.event_sources
                 .start(source, task_submitter.clone(), &candidate_config, graceful);
+            self.attach_event_source_effect(&descriptor, graceful)?;
         }
         *self.catalog.lock().expect("catalog mutex") = new_catalog;
         *self.components.lock().expect("component registry mutex") = combined_components;
@@ -3044,6 +3134,7 @@ async fn runtime_bootstrapper(
             enabled_plugins,
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
+            supported_extensions: Vec::new(),
             plugin_deployments: deployments,
             observability: Default::default(),
             allow_dynamic_registration: false,
@@ -3564,9 +3655,11 @@ mod tests {
                             service_id: service_id.clone(),
                             capability: service_capability.clone(),
                             service: service.clone(),
+                            rebindable: false,
                         }],
                         resource_providers: Vec::new(),
                         async_resource_providers: Vec::new(),
+                        host_effects: Vec::new(),
                     })
                 }),
             )
@@ -5355,6 +5448,7 @@ generation = 7
             host_runtime: Mutex::new(Some(host_runtime)),
             supervisor: RunnerSupervisor::new(),
             event_sources: EventSourceSupervisor::default(),
+            event_source_effects: Mutex::new(BTreeMap::new()),
             configured_plugins: ConfiguredPluginCatalog::default(),
             components: Mutex::new(components),
             component_generations: Mutex::new(BTreeMap::new()),

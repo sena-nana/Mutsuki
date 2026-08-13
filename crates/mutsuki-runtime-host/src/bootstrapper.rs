@@ -1,17 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use mutsuki_runtime_contracts::{
     CompletionBatch, ContractSurface, ContractSurfaceKind, PluginDeploymentKind, PluginManifest,
-    RunnerDescriptor, RuntimeLoadPlan, RuntimeProfile, WorkBatch,
+    RequirementBinding, RequirementKind, RunnerDescriptor, RuntimeLoadPlan, RuntimeProfile,
+    WorkBatch,
 };
 use mutsuki_runtime_core::{
     AsyncBatchHandler, AsyncCompletionFuture, CoreKernelRunner, CoreRuntime, Runner, RunnerContext,
-    RuntimeResult,
+    RunnerIsolation, RunnerManagementHandle, RuntimeResult,
 };
 use mutsuki_runtime_sdk::{
-    AsyncResourceProviderGateway, HostServiceRegistry, LoadedPlugin, PluginLoader,
-    ResourceProviderGateway, RuntimeBootstrapperService,
+    AsyncResourceProviderGateway, HostEffect, HostEffectKind, HostServiceRegistry, LoadedPlugin,
+    PluginLoader, ResourceProviderGateway, RuntimeBootstrapperEffect, RuntimeBootstrapperService,
 };
 
 use crate::capabilities::HostCapabilityRegistry;
@@ -23,6 +25,69 @@ use crate::error::{
 use crate::host::{HostRuntime, HostRuntimeConfig};
 use crate::resolver::{core_manifest, resolve_load_plan};
 use crate::scheduler::{DefaultScheduler, RunnerLimits, SchedulerPolicy};
+use crate::scope::{PluginLifetime, PluginScopeManager, ScopeId, ServiceDependency};
+
+#[derive(Clone)]
+pub struct PluginScopeSet {
+    manager: PluginScopeManager,
+    root_scope: ScopeId,
+    plugin_scopes: BTreeMap<String, ScopeId>,
+}
+
+impl PluginScopeSet {
+    #[must_use]
+    pub fn manager(&self) -> &PluginScopeManager {
+        &self.manager
+    }
+
+    #[must_use]
+    pub fn root_scope(&self) -> &ScopeId {
+        &self.root_scope
+    }
+
+    #[must_use]
+    pub fn plugin_scope(&self, plugin_id: &str) -> Option<&ScopeId> {
+        self.plugin_scopes.get(plugin_id)
+    }
+
+    pub(crate) fn has_live_plugins(&self) -> bool {
+        self.plugin_scopes
+            .values()
+            .any(|scope_id| self.manager.snapshot(scope_id).is_some())
+    }
+
+    pub(crate) fn has_dirty_scope(&self) -> bool {
+        self.plugin_scopes.values().any(|scope_id| {
+            self.manager
+                .snapshot(scope_id)
+                .is_some_and(|scope| scope.state == crate::ScopeState::FailedDirty)
+        })
+    }
+
+    pub(crate) fn validate_reload(
+        &self,
+        affected_plugins: Option<&BTreeSet<String>>,
+    ) -> RuntimeResult<()> {
+        for (plugin_id, scope_id) in &self.plugin_scopes {
+            if affected_plugins.is_some_and(|affected| !affected.contains(plugin_id)) {
+                continue;
+            }
+            let Some(scope) = self.manager.snapshot(scope_id) else {
+                continue;
+            };
+            if scope.state == crate::ScopeState::FailedDirty {
+                continue;
+            }
+            if scope.lifetime != PluginLifetime::DrainRequired {
+                return Err(crate::error::host_failure(
+                    "host.scope.reload_requires_restart",
+                    plugin_id,
+                ));
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 pub struct RuntimeBootstrapper {
@@ -30,6 +95,7 @@ pub struct RuntimeBootstrapper {
     runners: Vec<RegisteredRunner>,
     async_handlers: Vec<RegisteredAsyncHandler>,
     host_services: Vec<RegisteredHostService>,
+    host_effects: Vec<RegisteredHostEffect>,
     shared_services: Option<Arc<HostServiceRegistry>>,
     resource_providers: Vec<RegisteredResourceProvider>,
     async_resource_providers: Vec<RegisteredAsyncResourceProvider>,
@@ -45,6 +111,7 @@ pub struct PreparedRuntimeReload {
     pub(crate) registry_generation: u64,
     pub(crate) runner_limits: Option<BTreeMap<String, RunnerLimits>>,
     pub(crate) affected_plugins: Option<BTreeSet<String>>,
+    pub(crate) scopes: Option<PluginScopeSet>,
 }
 
 pub struct PreparedHostRuntime {
@@ -73,6 +140,7 @@ impl PreparedHostRuntime {
             booted.services,
             booted.profile_id,
             booted.registry_generation,
+            booted.scopes,
         )
     }
 }
@@ -98,9 +166,15 @@ struct RegisteredAsyncHandler {
     handler: Arc<dyn AsyncBatchHandler>,
 }
 
+#[derive(Clone)]
 struct RegisteredHostService {
     owner_plugin_id: String,
     service: RuntimeBootstrapperService,
+}
+
+struct RegisteredHostEffect {
+    owner_plugin_id: String,
+    effect: RuntimeBootstrapperEffect,
 }
 
 struct RegisteredResourceProvider {
@@ -134,6 +208,7 @@ impl RuntimeBootstrapper {
             runners,
             async_handlers,
             host_services,
+            host_effects,
             resource_providers,
             async_resource_providers,
         } = plugin;
@@ -155,6 +230,11 @@ impl RuntimeBootstrapper {
                     service,
                 }),
         );
+        self.host_effects
+            .extend(host_effects.into_iter().map(|effect| RegisteredHostEffect {
+                owner_plugin_id: owner_plugin_id.clone(),
+                effect,
+            }));
         for resource_provider in resource_providers {
             self.resource_providers.push(RegisteredResourceProvider {
                 provider_id: resource_provider.provider_id,
@@ -273,7 +353,7 @@ impl RuntimeBootstrapper {
         profile: RuntimeProfile,
         registry_generation: u64,
     ) -> RuntimeResult<PreparedRuntimeReload> {
-        self.prepare_reload_with_limits(profile, registry_generation, None)
+        self.prepare_reload_with_limits(profile, registry_generation, None, None)
     }
 
     /// Prepares a reload and atomically replaces Host scheduler limits with the supplied map.
@@ -286,7 +366,7 @@ impl RuntimeBootstrapper {
         registry_generation: u64,
         runner_limits: BTreeMap<String, RunnerLimits>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
-        self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits))
+        self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits), None)
     }
 
     pub fn prepare_targeted_reload_with_runner_limits(
@@ -296,10 +376,12 @@ impl RuntimeBootstrapper {
         runner_limits: BTreeMap<String, RunnerLimits>,
         affected_plugins: BTreeSet<String>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
-        let mut prepared =
-            self.prepare_reload_with_limits(profile, registry_generation, Some(runner_limits))?;
-        prepared.affected_plugins = Some(affected_plugins);
-        Ok(prepared)
+        self.prepare_reload_with_limits(
+            profile,
+            registry_generation,
+            Some(runner_limits),
+            Some(affected_plugins),
+        )
     }
 
     fn prepare_reload_with_limits(
@@ -307,6 +389,7 @@ impl RuntimeBootstrapper {
         profile: RuntimeProfile,
         registry_generation: u64,
         runner_limits: Option<BTreeMap<String, RunnerLimits>>,
+        affected_plugins: Option<BTreeSet<String>>,
     ) -> RuntimeResult<PreparedRuntimeReload> {
         let mut prepared = self.prepare_runtime(profile)?;
         prepared.plan.registry_generation = registry_generation;
@@ -331,6 +414,12 @@ impl RuntimeBootstrapper {
             })
             .collect();
         prepared.registry_generation = registry_generation;
+        let scopes = build_plugin_scopes(
+            &prepared.plan,
+            &prepared.services,
+            prepared.host_effects,
+            affected_plugins.as_ref(),
+        )?;
         Ok(PreparedRuntimeReload {
             plan: prepared.plan,
             runners: prepared.runners,
@@ -340,7 +429,8 @@ impl RuntimeBootstrapper {
             profile_id: prepared.profile_id,
             registry_generation: prepared.registry_generation,
             runner_limits,
-            affected_plugins: None,
+            affected_plugins,
+            scopes: Some(scopes),
         })
     }
 
@@ -374,17 +464,46 @@ impl RuntimeBootstrapper {
                     "shared and domain-local host services cannot be mixed",
                 ));
             }
-            None => build_host_service_registry(self.host_services)?,
+            None => build_host_service_registry(&self.host_services)?,
         };
+        let mut host_effects = self.host_effects;
         let runners: Vec<Box<dyn Runner>> = self
             .runners
             .into_iter()
-            .map(|registered| registered.runner)
+            .map(|registered| {
+                if let Some(management) = registered.runner.management_handle() {
+                    host_effects.push(RegisteredHostEffect {
+                        owner_plugin_id: registered.runner.descriptor().plugin_id.clone(),
+                        effect: RuntimeBootstrapperEffect {
+                            kind: HostEffectKind::BackendInstance,
+                            effect: Box::new(ManagementHandleEffect(management.clone())),
+                        },
+                    });
+                    Box::new(ScopeOwnedRunner::new(registered.runner, management))
+                        as Box<dyn Runner>
+                } else {
+                    registered.runner
+                }
+            })
             .collect();
         let async_handlers = self
             .async_handlers
             .into_iter()
-            .map(|registered| registered.handler)
+            .map(|registered| {
+                if let Some(management) = registered.handler.management_handle() {
+                    host_effects.push(RegisteredHostEffect {
+                        owner_plugin_id: registered.handler.descriptor().plugin_id.clone(),
+                        effect: RuntimeBootstrapperEffect {
+                            kind: HostEffectKind::BackendInstance,
+                            effect: Box::new(ManagementHandleEffect(management.clone())),
+                        },
+                    });
+                    Arc::new(ScopeOwnedAsyncHandler::new(registered.handler, management))
+                        as Arc<dyn AsyncBatchHandler>
+                } else {
+                    registered.handler
+                }
+            })
             .collect();
         Ok(PreparedRuntime {
             plan,
@@ -392,6 +511,7 @@ impl RuntimeBootstrapper {
             async_handlers,
             capabilities,
             services,
+            host_effects,
             profile_id,
             registry_generation,
             active_resource_providers,
@@ -402,16 +522,37 @@ impl RuntimeBootstrapper {
 }
 
 fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedRuntime> {
+    let scopes = build_plugin_scopes(
+        &prepared.plan,
+        &prepared.services,
+        prepared.host_effects,
+        None,
+    )?;
     append_core_kernel(&mut prepared.plan, &mut prepared.runners);
-    let core = CoreRuntime::boot_with_async_handlers(
+    let core = match CoreRuntime::boot_with_async_handlers(
         prepared.plan,
         prepared.runners,
         prepared.async_handlers,
-    )?;
+    ) {
+        Ok(core) => core,
+        Err(error) => {
+            if let Err(cleanup_error) = scopes
+                .manager()
+                .rollback_activation_blocking(scopes.root_scope(), Duration::from_secs(30))
+            {
+                return Err(crate::error::host_failure(
+                    "host.scope.boot_rollback_failed",
+                    format!("boot failed: {error}; scope rollback failed: {cleanup_error}"),
+                ));
+            }
+            return Err(error);
+        }
+    };
     Ok(BootedRuntime {
         core,
         capabilities: prepared.capabilities,
         services: prepared.services,
+        scopes,
         profile_id: prepared.profile_id,
         registry_generation: prepared.registry_generation,
         active_resource_providers: prepared.active_resource_providers,
@@ -463,6 +604,7 @@ struct BootedRuntime {
     core: CoreRuntime,
     capabilities: HostCapabilityRegistry,
     services: Arc<HostServiceRegistry>,
+    scopes: PluginScopeSet,
     profile_id: String,
     registry_generation: u64,
     active_resource_providers: Vec<String>,
@@ -476,6 +618,7 @@ struct PreparedRuntime {
     async_handlers: Vec<Arc<dyn AsyncBatchHandler>>,
     capabilities: HostCapabilityRegistry,
     services: Arc<HostServiceRegistry>,
+    host_effects: Vec<RegisteredHostEffect>,
     profile_id: String,
     registry_generation: u64,
     active_resource_providers: Vec<String>,
@@ -484,21 +627,257 @@ struct PreparedRuntime {
 }
 
 fn build_host_service_registry(
-    host_services: Vec<RegisteredHostService>,
+    host_services: &[RegisteredHostService],
 ) -> RuntimeResult<Arc<HostServiceRegistry>> {
     let registry = Arc::new(HostServiceRegistry::new());
     for registered in host_services {
-        let owner_plugin_id = registered.owner_plugin_id;
-        let service = registered.service;
-        let RuntimeBootstrapperService {
-            service_id,
-            service,
-            ..
-        } = service;
-        registry.register_erased_owned(service_id, owner_plugin_id, service)?;
+        registry.register_erased_owned_with_binding(
+            registered.service.service_id.clone(),
+            registered.owner_plugin_id.clone(),
+            registered.service.service.clone(),
+            registered.service.rebindable,
+        )?;
     }
     registry.freeze();
     Ok(registry)
+}
+
+fn build_plugin_scopes(
+    plan: &RuntimeLoadPlan,
+    host_services: &HostServiceRegistry,
+    host_effects: Vec<RegisteredHostEffect>,
+    affected_plugins: Option<&BTreeSet<String>>,
+) -> RuntimeResult<PluginScopeSet> {
+    let manager = PluginScopeManager::new();
+    let root_scope = manager.create_scope(
+        None,
+        "host.composition.root",
+        plan.registry_generation,
+        PluginLifetime::DrainRequired,
+    )?;
+    let mut plugin_scopes = BTreeMap::new();
+    for manifest in &plan.plugins {
+        if affected_plugins.is_some_and(|affected| !affected.contains(&manifest.plugin_id)) {
+            continue;
+        }
+        let scope = manager.create_scope(
+            Some(&root_scope),
+            manifest.plugin_id.clone(),
+            plan.registry_generation,
+            plugin_lifetime(&manifest.lifecycle),
+        )?;
+        plugin_scopes.insert(manifest.plugin_id.clone(), scope);
+    }
+    let discarded_scope = manager.create_scope(
+        Some(&root_scope),
+        "host.composition.discarded-candidate",
+        plan.registry_generation,
+        PluginLifetime::DrainRequired,
+    )?;
+
+    let activation = (|| -> RuntimeResult<()> {
+        for registered in host_effects {
+            let owner_scope = plugin_scopes
+                .get(&registered.owner_plugin_id)
+                .unwrap_or(&discarded_scope);
+            let kind = match registered.effect.kind {
+                HostEffectKind::HostLocal => crate::scope::EffectKind::HostLocal,
+                HostEffectKind::BackendInstance => crate::scope::EffectKind::BackendInstance,
+            };
+            manager.stage_effect(owner_scope, kind, Box::new(registered.effect))?;
+        }
+
+        for manifest in &plan.plugins {
+            let Some(scope) = plugin_scopes.get(&manifest.plugin_id) else {
+                continue;
+            };
+            for requirement in &manifest.requires {
+                if requirement.kind == ContractSurfaceKind::Service {
+                    manager.declare_dependency(
+                        scope,
+                        ServiceDependency {
+                            service_id: requirement.surface_id.clone(),
+                            requirement: match requirement.requirement {
+                                RequirementKind::Required => {
+                                    crate::scope::ServiceRequirement::Required
+                                }
+                                RequirementKind::Optional => {
+                                    crate::scope::ServiceRequirement::Optional
+                                }
+                            },
+                            binding: match requirement.binding {
+                                RequirementBinding::Static => {
+                                    crate::scope::ServiceBinding::StaticAtActivation
+                                }
+                                RequirementBinding::Rebindable => {
+                                    crate::scope::ServiceBinding::Rebindable
+                                }
+                            },
+                        },
+                    )?;
+                }
+            }
+        }
+
+        for (service_id, owner_plugin_id, service, rebindable) in host_services.owned_entries() {
+            let owner_scope = if owner_plugin_id.is_empty() {
+                &root_scope
+            } else {
+                plugin_scopes.get(&owner_plugin_id).unwrap_or(&root_scope)
+            };
+            manager.stage_published_service_erased(
+                owner_scope,
+                &root_scope,
+                &service_id,
+                service,
+                rebindable,
+            )?;
+        }
+
+        manager.begin_activation(&root_scope)?;
+        manager.commit_activation(&root_scope)?;
+        for plugin_id in &plan.load_order {
+            if let Some(scope) = plugin_scopes.get(plugin_id) {
+                manager.begin_activation(scope)?;
+            }
+        }
+        manager.rollback_activation_blocking(&discarded_scope, Duration::from_secs(30))?;
+        for plugin_id in &plan.load_order {
+            if let Some(scope) = plugin_scopes.get(plugin_id) {
+                manager.commit_activation(scope)?;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = activation {
+        if let Err(cleanup_error) =
+            manager.rollback_activation_blocking(&root_scope, Duration::from_secs(30))
+        {
+            return Err(crate::error::host_failure(
+                "host.scope.activation_rollback_failed",
+                format!("activation failed: {error}; scope rollback failed: {cleanup_error}"),
+            ));
+        }
+        return Err(error);
+    }
+
+    Ok(PluginScopeSet {
+        manager,
+        root_scope,
+        plugin_scopes,
+    })
+}
+
+struct ScopeOwnedRunner {
+    inner: Box<dyn Runner>,
+    management: Arc<dyn RunnerManagementHandle>,
+}
+
+impl ScopeOwnedRunner {
+    fn new(inner: Box<dyn Runner>, management: Arc<dyn RunnerManagementHandle>) -> Self {
+        Self { inner, management }
+    }
+}
+
+impl Runner for ScopeOwnedRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn run_batch(
+        &mut self,
+        ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        self.inner.run_batch(ctx, batch)
+    }
+
+    fn cancel(&mut self, invocation_id: &str) -> RuntimeResult<()> {
+        self.inner.cancel(invocation_id)
+    }
+
+    fn dispose(&mut self) -> RuntimeResult<()> {
+        Ok(())
+    }
+
+    fn isolation(&self) -> RunnerIsolation {
+        self.inner.isolation()
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        Some(Arc::new(ScopeOwnedManagementHandle(
+            self.management.clone(),
+        )))
+    }
+
+    fn recover_after_hard_termination(&mut self) -> RuntimeResult<()> {
+        self.inner.recover_after_hard_termination()
+    }
+}
+
+#[derive(Debug)]
+struct ScopeOwnedManagementHandle(Arc<dyn RunnerManagementHandle>);
+
+impl RunnerManagementHandle for ScopeOwnedManagementHandle {
+    fn cancel(&self, invocation_id: &str) -> RuntimeResult<()> {
+        self.0.cancel(invocation_id)
+    }
+
+    fn dispose(&self) -> RuntimeResult<()> {
+        Ok(())
+    }
+}
+
+struct ScopeOwnedAsyncHandler {
+    inner: Arc<dyn AsyncBatchHandler>,
+    management: Arc<dyn RunnerManagementHandle>,
+}
+
+impl ScopeOwnedAsyncHandler {
+    fn new(inner: Arc<dyn AsyncBatchHandler>, management: Arc<dyn RunnerManagementHandle>) -> Self {
+        Self { inner, management }
+    }
+}
+
+impl AsyncBatchHandler for ScopeOwnedAsyncHandler {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        self.inner.descriptor()
+    }
+
+    fn run_batch(&self, ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture {
+        self.inner.run_batch(ctx, batch)
+    }
+
+    fn isolation(&self) -> RunnerIsolation {
+        self.inner.isolation()
+    }
+
+    fn management_handle(&self) -> Option<Arc<dyn RunnerManagementHandle>> {
+        Some(Arc::new(ScopeOwnedManagementHandle(
+            self.management.clone(),
+        )))
+    }
+}
+
+struct ManagementHandleEffect(Arc<dyn RunnerManagementHandle>);
+
+impl HostEffect for ManagementHandleEffect {
+    fn dispose(&mut self) -> mutsuki_runtime_sdk::HostEffectFuture<'_> {
+        let management = self.0.clone();
+        Box::pin(async move { management.dispose() })
+    }
+}
+
+fn plugin_lifetime(lifecycle: &mutsuki_runtime_contracts::LifecyclePolicy) -> PluginLifetime {
+    if !lifecycle.supports_dispose {
+        return PluginLifetime::RestartRequired;
+    }
+    match lifecycle.reload_policy.as_str() {
+        "required_builtin" => PluginLifetime::RequiredBuiltin,
+        "application_lifetime" => PluginLifetime::Application,
+        "restart_required" | "static" => PluginLifetime::RestartRequired,
+        _ => PluginLifetime::DrainRequired,
+    }
 }
 
 struct GenerationRunner {

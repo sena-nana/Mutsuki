@@ -155,6 +155,7 @@ impl MutsukiTauriHostBuilder {
             enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
+            supported_extensions: Vec::new(),
             plugin_deployments: discovered.plugin_deployments,
             observability: observability.clone(),
             allow_dynamic_registration: false,

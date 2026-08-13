@@ -12,7 +12,7 @@ pub(super) fn surfaces_for(
         push_runner_surfaces(&mut surfaces, manifest);
         push_protocol_surfaces(&mut surfaces, manifest);
         push_handler_binding_surfaces(&mut surfaces, manifest);
-        push_plugin_extension_surfaces(&mut surfaces, manifest);
+        push_plugin_extension_surfaces(&mut surfaces, manifest, capability_graph);
         push_named_capability_surfaces(&mut surfaces, manifest);
         push_resource_provider_surfaces(&mut surfaces, manifest, capability_graph);
         push_resource_type_surfaces(&mut surfaces, manifest);
@@ -21,8 +21,18 @@ pub(super) fn surfaces_for(
     surfaces
 }
 
-fn push_plugin_extension_surfaces(surfaces: &mut Vec<ContractSurface>, manifest: &PluginManifest) {
+fn push_plugin_extension_surfaces(
+    surfaces: &mut Vec<ContractSurface>,
+    manifest: &PluginManifest,
+    capability_graph: &RuntimeCapabilityGraph,
+) {
     for extension in &manifest.provides.extensions {
+        if !active_surface(
+            &capability_graph.active_plugin_extensions,
+            &extension.extension_id,
+        ) {
+            continue;
+        }
         push_surface(
             surfaces,
             &manifest.plugin_id,

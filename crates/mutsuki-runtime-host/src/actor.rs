@@ -1408,7 +1408,11 @@ fn handle_worker_completion(
         }
         if let Some(mut runner) = completion.runner.take() {
             let _ = runner.cancel(&invocation_id);
-            let _ = runner.dispose();
+            if let Some(management) = runner.management_handle() {
+                let _ = management.dispose();
+            } else {
+                let _ = runner.dispose();
+            }
         }
         remove_running_batch_entries(&completion, running_batches_by_task);
         return core.complete_runner_dispatch(completion);

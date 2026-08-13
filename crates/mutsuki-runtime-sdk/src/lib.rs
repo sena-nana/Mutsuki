@@ -41,17 +41,18 @@ pub use descriptor::{
     ResourceTypeDescriptorBuilder, RunnerDescriptorBuilder,
 };
 pub use host::{
-    CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostService,
-    HostServiceRegistry, HostTaskFailureSummary, HostTaskSnapshot, ManualShutdownController,
-    NoopEventBridge, RecordingEventBridge, ShutdownController, StaticCapabilityBroker,
+    CapabilityBroker, ConfigProvider, EventBridge, HostContext, HostRuntime, HostScopeResolver,
+    HostService, HostServiceRegistry, HostTaskFailureSummary, HostTaskSnapshot,
+    ManualShutdownController, NoopEventBridge, PluginScopeContext, PluginScopeHandle,
+    RecordingEventBridge, ScopedHostService, ShutdownController, StaticCapabilityBroker,
     StaticConfigProvider, TaskSubmitter, TaskSubmitterRuntimeClient,
 };
 pub use mutsuki_runtime_core::{ReloadDecision, RuntimeFailure, RuntimeResult};
 pub use mutsuki_runtime_sdk_macros::{ResourceKind, SdkProtocol, mutsuki_runner};
 pub use plugin::{
-    BuiltinPluginLoader, LoadedPlugin, Plugin, PluginBuilder, PluginLoader,
-    RuntimeBootstrapperAsyncResourceProvider, RuntimeBootstrapperResourceProvider,
-    RuntimeBootstrapperService,
+    BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, Plugin,
+    PluginBuilder, PluginLoader, RuntimeBootstrapperAsyncResourceProvider,
+    RuntimeBootstrapperEffect, RuntimeBootstrapperResourceProvider, RuntimeBootstrapperService,
 };
 pub use portability::Checkpointable;
 pub use resource::{ResourceClient, ResourceKind, TypedResourceHandle};

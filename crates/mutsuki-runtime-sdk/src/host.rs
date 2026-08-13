@@ -212,10 +212,60 @@ pub trait HostService: Any + Send + Sync {}
 
 impl<T> HostService for T where T: Any + Send + Sync {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginScopeHandle {
+    pub scope_id: String,
+    pub plugin_id: String,
+    pub plugin_generation: u64,
+}
+
+pub struct ScopedHostService {
+    pub provider_scope_id: String,
+    pub plugin_generation: u64,
+    service: Arc<dyn Any + Send + Sync>,
+}
+
+impl ScopedHostService {
+    #[doc(hidden)]
+    pub fn from_erased(
+        provider_scope_id: impl Into<String>,
+        plugin_generation: u64,
+        service: Arc<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self {
+            provider_scope_id: provider_scope_id.into(),
+            plugin_generation,
+            service,
+        }
+    }
+
+    pub fn downcast<T>(self) -> RuntimeResult<Arc<T>>
+    where
+        T: HostService,
+    {
+        self.service.downcast::<T>().map_err(|_| {
+            sdk_error(
+                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                "host_service.type_mismatch".into(),
+            )
+        })
+    }
+}
+
+pub trait HostScopeResolver: Send + Sync {
+    fn plugin_scope(&self, plugin_id: &str) -> Option<PluginScopeHandle>;
+    fn resolve_service(
+        &self,
+        scope: &PluginScopeHandle,
+        service_id: &str,
+    ) -> RuntimeResult<Option<ScopedHostService>>;
+}
+
 #[derive(Default)]
 pub struct HostServiceRegistry {
     services: Mutex<BTreeMap<String, Arc<dyn Any + Send + Sync>>>,
     owners: Mutex<BTreeMap<String, String>>,
+    rebindable: Mutex<BTreeSet<String>>,
     frozen: AtomicBool,
 }
 
@@ -245,6 +295,16 @@ impl HostServiceRegistry {
         owner_plugin_id: impl Into<String>,
         service: Arc<dyn Any + Send + Sync>,
     ) -> RuntimeResult<()> {
+        self.register_erased_owned_with_binding(service_id, owner_plugin_id, service, false)
+    }
+
+    pub fn register_erased_owned_with_binding(
+        &self,
+        service_id: impl Into<String>,
+        owner_plugin_id: impl Into<String>,
+        service: Arc<dyn Any + Send + Sync>,
+        rebindable: bool,
+    ) -> RuntimeResult<()> {
         let service_id = service_id.into();
         if self.frozen.load(Ordering::SeqCst) {
             return Err(sdk_error(
@@ -266,7 +326,13 @@ impl HostServiceRegistry {
         self.owners
             .lock()
             .expect("host service owner registry mutex poisoned")
-            .insert(service_id, owner_plugin_id.into());
+            .insert(service_id.clone(), owner_plugin_id.into());
+        if rebindable {
+            self.rebindable
+                .lock()
+                .expect("host service binding registry mutex poisoned")
+                .insert(service_id);
+        }
         Ok(())
     }
 
@@ -276,21 +342,32 @@ impl HostServiceRegistry {
         affected_plugins: &BTreeSet<String>,
     ) -> RuntimeResult<Arc<Self>> {
         let merged = Arc::new(Self::new());
-        for (service_id, owner_plugin_id, service) in current.entries() {
+        for (service_id, owner_plugin_id, service, rebindable) in current.owned_entries() {
             if !affected_plugins.contains(&owner_plugin_id) {
-                merged.register_erased_owned(service_id, owner_plugin_id, service)?;
+                merged.register_erased_owned_with_binding(
+                    service_id,
+                    owner_plugin_id,
+                    service,
+                    rebindable,
+                )?;
             }
         }
-        for (service_id, owner_plugin_id, service) in candidate.entries() {
+        for (service_id, owner_plugin_id, service, rebindable) in candidate.owned_entries() {
             if affected_plugins.contains(&owner_plugin_id) {
-                merged.register_erased_owned(service_id, owner_plugin_id, service)?;
+                merged.register_erased_owned_with_binding(
+                    service_id,
+                    owner_plugin_id,
+                    service,
+                    rebindable,
+                )?;
             }
         }
         merged.freeze();
         Ok(merged)
     }
 
-    fn entries(&self) -> Vec<(String, String, Arc<dyn Any + Send + Sync>)> {
+    #[doc(hidden)]
+    pub fn owned_entries(&self) -> Vec<(String, String, Arc<dyn Any + Send + Sync>, bool)> {
         let services = self
             .services
             .lock()
@@ -299,6 +376,10 @@ impl HostServiceRegistry {
             .owners
             .lock()
             .expect("host service owner registry mutex poisoned");
+        let rebindable = self
+            .rebindable
+            .lock()
+            .expect("host service binding registry mutex poisoned");
         services
             .iter()
             .map(|(service_id, service)| {
@@ -306,6 +387,7 @@ impl HostServiceRegistry {
                     service_id.clone(),
                     owners.get(service_id).cloned().unwrap_or_default(),
                     service.clone(),
+                    rebindable.contains(service_id),
                 )
             })
             .collect()
@@ -497,6 +579,7 @@ pub struct HostContext {
     registry_generation: u64,
     capability_broker: Arc<dyn CapabilityBroker>,
     services: Arc<HostServiceRegistry>,
+    scopes: Arc<dyn HostScopeResolver>,
     config: Arc<dyn ConfigProvider>,
     events: Arc<dyn EventBridge>,
     task_submitter: Arc<dyn TaskSubmitter>,
@@ -514,6 +597,7 @@ impl HostContext {
         registry_generation: u64,
         capability_broker: Arc<dyn CapabilityBroker>,
         services: Arc<HostServiceRegistry>,
+        scopes: Arc<dyn HostScopeResolver>,
         config: Arc<dyn ConfigProvider>,
         events: Arc<dyn EventBridge>,
         task_submitter: Arc<dyn TaskSubmitter>,
@@ -528,6 +612,7 @@ impl HostContext {
             registry_generation,
             capability_broker,
             services,
+            scopes,
             config,
             events,
             task_submitter,
@@ -556,6 +641,19 @@ impl HostContext {
 
     pub fn services(&self) -> &HostServiceRegistry {
         &self.services
+    }
+
+    pub fn plugin_scope(&self, plugin_id: &str) -> RuntimeResult<PluginScopeContext<'_>> {
+        let scope = self.scopes.plugin_scope(plugin_id).ok_or_else(|| {
+            sdk_error(
+                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                format!("plugin_scope.missing.{plugin_id}"),
+            )
+        })?;
+        Ok(PluginScopeContext {
+            resolver: self.scopes.as_ref(),
+            scope,
+        })
     }
 
     pub fn config(&self) -> &dyn ConfigProvider {
@@ -600,6 +698,39 @@ impl HostContext {
 
     pub fn shutdown(&self) -> &dyn ShutdownController {
         self.shutdown.as_ref()
+    }
+}
+
+pub struct PluginScopeContext<'a> {
+    resolver: &'a dyn HostScopeResolver,
+    scope: PluginScopeHandle,
+}
+
+impl PluginScopeContext<'_> {
+    pub fn handle(&self) -> &PluginScopeHandle {
+        &self.scope
+    }
+
+    pub fn service<T>(&self, service_id: &str) -> RuntimeResult<Option<Arc<T>>>
+    where
+        T: HostService,
+    {
+        self.resolver
+            .resolve_service(&self.scope, service_id)?
+            .map(ScopedHostService::downcast)
+            .transpose()
+    }
+
+    pub fn require_service<T>(&self, service_id: &str) -> RuntimeResult<Arc<T>>
+    where
+        T: HostService,
+    {
+        self.service(service_id)?.ok_or_else(|| {
+            sdk_error(
+                mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED,
+                format!("host_service.missing.{service_id}"),
+            )
+        })
     }
 }
 

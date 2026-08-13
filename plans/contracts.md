@@ -63,17 +63,18 @@ artifact 统一从该 crate 导出。`mutsuki-runtime-contracts` 仍拥有 Task�
 | `ReadPlan` / `WritePlan` / `StreamPlan` / `ExportPlan` / `CommandPlan` | 可序列化资源操作计划，构造阶段不执行真实读写 |
 | `SnapshotDescriptor` / `PatchDescriptor` / `PlanReceipt` | 版本化 snapshot、patch 与 provider plan commit receipt；receipt 只能携带 descriptor 更新和小型结构化输出，不携带资源 bytes |
 | `TransactionPlan` / `CommandBatch` / `SagaPlan` | Experimental provider/workflow descriptor；CoreRuntime 不解释事务、批处理或 saga 执行语义 |
-| `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、runner 绑定、公共 surface provider 绑定，以及是否允许热重载 |
+| `RuntimeProfile` | 本次运行启用哪些插件、发行 profile mode、runner 绑定、公共 surface provider 绑定、支持的 contribution namespace，以及是否允许热重载 |
 | `PluginDeploymentKind` | RuntimeProfile / RuntimeLoadPlan 中声明插件本次部署形态：Builtin、Abi、Wasm、Process、Python |
-| `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 视图，用于 host 声明与裁剪一致性 |
+| `RuntimeCapabilityGraph` | resolver 从 enabled plugins、deployment、provides/requires 生成的 active capability 与 active plugin contribution 视图，用于 host 声明与裁剪一致性 |
 | `CapabilityProviderSelection` | resolver 为 active capability 选择的 provider 插件、版本和 surface descriptor |
 | `PermissionAuditEntry` | resolver 对插件 effect/resource 权限 grant 的结构化审计结果 |
-| `PluginExtensionDescriptor` | 插件发布的领域中立扩展信封；包含稳定 extension_id、正整数 version 和 owner-defined JSON object payload，Core 与通用 Host 不解释 payload |
+| `PluginExtensionDescriptor` | 插件发布的领域中立扩展信封；包含稳定 extension_id、正整数 version、Universal/Optional/Required projection 和 owner-defined JSON object payload，Core 与通用 Host 不解释 payload |
 | `ConfigDocumentKey` / `ConfigDocumentSnapshot` | provider id 与 owner-defined qualified context 定位的通用配置文档；每个 key 独立 revision |
 | `ConfigCompareAndSetRequest` | 配置仓库的 expected revision、redacted value 与 schema/value version；仓库不解释 owner payload |
 | `ConfigRepository` / `PreparedConfigWrite` | Host-neutral durable pending、CAS commit、rollback 与 crash recovery 边界 |
 | `ConfigProvider` / `PreparedConfigActivation` | owner validation、default 与可回滚运行态激活边界；不决定存储位置 |
 | `PluginManifest` | 插件声明 owner-defined capability、Host service、typed surface requirement、versioned extension、runner、protocol、handler binding、resource schema/provider、effect、stream、subscription、timer、permission、lifecycle |
+| `SurfaceRequirement` | public surface 依赖；service requirement 通过 requirement/binding 明确 Required/Optional 与 Static/Rebindable，旧清单默认 Required/Static |
 | `HostExtensionDescriptor` | Host 内部 backend/service 扩展点 descriptor，例如 bridge、codec、trace sink、resource backend、scheduler policy |
 | `PluginBackendDescriptor` | 某部署形态的 task/resource client 后端绑定 descriptor |
 | `CodecDescriptor` / `BridgeDescriptor` | 连接级 codec 与 host-side shim/bridge descriptor |
@@ -592,6 +593,23 @@ effect / resource permission 必须能映射到 active effect、resource provide
 Runner 使用 `task.call` 发出的 outbound protocol 必须在 SDK builder / macro 中声明为 typed
 task-protocol requirement；Host 在 registry freeze 前解析并验证，运行时 adapter 再拒绝未声明
 调用，避免依赖只存在于实现代码中。
+
+插件兼容性只基于 contract/schema version、required capability/service/extension、permission、
+platform 与 deployment support，不基于 `ApplicationId`。`PluginBusinessSurface` 保持应用无关；
+应用或领域专用能力使用独立、versioned `PluginExtensionDescriptor` contribution surface。
+每个 contribution 必须明确 required/optional：未知 optional extension 允许忽略，未知或不可用
+required extension 返回结构化 resolution failure。Profile 只选择 contribution projection，
+不能修改 plugin identity 或跳过 scope/generation lifecycle。
+
+Host-only scoped service dependency 明确区分 `Required`/`Optional` 与
+`StaticAtActivation`/`Rebindable`。默认是 required static；只有 provider 与 consumer 均声明
+可重绑定时，availability change 才能触发 suspend/re-resolve/reactivate。lookup 结果包含
+provider scope 与 plugin generation；这些 Host composition facts 不进入公共 plugin ABI/wire。
+
+Runtime surface（runner、handler binding、protocol、resource provider generation、permission/
+occupancy contract）是 generation-bound declaration，不是普通 disposable registration。
+它只能通过 `RuntimeLoadPlan` 与 Core prepared reload 激活/撤销，不能通过 effect handle 的
+`Drop` 直接修改 active registry。
 
 Builtin 插件必须仍通过 host 注册 runner/provider 能力，不能因为静态编译进 Host 就进入
 Core 内建逻辑。ABI / WASM / process / Python 插件必须通过对应 host bridge 注册相同的

@@ -152,6 +152,7 @@ mod tests {
                 .collect(),
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
+            supported_extensions: Vec::new(),
             plugin_deployments: BTreeMap::new(),
             observability: Default::default(),
             allow_dynamic_registration: false,

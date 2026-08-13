@@ -10,5 +10,7 @@ description: Change Mutsuki plugin manifests, capability resolution, RuntimeProf
 - Compare reload surfaces as Identical, Additive, Deprecated, Removed or Breaking.
 - Drain occupancy before removal; require migration, drain or restart for breaking changes.
 - Keep discovery and product selection in hosts or templates; Core only validates deterministic plans.
+- Route scope trees, scoped services, backend ownership and cleanup through
+  `../plugin-capability-composition/SKILL.md`; Core must not own Host effect leases.
 
 Test deterministic resolution, missing capability, generation transitions, occupied removal and breaking reload rejection.

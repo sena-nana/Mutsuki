@@ -8,6 +8,95 @@ use crate::{runner_manifest, runner_manifest_with_artifact};
 use super::helpers::{descriptor, runtime_profile};
 
 #[test]
+fn same_plugin_projects_optional_contributions_without_changing_business_identity() {
+    let mut manifest = runner_manifest("portable-plugin", Vec::new());
+    manifest.provides.services = vec!["git.service".into()];
+    manifest.provides.extensions = vec![
+        PluginExtensionDescriptor {
+            extension_id: "mutsuki.agent".into(),
+            version: 1,
+            projection: ExtensionProjection::Optional,
+            payload: json!({"tools": ["git"]}),
+        },
+        PluginExtensionDescriptor {
+            extension_id: "lilia.workbench".into(),
+            version: 1,
+            projection: ExtensionProjection::Optional,
+            payload: json!({"views": ["source-control"]}),
+        },
+    ];
+    let business_surface = manifest.business_surface();
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec![manifest.plugin_id.clone()];
+
+    profile.supported_extensions = vec!["mutsuki.agent".into()];
+    let application_a = crate::resolve_load_plan(&[manifest.clone()], &profile).unwrap();
+    assert_eq!(
+        application_a.capability_graph.active_plugin_extensions,
+        ["mutsuki.agent"]
+    );
+
+    profile.supported_extensions.clear();
+    let application_b = crate::resolve_load_plan(&[manifest.clone()], &profile).unwrap();
+    assert!(
+        application_b
+            .capability_graph
+            .active_plugin_extensions
+            .is_empty()
+    );
+
+    profile.supported_extensions = vec!["lilia.workbench".into()];
+    let application_c = crate::resolve_load_plan(&[manifest.clone()], &profile).unwrap();
+    assert_eq!(
+        application_c.capability_graph.active_plugin_extensions,
+        ["lilia.workbench"]
+    );
+    assert_eq!(
+        application_a.plugins[0].business_surface(),
+        business_surface
+    );
+    assert_eq!(
+        application_b.plugins[0].business_surface(),
+        business_surface
+    );
+    assert_eq!(
+        application_c.plugins[0].business_surface(),
+        business_surface
+    );
+    assert!(
+        application_a
+            .contract_surfaces
+            .iter()
+            .any(|surface| surface.surface_id.contains("mutsuki.agent"))
+    );
+    assert!(
+        !application_b
+            .contract_surfaces
+            .iter()
+            .any(|surface| surface.kind == ContractSurfaceKind::PluginExtension)
+    );
+}
+
+#[test]
+fn unsupported_required_contribution_is_a_resolution_error() {
+    let mut manifest = runner_manifest("required-extension", Vec::new());
+    manifest.provides.extensions = vec![PluginExtensionDescriptor {
+        extension_id: "lilia.required".into(),
+        version: 1,
+        projection: ExtensionProjection::Required,
+        payload: json!({}),
+    }];
+    let mut profile = runtime_profile();
+    profile.enabled_plugins = vec![manifest.plugin_id.clone()];
+
+    let error = crate::resolve_load_plan(&[manifest.clone()], &profile).unwrap_err();
+    assert_eq!(error.error().code, ERR_REGISTRY_UNAUTHORIZED);
+
+    profile.supported_extensions = vec!["lilia.required".into()];
+    assert!(crate::resolve_load_plan(&[manifest], &profile).is_ok());
+}
+
+#[test]
 fn resolver_activates_owner_defined_capabilities_and_fences_consumers() {
     let mut provider = runner_manifest("agent-connections", Vec::new());
     provider.provides.capabilities = vec!["agent_connection:primary".into()];
@@ -274,6 +363,7 @@ fn resolver_emits_declared_runtime_surfaces() {
         enabled_plugins: vec!["plugin-a".into()],
         bindings: BTreeMap::new(),
         surface_bindings: BTreeMap::new(),
+        supported_extensions: Vec::new(),
         plugin_deployments: BTreeMap::new(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
@@ -600,6 +690,28 @@ fn resolver_rejects_missing_required_capability() {
     assert_eq!(
         error.evidence.get("capability"),
         Some(&ScalarValue::String("workflow:workflow.missing".into()))
+    );
+}
+
+#[test]
+fn resolver_allows_missing_optional_service_dependency() {
+    let runner_descriptor = descriptor("builtin.runner", "builtin.work");
+    let mut manifest = runner_manifest("plugin-a", vec![runner_descriptor]);
+    manifest.requires = vec![
+        SurfaceRequirement::service("service.optional")
+            .optional()
+            .rebindable(),
+    ];
+
+    let plan = crate::resolve_load_plan(&[manifest], &runtime_profile()).unwrap();
+
+    assert_eq!(
+        plan.plugins[0].requires[0].requirement,
+        RequirementKind::Optional
+    );
+    assert_eq!(
+        plan.plugins[0].requires[0].binding,
+        RequirementBinding::Rebindable
     );
 }
 
