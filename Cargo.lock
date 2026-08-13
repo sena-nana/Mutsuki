@@ -3997,10 +3997,10 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "mutsuki-bot-flow",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-config-service",
  "mutsuki-plugin-bot-agent-web",
- "mutsuki-plugin-bot-bilibili",
  "mutsuki-plugin-bot-bilibili-web",
  "mutsuki-plugin-bot-command",
  "mutsuki-plugin-bot-control-web",
@@ -4467,6 +4467,7 @@ dependencies = [
  "hmac 0.13.0",
  "md5",
  "mutsuki-bot-link-parser",
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
  "mutsuki-protocol-browser",
  "mutsuki-protocol-image",
@@ -4489,9 +4490,8 @@ dependencies = [
 name = "mutsuki-plugin-bot-bilibili-web"
 version = "0.1.0"
 dependencies = [
+ "mutsuki-bot-management",
  "mutsuki-bot-protocol",
- "mutsuki-plugin-bot-bilibili",
- "mutsuki-plugin-bot-control-web",
  "mutsuki-web-extension",
  "mutsuki-web-protocol",
  "serde",

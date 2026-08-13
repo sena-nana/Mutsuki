@@ -1,16 +1,19 @@
 # Bilibili account and subscription management
 
 The Bilibili configured plugin can opt into chat management through its owner-defined
-`management` config. Chat and Web Console share `BilibiliManagementService`.
+`management` config. `mutsuki-bot-management::BilibiliManagementApi` is the only public
+management surface shared by chat and Web Console. The Bilibili plugin provides the concrete
+implementation, while ServiceHost integration owns construction, Host secret/config injection,
+and registration of the API object.
 
 ```text
 Chat:
   Bot Flow: Source -> Command Match -> Bilibili management Processor
-    -> BilibiliManagementService -> Host secret / configured-plugin store
+    -> BilibiliManagementApi -> plugin implementation -> Host secret / configured-plugin store
 
 Web Console:
   overview /bilibili page -> bilibili.* RPC (runtime.read|write)
-    -> BilibiliWebExtension -> same BilibiliManagementService
+    -> BilibiliWebExtension -> same BilibiliManagementApi
 ```
 
 The management contract contains only product fields:

@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use mutsuki_bot_management::{
+    BilibiliManagementApi, BilibiliManagementError, BilibiliNotificationKind,
+};
 use mutsuki_bot_protocol::BotTarget;
-use mutsuki_plugin_bot_bilibili::{BilibiliManagementService, BilibiliPollKind};
-use mutsuki_plugin_bot_control_web::{CAPABILITY_RUNTIME_READ, CAPABILITY_RUNTIME_WRITE};
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
 };
@@ -17,17 +18,19 @@ use serde_json::{Value as JsonValue, json};
 
 pub const PLUGIN_ID: &str = "bilibili";
 pub const PLUGIN_VERSION: &str = "0.1.0";
+pub const CAPABILITY_RUNTIME_READ: &str = "runtime.read";
+pub const CAPABILITY_RUNTIME_WRITE: &str = "runtime.write";
 
 /// Fixed actor id used for console-initiated QR sessions.
 pub const CONSOLE_LOGIN_ACTOR: &str = "web-console";
 
 pub struct BilibiliWebExtension {
-    service: Arc<BilibiliManagementService>,
+    service: Arc<dyn BilibiliManagementApi>,
     assets_root: Option<PathBuf>,
 }
 
 impl BilibiliWebExtension {
-    pub fn new(service: Arc<BilibiliManagementService>) -> Self {
+    pub fn new(service: Arc<dyn BilibiliManagementApi>) -> Self {
         Self {
             service,
             assets_root: None,
@@ -304,8 +307,8 @@ fn load_or_synthesize_manifest(root: &Path) -> Result<ExtensionManifest, Extensi
     })
 }
 
-fn map_bili_error(error: mutsuki_plugin_bot_bilibili::BilibiliError) -> ExtensionError {
-    ExtensionError::Registration(error.to_string())
+fn map_bili_error(error: BilibiliManagementError) -> ExtensionError {
+    ExtensionError::Registration(error.message)
 }
 
 fn required_str(params: &JsonValue, key: &str) -> Result<String, ExtensionError> {
@@ -333,20 +336,22 @@ fn required_u64(params: &JsonValue, key: &str) -> Result<u64, ExtensionError> {
         .ok_or_else(|| ExtensionError::Registration(format!("missing or invalid {key}")))
 }
 
-fn parse_notifications_json(params: &JsonValue) -> Result<Vec<BilibiliPollKind>, ExtensionError> {
+fn parse_notifications_json(
+    params: &JsonValue,
+) -> Result<Vec<BilibiliNotificationKind>, ExtensionError> {
     let Some(array) = params.get("notifications").and_then(|v| v.as_array()) else {
         return Ok(vec![
-            BilibiliPollKind::Live,
-            BilibiliPollKind::Dynamic,
-            BilibiliPollKind::Video,
+            BilibiliNotificationKind::Live,
+            BilibiliNotificationKind::Dynamic,
+            BilibiliNotificationKind::Video,
         ]);
     };
     let mut out = Vec::new();
     for item in array {
         let kind = match item.as_str().unwrap_or_default() {
-            "live" => BilibiliPollKind::Live,
-            "dynamic" => BilibiliPollKind::Dynamic,
-            "video" => BilibiliPollKind::Video,
+            "live" => BilibiliNotificationKind::Live,
+            "dynamic" => BilibiliNotificationKind::Dynamic,
+            "video" => BilibiliNotificationKind::Video,
             other => {
                 return Err(ExtensionError::Registration(format!(
                     "unknown notification type {other}"
