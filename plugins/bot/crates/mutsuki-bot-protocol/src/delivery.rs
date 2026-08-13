@@ -155,6 +155,9 @@ pub enum BotActiveDeliveryCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum BotReplyDeliveryCommand {
+    Reserve {
+        request: Box<BotReplyDeliveryRequest>,
+    },
     Submit {
         request: Box<BotReplyDeliveryRequest>,
         now_unix_ms: u64,

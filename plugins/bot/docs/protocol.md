@@ -17,8 +17,9 @@ Standard Bot protocols:
 `mutsuki.bot.flow.nodes@1` for their node catalog. `BotFlowEventEnvelope`, `BotNodeInvocation` and
 `BotNodeResult` preserve typed ports plus Bot/trace/correlation context across graph execution.
 
-`mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Submit` reserves one stable
-reply id plus its ordered message parts before any platform send; `Inspect`, `RetryPart` and
+`mutsuki.bot.delivery/reply@1` owns durable Bot reply delivery. `Reserve` persists one stable reply
+id plus its ordered message parts without sending, and `Submit` sends a new or already reserved
+bundle; `Inspect`, `RetryPart` and
 `CancelPart` operate on persisted receipts, while `ResumeDue` claims due parts for restart
 recovery. Each part is an ordinary `mutsuki.bot.message/send@1` task at the side-effect boundary.
 Agent turn/session completion is source provenance, not evidence that every part was delivered.

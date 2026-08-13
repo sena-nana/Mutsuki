@@ -18,13 +18,15 @@ Bot Agent replies take a durable route rather than calling the send protocol dir
 ```text
 Bot Agent final turn
   -> mutsuki.bot.delivery/reply@1
-  -> atomically reserve reply bundle + ordered Pending part receipts
+  -> before the Agent node returns, atomically reserve reply bundle + ordered Pending part receipts
   -> CAS claim one part
   -> mutsuki.bot.message/send@1
   -> persist attempt + platform receipt
 ```
 
-Stable reply and part ids make replay an inspection of the existing bundle. A transient failure
+Stable reply and part ids make replay an inspection of the existing bundle. The Flow delivery
+node sends an already reserved bundle; if the Host exits between the Agent and delivery nodes, the
+recovery source can claim those Pending parts without replaying the Agent. A transient failure
 only schedules the unconfirmed part; already succeeded parts remain terminal. Cancellation or a
 Runtime timeout after the send boundary becomes `ReconcileRequired`, because automatic resend
 could duplicate an externally accepted message. `BotReplyDeliveryRecoveryEventSource` asks the
