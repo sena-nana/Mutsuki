@@ -1,44 +1,19 @@
-use std::path::Path;
-
-use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
-use mutsuki_bot::load_bootstrapped_product;
+use mutsuki_bot::{
+    CONSOLE_AUTH_TOKEN_KEY, PRODUCT_CONFIG_PROVIDER_ID, load_single_instance_product_for_test,
+};
 use mutsuki_config_service::{
     ConfigApplyRequest, ConfigCompareAndSetRequest, ConfigContext, ConfigDocumentKey, ConfigValue,
     capability,
 };
 
-fn bootstrap(root: &Path, extra: &str) -> std::path::PathBuf {
-    let path = root.join("bootstrap.toml");
-    std::fs::write(
-        &path,
-        format!(
-            r#"
-[host]
-instance_id = "test"
-home_dir = "."
-data_dir = "data"
-
-[security]
-secret_file = "secrets.toml"
-
-[config_repository]
-repository_plugin_id = "mutsuki.config.repository.sqlite"
-document_namespace = "test"
-[config_repository.options]
-path = "config.sqlite3"
-{extra}
-"#
-        ),
-    )
-    .unwrap();
-    path
-}
+const TEST_ADMIN_PASSPHRASE: &str = "test-admin-passphrase";
 
 #[tokio::test]
-async fn empty_sqlite_is_seeded_once_and_restored() {
+async fn empty_single_instance_is_seeded_once_and_restored() {
     let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "");
-    let first = load_bootstrapped_product(&path).await.unwrap();
+    let first = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
     let first_product = first
         .config
         .read(
@@ -51,27 +26,33 @@ async fn empty_sqlite_is_seeded_once_and_restored() {
     assert_eq!(first_product.revision.0, 1);
     assert_eq!(first_product.schema_version, 3);
     assert_eq!(first_product.value_version, 3);
-    assert!(
-        first_product
-            .value
-            .as_object()
-            .unwrap()
-            .get("extensions")
-            .is_none()
+    assert_eq!(
+        first_product.value.to_json()["workspace_enabled"],
+        serde_json::Value::Bool(true)
     );
-    let enabled = first
-        .service
-        .plugins
-        .configured
-        .iter()
-        .filter(|selection| selection.enabled)
-        .map(|selection| selection.id.as_str())
-        .collect::<Vec<_>>();
-    assert!(enabled.is_empty());
-    assert_eq!(first.console.extensions, vec!["config"]);
+    for id in ["mutsuki.agent.connections", "mutsuki.bot.router.flow"] {
+        assert!(
+            first
+                .service
+                .plugins
+                .configured
+                .iter()
+                .any(|selection| selection.id == id && selection.enabled)
+        );
+    }
+    assert_eq!(
+        first.console.extensions,
+        vec!["config", "qq", "agent", "bot-flow-editor"]
+    );
+    assert_eq!(
+        first.service.secret(CONSOLE_AUTH_TOKEN_KEY).as_deref(),
+        Some(TEST_ADMIN_PASSPHRASE)
+    );
 
     drop(first);
-    let second = load_bootstrapped_product(&path).await.unwrap();
+    let second = load_single_instance_product_for_test(root.path(), "must-not-replace")
+        .await
+        .unwrap();
     let second_product = second
         .config
         .read(
@@ -82,13 +63,18 @@ async fn empty_sqlite_is_seeded_once_and_restored() {
         .await
         .unwrap();
     assert_eq!(second_product.revision, first_product.revision);
+    assert_eq!(
+        second.service.secret(CONSOLE_AUTH_TOKEN_KEY).as_deref(),
+        Some(TEST_ADMIN_PASSPHRASE)
+    );
 }
 
 #[tokio::test]
 async fn legacy_product_document_version_is_rejected_without_migration() {
     let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "");
-    let first = load_bootstrapped_product(&path).await.unwrap();
+    let first = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
     let snapshot = first
         .config
         .read(
@@ -113,18 +99,20 @@ async fn legacy_product_document_version_is_rejected_without_migration() {
     write.finish().unwrap();
     drop(first);
 
-    let error = match load_bootstrapped_product(&path).await {
-        Ok(_) => panic!("legacy product document unexpectedly loaded"),
-        Err(error) => error,
-    };
+    let error =
+        match load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE).await {
+            Ok(_) => panic!("legacy product document unexpectedly loaded"),
+            Err(error) => error,
+        };
     assert!(error.contains("product.config.version_unsupported"));
 }
 
 #[tokio::test]
 async fn owner_plugin_ids_are_rejected_from_runtime_plugins() {
     let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "");
-    let first = load_bootstrapped_product(&path).await.unwrap();
+    let first = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
     let snapshot = first
         .config
         .read(
@@ -161,87 +149,36 @@ async fn owner_plugin_ids_are_rejected_from_runtime_plugins() {
         .unwrap();
     drop(first);
 
-    let error = match load_bootstrapped_product(&path).await {
-        Ok(_) => panic!("reserved owner plugin unexpectedly loaded"),
-        Err(error) => error,
-    };
+    let error =
+        match load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE).await {
+            Ok(_) => panic!("reserved owner plugin unexpectedly loaded"),
+            Err(error) => error,
+        };
     assert!(error.contains("不得配置 owner 插件"));
 }
 
 #[tokio::test]
-async fn enabling_local_workspace_takes_effect_after_restart() {
+async fn legacy_bootstrap_files_are_not_imported() {
     let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "");
-    let first = load_bootstrapped_product(&path).await.unwrap();
-    let snapshot = first
-        .config
-        .read(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            ConfigContext::global(),
-            &[capability::VALUE_READ.into()],
-        )
-        .await
-        .unwrap();
-    let ConfigValue::Object(mut candidate) = snapshot.value else {
-        panic!("product config must be an object");
-    };
-    candidate.insert("workspace_enabled".into(), ConfigValue::Bool(true));
-    first
-        .config
-        .apply(
-            PRODUCT_CONFIG_PROVIDER_ID,
-            ConfigApplyRequest {
-                candidate: ConfigValue::Object(candidate),
-                expected_revision: snapshot.revision,
-                dry_run: false,
-            },
-            ConfigContext::global(),
-            &[capability::VALUE_WRITE.into(), capability::APPLY.into()],
-        )
-        .await
-        .unwrap();
-    drop(first);
+    std::fs::write(
+        root.path().join("local.toml"),
+        "[host]\ninstance_id = \"legacy\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("local.secret.toml"),
+        "[secrets]\nlegacy = \"ignored\"\n",
+    )
+    .unwrap();
 
-    let restarted = load_bootstrapped_product(&path).await.unwrap();
-    for id in ["mutsuki.agent.connections", "mutsuki.bot.router.flow"] {
-        assert!(
-            restarted
-                .service
-                .plugins
-                .configured
-                .iter()
-                .any(|selection| selection.id == id && selection.enabled),
-            "workspace component {id} was not enabled"
-        );
-    }
+    let product = load_single_instance_product_for_test(root.path(), TEST_ADMIN_PASSPHRASE)
+        .await
+        .unwrap();
+    assert_eq!(product.service.service.instance_id, "mutsuki-bot");
+    assert_eq!(product.service.service.home_dir, root.path());
+    assert!(root.path().join("config.sqlite3").is_file());
     assert_eq!(
-        restarted.console.extensions,
-        vec!["config", "qq", "agent", "bot-flow-editor"]
+        product.service.secret(CONSOLE_AUTH_TOKEN_KEY).as_deref(),
+        Some(TEST_ADMIN_PASSPHRASE)
     );
-}
-
-#[tokio::test]
-async fn legacy_monolithic_fields_are_rejected_by_bootstrap() {
-    let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "\n[service]\nprofile = \"bot\"");
-    let error = match load_bootstrapped_product(&path).await {
-        Ok(_) => panic!("legacy bootstrap unexpectedly loaded"),
-        Err(error) => error,
-    };
-    assert!(error.contains("unknown field"));
-}
-
-#[tokio::test]
-async fn unknown_repository_plugin_fails_before_runtime_load_plan() {
-    let root = tempfile::tempdir().unwrap();
-    let path = bootstrap(root.path(), "");
-    let text = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace("mutsuki.config.repository.sqlite", "example.remote");
-    std::fs::write(&path, text).unwrap();
-    let error = match load_bootstrapped_product(&path).await {
-        Ok(_) => panic!("unknown repository unexpectedly loaded"),
-        Err(error) => error,
-    };
-    assert!(error.contains("unknown bootstrap repository plugin"));
 }

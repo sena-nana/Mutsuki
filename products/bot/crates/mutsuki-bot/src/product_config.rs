@@ -168,26 +168,6 @@ pub fn product_descriptor() -> ConfigDescriptor {
                     "启用本机 Bot 工作区",
                     RestartPolicy::ApplicationRestart,
                 ),
-                hidden(string_node(
-                    "profile",
-                    "运行配置",
-                    RestartPolicy::ApplicationRestart,
-                )),
-                hidden(bool_node(
-                    "console_enabled",
-                    "启用管理台",
-                    RestartPolicy::Reconfigure,
-                )),
-                hidden(string_node(
-                    "console_listen",
-                    "管理地址",
-                    RestartPolicy::ApplicationRestart,
-                )),
-                hidden(string_node(
-                    "auth_token_key",
-                    "鉴权密钥引用",
-                    RestartPolicy::ApplicationRestart,
-                )),
                 hidden(ConfigNode {
                     key: "runtime_plugins".into(),
                     value_type: ConfigValueType::Map {
@@ -208,23 +188,6 @@ pub fn product_descriptor() -> ConfigDescriptor {
             ],
         },
         groups: Vec::new(),
-    }
-}
-
-fn string_node(key: &str, title: &str, restart_policy: RestartPolicy) -> ConfigNode {
-    ConfigNode {
-        key: key.into(),
-        value_type: ConfigValueType::String { multiline: false },
-        title: LocalizedText::new(title),
-        description: None,
-        default_value: None,
-        constraints: ConfigConstraints::default(),
-        presentation: ConfigPresentation::default(),
-        visibility: None,
-        enabled_if: None,
-        mutability: ConfigMutability::ReadWrite,
-        restart_policy,
-        children: Vec::new(),
     }
 }
 
@@ -254,17 +217,7 @@ fn hidden(mut node: ConfigNode) -> ConfigNode {
 
 pub fn product_seed_defaults() -> ConfigValue {
     ConfigValue::Object(BTreeMap::from([
-        ("workspace_enabled".into(), ConfigValue::Bool(false)),
-        ("profile".into(), ConfigValue::String("bot".into())),
-        ("console_enabled".into(), ConfigValue::Bool(true)),
-        (
-            "console_listen".into(),
-            ConfigValue::String("127.0.0.1:8787".into()),
-        ),
-        (
-            "auth_token_key".into(),
-            ConfigValue::String("mutsuki.web.console.token".into()),
-        ),
+        ("workspace_enabled".into(), ConfigValue::Bool(true)),
         (
             "runtime_plugins".into(),
             ConfigValue::Object(BTreeMap::new()),

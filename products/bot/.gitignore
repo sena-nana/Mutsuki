@@ -1,6 +1,8 @@
 /target/
 /run/
 /logs/
+/.mutsuki-bot/
+# Legacy local deployments are ignored but never read or migrated.
 /config/local.toml
 /config/local.secret.toml
 /.mutsuki-qqbot/

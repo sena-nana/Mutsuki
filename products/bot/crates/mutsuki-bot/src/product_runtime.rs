@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    BootstrappedProduct, TargetedPluginReloadLifecycle, WebConsoleError, WebConsoleGuard,
+    SingleInstanceProduct, TargetedPluginReloadLifecycle, WebConsoleError, WebConsoleGuard,
     assemble_service_with_connections,
 };
 
@@ -15,8 +15,10 @@ pub enum ProductRunError {
     ConsoleStop(#[from] mutsuki_web_host::WebHostError),
 }
 
-pub async fn run_bootstrapped_product(product: BootstrappedProduct) -> Result<(), ProductRunError> {
-    let BootstrappedProduct {
+pub async fn run_single_instance_product(
+    product: SingleInstanceProduct,
+) -> Result<(), ProductRunError> {
+    let SingleInstanceProduct {
         service,
         config,
         console,

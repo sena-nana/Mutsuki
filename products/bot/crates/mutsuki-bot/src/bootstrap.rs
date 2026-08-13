@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,11 +8,8 @@ use mutsuki_config_service::{
     ConfigMutability, ConfigNode, ConfigPresentation, ConfigProviderId, ConfigScope, ConfigService,
     ConfigValue, ConfigValueType, LocalizedText, MemoryConfigProvider, RestartPolicy, capability,
 };
-use mutsuki_plugin_config_sqlite::{
-    PLUGIN_ID as SQLITE_REPOSITORY_PLUGIN_ID, SqliteConfigRepository,
-};
+use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_service_config::{ServiceConfig, recover_host_secret_transaction};
-use serde::Deserialize;
 
 use crate::{
     PRODUCT_CONFIG_PROVIDER_ID, ProductConfigOptions, configured_product_owner_selections,
@@ -21,49 +18,12 @@ use crate::{
 };
 
 pub const SERVICE_CONFIG_PROVIDER_ID: &str = "mutsuki.service.runtime";
+pub const CONSOLE_AUTH_TOKEN_KEY: &str = "mutsuki.web.console.token";
+pub const CONSOLE_AUTH_TOKEN_ENV: &str = "MUTSUKI_SECRET_MUTSUKI_WEB_CONSOLE_TOKEN";
+const INSTANCE_DIR: &str = ".mutsuki-bot";
+const CONFIG_NAMESPACE: &str = "mutsuki-bot";
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotBootstrap {
-    pub host: BootstrapHost,
-    #[serde(default)]
-    pub security: BootstrapSecurity,
-    #[serde(default)]
-    pub plugin_discovery: BootstrapPluginDiscovery,
-    pub config_repository: ConfigRepositoryBootstrap,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BootstrapHost {
-    pub instance_id: String,
-    pub home_dir: PathBuf,
-    pub data_dir: PathBuf,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BootstrapSecurity {
-    pub secret_file: Option<PathBuf>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct BootstrapPluginDiscovery {
-    pub dynamic_dirs: Vec<PathBuf>,
-    pub disabled_dir: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConfigRepositoryBootstrap {
-    pub repository_plugin_id: String,
-    pub document_namespace: String,
-    #[serde(default)]
-    pub options: BTreeMap<String, toml::Value>,
-}
-
-pub struct BootstrappedProduct {
+pub struct SingleInstanceProduct {
     pub service: ServiceConfig,
     pub config: Arc<ConfigService>,
     pub console: LocalConsoleConfig,
@@ -71,8 +31,7 @@ pub struct BootstrappedProduct {
     pub agent_connections: AgentConnectionRegistry,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalConsoleConfig {
     pub enabled: bool,
     pub listen: String,
@@ -81,50 +40,47 @@ pub struct LocalConsoleConfig {
     pub release_set: Option<String>,
 }
 
-pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduct, String> {
-    let bootstrap_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .join(path)
-    };
-    let path = bootstrap_path.as_path();
-    let content = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read bootstrap {}: {error}", path.display()))?;
-    let bootstrap: BotBootstrap = toml::from_str(&content)
-        .map_err(|error| format!("invalid bootstrap {}: {error}", path.display()))?;
-    if bootstrap.config_repository.repository_plugin_id != SQLITE_REPOSITORY_PLUGIN_ID {
-        return Err(format!(
-            "unknown bootstrap repository plugin `{}`",
-            bootstrap.config_repository.repository_plugin_id
-        ));
-    }
-    let root = path
+pub async fn load_single_instance_product() -> Result<SingleInstanceProduct, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("single_instance.executable_unavailable: {error}"))?;
+    let root = single_instance_root(&executable)?;
+    load_single_instance_product_at(&root, interactive_admin_passphrase).await
+}
+
+/// Test harness entry for isolating the otherwise fixed single-instance directory.
+/// Production callers must use [`load_single_instance_product`].
+#[doc(hidden)]
+pub async fn load_single_instance_product_for_test(
+    root: &Path,
+    admin_passphrase: &str,
+) -> Result<SingleInstanceProduct, String> {
+    let admin_passphrase = admin_passphrase.to_owned();
+    load_single_instance_product_at(root, move || Ok(admin_passphrase.clone())).await
+}
+
+fn single_instance_root(executable: &Path) -> Result<PathBuf, String> {
+    executable
         .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    if let Some(secret_file) = bootstrap.security.secret_file.as_deref() {
-        recover_host_secret_transaction(&resolve(&root, secret_file))
-            .map_err(|error| error.to_string())?;
-    }
-    let repository_path = bootstrap
-        .config_repository
-        .options
-        .get("path")
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| "SQLite repository options.path is required".to_string())?;
-    let repository_path = resolve(&root, Path::new(repository_path));
-    if let Some(parent) = repository_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create repository directory: {error}"))?;
-    }
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.join(INSTANCE_DIR))
+        .ok_or_else(|| "single_instance.executable_parent_missing".to_string())
+}
+
+async fn load_single_instance_product_at<F>(
+    root: &Path,
+    prompt: F,
+) -> Result<SingleInstanceProduct, String>
+where
+    F: FnMut() -> Result<String, String>,
+{
+    ensure_single_instance_directories(root)?;
+    let secret_path = root.join("secrets.toml");
+    recover_host_secret_transaction(&secret_path).map_err(|error| error.to_string())?;
+    ensure_local_auth_secret(&secret_path, prompt)?;
+    let repository_path = root.join("config.sqlite3");
     let repository = Arc::new(
-        SqliteConfigRepository::open(
-            repository_path,
-            &bootstrap.config_repository.document_namespace,
-        )
-        .map_err(|error| error.to_string())?,
+        SqliteConfigRepository::open(repository_path, CONFIG_NAMESPACE)
+            .map_err(|error| error.to_string())?,
     );
     let config = product_config_service_with_options(ProductConfigOptions::new(repository))
         .map_err(|error| error.to_string())?;
@@ -136,7 +92,7 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         )
         .await
         .map_err(|error| error.to_string())?;
-    let seed = service_seed(&bootstrap, &root);
+    let seed = service_seed(root);
     config
         .registry()
         .register(Arc::new(MemoryConfigProvider::new(
@@ -168,7 +124,7 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         .map_err(|error| error.to_string())?;
     let mut service: ServiceConfig = serde_json::from_value(snapshot.value.to_json())
         .map_err(|error| format!("stored ServiceConfig is invalid: {error}"))?;
-    apply_bootstrap_boundaries(&mut service, &bootstrap, &root);
+    apply_single_instance_boundaries(&mut service, root);
 
     let product_snapshot = config
         .read(
@@ -185,10 +141,10 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
         ));
     }
     let product = product_snapshot.value.to_json();
-    let console = decode_console(&product)?;
-    ensure_local_auth_secret(&service, &console, path)?;
+    let console = console_config(&product);
+    let boundary = root.join("instance.boundary");
     let mut service = service
-        .finalize_bootstrap(path, None)
+        .finalize_bootstrap(&boundary, None)
         .map_err(|error| error.to_string())?;
     register_configured_product_providers(&config, service.host_secret_store())
         .await
@@ -199,50 +155,58 @@ pub async fn load_bootstrapped_product(path: &Path) -> Result<BootstrappedProduc
     service.plugins.configured = configured_product_selections(&product, owner_selections)
         .map_err(|error| error.to_string())?;
     let agent_connections = AgentConnectionRegistry::new();
-    Ok(BootstrappedProduct {
+    Ok(SingleInstanceProduct {
         service,
         config,
         console,
-        root,
+        root: root.to_path_buf(),
         agent_connections,
     })
 }
 
-fn service_seed(bootstrap: &BotBootstrap, root: &Path) -> ServiceConfig {
+fn ensure_single_instance_directories(root: &Path) -> Result<(), String> {
+    for path in [
+        root.to_path_buf(),
+        root.join("data"),
+        root.join("logs"),
+        root.join("run"),
+        root.join("plugins/installed"),
+        root.join("plugins/disabled"),
+    ] {
+        std::fs::create_dir_all(&path).map_err(|error| {
+            format!(
+                "single_instance.directory_unavailable: failed to create {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn service_seed(root: &Path) -> ServiceConfig {
     let mut service = ServiceConfig::default();
     service.service.profile = "bot".into();
     service.plugins.configured.clear();
-    apply_bootstrap_boundaries(&mut service, bootstrap, root);
+    apply_single_instance_boundaries(&mut service, root);
     service
 }
 
-fn apply_bootstrap_boundaries(service: &mut ServiceConfig, bootstrap: &BotBootstrap, root: &Path) {
+fn apply_single_instance_boundaries(service: &mut ServiceConfig, root: &Path) {
     // This local product is administered through the loopback Web Console; it does not expose
     // the optional Unix-domain control socket.
     service.ipc.enabled = false;
-    service
-        .service
-        .instance_id
-        .clone_from(&bootstrap.host.instance_id);
-    service.service.home_dir = resolve(root, &bootstrap.host.home_dir);
-    service.service.data_dir = resolve(root, &bootstrap.host.data_dir);
-    service.security.secret_file = bootstrap
-        .security
-        .secret_file
-        .as_deref()
-        .map(|path| resolve(root, path));
-    service.plugins.dynamic_dirs = bootstrap
-        .plugin_discovery
-        .dynamic_dirs
-        .iter()
-        .map(|path| resolve(root, path))
-        .collect();
-    if let Some(path) = &bootstrap.plugin_discovery.disabled_dir {
-        service.plugins.disabled_dir = resolve(root, path);
-    }
+    service.service.instance_id = "mutsuki-bot".into();
+    service.service.home_dir = root.to_path_buf();
+    service.service.data_dir = root.join("data");
+    service.service.log_dir = root.join("logs");
+    service.service.run_dir = root.join("run");
+    service.service.plugin_dir = root.join("plugins/installed");
+    service.security.secret_file = Some(root.join("secrets.toml"));
+    service.plugins.dynamic_dirs = vec![root.join("plugins/installed")];
+    service.plugins.disabled_dir = root.join("plugins/disabled");
 }
 
-fn decode_console(product: &serde_json::Value) -> Result<LocalConsoleConfig, String> {
+fn console_config(product: &serde_json::Value) -> LocalConsoleConfig {
     let mut extensions = vec!["config".to_string()];
     if product
         .get("workspace_enabled")
@@ -251,37 +215,39 @@ fn decode_console(product: &serde_json::Value) -> Result<LocalConsoleConfig, Str
     {
         extensions.extend(["qq".into(), "agent".into(), "bot-flow-editor".into()]);
     }
-    serde_json::from_value(serde_json::json!({
-        "enabled": product.get("console_enabled").and_then(serde_json::Value::as_bool).unwrap_or(true),
-        "listen": product.get("console_listen").and_then(serde_json::Value::as_str).unwrap_or("127.0.0.1:0"),
-        "auth_token_key": product.get("auth_token_key").and_then(serde_json::Value::as_str),
-        "extensions": extensions,
-        "release_set": serde_json::Value::Null,
-    }))
-    .map_err(|error| error.to_string())
+    LocalConsoleConfig {
+        enabled: true,
+        listen: "127.0.0.1:8787".into(),
+        auth_token_key: Some(CONSOLE_AUTH_TOKEN_KEY.into()),
+        extensions,
+        release_set: None,
+    }
 }
 
-fn ensure_local_auth_secret(
-    service: &ServiceConfig,
-    console: &LocalConsoleConfig,
-    bootstrap_path: &Path,
-) -> Result<(), String> {
-    if !console.enabled {
-        return Ok(());
-    }
-    let key = console
-        .auth_token_key
-        .as_deref()
-        .ok_or_else(|| "enabled console requires auth_token_key".to_string())?;
-    let configured = service
-        .security
-        .secret_file
-        .as_ref()
-        .ok_or_else(|| "enabled console requires bootstrap security.secret_file".to_string())?;
-    let secret_path = resolve(
-        bootstrap_path.parent().unwrap_or_else(|| Path::new(".")),
-        configured,
-    );
+fn ensure_local_auth_secret<F>(secret_path: &Path, mut prompt: F) -> Result<(), String>
+where
+    F: FnMut() -> Result<String, String>,
+{
+    let environment = match std::env::var(CONSOLE_AUTH_TOKEN_ENV) {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(format!(
+                "single_instance.console_auth_invalid: {CONSOLE_AUTH_TOKEN_ENV}"
+            ));
+        }
+        Err(std::env::VarError::NotPresent) => None,
+    };
+    ensure_local_auth_secret_with_environment(secret_path, &mut prompt, environment.as_deref())
+}
+
+fn ensure_local_auth_secret_with_environment<F>(
+    secret_path: &Path,
+    prompt: &mut F,
+    environment: Option<&str>,
+) -> Result<(), String>
+where
+    F: FnMut() -> Result<String, String>,
+{
     let mut document = if secret_path.exists() {
         let content = std::fs::read_to_string(&secret_path).map_err(|error| error.to_string())?;
         toml::from_str::<toml::Value>(&content).map_err(|error| error.to_string())?
@@ -290,30 +256,66 @@ fn ensure_local_auth_secret(
     };
     let root = document
         .as_table_mut()
-        .ok_or_else(|| "local secret file must be a TOML table".to_string())?;
+        .ok_or_else(|| "single_instance.secret_document_invalid".to_string())?;
     let secrets = root
         .entry("secrets")
         .or_insert_with(|| toml::Value::Table(Default::default()))
         .as_table_mut()
-        .ok_or_else(|| "local secret file [secrets] must be a TOML table".to_string())?;
+        .ok_or_else(|| "single_instance.secret_table_invalid".to_string())?;
     if secrets
-        .get(key)
+        .get(CONSOLE_AUTH_TOKEN_KEY)
         .and_then(toml::Value::as_str)
         .is_some_and(|value| !value.is_empty())
     {
-        ensure_private_permissions(&secret_path)?;
+        ensure_private_permissions(secret_path)?;
         return Ok(());
     }
-    if let Some(parent) = secret_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    match environment {
+        Some("") => {
+            return Err(format!(
+                "single_instance.console_auth_empty: {CONSOLE_AUTH_TOKEN_ENV}"
+            ));
+        }
+        Some(_) => return write_private_toml(secret_path, &document),
+        None => {}
     }
-    let token = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
+    let passphrase = prompt()?;
+    if passphrase.is_empty() {
+        return Err("single_instance.console_auth_empty".into());
+    }
+    secrets.insert(
+        CONSOLE_AUTH_TOKEN_KEY.into(),
+        toml::Value::String(passphrase),
     );
-    secrets.insert(key.into(), toml::Value::String(token));
-    write_private_toml(&secret_path, &document)
+    write_private_toml(secret_path, &document)
+}
+
+fn interactive_admin_passphrase() -> Result<String, String> {
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Err(format!(
+            "single_instance.console_auth_required: set {CONSOLE_AUTH_TOKEN_ENV} for non-interactive startup"
+        ));
+    }
+    confirmed_admin_passphrase(|prompt| {
+        rpassword::prompt_password(prompt)
+            .map_err(|error| format!("single_instance.console_auth_prompt_failed: {error}"))
+    })
+}
+
+fn confirmed_admin_passphrase<F>(mut read: F) -> Result<String, String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    loop {
+        let first = read("设置管理台口令: ")?;
+        if first.is_empty() {
+            continue;
+        }
+        let confirmation = read("再次输入管理台口令: ")?;
+        if first == confirmation {
+            return Ok(first);
+        }
+    }
 }
 
 fn write_private_toml(path: &Path, document: &toml::Value) -> Result<(), String> {
@@ -321,7 +323,7 @@ fn write_private_toml(path: &Path, document: &toml::Value) -> Result<(), String>
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("local.secret.toml");
+        .unwrap_or("secrets.toml");
     let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -386,14 +388,6 @@ fn service_descriptor() -> ConfigDescriptor {
     }
 }
 
-fn resolve(root: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,48 +403,91 @@ mod tests {
     use mutsuki_plugin_bot_adapter_qqbot::QQBOT_ADAPTER_PLUGIN_ID;
     use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
 
-    fn enable_runtime_test_services(product: &mut BootstrappedProduct) {
-        for id in [AGENT_CONNECTIONS_PLUGIN_ID, "mutsuki.bot.router.flow"] {
-            product
-                .service
-                .plugins
-                .configured
-                .iter_mut()
-                .find(|selection| selection.id == id)
-                .expect("test runtime selection")
-                .enabled = true;
-        }
+    #[test]
+    fn executable_path_selects_exactly_one_sibling_instance_directory() {
+        assert_eq!(
+            single_instance_root(Path::new("/opt/mutsuki/mutsuki-bot")).unwrap(),
+            PathBuf::from("/opt/mutsuki/.mutsuki-bot")
+        );
+    }
+
+    #[test]
+    fn passphrase_confirmation_retries_empty_and_mismatched_input() {
+        let mut input = ["", "first", "different", "accepted", "accepted"].into_iter();
+        let passphrase = confirmed_admin_passphrase(|_| {
+            input
+                .next()
+                .map(str::to_owned)
+                .ok_or_else(|| "unexpected extra prompt".to_string())
+        })
+        .unwrap();
+        assert_eq!(passphrase, "accepted");
+    }
+
+    #[test]
+    fn passphrase_prompt_error_does_not_create_secret_file() {
+        let root = tempfile::tempdir().unwrap();
+        let secret = root.path().join("secrets.toml");
+        let error = ensure_local_auth_secret_with_environment(
+            &secret,
+            &mut || Err("prompt cancelled".into()),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error, "prompt cancelled");
+        assert!(!secret.exists());
+    }
+
+    #[test]
+    fn noninteractive_secret_requires_a_nonempty_environment_value() {
+        let root = tempfile::tempdir().unwrap();
+        let secret = root.path().join("secrets.toml");
+        let error = ensure_local_auth_secret_with_environment(
+            &secret,
+            &mut || panic!("environment-backed startup must not prompt"),
+            Some(""),
+        )
+        .unwrap_err();
+        assert!(error.contains(CONSOLE_AUTH_TOKEN_ENV));
+        assert!(!secret.exists());
+
+        ensure_local_auth_secret_with_environment(
+            &secret,
+            &mut || panic!("environment-backed startup must not prompt"),
+            Some("deployment-secret"),
+        )
+        .unwrap();
+        assert!(secret.is_file());
+        assert!(
+            !std::fs::read_to_string(secret)
+                .unwrap()
+                .contains("deployment-secret")
+        );
+    }
+
+    async fn load_test_product(root: &Path) -> SingleInstanceProduct {
+        load_single_instance_product_at(root, || Ok("test-admin-passphrase".into()))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
-    async fn local_bootstrap_declares_product_components_and_private_console_secret() {
+    async fn first_run_creates_single_instance_workspace_and_private_console_secret() {
         let root = tempfile::tempdir().unwrap();
-        let bootstrap_path = root.path().join("local.toml");
-        std::fs::write(
-            &bootstrap_path,
-            r#"
-[host]
-instance_id = "test-bot"
-home_dir = "home"
-data_dir = "home/data"
-
-[security]
-secret_file = "local.secret.toml"
-
-[config_repository]
-repository_plugin_id = "mutsuki.config.repository.sqlite"
-document_namespace = "test-bot"
-
-[config_repository.options]
-path = "home/config.sqlite3"
-"#,
-        )
-        .unwrap();
-
-        let product = load_bootstrapped_product(&bootstrap_path).await.unwrap();
+        let product = load_test_product(root.path()).await;
+        for id in [AGENT_CONNECTIONS_PLUGIN_ID, "mutsuki.bot.router.flow"] {
+            assert!(
+                product
+                    .service
+                    .plugins
+                    .configured
+                    .iter()
+                    .any(|selection| selection.id == id && selection.enabled),
+                "missing enabled workspace selection {id}: {:?}",
+                product.service.plugins.configured
+            );
+        }
         for id in [
-            AGENT_CONNECTIONS_PLUGIN_ID,
-            "mutsuki.bot.router.flow",
             QQBOT_ADAPTER_PLUGIN_ID,
             LOCAL_AGENT_PLUGIN_ID,
             "mutsuki.plugin.bot.agent",
@@ -462,22 +499,39 @@ path = "home/config.sqlite3"
                     .configured
                     .iter()
                     .any(|selection| selection.id == id && !selection.enabled),
-                "missing disabled product selection {id}: {:?}",
+                "missing disabled owner selection {id}: {:?}",
                 product.service.plugins.configured
             );
         }
         assert!(!product.service.ipc.enabled);
+        assert_eq!(product.service.service.instance_id, "mutsuki-bot");
+        assert_eq!(product.service.service.home_dir, root.path());
+        assert_eq!(product.service.service.data_dir, root.path().join("data"));
+        assert_eq!(product.service.service.log_dir, root.path().join("logs"));
+        assert_eq!(product.service.service.run_dir, root.path().join("run"));
         assert_eq!(product.console.listen, "127.0.0.1:8787");
-        assert_eq!(product.console.extensions, vec!["config"]);
-        let secret_path = root.path().join("local.secret.toml");
+        assert_eq!(
+            product.console.extensions,
+            vec!["config", "qq", "agent", "bot-flow-editor"]
+        );
+        let secret_path = root.path().join("secrets.toml");
         let content = std::fs::read_to_string(&secret_path).unwrap();
         assert!(!content.contains("mutsuki.web.console.token ="));
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert!(
-            parsed["secrets"]["mutsuki.web.console.token"]
-                .as_str()
-                .is_some_and(|token| token.len() == 64)
+        assert_eq!(
+            parsed["secrets"][CONSOLE_AUTH_TOKEN_KEY].as_str(),
+            Some("test-admin-passphrase")
         );
+        assert!(root.path().join("config.sqlite3").is_file());
+        for directory in [
+            "data",
+            "logs",
+            "run",
+            "plugins/installed",
+            "plugins/disabled",
+        ] {
+            assert!(root.path().join(directory).is_dir(), "missing {directory}");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -486,35 +540,20 @@ path = "home/config.sqlite3"
                 0o600
             );
         }
+
+        drop(product);
+        let restored = load_single_instance_product_at(root.path(), || {
+            Err("existing secret unexpectedly prompted".into())
+        })
+        .await
+        .unwrap();
+        assert_eq!(restored.console.extensions.len(), 4);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn owner_config_apply_persists_secret_and_preserves_unrelated_services() {
         let root = tempfile::tempdir().unwrap();
-        let bootstrap_path = root.path().join("local.toml");
-        std::fs::write(
-            &bootstrap_path,
-            r#"
-[host]
-instance_id = "test-bot"
-home_dir = "home"
-data_dir = "home/data"
-
-[security]
-secret_file = "local.secret.toml"
-
-[config_repository]
-repository_plugin_id = "mutsuki.config.repository.sqlite"
-document_namespace = "test-bot"
-
-[config_repository.options]
-path = "home/config.sqlite3"
-"#,
-        )
-        .unwrap();
-
-        let mut product = load_bootstrapped_product(&bootstrap_path).await.unwrap();
-        enable_runtime_test_services(&mut product);
+        let product = load_test_product(root.path()).await;
         let runtime = crate::assemble_service_with_connections(
             product.service.clone(),
             product.config.clone(),
@@ -599,7 +638,7 @@ path = "home/config.sqlite3"
         runtime.shutdown().await;
         drop(product);
 
-        let restored = load_bootstrapped_product(&bootstrap_path).await.unwrap();
+        let restored = load_test_product(root.path()).await;
         let local = restored
             .service
             .plugins
@@ -617,29 +656,7 @@ path = "home/config.sqlite3"
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn failed_agent_preflight_restores_secret_document_and_runtime_generation() {
         let root = tempfile::tempdir().unwrap();
-        let bootstrap_path = root.path().join("local.toml");
-        std::fs::write(
-            &bootstrap_path,
-            r#"
-[host]
-instance_id = "test-bot"
-home_dir = "home"
-data_dir = "home/data"
-
-[security]
-secret_file = "local.secret.toml"
-
-[config_repository]
-repository_plugin_id = "mutsuki.config.repository.sqlite"
-document_namespace = "test-bot"
-
-[config_repository.options]
-path = "home/config.sqlite3"
-"#,
-        )
-        .unwrap();
-        let mut product = load_bootstrapped_product(&bootstrap_path).await.unwrap();
-        enable_runtime_test_services(&mut product);
+        let product = load_test_product(root.path()).await;
         let runtime = crate::assemble_service_with_connections(
             product.service.clone(),
             product.config.clone(),
@@ -699,7 +716,7 @@ path = "home/config.sqlite3"
                 .is_none()
         );
         assert!(
-            !std::fs::read_to_string(root.path().join("local.secret.toml"))
+            !std::fs::read_to_string(root.path().join("secrets.toml"))
                 .unwrap()
                 .contains("must-roll-back")
         );
