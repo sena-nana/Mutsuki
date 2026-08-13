@@ -24,7 +24,7 @@ members = [
     "plugins/std/crates/*",
     "plugins/std/plugins/*",
     "plugins/std/protocols/*",
-    "templates/bot/crates/*",
+    "products/bot/crates/*",
 ]
 resolver = "2"
 exclude = [

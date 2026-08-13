@@ -3,7 +3,7 @@
 Cross-package tests remain beside the product or Host that owns the acceptance boundary, so they can
 use the same fixtures and are selected by the unified root Workspace:
 
-- `templates/bot/crates/mutsuki-bot/tests`: Core + ServiceHost + StdPlugins + BotPlugins + AgentKit
+- `products/bot/crates/mutsuki-bot/tests`: Core + ServiceHost + StdPlugins + BotPlugins + AgentKit
   assembly, configuration failure semantics, health and shutdown.
 - `hosts/service/crates/mutsuki-service-runtime/tests`: ServiceHost lifecycle and plugin loading.
 - `hosts/distributed/crates/mutsuki-distributed-runtime/tests`: Link-backed placement, recovery and

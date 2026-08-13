@@ -63,9 +63,9 @@ The repository owns Bot protocol objects, Bot authoring helpers, Bot event routi
 - `mutsuki-bot-web-console`: 嵌入式 Bot 管理台装配（WebHost + control/overview/config/upgrade extensions）。产品路径仅 Embedded；不提供 Standalone / 分进程 Console 装配。
 - `examples/config-demo`: Discord-like 最小可用配置闭环
 
-WebHost 依赖：本仓库对 `mutsuki-web-host` / `mutsuki-web-protocol` 使用 **Git `rev` pin**（非兄弟 path）。
-产品组合以 BotTemplate release-set 的 `web_host` 条目为 pin 追踪；可单独 bump WebHost revision 再
-`release_set.py sync`。`web_host` 不是独立产品部署能力，仅作为 Embedded Console 的库依赖。
+WebHost 依赖：Bot package 通过根 Workspace path 使用 `mutsuki-web-host` / `mutsuki-web-protocol`，
+并与 `products/bot` 在同一 revision 原子验证。`web_host` 不是独立产品部署能力，仅作为 Embedded
+Console 的库依赖。
 
 - `mutsuki-bot-protocol`: common event/message and typed Bot Flow contracts.
 - `mutsuki-bot-flow`: Bot-owned graph catalog validation, immutable versions and revision CAS.

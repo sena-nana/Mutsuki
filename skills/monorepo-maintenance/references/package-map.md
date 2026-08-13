@@ -13,7 +13,7 @@
 | `kits/python-runner/` | Python Runner SDK, wire mirror, transport and conformance |
 | `plugins/bot/` | Bot protocols, SDK, adapters, routing, integration and testkit |
 | `plugins/std/` | Domain-neutral protocols, resource/effect/workflow plugins and providers |
-| `templates/bot/` | Canonical Bot product template source and export tooling |
+| `products/bot/` | First-party Bot product configuration, runtime assembly and acceptance |
 
 Dependency direction:
 
@@ -22,7 +22,7 @@ contracts/wire -> runtime core -> host helpers/SDK
 link -----------> hosts
 runtime SDK ----> standard, agent and bot packages
 service host ---> explicit integration packages
-all packages ---> product templates
+all packages ---> first-party and external products
 ```
 
 The arrows mean “may be consumed by”. Runtime core never depends on concrete hosts, AgentKit,
@@ -30,5 +30,6 @@ Bot packages, standard plugins, or products. Link never depends on a concrete ho
 plugin. Agent, Bot, and standard packages remain host-neutral except explicitly named integration
 packages.
 
-Business repositories such as Lilia and Nana products remain external consumers. They depend on
+`products/bot` is the first-party product exception and runs from this Workspace. Business
+repositories such as Lilia and Nana remain external consumers and depend on
 `https://github.com/sena-nana/Mutsuki.git` at a release tag or fixed commit.
