@@ -41,7 +41,7 @@ use mutsuki_runtime_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::AgentPluginBundle;
+use crate::{AgentPluginBundle, ContextBuilder};
 
 pub const NATIVE_CODING_BUNDLE_ID: &str = "mutsuki.agent.bundle.native-coding";
 pub const LSP_PLUGIN_ID: &str = "mutsuki.plugin.agent.lsp";
@@ -185,8 +185,16 @@ impl NativeCodingAgentBundle {
             ],
             max_depth: 1,
         });
+        let profile = reference_coding_agent_test_profile();
+        let core = AgentPluginBundle {
+            context: ContextBuilder::with_resources(resources.clone()),
+            ..AgentPluginBundle::default()
+        };
+        core.agent_loop
+            .configure_profile(&profile)
+            .expect("reference coding profile configures AgentLoop");
         Self {
-            core: AgentPluginBundle::default(),
+            core,
             resources,
             git,
             code_index,
@@ -194,7 +202,7 @@ impl NativeCodingAgentBundle {
             computer_use,
             mcp,
             subagents,
-            profile: reference_coding_agent_test_profile(),
+            profile,
         }
     }
 

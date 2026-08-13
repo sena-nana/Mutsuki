@@ -117,14 +117,26 @@ pub struct CompactionResult {
     pub provenance: ContextProvenance,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentContextCompactionConfig {
+    pub service_id: String,
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_hint: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentContextBuildRequest {
     pub profile_id: String,
     pub messages: Vec<AgentMessage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
     #[serde(default)]
     pub max_context_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<AgentContextCompactionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
 }
@@ -139,4 +151,8 @@ pub struct AgentContext {
     pub memories: Vec<AgentMemoryRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_prompt: Option<String>,
+    #[serde(default)]
+    pub preparation_usage: crate::AgentUsage,
+    #[serde(default)]
+    pub preparation_cost_microunits: u64,
 }
