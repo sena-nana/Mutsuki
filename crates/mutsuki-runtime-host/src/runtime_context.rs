@@ -9,12 +9,14 @@ use mutsuki_runtime_contracts::{
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
     AsyncResourcePlanGateway, BoxRuntimeFuture, ConfigProvider, HostContext as SdkHostContext,
-    HostServiceRegistry, NoopEventBridge, ResourcePlanGateway, ResourceRegistryGateway,
-    ShutdownController, StaticConfigProvider, TaskSubmitter,
+    HostScopeResolver, HostServiceRegistry, NoopEventBridge, PluginScopeHandle,
+    ResourcePlanGateway, ResourceRegistryGateway, ScopedHostService, ShutdownController,
+    StaticConfigProvider, TaskSubmitter,
 };
 
 use crate::actor::ActorSender;
 use crate::actor::CoreActorMsg;
+use crate::bootstrapper::PluginScopeSet;
 use crate::capabilities::HostCapabilityRegistry;
 use crate::commands::{HostRuntimeCommand, HostRuntimeReply};
 use crate::error::host_failure;
@@ -23,6 +25,7 @@ pub(crate) fn build_host_context(
     tx: ActorSender,
     capabilities: Arc<HostCapabilityRegistry>,
     services: Arc<HostServiceRegistry>,
+    scopes: Vec<PluginScopeSet>,
     profile_id: String,
     registry_generation: u64,
 ) -> SdkHostContext {
@@ -42,6 +45,7 @@ pub(crate) fn build_host_context(
         registry_generation,
         capabilities,
         services,
+        Arc::new(RuntimeScopeResolver(scopes)),
         config_provider,
         Arc::new(NoopEventBridge),
         task_submitter,
@@ -50,6 +54,53 @@ pub(crate) fn build_host_context(
         resource_registry,
         shutdown,
     )
+}
+
+struct RuntimeScopeResolver(Vec<PluginScopeSet>);
+
+impl HostScopeResolver for RuntimeScopeResolver {
+    fn plugin_scope(&self, plugin_id: &str) -> Option<PluginScopeHandle> {
+        let scopes = self
+            .0
+            .iter()
+            .rev()
+            .find(|scopes| scopes.plugin_scope(plugin_id).is_some())?;
+        let scope_id = scopes.plugin_scope(plugin_id)?.clone();
+        let snapshot = scopes.manager().snapshot(&scope_id)?;
+        Some(PluginScopeHandle {
+            scope_id: scope_id.as_str().to_string(),
+            plugin_id: snapshot.plugin_id,
+            plugin_generation: snapshot.plugin_generation,
+        })
+    }
+
+    fn resolve_service(
+        &self,
+        scope: &PluginScopeHandle,
+        service_id: &str,
+    ) -> RuntimeResult<Option<ScopedHostService>> {
+        let scopes = self
+            .0
+            .iter()
+            .rev()
+            .find(|scopes| {
+                scopes
+                    .plugin_scope(&scope.plugin_id)
+                    .is_some_and(|known| known.as_str() == scope.scope_id)
+            })
+            .ok_or_else(|| host_failure("host.scope.stale_handle", &scope.scope_id))?;
+        let scope_id = scopes
+            .plugin_scope(&scope.plugin_id)
+            .expect("matched plugin scope");
+        scopes
+            .manager()
+            .resolve_service_erased(scope_id, service_id)
+            .map(|resolved| {
+                resolved.map(|(provider, generation, service)| {
+                    ScopedHostService::from_erased(provider.as_str(), generation, service)
+                })
+            })
+    }
 }
 
 struct ActorCommandClient {

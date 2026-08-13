@@ -13,7 +13,8 @@ use mutsuki_runtime_contracts::{
 };
 use mutsuki_runtime_core::{RuntimeFailure, RuntimeResult};
 use mutsuki_runtime_sdk::{
-    LoadedPlugin, ResourcePlanGateway, RuntimeBootstrapperResourceProvider, TaskSubmitter,
+    HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, ResourcePlanGateway,
+    RuntimeBootstrapperEffect, RuntimeBootstrapperResourceProvider, TaskSubmitter,
 };
 use mutsuki_runtime_wire::WireRequest;
 use serde_json::Value;
@@ -83,7 +84,19 @@ pub fn load_abi_plugin_v2(request: AbiPluginLoadRequest) -> RuntimeResult<Loaded
         host_services: Vec::new(),
         resource_providers,
         async_resource_providers: Vec::new(),
+        host_effects: vec![RuntimeBootstrapperEffect {
+            kind: HostEffectKind::BackendInstance,
+            effect: Box::new(AbiSessionEffect(session)),
+        }],
     })
+}
+
+struct AbiSessionEffect(Arc<PluginSession>);
+
+impl HostEffect for AbiSessionEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        Box::pin(async move { self.0.dispose().map_err(to_runtime_failure) })
+    }
 }
 
 struct SessionTransport(Arc<PluginSession>);

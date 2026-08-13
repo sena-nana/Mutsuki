@@ -387,6 +387,22 @@ resource provider 执行，不进入 Rust core。
 插件声明能力，RuntimeProfile 决定组合，resolver 生成确定性 load plan，Core 只校验和
 物化。
 
+插件组合同时遵守四个正交不变量：
+
+- identity 不等于 location 或 generation；同一插件/服务/资源身份可以存在于不同 scope，
+  每次激活与替换仍由独立 generation/version fencing 区分。
+- capability 不等于 application；Host/Application 只通过 active capability graph 和 Profile
+  投影自己理解的 contribution，应用名不参与通用插件兼容判断。
+- plugin 不等于 deployment；builtin、ABI、WASM、process、Python 只改变执行后端，不改变
+  business surface、事务边界或业务语义。
+- plugin 不等于 domain entity；插件是 ownership/lifecycle 单元，不能为了机械拆分而破坏必须
+  原子提交的 UnitOfWork、revision 或 idempotency 边界。
+
+Host composition 通过 `PluginScope` 管理空间位置、依赖与长期可逆副作用；Core generation
+管理时间切换。一个 scope 可以同时拥有通用 capability、领域 contribution 与应用
+contribution。未知 optional contribution 只是不被当前 Profile 投影，不能使插件核心能力
+不兼容；required contribution/service 缺失必须在 activation 前结构化失败。
+
 RuntimeProfile 同时声明每个 enabled plugin 的部署形态。Builtin、ABI、WASM、
 process 和 Python 都是 Host 执行面后端：同一插件能力 surface 必须通过统一
 TaskClient / ResourceClient / runner 协议暴露，插件业务代码不根据部署形态分叉。Host
@@ -417,6 +433,12 @@ registry / binding index、surface occupancy 和 generation 切换的事实源�
 运行环境适配。插件加载只能在 boot 或 prepared reload transaction 中生成新的
 `RuntimeLoadPlan` / registry generation；Core v1 不提供运行中 lazy load 后动态注册 runner
 或 provider 的入口。
+
+Issue #172 对 #11/#13 作进一步 refine/supersede：Core 不拥有 `PluginManager`、scope tree、
+service dependency graph 或 lazy lifecycle mutation。Host 拥有 scope/dependency/effect
+lifecycle，并把已解析的确定性 surface 交给 prepared reload；Core 只提交 generation facts。
+SDK 只提供显式 `HostContext(scope_id)` facade，不使用 thread-local/global current plugin
+推断 owner。
 
 ### 8.1 运行时可替换边界
 

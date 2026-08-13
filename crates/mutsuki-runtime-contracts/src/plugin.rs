@@ -107,7 +107,18 @@ pub struct LifecyclePolicy {
 pub struct PluginExtensionDescriptor {
     pub extension_id: String,
     pub version: u32,
+    #[serde(default)]
+    pub projection: ExtensionProjection,
     pub payload: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionProjection {
+    #[default]
+    Universal,
+    Optional,
+    Required,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -158,6 +169,26 @@ pub struct SurfaceRequirement {
     pub surface_id: SurfaceId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    #[serde(default)]
+    pub requirement: RequirementKind,
+    #[serde(default)]
+    pub binding: RequirementBinding,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementKind {
+    #[default]
+    Required,
+    Optional,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequirementBinding {
+    #[default]
+    Static,
+    Rebindable,
 }
 
 impl SurfaceRequirement {
@@ -166,6 +197,8 @@ impl SurfaceRequirement {
             kind,
             surface_id: surface_id.into(),
             version: None,
+            requirement: RequirementKind::Required,
+            binding: RequirementBinding::Static,
         }
     }
 
@@ -179,6 +212,16 @@ impl SurfaceRequirement {
 
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
+        self
+    }
+
+    pub fn optional(mut self) -> Self {
+        self.requirement = RequirementKind::Optional;
+        self
+    }
+
+    pub fn rebindable(mut self) -> Self {
+        self.binding = RequirementBinding::Rebindable;
         self
     }
 
@@ -283,6 +326,10 @@ pub struct RuntimeProfile {
     /// `<kind>:<surface-id>` form and values are provider plugin ids.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_bindings: BTreeMap<String, String>,
+    /// Application/domain contribution namespaces understood by this Host Profile.
+    /// Universal extensions do not need to be listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_extensions: Vec<String>,
     pub plugin_deployments: BTreeMap<String, PluginDeploymentKind>,
     pub observability: ObservabilityProfile,
     pub allow_dynamic_registration: bool,
@@ -296,6 +343,7 @@ pub struct RuntimeCapabilityGraph {
     pub required_capabilities: Vec<String>,
     pub active_capabilities: Vec<String>,
     pub active_capability_providers: Vec<CapabilityProviderSelection>,
+    pub active_plugin_extensions: Vec<String>,
     pub active_resource_providers: Vec<String>,
     pub active_host_extensions: Vec<String>,
     pub active_plugin_backends: Vec<String>,

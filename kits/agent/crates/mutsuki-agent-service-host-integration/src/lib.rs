@@ -871,15 +871,18 @@ impl ConfiguredPluginFactory for ConfiguredAgentConnectionsPlugin {
                             service_id: AGENT_CONNECTION_REGISTRY_SERVICE_ID.into(),
                             capability: "agent.connection.read".into(),
                             service: registry_service.clone(),
+                            rebindable: false,
                         },
                         RuntimeBootstrapperService {
                             service_id: AGENT_CONNECTION_MANAGEMENT_SERVICE_ID.into(),
                             capability: "agent.connection.write".into(),
                             service: management_service.clone(),
+                            rebindable: false,
                         },
                     ],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
                 })
             }),
         )

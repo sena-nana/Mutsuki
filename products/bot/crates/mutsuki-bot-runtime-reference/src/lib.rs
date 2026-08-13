@@ -288,6 +288,7 @@ fn profile(profile_id: &str) -> RuntimeProfile {
         enabled_plugins: vec![REFERENCE_PLUGIN_ID.into()],
         bindings: BTreeMap::new(),
         surface_bindings: BTreeMap::new(),
+        supported_extensions: Vec::new(),
         plugin_deployments: BTreeMap::new(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,

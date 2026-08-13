@@ -127,6 +127,7 @@ async fn real_cdylib_loads_runner_and_resource_provider() {
             enabled_plugins: vec![manifest.plugin_id.clone()],
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
+            supported_extensions: Vec::new(),
             plugin_deployments: [(manifest.plugin_id.clone(), PluginDeploymentKind::Abi)].into(),
             observability: Default::default(),
             allow_dynamic_registration: false,

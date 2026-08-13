@@ -184,9 +184,11 @@ impl QqAiBotPluginBundle {
                         service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
                         capability: "bot.agent.config".into(),
                         service: config_service.clone(),
+                        rebindable: false,
                     }],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
                 })
             })
             .register_builtin_plugin(bot_media_bridge_manifest())

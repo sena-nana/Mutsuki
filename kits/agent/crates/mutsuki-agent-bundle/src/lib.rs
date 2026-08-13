@@ -576,6 +576,7 @@ mod tests {
             enabled_plugins: enabled_plugins.clone(),
             bindings: BTreeMap::new(),
             surface_bindings: BTreeMap::new(),
+            supported_extensions: Vec::new(),
             plugin_deployments: enabled_plugins
                 .into_iter()
                 .map(|plugin_id| (plugin_id, PluginDeploymentKind::Builtin))

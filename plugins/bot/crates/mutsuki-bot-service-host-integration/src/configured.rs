@@ -202,9 +202,11 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
                         service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
                         capability: "bot.flow".into(),
                         service: service_registry.clone(),
+                        rebindable: false,
                     }],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
                 })
             })
             .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
@@ -403,9 +405,11 @@ fn register_bot_agent_services(
                 service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
                 capability: "bot.agent.config".into(),
                 service: config.clone(),
+                rebindable: false,
             }],
             resource_providers: Vec::new(),
             async_resource_providers: Vec::new(),
+            host_effects: Vec::new(),
         })
     })
 }
@@ -738,9 +742,11 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                         service_id: BILIBILI_MANAGEMENT_SERVICE_ID.into(),
                         capability: "bot.bilibili.management".into(),
                         service: Arc::new(management_api.clone()),
+                        rebindable: false,
                     }],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
                 })
             })
         } else {

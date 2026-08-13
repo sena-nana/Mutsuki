@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mutsuki_runtime_contracts::{
-    CapabilityProviderSelection, PermissionAuditEntry, PluginDeploymentKind, PluginManifest,
-    ProtocolClass, ResourceTypeDescriptor, RuntimeCapabilityGraph, RuntimeProfile,
-    RuntimeProfileMode, SurfaceRequirement,
+    CapabilityProviderSelection, ExtensionProjection, PermissionAuditEntry, PluginDeploymentKind,
+    PluginManifest, ProtocolClass, RequirementKind, ResourceTypeDescriptor, RuntimeCapabilityGraph,
+    RuntimeProfile, RuntimeProfileMode, SurfaceRequirement,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -33,6 +33,7 @@ pub(super) fn capability_graph_for(
     let mut active = BTreeSet::new();
     let mut providers: BTreeMap<String, Vec<CapabilityProvider>> = BTreeMap::new();
     let mut active_resource_providers = BTreeSet::new();
+    let mut active_plugin_extensions = BTreeSet::new();
     let mut active_host_extensions = BTreeSet::new();
     let mut active_plugin_backends = BTreeSet::new();
     let mut active_codecs = BTreeSet::new();
@@ -43,6 +44,7 @@ pub(super) fn capability_graph_for(
     for manifest in manifests {
         requirements.extend(manifest.requires.iter().cloned());
         collect_base_capabilities(manifest, &mut provided, &mut active, &mut providers);
+        collect_plugin_extension_capabilities(manifest, &mut provided, &mut providers);
         collect_system_extension_capabilities(manifest, &mut provided, &mut providers);
     }
     let requirements = requirements.into_iter().collect::<Vec<_>>();
@@ -50,6 +52,36 @@ pub(super) fn capability_graph_for(
         .iter()
         .map(SurfaceRequirement::capability_key)
         .collect();
+    let supported_extensions = profile
+        .supported_extensions
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+
+    for manifest in manifests {
+        for extension in &manifest.provides.extensions {
+            let supported = supported_extensions.contains(extension.extension_id.as_str());
+            let active_for_profile = match extension.projection {
+                ExtensionProjection::Universal => true,
+                ExtensionProjection::Optional => supported,
+                ExtensionProjection::Required if supported => true,
+                ExtensionProjection::Required => {
+                    return Err(required_capability_missing(&format!(
+                        "plugin_extension:{}",
+                        extension.extension_id
+                    )));
+                }
+            };
+            if active_for_profile {
+                activate(
+                    &mut active,
+                    &mut active_plugin_extensions,
+                    "plugin_extension",
+                    &extension.extension_id,
+                );
+            }
+        }
+    }
 
     for manifest in manifests {
         for extension in &manifest.provides.host_extensions {
@@ -151,6 +183,7 @@ pub(super) fn capability_graph_for(
     }
 
     for (prefix, active_ids) in [
+        ("plugin_extension", &active_plugin_extensions),
         ("resource_provider", &active_resource_providers),
         ("host_extension", &active_host_extensions),
         ("plugin_backend", &active_plugin_backends),
@@ -185,6 +218,7 @@ pub(super) fn capability_graph_for(
             .collect(),
         active_capabilities: active.into_iter().collect(),
         active_capability_providers,
+        active_plugin_extensions: active_plugin_extensions.into_iter().collect(),
         active_resource_providers: active_resource_providers.into_iter().collect(),
         active_host_extensions: active_host_extensions.into_iter().collect(),
         active_plugin_backends: active_plugin_backends.into_iter().collect(),
@@ -194,6 +228,23 @@ pub(super) fn capability_graph_for(
         active_workflows: active_workflows.into_iter().collect(),
         permission_audit,
     })
+}
+
+fn collect_plugin_extension_capabilities(
+    manifest: &PluginManifest,
+    provided: &mut BTreeSet<String>,
+    providers: &mut BTreeMap<String, Vec<CapabilityProvider>>,
+) {
+    for extension in &manifest.provides.extensions {
+        collect_provided_capability(
+            manifest,
+            provided,
+            providers,
+            "plugin_extension",
+            &extension.extension_id,
+            Some(extension.version.to_string()),
+        );
+    }
 }
 
 fn collect_base_capabilities(
@@ -468,6 +519,9 @@ fn ensure_required_capabilities_are_active(
 ) -> RuntimeResult<()> {
     for requirement in requirements {
         let Some(active_capability) = active_capability_for_requirement(requirement, active) else {
+            if requirement.requirement == RequirementKind::Optional {
+                continue;
+            }
             return Err(required_capability_missing(&requirement.display_key()));
         };
         select_provider_for_requirement(&active_capability, requirement, providers, bindings)?;

@@ -57,11 +57,29 @@ class ProtocolClass(StrEnum):
     CONTROL = "control"
 
 
+class ExtensionProjection(StrEnum):
+    UNIVERSAL = "universal"
+    OPTIONAL = "optional"
+    REQUIRED = "required"
+
+
+class RequirementKind(StrEnum):
+    REQUIRED = "required"
+    OPTIONAL = "optional"
+
+
+class RequirementBinding(StrEnum):
+    STATIC = "static"
+    REBINDABLE = "rebindable"
+
+
 @dataclass(frozen=True)
 class SurfaceRequirement:
     kind: ContractSurfaceKind
     surface_id: str
     version: str | None = None
+    requirement: RequirementKind = RequirementKind.REQUIRED
+    binding: RequirementBinding = RequirementBinding.STATIC
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -71,6 +89,10 @@ class SurfaceRequirement:
             kind=ContractSurfaceKind(as_str(field_value(raw, "kind"), "kind")),
             surface_id=as_str(field_value(raw, "surface_id"), "surface_id"),
             version=None if version is None else as_str(version, "version"),
+            requirement=RequirementKind(
+                as_str(raw.get("requirement", "required"), "requirement")
+            ),
+            binding=RequirementBinding(as_str(raw.get("binding", "static"), "binding")),
         )
 
 
@@ -192,6 +214,7 @@ class PluginExtensionDescriptor:
     extension_id: str
     version: int
     payload: JsonDict
+    projection: ExtensionProjection = ExtensionProjection.UNIVERSAL
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -203,6 +226,9 @@ class PluginExtensionDescriptor:
             extension_id=as_str(field_value(raw, "extension_id"), "extension_id"),
             version=as_int(field_value(raw, "version"), "version"),
             payload=payload,
+            projection=ExtensionProjection(
+                as_str(raw.get("projection", "universal"), "projection")
+            ),
         )
 
 
@@ -331,6 +357,10 @@ class RuntimeProfile:
     allow_dynamic_registration: bool
     allow_hot_reload: bool
     surface_bindings: dict[str, str] = field(default_factory=dict)
+    supported_extensions: tuple[str, ...] = field(
+        default_factory=tuple,
+        metadata={"skip_serializing_if_empty": True},
+    )
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, object] | JsonDict) -> Self:
@@ -343,6 +373,9 @@ class RuntimeProfile:
             surface_bindings=as_str_dict(raw, "surface_bindings")
             if "surface_bindings" in raw
             else {},
+            supported_extensions=as_str_tuple(
+                raw.get("supported_extensions", ()), "supported_extensions"
+            ),
             plugin_deployments=as_plugin_deployments(
                 field_value(raw, "plugin_deployments"), "plugin_deployments"
             ),
@@ -411,6 +444,7 @@ class RuntimeCapabilityGraph:
     required_capabilities: tuple[str, ...]
     active_capabilities: tuple[str, ...]
     active_capability_providers: tuple[CapabilityProviderSelection, ...]
+    active_plugin_extensions: tuple[str, ...]
     active_resource_providers: tuple[str, ...]
     active_host_extensions: tuple[str, ...]
     active_plugin_backends: tuple[str, ...]
@@ -438,6 +472,10 @@ class RuntimeCapabilityGraph:
             ),
             active_capability_providers=tuple_from_json(
                 raw, "active_capability_providers", CapabilityProviderSelection
+            ),
+            active_plugin_extensions=as_str_tuple(
+                field_value(raw, "active_plugin_extensions"),
+                "active_plugin_extensions",
             ),
             active_resource_providers=as_str_tuple(
                 field_value(raw, "active_resource_providers"),

@@ -62,9 +62,10 @@ pub use observability::{
 };
 pub use plugin::{
     ArtifactType, CapabilityProviderSelection, CompanionArtifact, ContractSurface,
-    ContractSurfaceKind, HandlerBinding, LifecyclePolicy, PermissionAuditEntry, PermissionGrant,
-    PluginArtifact, PluginBusinessSurface, PluginDeploymentKind, PluginExtensionDescriptor,
-    PluginManifest, PluginProvides, ProtocolClass, ProtocolDescriptor, RuntimeCapabilityGraph,
+    ContractSurfaceKind, ExtensionProjection, HandlerBinding, LifecyclePolicy,
+    PermissionAuditEntry, PermissionGrant, PluginArtifact, PluginBusinessSurface,
+    PluginDeploymentKind, PluginExtensionDescriptor, PluginManifest, PluginProvides, ProtocolClass,
+    ProtocolDescriptor, RequirementBinding, RequirementKind, RuntimeCapabilityGraph,
     RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility,
     SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind, SurfaceRequirement,
 };

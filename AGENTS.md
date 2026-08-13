@@ -21,6 +21,8 @@ Issue 是需求线索，不是当前 API 的事实源。存在 `.codegraph/` 时
 - `skills/runtime-kernel/SKILL.md`：TaskPool、Runner、批处理、路由、取消与 trace。
 - `skills/resource-state-effects/SKILL.md`：资源 descriptor、lease、状态、事件与 effect。
 - `skills/load-plan-reload/SKILL.md`：manifest、LoadPlan、registry generation 与热重载。
+- `skills/plugin-capability-composition/SKILL.md`：PluginScope、scoped service、effect ownership、
+  contribution projection 与 staged reload。
 - `skills/sdk-runner-host/SKILL.md`：Rust SDK、宏、Runner host helper 与通用 ABI。
 
 跨 package 或目录移动先读 monorepo-maintenance；跨协议边界同时读 contracts。

@@ -1,18 +1,35 @@
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use mutsuki_runtime_contracts::*;
 use mutsuki_runtime_core::CoreRuntime;
-use mutsuki_runtime_sdk::{BuiltinPluginLoader, LoadedPlugin, PluginBuilder};
+use mutsuki_runtime_sdk::{
+    BuiltinPluginLoader, HostEffect, HostEffectFuture, HostEffectKind, LoadedPlugin, PluginBuilder,
+};
 use serde_json::json;
 
-use crate::{BinaryRunner, NativeRunner, RuntimeBootstrapper, runner_manifest_with_artifact};
+use crate::{
+    BinaryRunner, NativeRunner, RuntimeBootstrapper, runner_manifest, runner_manifest_with_artifact,
+};
 
 use super::helpers::{
     abi_plugin_fixture, descriptor, host_with_echo_runner, host_with_portable_plugin_artifact,
     runtime_profile, runtime_profile_with_deployment,
 };
+
+struct CountingEffect(Arc<AtomicUsize>);
+
+impl HostEffect for CountingEffect {
+    fn dispose(&mut self) -> HostEffectFuture<'_> {
+        let disposed = self.0.clone();
+        Box::pin(async move {
+            disposed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
 
 #[test]
 fn runtime_bootstrapper_boots_runtime_and_runs_runner_loop() {
@@ -128,6 +145,13 @@ fn loaded_plugin_host_service_is_reachable_from_host_context_after_boot() {
         .require::<String>("service.echo")
         .unwrap();
     assert_eq!(service.as_str(), "ready");
+    let scoped_service = runtime
+        .host_context()
+        .plugin_scope("plugin-service")
+        .unwrap()
+        .require_service::<String>("service.echo")
+        .unwrap();
+    assert_eq!(scoped_service.as_str(), "ready");
     assert!(runtime.host_context().services().is_frozen());
 }
 
@@ -151,6 +175,27 @@ fn plugin_loader_registers_sdk_built_plugin_services_for_host_boot() {
         .require::<String>("service.loader")
         .unwrap();
     assert_eq!(service.as_str(), "loaded");
+}
+
+#[test]
+fn rebindable_host_service_reaches_scope_composition_with_provider_binding() {
+    let plugin = PluginBuilder::new("plugin-rebindable")
+        .rebindable_host_service(
+            "service.rebindable",
+            Arc::new(String::from("ready")),
+            "test.host.lifecycle",
+        )
+        .build();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(plugin);
+
+    let runtime = host
+        .into_host_runtime(host_service_profile("plugin-rebindable"))
+        .unwrap();
+    let entries = runtime.host_context().services().owned_entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, "service.rebindable");
+    assert!(entries[0].3);
 }
 
 #[test]
@@ -196,6 +241,153 @@ fn host_runtime_reload_preserves_prepared_plugin_services_in_host_context() {
 }
 
 #[test]
+fn plugin_effect_is_disposed_by_its_scope_on_runtime_shutdown() {
+    let disposed = Arc::new(AtomicUsize::new(0));
+    let plugin = PluginBuilder::new("plugin-effect")
+        .host_effect(
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(disposed.clone())),
+        )
+        .build();
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(plugin);
+    let runtime = host
+        .into_host_runtime(host_service_profile("plugin-effect"))
+        .unwrap();
+
+    assert_eq!(disposed.load(Ordering::SeqCst), 0);
+    drop(runtime);
+    assert_eq!(disposed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn core_boot_failure_rolls_back_activated_plugin_effects() {
+    let disposed = Arc::new(AtomicUsize::new(0));
+    let runner = descriptor("duplicate.runner", "duplicate.work");
+    let mut plugin = PluginBuilder::new("plugin-a")
+        .host_effect(
+            HostEffectKind::HostLocal,
+            Box::new(CountingEffect(disposed.clone())),
+        )
+        .build();
+    plugin.manifest = runner_manifest("plugin-a", vec![runner.clone()]);
+    plugin.runners = vec![
+        Box::new(NativeRunner::new(runner.clone(), |_ctx, tasks| {
+            Ok(RunnerResult::completed(tasks.task_id))
+        })),
+        Box::new(NativeRunner::new(runner, |_ctx, tasks| {
+            Ok(RunnerResult::completed(tasks.task_id))
+        })),
+    ];
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(plugin);
+
+    let error = host.into_host_runtime(runtime_profile()).err().unwrap();
+    assert_eq!(disposed.load(Ordering::SeqCst), 1, "{error}");
+}
+
+#[test]
+fn targeted_reload_keeps_unaffected_scope_and_discards_unused_candidate() {
+    fn plugin(id: &str, disposed: Arc<AtomicUsize>) -> LoadedPlugin {
+        PluginBuilder::new(id)
+            .host_effect(
+                HostEffectKind::HostLocal,
+                Box::new(CountingEffect(disposed)),
+            )
+            .build()
+    }
+    fn profile() -> RuntimeProfile {
+        let mut profile = host_service_profile("plugin-a");
+        profile.enabled_plugins.push("plugin-b".into());
+        profile
+    }
+
+    let old_a = Arc::new(AtomicUsize::new(0));
+    let old_b = Arc::new(AtomicUsize::new(0));
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(plugin("plugin-a", old_a.clone()));
+    host.register_loaded_plugin(plugin("plugin-b", old_b.clone()));
+    let mut runtime = host.into_host_runtime(profile()).unwrap();
+
+    let new_a = Arc::new(AtomicUsize::new(0));
+    let unused_b = Arc::new(AtomicUsize::new(0));
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(plugin("plugin-a", new_a.clone()));
+    candidate.register_loaded_plugin(plugin("plugin-b", unused_b.clone()));
+    let prepared = candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            2,
+            Default::default(),
+            ["plugin-a".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+
+    assert_eq!(old_a.load(Ordering::SeqCst), 1);
+    assert_eq!(old_b.load(Ordering::SeqCst), 0);
+    assert_eq!(new_a.load(Ordering::SeqCst), 0);
+    assert_eq!(unused_b.load(Ordering::SeqCst), 1);
+
+    let newest_a = Arc::new(AtomicUsize::new(0));
+    let discarded_b = Arc::new(AtomicUsize::new(0));
+    let mut next_candidate = RuntimeBootstrapper::new();
+    next_candidate.register_loaded_plugin(plugin("plugin-a", newest_a.clone()));
+    next_candidate.register_loaded_plugin(plugin("plugin-b", discarded_b.clone()));
+    let prepared = next_candidate
+        .prepare_targeted_reload_with_runner_limits(
+            profile(),
+            3,
+            Default::default(),
+            ["plugin-a".to_string()].into_iter().collect(),
+        )
+        .unwrap();
+    runtime.reload(prepared, Duration::from_secs(1)).unwrap();
+
+    assert_eq!(runtime.scope_set_count(), 2);
+    assert_eq!(new_a.load(Ordering::SeqCst), 1);
+    assert_eq!(discarded_b.load(Ordering::SeqCst), 1);
+    drop(runtime);
+    assert_eq!(old_b.load(Ordering::SeqCst), 1);
+    assert_eq!(newest_a.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn restart_required_scope_rejects_reload_before_generation_switch() {
+    fn plugin(effect: Option<Box<dyn HostEffect>>) -> LoadedPlugin {
+        let mut builder = PluginBuilder::new("plugin-restart").lifecycle(LifecyclePolicy {
+            reload_policy: "restart_required".into(),
+            unload_timeout_ms: 1_000,
+            supports_cancel: true,
+            supports_dispose: true,
+            supports_snapshot: false,
+        });
+        if let Some(effect) = effect {
+            builder = builder.host_effect(HostEffectKind::HostLocal, effect);
+        }
+        builder.build()
+    }
+
+    let mut host = RuntimeBootstrapper::new();
+    host.register_loaded_plugin(plugin(None));
+    let mut runtime = host
+        .into_host_runtime(host_service_profile("plugin-restart"))
+        .unwrap();
+    let candidate_disposed = Arc::new(AtomicUsize::new(0));
+    let mut candidate = RuntimeBootstrapper::new();
+    candidate.register_loaded_plugin(plugin(Some(Box::new(CountingEffect(
+        candidate_disposed.clone(),
+    )))));
+    let prepared = candidate
+        .prepare_reload(host_service_profile("plugin-restart"), 2)
+        .unwrap();
+
+    assert!(runtime.reload(prepared, Duration::from_secs(1)).is_err());
+    assert_eq!(runtime.host_context().registry_generation(), 1);
+    assert_eq!(candidate_disposed.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn abi_plugin_boots_through_registered_abi_runner_bridge() {
     let (manifest, runner_descriptor) = abi_plugin_fixture();
     let reader = Cursor::new(Vec::<u8>::new());
@@ -231,6 +423,7 @@ fn loaded_abi_plugin_keeps_abi_runner_deployment() {
         host_services: Vec::new(),
         resource_providers: Vec::new(),
         async_resource_providers: Vec::new(),
+        host_effects: Vec::new(),
     });
 
     let runtime = host.into_runtime(runtime_profile_with_deployment(
@@ -375,6 +568,7 @@ fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
         enabled_plugins: vec![plugin_id.into()],
         bindings: Default::default(),
         surface_bindings: Default::default(),
+        supported_extensions: Vec::new(),
         plugin_deployments: Default::default(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,

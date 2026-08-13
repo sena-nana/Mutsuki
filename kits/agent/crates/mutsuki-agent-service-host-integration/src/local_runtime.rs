@@ -564,6 +564,7 @@ impl LocalAgentEngine {
                     enabled_plugins: enabled_plugins.clone(),
                     bindings: BTreeMap::new(),
                     surface_bindings: BTreeMap::new(),
+                    supported_extensions: Vec::new(),
                     plugin_deployments: enabled_plugins
                         .into_iter()
                         .map(|plugin_id| (plugin_id, PluginDeploymentKind::Builtin))
@@ -1395,15 +1396,18 @@ impl ConfiguredPluginFactory for ConfiguredLocalAgentPlugin {
                             service_id: LOCAL_AGENT_SERVICE_ID.into(),
                             capability: "agent.runtime.local".into(),
                             service: runtime_service.clone(),
+                            rebindable: false,
                         },
                         RuntimeBootstrapperService {
                             service_id: LOCAL_AGENT_MANAGEMENT_SERVICE_ID.into(),
                             capability: "agent.session.manage".into(),
                             service: management.clone(),
+                            rebindable: false,
                         },
                     ],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
+                    host_effects: Vec::new(),
                 })
             })
             .register_health_probe(LOCAL_AGENT_PLUGIN_ID, {
