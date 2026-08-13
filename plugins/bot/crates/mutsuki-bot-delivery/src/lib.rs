@@ -527,28 +527,17 @@ impl ReplyDeliveryService {
         for part in &request.parts {
             let work = reply_part_request(request, part);
             let current = self.attempts.repository.receipt(&work.delivery_id).await?;
-            if current.status != DeliveryStatus::Pending {
-                let blocks_later_parts = matches!(
-                    current.status,
-                    DeliveryStatus::Sending
-                        | DeliveryStatus::RetryScheduled
-                        | DeliveryStatus::ReconcileRequired
-                );
-                if blocks_later_parts {
+            match current.status {
+                DeliveryStatus::Pending => {
+                    let receipt = self.attempt(ctx, &work, now_unix_ms, 1).await?;
+                    if blocks_following_reply_part(receipt.status) {
+                        break;
+                    }
+                }
+                status if blocks_following_reply_part(status) => {
                     break;
                 }
-                continue;
-            }
-            let receipt = self.attempt(ctx, &work, now_unix_ms, 1).await?;
-            let blocks_later_parts = matches!(
-                receipt.status,
-                DeliveryStatus::Pending
-                    | DeliveryStatus::Sending
-                    | DeliveryStatus::RetryScheduled
-                    | DeliveryStatus::ReconcileRequired
-            );
-            if blocks_later_parts {
-                break;
+                _ => {}
             }
         }
         self.receipt_for(request).await
@@ -778,6 +767,16 @@ impl ReplyDeliveryService {
             }
         }
     }
+}
+
+fn blocks_following_reply_part(status: DeliveryStatus) -> bool {
+    matches!(
+        status,
+        DeliveryStatus::Pending
+            | DeliveryStatus::Sending
+            | DeliveryStatus::RetryScheduled
+            | DeliveryStatus::ReconcileRequired
+    )
 }
 
 fn failed_part(code: &str) -> Vec<BotDeliveryPartReceipt> {

@@ -73,49 +73,51 @@ impl LoadPlanLifecycleHook for FlowHook {
     }
 }
 
+struct RuntimeFixture {
+    root: tempfile::TempDir,
+    submits: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
+    agent_state: Arc<Mutex<TestAgentState>>,
+    send_plan: Arc<TestSendPlan>,
+}
+
+impl RuntimeFixture {
+    fn new(outcomes: impl IntoIterator<Item = TestSendOutcome>) -> Self {
+        Self {
+            root: tempfile::tempdir().unwrap(),
+            submits: Arc::new(AtomicUsize::new(0)),
+            sends: Arc::new(AtomicUsize::new(0)),
+            agent_state: Arc::new(Mutex::new(TestAgentState::default())),
+            send_plan: Arc::new(TestSendPlan::new(outcomes)),
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let submits = Arc::new(AtomicUsize::new(0));
-    let sends = Arc::new(AtomicUsize::new(0));
-    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
-
-    let runtime = start_runtime(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state.clone(),
-        true,
-    )
-    .await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime(&fixture, true, Duration::from_millis(250), None).await;
     submit_event(&runtime, "event-1", "wake hello").await;
-    wait_for(&submits, 1).await;
-    wait_for(&sends, 1).await;
+    wait_for(&fixture.submits, 1).await;
+    wait_for(&fixture.sends, 1).await;
 
     // Replaying the same external event cannot cross the durable Agent/delivery fencing twice.
     submit_event(&runtime, "event-1", "wake hello").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
-    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
     wait_for_flow_tasks(&runtime).await;
     runtime.shutdown().await;
 
-    let runtime = start_runtime(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state,
-        false,
-    )
-    .await;
+    let runtime = start_runtime(&fixture, false, Duration::from_millis(250), None).await;
     let registry = runtime
         .host_service::<BotFlowRegistry>(BOT_FLOW_REGISTRY_SERVICE_ID)
         .unwrap();
     assert_eq!(registry.active().revision, 1);
     submit_event(&runtime, "event-2", "wake after restart").await;
-    wait_for(&submits, 2).await;
-    wait_for(&sends, 2).await;
+    wait_for(&fixture.submits, 2).await;
+    wait_for(&fixture.sends, 2).await;
     wait_for_flow_tasks(&runtime).await;
     runtime.shutdown().await;
 }
@@ -123,137 +125,88 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agent_node_reserves_reply_before_return_and_restart_recovers_without_resubmit() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let submits = Arc::new(AtomicUsize::new(0));
-    let sends = Arc::new(AtomicUsize::new(0));
-    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
-
-    let runtime = start_runtime_with_recovery(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state.clone(),
-        true,
-        Duration::from_secs(60),
-    )
-    .await;
+    let fixture = RuntimeFixture::new([]);
+    let runtime = start_runtime(&fixture, true, Duration::from_secs(60), None).await;
     submit_agent_node(&runtime, "event-reserved").await;
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
-    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
     runtime.shutdown().await;
 
-    let runtime = start_runtime_with_recovery(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state,
-        false,
-        Duration::from_millis(10),
-    )
-    .await;
-    wait_for(&sends, 1).await;
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    let runtime = start_runtime(&fixture, false, Duration::from_millis(10), None).await;
+    wait_for(&fixture.sends, 1).await;
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
 
     submit_agent_node(&runtime, "event-reserved").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
-    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
     runtime.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn transient_failure_recovers_and_duplicate_event_does_not_repeat_agent_or_send() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let submits = Arc::new(AtomicUsize::new(0));
-    let sends = Arc::new(AtomicUsize::new(0));
-    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
-    let send_plan = Arc::new(TestSendPlan::new([
-        TestSendOutcome::TransientFailure,
-        TestSendOutcome::Success,
-    ]));
-    let runtime = start_runtime_with_options(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state,
-        true,
-        Duration::from_millis(5),
-        send_plan.clone(),
-        None,
-    )
-    .await;
+    let fixture =
+        RuntimeFixture::new([TestSendOutcome::TransientFailure, TestSendOutcome::Success]);
+    let runtime = start_runtime(&fixture, true, Duration::from_millis(5), None).await;
 
     submit_event(&runtime, "event-transient", "wake transient").await;
-    wait_for(&sends, 1).await;
-    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    wait_for(&fixture.sends, 1).await;
+    assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
 
     submit_event(&runtime, "event-transient", "wake transient").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
-    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
     runtime.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn permanent_cancel_and_timeout_are_queryable_and_only_manual_retry_resends() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
-    assert_terminal_send_outcome(
-        TestSendOutcome::PermanentFailure,
-        None,
-        DeliveryStatus::PermanentlyFailed,
-        "event-permanent",
-        true,
-    )
-    .await;
-    assert_terminal_send_outcome(
-        TestSendOutcome::Cancelled,
-        None,
-        DeliveryStatus::ReconcileRequired,
-        "event-cancelled",
-        false,
-    )
-    .await;
-    assert_terminal_send_outcome(
-        TestSendOutcome::Timeout,
-        Some(10),
-        DeliveryStatus::ReconcileRequired,
-        "event-timeout",
-        false,
-    )
-    .await;
+    for (outcome, timeout_ms, status, event_id, retry) in [
+        (
+            TestSendOutcome::PermanentFailure,
+            None,
+            DeliveryStatus::PermanentlyFailed,
+            "event-permanent",
+            true,
+        ),
+        (
+            TestSendOutcome::Cancelled,
+            None,
+            DeliveryStatus::ReconcileRequired,
+            "event-cancelled",
+            false,
+        ),
+        (
+            TestSendOutcome::Timeout,
+            Some(10),
+            DeliveryStatus::ReconcileRequired,
+            "event-timeout",
+            false,
+        ),
+    ] {
+        assert_terminal_send_outcome(outcome, timeout_ms, status, event_id, retry).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn multipart_restart_recovers_only_unconfirmed_parts_and_keeps_receipts_for_all_shapes() {
     let _guard = RUNTIME_E2E_LOCK.lock().await;
-    let root = tempfile::tempdir().unwrap();
-    let submits = Arc::new(AtomicUsize::new(0));
-    let sends = Arc::new(AtomicUsize::new(0));
-    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
-    let send_plan = Arc::new(TestSendPlan::new([
+    let fixture = RuntimeFixture::new([
         TestSendOutcome::Success,
         TestSendOutcome::TransientFailure,
         TestSendOutcome::Success,
         TestSendOutcome::Success,
         TestSendOutcome::Success,
         TestSendOutcome::Success,
-    ]));
+    ]);
     let request = multipart_reply_request();
 
-    let runtime = start_runtime_with_options(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state.clone(),
-        true,
-        Duration::from_secs(60),
-        send_plan.clone(),
-        None,
-    )
-    .await;
+    let runtime = start_runtime(&fixture, true, Duration::from_secs(60), None).await;
     submit_reply_command(
         &runtime,
         BotReplyDeliveryCommand::Submit {
@@ -262,25 +215,15 @@ async fn multipart_restart_recovers_only_unconfirmed_parts_and_keeps_receipts_fo
         },
     )
     .await;
-    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
-    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 1);
     runtime.shutdown().await;
 
-    let runtime = start_runtime_with_options(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        agent_state,
-        false,
-        Duration::from_millis(5),
-        send_plan.clone(),
-        None,
-    )
-    .await;
-    wait_for(&sends, 5).await;
-    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 6);
-    assert_eq!(submits.load(Ordering::SeqCst), 0);
-    let receipt = wait_for_reply_succeeded(root.path(), &request.reply_id).await;
+    let runtime = start_runtime(&fixture, false, Duration::from_millis(5), None).await;
+    wait_for(&fixture.sends, 5).await;
+    assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 6);
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 0);
+    let receipt = wait_for_reply_succeeded(fixture.root.path(), &request.reply_id).await;
     assert_eq!(receipt.part_receipts.len(), 5);
     assert!(
         receipt
@@ -300,55 +243,16 @@ async fn multipart_restart_recovers_only_unconfirmed_parts_and_keeps_receipts_fo
 }
 
 async fn start_runtime(
-    root: &std::path::Path,
-    submits: Arc<AtomicUsize>,
-    sends: Arc<AtomicUsize>,
-    agent_state: Arc<Mutex<TestAgentState>>,
-    publish: bool,
-) -> ServiceRuntime {
-    start_runtime_with_recovery(
-        root,
-        submits,
-        sends,
-        agent_state,
-        publish,
-        Duration::from_millis(250),
-    )
-    .await
-}
-
-async fn start_runtime_with_recovery(
-    root: &std::path::Path,
-    submits: Arc<AtomicUsize>,
-    sends: Arc<AtomicUsize>,
-    agent_state: Arc<Mutex<TestAgentState>>,
+    fixture: &RuntimeFixture,
     publish: bool,
     recovery_interval: Duration,
-) -> ServiceRuntime {
-    start_runtime_with_options(
-        root,
-        submits,
-        sends,
-        agent_state,
-        publish,
-        recovery_interval,
-        Arc::new(TestSendPlan::default()),
-        None,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn start_runtime_with_options(
-    root: &std::path::Path,
-    submits: Arc<AtomicUsize>,
-    sends: Arc<AtomicUsize>,
-    agent_state: Arc<Mutex<TestAgentState>>,
-    publish: bool,
-    recovery_interval: Duration,
-    send_plan: Arc<TestSendPlan>,
     send_timeout_ms: Option<u64>,
 ) -> ServiceRuntime {
+    let root = fixture.root.path();
+    let submits = fixture.submits.clone();
+    let sends = fixture.sends.clone();
+    let agent_state = fixture.agent_state.clone();
+    let send_plan = fixture.send_plan.clone();
     let data_dir = root.join("data");
     let state_dir = data_dir.join("bot");
     std::fs::create_dir_all(&state_dir).unwrap();
@@ -580,26 +484,13 @@ async fn assert_terminal_send_outcome(
     event_id: &str,
     retry: bool,
 ) {
-    let root = tempfile::tempdir().unwrap();
-    let submits = Arc::new(AtomicUsize::new(0));
-    let sends = Arc::new(AtomicUsize::new(0));
-    let send_plan = Arc::new(TestSendPlan::new([outcome, TestSendOutcome::Success]));
-    let runtime = start_runtime_with_options(
-        root.path(),
-        submits.clone(),
-        sends.clone(),
-        Arc::new(Mutex::new(TestAgentState::default())),
-        true,
-        Duration::from_secs(60),
-        send_plan.clone(),
-        timeout_ms,
-    )
-    .await;
+    let fixture = RuntimeFixture::new([outcome, TestSendOutcome::Success]);
+    let runtime = start_runtime(&fixture, true, Duration::from_secs(60), timeout_ms).await;
     submit_event(&runtime, event_id, "wake terminal").await;
-    wait_for(&send_plan.attempts, 1).await;
-    let delivery_id = wait_for_delivery_status(root.path(), expected_status).await;
-    assert_eq!(submits.load(Ordering::SeqCst), 1);
-    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    wait_for(&fixture.send_plan.attempts, 1).await;
+    let delivery_id = wait_for_delivery_status(fixture.root.path(), expected_status).await;
+    assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
 
     if retry {
         submit_reply_command(
@@ -610,16 +501,16 @@ async fn assert_terminal_send_outcome(
             },
         )
         .await;
-        wait_for(&sends, 1).await;
-        assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
+        wait_for(&fixture.sends, 1).await;
+        assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 2);
         assert_eq!(
-            wait_for_delivery_status(root.path(), DeliveryStatus::Succeeded).await,
+            wait_for_delivery_status(fixture.root.path(), DeliveryStatus::Succeeded).await,
             delivery_id
         );
-        assert_eq!(submits.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.submits.load(Ordering::SeqCst), 1);
     } else {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.send_plan.attempts.load(Ordering::SeqCst), 1);
     }
     runtime.shutdown().await;
 }
@@ -898,7 +789,6 @@ enum TestSendOutcome {
     Timeout,
 }
 
-#[derive(Default)]
 struct TestSendPlan {
     outcomes: Mutex<VecDeque<TestSendOutcome>>,
     attempts: AtomicUsize,
