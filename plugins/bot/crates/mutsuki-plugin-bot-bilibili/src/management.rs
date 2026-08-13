@@ -3,8 +3,13 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use async_trait::async_trait;
+use mutsuki_bot_management::{
+    BilibiliBindChallengeResult, BilibiliBindVerifyResult, BilibiliCredentialSecretState,
+    BilibiliLoginPollResult, BilibiliLoginSession, BilibiliLoginStartResult, BilibiliManagementApi,
+    BilibiliManagementError, BilibiliManagementStatus, BilibiliNotificationKind,
+    BilibiliPreviewCardView, BilibiliQrLoginStatus, BilibiliSubscriptionView,
+};
 use mutsuki_bot_protocol::BotTarget;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     BilibiliBackendConfig, BilibiliBackendKind, BilibiliConfig, BilibiliConfigStore,
@@ -18,89 +23,8 @@ pub trait BilibiliQrRenderer: Send + Sync {
     async fn render_qr(&self, content: &str) -> Result<Vec<u8>, BilibiliError>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CredentialSecretState {
-    Absent,
-    Present,
-    Invalid,
-}
-
 pub trait BilibiliSecretPresence: Send + Sync {
-    fn inspect(&self, key: &str) -> CredentialSecretState;
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ManagementStatus {
-    pub available: bool,
-    pub backend: String,
-    pub management_enabled: bool,
-    pub allow_self_binding: bool,
-    pub cookie_secret_key: Option<String>,
-    pub cookie_secret_state: Option<CredentialSecretState>,
-    pub credential_loaded: bool,
-    pub subscription_count: usize,
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct LoginStartResult {
-    pub url: String,
-    pub key: String,
-    #[serde(skip)]
-    pub qr_png: Vec<u8>,
-    pub qr_png_base64: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LoginSession {
-    pub url: String,
-    pub key: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct LoginPollResult {
-    pub status: BilibiliQrStatus,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SubscriptionView {
-    pub subscription_id: String,
-    pub uid: u64,
-    pub notifications: Vec<BilibiliPollKind>,
-    pub target: BotTarget,
-    pub outbound_binding: String,
-    pub paused: bool,
-    pub owner_user_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct PreviewCardView {
-    pub title: String,
-    pub url: String,
-    pub description: String,
-    pub image_url: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct BindChallengeResult {
-    pub uid: u64,
-    pub name: String,
-    pub code: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "result")]
-pub enum BindVerifyResult {
-    Verified(SubscriptionView),
-    SignatureMismatch { code: String },
+    fn inspect(&self, key: &str) -> BilibiliCredentialSecretState;
 }
 
 pub struct BilibiliManagementService {
@@ -140,11 +64,7 @@ impl BilibiliManagementService {
         *self.qr_renderer.write().expect("QR renderer lock") = Some(renderer);
     }
 
-    pub fn config(&self) -> &SharedBilibiliConfig {
-        &self.config
-    }
-
-    pub fn status(&self) -> ManagementStatus {
+    fn status_impl(&self) -> BilibiliManagementStatus {
         let snapshot = self.config.snapshot();
         let backend = match snapshot.backend.kind() {
             BilibiliBackendKind::WebCookie => "web_cookie",
@@ -168,7 +88,7 @@ impl BilibiliManagementService {
         } else {
             None
         };
-        ManagementStatus {
+        BilibiliManagementStatus {
             available,
             backend,
             management_enabled,
@@ -181,7 +101,10 @@ impl BilibiliManagementService {
         }
     }
 
-    pub async fn login_start(&self, actor_id: &str) -> Result<LoginStartResult, BilibiliError> {
+    async fn login_start_impl(
+        &self,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginStartResult, BilibiliError> {
         let renderer = self
             .qr_renderer
             .read()
@@ -190,9 +113,9 @@ impl BilibiliManagementService {
             .ok_or_else(|| {
                 BilibiliError::ManagementUnavailable("image QR renderer is unavailable".into())
             })?;
-        let session = self.login_start_session(actor_id)?;
+        let session = self.login_start_session_impl(actor_id)?;
         let png = renderer.render_qr(&session.url).await?;
-        Ok(LoginStartResult {
+        Ok(BilibiliLoginStartResult {
             url: session.url,
             key: session.key,
             qr_png_base64: base64_encode(&png),
@@ -200,10 +123,10 @@ impl BilibiliManagementService {
         })
     }
 
-    pub(crate) fn login_start_session(
+    fn login_start_session_impl(
         &self,
         actor_id: &str,
-    ) -> Result<LoginSession, BilibiliError> {
+    ) -> Result<BilibiliLoginSession, BilibiliError> {
         self.require_web_management()?;
         let qr = self
             .transport
@@ -213,13 +136,13 @@ impl BilibiliManagementService {
         self.repository
             .set_qr_session(actor_id, &qr.key)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        Ok(LoginSession {
+        Ok(BilibiliLoginSession {
             url: qr.url,
             key: qr.key,
         })
     }
 
-    pub fn login_poll(&self, actor_id: &str) -> Result<LoginPollResult, BilibiliError> {
+    fn login_poll_impl(&self, actor_id: &str) -> Result<BilibiliLoginPollResult, BilibiliError> {
         self.require_web_management()?;
         let config = self.config.snapshot();
         let key = self
@@ -260,13 +183,13 @@ impl BilibiliManagementService {
                 "登录成功，凭据已通过 Host secret backend 原子轮换。".into()
             }
         };
-        Ok(LoginPollResult {
-            status: polled.status,
+        Ok(BilibiliLoginPollResult {
+            status: polled.status.into(),
             message,
         })
     }
 
-    pub fn credential_clear(&self) -> Result<(), BilibiliError> {
+    fn credential_clear_impl(&self) -> Result<(), BilibiliError> {
         self.require_web_management()?;
         let config = self.config.snapshot();
         let cookie_secret_key = config.backend.cookie_secret_key().ok_or_else(|| {
@@ -279,11 +202,11 @@ impl BilibiliManagementService {
         Ok(())
     }
 
-    pub fn list(
+    fn list_impl(
         &self,
         actor_id: &str,
         is_admin: bool,
-    ) -> Result<Vec<SubscriptionView>, BilibiliError> {
+    ) -> Result<Vec<BilibiliSubscriptionView>, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled {
             return Err(BilibiliError::ManagementUnavailable(
@@ -296,18 +219,18 @@ impl BilibiliManagementService {
             .filter(|subscription| {
                 is_admin || subscription.owner_user_id.as_deref() == Some(actor_id)
             })
-            .map(SubscriptionView::from)
+            .map(BilibiliSubscriptionView::from)
             .collect())
     }
 
-    pub fn subscribe(
+    fn subscribe_impl(
         &self,
         subscription_id: String,
         uid: u64,
-        notifications: Vec<BilibiliPollKind>,
+        notifications: Vec<BilibiliNotificationKind>,
         target: BotTarget,
         outbound_binding: String,
-    ) -> Result<SubscriptionView, BilibiliError> {
+    ) -> Result<BilibiliSubscriptionView, BilibiliError> {
         self.require_web_management()?;
         if subscription_id.trim().is_empty() || uid == 0 || notifications.is_empty() {
             return Err(BilibiliError::InvalidResponse(
@@ -325,7 +248,7 @@ impl BilibiliManagementService {
         let subscription = BilibiliSubscription {
             subscription_id,
             uid,
-            notifications,
+            notifications: notifications.into_iter().map(Into::into).collect(),
             target,
             outbound_binding,
             paused: false,
@@ -333,10 +256,10 @@ impl BilibiliManagementService {
         };
         next.subscriptions.push(subscription.clone());
         self.persist(next)?;
-        Ok(SubscriptionView::from(subscription))
+        Ok(BilibiliSubscriptionView::from(subscription))
     }
 
-    pub fn unsubscribe(&self, subscription_id: &str) -> Result<(), BilibiliError> {
+    fn unsubscribe_impl(&self, subscription_id: &str) -> Result<(), BilibiliError> {
         self.require_web_management()?;
         let mut next = self.config.snapshot();
         let before = next.subscriptions.len();
@@ -350,13 +273,13 @@ impl BilibiliManagementService {
         self.persist(next)
     }
 
-    pub fn set_paused(
+    fn set_paused_impl(
         &self,
         actor_id: &str,
         is_admin: bool,
         selector: Option<&str>,
         paused: bool,
-    ) -> Result<SubscriptionView, BilibiliError> {
+    ) -> Result<BilibiliSubscriptionView, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled {
             return Err(BilibiliError::ManagementUnavailable(
@@ -366,17 +289,17 @@ impl BilibiliManagementService {
         let mut next = config;
         let index = select_subscription(&next, actor_id, is_admin, selector)?;
         next.subscriptions[index].paused = paused;
-        let view = SubscriptionView::from(next.subscriptions[index].clone());
+        let view = BilibiliSubscriptionView::from(next.subscriptions[index].clone());
         self.persist(next)?;
         Ok(view)
     }
 
-    pub fn preview(
+    fn preview_impl(
         &self,
         actor_id: &str,
         is_admin: bool,
         selector: Option<&str>,
-    ) -> Result<PreviewCardView, BilibiliError> {
+    ) -> Result<BilibiliPreviewCardView, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled {
             return Err(BilibiliError::ManagementUnavailable(
@@ -393,7 +316,7 @@ impl BilibiliManagementService {
             .into_iter()
             .next()
             .ok_or_else(|| BilibiliError::ManagementUnavailable("该账号暂无可预览动态。".into()))?;
-        Ok(PreviewCardView {
+        Ok(BilibiliPreviewCardView {
             title: item.title,
             url: item.url,
             description: "通知预览（不会推进轮询 cursor）".into(),
@@ -401,12 +324,12 @@ impl BilibiliManagementService {
         })
     }
 
-    pub fn bind_start(
+    fn bind_start_impl(
         &self,
         operator_user_id: &str,
         uid: u64,
         challenge_seed: &str,
-    ) -> Result<BindChallengeResult, BilibiliError> {
+    ) -> Result<BilibiliBindChallengeResult, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled || !config.management.allow_self_binding {
             return Err(BilibiliError::Forbidden);
@@ -425,19 +348,19 @@ impl BilibiliManagementService {
         self.repository
             .set_binding_challenge(operator_user_id, uid, &code)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        Ok(BindChallengeResult {
+        Ok(BilibiliBindChallengeResult {
             uid,
             name: profile.name,
             code,
         })
     }
 
-    pub fn bind_verify(
+    fn bind_verify_impl(
         &self,
         operator_user_id: &str,
         platform: &str,
         target: BotTarget,
-    ) -> Result<BindVerifyResult, BilibiliError> {
+    ) -> Result<BilibiliBindVerifyResult, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled || !config.management.allow_self_binding {
             return Err(BilibiliError::Forbidden);
@@ -455,7 +378,7 @@ impl BilibiliManagementService {
             .expect("bilibili transport mutex")
             .profile(uid)?;
         if !profile.signature.contains(&code) {
-            return Ok(BindVerifyResult::SignatureMismatch { code });
+            return Ok(BilibiliBindVerifyResult::SignatureMismatch { code });
         }
         let mut next = config.clone();
         let subscription_id = self_subscription_id_for(platform, operator_user_id);
@@ -475,12 +398,12 @@ impl BilibiliManagementService {
         self.repository
             .clear_binding_challenge(operator_user_id)
             .map_err(|error| BilibiliError::Transport(error.to_string()))?;
-        Ok(BindVerifyResult::Verified(SubscriptionView::from(
-            subscription,
-        )))
+        Ok(BilibiliBindVerifyResult::Verified(
+            BilibiliSubscriptionView::from(subscription),
+        ))
     }
 
-    pub fn unbind(&self, operator_user_id: &str) -> Result<bool, BilibiliError> {
+    fn unbind_impl(&self, operator_user_id: &str) -> Result<bool, BilibiliError> {
         let config = self.config.snapshot();
         if !config.management.enabled {
             return Err(BilibiliError::ManagementUnavailable(
@@ -524,12 +447,166 @@ impl BilibiliManagementService {
     }
 }
 
-impl From<BilibiliSubscription> for SubscriptionView {
+#[async_trait]
+impl BilibiliManagementApi for BilibiliManagementService {
+    fn status(&self) -> BilibiliManagementStatus {
+        self.status_impl()
+    }
+
+    fn login_start_session(
+        &self,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginSession, BilibiliManagementError> {
+        self.login_start_session_impl(actor_id).map_err(map_error)
+    }
+
+    async fn login_start(
+        &self,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginStartResult, BilibiliManagementError> {
+        self.login_start_impl(actor_id).await.map_err(map_error)
+    }
+
+    fn login_poll(
+        &self,
+        actor_id: &str,
+    ) -> Result<BilibiliLoginPollResult, BilibiliManagementError> {
+        self.login_poll_impl(actor_id).map_err(map_error)
+    }
+
+    fn credential_clear(&self) -> Result<(), BilibiliManagementError> {
+        self.credential_clear_impl().map_err(map_error)
+    }
+
+    fn list(
+        &self,
+        actor_id: &str,
+        is_admin: bool,
+    ) -> Result<Vec<BilibiliSubscriptionView>, BilibiliManagementError> {
+        self.list_impl(actor_id, is_admin).map_err(map_error)
+    }
+
+    fn subscribe(
+        &self,
+        subscription_id: String,
+        uid: u64,
+        notifications: Vec<BilibiliNotificationKind>,
+        target: BotTarget,
+        outbound_binding: String,
+    ) -> Result<BilibiliSubscriptionView, BilibiliManagementError> {
+        self.subscribe_impl(
+            subscription_id,
+            uid,
+            notifications,
+            target,
+            outbound_binding,
+        )
+        .map_err(map_error)
+    }
+
+    fn unsubscribe(&self, subscription_id: &str) -> Result<(), BilibiliManagementError> {
+        self.unsubscribe_impl(subscription_id).map_err(map_error)
+    }
+
+    fn set_paused(
+        &self,
+        actor_id: &str,
+        is_admin: bool,
+        selector: Option<&str>,
+        paused: bool,
+    ) -> Result<BilibiliSubscriptionView, BilibiliManagementError> {
+        self.set_paused_impl(actor_id, is_admin, selector, paused)
+            .map_err(map_error)
+    }
+
+    fn preview(
+        &self,
+        actor_id: &str,
+        is_admin: bool,
+        selector: Option<&str>,
+    ) -> Result<BilibiliPreviewCardView, BilibiliManagementError> {
+        self.preview_impl(actor_id, is_admin, selector)
+            .map_err(map_error)
+    }
+
+    fn bind_start(
+        &self,
+        operator_user_id: &str,
+        uid: u64,
+        challenge_seed: &str,
+    ) -> Result<BilibiliBindChallengeResult, BilibiliManagementError> {
+        self.bind_start_impl(operator_user_id, uid, challenge_seed)
+            .map_err(map_error)
+    }
+
+    fn bind_verify(
+        &self,
+        operator_user_id: &str,
+        platform: &str,
+        target: BotTarget,
+    ) -> Result<BilibiliBindVerifyResult, BilibiliManagementError> {
+        self.bind_verify_impl(operator_user_id, platform, target)
+            .map_err(map_error)
+    }
+
+    fn unbind(&self, operator_user_id: &str) -> Result<bool, BilibiliManagementError> {
+        self.unbind_impl(operator_user_id).map_err(map_error)
+    }
+}
+
+fn map_error(error: BilibiliError) -> BilibiliManagementError {
+    BilibiliManagementError {
+        code: match &error {
+            BilibiliError::Forbidden => "bilibili.management_forbidden",
+            BilibiliError::ManagementUnavailable(_) => "bilibili.management_unavailable",
+            _ => "bilibili.request_failed",
+        }
+        .into(),
+        message: error.to_string(),
+    }
+}
+
+impl From<BilibiliQrStatus> for BilibiliQrLoginStatus {
+    fn from(value: BilibiliQrStatus) -> Self {
+        match value {
+            BilibiliQrStatus::Pending => Self::Pending,
+            BilibiliQrStatus::Scanned => Self::Scanned,
+            BilibiliQrStatus::Expired => Self::Expired,
+            BilibiliQrStatus::Confirmed => Self::Confirmed,
+        }
+    }
+}
+
+impl From<BilibiliNotificationKind> for BilibiliPollKind {
+    fn from(value: BilibiliNotificationKind) -> Self {
+        match value {
+            BilibiliNotificationKind::Live => Self::Live,
+            BilibiliNotificationKind::Dynamic => Self::Dynamic,
+            BilibiliNotificationKind::Video => Self::Video,
+        }
+    }
+}
+
+impl From<BilibiliPollKind> for BilibiliNotificationKind {
+    fn from(value: BilibiliPollKind) -> Self {
+        match value {
+            BilibiliPollKind::Live => Self::Live,
+            BilibiliPollKind::Dynamic => Self::Dynamic,
+            BilibiliPollKind::Video => Self::Video,
+        }
+    }
+}
+
+impl From<BilibiliSubscription> for BilibiliSubscriptionView {
     fn from(subscription: BilibiliSubscription) -> Self {
         Self {
             subscription_id: subscription.subscription_id,
             uid: subscription.uid,
-            notifications: subscription.notifications,
+            notifications: subscription
+                .notifications
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             target: subscription.target,
             outbound_binding: subscription.outbound_binding,
             paused: subscription.paused,

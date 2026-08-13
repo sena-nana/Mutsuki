@@ -10,6 +10,7 @@ fastrand.workspace = true
 md5.workspace = true
 hmac.workspace = true
 mutsuki-bot-link-parser.workspace = true
+mutsuki-bot-management.workspace = true
 mutsuki-bot-protocol.workspace = true
 mutsuki-protocol-browser.workspace = true
 mutsuki-protocol-image.workspace = true

@@ -7,6 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use mutsuki_bot_link_parser::{MAX_LINK_CARD_MEDIA_BYTES, ResolvedLinkCard};
+#[cfg(test)]
+use mutsuki_bot_management::BilibiliCredentialSecretState;
+use mutsuki_bot_management::{
+    BilibiliBindVerifyResult, BilibiliManagementApi, BilibiliManagementError,
+    BilibiliNotificationKind,
+};
 use mutsuki_bot_protocol::{
     BOT_MESSAGE_SEND_PROTOCOL_ID, BotCommandEvent, BotExtMap, BotFlowEventEnvelope, BotFlowPayload,
     BotFlowTypeRef, BotMessage, BotNodeBinding, BotNodeCatalogFragment, BotNodeDescriptor,
@@ -41,11 +47,7 @@ mod management;
 mod open_platform;
 mod secure_media;
 
-pub use management::{
-    BilibiliManagementService, BilibiliQrRenderer, BilibiliSecretPresence, BindChallengeResult,
-    BindVerifyResult, CredentialSecretState, LoginPollResult, LoginStartResult, ManagementStatus,
-    PreviewCardView, SubscriptionView,
-};
+pub use management::{BilibiliManagementService, BilibiliQrRenderer, BilibiliSecretPresence};
 pub use open_platform::{
     BilibiliOpenPlatformCredential, BilibiliOpenPlatformHttpClient,
     BilibiliOpenPlatformHttpRequest, BilibiliOpenPlatformHttpResponse,
@@ -930,7 +932,7 @@ pub struct BilibiliRunner {
     resources: Arc<dyn ResourceRegistryGateway>,
     media_provider_id: String,
     managed_config: Option<SharedBilibiliConfig>,
-    management: Option<Arc<BilibiliManagementService>>,
+    management: Option<Arc<dyn BilibiliManagementApi>>,
 }
 
 struct PreparedCards {
@@ -985,8 +987,12 @@ impl BilibiliRunner {
         }
     }
 
-    pub fn with_management(mut self, management: Arc<BilibiliManagementService>) -> Self {
-        self.managed_config = Some(management.config().clone());
+    pub fn with_management(
+        mut self,
+        config: SharedBilibiliConfig,
+        management: Arc<dyn BilibiliManagementApi>,
+    ) -> Self {
+        self.managed_config = Some(config);
         self.management = Some(management);
         self
     }
@@ -1082,7 +1088,11 @@ impl BilibiliRunner {
         let Some(management) = self.management.clone() else {
             return Ok(RunnerResult::completed(task.task_id.clone()));
         };
-        let config = management.config().snapshot();
+        let config = self
+            .managed_config
+            .as_ref()
+            .expect("management config is installed with the API")
+            .snapshot();
         if !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id.clone()));
         }
@@ -1117,14 +1127,14 @@ impl BilibiliRunner {
                 require_admin(is_admin).map_err(|error| bili_error(task, error))?;
                 let polled = management
                     .login_poll(actor_id)
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(task, &command, polled.message, None))
             }
             "bind" => {
                 let uid = parse_uid(command.args.get(1)).map_err(|error| bili_error(task, error))?;
                 let challenge = management
                     .bind_start(actor_id, uid, &task.task_id)
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1142,9 +1152,9 @@ impl BilibiliRunner {
                         command.source.platform.as_str(),
                         command.source.target.clone(),
                     )
-                    .map_err(|error| bili_error(task, error))?
+                    .map_err(|error| bili_management_error(task, error))?
                 {
-                    BindVerifyResult::Verified(subscription) => Ok(self.command_reply(
+                    BilibiliBindVerifyResult::Verified(subscription) => Ok(self.command_reply(
                         task,
                         &command,
                         format!(
@@ -1153,7 +1163,7 @@ impl BilibiliRunner {
                         ),
                         None,
                     )),
-                    BindVerifyResult::SignatureMismatch { code } => Ok(self.command_reply(
+                    BilibiliBindVerifyResult::SignatureMismatch { code } => Ok(self.command_reply(
                         task,
                         &command,
                         format!("验证未通过：个性签名中尚未找到 {code}。"),
@@ -1164,7 +1174,7 @@ impl BilibiliRunner {
             "unbind" => {
                 let removed = management
                     .unbind(actor_id)
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1185,7 +1195,7 @@ impl BilibiliRunner {
                         command.args.get(1).map(String::as_str),
                         paused,
                     )
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1208,7 +1218,7 @@ impl BilibiliRunner {
             "list" => {
                 let lines = management
                     .list(actor_id, is_admin)
-                    .map_err(|error| bili_error(task, error))?
+                    .map_err(|error| bili_management_error(task, error))?
                     .into_iter()
                     .map(|subscription| {
                         format!(
@@ -1251,7 +1261,7 @@ impl BilibiliRunner {
                         command.source.target.clone(),
                         config.management.self_binding_outbound_binding.clone(),
                     )
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1265,7 +1275,7 @@ impl BilibiliRunner {
                     .map_err(|error| bili_error(task, error))?;
                 management
                     .unsubscribe(&subscription_id)
-                    .map_err(|error| bili_error(task, error))?;
+                    .map_err(|error| bili_management_error(task, error))?;
                 Ok(self.command_reply(
                     task,
                     &command,
@@ -1529,7 +1539,11 @@ async fn run_management_task(
         let Some(management) = runner.management.clone() else {
             return Ok(RunnerResult::completed(task.task_id));
         };
-        let config = management.config().snapshot();
+        let config = runner
+            .managed_config
+            .as_ref()
+            .expect("management config is installed with the API")
+            .snapshot();
         if !config.management.enabled {
             return Ok(RunnerResult::completed(task.task_id));
         }
@@ -1550,7 +1564,7 @@ async fn run_management_task(
         require_admin(is_admin).map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
         let session = management
             .login_start_session(&actor_id)
-            .map_err(|error| RuntimeFailure::new(bili_error(&task, error)))?;
+            .map_err(|error| RuntimeFailure::new(bili_management_error(&task, error)))?;
         let rendered = render_qr_child(&ctx, &task, session.url).await?;
         return Ok(state
             .lock()
@@ -1595,13 +1609,11 @@ async fn run_management_task(
             )
             .await
         }
-        Err(BilibiliError::ManagementUnavailable(message)) if message.contains("暂无可预览") => {
-            Ok(state
-                .lock()
-                .expect("Bilibili runner mutex")
-                .command_reply(&task, &command, message, None))
-        }
-        Err(error) => Err(RuntimeFailure::new(bili_error(&task, error))),
+        Err(error) if error.message.contains("暂无可预览") => Ok(state
+            .lock()
+            .expect("Bilibili runner mutex")
+            .command_reply(&task, &command, error.message, None)),
+        Err(error) => Err(RuntimeFailure::new(bili_management_error(&task, error))),
     }
 }
 
@@ -2023,16 +2035,16 @@ pub(crate) fn parse_uid(value: Option<&String>) -> Result<u64, BilibiliError> {
 
 pub(crate) fn parse_notifications(
     value: Option<&String>,
-) -> Result<Vec<BilibiliPollKind>, BilibiliError> {
+) -> Result<Vec<BilibiliNotificationKind>, BilibiliError> {
     let values = value
         .map(|value| value.split(',').collect::<Vec<_>>())
         .unwrap_or_else(|| vec!["live", "dynamic", "video"]);
     let mut notifications = Vec::new();
     for value in values {
         let kind = match value.trim() {
-            "live" => BilibiliPollKind::Live,
-            "dynamic" => BilibiliPollKind::Dynamic,
-            "video" => BilibiliPollKind::Video,
+            "live" => BilibiliNotificationKind::Live,
+            "dynamic" => BilibiliNotificationKind::Dynamic,
+            "video" => BilibiliNotificationKind::Video,
             unknown => {
                 return Err(BilibiliError::InvalidResponse(format!(
                     "unknown notification type {unknown}"
@@ -2186,6 +2198,15 @@ fn bili_error(task: &Task, error: BilibiliError) -> RuntimeError {
                 .insert(key.into(), ScalarValue::String(value.into()));
         }
     }
+    runtime
+}
+
+fn bili_management_error(task: &Task, error: BilibiliManagementError) -> RuntimeError {
+    let mut runtime =
+        RuntimeError::new(error.code, PLUGIN_ID, format!("bilibili.{}", task.task_id));
+    runtime
+        .evidence
+        .insert("detail".into(), ScalarValue::String(error.message));
     runtime
 }
 
@@ -3122,8 +3143,9 @@ mod tests {
     fn login_command_awaits_qr_renderer_then_sends_rendered_resource() {
         let state = Arc::new(Mutex::new(FakeTransportState::default()));
         let repository = Arc::new(SqliteBilibiliRepository::open(":memory:").unwrap());
+        let config = SharedBilibiliConfig::new(managed_config());
         let management = Arc::new(BilibiliManagementService::new(
-            SharedBilibiliConfig::new(managed_config()),
+            config.clone(),
             SharedBilibiliCredential::default(),
             Box::new(FakeTransport(state.clone())),
             repository.clone(),
@@ -3137,7 +3159,7 @@ mod tests {
             Arc::new(UnusedResources),
             "memory",
         )
-        .with_management(management)
+        .with_management(config, management)
         .into_runtime_runner(Arc::new(RenderedChildClient), None);
         let task = command_task("login-render", "admin", &["login"]);
         let batch = command_batch(vec![task]);
@@ -3248,7 +3270,7 @@ mod tests {
             Arc::new(UnusedResources),
             "memory",
         )
-        .with_management(management.clone());
+        .with_management(config.clone(), management.clone());
 
         repository.set_qr_session("admin", "qr-key").unwrap();
         let login = runner
@@ -3326,7 +3348,7 @@ mod tests {
             .subscribe(
                 "sub-1".into(),
                 7,
-                vec![BilibiliPollKind::Live],
+                vec![BilibiliNotificationKind::Live],
                 BotTarget::Group {
                     group_id: "g1".into(),
                 },
@@ -3345,8 +3367,8 @@ mod tests {
     struct AlwaysPresentSecrets;
 
     impl BilibiliSecretPresence for AlwaysPresentSecrets {
-        fn inspect(&self, _key: &str) -> CredentialSecretState {
-            CredentialSecretState::Present
+        fn inspect(&self, _key: &str) -> BilibiliCredentialSecretState {
+            BilibiliCredentialSecretState::Present
         }
     }
 

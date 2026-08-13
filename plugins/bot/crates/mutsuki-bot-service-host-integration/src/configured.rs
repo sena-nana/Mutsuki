@@ -9,6 +9,7 @@ use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
     validate_flows,
 };
+use mutsuki_bot_management::{BilibiliCredentialSecretState, BilibiliManagementApi};
 use mutsuki_bot_protocol::ConversationPolicy;
 use mutsuki_bot_state_db::BotStateDbRepository;
 use mutsuki_config_service::{
@@ -46,7 +47,7 @@ use crate::{
 };
 use mutsuki_plugin_bot_bilibili::{
     BilibiliBackendConfig, BilibiliConfig, BilibiliConfigStore, BilibiliCredentialStore,
-    BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence, CredentialSecretState,
+    BilibiliManagementService, BilibiliRunner, BilibiliSecretPresence,
     PLUGIN_ID as BILIBILI_PLUGIN_ID, ReqwestBilibiliOpenPlatformTransport,
     ReqwestBilibiliTransport, RuntimeBilibiliQrRenderer, SharedBilibiliConfig,
     SharedBilibiliCredential, SqliteBilibiliRepository,
@@ -565,11 +566,11 @@ impl BilibiliConfigStore for ConfigServiceBilibiliConfigStore {
 struct HostSecretPresence(HostSecretStore);
 
 impl BilibiliSecretPresence for HostSecretPresence {
-    fn inspect(&self, key: &str) -> CredentialSecretState {
+    fn inspect(&self, key: &str) -> BilibiliCredentialSecretState {
         match self.0.resolve(key) {
-            None => CredentialSecretState::Absent,
-            Some(value) if value.trim().is_empty() => CredentialSecretState::Invalid,
-            Some(_) => CredentialSecretState::Present,
+            None => BilibiliCredentialSecretState::Absent,
+            Some(value) if value.trim().is_empty() => BilibiliCredentialSecretState::Invalid,
+            Some(_) => BilibiliCredentialSecretState::Present,
         }
     }
 }
@@ -700,6 +701,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
 
         let builder = if let Some(service) = management_service.clone() {
             let loaded_manifest = manifest.clone();
+            let management_api: Arc<dyn BilibiliManagementApi> = service;
             builder.register_builtin_loaded_plugin_factory(manifest, move || {
                 Ok::<LoadedPlugin, String>(LoadedPlugin {
                     manifest: loaded_manifest.clone(),
@@ -708,7 +710,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     host_services: vec![RuntimeBootstrapperService {
                         service_id: BILIBILI_MANAGEMENT_SERVICE_ID.into(),
                         capability: None,
-                        service: service.clone(),
+                        service: Arc::new(management_api.clone()),
                     }],
                     resource_providers: Vec::new(),
                     async_resource_providers: Vec::new(),
@@ -764,7 +766,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                         client.clone(),
                         resources,
                     )));
-                    runner = runner.with_management(management);
+                    runner = runner.with_management(runner_config.clone(), management);
                 }
                 Ok::<
                     Box<dyn mutsuki_runtime_core::Runner>,

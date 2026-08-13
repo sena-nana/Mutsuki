@@ -9,9 +9,8 @@ use mutsuki_agent_service_host_integration::{
     LocalAgentManagementService,
 };
 use mutsuki_bot_flow::BotFlowRegistry;
-use mutsuki_bot_management::QqBotManagementService;
+use mutsuki_bot_management::{BilibiliManagementApi, QqBotManagementService};
 use mutsuki_plugin_bot_agent::{BOT_AGENT_CONFIG_SERVICE_ID, BotAgentConfigHandle};
-use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
 use mutsuki_plugin_bot_event_router::BOT_FLOW_REGISTRY_SERVICE_ID;
 use mutsuki_service_runtime::{ServiceRuntime, ServiceRuntimeHandle};
 
@@ -21,8 +20,11 @@ pub const QQ_MANAGEMENT_SERVICE_ID: &str = "mutsuki.bot.qq.management";
 pub struct BilibiliConsoleBridge;
 
 impl BilibiliConsoleBridge {
-    pub fn get(runtime: &ServiceRuntime) -> Option<Arc<BilibiliManagementService>> {
-        runtime.host_service(BILIBILI_MANAGEMENT_SERVICE_ID).ok()
+    pub fn get(runtime: &ServiceRuntime) -> Option<Arc<dyn BilibiliManagementApi>> {
+        runtime
+            .host_service::<Arc<dyn BilibiliManagementApi>>(BILIBILI_MANAGEMENT_SERVICE_ID)
+            .ok()
+            .map(|api| (*api).clone())
     }
 }
 

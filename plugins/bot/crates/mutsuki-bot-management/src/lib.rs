@@ -1,4 +1,8 @@
-//! Headless QQ management owner: revision-fenced writes, audit, and live provider injection.
+//! Headless Bot management contracts: QQ and Bilibili console APIs.
+
+mod bilibili;
+
+pub use bilibili::*;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};

@@ -13,7 +13,7 @@ mutsuki-plugin-config-web = { workspace = true }
 mutsuki-plugin-bot-control-web = { workspace = true }
 mutsuki-plugin-bot-upgrade-web = { workspace = true }
 mutsuki-plugin-bot-overview-web = { workspace = true }
-mutsuki-plugin-bot-bilibili = { workspace = true }
+mutsuki-bot-management = { workspace = true }
 mutsuki-plugin-bot-bilibili-web = { workspace = true }
 mutsuki-plugin-bot-qq-web = { workspace = true }
 mutsuki-plugin-bot-agent-web = { workspace = true }

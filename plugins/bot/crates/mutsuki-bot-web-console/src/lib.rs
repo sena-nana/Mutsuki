@@ -15,12 +15,12 @@ pub use secret_status::{SecretKeyResolver, SecretMonitor, SecretStatusWebExtensi
 pub use watch_bridge::attach_revision_changed_bridge;
 
 use mutsuki_bot_flow::BotFlowRegistry;
+use mutsuki_bot_management::BilibiliManagementApi;
 use mutsuki_config_service::{ConfigProviderRegistry, ConfigService, InMemoryConfigRepository};
 use mutsuki_plugin_bot_agent_web::{
     AgentConnectionManagementResolver, BotAgentWebExtension, LocalAgentManagementResolver,
     materialize_frontend_assets as materialize_bot_agent_assets,
 };
-use mutsuki_plugin_bot_bilibili::BilibiliManagementService;
 use mutsuki_plugin_bot_bilibili_web::{
     BilibiliWebExtension, materialize_frontend_assets as materialize_bilibili_assets,
 };
@@ -123,7 +123,7 @@ pub fn build_console_host(
     config_service: Option<Arc<ConfigService>>,
     secret_monitor: Option<SecretMonitor>,
     paths: &WebConsolePaths,
-    bilibili: Option<Arc<BilibiliManagementService>>,
+    bilibili: Option<Arc<dyn BilibiliManagementApi>>,
     qq: Option<Arc<dyn QqBotManagementApi>>,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
     build_console_host_with_agent(
@@ -158,7 +158,7 @@ pub fn build_console_host_with_agent(
     config_service: Option<Arc<ConfigService>>,
     secret_monitor: Option<SecretMonitor>,
     paths: &WebConsolePaths,
-    bilibili: Option<Arc<BilibiliManagementService>>,
+    bilibili: Option<Arc<dyn BilibiliManagementApi>>,
     qq: Option<Arc<dyn QqBotManagementApi>>,
     bot_agent: BotAgentConsoleServices,
 ) -> WebHostResult<(MutsukiWebHost, ConsoleAssetDirs)> {
