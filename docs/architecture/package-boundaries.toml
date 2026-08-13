@@ -87,3 +87,26 @@ forbidden_target_roots = [
   "hosts/web/crates/mutsuki-web-host",
   "hosts/distributed/crates/mutsuki-distributed-runtime",
 ]
+
+[[rules]]
+name = "plugin-implementations-do-not-depend-on-plugin-implementations"
+source_package_prefixes = ["mutsuki-plugin-"]
+forbidden_target_package_prefixes = ["mutsuki-plugin-"]
+allow_target_packages = ["mutsuki-plugin-api"]
+allow_source_packages = [
+  # Remaining: typed Control RPC client and catalog planner still live in plugin crates.
+  "mutsuki-plugin-bot-overview-web",
+  "mutsuki-plugin-bot-upgrade-web",
+]
+
+[[rules]]
+name = "plugin-implementations-do-not-depend-on-host-integration"
+source_package_prefixes = ["mutsuki-plugin-"]
+forbidden_target_packages = [
+  "mutsuki-agent-bundle",
+  "mutsuki-agent-distributed-integration",
+  "mutsuki-agent-service-host-integration",
+  "mutsuki-bot-service-host-integration",
+  "mutsuki-bot-web-console",
+  "mutsuki-std-service-host-integration",
+]

@@ -766,6 +766,7 @@ impl MutsukiTauriHost {
             mode: RuntimeProfileMode::FullDev,
             enabled_plugins: discovered.enabled_plugins.iter().cloned().collect(),
             bindings: BTreeMap::new(),
+            surface_bindings: BTreeMap::new(),
             plugin_deployments: discovered.plugin_deployments,
             observability: self.observability.clone(),
             allow_dynamic_registration: false,

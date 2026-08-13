@@ -160,7 +160,20 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
     let manifest = PluginBuilder::new(CAPTURE_PLUGIN_ID)
         .runner_descriptor(descriptor.clone())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(CAPTURE_PROTOCOL_ID).build(),
+            ProtocolDescriptorBuilder::new(CAPTURE_PROTOCOL_ID)
+                .input_schema(json!({
+                    "type": "object",
+                    "required": ["flow_id", "node_id", "input"]
+                }))
+                .output_schema(json!({
+                    "type": "object",
+                    "required": ["outputs", "metadata"]
+                }))
+                .error_schema(json!({
+                    "type": "object",
+                    "required": ["code", "source", "route"]
+                }))
+                .build(),
             CAPTURE_RUNNER_ID,
             "capture",
         )
@@ -193,7 +206,12 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
         .build()
         .manifest;
     let flow_registry = capture_flow_registry(&manifest);
-    let flow_manifest = flow_router_manifest();
+    let mut flow_manifest = flow_router_manifest();
+    flow_manifest
+        .provides
+        .services
+        .push(BOT_FLOW_REGISTRY_SERVICE_ID.into());
+    flow_manifest.provides.capabilities.push("bot.flow".into());
     let loaded_flow_manifest = flow_manifest.clone();
     let ingress_registry = flow_registry.clone();
     let node_registry = flow_registry.clone();
@@ -210,7 +228,7 @@ async fn fake_gateway_delivers_private_group_channel_and_distinct_delete_once() 
                 async_handlers: Vec::new(),
                 host_services: vec![mutsuki_runtime_sdk::RuntimeBootstrapperService {
                     service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
-                    capability: Some("bot.flow".into()),
+                    capability: "bot.flow".into(),
                     service: service_registry.clone(),
                 }],
                 resource_providers: Vec::new(),

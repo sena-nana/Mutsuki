@@ -66,7 +66,7 @@ pub use plugin::{
     PluginArtifact, PluginBusinessSurface, PluginDeploymentKind, PluginExtensionDescriptor,
     PluginManifest, PluginProvides, ProtocolClass, ProtocolDescriptor, RuntimeCapabilityGraph,
     RuntimeLoadPlan, RuntimeLock, RuntimeProfile, RuntimeProfileMode, SurfaceCompatibility,
-    SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind,
+    SurfaceOccupancy, SurfaceOccupancyHandle, SurfaceOccupancyHandleKind, SurfaceRequirement,
 };
 pub use portability::{
     ContentId, ExecutionMobility, PORTABLE_TASK_ENVELOPE_SCHEMA_ID,

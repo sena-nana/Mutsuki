@@ -110,6 +110,7 @@ fn expand_runner(attrs: RunnerAttrs, function: ItemFn) -> syn::Result<proc_macro
     let purity = purity_tokens(&attrs.purity);
     let execution_class = execution_class_tokens(&attrs.execution_class);
     let accepts = attrs.accepts;
+    let requires = attrs.requires;
 
     Ok(quote! {
         #function
@@ -119,6 +120,7 @@ fn expand_runner(attrs: RunnerAttrs, function: ItemFn) -> syn::Result<proc_macro
                 .purity(#purity)
                 .execution_class(#execution_class);
             #(let builder = builder.accepts::<#accepts>();)*
+            #(let builder = builder.requires::<#requires>();)*
             builder.build()
         }
 
@@ -219,6 +221,7 @@ struct RunnerAttrs {
     runner_id: String,
     plugin_id: String,
     accepts: Vec<Type>,
+    requires: Vec<Type>,
     purity: String,
     execution_class: String,
 }
@@ -229,6 +232,7 @@ impl Parse for RunnerAttrs {
         let mut runner_id = None;
         let mut plugin_id = None;
         let mut accepts = Vec::new();
+        let mut requires = Vec::new();
         let mut purity = None;
         let mut execution_class = None;
         for meta in metas {
@@ -248,6 +252,9 @@ impl Parse for RunnerAttrs {
                 Meta::List(list) if list.path.is_ident("accepts") => {
                     accepts = type_list(&list)?;
                 }
+                Meta::List(list) if list.path.is_ident("requires") => {
+                    requires = type_list(&list)?;
+                }
                 other => {
                     return Err(syn::Error::new_spanned(
                         other,
@@ -266,6 +273,7 @@ impl Parse for RunnerAttrs {
             runner_id: required(runner_id, "runner_id")?,
             plugin_id: required(plugin_id, "plugin_id")?,
             accepts,
+            requires,
             purity: required(purity, "purity")?,
             execution_class: required(execution_class, "execution_class")?,
         })

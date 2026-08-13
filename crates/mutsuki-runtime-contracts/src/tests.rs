@@ -22,7 +22,10 @@ fn plugin_business_surface_ignores_deployment_transport() {
             companion_artifacts: Vec::new(),
         },
         provides: PluginProvides::default(),
-        requires: vec!["cap.input".into()],
+        requires: vec![SurfaceRequirement::new(
+            ContractSurfaceKind::Capability,
+            "cap.input",
+        )],
         permissions: PermissionGrant {
             effects: vec!["effect.output".into()],
             resources: vec![],
@@ -70,7 +73,10 @@ fn plugin_business_surface_ignores_deployment_transport() {
     });
 
     assert_eq!(builtin.business_surface(), abi.business_surface());
-    abi.requires.push("cap.extra".into());
+    abi.requires.push(SurfaceRequirement::new(
+        ContractSurfaceKind::Capability,
+        "cap.extra",
+    ));
     assert_ne!(builtin.business_surface(), abi.business_surface());
 }
 
@@ -440,6 +446,7 @@ fn local_task_payload_preserves_row_wire_shape_without_local_roundtrip() {
 fn plugin_load_plan_roundtrips_and_keeps_surfaces() {
     let provides = PluginProvides {
         capabilities: Vec::new(),
+        services: Vec::new(),
         extensions: vec![PluginExtensionDescriptor {
             extension_id: "example.plugin.catalog".into(),
             version: 1,

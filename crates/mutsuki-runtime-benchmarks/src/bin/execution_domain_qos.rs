@@ -339,6 +339,7 @@ fn profile() -> RuntimeProfile {
         mode: RuntimeProfileMode::FullDev,
         enabled_plugins: vec![PLUGIN_ID.into()],
         bindings: BTreeMap::new(),
+        surface_bindings: BTreeMap::new(),
         plugin_deployments: BTreeMap::new(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,

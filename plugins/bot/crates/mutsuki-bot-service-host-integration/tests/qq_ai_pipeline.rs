@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mutsuki_agent_contracts::{
-    AgentError, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentEventPage, AgentMessage,
-    AgentSession, AgentSessionCreateRequest, AgentWireError, MediaService, ResourceCellRef,
-    SessionVersion,
+    AGENT_SPEECH_SYNTHESIZE_PROTOCOL, AGENT_TRANSCRIBE_PROTOCOL, AgentError, AgentEvent,
+    AgentEventEnvelope, AgentEventMeta, AgentEventPage, AgentMessage, AgentSession,
+    AgentSessionCreateRequest, AgentWireError, MediaService, ResourceCellRef, SessionVersion,
 };
 use mutsuki_bot_delivery::{
     DeliveryError, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
@@ -39,11 +39,13 @@ use mutsuki_plugin_bot_event_router::{
 };
 use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_runtime_contracts::{
-    ExecutionClass, InvocationMode, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
-    ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerResult, RunnerStatus,
-    ScalarValue, Task, TaskHandle, TaskOutcome, TaskStatus, WorkBatch,
+    CompletionBatch, ExecutionClass, InvocationMode, ResourceAccess, ResourceId, ResourceLifetime,
+    ResourceRef, ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerResult,
+    RunnerStatus, ScalarValue, Task, TaskHandle, TaskOutcome, TaskStatus, WorkBatch,
 };
-use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
+use mutsuki_runtime_core::{
+    AsyncBatchHandler, AsyncCompletionFuture, Runner, RunnerContext, RuntimeResult,
+};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
@@ -55,6 +57,8 @@ const TEST_SOURCE_PLUGIN_ID: &str = "test.qq.flow.source";
 const TEST_SOURCE_NODE_TYPE: &str = "test.qq.flow.source";
 const TEST_SEND_PLUGIN_ID: &str = "test.qq.flow.send";
 const TEST_SEND_RUNNER_ID: &str = "test.qq.flow.send.runner";
+const TEST_MEDIA_PLUGIN_ID: &str = "test.agent.media";
+const TEST_MEDIA_RUNNER_ID: &str = "test.agent.media.runner";
 static RUNTIME_E2E_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct FlowHook(Arc<BotFlowRegistry>);
@@ -260,7 +264,12 @@ async fn start_runtime(
     std::fs::create_dir_all(root.join("run")).unwrap();
     let repository = Arc::new(BotStateDbRepository::open(state_dir.join("state.sqlite3")).unwrap());
     let source_manifest = source_manifest();
-    let flow_manifest = flow_router_manifest();
+    let mut flow_manifest = flow_router_manifest();
+    flow_manifest
+        .provides
+        .services
+        .push(BOT_FLOW_REGISTRY_SERVICE_ID.into());
+    flow_manifest.provides.capabilities.push("bot.flow".into());
     let agent_manifest = bot_agent_bridge_manifest();
     let reply_manifest = bot_reply_delivery_manifest();
     let catalog = BotNodeCatalog::from_manifests(&[
@@ -318,9 +327,35 @@ async fn start_runtime(
     let send_manifest = PluginBuilder::new(TEST_SEND_PLUGIN_ID)
         .runner_descriptor(send_descriptor.clone())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MESSAGE_SEND_PROTOCOL_ID).build(),
+            ProtocolDescriptorBuilder::new(BOT_MESSAGE_SEND_PROTOCOL_ID)
+                .input_schema(json!({"type": "object", "required": ["target", "segments"]}))
+                .output_schema(json!({"type": "object", "required": ["message_id"]}))
+                .error_schema(json!({
+                    "type": "object",
+                    "required": ["code", "source", "route"]
+                }))
+                .build(),
             TEST_SEND_RUNNER_ID,
             "test-send",
+        )
+        .build()
+        .manifest;
+    let media_descriptor = RunnerDescriptorBuilder::new(TEST_MEDIA_RUNNER_ID, TEST_MEDIA_PLUGIN_ID)
+        .accepted_protocol(AGENT_TRANSCRIBE_PROTOCOL)
+        .accepted_protocol(AGENT_SPEECH_SYNTHESIZE_PROTOCOL)
+        .execution_class(ExecutionClass::Io)
+        .build();
+    let media_manifest = PluginBuilder::new(TEST_MEDIA_PLUGIN_ID)
+        .runner_descriptor(media_descriptor.clone())
+        .protocol_handler(
+            test_protocol_descriptor(AGENT_TRANSCRIBE_PROTOCOL),
+            TEST_MEDIA_RUNNER_ID,
+            "test-agent-transcribe",
+        )
+        .protocol_handler(
+            test_protocol_descriptor(AGENT_SPEECH_SYNTHESIZE_PROTOCOL),
+            TEST_MEDIA_RUNNER_ID,
+            "test-agent-speech-synthesize",
         )
         .build()
         .manifest;
@@ -343,6 +378,7 @@ async fn start_runtime(
         mutsuki_bot_delivery::BOT_REPLY_DELIVERY_PLUGIN_ID,
         mutsuki_bot_interaction::BOT_INTERACTION_PLUGIN_ID,
         TEST_SEND_PLUGIN_ID,
+        TEST_MEDIA_PLUGIN_ID,
     ]
     .into_iter()
     .map(|id| ConfiguredPluginSelection {
@@ -359,6 +395,7 @@ async fn start_runtime(
     let builder = ServiceRuntimeBuilder::new(config)
         .register_builtin_plugin(source_manifest)
         .register_builtin_plugin(send_manifest)
+        .register_builtin_plugin(media_manifest)
         .register_builtin_loaded_plugin_factory(flow_manifest, move || {
             Ok::<mutsuki_runtime_sdk::LoadedPlugin, String>(mutsuki_runtime_sdk::LoadedPlugin {
                 manifest: flow_loaded_manifest.clone(),
@@ -366,7 +403,7 @@ async fn start_runtime(
                 async_handlers: Vec::new(),
                 host_services: vec![mutsuki_runtime_sdk::RuntimeBootstrapperService {
                     service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
-                    capability: Some("bot.flow".into()),
+                    capability: "bot.flow".into(),
                     service: service_registry.clone(),
                 }],
                 resource_providers: Vec::new(),
@@ -381,6 +418,11 @@ async fn start_runtime(
             })
         })
         .register_dynamic_runner_limit(TEST_SEND_RUNNER_ID, move || (None, send_timeout_ms))
+        .register_builtin_runner(move || {
+            Box::new(UnusedMediaRunner {
+                descriptor: media_descriptor.clone(),
+            })
+        })
         .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
         .register_builtin_runner(|| Box::new(BotFlowMatchRunner::default()))
         .register_runtime_client_runner(move |client| {
@@ -777,6 +819,42 @@ fn bot_event(event_id: &str, text: &str) -> BotEvent {
         message: Some(BotMessage::text(target, text)),
         raw: None,
         ext: BTreeMap::new(),
+    }
+}
+
+fn test_protocol_descriptor(protocol_id: &str) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(json!({"type": "object"}))
+        .output_schema(json!({"type": "object"}))
+        .error_schema(json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
+}
+
+struct UnusedMediaRunner {
+    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+}
+
+impl Runner for UnusedMediaRunner {
+    fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        Ok(CompletionBatch::from_error(
+            &batch,
+            mutsuki_runtime_contracts::RuntimeError::new(
+                "test.unexpected_media_call",
+                TEST_MEDIA_PLUGIN_ID,
+                "disabled_by_policy",
+            ),
+        ))
     }
 }
 

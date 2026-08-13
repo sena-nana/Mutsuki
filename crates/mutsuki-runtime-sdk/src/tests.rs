@@ -95,6 +95,7 @@ struct MacroTextBuffer;
     runner_id = "macro.echo.runner",
     plugin_id = "macro.plugin",
     accepts(MacroEchoInput),
+    requires(MacroEchoInput),
     purity = "pure",
     execution_class = "cpu"
 )]
@@ -125,7 +126,11 @@ fn async_descriptor() -> RunnerDescriptor {
         ordering: Default::default(),
         control: Default::default(),
         metadata: BTreeMap::new(),
-        contract_surfaces: vec!["runner:async.runner".into()],
+        contract_surfaces: vec![
+            "runner:async.runner".into(),
+            "requires:task_protocol:child.work".into(),
+            "requires:task_protocol:parent.work".into(),
+        ],
     }
 }
 
@@ -562,6 +567,46 @@ fn task_await_runner_adapter_rejects_external_future_without_wake_source() {
 }
 
 #[test]
+fn task_await_runner_adapter_rejects_undeclared_outbound_protocol() {
+    let client = Arc::new(ManualClient {
+        outcomes: Mutex::new(HashMap::new()),
+    });
+    let mut descriptor = async_descriptor();
+    descriptor
+        .contract_surfaces
+        .retain(|surface| !surface.starts_with("requires:task_protocol:"));
+    let mut adapter = TaskAwaitRunnerAdapter::new(
+        descriptor,
+        client,
+        Box::new(|ctx, task| {
+            Box::pin(async move {
+                ctx.call::<ChildWork>(json!({})).await?;
+                Ok(RunnerResult::completed(task.task_id))
+            })
+        }),
+    );
+
+    let error = adapter
+        .run_one_for_test(
+            RunnerContext::new(
+                1,
+                1,
+                "executor:test",
+                Some("lease:test".into()),
+                "invocation:test",
+            ),
+            Task::new("parent-1", "parent.work", json!({})),
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error.error().code,
+        mutsuki_runtime_contracts::ERR_REGISTRY_UNAUTHORIZED
+    );
+    assert_eq!(error.error().source, "runtime.sdk.outbound_surface");
+}
+
+#[test]
 fn task_await_runner_adapter_emits_targeted_child_task_descriptor() {
     let client = Arc::new(ManualClient {
         outcomes: Mutex::new(HashMap::new()),
@@ -625,7 +670,11 @@ fn plugin_builder_loads_manifest_runners_and_host_services() {
         .runner(Box::new(TestRunner {
             descriptor: descriptor.clone(),
         }))
-        .host_service("service.echo", Arc::new(String::from("ready")), None)
+        .host_service(
+            "service.echo",
+            Arc::new(String::from("ready")),
+            "test.host.lifecycle",
+        )
         .build();
 
     assert_eq!(plugin.manifest.plugin_id, "plugin-a");

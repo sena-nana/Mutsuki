@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mutsuki_agent_contracts::{InteractionResolution, PermissionDecision, SessionVersion};
-use mutsuki_agent_service_host_integration::{
-    AgentConnectionConfig, AgentConnectionId, AgentConnectionManager, LocalAgentManagementService,
+use mutsuki_agent_contracts::{
+    AgentConnectionConfig, AgentConnectionManagementApi, AgentManagementError,
+    AgentSessionManagementApi, InteractionResolution, PermissionDecision, SessionVersion,
 };
 use mutsuki_web_extension::{
     ExtensionError, RpcRegistry, WebExtension, WebExtensionDescriptor, content_hash,
@@ -25,9 +25,9 @@ pub const CAPABILITY_CONNECTION_WRITE: &str = "agent.connection.write";
 pub const CAPABILITY_SESSION_READ: &str = "agent.session.read";
 pub const CAPABILITY_SESSION_WRITE: &str = "agent.session.write";
 pub type AgentConnectionManagementResolver =
-    Arc<dyn Fn() -> Result<Arc<AgentConnectionManager>, String> + Send + Sync>;
+    Arc<dyn Fn() -> Result<Arc<dyn AgentConnectionManagementApi>, String> + Send + Sync>;
 pub type LocalAgentManagementResolver =
-    Arc<dyn Fn() -> Result<Arc<LocalAgentManagementService>, String> + Send + Sync>;
+    Arc<dyn Fn() -> Result<Arc<dyn AgentSessionManagementApi>, String> + Send + Sync>;
 
 pub struct BotAgentWebExtension {
     connections: Option<AgentConnectionManagementResolver>,
@@ -37,7 +37,7 @@ pub struct BotAgentWebExtension {
 
 impl BotAgentWebExtension {
     #[must_use]
-    pub fn new(connections: Option<Arc<AgentConnectionManager>>) -> Self {
+    pub fn new(connections: Option<Arc<dyn AgentConnectionManagementApi>>) -> Self {
         Self {
             connections: connections.map(|manager| {
                 Arc::new(move || Ok(manager.clone())) as AgentConnectionManagementResolver
@@ -135,9 +135,7 @@ impl WebExtension for BotAgentWebExtension {
                 async move {
                     context.require(CAPABILITY_CONNECTION_WRITE)?;
                     let expected_revision = required_u64(&params, "expected_revision")?;
-                    let connection_id =
-                        AgentConnectionId::new(required_str(&params, "connection_id")?)
-                            .map_err(|error| ExtensionError::Registration(error.to_string()))?;
+                    let connection_id = required_str(&params, "connection_id")?;
                     let manager = resolve_connections(&manager)?;
                     let status = tokio::task::spawn_blocking(move || {
                         manager.reconnect(expected_revision, &connection_id)
@@ -320,12 +318,8 @@ fn required_u64(params: &Value, key: &str) -> Result<u64, ExtensionError> {
         .ok_or_else(|| ExtensionError::Registration(format!("missing {key}")))
 }
 
-fn agent_error(
-    error: mutsuki_agent_service_host_integration::AgentConnectionError,
-) -> ExtensionError {
-    ExtensionError::Registration(
-        json!({"code": error.code(), "message": error.to_string()}).to_string(),
-    )
+fn agent_error(error: AgentManagementError) -> ExtensionError {
+    ExtensionError::Registration(json!({"code": error.code, "message": error.message}).to_string())
 }
 
 fn wire_error(error: mutsuki_agent_contracts::AgentWireError) -> ExtensionError {
@@ -337,7 +331,7 @@ fn wire_error(error: mutsuki_agent_contracts::AgentWireError) -> ExtensionError 
 
 fn resolve_sessions(
     resolver: &LocalAgentManagementResolver,
-) -> Result<Arc<LocalAgentManagementService>, ExtensionError> {
+) -> Result<Arc<dyn AgentSessionManagementApi>, ExtensionError> {
     resolver().map_err(|message| {
         ExtensionError::Registration(
             json!({"code": "agent.owner_unavailable", "message": message}).to_string(),
@@ -347,7 +341,7 @@ fn resolve_sessions(
 
 fn resolve_connections(
     resolver: &AgentConnectionManagementResolver,
-) -> Result<Arc<AgentConnectionManager>, ExtensionError> {
+) -> Result<Arc<dyn AgentConnectionManagementApi>, ExtensionError> {
     resolver().map_err(|message| {
         ExtensionError::Registration(
             json!({"code": "agent.connection_owner_unavailable", "message": message}).to_string(),

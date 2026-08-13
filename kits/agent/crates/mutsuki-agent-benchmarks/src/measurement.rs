@@ -73,13 +73,17 @@ pub struct RawCase {
 
 pub fn raw_case(case_id: impl Into<String>, dimensions: Value, samples: Vec<Sample>) -> RawCase {
     assert!(!samples.is_empty());
+    let case_id = case_id.into();
     let hashes = samples
         .iter()
         .map(|sample| canonical_hash(&sample.output))
         .collect::<Vec<_>>();
-    assert!(hashes.iter().all(|hash| hash == &hashes[0]));
+    assert!(
+        hashes.iter().all(|hash| hash == &hashes[0]),
+        "benchmark case `{case_id}` produced non-deterministic output hashes: {hashes:?}"
+    );
     RawCase {
-        case_id: case_id.into(),
+        case_id,
         dimensions,
         elapsed_ns: samples.iter().map(|sample| sample.elapsed_ns).collect(),
         simulated_wall_ns: samples
@@ -128,5 +132,63 @@ pub fn allocation_delta(start: (u64, u64)) -> (u64, u64) {
 }
 
 pub fn canonical_hash(value: &Value) -> String {
-    hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
+    let mut value = value.clone();
+    normalize_event_timestamps(&mut value);
+    hex::encode(Sha256::digest(serde_json::to_vec(&value).unwrap()))
+}
+
+fn normalize_event_timestamps(value: &mut Value) {
+    match value {
+        Value::Array(values) => values.iter_mut().for_each(normalize_event_timestamps),
+        Value::Object(values) => {
+            if values.contains_key("event_id")
+                && values.contains_key("visibility")
+                && values.contains_key("timestamp_unix_ms")
+            {
+                values.insert("timestamp_unix_ms".into(), Value::from(0));
+            }
+            values.values_mut().for_each(normalize_event_timestamps);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn output_hash_ignores_only_event_envelope_timestamps() {
+        let first = json!({
+            "meta": {
+                "event_id": "turn-1:1",
+                "visibility": "default",
+                "timestamp_unix_ms": 10,
+            },
+            "expires_at_unix_ms": 10,
+        });
+        let later_event = json!({
+            "meta": {
+                "event_id": "turn-1:1",
+                "visibility": "default",
+                "timestamp_unix_ms": 20,
+            },
+            "expires_at_unix_ms": 10,
+        });
+        let different_business_time = json!({
+            "meta": {
+                "event_id": "turn-1:1",
+                "visibility": "default",
+                "timestamp_unix_ms": 20,
+            },
+            "expires_at_unix_ms": 20,
+        });
+
+        assert_eq!(canonical_hash(&first), canonical_hash(&later_event));
+        assert_ne!(
+            canonical_hash(&first),
+            canonical_hash(&different_business_time)
+        );
+    }
 }

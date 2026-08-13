@@ -365,6 +365,7 @@ impl RuntimeBootstrapper {
             &self.resource_providers,
             &self.async_resource_providers,
         )?;
+        validate_registered_host_services(&plan, &self.host_services)?;
         let services = match self.shared_services {
             Some(services) if self.host_services.is_empty() => services,
             Some(_) => {
@@ -417,6 +418,45 @@ fn boot_prepared_runtime(mut prepared: PreparedRuntime) -> RuntimeResult<BootedR
         resource_providers: prepared.resource_providers,
         async_resource_providers: prepared.async_resource_providers,
     })
+}
+
+fn validate_registered_host_services(
+    plan: &RuntimeLoadPlan,
+    services: &[RegisteredHostService],
+) -> RuntimeResult<()> {
+    for registered in services {
+        let Some(manifest) = plan
+            .plugins
+            .iter()
+            .find(|manifest| manifest.plugin_id == registered.owner_plugin_id)
+        else {
+            return Err(crate::error::host_failure(
+                "host.services.owner_not_enabled",
+                &registered.owner_plugin_id,
+            ));
+        };
+        let service_id = registered.service.service_id.trim();
+        if service_id.is_empty() || !manifest.provides.services.iter().any(|id| id == service_id) {
+            return Err(crate::error::host_failure(
+                "host.services.undeclared_service",
+                service_id,
+            ));
+        }
+        let capability = registered.service.capability.trim();
+        if capability.is_empty()
+            || !manifest
+                .provides
+                .capabilities
+                .iter()
+                .any(|provided| provided == capability)
+        {
+            return Err(crate::error::host_failure(
+                "host.services.undeclared_capability",
+                capability,
+            ));
+        }
+    }
+    Ok(())
 }
 
 struct BootedRuntime {

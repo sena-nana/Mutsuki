@@ -155,7 +155,15 @@ impl QqAiBotPluginBundle {
         });
         let interaction = InteractionService::new(self.interactions, self.interaction_matcher);
         let media = self.media;
-        let agent_manifest = bot_agent_bridge_manifest();
+        let mut agent_manifest = bot_agent_bridge_manifest();
+        agent_manifest
+            .provides
+            .services
+            .push(BOT_AGENT_CONFIG_SERVICE_ID.into());
+        agent_manifest
+            .provides
+            .capabilities
+            .push("bot.agent.config".into());
         let loaded_agent_manifest = agent_manifest.clone();
         let config_service = Arc::new(agent_config.clone());
         let builder = builder
@@ -174,7 +182,7 @@ impl QqAiBotPluginBundle {
                     async_handlers: Vec::new(),
                     host_services: vec![RuntimeBootstrapperService {
                         service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
-                        capability: Some("bot.agent.config".into()),
+                        capability: "bot.agent.config".into(),
                         service: config_service.clone(),
                     }],
                     resource_providers: Vec::new(),

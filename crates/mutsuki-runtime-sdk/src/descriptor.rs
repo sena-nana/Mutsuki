@@ -17,15 +17,15 @@ pub trait ProtocolSpec: SdkProtocol {
     }
 
     fn input_schema() -> Value {
-        json!({})
+        protocol_surface_schema(Self::PROTOCOL_ID, "request")
     }
 
     fn output_schema() -> Value {
-        json!({})
+        protocol_surface_schema(Self::PROTOCOL_ID, "response")
     }
 
     fn error_schema() -> Value {
-        json!({})
+        protocol_surface_schema(Self::PROTOCOL_ID, "error")
     }
 
     fn codec() -> &'static str {
@@ -46,6 +46,16 @@ pub trait ProtocolSpec: SdkProtocol {
             .compatibility(Self::compatibility())
             .build()
     }
+}
+
+fn protocol_surface_schema(protocol_id: &str, direction: &str) -> Value {
+    json!({
+        "$id": format!("mutsuki://protocol/{protocol_id}/{direction}"),
+        "type": "object",
+        "title": format!("{protocol_id} {direction}"),
+        "x-mutsuki-protocol": protocol_id,
+        "x-mutsuki-direction": direction,
+    })
 }
 
 pub trait ResourceKindSpec: ResourceKind {
@@ -198,6 +208,24 @@ impl RunnerDescriptorBuilder {
 
     pub fn accepted_protocol(mut self, protocol_id: impl Into<String>) -> Self {
         self.accepted_protocol_ids.push(protocol_id.into());
+        self
+    }
+
+    /// Declares an outbound protocol used by this runner. The adapter enforces
+    /// this list before creating a child task and PluginBuilder lowers it into
+    /// the owning PluginManifest requirement set.
+    pub fn requires<P>(mut self) -> Self
+    where
+        P: SdkProtocol,
+    {
+        self.contract_surfaces
+            .push(format!("requires:task_protocol:{}", P::PROTOCOL_ID));
+        self
+    }
+
+    pub fn requires_protocol(mut self, protocol_id: impl Into<String>) -> Self {
+        self.contract_surfaces
+            .push(format!("requires:task_protocol:{}", protocol_id.into()));
         self
     }
 

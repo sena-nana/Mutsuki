@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use mutsuki_runtime_contracts::{
     CapabilityProviderSelection, PermissionAuditEntry, PluginDeploymentKind, PluginManifest,
     ProtocolClass, ResourceTypeDescriptor, RuntimeCapabilityGraph, RuntimeProfile,
-    RuntimeProfileMode,
+    RuntimeProfileMode, SurfaceRequirement,
 };
 use mutsuki_runtime_core::RuntimeResult;
 
@@ -19,13 +19,6 @@ struct CapabilityProvider {
     surface_id: String,
 }
 
-#[derive(Clone, Debug)]
-struct CapabilityRequirement {
-    raw: String,
-    capability: String,
-    version_constraint: Option<String>,
-}
-
 pub(super) fn capability_graph_for(
     profile: &RuntimeProfile,
     manifests: &[PluginManifest],
@@ -36,7 +29,7 @@ pub(super) fn capability_graph_for(
         RuntimeProfileMode::BuiltinOnly | RuntimeProfileMode::LockedBuiltin
     );
     let mut provided = BTreeSet::new();
-    let mut required_raw = BTreeSet::new();
+    let mut requirements = BTreeSet::new();
     let mut active = BTreeSet::new();
     let mut providers: BTreeMap<String, Vec<CapabilityProvider>> = BTreeMap::new();
     let mut active_resource_providers = BTreeSet::new();
@@ -48,14 +41,14 @@ pub(super) fn capability_graph_for(
     let mut active_workflows = BTreeSet::new();
 
     for manifest in manifests {
-        required_raw.extend(manifest.requires.iter().cloned());
+        requirements.extend(manifest.requires.iter().cloned());
         collect_base_capabilities(manifest, &mut provided, &mut active, &mut providers);
         collect_system_extension_capabilities(manifest, &mut provided, &mut providers);
     }
-    let requirements = parse_requirements(&required_raw);
+    let requirements = requirements.into_iter().collect::<Vec<_>>();
     let required_capabilities: BTreeSet<String> = requirements
         .iter()
-        .map(|requirement| requirement.capability.clone())
+        .map(SurfaceRequirement::capability_key)
         .collect();
 
     for manifest in manifests {
@@ -172,17 +165,24 @@ pub(super) fn capability_graph_for(
     ensure_required_capabilities_are_active(
         &requirements,
         &active,
-        &active_resource_providers,
         &providers,
+        &profile.surface_bindings,
     )?;
-    let active_capability_providers =
-        active_capability_providers(&active, &requirements, &providers)?;
+    let active_capability_providers = active_capability_providers(
+        &active,
+        &requirements,
+        &providers,
+        &profile.surface_bindings,
+    )?;
     let permission_audit = permission_audit_for(manifests, &active, &active_resource_providers)?;
 
     Ok(RuntimeCapabilityGraph {
         profile_mode: profile.mode.clone(),
         provided_capabilities: provided.into_iter().collect(),
-        required_capabilities: required_raw.into_iter().collect(),
+        required_capabilities: requirements
+            .iter()
+            .map(SurfaceRequirement::display_key)
+            .collect(),
         active_capabilities: active.into_iter().collect(),
         active_capability_providers,
         active_resource_providers: active_resource_providers.into_iter().collect(),
@@ -204,6 +204,11 @@ fn collect_base_capabilities(
 ) {
     for capability in &manifest.provides.capabilities {
         collect_named_capability(manifest, provided, active, providers, capability);
+    }
+    for service_id in &manifest.provides.services {
+        collect_active_capability(
+            manifest, provided, active, providers, "service", service_id, None,
+        );
     }
     collect_active_capability(
         manifest,
@@ -319,16 +324,15 @@ fn collect_named_capability(
     if capability.is_empty() {
         return;
     }
-    provided.insert(capability.to_owned());
-    active.insert(capability.to_owned());
-    providers
-        .entry(capability.to_owned())
-        .or_default()
-        .push(CapabilityProvider {
-            provider_plugin_id: manifest.plugin_id.clone(),
-            provider_version: None,
-            surface_id: capability.to_owned(),
-        });
+    collect_active_capability(
+        manifest,
+        provided,
+        active,
+        providers,
+        "capability",
+        capability,
+        None,
+    );
 }
 
 fn collect_system_extension_capabilities(
@@ -457,36 +461,35 @@ fn resource_provider_is_used(manifests: &[PluginManifest], provider_id: &str) ->
 }
 
 fn ensure_required_capabilities_are_active(
-    requirements: &[CapabilityRequirement],
+    requirements: &[SurfaceRequirement],
     active: &BTreeSet<String>,
-    active_resource_providers: &BTreeSet<String>,
     providers: &BTreeMap<String, Vec<CapabilityProvider>>,
+    bindings: &BTreeMap<String, String>,
 ) -> RuntimeResult<()> {
     for requirement in requirements {
-        let Some(active_capability) =
-            active_capability_for_requirement(requirement, active, active_resource_providers)
-        else {
-            return Err(required_capability_missing(&requirement.raw));
+        let Some(active_capability) = active_capability_for_requirement(requirement, active) else {
+            return Err(required_capability_missing(&requirement.display_key()));
         };
-        select_provider_for_requirement(&active_capability, requirement, providers)?;
+        select_provider_for_requirement(&active_capability, requirement, providers, bindings)?;
     }
     Ok(())
 }
 
 fn active_capability_providers(
     active: &BTreeSet<String>,
-    requirements: &[CapabilityRequirement],
+    requirements: &[SurfaceRequirement],
     providers: &BTreeMap<String, Vec<CapabilityProvider>>,
+    bindings: &BTreeMap<String, String>,
 ) -> RuntimeResult<Vec<CapabilityProviderSelection>> {
     let mut selections = Vec::new();
     for capability in active {
         let matching_requirement = requirements
             .iter()
-            .find(|requirement| requirement.capability == *capability);
+            .find(|requirement| requirement.capability_key() == *capability);
         let provider = if let Some(requirement) = matching_requirement {
-            select_provider_for_requirement(capability, requirement, providers)?
+            select_provider_for_requirement(capability, requirement, providers, bindings)?
         } else {
-            select_provider(capability, None, providers)?
+            select_provider(capability, None, providers, bindings)?
         };
         selections.push(CapabilityProviderSelection {
             capability: capability.clone(),
@@ -494,7 +497,7 @@ fn active_capability_providers(
             provider_version: provider.provider_version.clone(),
             surface_id: provider.surface_id.clone(),
             reason: matching_requirement
-                .and_then(|requirement| requirement.version_constraint.as_ref())
+                .and_then(|requirement| requirement.version.as_ref())
                 .map(|_| "required_version")
                 .unwrap_or("active_plan")
                 .into(),
@@ -505,19 +508,21 @@ fn active_capability_providers(
 
 fn select_provider_for_requirement<'a>(
     active_capability: &str,
-    requirement: &CapabilityRequirement,
+    requirement: &SurfaceRequirement,
     providers: &'a BTreeMap<String, Vec<CapabilityProvider>>,
+    bindings: &BTreeMap<String, String>,
 ) -> RuntimeResult<&'a CapabilityProvider> {
     select_provider(
         active_capability,
-        requirement.version_constraint.as_deref(),
+        requirement.version.as_deref(),
         providers,
+        bindings,
     )
     .map_err(|failure| {
-        if requirement.version_constraint.is_some() {
+        if requirement.version.is_some() {
             failure
         } else {
-            required_capability_missing(&requirement.raw)
+            required_capability_missing(&requirement.display_key())
         }
     })
 }
@@ -526,11 +531,21 @@ fn select_provider<'a>(
     capability: &str,
     version_constraint: Option<&str>,
     providers: &'a BTreeMap<String, Vec<CapabilityProvider>>,
+    bindings: &BTreeMap<String, String>,
 ) -> RuntimeResult<&'a CapabilityProvider> {
     let Some(candidates) = providers.get(capability) else {
         return Err(capability_provider_missing(capability));
     };
+    let bound_provider = bindings.get(capability);
+    if candidates.len() > 1 && bound_provider.is_none() {
+        return Err(capability_provider_missing(&format!(
+            "{capability}.ambiguous"
+        )));
+    }
     for provider in candidates {
+        if bound_provider.is_some_and(|plugin_id| plugin_id != &provider.provider_plugin_id) {
+            continue;
+        }
         if let Some(constraint) = version_constraint {
             let Some(version) = provider.provider_version.as_deref() else {
                 return Err(capability_version_mismatch(capability, constraint, None));
@@ -541,37 +556,28 @@ fn select_provider<'a>(
         }
         return Ok(provider);
     }
-    Err(capability_version_mismatch(
-        capability,
-        version_constraint.expect("version constraint is present"),
-        candidates
-            .iter()
-            .filter_map(|provider| provider.provider_version.as_deref())
-            .max(),
-    ))
+    match version_constraint {
+        Some(constraint) => Err(capability_version_mismatch(
+            capability,
+            constraint,
+            candidates
+                .iter()
+                .filter_map(|provider| provider.provider_version.as_deref())
+                .max(),
+        )),
+        None => Err(capability_provider_missing(capability)),
+    }
 }
 
 fn active_capability_for_requirement(
-    requirement: &CapabilityRequirement,
+    requirement: &SurfaceRequirement,
     active: &BTreeSet<String>,
-    active_resource_providers: &BTreeSet<String>,
 ) -> Option<String> {
-    if active.contains(&requirement.capability) {
-        return Some(requirement.capability.clone());
+    let capability = requirement.capability_key();
+    if active.contains(&capability) {
+        return Some(capability);
     }
-    if let Some(provider_id) = requirement.capability.strip_prefix("resource_strategy:")
-        && active_resource_providers.contains(provider_id)
-    {
-        return Some(format!("resource_provider:{provider_id}"));
-    }
-    if requirement.capability.contains(':') {
-        return None;
-    }
-    active.iter().find_map(|active_capability| {
-        active_capability
-            .rsplit_once(':')
-            .and_then(|(_, id)| (id == requirement.capability).then(|| active_capability.clone()))
-    })
+    None
 }
 
 fn activate(
@@ -653,40 +659,18 @@ fn add_provider(
     provider_version: Option<String>,
 ) {
     let capability = format!("{prefix}:{id}");
-    providers
-        .entry(capability.clone())
-        .or_default()
-        .push(CapabilityProvider {
-            provider_plugin_id: manifest.plugin_id.clone(),
-            provider_version,
-            surface_id: capability,
-        });
-}
-
-fn parse_requirements(required: &BTreeSet<String>) -> Vec<CapabilityRequirement> {
-    required
-        .iter()
-        .map(|raw| {
-            let (capability, version_constraint) = raw.rsplit_once('@').map_or_else(
-                || (raw.clone(), None),
-                |(capability, constraint)| {
-                    if [">=", "<=", ">", "<", "="]
-                        .iter()
-                        .any(|operator| constraint.starts_with(operator))
-                    {
-                        (capability.to_string(), Some(constraint.into()))
-                    } else {
-                        (raw.clone(), None)
-                    }
-                },
-            );
-            CapabilityRequirement {
-                raw: raw.clone(),
-                capability,
-                version_constraint,
-            }
-        })
-        .collect()
+    let provider = CapabilityProvider {
+        provider_plugin_id: manifest.plugin_id.clone(),
+        provider_version,
+        surface_id: capability,
+    };
+    let candidates = providers.entry(provider.surface_id.clone()).or_default();
+    if !candidates.iter().any(|candidate| {
+        candidate.provider_plugin_id == provider.provider_plugin_id
+            && candidate.provider_version == provider.provider_version
+    }) {
+        candidates.push(provider);
+    }
 }
 
 fn version_matches_constraint(version: &str, constraint: &str) -> bool {

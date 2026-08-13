@@ -824,6 +824,7 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
 fn facade_runner_descriptor() -> RunnerDescriptor {
     RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
         .accepted_protocol(HTTP_REQUEST_PROTOCOL)
+        .requires_protocol(EFFECT_HTTP_REQUEST_PROTOCOL)
         .purity(RunnerPurity::Pure)
         .execution_class(ExecutionClass::Orchestration)
         .batch_capability(RunnerBatchCapability {

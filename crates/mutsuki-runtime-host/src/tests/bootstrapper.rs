@@ -374,6 +374,7 @@ fn host_service_profile(plugin_id: &str) -> RuntimeProfile {
         mode: RuntimeProfileMode::FullDev,
         enabled_plugins: vec![plugin_id.into()],
         bindings: Default::default(),
+        surface_bindings: Default::default(),
         plugin_deployments: Default::default(),
         observability: ObservabilityProfile::default(),
         allow_dynamic_registration: false,
@@ -390,5 +391,9 @@ fn host_service_plugin(
 }
 
 fn host_service_builder(plugin_id: &str, service_id: &str, value: &str) -> PluginBuilder {
-    PluginBuilder::new(plugin_id).host_service(service_id, Arc::new(value.to_string()), None)
+    PluginBuilder::new(plugin_id).host_service(
+        service_id,
+        Arc::new(value.to_string()),
+        "test.host.lifecycle",
+    )
 }

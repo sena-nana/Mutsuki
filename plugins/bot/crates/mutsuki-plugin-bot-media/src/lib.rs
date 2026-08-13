@@ -30,12 +30,16 @@ pub fn bot_media_bridge_manifest() -> PluginManifest {
     PluginBuilder::new(BOT_MEDIA_BRIDGE_PLUGIN_ID)
         .runner_descriptor(media_bridge_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID).build(),
+            media_protocol_descriptor(BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID, &["audio"], &["text"]),
             BOT_MEDIA_BRIDGE_RUNNER_ID,
             "bot-media-transcribe",
         )
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID).build(),
+            media_protocol_descriptor(
+                BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID,
+                &["target", "text", "policy", "qq_mime_type"],
+                &[],
+            ),
             BOT_MEDIA_BRIDGE_RUNNER_ID,
             "bot-media-synthesize",
         )
@@ -46,6 +50,27 @@ pub fn bot_media_bridge_manifest() -> PluginManifest {
         )
         .build()
         .manifest
+}
+
+fn media_protocol_descriptor(
+    protocol_id: &str,
+    request_required: &[&str],
+    response_required: &[&str],
+) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(serde_json::json!({
+            "type": "object",
+            "required": request_required
+        }))
+        .output_schema(serde_json::json!({
+            "type": "object",
+            "required": response_required
+        }))
+        .error_schema(serde_json::json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
 }
 
 fn media_node_catalog() -> BotNodeCatalogFragment {
@@ -125,6 +150,8 @@ fn media_bridge_descriptor() -> mutsuki_runtime_contracts::RunnerDescriptor {
     RunnerDescriptorBuilder::new(BOT_MEDIA_BRIDGE_RUNNER_ID, BOT_MEDIA_BRIDGE_PLUGIN_ID)
         .accepted_protocol(BOT_MEDIA_TRANSCRIBE_PROTOCOL_ID)
         .accepted_protocol(BOT_MEDIA_SYNTHESIZE_PROTOCOL_ID)
+        .requires_protocol(AGENT_TRANSCRIBE_PROTOCOL)
+        .requires_protocol(AGENT_SPEECH_SYNTHESIZE_PROTOCOL)
         .execution_class(ExecutionClass::Orchestration)
         .build()
 }

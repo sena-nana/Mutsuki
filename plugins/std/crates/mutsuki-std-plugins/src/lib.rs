@@ -6,7 +6,7 @@
 use mutsuki_plugin_image_render::ImageRenderConfig;
 use mutsuki_plugin_io_browser_chromium::ChromiumConfig;
 use mutsuki_plugin_io_http_client::HttpClientConfig;
-use mutsuki_runtime_contracts::PluginManifest;
+use mutsuki_runtime_contracts::{ContractSurfaceKind, PluginManifest, SurfaceRequirement};
 
 pub const STD_PLUGIN_IDS: [&str; 4] = [
     mutsuki_plugin_resource_memory::PLUGIN_ID,
@@ -52,9 +52,10 @@ impl StdPluginCatalog {
     pub fn http_client_manifest(self, config: &HttpClientConfig) -> Result<PluginManifest, String> {
         config.validate()?;
         let mut manifest = mutsuki_plugin_io_http_client::manifest();
-        manifest
-            .requires
-            .push(format!("resource_strategy:{}", config.response_provider_id));
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            config.response_provider_id.clone(),
+        ));
         Ok(manifest)
     }
 
@@ -69,9 +70,10 @@ impl StdPluginCatalog {
     ) -> Result<PluginManifest, String> {
         config.validate()?;
         let mut manifest = mutsuki_plugin_image_render::manifest();
-        manifest
-            .requires
-            .push(format!("resource_strategy:{}", config.output_provider_id));
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            config.output_provider_id.clone(),
+        ));
         Ok(manifest)
     }
 }

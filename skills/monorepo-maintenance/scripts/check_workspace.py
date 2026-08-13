@@ -157,10 +157,21 @@ def check_package_boundaries(metadata: dict[str, object]) -> None:
                 if not target_path.is_relative_to(ROOT):
                     continue
                 target = target_path.relative_to(ROOT).as_posix()
-                forbidden = any(
-                    target == root or target.startswith(f"{root}/")
-                    for root in rule.get("forbidden_target_roots", [])
-                ) or dependency["name"] in rule.get("forbidden_target_packages", [])
+                allowed_targets = set(rule.get("allow_target_packages", []))
+                forbidden = (
+                    dependency["name"] not in allowed_targets
+                    and (
+                        any(
+                            target == root or target.startswith(f"{root}/")
+                            for root in rule.get("forbidden_target_roots", [])
+                        )
+                        or dependency["name"] in rule.get("forbidden_target_packages", [])
+                        or any(
+                            dependency["name"].startswith(prefix)
+                            for prefix in rule.get("forbidden_target_package_prefixes", [])
+                        )
+                    )
+                )
                 if forbidden:
                     violations.append(
                         f"{rule_name}: {package['name']} -> {dependency['name']} ({target})"

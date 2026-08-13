@@ -11,6 +11,8 @@ use mutsuki_protocol_http::{HttpRequest, HttpResponse, REQUEST as HTTP_REQUEST};
 use mutsuki_protocol_image::{
     CARD_RENDER, CardGradient, CardRenderRequest, ImageRenderResponse, Rgba,
 };
+#[cfg(test)]
+use mutsuki_runtime_contracts::{ContractSurfaceKind, SurfaceRequirement};
 use mutsuki_runtime_contracts::{
     ExecutionClass, ProtocolClass, ReadPlan, ResourceRef, RunnerDescriptor, RunnerPurity,
     RunnerResult, RuntimeError, ScalarValue, Task, TaskOutcome,
@@ -336,16 +338,13 @@ pub fn manifest() -> mutsuki_runtime_contracts::PluginManifest {
         .protocol_classes
         .insert(LINK_RESOLVE.into(), ProtocolClass::Effect);
     manifest
-        .requires
-        .push(format!("task_protocol:{CARD_RENDER}"));
-    manifest
-        .requires
-        .push(format!("task_protocol:{HTTP_REQUEST}"));
-    manifest
 }
 fn descriptor() -> RunnerDescriptor {
     RunnerDescriptorBuilder::new(RUNNER_ID, PLUGIN_ID)
         .accepted_protocol(LINK_RESOLVE)
+        .requires_protocol(SNAPSHOT)
+        .requires_protocol(HTTP_REQUEST)
+        .requires_protocol(CARD_RENDER)
         .purity(RunnerPurity::Effectful)
         .execution_class(ExecutionClass::Orchestration)
         .metadata("domain", ScalarValue::String("mihuashi".into()))
@@ -549,12 +548,12 @@ mod tests {
         assert!(
             manifest()
                 .requires
-                .contains(&format!("task_protocol:{CARD_RENDER}"))
+                .contains(&SurfaceRequirement::task_protocol(CARD_RENDER))
         );
         assert!(
             manifest()
                 .requires
-                .contains(&format!("task_protocol:{HTTP_REQUEST}"))
+                .contains(&SurfaceRequirement::task_protocol(HTTP_REQUEST))
         );
     }
 
@@ -802,22 +801,22 @@ mod tests {
             .unwrap();
         let memory_manifest = mutsuki_plugin_resource_memory::loaded_plugin().manifest;
         let mut image_manifest = mutsuki_plugin_image_render::manifest();
-        image_manifest.requires.push(format!(
-            "resource_strategy:{}",
-            mutsuki_plugin_resource_memory::PLUGIN_ID
+        image_manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            mutsuki_plugin_resource_memory::PLUGIN_ID,
         ));
         let mut mihuashi_manifest = manifest();
         mihuashi_manifest.requires.extend([
-            format!("task_protocol:{SNAPSHOT}"),
-            format!(
-                "resource_strategy:{}",
-                mutsuki_plugin_resource_memory::PLUGIN_ID
+            SurfaceRequirement::task_protocol(SNAPSHOT),
+            SurfaceRequirement::new(
+                ContractSurfaceKind::ResourceProvider,
+                mutsuki_plugin_resource_memory::PLUGIN_ID,
             ),
         ]);
         let mut http_manifest = mutsuki_plugin_io_http_client::manifest();
-        http_manifest.requires.push(format!(
-            "resource_strategy:{}",
-            mutsuki_plugin_resource_memory::PLUGIN_ID
+        http_manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            mutsuki_plugin_resource_memory::PLUGIN_ID,
         ));
         ServiceRuntimeBuilder::new(config)
             .register_builtin_loaded_plugin_factory(memory_manifest, || {

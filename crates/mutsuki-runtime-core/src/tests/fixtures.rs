@@ -114,6 +114,7 @@ fn manifest(
         },
         provides: PluginProvides {
             capabilities: Vec::new(),
+            services: Vec::new(),
             extensions: Vec::new(),
             runners,
             protocols: Vec::new(),

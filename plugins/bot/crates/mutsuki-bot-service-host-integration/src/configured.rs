@@ -29,9 +29,11 @@ use mutsuki_plugin_bot_command::{
 };
 use mutsuki_plugin_bot_event_router::{
     BOT_FLOW_REGISTRY_SERVICE_ID, BOT_FLOW_ROUTER_PLUGIN_ID, BotFlowMatchRunner,
-    flow_ingress_runner, flow_node_runner, flow_router_manifest,
+    flow_ingress_runner, flow_node_runner,
 };
-use mutsuki_runtime_contracts::{PluginManifest, RuntimeLoadPlan};
+use mutsuki_runtime_contracts::{
+    ContractSurfaceKind, PluginManifest, RuntimeLoadPlan, SurfaceRequirement,
+};
 use mutsuki_runtime_sdk::{LoadedPlugin, PluginBuilder, RuntimeBootstrapperService};
 use mutsuki_service_config::HostSecretStore;
 use mutsuki_service_runtime::{
@@ -179,7 +181,13 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
             .registry()
             .register(Arc::new(BotFlowConfigProvider::new(registry.clone())))
             .map_err(|error| error.to_string())?;
-        let manifest = flow_router_manifest();
+        let mut manifest =
+            mutsuki_plugin_bot_event_router::flow_router_manifest_for_catalog(&registry.catalog());
+        manifest
+            .provides
+            .services
+            .push(BOT_FLOW_REGISTRY_SERVICE_ID.into());
+        manifest.provides.capabilities.push("bot.flow".into());
         let loaded_manifest = manifest.clone();
         let ingress_registry = registry.clone();
         let node_registry = registry.clone();
@@ -192,7 +200,7 @@ impl ConfiguredPluginFactory for BotFlowRouterConfiguredPlugin {
                     async_handlers: Vec::new(),
                     host_services: vec![RuntimeBootstrapperService {
                         service_id: BOT_FLOW_REGISTRY_SERVICE_ID.into(),
-                        capability: Some("bot.flow".into()),
+                        capability: "bot.flow".into(),
                         service: service_registry.clone(),
                     }],
                     resource_providers: Vec::new(),
@@ -340,7 +348,10 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
                 BOT_AGENT_REPLY_DELIVERY_RUNNER_ID,
             ),
         );
-        manifest.requires.push(connection_id.capability());
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::Capability,
+            connection_id.capability(),
+        ));
         let builder = register_bot_agent_services(builder, manifest, config_handle.clone());
         Ok(builder
             .register_event_source(Box::new(BotReplyDeliveryRecoveryEventSource::for_plugin(
@@ -370,9 +381,17 @@ impl ConfiguredPluginFactory for BotAgentConfiguredPlugin {
 
 fn register_bot_agent_services(
     builder: ServiceRuntimeBuilder,
-    manifest: PluginManifest,
+    mut manifest: PluginManifest,
     config: BotAgentConfigHandle,
 ) -> ServiceRuntimeBuilder {
+    manifest
+        .provides
+        .services
+        .push(BOT_AGENT_CONFIG_SERVICE_ID.into());
+    manifest
+        .provides
+        .capabilities
+        .push("bot.agent.config".into());
     let loaded_manifest = manifest.clone();
     let config = Arc::new(config);
     builder.register_builtin_loaded_plugin_factory(manifest, move || {
@@ -382,7 +401,7 @@ fn register_bot_agent_services(
             async_handlers: Vec::new(),
             host_services: vec![RuntimeBootstrapperService {
                 service_id: BOT_AGENT_CONFIG_SERVICE_ID.into(),
-                capability: Some("bot.agent.config".into()),
+                capability: "bot.agent.config".into(),
                 service: config.clone(),
             }],
             resource_providers: Vec::new(),
@@ -673,9 +692,9 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         let source = BilibiliPollingEventSource::new(shared_config.clone(), source_credentials);
         let manifest_config = runner_config.snapshot();
         let mut manifest = mutsuki_plugin_bot_bilibili::manifest_for_config(&manifest_config);
-        manifest.requires.push(format!(
-            "resource_strategy:{}",
-            runner_config.snapshot().media_provider_id
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            runner_config.snapshot().media_provider_id,
         ));
 
         let management_service = if let Some(config_service) = config_service {
@@ -700,6 +719,14 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
         };
 
         let builder = if let Some(service) = management_service.clone() {
+            manifest
+                .provides
+                .services
+                .push(BILIBILI_MANAGEMENT_SERVICE_ID.into());
+            manifest
+                .provides
+                .capabilities
+                .push("bot.bilibili.management".into());
             let loaded_manifest = manifest.clone();
             let management_api: Arc<dyn BilibiliManagementApi> = service;
             builder.register_builtin_loaded_plugin_factory(manifest, move || {
@@ -709,7 +736,7 @@ impl ConfiguredPluginFactory for BilibiliConfiguredPlugin {
                     async_handlers: Vec::new(),
                     host_services: vec![RuntimeBootstrapperService {
                         service_id: BILIBILI_MANAGEMENT_SERVICE_ID.into(),
-                        capability: None,
+                        capability: "bot.bilibili.management".into(),
                         service: Arc::new(management_api.clone()),
                     }],
                     resource_providers: Vec::new(),
@@ -808,9 +835,10 @@ impl ConfiguredPluginFactory for WorkshopConfiguredPlugin {
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         config.validate()?;
         let mut manifest = mutsuki_plugin_bot_bilibili_workshop::manifest();
-        manifest
-            .requires
-            .push(format!("resource_strategy:{}", config.media_provider_id));
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            config.media_provider_id.clone(),
+        ));
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_fallible_runtime_services_runner(move |_client, resources| {
@@ -840,12 +868,13 @@ impl ConfiguredPluginFactory for MihuashiConfiguredPlugin {
             serde_json::from_value(config.clone()).map_err(|error| error.to_string())?;
         config.validate()?;
         let mut manifest = mutsuki_plugin_bot_mihuashi::manifest();
-        manifest
-            .requires
-            .push(format!("resource_strategy:{}", config.media_provider_id));
-        manifest
-            .requires
-            .push("task_protocol:mutsuki.browser.snapshot".into());
+        manifest.requires.push(SurfaceRequirement::new(
+            ContractSurfaceKind::ResourceProvider,
+            config.media_provider_id.clone(),
+        ));
+        manifest.requires.push(SurfaceRequirement::task_protocol(
+            "mutsuki.browser.snapshot",
+        ));
         Ok(builder
             .register_builtin_plugin(manifest)
             .register_runtime_services_runner(move |client, resources| {

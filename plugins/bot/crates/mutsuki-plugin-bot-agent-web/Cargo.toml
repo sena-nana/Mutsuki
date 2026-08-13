@@ -7,7 +7,6 @@ description = "Web Console management surfaces for Agent connections and persist
 
 [dependencies]
 mutsuki-agent-contracts.workspace = true
-mutsuki-agent-service-host-integration.workspace = true
 mutsuki-web-extension.workspace = true
 mutsuki-web-protocol.workspace = true
 serde.workspace = true

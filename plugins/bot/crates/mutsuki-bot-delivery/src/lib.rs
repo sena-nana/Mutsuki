@@ -971,7 +971,11 @@ pub fn bot_scheduled_delivery_manifest() -> PluginManifest {
     PluginBuilder::new(BOT_SCHEDULED_DELIVERY_PLUGIN_ID)
         .runner_descriptor(scheduled_delivery_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_SCHEDULED_DELIVERY_PROTOCOL_ID).build(),
+            delivery_protocol_descriptor(
+                BOT_SCHEDULED_DELIVERY_PROTOCOL_ID,
+                &["execution_id", "summary"],
+                &["delivery_id", "status"],
+            ),
             BOT_SCHEDULED_DELIVERY_RUNNER_ID,
             "bot-scheduled-delivery",
         )
@@ -1064,7 +1068,11 @@ pub fn bot_delivery_manifest() -> PluginManifest {
     PluginBuilder::new(BOT_DELIVERY_PLUGIN_ID)
         .runner_descriptor(delivery_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_ACTIVE_DELIVERY_PROTOCOL_ID).build(),
+            delivery_protocol_descriptor(
+                BOT_ACTIVE_DELIVERY_PROTOCOL_ID,
+                &["action"],
+                &["delivery_id", "status"],
+            ),
             BOT_DELIVERY_RUNNER_ID,
             "bot-delivery",
         )
@@ -1107,7 +1115,11 @@ pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> Plug
     PluginBuilder::new(plugin_id)
         .runner_descriptor(reply_delivery_descriptor(plugin_id, runner_id))
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_REPLY_DELIVERY_PROTOCOL_ID).build(),
+            delivery_protocol_descriptor(
+                BOT_REPLY_DELIVERY_PROTOCOL_ID,
+                &["action"],
+                &["reply_id", "part_receipts"],
+            ),
             runner_id,
             "bot-reply-delivery",
         )
@@ -1139,6 +1151,27 @@ pub fn bot_reply_delivery_manifest_for(plugin_id: &str, runner_id: &str) -> Plug
         )
         .build()
         .manifest
+}
+
+fn delivery_protocol_descriptor(
+    protocol_id: &str,
+    request_required: &[&str],
+    response_required: &[&str],
+) -> mutsuki_runtime_contracts::ProtocolDescriptor {
+    ProtocolDescriptorBuilder::new(protocol_id)
+        .input_schema(serde_json::json!({
+            "type": "object",
+            "required": request_required
+        }))
+        .output_schema(serde_json::json!({
+            "type": "object",
+            "required": response_required
+        }))
+        .error_schema(serde_json::json!({
+            "type": "object",
+            "required": ["code", "source", "route"]
+        }))
+        .build()
 }
 
 #[must_use]
@@ -1179,6 +1212,7 @@ fn reply_delivery_descriptor(
 ) -> mutsuki_runtime_contracts::RunnerDescriptor {
     RunnerDescriptorBuilder::new(runner_id, plugin_id)
         .accepted_protocol(BOT_REPLY_DELIVERY_PROTOCOL_ID)
+        .requires_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
         .execution_class(ExecutionClass::Orchestration)
         .invocation_mode(InvocationMode::AsyncReentrant)
         .concurrency(RunnerConcurrency::Reentrant {

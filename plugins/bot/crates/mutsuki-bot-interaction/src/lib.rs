@@ -266,7 +266,20 @@ pub fn bot_interaction_manifest() -> PluginManifest {
     PluginBuilder::new(BOT_INTERACTION_PLUGIN_ID)
         .runner_descriptor(interaction_descriptor())
         .protocol_handler(
-            ProtocolDescriptorBuilder::new(BOT_INTERACTION_SESSION_PROTOCOL_ID).build(),
+            ProtocolDescriptorBuilder::new(BOT_INTERACTION_SESSION_PROTOCOL_ID)
+                .input_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["action"]
+                }))
+                .output_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["session_id", "status", "version"]
+                }))
+                .error_schema(serde_json::json!({
+                    "type": "object",
+                    "required": ["code", "source", "route"]
+                }))
+                .build(),
             BOT_INTERACTION_RUNNER_ID,
             "bot-interaction",
         )
