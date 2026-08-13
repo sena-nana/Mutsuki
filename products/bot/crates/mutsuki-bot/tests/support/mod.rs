@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use futures_util::{SinkExt, StreamExt};
 use mutsuki_bot::PRODUCT_CONFIG_PROVIDER_ID;
 use mutsuki_bot::load_bootstrapped_product;
-use mutsuki_bot_testkit::FakeQqServer;
+use mutsuki_bot_testkit::{FakeQqGatewayScript, FakeQqServer};
 use mutsuki_config_service::{ConfigApplyRequest, ConfigContext, ConfigValue};
+use mutsuki_plugin_bot_adapter_qqbot::{QQBOT_ADAPTER_PLUGIN_ID, qq_config_value};
 use mutsuki_service_control::{HealthReport, TaskSnapshot};
 use mutsuki_web_protocol::{RpcRequest, WEB_PROTOCOL_VERSION, WireMessage};
 use uuid::Uuid;
@@ -16,7 +17,14 @@ pub struct ProductFixture {
 }
 
 pub async fn fake_qq_product(root: &Path) -> (FakeQqServer, ProductFixture) {
-    let fake = FakeQqServer::start().await;
+    fake_qq_product_with_script(root, FakeQqGatewayScript::default()).await
+}
+
+pub async fn fake_qq_product_with_script(
+    root: &Path,
+    script: FakeQqGatewayScript,
+) -> (FakeQqServer, ProductFixture) {
+    let fake = FakeQqServer::start_with_gateway_script(script).await;
     let secret_key = "QQBOT_CLIENT_SECRET";
     let qq = fake.config("template", "TEST_APP_ID", secret_key);
     std::fs::write(
@@ -62,10 +70,6 @@ path = "config.sqlite3"
         .expect("read product config");
     let mut product = snapshot.value.to_json();
     product["console_listen"] = serde_json::Value::String(free_loopback_address());
-    product["runtime_plugins"]["mutsuki.bot.adapter.qqbot"] = serde_json::json!({
-        "enabled": true,
-        "config": qq,
-    });
     first
         .config
         .apply(
@@ -80,6 +84,29 @@ path = "config.sqlite3"
         )
         .await
         .expect("persist fake QQ product config");
+    let qq_snapshot = first
+        .config
+        .read(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            ConfigContext::global(),
+            &["*".into()],
+        )
+        .await
+        .expect("read QQ owner config");
+    first
+        .config
+        .apply(
+            QQBOT_ADAPTER_PLUGIN_ID,
+            ConfigApplyRequest {
+                candidate: qq_config_value(true, &qq),
+                expected_revision: qq_snapshot.revision,
+                dry_run: false,
+            },
+            ConfigContext::global(),
+            &["*".into()],
+        )
+        .await
+        .expect("persist fake QQ owner config");
     drop(first);
 
     let product = load_bootstrapped_product(&bootstrap_path)

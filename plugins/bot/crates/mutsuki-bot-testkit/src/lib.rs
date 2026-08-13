@@ -36,6 +36,7 @@ pub struct FakeQqSnapshot {
 pub struct FakeQqGatewayScript {
     pub initial_events: Vec<Value>,
     pub resumed_events: Vec<Value>,
+    pub close_delay: Duration,
 }
 
 impl Default for FakeQqGatewayScript {
@@ -43,6 +44,7 @@ impl Default for FakeQqGatewayScript {
         Self {
             initial_events: vec![command_event(2, "echo-1", "/echo hello")],
             resumed_events: vec![command_event(4, "ping-1", "/ping")],
+            close_delay: Duration::ZERO,
         }
     }
 }
@@ -332,6 +334,7 @@ async fn run_gateway_server(
                     }
                 }
                 Ok(Message::Close(_)) => {
+                    tokio::time::sleep(script.close_delay).await;
                     clean_closes.fetch_add(1, Ordering::SeqCst);
                     break;
                 }

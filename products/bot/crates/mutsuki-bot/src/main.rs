@@ -1,11 +1,6 @@
+use mutsuki_bot::{load_bootstrapped_product, run_bootstrapped_product};
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use mutsuki_bot::{
-    TargetedPluginReloadLifecycle, WebConsoleGuard, assemble_service_with_connections,
-    load_bootstrapped_product,
-};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,36 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::var_os("MUTSUKI_BOOTSTRAP"),
     );
     let product = load_bootstrapped_product(&bootstrap_path).await?;
-    let runtime = assemble_service_with_connections(
-        product.service.clone(),
-        product.config.clone(),
-        product.agent_connections.clone(),
-    )?
-    .start()
-    .await?;
-    product
-        .config
-        .set_lifecycle(Arc::new(TargetedPluginReloadLifecycle::new(
-            runtime.handle(),
-        )));
-    let console = WebConsoleGuard::start(
-        product.console,
-        &product.root,
-        &product.service,
-        &runtime,
-        product.config,
-    )
-    .await?;
-    if let Some(console) = &console
-        && let Some(addr) = console.listen_addr()
-    {
-        eprintln!("Mutsuki Web Console listening on http://{addr}");
-    }
-    let result = runtime.run_foreground().await;
-    if let Some(console) = console {
-        console.stop().await?;
-    }
-    result?;
+    run_bootstrapped_product(product).await?;
     Ok(())
 }
 

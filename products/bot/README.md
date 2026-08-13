@@ -33,6 +33,12 @@ Flow。
 脱敏状态。首次启动会在 Git 忽略的 `config/local.secret.toml` 创建随机 Console Token，并在
 Unix 平台限制为当前用户可读写；QQ 与模型密钥只能在 Web 中写入，之后不会回显。
 
+当前 `mutsuki.product` 使用 schema/value v3。v3 是破坏性配置边界：旧版本 SQLite 产品文档
+会以 `product.config.version_unsupported` 拒绝启动，部署者必须重建配置仓库；Secret 文件不会
+被自动删除。`workspace_enabled` 唯一选择 Agent Connections、Flow Router 和对应 Console 页面，
+QQ、Local Agent、Bot Agent 的启用状态与配置唯一来自各自 owner document；`runtime_plugins`
+只允许选择其余通用插件，不能重复声明上述 owner 插件。
+
 ## Bot Flow
 
 Bot Flow 是 provider id 为 `mutsuki.bot.flow` 的普通配置文档。插件仅声明

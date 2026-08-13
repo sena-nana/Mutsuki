@@ -62,6 +62,22 @@ fn runtime_bootstrapper_can_boot_host_runtime_control_plane() {
 }
 
 #[test]
+fn prepared_host_runtime_exposes_the_exact_external_plan_used_for_start() {
+    let prepared = host_with_echo_runner()
+        .prepare_host_runtime_with_config(runtime_profile(), crate::HostRuntimeConfig::default())
+        .unwrap();
+    let plan = prepared.load_plan().clone();
+    assert!(plan.plugins.iter().all(|plugin| plugin.plugin_id != "core"));
+
+    let runtime = prepared.start().unwrap();
+    assert_eq!(
+        runtime.host_context().registry_generation(),
+        plan.registry_generation
+    );
+    assert_eq!(runtime.host_context().profile_id(), plan.profile_id);
+}
+
+#[test]
 fn same_plugin_artifact_runs_in_local_and_worker_adapter_hosts() {
     fn run_through_ordinary_host(task_id: &str) -> TaskStatus {
         let mut profile = runtime_profile_with_deployment(
@@ -158,6 +174,14 @@ fn host_runtime_reload_preserves_prepared_plugin_services_in_host_context() {
     let prepared = reload_host
         .prepare_reload(host_service_profile("plugin-service"), 2)
         .unwrap();
+    assert_eq!(prepared.load_plan().registry_generation, 2);
+    assert!(
+        prepared
+            .load_plan()
+            .plugins
+            .iter()
+            .all(|plugin| plugin.plugin_id != "core")
+    );
 
     runtime.reload(prepared, Duration::from_secs(1)).unwrap();
 

@@ -29,26 +29,10 @@ impl TargetedPluginReloadLifecycle {
     fn reconfigure(&self, provider_id: &str, value: &ConfigValue) -> Result<(), ConfigError> {
         let runtime = self.runtime.clone();
         let selections = if provider_id == crate::PRODUCT_CONFIG_PROVIDER_ID {
-            value
-                .to_json()
-                .get("runtime_plugins")
-                .and_then(serde_json::Value::as_object)
-                .into_iter()
-                .flatten()
-                .map(
-                    |(id, value)| mutsuki_service_config::ConfiguredPluginSelection {
-                        id: id.clone(),
-                        enabled: value
-                            .get("enabled")
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or(true),
-                        config: value
-                            .get("config")
-                            .cloned()
-                            .unwrap_or_else(|| serde_json::json!({})),
-                    },
-                )
-                .collect::<Vec<_>>()
+            product_reconfigure_candidates(
+                runtime.configured_plugin_selections(),
+                &value.to_json(),
+            )?
         } else {
             let base = runtime.configured_plugin_selection(provider_id);
             let mut selections = vec![crate::configured_plugin_selection_from_value(
@@ -65,11 +49,72 @@ impl TargetedPluginReloadLifecycle {
             }
             selections
         };
+        if selections.is_empty() {
+            return Ok(());
+        }
         block_on_result(async move { runtime.reconfigure_plugins(&selections).await })
             .map(|_| ())
             .map_err(|error| ConfigError::ReloadFailed {
                 reason: error.to_string(),
             })
+    }
+}
+
+fn product_reconfigure_candidates(
+    current: Vec<mutsuki_service_config::ConfiguredPluginSelection>,
+    product: &serde_json::Value,
+) -> Result<Vec<mutsuki_service_config::ConfiguredPluginSelection>, ConfigError> {
+    let desired = crate::runtime_plugin_selections(product)?;
+    let desired = desired
+        .into_iter()
+        .map(|selection| (selection.id.clone(), selection))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let current = current
+        .into_iter()
+        .filter(|selection| !crate::is_product_owner_plugin(&selection.id))
+        .map(|selection| (selection.id.clone(), selection))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let ids = desired
+        .keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut candidates = Vec::new();
+    for id in ids {
+        match (current.get(&id), desired.get(&id)) {
+            (Some(current), Some(desired))
+                if current.enabled == desired.enabled && current.config == desired.config => {}
+            (_, Some(desired)) => candidates.push(desired.clone()),
+            (Some(current), None) if current.enabled => {
+                let mut disabled = current.clone();
+                disabled.enabled = false;
+                candidates.push(disabled);
+            }
+            _ => {}
+        }
+    }
+    Ok(candidates)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::product_reconfigure_candidates;
+    use mutsuki_service_config::ConfiguredPluginSelection;
+
+    #[test]
+    fn removed_generic_plugin_becomes_an_explicit_disabled_candidate() {
+        let current = vec![ConfiguredPluginSelection {
+            id: "example.generic".into(),
+            enabled: true,
+            config: serde_json::json!({"value": 1}),
+        }];
+        let candidates =
+            product_reconfigure_candidates(current, &serde_json::json!({"runtime_plugins": {}}))
+                .unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].id, "example.generic");
+        assert!(!candidates[0].enabled);
+        assert_eq!(candidates[0].config, serde_json::json!({"value": 1}));
     }
 }
 
@@ -87,6 +132,9 @@ impl ConfigLifecycle for TargetedPluginReloadLifecycle {
                 .iter()
                 .any(|action| matches!(action, ConfigAction::PluginReloaded));
         if !needs_reload {
+            if provider_id == crate::PRODUCT_CONFIG_PROVIDER_ID {
+                crate::runtime_plugin_selections(&candidate.to_json())?;
+            }
             return Ok(Vec::new());
         }
         self.reconfigure(provider_id, candidate)?;
