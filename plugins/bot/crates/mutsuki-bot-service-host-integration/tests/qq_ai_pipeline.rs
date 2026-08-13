@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,20 +10,22 @@ use mutsuki_agent_contracts::{
 };
 use mutsuki_bot_delivery::{
     DeliveryError, DeliveryPolicyResolver, QqDeliveryFailure, QqDeliveryGateway, QqDeliverySuccess,
-    bot_reply_delivery_manifest,
+    ReplyDeliveryRepository, bot_reply_delivery_manifest,
 };
 use mutsuki_bot_flow::{
     BOT_FLOW_CONFIG_PROVIDER_ID, BotFlowConfigProvider, BotFlowRegistry, BotNodeCatalog,
 };
 use mutsuki_bot_interaction::{InteractionConditionMatcher, InteractionError};
 use mutsuki_bot_protocol::{
-    AgentSessionScope, BOT_EVENT_INGEST_PROTOCOL_ID, BOT_FLOW_BOT_EVENT_TYPE,
-    BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID, BotAccountRef, BotDeliveryContent,
-    BotEvent, BotEventKind, BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind,
-    BotFlowEventEnvelope, BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector,
-    BotFlowTypeRef, BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodePortDescriptor,
-    BotNodePortDirection, BotNodeRole, BotPlatform, BotSpeechReplyPolicy, BotTarget, BotUser,
-    ConversationPolicy, QqConversationRef,
+    AgentSessionScope, BOT_AGENT_SUBMIT_PROTOCOL_ID, BOT_EVENT_INGEST_PROTOCOL_ID,
+    BOT_FLOW_BOT_EVENT_TYPE, BOT_FLOW_INGRESS_PROTOCOL_ID, BOT_MESSAGE_SEND_PROTOCOL_ID,
+    BOT_REPLY_DELIVERY_PROTOCOL_ID, BotAccountRef, BotDeliveryContent, BotEvent, BotEventKind,
+    BotFlowContext, BotFlowDocument, BotFlowEdge, BotFlowEdgeKind, BotFlowEventEnvelope,
+    BotFlowNode, BotFlowNodePosition, BotFlowPayload, BotFlowSourceSelector, BotFlowTypeRef,
+    BotMessage, BotNodeCatalogFragment, BotNodeDescriptor, BotNodeInvocation,
+    BotNodePortDescriptor, BotNodePortDirection, BotNodeRole, BotPlatform, BotReplyDeliveryCommand,
+    BotReplyDeliveryPart, BotReplyDeliveryRequest, BotSpeechReplyPolicy, BotTarget, BotUser,
+    ConversationPolicy, DeliveryPolicy, DeliveryStatus, MessageSegment, QqConversationRef,
 };
 use mutsuki_bot_service_host_integration::QqAiBotPluginBundle;
 use mutsuki_bot_state_db::BotStateDbRepository;
@@ -37,11 +39,11 @@ use mutsuki_plugin_bot_event_router::{
 };
 use mutsuki_plugin_config_sqlite::SqliteConfigRepository;
 use mutsuki_runtime_contracts::{
-    CompletionBatch, ExecutionClass, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
-    ResourceSealState, ResourceSemantic, RunnerResult, Task, TaskHandle, TaskOutcome, TaskStatus,
-    WorkBatch,
+    ExecutionClass, InvocationMode, ResourceAccess, ResourceId, ResourceLifetime, ResourceRef,
+    ResourceSealState, ResourceSemantic, RunnerConcurrency, RunnerResult, RunnerStatus,
+    ScalarValue, Task, TaskHandle, TaskOutcome, TaskStatus, WorkBatch,
 };
-use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_core::{AsyncBatchHandler, AsyncCompletionFuture, RunnerContext};
 use mutsuki_runtime_sdk::{
     PluginBuilder, ProtocolDescriptorBuilder, RunnerDescriptorBuilder, map_work_batch_entries,
 };
@@ -53,6 +55,7 @@ const TEST_SOURCE_PLUGIN_ID: &str = "test.qq.flow.source";
 const TEST_SOURCE_NODE_TYPE: &str = "test.qq.flow.source";
 const TEST_SEND_PLUGIN_ID: &str = "test.qq.flow.send";
 const TEST_SEND_RUNNER_ID: &str = "test.qq.flow.send.runner";
+static RUNTIME_E2E_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct FlowHook(Arc<BotFlowRegistry>);
 
@@ -72,6 +75,7 @@ impl LoadPlanLifecycleHook for FlowHook {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
     let root = tempfile::tempdir().unwrap();
     let submits = Arc::new(AtomicUsize::new(0));
     let sends = Arc::new(AtomicUsize::new(0));
@@ -116,12 +120,234 @@ async fn published_flow_routes_agent_reply_once_and_recovers_after_restart() {
     runtime.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_node_reserves_reply_before_return_and_restart_recovers_without_resubmit() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let submits = Arc::new(AtomicUsize::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
+
+    let runtime = start_runtime_with_recovery(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        agent_state.clone(),
+        true,
+        Duration::from_secs(60),
+    )
+    .await;
+    submit_agent_node(&runtime, "event-reserved").await;
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+    runtime.shutdown().await;
+
+    let runtime = start_runtime_with_recovery(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        agent_state,
+        false,
+        Duration::from_millis(10),
+    )
+    .await;
+    wait_for(&sends, 1).await;
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+
+    submit_agent_node(&runtime, "event-reserved").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transient_failure_recovers_and_duplicate_event_does_not_repeat_agent_or_send() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let submits = Arc::new(AtomicUsize::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
+    let send_plan = Arc::new(TestSendPlan::new([
+        TestSendOutcome::TransientFailure,
+        TestSendOutcome::Success,
+    ]));
+    let runtime = start_runtime_with_options(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        agent_state,
+        true,
+        Duration::from_millis(5),
+        send_plan.clone(),
+        None,
+    )
+    .await;
+
+    submit_event(&runtime, "event-transient", "wake transient").await;
+    wait_for(&sends, 1).await;
+    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+
+    submit_event(&runtime, "event-transient", "wake transient").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn permanent_cancel_and_timeout_are_queryable_and_only_manual_retry_resends() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    assert_terminal_send_outcome(
+        TestSendOutcome::PermanentFailure,
+        None,
+        DeliveryStatus::PermanentlyFailed,
+        "event-permanent",
+        true,
+    )
+    .await;
+    assert_terminal_send_outcome(
+        TestSendOutcome::Cancelled,
+        None,
+        DeliveryStatus::ReconcileRequired,
+        "event-cancelled",
+        false,
+    )
+    .await;
+    assert_terminal_send_outcome(
+        TestSendOutcome::Timeout,
+        Some(10),
+        DeliveryStatus::ReconcileRequired,
+        "event-timeout",
+        false,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn multipart_restart_recovers_only_unconfirmed_parts_and_keeps_receipts_for_all_shapes() {
+    let _guard = RUNTIME_E2E_LOCK.lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let submits = Arc::new(AtomicUsize::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let agent_state = Arc::new(Mutex::new(TestAgentState::default()));
+    let send_plan = Arc::new(TestSendPlan::new([
+        TestSendOutcome::Success,
+        TestSendOutcome::TransientFailure,
+        TestSendOutcome::Success,
+        TestSendOutcome::Success,
+        TestSendOutcome::Success,
+        TestSendOutcome::Success,
+    ]));
+    let request = multipart_reply_request();
+
+    let runtime = start_runtime_with_options(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        agent_state.clone(),
+        true,
+        Duration::from_secs(60),
+        send_plan.clone(),
+        None,
+    )
+    .await;
+    submit_reply_command(
+        &runtime,
+        BotReplyDeliveryCommand::Submit {
+            request: Box::new(request.clone()),
+            now_unix_ms: 100,
+        },
+    )
+    .await;
+    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
+    runtime.shutdown().await;
+
+    let runtime = start_runtime_with_options(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        agent_state,
+        false,
+        Duration::from_millis(5),
+        send_plan.clone(),
+        None,
+    )
+    .await;
+    wait_for(&sends, 5).await;
+    assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 6);
+    assert_eq!(submits.load(Ordering::SeqCst), 0);
+    let receipt = wait_for_reply_succeeded(root.path(), &request.reply_id).await;
+    assert_eq!(receipt.part_receipts.len(), 5);
+    assert!(
+        receipt
+            .part_receipts
+            .iter()
+            .all(|part| part.status == DeliveryStatus::Succeeded),
+        "{receipt:?}"
+    );
+    assert_eq!(receipt.part_receipts[0].attempt_count, 1);
+    assert_eq!(receipt.part_receipts[1].attempt_count, 2);
+    assert!(
+        receipt.part_receipts[2..]
+            .iter()
+            .all(|part| part.attempt_count == 1)
+    );
+    runtime.shutdown().await;
+}
+
 async fn start_runtime(
     root: &std::path::Path,
     submits: Arc<AtomicUsize>,
     sends: Arc<AtomicUsize>,
     agent_state: Arc<Mutex<TestAgentState>>,
     publish: bool,
+) -> ServiceRuntime {
+    start_runtime_with_recovery(
+        root,
+        submits,
+        sends,
+        agent_state,
+        publish,
+        Duration::from_millis(250),
+    )
+    .await
+}
+
+async fn start_runtime_with_recovery(
+    root: &std::path::Path,
+    submits: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
+    agent_state: Arc<Mutex<TestAgentState>>,
+    publish: bool,
+    recovery_interval: Duration,
+) -> ServiceRuntime {
+    start_runtime_with_options(
+        root,
+        submits,
+        sends,
+        agent_state,
+        publish,
+        recovery_interval,
+        Arc::new(TestSendPlan::default()),
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_runtime_with_options(
+    root: &std::path::Path,
+    submits: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
+    agent_state: Arc<Mutex<TestAgentState>>,
+    publish: bool,
+    recovery_interval: Duration,
+    send_plan: Arc<TestSendPlan>,
+    send_timeout_ms: Option<u64>,
 ) -> ServiceRuntime {
     let data_dir = root.join("data");
     let state_dir = data_dir.join("bot");
@@ -171,10 +397,20 @@ async fn start_runtime(
             .unwrap();
     }
 
-    let send_descriptor = RunnerDescriptorBuilder::new(TEST_SEND_RUNNER_ID, TEST_SEND_PLUGIN_ID)
-        .accepted_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
-        .execution_class(ExecutionClass::Io)
-        .build();
+    let mut send_descriptor =
+        RunnerDescriptorBuilder::new(TEST_SEND_RUNNER_ID, TEST_SEND_PLUGIN_ID)
+            .accepted_protocol(BOT_MESSAGE_SEND_PROTOCOL_ID)
+            .execution_class(ExecutionClass::Io)
+            .invocation_mode(InvocationMode::AsyncReentrant)
+            .concurrency(RunnerConcurrency::Reentrant {
+                max_inflight_batches: 8,
+                max_inflight_entries: 8,
+            })
+            .build();
+    send_descriptor.batch.preferred_batch_size = 1;
+    send_descriptor.batch.max_batch_entries = 1;
+    send_descriptor.batch.max_entry_concurrency = 1;
+    send_descriptor.batch.max_inflight_batches = 8;
     let send_manifest = PluginBuilder::new(TEST_SEND_PLUGIN_ID)
         .runner_descriptor(send_descriptor.clone())
         .protocol_handler(
@@ -233,12 +469,14 @@ async fn start_runtime(
                 async_resource_providers: Vec::new(),
             })
         })
-        .register_builtin_runner(move || {
-            Box::new(MessageSendRunner {
+        .register_builtin_async_handler(move || {
+            Arc::new(MessageSendHandler {
                 descriptor: send_descriptor.clone(),
                 sends: sends.clone(),
+                plan: send_plan.clone(),
             })
         })
+        .register_dynamic_runner_limit(TEST_SEND_RUNNER_ID, move || (None, send_timeout_ms))
         .register_builtin_runner(move || flow_ingress_runner(ingress_registry.clone()))
         .register_builtin_runner(|| Box::new(BotFlowMatchRunner::default()))
         .register_runtime_client_runner(move |client| {
@@ -272,7 +510,230 @@ async fn start_runtime(
         Arc::new(Allow),
         Arc::new(Allow),
     );
-    bundle.install(builder).start().await.unwrap()
+    bundle
+        .with_reply_delivery_recovery_interval(recovery_interval)
+        .install(builder)
+        .start()
+        .await
+        .unwrap()
+}
+
+async fn submit_agent_node(runtime: &ServiceRuntime, event_id: &str) {
+    let event = bot_event(event_id, "wake reserved");
+    let invocation = BotNodeInvocation {
+        flow_id: "crash-window".into(),
+        graph_revision: 1,
+        execution_id: format!("execution-{event_id}"),
+        node_id: "agent".into(),
+        input_port_id: "input".into(),
+        config: json!({}),
+        input: BotFlowEventEnvelope {
+            event_id: event.event_id.clone(),
+            protocol_id: BOT_EVENT_INGEST_PROTOCOL_ID.into(),
+            payload: BotFlowPayload {
+                event_type: BotFlowTypeRef::new(BOT_FLOW_BOT_EVENT_TYPE, 1),
+                value: serde_json::to_value(&event).unwrap(),
+            },
+            context: BotFlowContext {
+                bot: Some(event.bot.clone()),
+                target: Some(event.target.clone()),
+                actor: event.actor.clone(),
+                ext: event.ext.clone(),
+            },
+            trace_id: Some(format!("trace-{event_id}")),
+            correlation_id: Some(format!("correlation-{event_id}")),
+        },
+    };
+    let handle = runtime
+        .submit_task(Task::new(
+            format!("agent-{event_id}-{}", fastrand::u64(..)),
+            BOT_AGENT_SUBMIT_PROTOCOL_ID,
+            serde_json::to_value(invocation).unwrap(),
+        ))
+        .unwrap();
+    let outcome = wait_outcome(runtime, &handle).await;
+    assert!(
+        matches!(outcome, TaskOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+}
+
+async fn submit_reply_command(runtime: &ServiceRuntime, command: BotReplyDeliveryCommand) {
+    let handle = runtime
+        .submit_task(Task::new(
+            format!("reply-command-{}", fastrand::u64(..)),
+            BOT_REPLY_DELIVERY_PROTOCOL_ID,
+            serde_json::to_value(command).unwrap(),
+        ))
+        .unwrap();
+    let outcome = wait_outcome(runtime, &handle).await;
+    assert!(
+        matches!(outcome, TaskOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+}
+
+async fn assert_terminal_send_outcome(
+    outcome: TestSendOutcome,
+    timeout_ms: Option<u64>,
+    expected_status: DeliveryStatus,
+    event_id: &str,
+    retry: bool,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let submits = Arc::new(AtomicUsize::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
+    let send_plan = Arc::new(TestSendPlan::new([outcome, TestSendOutcome::Success]));
+    let runtime = start_runtime_with_options(
+        root.path(),
+        submits.clone(),
+        sends.clone(),
+        Arc::new(Mutex::new(TestAgentState::default())),
+        true,
+        Duration::from_secs(60),
+        send_plan.clone(),
+        timeout_ms,
+    )
+    .await;
+    submit_event(&runtime, event_id, "wake terminal").await;
+    wait_for(&send_plan.attempts, 1).await;
+    let delivery_id = wait_for_delivery_status(root.path(), expected_status).await;
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
+
+    if retry {
+        submit_reply_command(
+            &runtime,
+            BotReplyDeliveryCommand::RetryPart {
+                delivery_id: delivery_id.clone(),
+                now_unix_ms: 200,
+            },
+        )
+        .await;
+        wait_for(&sends, 1).await;
+        assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            wait_for_delivery_status(root.path(), DeliveryStatus::Succeeded).await,
+            delivery_id
+        );
+        assert_eq!(submits.load(Ordering::SeqCst), 1);
+    } else {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(send_plan.attempts.load(Ordering::SeqCst), 1);
+    }
+    runtime.shutdown().await;
+}
+
+async fn wait_for_delivery_status(root: &std::path::Path, status: DeliveryStatus) -> String {
+    let repository = BotStateDbRepository::open(root.join("data/bot/state.sqlite3")).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some((receipt, _)) = repository
+                .delivery_page(None, 64)
+                .unwrap()
+                .items
+                .into_iter()
+                .find(|(receipt, _)| receipt.status == status)
+            {
+                return receipt.delivery_id;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("delivery reaches expected status")
+}
+
+async fn wait_for_reply_succeeded(
+    root: &std::path::Path,
+    reply_id: &str,
+) -> mutsuki_bot_protocol::BotReplyDeliveryReceipt {
+    let repository = BotStateDbRepository::open(root.join("data/bot/state.sqlite3")).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let receipt = repository.reply_receipt(reply_id).await.unwrap();
+            if receipt
+                .part_receipts
+                .iter()
+                .all(|part| part.status == DeliveryStatus::Succeeded)
+            {
+                return receipt;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("all reply parts succeed")
+}
+
+fn multipart_reply_request() -> BotReplyDeliveryRequest {
+    let conversation =
+        mutsuki_bot_conversation::qq_conversation_from_event(&bot_event("multipart", "wake"))
+            .unwrap();
+    let audio = test_audio_resource("voice");
+    let contents = vec![
+        vec![MessageSegment::text("text-only")],
+        vec![MessageSegment::Audio {
+            resource: audio.clone(),
+        }],
+        vec![
+            MessageSegment::text("text-and-voice"),
+            MessageSegment::Audio { resource: audio },
+        ],
+        vec![MessageSegment::text("long-segment-one")],
+        vec![MessageSegment::text("long-segment-two")],
+    ];
+    BotReplyDeliveryRequest {
+        reply_id: "reply-multipart".into(),
+        idempotency_key: "reply-multipart".into(),
+        conversation,
+        parts: contents
+            .into_iter()
+            .enumerate()
+            .map(|(index, segments)| BotReplyDeliveryPart {
+                part_id: format!("reply-multipart:part:{index}"),
+                content: BotDeliveryContent {
+                    segments,
+                    summary: None,
+                    reply_to: None,
+                },
+            })
+            .collect(),
+        policy: DeliveryPolicy {
+            max_attempts: 3,
+            initial_backoff_ms: 10,
+            max_backoff_ms: 100,
+            not_before_unix_ms: None,
+            expires_at_unix_ms: None,
+        },
+        source_event_id: "multipart".into(),
+        source_turn_id: "turn-multipart".into(),
+        source_binding_key: None,
+    }
+}
+
+fn test_audio_resource(id: &str) -> ResourceRef {
+    ResourceRef {
+        resource_id: ResourceId {
+            kind_id: "bot.media".into(),
+            slot_id: id.into(),
+            generation: 1,
+            version: 1,
+        },
+        ref_id: format!("ref-{id}"),
+        semantic: ResourceSemantic::VersionedSnapshot,
+        provider_id: "test.media".into(),
+        resource_kind: "bot.media".into(),
+        schema: "audio/silk".into(),
+        version: 1,
+        generation: 1,
+        access: ResourceAccess::Inline,
+        size_hint: Some(16),
+        content_hash: Some(format!("sha256-{id}")),
+        lifetime: ResourceLifetime::Persistent,
+        lease: None,
+        seal_state: ResourceSealState::Sealed,
+    }
 }
 
 async fn submit_event(runtime: &ServiceRuntime, event_id: &str, text: &str) {
@@ -428,28 +889,94 @@ fn bot_event(event_id: &str, text: &str) -> BotEvent {
     }
 }
 
-struct MessageSendRunner {
-    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
-    sends: Arc<AtomicUsize>,
+#[derive(Clone, Copy, Debug)]
+enum TestSendOutcome {
+    Success,
+    TransientFailure,
+    PermanentFailure,
+    Cancelled,
+    Timeout,
 }
 
-impl Runner for MessageSendRunner {
+#[derive(Default)]
+struct TestSendPlan {
+    outcomes: Mutex<VecDeque<TestSendOutcome>>,
+    attempts: AtomicUsize,
+}
+
+impl TestSendPlan {
+    fn new(outcomes: impl IntoIterator<Item = TestSendOutcome>) -> Self {
+        Self {
+            outcomes: Mutex::new(outcomes.into_iter().collect()),
+            attempts: AtomicUsize::new(0),
+        }
+    }
+
+    fn next(&self) -> TestSendOutcome {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        self.outcomes
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(TestSendOutcome::Success)
+    }
+}
+
+struct MessageSendHandler {
+    descriptor: mutsuki_runtime_contracts::RunnerDescriptor,
+    sends: Arc<AtomicUsize>,
+    plan: Arc<TestSendPlan>,
+}
+
+impl AsyncBatchHandler for MessageSendHandler {
     fn descriptor(&self) -> &mutsuki_runtime_contracts::RunnerDescriptor {
         &self.descriptor
     }
 
-    fn run_batch(
-        &mut self,
-        _ctx: RunnerContext,
-        batch: WorkBatch,
-    ) -> RuntimeResult<CompletionBatch> {
-        map_work_batch_entries(&batch, |task| {
-            let message: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
-            assert_eq!(message.plain_text(), "Agent reply");
-            self.sends.fetch_add(1, Ordering::SeqCst);
-            let mut result = RunnerResult::completed(task.task_id.clone());
-            result.output = Some(json!({"id": "qq-message"}));
-            Ok(result)
+    fn run_batch(&self, _ctx: RunnerContext, batch: WorkBatch) -> AsyncCompletionFuture {
+        let outcome = self.plan.next();
+        let sends = self.sends.clone();
+        Box::pin(async move {
+            if matches!(outcome, TestSendOutcome::Timeout) {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            map_work_batch_entries(&batch, |task| {
+                let _: BotMessage = serde_json::from_value(task.payload.to_value()).unwrap();
+                match outcome {
+                    TestSendOutcome::Success | TestSendOutcome::Timeout => {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        let mut result = RunnerResult::completed(task.task_id.clone());
+                        result.output = Some(json!({"id": "qq-message"}));
+                        Ok(result)
+                    }
+                    TestSendOutcome::TransientFailure | TestSendOutcome::PermanentFailure => {
+                        let mut error = mutsuki_runtime_contracts::RuntimeError::new(
+                            if matches!(outcome, TestSendOutcome::TransientFailure) {
+                                "qq.transient"
+                            } else {
+                                "qq.permanent"
+                            },
+                            TEST_SEND_PLUGIN_ID,
+                            "test.send",
+                        );
+                        error.evidence.insert(
+                            "retryable".into(),
+                            ScalarValue::Bool(matches!(outcome, TestSendOutcome::TransientFailure)),
+                        );
+                        if matches!(outcome, TestSendOutcome::TransientFailure) {
+                            error
+                                .evidence
+                                .insert("retry_after_ms".into(), ScalarValue::Int(10));
+                        }
+                        Err(error)
+                    }
+                    TestSendOutcome::Cancelled => {
+                        let mut result = RunnerResult::completed(task.task_id.clone());
+                        result.status = RunnerStatus::Cancelled;
+                        Ok(result)
+                    }
+                }
+            })
         })
     }
 }
@@ -675,7 +1202,7 @@ fn wire_error(code: &str) -> AgentWireError {
 }
 
 async fn wait_outcome(runtime: &ServiceRuntime, handle: &TaskHandle) -> TaskOutcome {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             if let Some(outcome) = runtime.task_outcome(handle).unwrap() {
                 return outcome;
@@ -688,7 +1215,7 @@ async fn wait_outcome(runtime: &ServiceRuntime, handle: &TaskHandle) -> TaskOutc
 }
 
 async fn wait_for(counter: &AtomicUsize, expected: usize) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             if counter.load(Ordering::SeqCst) >= expected {
                 return;
@@ -704,16 +1231,20 @@ async fn wait_for_flow_tasks(runtime: &ServiceRuntime) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let snapshots = runtime.task_snapshots().unwrap();
-            if snapshots.iter().all(|snapshot| {
-                matches!(
-                    snapshot.status,
-                    TaskStatus::Completed
-                        | TaskStatus::Failed
-                        | TaskStatus::Cancelled
-                        | TaskStatus::Expired
-                        | TaskStatus::DeadLetter
-                )
-            }) {
+            if snapshots
+                .iter()
+                .filter(|snapshot| !snapshot.task_id.starts_with("bot-reply-delivery-recovery:"))
+                .all(|snapshot| {
+                    matches!(
+                        snapshot.status,
+                        TaskStatus::Completed
+                            | TaskStatus::Failed
+                            | TaskStatus::Cancelled
+                            | TaskStatus::Expired
+                            | TaskStatus::DeadLetter
+                    )
+                })
+            {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

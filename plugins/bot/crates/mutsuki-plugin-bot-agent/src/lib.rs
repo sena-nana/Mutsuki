@@ -340,6 +340,7 @@ async fn run_bridge_node_task(
             delivery_policy,
         )
         .map_err(|error| bridge_failure(&task, "delivery.binding", error))?;
+        reserve_reply_delivery(&ctx, &task, &request).await?;
         vec![BotNodeOutput {
             port_id: "reply".into(),
             event: BotFlowEventEnvelope {
@@ -630,6 +631,23 @@ async fn inspect_reply_delivery(
         )),
         Err(error) => Err(error),
     }
+}
+
+async fn reserve_reply_delivery(
+    ctx: &AsyncRunnerContext,
+    task: &Task,
+    request: &BotReplyDeliveryRequest,
+) -> RuntimeResult<BotReplyDeliveryReceipt> {
+    let outcome = ctx
+        .call_raw(
+            BOT_REPLY_DELIVERY_PROTOCOL_ID,
+            serde_json::to_value(BotReplyDeliveryCommand::Reserve {
+                request: Box::new(request.clone()),
+            })
+            .map_err(|error| bridge_failure(task, "delivery.reserve.encode", error))?,
+        )
+        .await;
+    decode_reply_delivery_outcome(task, outcome)
 }
 
 fn decode_reply_delivery_outcome(

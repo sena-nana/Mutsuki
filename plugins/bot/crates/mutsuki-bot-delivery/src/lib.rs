@@ -506,18 +506,39 @@ impl ReplyDeliveryService {
         }
     }
 
+    async fn reserve(
+        &self,
+        request: &BotReplyDeliveryRequest,
+    ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
+        validate_reply_request(request)?;
+        if let Some(existing) = self.repository.reserve_reply(request).await? {
+            return Ok(existing);
+        }
+        self.receipt_for(request).await
+    }
+
     async fn submit(
         &self,
         ctx: &AsyncRunnerContext,
         request: &BotReplyDeliveryRequest,
         now_unix_ms: u64,
     ) -> Result<BotReplyDeliveryReceipt, DeliveryError> {
-        validate_reply_request(request)?;
-        if let Some(existing) = self.repository.reserve_reply(request).await? {
-            return Ok(existing);
-        }
+        self.reserve(request).await?;
         for part in &request.parts {
             let work = reply_part_request(request, part);
+            let current = self.attempts.repository.receipt(&work.delivery_id).await?;
+            if current.status != DeliveryStatus::Pending {
+                let blocks_later_parts = matches!(
+                    current.status,
+                    DeliveryStatus::Sending
+                        | DeliveryStatus::RetryScheduled
+                        | DeliveryStatus::ReconcileRequired
+                );
+                if blocks_later_parts {
+                    break;
+                }
+                continue;
+            }
             let receipt = self.attempt(ctx, &work, now_unix_ms, 1).await?;
             let blocks_later_parts = matches!(
                 receipt.status,
@@ -692,6 +713,17 @@ impl ReplyDeliveryService {
                     .await
             }
             Ok(TaskOutcome::Failed { error, .. }) => {
+                if error.code == mutsuki_runtime_contracts::ERR_RUNTIME_HOST_FAILED
+                    && matches!(
+                        error.route.as_str(),
+                        "host.async_executor.timeout" | "host.async_executor.cancelled"
+                    )
+                {
+                    return self
+                        .attempts
+                        .reconcile(receipt, attempt_number, now_unix_ms, &error.route)
+                        .await;
+                }
                 let transient = matches!(
                     error.evidence.get("retryable"),
                     Some(ScalarValue::Bool(true))
@@ -1254,6 +1286,12 @@ async fn reply_delivery_result(
             ),
         };
     let output = match command {
+        BotReplyDeliveryCommand::Reserve { request } => serde_json::to_value(
+            service
+                .reserve(&request)
+                .await
+                .map_err(|error| runtime_delivery_error(task, error))?,
+        ),
         BotReplyDeliveryCommand::Submit {
             request,
             now_unix_ms,
