@@ -1,9 +1,9 @@
 # Mutsuki
 
-Mutsuki is a domain-neutral, batch-first runtime framework maintained as one monorepo with
-independently consumable packages. The repository contains the Rust runtime and Link layers,
-product Hosts, Agent and Python kits, Bot and standard plugins, canonical templates, integration
-tests, performance models, and one release compatibility baseline.
+Mutsuki is a monorepo that contains a domain-neutral, batch-first runtime framework and the
+first-party Mutsuki Bot product. The repository also contains independently consumable Link and
+Host packages, Agent and Python kits, Bot and standard plugins, integration tests, performance
+models, and one release compatibility baseline. Product ownership does not enter Runtime Core.
 
 Repository consolidation does not create an all-in-one crate. Products depend only on the packages
 they need:
@@ -24,7 +24,7 @@ mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", tag = "
 | `hosts/` | CLI, service, Tauri, Web and optional distributed Hosts |
 | `kits/` | AgentKit and Python Runner Kit |
 | `plugins/` | Bot packages and domain-neutral standard protocols/plugins |
-| `templates/bot/` | Canonical Bot template source and export tooling |
+| `products/bot/` | First-party Bot configuration, runtime assembly and product acceptance |
 
 The full ownership and dependency map is in
 [Monorepo architecture](docs/architecture/monorepo.md). Public runtime contracts remain
@@ -55,6 +55,19 @@ uv run pytest
 
 Web and Tauri frontend packages retain their package-level scripts and lockfiles under
 `hosts/web` and `hosts/tauri`. Run their typecheck/build commands when those surfaces change.
+
+## Run the Bot product
+
+The first-party Bot runs directly from this repository and shares the root compatibility lock:
+
+```bash
+cp products/bot/config/bootstrap.toml products/bot/config/local.toml
+cp products/bot/config/secret.template.toml products/bot/config/local.secret.toml
+cargo run --locked -p mutsuki-bot -- products/bot/config/local.toml
+```
+
+Product configuration is stored through the selected ConfigRepository. Local secret files and
+runtime data remain ignored by Git.
 
 ## Performance
 
@@ -99,12 +112,11 @@ approval whose report hash, revision snapshot and environment fingerprint match.
 - [v0.1.0 compatibility matrix](docs/compatibility/v0.1.0.md)
 - [Issue #44 migration ledger](docs/migration/issue-44-ledger.md)
 - [Monorepo decision](docs/decisions/0001-mutsuki-monorepo.md)
+- [First-party Bot product decision](docs/decisions/0002-first-party-bot-product.md)
 
 Business products such as Lilia and Nana remain in their own repositories and pin this repository
-at a tag or commit. The
-[independent Bot GitHub Template](https://github.com/sena-nana/MutsukiBotTemplate) is generated
-from `templates/bot`; it remains active for “Use this template” but is not a second source of
-framework behavior.
+at a tag or commit. `mutsuki-bot` is the first-party product maintained and run from
+`products/bot`; the former `MutsukiBotTemplate` repository is retired.
 
 ## Reading order
 

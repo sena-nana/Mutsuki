@@ -14,7 +14,7 @@ forbidden_target_roots = [
   "hosts",
   "kits",
   "plugins",
-  "templates",
+  "products",
 ]
 
 [[rules]]
@@ -28,7 +28,7 @@ forbidden_target_roots = [
   "hosts",
   "kits",
   "plugins",
-  "templates",
+  "products",
 ]
 
 [[rules]]
@@ -41,13 +41,13 @@ forbidden_target_roots = [
   "hosts",
   "kits",
   "plugins",
-  "templates",
+  "products",
 ]
 
 [[rules]]
 name = "link-does-not-own-host-or-business-behavior"
 source_roots = ["crates/link"]
-forbidden_target_roots = ["hosts", "kits/agent", "plugins/bot", "templates"]
+forbidden_target_roots = ["hosts", "kits/agent", "plugins/bot", "products"]
 
 [[rules]]
 name = "host-neutral-kits-and-plugins-use-explicit-integration-packages"

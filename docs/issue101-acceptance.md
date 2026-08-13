@@ -9,7 +9,7 @@ Date: 2026-07-27
 | Runtime / Adapter / Plugin boundaries | `mutsuki-agent-contracts`, `mutsuki-agent-runtime`, `mutsuki-agent-adapter-*` and `mutsuki-agent-plugin-*`; `check_workspace.py` verifies the monorepo boundary |
 | AgentRuntimeProfile | `mutsuki-agent-runtime::profile` tests cover runtime, Adapter, Provider, Plugin, policy and persistence/distribution validation |
 | Provider credential isolation | the OpenAI-compatible async batch test proves an unavailable credential fails only its Provider/session entry while another Provider/session completes through the public protocol |
-| Reference coding agent | `templates/bot/crates/mutsuki-bot/tests/agentkit_issue3_e2e.rs` executes context, Git/LSP-style tools, two approval suspend/resume loops and a final response |
+| Reference coding agent | `products/bot/crates/mutsuki-bot/tests/agentkit_issue3_e2e.rs` executes context, Git/LSP-style tools, two approval suspend/resume loops and a final response |
 | In-process Core | the public `RuntimeBootstrapper` test completes model → tool → model |
 | ServiceHost | `agentkit_issue3_e2e` covers cancellation, stream, budget, errors, session resume and approval |
 | TauriHost | runtime-client runner/async-handler factories complete Agent loop before and after generation reload |

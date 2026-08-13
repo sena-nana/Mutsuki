@@ -37,7 +37,7 @@ REQUIRED_PATHS = (
     "kits/python-runner",
     "plugins/bot",
     "plugins/std",
-    "templates/bot",
+    "products/bot",
     "docs/architecture/monorepo.md",
     "docs/architecture/package-boundaries.toml",
     "docs/architecture/refactor-behavior-matrix.md",

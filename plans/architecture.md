@@ -518,7 +518,7 @@ Contract surface 兼容性：
   pending CAS, reversible provider activation/lifecycle, repository commit and rollback.
 - `ConfigRepository` is a replaceable bootstrap plugin boundary. Core, ServiceHost, providers and
   WebExtensions never infer a file, SQLite database or remote endpoint.
-- SQLite is one Std plugin selected explicitly by BotTemplate bootstrap. It is not a framework
+- SQLite is one Std plugin selected explicitly by the Mutsuki Bot product bootstrap. It is not a framework
   default and receives both path and logical namespace from its caller.
 - Bot Flow is an ordinary Bot-owned `ConfigProvider`; only Bot packages decode its document.
   The independent editor adapts Web RPC to ConfigService and owns no server-side storage or draft.

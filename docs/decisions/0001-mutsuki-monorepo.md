@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-27
 - Issue: `#44`
+- Qualified by: [ADR 0002](0002-first-party-bot-product.md)
 
 ## Context
 

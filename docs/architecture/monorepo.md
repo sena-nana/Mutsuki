@@ -16,7 +16,7 @@ Mutsuki/
 ├── hosts/{cli,service,tauri,web,distributed}/
 ├── kits/{agent,python-runner}/
 ├── plugins/{bot,std}/
-├── templates/bot/
+├── products/bot/
 ├── integration-tests/
 ├── performance/
 └── docs/{architecture,contracts,decisions,compatibility,migration}/
@@ -40,7 +40,7 @@ link / standard plugins / AgentKit / Bot packages
         ↓
 service, Tauri, Web and distributed Hosts
         ↓
-templates and external products
+first-party and external products
 ```
 
 The diagram is ownership-oriented, not permission to add every downward dependency:
@@ -49,7 +49,7 @@ The diagram is ownership-oriented, not permission to add every downward dependen
 - Link never depends on a concrete Host or business package.
 - AgentKit, Bot packages and standard plugins remain Host-neutral.
 - Host-specific integration lives in an explicitly named integration package.
-- Templates select packages but never own their implementation.
+- Products select packages but do not absorb implementation owned by Core, Hosts, Kits or plugins.
 - External products choose only required packages from one release revision.
 
 ## Workspace invariants
@@ -69,13 +69,20 @@ rules. Cargo tests, contract conformance and scoped integration tests enforce be
 `hosts/tauri` and `hosts/web` own their frontend SDKs and shells. Their package locks are not Rust
 Workspace locks and remain scoped to their JavaScript build boundaries.
 
+## First-party Bot product
+
+`products/bot` is the repository's runnable Bot product. It owns external bootstrap configuration,
+owner catalog aggregation, ServiceRuntime startup and cross-package product acceptance. Runtime
+Core remains domain-neutral, ServiceHost keeps process lifecycle ownership, and Bot, Agent and Std
+packages keep their protocol and implementation ownership. The product does not introduce a
+`BotHost`, duplicate owner implementations or an all-capability facade crate.
+
 ## History and retired repositories
 
 Every former framework repository was merged with its Git history as a parent of the monorepo.
 Issues are transferred to the unified tracker and source repositories receive a migration notice
-before archival. `MutsukiBotTemplate` is not an active source repository: it remains unarchived
-only as a generated GitHub Template. Release automation exports `templates/bot`, validates the
-standalone Workspace, performs a byte-for-byte comparison, and publishes the result through a
-write-scoped deploy key. Manual changes and independent Issues belong in this monorepo instead.
+before archival. `MutsukiBotTemplate` is being retired because its former source and generated
+distribution role moved to `products/bot`; Bot source, runtime changes and Issues belong only in
+this monorepo.
 Exact revisions and Issue counts live in
 [`docs/migration/issue-44-ledger.md`](../migration/issue-44-ledger.md).

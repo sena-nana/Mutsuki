@@ -1,7 +1,7 @@
 # Mutsuki 路线图
 
 Mutsuki 当前是单仓库、多 package 的 Framework。Core 目标仍是 **极薄 Tick-first /
-Batch-first runtime + Plugin Runner**；仓库同时承载 Link、Host、Kit、标准插件与模板，
+Batch-first runtime + Plugin Runner**；仓库同时承载 Link、Host、Kit、标准插件与第一方 Bot 产品，
 但 Core 只保留 TaskPool、RunnerRegistry、Runner dispatch、ResultRouter、StateStore、
 ResourceManager、EventLog 和 TraceLog 等领域中立运行事实。
 
@@ -23,7 +23,7 @@ ResourceManager、EventLog 和 TraceLog 等领域中立运行事实。
 Python Runner Kit 位于 `kits/python-runner`，镜像同一 revision 的协议并提供 Python
 runner backend、stdio binary runner bridge 和测试替身；它不是 Rust Workspace member。
 
-Link、Host、AgentKit、Bot、StdPlugins 和 BotTemplate 的 package 组、依赖方向与发布门禁见
+Link、Host、AgentKit、Bot、StdPlugins 和第一方 Bot 产品的 package 组、依赖方向与发布门禁见
 `docs/architecture/monorepo.md` 和 `docs/release-train.md`。
 
 ## 标准插件命名边界
